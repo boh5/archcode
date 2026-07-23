@@ -20,7 +20,7 @@ Page files override the Master only where they explicitly differ.
 | Artifact | Purpose |
 |---|---|
 | `MASTER.md` | Brand, tokens, typography, layout, components, motion, accessibility, forbidden patterns |
-| `pages/session.md` | Conversation, Execution, tool aggregation/expansion, inspector, composer |
+| `pages/session.md` | Conversation, Work/final-response hierarchy, tool expansion, inspector, composer |
 | `pages/dashboard.md` | Attention/running/resumption/upcoming hierarchy |
 | `pages/todos.md` | Board, Rejected, Archived, capture, and Todo detail drawer |
 | `../../styles.css` | Exact prototype token and component implementation |

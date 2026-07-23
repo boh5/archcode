@@ -7,12 +7,16 @@ import {
   type ProfileName,
   type SessionExecutionRecord,
   type SessionMessage,
+  type SessionPart,
+  type SessionStep,
+  type TextPart,
   type ToolChildSessionLink,
 } from "@archcode/protocol";
 
 export interface ExecutionWorkstreamInput {
   messages: readonly SessionMessage[];
   executions: readonly SessionExecutionRecord[];
+  steps: readonly SessionStep[];
   childSessionLinks: readonly ToolChildSessionLink[];
   compression?: CompressionStateSnapshot;
   session: {
@@ -29,15 +33,33 @@ export interface WorkstreamSessionIdentity {
   displayName?: string;
 }
 
+export interface ExecutionWorkstreamMessageSlice {
+  /** Authoritative owning message. */
+  message: SessionMessage;
+  /** Ordered references to the parts that remain inside Work. */
+  parts: readonly SessionPart[];
+}
+
+export interface ExecutionWorkstreamFinalResponse {
+  /** The last Assistant message in the completed Execution. */
+  message: SessionMessage;
+  /** Ordered, completed, trusted, non-empty Text part references. */
+  textParts: readonly TextPart[];
+}
+
 export interface ExecutionWorkstreamExecution {
   kind: "execution";
   id: string;
   number: number;
   sortTime: number;
   record: SessionExecutionRecord;
-  /** Null when a user_message Execution has no authoritative user text. */
-  title: string | null;
-  messages: readonly SessionMessage[];
+  /** Canonical user inputs remain outside the Work disclosure. */
+  userMessages: readonly SessionMessage[];
+  /** Every non-input part except the trusted final Text parts. */
+  workMessages: readonly ExecutionWorkstreamMessageSlice[];
+  /** Absent unless the completed Execution has an authoritative terminal model step. */
+  finalResponse?: ExecutionWorkstreamFinalResponse;
+  stepCount: number;
   toolCount: number;
   childCount: number;
   /** Only links resolved through delegate Tool parts in this Execution. */
@@ -90,6 +112,91 @@ export interface ExecutionWorkstreamProjection {
   compression?: CompressionStateSnapshot;
 }
 
+function sameReferences<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameMessageSlices(
+  left: readonly ExecutionWorkstreamMessageSlice[],
+  right: readonly ExecutionWorkstreamMessageSlice[],
+): boolean {
+  return left.length === right.length && left.every((slice, index) => {
+    const candidate = right[index];
+    return candidate !== undefined
+      && slice.message === candidate.message
+      && sameReferences(slice.parts, candidate.parts);
+  });
+}
+
+function sameFinalResponse(
+  left: ExecutionWorkstreamFinalResponse | undefined,
+  right: ExecutionWorkstreamFinalResponse | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.message === right.message && sameReferences(left.textParts, right.textParts);
+}
+
+function sameExecutionProjection(
+  left: ExecutionWorkstreamExecution,
+  right: ExecutionWorkstreamExecution,
+): boolean {
+  return left.id === right.id
+    && left.number === right.number
+    && left.sortTime === right.sortTime
+    && left.record === right.record
+    && left.stepCount === right.stepCount
+    && left.toolCount === right.toolCount
+    && left.childCount === right.childCount
+    && sameReferences(left.userMessages, right.userMessages)
+    && sameMessageSlices(left.workMessages, right.workMessages)
+    && sameFinalResponse(left.finalResponse, right.finalResponse)
+    && sameReferences(left.childSessionLinks, right.childSessionLinks);
+}
+
+/**
+ * Reuses unchanged projection objects across streaming snapshots. The builder
+ * remains a pure full projection, while React can memoize historical turns by
+ * identity instead of reconciling their Markdown and Tool subtrees on every
+ * active-Execution delta.
+ */
+export function stabilizeExecutionWorkstreamProjection(
+  previous: ExecutionWorkstreamProjection | undefined,
+  next: ExecutionWorkstreamProjection,
+): ExecutionWorkstreamProjection {
+  if (previous === undefined) return next;
+
+  const previousExecutions = new Map(previous.executions.map((execution) => [execution.id, execution]));
+  const executions = next.executions.map((execution) => {
+    const candidate = previousExecutions.get(execution.id);
+    return candidate && sameExecutionProjection(candidate, execution) ? candidate : execution;
+  });
+  const executionById = new Map(executions.map((execution) => [execution.id, execution]));
+  const previousItems = new Map(previous.items.map((item) => [`${item.kind}\u0000${item.id}`, item]));
+  const items = next.items.map((item) => {
+    if (item.kind === "execution") return executionById.get(item.id) ?? item;
+    const candidate = previousItems.get(`${item.kind}\u0000${item.id}`);
+    if (item.kind === "activity-message" && candidate?.kind === "activity-message") {
+      return candidate.message === item.message ? candidate : item;
+    }
+    if (item.kind === "compression" && candidate?.kind === "compression") {
+      return candidate.snapshot === item.snapshot ? candidate : item;
+    }
+    return item;
+  });
+  const session = previous.session.agentName === next.session.agentName
+    && previous.session.profile === next.session.profile
+    && previous.session.displayName === next.session.displayName
+    ? previous.session
+    : next.session;
+
+  return {
+    ...next,
+    items,
+    executions,
+    session,
+  };
+}
+
 interface SortableItem {
   item: ExecutionWorkstreamItem;
   rank: number;
@@ -123,37 +230,73 @@ function compareSortableItems(left: SortableItem, right: SortableItem): number {
     || left.sourceIndex - right.sourceIndex;
 }
 
-function firstNonEmptyLine(text: string): string | null {
-  for (const line of text.split(/\r?\n/u)) {
-    const summary = line.trim();
-    if (summary.length > 0) return summary;
-  }
-  return null;
+function isCanonicalUserMessage(message: SessionMessage): boolean {
+  return message.role === "user" && message.parts.some((part) => part.type === "text");
 }
 
-function titleForExecution(
+function isTrustedFinalTextPart(part: SessionPart): part is TextPart {
+  return part.type === "text"
+    && part.completedAt !== undefined
+    && part.text.trim().length > 0
+    && part.meta?.interrupted !== true
+    && part.meta?.discardedFromContext !== true;
+}
+
+function finalResponseForExecution(
   record: SessionExecutionRecord,
   messages: readonly SessionMessage[],
-): string | null {
-  switch (record.origin) {
-    case "goal_continuation":
-      return "Continue active goal";
-    case "tool_call":
-      return "Continue after tool response";
-    case "tool_batch":
-      return "Continue after tool responses";
-    case "user_message": {
-      for (const message of messages) {
-        if (message.role !== "user") continue;
-        for (const part of message.parts) {
-          if (part.type !== "text") continue;
-          const summary = firstNonEmptyLine(part.text);
-          if (summary !== null) return summary;
-        }
-      }
-      return null;
-    }
+  steps: readonly SessionStep[],
+): ExecutionWorkstreamFinalResponse | undefined {
+  if (record.status !== "completed") return undefined;
+
+  const terminalStep = steps.at(-1);
+  if (
+    terminalStep?.completedAt === undefined
+    || terminalStep.finishReason === undefined
+    || terminalStep.finishReason === "tool-calls"
+    || terminalStep.finishReason === "interrupted"
+    || terminalStep.finishReason === "error"
+  ) {
+    return undefined;
   }
+
+  let message: SessionMessage | undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (candidate?.role !== "assistant") continue;
+    message = candidate;
+    break;
+  }
+  if (message?.completedAt === undefined) return undefined;
+
+  const textParts = message.parts.filter(isTrustedFinalTextPart);
+  return textParts.length === 0 ? undefined : { message, textParts };
+}
+
+function splitExecutionMessages(
+  messages: readonly SessionMessage[],
+  finalResponse: ExecutionWorkstreamFinalResponse | undefined,
+): {
+  userMessages: readonly SessionMessage[];
+  workMessages: readonly ExecutionWorkstreamMessageSlice[];
+} {
+  const userMessages: SessionMessage[] = [];
+  const workMessages: ExecutionWorkstreamMessageSlice[] = [];
+  const finalTextParts = new Set<SessionPart>(finalResponse?.textParts ?? []);
+
+  for (const message of messages) {
+    if (isCanonicalUserMessage(message)) {
+      userMessages.push(message);
+      continue;
+    }
+
+    const parts = message === finalResponse?.message
+      ? message.parts.filter((part) => !finalTextParts.has(part))
+      : message.parts;
+    if (parts.length > 0) workMessages.push({ message, parts });
+  }
+
+  return { userMessages, workMessages };
 }
 
 function sessionActivityTime(message: SessionMessage): number | null {
@@ -219,6 +362,7 @@ export function buildExecutionWorkstream(
   }
 
   const messagesByExecutionId = new Map<string, SessionMessage[]>();
+  const stepsByExecutionId = new Map<string, Array<{ step: SessionStep; sourceIndex: number }>>();
   const duplicateMessagesById = new Map<string, SessionMessage[]>();
   const diagnostics: ExecutionWorkstreamDiagnostic[] = [];
   const sortableItems: SortableItem[] = [];
@@ -262,12 +406,30 @@ export function buildExecutionWorkstream(
     });
   });
 
+  input.steps.forEach((step, sourceIndex) => {
+    if (step.executionId === undefined || duplicateIds.has(step.executionId)) return;
+    if (!recordsById.has(step.executionId)) return;
+    const steps = stepsByExecutionId.get(step.executionId);
+    const indexedStep = { step, sourceIndex };
+    if (steps) steps.push(indexedStep);
+    else stepsByExecutionId.set(step.executionId, [indexedStep]);
+  });
+
   const uniqueRecords = input.executions
     .filter((record) => !duplicateIds.has(record.id))
     .sort(compareExecutionRecords);
 
   const executions: ExecutionWorkstreamExecution[] = uniqueRecords.map((record, index) => {
     const messages = messagesByExecutionId.get(record.id) ?? [];
+    const steps = (stepsByExecutionId.get(record.id) ?? [])
+      .sort((left, right) =>
+        left.step.step - right.step.step
+        || left.step.startedAt - right.step.startedAt
+        || left.sourceIndex - right.sourceIndex
+      )
+      .map(({ step }) => step);
+    const finalResponse = finalResponseForExecution(record, messages, steps);
+    const { userMessages, workMessages } = splitExecutionMessages(messages, finalResponse);
     const childSessionLinks = resolveChildLinks(messages, input.childSessionLinks);
     return {
       kind: "execution",
@@ -275,8 +437,10 @@ export function buildExecutionWorkstream(
       number: index + 1,
       sortTime: record.startedAt,
       record,
-      title: titleForExecution(record, messages),
-      messages,
+      userMessages,
+      workMessages,
+      ...(finalResponse === undefined ? {} : { finalResponse }),
+      stepCount: steps.length,
       toolCount: countTools(messages),
       childCount: childSessionLinks.length,
       childSessionLinks,

@@ -480,8 +480,19 @@ describe("SessionRoute focused view store behavior", () => {
 
       await waitFor(() => {
         expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
-        expect(container.textContent).toContain("Open child session");
+        expect(container.querySelector('[data-testid="work-summary-root-execution"]')).not.toBeNull();
+        expect(container.textContent).not.toContain("Open child session");
         expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
+      });
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="work-summary-root-execution"]')?.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Open child session");
       });
 
       await act(async () => {

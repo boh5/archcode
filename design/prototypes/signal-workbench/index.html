@@ -191,26 +191,24 @@
                 <span class="agent-avatar">A</span>
                 <div><strong>ArchCode</strong><span>Lead Agent</span></div>
               </header>
-              <p class="response-copy">I mapped every runtime reader and writer before changing the boundary. The migration touches Sessions, HITL, approvals, Todos, Automations, and memory.</p>
 
-              <section class="execution" aria-label="Execution">
-                <button class="execution-head" type="button" aria-expanded="true" data-execution-toggle>
-                  <span class="execution-identity">
-                    <span class="live-pulse"></span>
-                    <strong>Execution</strong>
-                    <span class="running-badge">Running</span>
+              <section class="work-disclosure completed" aria-label="Execution 1 work">
+                <button class="work-summary" type="button" aria-expanded="false" aria-controls="completed-work-body" data-work-toggle>
+                  <span class="work-summary-primary">
+                    <span class="work-state-icon complete" data-icon="check"></span>
+                    <strong>Worked for 12m 18s</strong>
                   </span>
-                  <span class="execution-head-meta">
-                    <span>4 steps · 7 calls</span>
-                    <span class="elapsed">14:32</span>
-                    <span class="execution-chevron" data-icon="chevron"></span>
+                  <span class="work-summary-meta">
+                    <span>Execution 1 · 6 steps · 9 tools · 1 child</span>
+                    <span class="work-chevron" data-icon="chevron-right"></span>
                   </span>
                 </button>
-                <div class="execution-body" data-execution-body>
-                  <div class="execution-binding">
+                <div class="work-body" id="completed-work-body" data-work-body hidden>
+                  <p class="work-commentary">I mapped every runtime reader and writer before changing the boundary. The migration touches Sessions, HITL, approvals, Todos, Automations, and memory.</p>
+                  <div class="work-binding">
                     <span>Lead · principal</span>
                     <span>GLM-5 · deep</span>
-                    <span>Working continuously</span>
+                    <span class="work-binding-state completed">Completed cleanly</span>
                   </div>
                   <ol class="execution-list">
                     <li class="tool-group-event complete">
@@ -314,21 +312,79 @@
                       <div><strong>Delegated to Build</strong><p>Verify mutation guards and runtime path hygiene independently.</p></div>
                       <span class="step-state">Completed</span>
                     </li>
-                    <li class="current">
-                      <span class="step-glyph active-glyph" data-icon="terminal"></span>
-                      <div><strong>Bash</strong><p>Running architecture tests against ancestor mutations and legacy paths.</p></div>
-                      <span class="running-word">RUNNING</span>
+                    <li class="complete">
+                      <span class="step-glyph" data-icon="check"></span>
+                      <div><strong>Architecture verification</strong><p>Checked ancestor mutations, protected paths, and retired runtime locations.</p></div>
+                      <span class="step-state">Completed</span>
                     </li>
                   </ol>
                   <div class="terminal-line">
                     <span>$</span>
                     <code>bun run test --filter runtime-path-hygiene</code>
-                    <span class="terminal-cursor" aria-hidden="true"></span>
+                    <span class="terminal-result">132 passed</span>
                   </div>
                 </div>
               </section>
 
-              <p class="response-copy final-copy">The new boundary is in place. Plans and Skills remain outside the protected runtime subtree; I’m finishing the last verification pass now.</p>
+              <div class="final-response">
+                <p>The runtime authority migration is complete.</p>
+                <ul>
+                  <li>System-owned project state now lives under <code>.archcode/runtime</code>.</li>
+                  <li>Plans and Skills remain directly editable outside the protected subtree.</li>
+                  <li>Legacy reads and compatibility aliases were removed; the focused verification suite passes.</li>
+                </ul>
+              </div>
+              <div class="response-meta">ArchCode · principal · completed just now</div>
+            </section>
+
+            <section class="message user-message follow-up-message" aria-label="User message">
+              <div class="message-author">You</div>
+              <p>Do one final independent review and make sure the Web UI explains the new boundary clearly.</p>
+            </section>
+
+            <section class="agent-response active-turn" aria-label="ArchCode response in progress">
+              <header class="response-author">
+                <span class="agent-avatar">A</span>
+                <div><strong>ArchCode</strong><span>Lead Agent</span></div>
+              </header>
+
+              <section class="work-disclosure running" aria-label="Execution 2 work">
+                <button class="work-summary" type="button" aria-expanded="true" aria-controls="running-work-body" data-work-toggle>
+                  <span class="work-summary-primary">
+                    <span class="live-pulse"></span>
+                    <strong>Working · <span class="elapsed">02:14</span></strong>
+                  </span>
+                  <span class="work-summary-meta">
+                    <span>Execution 2 · 2 steps · 3 tools · 1 child</span>
+                    <span class="work-chevron" data-icon="chevron-right"></span>
+                  </span>
+                </button>
+                <div class="work-body" id="running-work-body" data-work-body>
+                  <p class="work-commentary">The implementation is already verified. I’m checking the user-facing explanation and asking an Analyst to challenge the final wording.</p>
+                  <div class="work-binding">
+                    <span>Lead · principal</span>
+                    <span>GLM-5 · deep</span>
+                    <span class="work-binding-state live">Working continuously</span>
+                  </div>
+                  <ol class="execution-list">
+                    <li class="complete">
+                      <span class="step-glyph" data-icon="check"></span>
+                      <div><strong>Read the runtime boundary copy</strong><p>Compared Settings, Session, and protected-path explanations.</p></div>
+                      <span class="step-state">Completed</span>
+                    </li>
+                    <li class="current">
+                      <span class="step-glyph active-glyph" data-icon="delegate"></span>
+                      <div><strong>Analyst review</strong><p>Checking whether the final explanation is precise and free of migration ambiguity.</p></div>
+                      <span class="running-word">RUNNING</span>
+                    </li>
+                  </ol>
+                  <div class="terminal-line">
+                    <span>$</span>
+                    <code>review runtime boundary copy</code>
+                    <span class="terminal-cursor" aria-hidden="true"></span>
+                  </div>
+                </div>
+              </section>
             </section>
           </div>
 
@@ -337,9 +393,9 @@
               <section class="composer-attention" aria-label="HITL permission request">
                 <div class="composer-status-mark attention-mark">!</div>
                 <div class="composer-status-copy">
-                  <div><strong>HITL · Permission required</strong><span>bash</span></div>
-                  <code>bun run test --filter runtime-path-hygiene</code>
-                  <small>ArchCode is waiting for this decision before it can continue.</small>
+                  <div><strong>HITL · Permission required</strong><span>bash · 1 pending call</span></div>
+                  <code>bun run docs:verify</code>
+                  <small>This call is waiting while the background Analyst review continues.</small>
                 </div>
                 <div class="attention-actions">
                   <button type="button" data-action="拒绝权限">Deny</button>

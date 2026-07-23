@@ -286,11 +286,22 @@ function bindTabs(tabSelector, panelSelector, tabKey, panelKey) {
 bindTabs("[data-sidebar-tab]", "[data-sidebar-panel]", "sidebarTab", "sidebarPanel");
 bindTabs("[data-inspector-tab]", "[data-inspector-panel]", "inspectorTab", "inspectorPanel");
 
-document.querySelector("[data-execution-toggle]").addEventListener("click", (event) => {
-  const button = event.currentTarget;
-  const expanded = button.getAttribute("aria-expanded") === "true";
-  button.setAttribute("aria-expanded", String(!expanded));
-  document.querySelector("[data-execution-body]").hidden = expanded;
+document.querySelectorAll("[data-work-toggle]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const expanded = button.getAttribute("aria-expanded") === "true";
+    const body = document.getElementById(button.getAttribute("aria-controls"));
+    const scroller = button.closest(".conversation");
+    const anchorTop = button.getBoundingClientRect().top;
+
+    button.setAttribute("aria-expanded", String(!expanded));
+    body.hidden = expanded;
+
+    window.requestAnimationFrame(() => {
+      if (!scroller) return;
+      const anchorDelta = button.getBoundingClientRect().top - anchorTop;
+      scroller.scrollTop += anchorDelta;
+    });
+  });
 });
 
 document.querySelectorAll("[data-tool-group-toggle]").forEach((button) => {

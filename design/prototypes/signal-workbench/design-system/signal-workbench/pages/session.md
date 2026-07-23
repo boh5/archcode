@@ -28,17 +28,70 @@ away.
 
 1. Session header with title, project/worktree context, Todo status, and Inspector.
 2. Objective block with Agent, Profile, start time, title, and short rationale.
-3. User and Agent conversation.
-4. Execution embedded in the relevant Agent response.
-5. Hybrid Composer Dock at the bottom of the Session canvas.
-6. Context Inspector with Agents, Changes, and Context.
+3. User message.
+4. The relevant Execution rendered as a Work disclosure.
+5. The final Agent response, when one exists, outside the Work disclosure.
+6. Hybrid Composer Dock at the bottom of the Session canvas.
+7. Context Inspector with Agents, Changes, and Context.
 
 Do not move Execution into the inspector or replace it with a small status pill.
 
-## Execution
+## Work and Final Response
 
-- Execution header is always recognizable as an entity.
-- Show `Running/Completed/Failed`, steps, calls, and elapsed time.
+The Session page uses progressive disclosure at the Execution boundary:
+
+```text
+completed:  user message → collapsed Work → visible final response
+running:    user message → expanded Work
+```
+
+- `Work` is the visual disclosure for one authoritative Execution. It does not
+  merge multiple Executions or infer ownership from visual proximity.
+- A completed Work summary reads `Worked for {duration}`. A running summary
+  reads `Working · {duration}`. Keep `Execution {number}`, steps, Tool count,
+  and Child count as quiet metadata on the same row.
+- Running Work is expanded by default. Historical completed Work is collapsed
+  by default.
+- When a followed live Execution completes, collapse Work only if the user is
+  still near the bottom and has not manually changed that disclosure.
+- The final Agent response is ordinary editorial text below Work. It is never
+  hidden by the Work disclosure and never restyled as a status card.
+- If an Execution stops, waits for the user, or completes through a Tool without
+  final Agent text, do not invent an empty final-response block. Keep the
+  terminal state and recovery path in Work.
+- Earlier Agent commentary, reasoning, Tools, delegated work, recovery,
+  compression, and model binding remain inside Work.
+- If the final model message contains reasoning followed by text, keep the
+  reasoning inside Work and render only the final text outside.
+
+### Work summary row
+
+- Minimum hit target: 44px.
+- Leading state uses icon plus text: live pulse + `Working`, check +
+  `Worked for`, question + `Needs you`, stop/error icon + the terminal label.
+- The label is 11px/650 and is the strongest content in the row.
+- Duration uses tabular figures. Counts and `Execution {number}` use quiet
+  9px metadata and may wrap below the label on narrow screens.
+- Use thin rules and a neutral hover field. Do not wrap Work in a raised card,
+  add a large colored badge, or repeat the user prompt as an Execution title.
+- The chevron rotates 160ms. Do not animate disclosure height.
+
+### Scroll and disclosure behavior
+
+- Expanding or collapsing Work preserves the disclosure row at the same viewport
+  position. It must never trigger the live “follow bottom” behavior.
+- Streaming updates follow the bottom only while the user is within the existing
+  near-bottom threshold.
+- Reading historical content disables live following until the user returns to
+  the bottom.
+- A user-explicit Work state wins over automatic defaults for the current route
+  lifetime.
+- Keyboard focus remains on the disclosure button after opening or closing.
+- `aria-expanded`, `aria-controls`, and an accessible name containing the
+  Execution number and state are required.
+
+## Work content
+
 - The binding row shows Lead/Profile, model/variant, and continuity state.
 - Timeline rows distinguish:
   - grouped completed read-only tools;
@@ -50,6 +103,7 @@ Do not move Execution into the inspector or replace it with a small status pill.
 
 ## Tool Aggregation and Expansion
 
+- Tool details remain inside Work; do not move them to the Context Inspector.
 - Aggregate only consecutive completed read-only calls and only at a count of
   two or more.
 - Mixed read tools use `Ran N read-only tools`; one repeated tool may use a
@@ -96,6 +150,9 @@ Do not move Execution into the inspector or replace it with a small status pill.
 - chat bubbles for every Agent message;
 - hiding tools behind a separate route;
 - a terminal-only Execution treatment;
+- hiding the final Agent response inside Work;
+- a second outer Execution card around Work and the final response;
+- auto-scrolling to the bottom when the user opens historical Work;
 - an expandable Composer or Goal progress bar;
 - HITL placed below Goal, Queue, or ordinary input;
 - live lime used on completed rows;

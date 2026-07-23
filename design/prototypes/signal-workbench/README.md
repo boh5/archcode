@@ -2,7 +2,7 @@
 
 Interactive UI proposal for the ArchCode workbench. It includes:
 
-- Session workspace with Execution, grouped read-only calls, independently expandable ToolCards, a compact HITL-first Composer Dock, and the Session context inspector
+- Session workspace with live Work streams, collapsed completed Work, always-visible final responses, grouped read-only calls, independently expandable ToolCards, a compact HITL-first Composer Dock, and the Session context inspector
 - Project Dashboard
 - Project Todos: Board, Rejected, and Archived
 - Todo detail drawer

@@ -1,6 +1,6 @@
 import {
+  memo,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -25,6 +25,7 @@ import {
   type SessionMessage,
   type SessionPart,
   type SystemNoticePart,
+  type TextPart,
   type ToolChildSessionLink,
 } from "@archcode/protocol";
 import { useSessionStore } from "../../store/session-store";
@@ -32,6 +33,8 @@ import {
   buildExecutionWorkstream,
   type ExecutionWorkstreamDiagnostic,
   type ExecutionWorkstreamExecution,
+  type ExecutionWorkstreamProjection,
+  stabilizeExecutionWorkstreamProjection,
 } from "../../lib/execution-workstream";
 import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
 import { groupReadOnlyToolParts } from "../../lib/group-tools";
@@ -52,8 +55,8 @@ const NEAR_BOTTOM_THRESHOLD_PX = 100;
 
 interface WorkstreamUiSnapshot {
   expandedIds: Set<string>;
-  knownRunningIds: Set<string>;
-  initialized: boolean;
+  manualOverrideIds: Set<string>;
+  statusByExecutionId: Map<string, SessionExecutionRecord["status"]>;
   scrollTop: number;
   nearBottom: boolean;
   hasScrollPosition: boolean;
@@ -61,6 +64,14 @@ interface WorkstreamUiSnapshot {
 
 const workstreamUiBySession = new Map<string, WorkstreamUiSnapshot>();
 const workstreamRouteLifecycleGeneration = new Map<string, number>();
+let executionTurnRenderObserverForTest: ((executionId: string) => void) | undefined;
+
+/** Test-only render isolation probe; production leaves it undefined. */
+export function __setExecutionTurnRenderObserverForTest(
+  observer: ((executionId: string) => void) | undefined,
+): void {
+  executionTurnRenderObserverForTest = observer;
+}
 
 function workstreamUiKey(slug: string, routeScopeId: string, sessionId: string): string {
   return `${slug}\u0000${routeScopeId}\u0000${sessionId}`;
@@ -69,8 +80,8 @@ function workstreamUiKey(slug: string, routeScopeId: string, sessionId: string):
 function createWorkstreamUiSnapshot(): WorkstreamUiSnapshot {
   return {
     expandedIds: new Set(),
-    knownRunningIds: new Set(),
-    initialized: false,
+    manualOverrideIds: new Set(),
+    statusByExecutionId: new Map(),
     scrollTop: 0,
     nearBottom: true,
     hasScrollPosition: false,
@@ -149,6 +160,7 @@ function selectionLabel(selection: { model: string; variant?: string }): string 
 
 export function MsgUser({
   message,
+  parts = message.parts,
   projectSlug = "",
   focusStoreSessionId = "",
   childSessionLinks = [],
@@ -156,6 +168,7 @@ export function MsgUser({
   onInspectModelAudit,
 }: {
   message: SessionMessage;
+  parts?: readonly SessionPart[];
   projectSlug?: string;
   focusStoreSessionId?: string;
   childSessionLinks?: readonly ToolChildSessionLink[];
@@ -166,7 +179,7 @@ export function MsgUser({
 
   return (
     <div className="flex min-w-0 flex-col gap-2" data-message-kind="canonical-user">
-      {message.parts.map((part) => {
+      {parts.map((part) => {
         if (part.type === "text") {
           return (
             <div key={part.id} className="flex justify-end">
@@ -301,6 +314,7 @@ export function PartRenderer({
 
 function MsgAgent({
   message,
+  parts = message.parts,
   identity,
   projectSlug,
   focusStoreSessionId,
@@ -308,6 +322,7 @@ function MsgAgent({
   agents,
 }: {
   message: SessionMessage;
+  parts?: readonly SessionPart[];
   identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
@@ -317,7 +332,7 @@ function MsgAgent({
   return (
     <div className="min-w-0 max-w-[740px]" data-message-kind="agent">
       <div className="msg-parts">
-        {groupReadOnlyToolParts(message.parts).map((entry) => {
+        {groupReadOnlyToolParts([...parts]).map((entry) => {
           const partKind = entry.type === "grouped-tools" || entry.type === "tool" ? "tool" : "content";
           if (entry.type === "grouped-tools") {
             return (
@@ -352,6 +367,7 @@ function MsgAgent({
 
 function SessionMessageView({
   message,
+  parts = message.parts,
   identity,
   projectSlug,
   focusStoreSessionId,
@@ -360,6 +376,7 @@ function SessionMessageView({
   onInspectModelAudit,
 }: {
   message: SessionMessage;
+  parts?: readonly SessionPart[];
   identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
@@ -371,6 +388,7 @@ function SessionMessageView({
     return (
       <MsgUser
         message={message}
+        parts={parts}
         projectSlug={projectSlug}
         focusStoreSessionId={focusStoreSessionId}
         childSessionLinks={childSessionLinks}
@@ -382,6 +400,7 @@ function SessionMessageView({
   return (
     <MsgAgent
       message={message}
+      parts={parts}
       identity={identity}
       projectSlug={projectSlug}
       focusStoreSessionId={focusStoreSessionId}
@@ -407,7 +426,45 @@ function modelBindingLabel(binding: ExecutionModelBindingSummary): string {
     : binding.modelDisplayName;
 }
 
-function ExecutionCard({
+function FinalAgentResponse({
+  message,
+  textParts,
+  identity,
+}: {
+  message: SessionMessage;
+  textParts: readonly TextPart[];
+  identity: { agentName: string; displayName?: string; profile: ProfileName };
+}) {
+  const text = textParts.map((part) => part.text).join("");
+
+  return (
+    <section
+      className="min-w-0 max-w-[740px]"
+      data-message-kind="agent"
+      data-testid={`final-response-${message.executionId ?? message.id}`}
+    >
+      <div className="msg-parts">
+        <div className="conversation-part" data-conversation-part="content">
+          <div className="max-w-[740px] text-[13px] leading-[1.7] text-text-secondary">
+            <MarkdownContent>{text}</MarkdownContent>
+          </div>
+        </div>
+      </div>
+      <div
+        className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-text-tertiary"
+        data-testid={`agent-message-meta-${message.id}`}
+      >
+        <span>{identity.displayName ?? identity.agentName}</span>
+        <span aria-hidden="true">·</span>
+        <span>{identity.profile}</span>
+        <span aria-hidden="true">·</span>
+        <time dateTime={new Date(message.createdAt).toISOString()}>{formatRelativeTime(message.createdAt)}</time>
+      </div>
+    </section>
+  );
+}
+
+function WorkDisclosure({
   execution,
   expanded,
   identity,
@@ -418,6 +475,7 @@ function ExecutionCard({
   onInspectModelAudit,
   checkpoint,
   continuationExecutionNumber,
+  buttonRef,
 }: {
   execution: ExecutionWorkstreamExecution;
   expanded: boolean;
@@ -425,69 +483,88 @@ function ExecutionCard({
   projectSlug: string;
   focusStoreSessionId: string;
   agents: readonly AgentDescriptor[];
-  onToggle: () => void;
+  onToggle: (button: HTMLButtonElement) => void;
   onInspectModelAudit?: (messageId: string) => void;
   checkpoint?: SessionExecutionInputCheckpoint;
   continuationExecutionNumber?: number;
+  buttonRef: (button: HTMLButtonElement | null) => void;
 }) {
   const status = presentExecutionStatus(execution.record.status, checkpoint);
   const visualKind = executionVisualKind(execution.record.status, checkpoint);
   const statusTransition = useStatusTransition(execution.id, visualKind);
   const statusTone = statusVisual(visualKind).tone;
-  const title = execution.title ?? "Untitled execution";
-  const countLabel = [
+  const duration = formatDuration(execution.record);
+  const primaryLabel = execution.record.status === "running"
+    ? `Working · ${duration}`
+    : execution.record.status === "completed"
+      ? `Worked for ${duration}`
+      : status.label;
+  const metadata = [
+    `Execution ${execution.number}`,
+    execution.stepCount > 0 ? `${execution.stepCount} ${execution.stepCount === 1 ? "step" : "steps"}` : null,
     execution.toolCount > 0 ? `${execution.toolCount} ${execution.toolCount === 1 ? "tool" : "tools"}` : null,
     execution.childCount > 0 ? `${execution.childCount} ${execution.childCount === 1 ? "child" : "children"}` : null,
     continuationExecutionNumber === undefined ? null : `Continued in Execution ${continuationExecutionNumber}`,
   ].filter(Boolean).join(" · ");
+  const accessibleName = [primaryLabel, status.detail, metadata].filter(Boolean).join(", ");
 
   return (
-    <article
-      className={`overflow-hidden border-y border-r border-l-[3px] transition-colors duration-[var(--motion-hover)] ${execution.record.status === "running" ? "border-y-signal/40 border-r-signal/40 border-l-signal bg-signal-field" : "border-y-border-default border-r-transparent border-l-transparent bg-transparent"}`}
-      data-testid={`execution-card-${execution.id}`}
-      data-execution-expanded={expanded ? "true" : "false"}
+    <section
+      className={`min-w-0 border-y border-border-default ${execution.record.status === "running" ? "border-l-[3px] border-l-signal bg-signal-field" : "border-l-[3px] border-l-transparent bg-transparent"}`}
+      data-testid={`work-disclosure-${execution.id}`}
+      data-work-expanded={expanded ? "true" : "false"}
       data-product-status={status.productStatus}
       data-visual-kind={visualKind}
       title={`Model: ${modelBindingLabel(execution.record.binding)}${status.detail ? ` · ${status.label}: ${status.detail}` : ""}`}
     >
       <button
+        ref={buttonRef}
         type="button"
-        className="grid min-h-12 w-full grid-cols-[24px_minmax(0,1fr)_auto_18px] items-center gap-3 px-1 py-2 text-left hover:bg-bg-hover max-[520px]:grid-cols-[22px_minmax(0,1fr)_18px]"
-        onClick={onToggle}
+        className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_18px] items-center gap-x-3 gap-y-1 px-2 py-2 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+        onClick={(event) => onToggle(event.currentTarget)}
         aria-expanded={expanded}
-        aria-controls={`execution-body-${execution.id}`}
+        aria-controls={`work-body-${execution.id}`}
+        aria-label={accessibleName}
+        data-testid={`work-summary-${execution.id}`}
       >
-        <span className={`grid h-7 w-7 place-items-center rounded-full text-[9px] font-semibold tabular-nums ${execution.record.status === "running" ? "bg-signal text-signal-ink" : "bg-bg-active text-text-tertiary"}`}>
-          {execution.number}
-        </span>
         <span className="min-w-0">
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-tertiary">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className={`inline-flex items-center gap-2 text-[11px] font-semibold ${execution.record.status === "running" ? "text-signal-foreground" : STATUS_TONE_CLASS[statusTone]}`}>
               <StatusGlyph kind={visualKind} size={14} transition={statusTransition} />
-              {status.label}
+              <span className="tabular-nums">{primaryLabel}</span>
             </span>
-            {status.detail && <span className="font-medium text-text-tertiary">· {status.detail}</span>}
-            <span className="text-text-tertiary">{formatDuration(execution.record)}</span>
+            {status.detail && execution.record.status !== "completed" && execution.record.status !== "running" && (
+              <span className="text-[10px] font-medium text-text-tertiary">· {status.detail}</span>
+            )}
           </span>
-          <span className="mt-1 block truncate text-[13px] font-medium text-text-primary" title={execution.title ?? undefined}>
-            {title}
+          <span className="mt-1 block min-w-0 whitespace-normal font-mono text-[9px] leading-4 text-text-tertiary">
+            {metadata}
           </span>
-        </span>
-        <span className="whitespace-nowrap text-[11px] text-text-tertiary max-[520px]:hidden">
-          {countLabel}
         </span>
         <ChevronDown size={15} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "" : "-rotate-90"}`} aria-hidden="true" />
       </button>
       {expanded && (
         <div
-          id={`execution-body-${execution.id}`}
+          id={`work-body-${execution.id}`}
           className="flex flex-col gap-4 border-t border-border-subtle px-1 py-4 sm:px-2"
-          data-testid={`execution-body-${execution.id}`}
+          data-testid={`work-body-${execution.id}`}
         >
-          {execution.messages.map((message) => (
+          <div
+            className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[9px] text-text-tertiary"
+            data-testid={`work-binding-${execution.id}`}
+            title={`${execution.record.binding.providerDisplayName} · ${selectionLabel(execution.record.binding.selection)}`}
+          >
+            <span className="font-medium text-text-secondary">
+              {identity.displayName ?? identity.agentName} · {identity.profile}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono">{modelBindingLabel(execution.record.binding)}</span>
+          </div>
+          {execution.workMessages.map((slice) => (
             <SessionMessageView
-              key={message.id}
-              message={message}
+              key={slice.message.id}
+              message={slice.message}
+              parts={slice.parts}
               identity={identity}
               projectSlug={projectSlug}
               focusStoreSessionId={focusStoreSessionId}
@@ -496,9 +573,6 @@ function ExecutionCard({
               onInspectModelAudit={onInspectModelAudit}
             />
           ))}
-          {execution.messages.length === 0 && (
-            <div className="py-1 text-xs text-text-tertiary">No messages recorded for this execution.</div>
-          )}
           {status.productStatus === "stopped" && status.detail && (
             <div
               className="rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[11px] text-text-secondary"
@@ -516,18 +590,77 @@ function ExecutionCard({
               Input received · Continued in Execution {continuationExecutionNumber}
             </div>
           )}
-          <div
-            className="border-t border-border-subtle pt-2 font-mono text-[9px] text-text-tertiary"
-            data-testid={`execution-model-${execution.id}`}
-            title={`${execution.record.binding.providerDisplayName} · ${selectionLabel(execution.record.binding.selection)}`}
-          >
-            Model · {modelBindingLabel(execution.record.binding)}
-          </div>
         </div>
+      )}
+    </section>
+  );
+}
+
+interface ExecutionTurnProps {
+  execution: ExecutionWorkstreamExecution;
+  expanded: boolean;
+  identity: { agentName: string; displayName?: string; profile: ProfileName };
+  projectSlug: string;
+  focusStoreSessionId: string;
+  agents: readonly AgentDescriptor[];
+  onToggle: (executionId: string, button: HTMLButtonElement) => void;
+  onButtonRef: (executionId: string, button: HTMLButtonElement | null) => void;
+  onInspectModelAudit?: (messageId: string) => void;
+  checkpoint?: SessionExecutionInputCheckpoint;
+  continuationExecutionNumber?: number;
+}
+
+const ExecutionTurn = memo(function ExecutionTurn({
+  execution,
+  expanded,
+  identity,
+  projectSlug,
+  focusStoreSessionId,
+  agents,
+  onToggle,
+  onInspectModelAudit,
+  checkpoint,
+  continuationExecutionNumber,
+  onButtonRef,
+}: ExecutionTurnProps) {
+  executionTurnRenderObserverForTest?.(execution.id);
+
+  return (
+    <article className="flex min-w-0 flex-col gap-4" data-testid={`execution-turn-${execution.id}`}>
+      {execution.userMessages.map((message) => (
+        <MsgUser
+          key={message.id}
+          message={message}
+          projectSlug={projectSlug}
+          focusStoreSessionId={focusStoreSessionId}
+          childSessionLinks={execution.childSessionLinks}
+          agentDescriptors={agents}
+          onInspectModelAudit={onInspectModelAudit}
+        />
+      ))}
+      <WorkDisclosure
+        execution={execution}
+        expanded={expanded}
+        identity={identity}
+        projectSlug={projectSlug}
+        focusStoreSessionId={focusStoreSessionId}
+        agents={agents}
+        checkpoint={checkpoint}
+        continuationExecutionNumber={continuationExecutionNumber}
+        onToggle={(button) => onToggle(execution.id, button)}
+        onInspectModelAudit={onInspectModelAudit}
+        buttonRef={(button) => onButtonRef(execution.id, button)}
+      />
+      {execution.finalResponse && (
+        <FinalAgentResponse
+          message={execution.finalResponse.message}
+          textParts={execution.finalResponse.textParts}
+          identity={identity}
+        />
       )}
     </article>
   );
-}
+});
 
 function DiagnosticBlock({
   diagnostic,
@@ -596,27 +729,37 @@ export function ExecutionWorkstream({
 }: ExecutionWorkstreamProps) {
   const messages = useSessionStore(sessionId, (state) => state.messages, slug);
   const executions = useSessionStore(sessionId, (state) => state.executions, slug);
+  const steps = useSessionStore(sessionId, (state) => state.steps, slug);
   const executionInputCheckpoints = useSessionStore(sessionId, (state) => state.executionInputCheckpoints ?? [], slug);
   const childSessionLinks = useSessionStore(sessionId, (state) => state.childSessionLinks, slug);
   const compression = useSessionStore(sessionId, (state) => state.compression, slug);
   const focusStoreSessionId = useSessionStore(sessionId, (state) => state.rootSessionId, slug);
 
-  const projection = useMemo(() => buildExecutionWorkstream({
-    messages,
-    executions,
-    childSessionLinks,
-    compression,
-    session: sessionIdentity,
-    agentDescriptors: agents,
-  }), [
+  const previousProjectionRef = useRef<ExecutionWorkstreamProjection | undefined>(undefined);
+  const projection = useMemo(() => stabilizeExecutionWorkstreamProjection(
+    previousProjectionRef.current,
+    buildExecutionWorkstream({
+      messages,
+      executions,
+      steps,
+      childSessionLinks,
+      compression,
+      session: sessionIdentity,
+      agentDescriptors: agents,
+    }),
+  ), [
     agents,
     childSessionLinks,
     compression,
     executions,
     messages,
+    steps,
     sessionIdentity.agentName,
     sessionIdentity.profile,
   ]);
+  useLayoutEffect(() => {
+    previousProjectionRef.current = projection;
+  }, [projection]);
   const checkpointByExecutionId = useMemo(
     () => new Map(executionInputCheckpoints.map((checkpoint) => [checkpoint.executionId, checkpoint])),
     [executionInputCheckpoints],
@@ -628,43 +771,78 @@ export function ExecutionWorkstream({
 
   const uiSnapshotRef = useRef(getWorkstreamUiSnapshot(slug, routeScopeId, sessionId));
   const [expandedIds, setExpandedIds] = useState<Set<string>>(
-    () => new Set(uiSnapshotRef.current.expandedIds),
+    () => {
+      const snapshot = uiSnapshotRef.current;
+      const initial = new Set(snapshot.expandedIds);
+      for (const execution of projection.executions) {
+        if (!snapshot.manualOverrideIds.has(execution.id)
+          && !snapshot.statusByExecutionId.has(execution.id)
+          && execution.record.status === "running") {
+          initial.add(execution.id);
+        }
+      }
+      return initial;
+    },
   );
   const expandedIdsRef = useRef(expandedIds);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(uiSnapshotRef.current.nearBottom);
-  const renderedExpandedIds = useMemo(() => {
-    const uiSnapshot = uiSnapshotRef.current;
-    const next = new Set(expandedIds);
-    if (!uiSnapshot.initialized && projection.executions.length > 0) {
-      const defaultExecution = projection.executions.find((execution) => execution.record.status === "running")
-        ?? projection.executions.at(-1);
-      if (defaultExecution) next.add(defaultExecution.id);
-    }
-    for (const execution of projection.executions) {
-      if (execution.record.status === "running" && !uiSnapshot.knownRunningIds.has(execution.id)) {
-        next.add(execution.id);
+  const workButtonByExecutionIdRef = useRef(new Map<string, HTMLButtonElement>());
+  const pendingDisclosureAnchorRef = useRef<{ executionId: string; viewportTop: number } | null>(null);
+  const pendingAutoCollapseRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const snapshot = uiSnapshotRef.current;
+    const next = new Set(expandedIdsRef.current);
+    let changed = false;
+    const currentIds = new Set(projection.executions.map((execution) => execution.id));
+
+    for (const id of next) {
+      if (!currentIds.has(id)) {
+        next.delete(id);
+        changed = true;
       }
     }
-    return next;
-  }, [expandedIds, projection.executions]);
 
-  useEffect(() => {
-    const uiSnapshot = uiSnapshotRef.current;
-    const runningIds = new Set(
-      projection.executions
-        .filter((execution) => execution.record.status === "running")
-        .map((execution) => execution.id),
-    );
-    if (projection.executions.length > 0) uiSnapshot.initialized = true;
-    uiSnapshot.knownRunningIds = runningIds;
-    uiSnapshot.expandedIds = new Set(renderedExpandedIds);
-    expandedIdsRef.current = renderedExpandedIds;
-    if (expandedIds.size !== renderedExpandedIds.size
-      || [...expandedIds].some((id) => !renderedExpandedIds.has(id))) {
-      setExpandedIds(new Set(renderedExpandedIds));
+    for (const execution of projection.executions) {
+      const previousStatus = snapshot.statusByExecutionId.get(execution.id);
+      const manuallyOverridden = snapshot.manualOverrideIds.has(execution.id);
+
+      if (previousStatus === undefined && execution.record.status === "running" && !manuallyOverridden) {
+        if (!next.has(execution.id)) {
+          next.add(execution.id);
+          changed = true;
+        }
+      } else if (
+        previousStatus === "running"
+        && execution.record.status === "completed"
+        && nearBottomRef.current
+        && !manuallyOverridden
+        && next.has(execution.id)
+      ) {
+        next.delete(execution.id);
+        pendingAutoCollapseRef.current = true;
+        changed = true;
+      }
+
+      snapshot.statusByExecutionId.set(execution.id, execution.record.status);
     }
-  }, [expandedIds, projection.executions, renderedExpandedIds]);
+
+    for (const id of snapshot.statusByExecutionId.keys()) {
+      if (!currentIds.has(id)) snapshot.statusByExecutionId.delete(id);
+    }
+    for (const id of snapshot.manualOverrideIds) {
+      if (!currentIds.has(id)) snapshot.manualOverrideIds.delete(id);
+    }
+
+    if (changed) {
+      snapshot.expandedIds = new Set(next);
+      expandedIdsRef.current = next;
+      setExpandedIds(next);
+    } else {
+      snapshot.expandedIds = new Set(expandedIdsRef.current);
+    }
+  }, [projection.executions]);
 
   useLayoutEffect(() => {
     const element = scrollerRef.current;
@@ -688,15 +866,50 @@ export function ExecutionWorkstream({
   }, []);
 
   useLayoutEffect(() => {
-    if (!nearBottomRef.current) return;
     const element = scrollerRef.current;
     if (!element) return;
+    const pendingAnchor = pendingDisclosureAnchorRef.current;
+    if (pendingAnchor) {
+      const button = workButtonByExecutionIdRef.current.get(pendingAnchor.executionId);
+      if (button) {
+        const delta = button.getBoundingClientRect().top - pendingAnchor.viewportTop;
+        if (Math.abs(delta) > 0.5) element.scrollTop += delta;
+      }
+      pendingDisclosureAnchorRef.current = null;
+      const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+      nearBottomRef.current = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX;
+      const snapshot = uiSnapshotRef.current;
+      snapshot.scrollTop = element.scrollTop;
+      snapshot.nearBottom = nearBottomRef.current;
+      snapshot.hasScrollPosition = true;
+      return;
+    }
+
+    if (pendingAutoCollapseRef.current) {
+      pendingAutoCollapseRef.current = false;
+      if (nearBottomRef.current) element.scrollTop = element.scrollHeight;
+      const snapshot = uiSnapshotRef.current;
+      snapshot.scrollTop = element.scrollTop;
+      snapshot.nearBottom = nearBottomRef.current;
+      snapshot.hasScrollPosition = true;
+      return;
+    }
+
+    if (!nearBottomRef.current) return;
     element.scrollTop = element.scrollHeight;
     const uiSnapshot = uiSnapshotRef.current;
     uiSnapshot.scrollTop = element.scrollTop;
     uiSnapshot.nearBottom = true;
     uiSnapshot.hasScrollPosition = true;
-  }, [compression, executions, expandedIds, messages]);
+  }, [
+    childSessionLinks,
+    compression,
+    executionInputCheckpoints,
+    executions,
+    expandedIds,
+    messages,
+    steps,
+  ]);
 
   const handleScroll = useCallback(() => {
     const element = scrollerRef.current;
@@ -710,13 +923,27 @@ export function ExecutionWorkstream({
     uiSnapshot.hasScrollPosition = true;
   }, []);
 
-  const toggleExecution = useCallback((executionId: string) => {
+  const toggleExecution = useCallback((executionId: string, button: HTMLButtonElement) => {
+    pendingDisclosureAnchorRef.current = {
+      executionId,
+      viewportTop: button.getBoundingClientRect().top,
+    };
     const next = new Set(expandedIdsRef.current);
     if (next.has(executionId)) next.delete(executionId);
     else next.add(executionId);
-    uiSnapshotRef.current.expandedIds = new Set(next);
+    const snapshot = uiSnapshotRef.current;
+    snapshot.manualOverrideIds.add(executionId);
+    snapshot.expandedIds = new Set(next);
     expandedIdsRef.current = next;
     setExpandedIds(next);
+  }, []);
+
+  const registerWorkButton = useCallback((
+    executionId: string,
+    button: HTMLButtonElement | null,
+  ) => {
+    if (button) workButtonByExecutionIdRef.current.set(executionId, button);
+    else workButtonByExecutionIdRef.current.delete(executionId);
   }, []);
 
   const isEmpty = projection.items.length === 0 && projection.diagnostics.length === 0;
@@ -726,7 +953,7 @@ export function ExecutionWorkstream({
       ref={scrollerRef}
       onScroll={handleScroll}
       className="conversation-scroller min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden bg-bg-base"
-      style={{ scrollbarGutter: "stable" }}
+      style={{ overflowAnchor: "none", scrollbarGutter: "stable" }}
       data-testid="execution-workstream-scroller"
     >
       <ConversationRail
@@ -737,18 +964,6 @@ export function ExecutionWorkstream({
           <div className="text-sm text-text-tertiary">No executions yet</div>
         ) : (
           <>
-            <header className="mb-1 flex items-end justify-between gap-4 border-b border-border-default px-1 pb-3">
-              <div className="min-w-0">
-                <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-text-muted">Session activity</div>
-                <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-text-primary">Execution workstream</h2>
-                <p className="mt-1 truncate text-[10px] text-text-tertiary">
-                  {projection.session.displayName ?? projection.session.agentName} · {projection.session.profile}
-                </p>
-              </div>
-              <span className="shrink-0 font-mono text-[9px] tabular-nums text-text-tertiary">
-                {projection.executions.length} {projection.executions.length === 1 ? "execution" : "executions"}
-              </span>
-            </header>
             {projection.diagnostics.map((diagnostic, index) => (
               <DiagnosticBlock
                 key={`${diagnostic.code}-${"executionId" in diagnostic ? diagnostic.executionId : diagnostic.message.id}-${index}`}
@@ -767,17 +982,18 @@ export function ExecutionWorkstream({
                   ? undefined
                   : executionNumberById.get(checkpoint.continuationExecutionId);
                 return (
-                  <ExecutionCard
+                  <ExecutionTurn
                     key={`execution-${item.id}`}
                     execution={item}
-                    expanded={renderedExpandedIds.has(item.id)}
+                    expanded={expandedIds.has(item.id)}
                     identity={projection.session}
                     projectSlug={slug}
                     focusStoreSessionId={focusStoreSessionId}
                     agents={agents}
                     checkpoint={checkpoint}
                     continuationExecutionNumber={continuationExecutionNumber}
-                    onToggle={() => toggleExecution(item.id)}
+                    onToggle={toggleExecution}
+                    onButtonRef={registerWorkButton}
                     onInspectModelAudit={onInspectModelAudit}
                   />
                 );

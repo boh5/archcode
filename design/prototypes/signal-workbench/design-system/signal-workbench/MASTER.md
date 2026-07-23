@@ -296,15 +296,26 @@ cursor may loop.
 - Selection uses a 2px indigo inset rule plus border change.
 - Running or attention rows may use a semantic field and 3px inset rule.
 
-### Execution
+### Execution, Work, and Final Response
 
 Execution is a mandatory product entity, not an optional visual section.
 
-- Header shows state, step/call count, elapsed time, and an expansion affordance.
+- One Execution's process is presented through a `Work` disclosure. Keep the
+  Execution number and real counts as quiet metadata rather than wrapping the
+  whole turn in an Execution card.
+- Running Work is expanded so progress remains visible. Completed Work may
+  collapse to a summary with state, elapsed time, step/Tool/Child counts, and an
+  expansion affordance.
+- A final Agent response is editorial content after Work and remains visible
+  when Work is collapsed. Never place the final response inside the disclosure.
+- An Execution without final Agent text does not receive a fabricated empty
+  response block.
 - Binding row shows Agent/Profile, model/variant, and continuity state.
 - Timeline includes grouped reads, independent tool calls, delegation, and
   running commands.
 - The running step uses lime; completed steps use green; delegation uses indigo.
+- Opening historical Work preserves the user's reading position and does not
+  trigger live bottom-follow behavior.
 
 ### Tool Calls
 
@@ -337,7 +348,7 @@ Execution is a mandatory product entity, not an optional visual section.
   one quiet surface below the priority band and compact summaries.
 - A running Session keeps ordinary queue composition available and exposes Stop
   clearly.
-- The dock consumes layout space and never floats over Execution or conversation
+- The dock consumes layout space and never floats over Work or conversation
   content.
 
 ### Inspector and Drawers
