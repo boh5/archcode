@@ -7,6 +7,7 @@ import {
   resolveValidSessionCwd,
   SessionFileNotFoundError,
   type AgentRuntime,
+  type ProcessRunnerResult,
 } from "@archcode/agent-core";
 import { z } from "zod/v4";
 import { ServerError, SessionNotFoundError } from "../errors";
@@ -57,21 +58,24 @@ export function createFilesRoutes(runtime: AgentRuntime): Hono {
       return c.json({ files: [] });
     }
 
-    const [rawDiff, untrackedPaths] = await Promise.all([
+    const diffBase = await resolveDiffBase(cwd);
+    const [rawDiff, rawUntrackedPaths] = await Promise.all([
       runGit(cwd, [
         "diff",
-        "HEAD",
+        diffBase,
         "--no-color",
         "--unified=3",
         "--no-ext-diff",
         "--no-renames",
       ]),
-      runGit(cwd, ["ls-files", "--others", "--exclude-standard"]),
+      runGit(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]),
     ]);
 
-    const files = parseUnifiedDiff(rawDiff);
+    const untrackedPaths = parsePathList(rawUntrackedPaths);
+    const untrackedDiff = await runUntrackedDiff(cwd, untrackedPaths);
+    const files = parseUnifiedDiff(`${rawDiff}\n${untrackedDiff}`);
     const trackedPaths = new Set(files.map((file) => file.path));
-    for (const path of parsePathList(untrackedPaths)) {
+    for (const path of untrackedPaths) {
       if (!trackedPaths.has(path)) {
         files.push({ path, status: "created", additions: 0, deletions: 0, hunks: [] });
       }
@@ -199,9 +203,56 @@ export function parseUnifiedDiff(raw: string): DiffFile[] {
   return files.filter((file) => file.path.length > 0);
 }
 
-async function runGit(workspaceRoot: string, args: string[]): Promise<string> {
-  const result = await processRunner.run(runGitInput(workspaceRoot, args));
+async function resolveDiffBase(workspaceRoot: string): Promise<string> {
+  const head = await processRunner.run(runGitInput(workspaceRoot, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    "HEAD",
+  ]));
 
+  if (head.kind === "success") return head.output.stdout.trim();
+  if (head.kind === "nonzero" && head.exitCode === 1) {
+    return (await runGit(
+      workspaceRoot,
+      ["hash-object", "-t", "tree", "--stdin"],
+      new Uint8Array(),
+    )).trim();
+  }
+
+  return unwrapGitResult(head);
+}
+
+async function runGit(workspaceRoot: string, args: string[], stdin?: Uint8Array): Promise<string> {
+  const result = await processRunner.run(runGitInput(workspaceRoot, args, stdin));
+  return unwrapGitResult(result);
+}
+
+async function runUntrackedDiff(workspaceRoot: string, paths: string[]): Promise<string> {
+  const diffs: string[] = [];
+  for (const path of paths) {
+    const result = await processRunner.run(runGitInput(workspaceRoot, [
+      "diff",
+      "--no-index",
+      "--no-color",
+      "--unified=3",
+      "--no-ext-diff",
+      "--no-renames",
+      "--",
+      "/dev/null",
+      path,
+    ]));
+
+    if (result.kind === "nonzero" && result.exitCode === 1) {
+      diffs.push(result.output.stdout);
+      continue;
+    }
+    diffs.push(unwrapGitResult(result));
+  }
+  return diffs.join("\n");
+}
+
+function unwrapGitResult(result: ProcessRunnerResult): string {
   switch (result.kind) {
     case "success":
       return result.output.stdout;
@@ -218,11 +269,16 @@ async function runGit(workspaceRoot: string, args: string[]): Promise<string> {
   }
 }
 
-function runGitInput(workspaceRoot: string, args: string[]): Parameters<typeof processRunner.run>[0] {
+function runGitInput(
+  workspaceRoot: string,
+  args: string[],
+  stdin?: Uint8Array,
+): Parameters<typeof processRunner.run>[0] {
   return {
     argv: ["git", ...args],
     cwd: workspaceRoot,
     env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    ...(stdin === undefined ? {} : { stdin }),
   };
 }
 
@@ -263,7 +319,6 @@ function stripGitPrefix(path: string): string {
 
 function parsePathList(raw: string): string[] {
   return raw
-    .split(/\r?\n/)
-    .map((path) => path.trim())
+    .split("\0")
     .filter((path) => path.length > 0);
 }

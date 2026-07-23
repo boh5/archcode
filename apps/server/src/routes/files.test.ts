@@ -14,6 +14,10 @@ interface DiffResponseBody {
   files: DiffFile[];
 }
 
+interface CreateTestAppOptions {
+  createInitialCommit?: boolean;
+}
+
 function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   return {
     projectRegistry,
@@ -39,13 +43,17 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   } as unknown as AgentRuntime;
 }
 
-async function createTestApp(testName: string) {
+async function createTestApp(testName: string, options: CreateTestAppOptions = {}) {
   const homeDir = join(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
   const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
   const runtime = createTestRuntime(projectRegistry);
   const workspaceRoot = join(tempRoot, "workspaces", testName);
-  await initGitRepo(workspaceRoot);
+  if (options.createInitialCommit === false) {
+    await initUnbornGitRepo(workspaceRoot);
+  } else {
+    await initGitRepo(workspaceRoot);
+  }
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
 
   return {
@@ -55,11 +63,15 @@ async function createTestApp(testName: string) {
   };
 }
 
-async function initGitRepo(workspaceRoot: string): Promise<void> {
+async function initUnbornGitRepo(workspaceRoot: string): Promise<void> {
   await mkdir(workspaceRoot, { recursive: true });
   await run(workspaceRoot, ["git", "init"]);
   await run(workspaceRoot, ["git", "config", "user.email", "archcode@example.test"]);
   await run(workspaceRoot, ["git", "config", "user.name", "ArchCode Test"]);
+}
+
+async function initGitRepo(workspaceRoot: string): Promise<void> {
+  await initUnbornGitRepo(workspaceRoot);
   await Bun.write(join(workspaceRoot, "README.md"), "# Test Repo\n");
   await run(workspaceRoot, ["git", "add", "README.md"]);
   await run(workspaceRoot, ["git", "commit", "-m", "initial"]);
@@ -181,6 +193,44 @@ Binary files a/assets/logo.png and b/assets/logo.png differ
     expect(await res.json()).toEqual({ files: [] });
   });
 
+  test("GET /api/projects/:slug/diff returns empty files before the first commit", async () => {
+    const { app, project } = await createTestApp("empty-unborn-workspace", {
+      createInitialCommit: false,
+    });
+
+    const res = await app.request(`/api/projects/${project.slug}/diff`);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ files: [] });
+  });
+
+  test("GET /api/projects/:slug/diff returns staged and untracked files before the first commit", async () => {
+    const { app, project, workspaceRoot } = await createTestApp("unborn-workspace-changes", {
+      createInitialCommit: false,
+    });
+    await Bun.write(join(workspaceRoot, "staged.txt"), "staged content\n");
+    await Bun.write(join(workspaceRoot, "untracked.txt"), "untracked content\n");
+    await run(workspaceRoot, ["git", "add", "staged.txt"]);
+
+    const res = await app.request(`/api/projects/${project.slug}/diff`);
+    const body = (await res.json()) as DiffResponseBody;
+
+    expect(res.status).toBe(200);
+    expect(fileByPath(body.files, "staged.txt")).toMatchObject({
+      status: "created",
+      additions: 1,
+      deletions: 0,
+    });
+    expect(fileByPath(body.files, "untracked.txt")).toMatchObject({
+      status: "created",
+      additions: 1,
+      deletions: 0,
+    });
+    expect(fileByPath(body.files, "untracked.txt").hunks[0]?.lines).toEqual([
+      { type: "add", content: "untracked content" },
+    ]);
+  });
+
   test("GET /api/projects/:slug/diff returns tracked and untracked workspace changes", async () => {
     const { app, project, workspaceRoot } = await createTestApp("workspace-changes");
     await Bun.write(join(workspaceRoot, "README.md"), "# Test Repo\n\nAdded line\n");
@@ -202,13 +252,14 @@ Binary files a/assets/logo.png and b/assets/logo.png differ
       additions: 1,
       deletions: 0,
     });
-    expect(fileByPath(body.files, "untracked.txt")).toEqual({
-      path: "untracked.txt",
+    expect(fileByPath(body.files, "untracked.txt")).toMatchObject({
       status: "created",
-      additions: 0,
+      additions: 1,
       deletions: 0,
-      hunks: [],
     });
+    expect(fileByPath(body.files, "untracked.txt").hunks[0]?.lines).toEqual([
+      { type: "add", content: "untracked content" },
+    ]);
   });
 
   test("GET /api/projects/:slug/diff resolves changes from the requested Session worktree", async () => {
