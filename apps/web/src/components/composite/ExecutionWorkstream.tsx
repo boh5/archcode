@@ -137,7 +137,6 @@ export function MsgUser({
   projectSlug = "",
   focusStoreSessionId = "",
   childSessionLinks = [],
-  agentDescriptors = [],
   onInspectModelAudit,
 }: {
   message: SessionMessage;
@@ -145,7 +144,6 @@ export function MsgUser({
   projectSlug?: string;
   focusStoreSessionId?: string;
   childSessionLinks?: readonly ToolChildSessionLink[];
-  agentDescriptors?: readonly AgentDescriptor[];
   onInspectModelAudit?: (messageId: string) => void;
 }) {
   const modelChanged = message.modelAudit?.reason === "config_invalidated";
@@ -169,7 +167,6 @@ export function MsgUser({
               projectSlug={projectSlug}
               focusStoreSessionId={focusStoreSessionId}
               childSessionLinks={childSessionLinks}
-              agentDescriptors={agentDescriptors}
             />
           </div>
         );
@@ -234,13 +231,11 @@ export function PartRenderer({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
-  agentDescriptors = [],
 }: {
   part: SessionPart;
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: readonly ToolChildSessionLink[];
-  agentDescriptors?: readonly AgentDescriptor[];
 }) {
   switch (part.type) {
     case "text": {
@@ -270,7 +265,6 @@ export function PartRenderer({
               projectSlug,
               focusStoreSessionId,
               childSessionLinks,
-              agentDescriptors,
             })}
           />
         );
@@ -293,7 +287,6 @@ function MsgAgent({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
-  agents,
 }: {
   message: SessionMessage;
   parts?: readonly SessionPart[];
@@ -302,7 +295,6 @@ function MsgAgent({
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: readonly ToolChildSessionLink[];
-  agents: readonly AgentDescriptor[];
 }) {
   return (
     <div className="min-w-0 max-w-[740px]" data-message-kind="agent">
@@ -316,7 +308,6 @@ function MsgAgent({
                 projectSlug={projectSlug}
                 focusStoreSessionId={focusStoreSessionId}
                 childSessionLinks={childSessionLinks}
-                agentDescriptors={agents}
               />
             </div>
           );
@@ -343,7 +334,6 @@ function SessionMessageView({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
-  agents,
   onInspectModelAudit,
 }: {
   message: SessionMessage;
@@ -353,7 +343,6 @@ function SessionMessageView({
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: readonly ToolChildSessionLink[];
-  agents: readonly AgentDescriptor[];
   onInspectModelAudit?: (messageId: string) => void;
 }) {
   if (message.role === "user") {
@@ -364,7 +353,6 @@ function SessionMessageView({
         projectSlug={projectSlug}
         focusStoreSessionId={focusStoreSessionId}
         childSessionLinks={childSessionLinks}
-        agentDescriptors={agents}
         onInspectModelAudit={onInspectModelAudit}
       />
     );
@@ -378,7 +366,6 @@ function SessionMessageView({
       projectSlug={projectSlug}
       focusStoreSessionId={focusStoreSessionId}
       childSessionLinks={childSessionLinks}
-      agents={agents}
     />
   );
 }
@@ -443,7 +430,6 @@ function WorkDisclosure({
   identity,
   projectSlug,
   focusStoreSessionId,
-  agents,
   onToggle,
   onInspectModelAudit,
   checkpoint,
@@ -455,7 +441,6 @@ function WorkDisclosure({
   identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
-  agents: readonly AgentDescriptor[];
   onToggle: (button: HTMLButtonElement) => void;
   onInspectModelAudit?: (messageId: string) => void;
   checkpoint?: SessionExecutionInputCheckpoint;
@@ -563,7 +548,6 @@ function WorkDisclosure({
                 projectSlug={projectSlug}
                 focusStoreSessionId={focusStoreSessionId}
                 childSessionLinks={execution.childSessionLinks}
-                agents={agents}
                 onInspectModelAudit={onInspectModelAudit}
               />
             ))}
@@ -596,7 +580,6 @@ interface ExecutionTurnProps {
   identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
-  agents: readonly AgentDescriptor[];
   onToggle: (executionId: string, button: HTMLButtonElement) => void;
   onButtonRef: (executionId: string, button: HTMLButtonElement | null) => void;
   onInspectModelAudit?: (messageId: string) => void;
@@ -610,7 +593,6 @@ const ExecutionTurn = memo(function ExecutionTurn({
   identity,
   projectSlug,
   focusStoreSessionId,
-  agents,
   onToggle,
   onInspectModelAudit,
   checkpoint,
@@ -628,7 +610,6 @@ const ExecutionTurn = memo(function ExecutionTurn({
           projectSlug={projectSlug}
           focusStoreSessionId={focusStoreSessionId}
           childSessionLinks={execution.childSessionLinks}
-          agentDescriptors={agents}
           onInspectModelAudit={onInspectModelAudit}
         />
       ))}
@@ -638,7 +619,6 @@ const ExecutionTurn = memo(function ExecutionTurn({
         identity={identity}
         projectSlug={projectSlug}
         focusStoreSessionId={focusStoreSessionId}
-        agents={agents}
         checkpoint={checkpoint}
         continuationExecutionNumber={continuationExecutionNumber}
         onToggle={(button) => onToggle(execution.id, button)}
@@ -661,14 +641,12 @@ function DiagnosticBlock({
   identity,
   projectSlug,
   focusStoreSessionId,
-  agents,
   onInspectModelAudit,
 }: {
   diagnostic: ExecutionWorkstreamDiagnostic;
   identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
-  agents: readonly AgentDescriptor[];
   onInspectModelAudit?: (messageId: string) => void;
 }) {
   const messages = diagnostic.code === "duplicate_execution" ? diagnostic.messages : [diagnostic.message];
@@ -694,7 +672,6 @@ function DiagnosticBlock({
               projectSlug={projectSlug}
               focusStoreSessionId={focusStoreSessionId}
               childSessionLinks={[]}
-              agents={agents}
               onInspectModelAudit={onInspectModelAudit}
             />
           ))}
@@ -965,7 +942,6 @@ export function ExecutionWorkstream({
                 identity={projection.session}
                 projectSlug={slug}
                 focusStoreSessionId={focusStoreSessionId}
-                agents={agents}
                 onInspectModelAudit={onInspectModelAudit}
               />
             ))}
@@ -983,7 +959,6 @@ export function ExecutionWorkstream({
                     identity={projection.session}
                     projectSlug={slug}
                     focusStoreSessionId={focusStoreSessionId}
-                    agents={agents}
                     checkpoint={checkpoint}
                     continuationExecutionNumber={continuationExecutionNumber}
                     onToggle={toggleExecution}
@@ -1002,7 +977,6 @@ export function ExecutionWorkstream({
                     focusStoreSessionId={focusStoreSessionId}
                     snapshot={item.snapshot}
                     childSessionLinks={childSessionLinks}
-                    agentDescriptors={agents}
                   />
                 );
               }
@@ -1014,7 +988,6 @@ export function ExecutionWorkstream({
                     projectSlug={slug}
                     focusStoreSessionId={focusStoreSessionId}
                     childSessionLinks={[]}
-                    agents={agents}
                     onInspectModelAudit={onInspectModelAudit}
                   />
                 </section>

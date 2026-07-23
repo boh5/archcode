@@ -2,14 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   getToolIcon,
   getToolSummary,
-  formatToolInputDetails,
   getToolDiffMetadata,
   summarizeToolDiffMetadata,
-  getToolInvalidInputMessage,
-  INLINE_VALUE_MAX_CHARS,
-  INLINE_VALUE_MAX_LINES,
-  CONTENT_SUMMARY_THRESHOLD_CHARS,
-  CONTENT_SUMMARY_THRESHOLD_LINES,
 } from "./tool-format";
 import type { ToolDiffMetadata } from "@archcode/protocol";
 import {
@@ -28,18 +22,6 @@ import {
   Target,
   CircleQuestionMark,
 } from "lucide-react";
-
-function delegateV2(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    agent_type: "explore",
-    profile: "fast",
-    title: "Explore codebase",
-    objective: "Inspect the source",
-    skills: [],
-    background: false,
-    ...overrides,
-  };
-}
 
 describe("getToolIcon", () => {
   test("returns correct icon for each category", () => {
@@ -61,279 +43,58 @@ describe("getToolIcon", () => {
 });
 
 describe("getToolSummary", () => {
-  test("bash returns two-part model with description and command", () => {
-    const result = getToolSummary("bash", { description: "Install deps", command: "bun install" });
+  test("uses tool category only for the icon and summarizes input generically", () => {
+    const input = { first_value: "Install deps", second_value: "bun install" };
+    const result = getToolSummary("bash", input);
+    const custom = getToolSummary("custom_tool", input);
+
     expect(result.icon).toBe(Terminal);
     expect(result.primary).toBe("Install deps");
     expect(result.secondary).toBe("bun install");
+    expect(custom.icon).toBe(CircleQuestionMark);
+    expect(custom.primary).toBe(result.primary);
+    expect(custom.secondary).toBe(result.secondary);
   });
 
-  test("bash with only command falls back to command as primary", () => {
-    const result = getToolSummary("bash", { command: "pwd" });
-    expect(result.primary).toBe("pwd");
-    expect(result.secondary).toBeUndefined();
+  test("does not depend on builtin or MCP parameter names", () => {
+    const builtin = getToolSummary("memory_read", {
+      arbitrary_exact_key: "preferences",
+      another_exact_key: false,
+    });
+    const mcp = getToolSummary("mcp__docs__lookup", {
+      arbitrary_exact_key: "preferences",
+      another_exact_key: false,
+    });
+
+    expect(builtin.primary).toBe("preferences");
+    expect(builtin.secondary).toBe("false");
+    expect(mcp.primary).toBe(builtin.primary);
+    expect(mcp.secondary).toBe(builtin.secondary);
+    expect(mcp.icon).toBe(Plug);
   });
 
-  test("bash with null input returns dash", () => {
-    const result = getToolSummary("bash", null);
-    expect(result.primary).toBe("—");
-  });
-
-  test("file_read returns path", () => {
-    const result = getToolSummary("file_read", { filePath: "/src/index.ts" });
-    expect(result.icon).toBe(FileText);
-    expect(result.primary).toBe("/src/index.ts");
-  });
-
-  test("file_write returns path and content stats", () => {
-    const content = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9";
-    const result = getToolSummary("file_write", { filePath: "/src/index.ts", content });
-    expect(result.primary).toBe("/src/index.ts");
-    expect(result.secondary).toContain("chars");
-    expect(result.secondary).toContain("lines");
-  });
-
-  test("grep returns pattern", () => {
-    const result = getToolSummary("grep", { pattern: "TODO", include: "*.ts" });
-    expect(result.icon).toBe(Search);
-    expect(result.primary).toBe("TODO");
-  });
-
-  test("delegate shows V2 agent/title with objective secondary", () => {
-    const result = getToolSummary("delegate", delegateV2());
-    expect(result.icon).toBe(Handshake);
-    expect(result.primary).toBe("explore: Explore codebase");
-    expect(result.secondary).toBe("Inspect the source");
-  });
-
-  test("background_output shows session_id", () => {
-    const result = getToolSummary("background_output", { session_id: "ses_abc123" });
-    expect(result.icon).toBe(Handshake);
-    expect(result.primary).toBe("ses_abc123");
-  });
-
-  test("resume_session shows session_id with instruction secondary", () => {
-    const result = getToolSummary("resume_session", { session_id: "ses_abc123", instruction: "Continue the investigation", background: false });
-    expect(result.primary).toBe("ses_abc123");
-    expect(result.secondary).toBe("Continue the investigation");
-  });
-
-  test("MCP tool renders as server/tool with primary value", () => {
-    const result = getToolSummary("mcp__context7__resolve_library", { query: "react hooks" });
-    expect(result.icon).toBe(Plug);
-    expect(result.primary).toBe("react hooks");
-  });
-
-  test("MCP tool with url field uses url as primary", () => {
-    const result = getToolSummary("mcp__exa__search", { url: "https://example.com", numResults: 5 });
-    expect(result.primary).toBe("https://example.com");
-  });
-
-  test("MCP tool with no meaningful string falls back to server/tool", () => {
-    const result = getToolSummary("mcp__myserver__mytool", { count: 42 });
-    expect(result.primary).toBe("myserver/mytool");
-  });
-
-  test("web_fetch returns url", () => {
-    const result = getToolSummary("web_fetch", { url: "https://docs.example.com" });
-    expect(result.icon).toBe(Globe);
-    expect(result.primary).toBe("https://docs.example.com");
-  });
-
-  test("LSP tools return path", () => {
-    const result = getToolSummary("lsp_diagnostics", { filePath: "/src/app.ts" });
-    expect(result.icon).toBe(Wrench);
-    expect(result.primary).toBe("/src/app.ts");
-  });
-
-  test("git_status returns workdir", () => {
-    const result = getToolSummary("git_status", { workdir: "/project" });
-    expect(result.icon).toBe(GitBranch);
-    expect(result.primary).toBe("/project");
-  });
-
-  test("unknown tool returns safe fallback", () => {
-    const result = getToolSummary("custom_tool", { foo: "bar" });
-    expect(result.icon).toBe(CircleQuestionMark);
-    expect(result.primary).toBe("bar");
-  });
-
-  test("null input returns dash", () => {
-    const result = getToolSummary("file_read", null);
-    expect(result.primary).toBe("—");
-  });
-
-  test("undefined input returns dash", () => {
-    const result = getToolSummary("file_read", undefined);
-    expect(result.primary).toBe("—");
-  });
-
-  test("array input returns string representation", () => {
-    const result = getToolSummary("file_read", [1, 2, 3]);
-    expect(result.primary).toBe("1,2,3");
-  });
-
-  test("string input returns truncated string", () => {
-    const result = getToolSummary("file_read", "just a string");
-    expect(result.primary).toBe("just a string");
-  });
-
-  test("artifact_write is treated as an unknown legacy tool", () => {
-    const content = "a".repeat(300);
-    const result = getToolSummary("artifact_write", { legacyId: "wf-1", kind: "PRD", content });
-    expect(result.primary).toBe("wf-1");
-    expect(result.secondary).toBeUndefined();
-  });
-
-  test("truncates long primary values", () => {
-    const longText = "a".repeat(200);
-    const result = getToolSummary("ask_user", { question: longText });
-    expect(result.primary.length).toBeLessThanOrEqual(INLINE_VALUE_MAX_CHARS + 1);
-  });
-
-  test("ask_user uses the first structured question as its summary", () => {
+  test("finds bounded nested values without knowing their keys", () => {
     const result = getToolSummary("ask_user", {
-      questions: [{ header: "Goal", question: "What do you want to build?", options: [], custom: true }],
+      any_container: [{ first_nested_key: "Scope", second_nested_key: "Proceed?" }],
     });
-
-    expect(result.primary).toBe("What do you want to build?");
-  });
-});
-
-describe("formatToolInputDetails", () => {
-  test("bash shows description and command", () => {
-    const result = formatToolInputDetails("bash", { description: "Install deps", command: "bun install" });
-    expect(result).not.toBeNull();
-    expect(result!.description).toBe("Install deps");
-    expect(result!.command).toBe("bun install");
+    expect(result.primary).toBe("Scope");
+    expect(result.secondary).toBe("Proceed?");
   });
 
-  test("file_write shows content stats only", () => {
-    const content = "a".repeat(300);
-    const result = formatToolInputDetails("file_write", { filePath: "/src/index.ts", content });
-    expect(result).not.toBeNull();
-    expect(result!.filePath).toBe("/src/index.ts");
-    expect(result!.content).toContain("chars");
-    expect(result!.content).toContain("lines");
-    expect(result!.content).not.toContain("aaa");
+  test("summarizes long strings by size rather than rendering their contents", () => {
+    const content = Array.from({ length: 9 }, (_, index) => `line-${index}`).join("\n");
+    const result = getToolSummary("file_write", { any_path_key: "/src/index.ts", any_content_key: content });
+    expect(result.primary).toBe("/src/index.ts");
+    expect(result.secondary).toBe(`${content.length} chars, 9 lines`);
   });
 
-  test("artifact_write details use unknown-tool fallback", () => {
-    const content = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
-    const result = formatToolInputDetails("artifact_write", { legacyId: "wf-1", kind: "PRD", content });
-    expect(result).not.toBeNull();
-    expect(result!.legacyId).toBe("wf-1");
-    expect(result!.kind).toBe("PRD");
-    expect(result!.content).toContain("chars");
-    expect(result!.content).toContain("lines");
-    expect(result!.content).not.toContain("line1");
-  });
-
-  test("file_edit shows edits count and per-edit stats", () => {
-    const result = formatToolInputDetails("file_edit", {
-      filePath: "/src/app.ts",
-      edits: [
-        { oldString: "const x = 1;\nconst y = 2;\nconst z = 3;\nconst w = 4;\nconst v = 5;", newString: "const x = 10;" },
-      ],
-    });
-    expect(result).not.toBeNull();
-    expect(result!.filePath).toBe("/src/app.ts");
-    expect(result!.edits).toBe("[1 edit]");
-    expect(result!["edits[0].oldString"]).toContain("chars");
-    expect(result!["edits[0].newString"]).toContain("chars");
-  });
-
-  test("MCP tool shows server/tool and primary value", () => {
-    const result = formatToolInputDetails("mcp__context7__resolve_library", { query: "react" });
-    expect(result).not.toBeNull();
-    expect(result!.tool).toBe("context7/resolve_library");
-    expect(result!.input).toBe("react");
-  });
-
-  test("grep shows pattern and include", () => {
-    const result = formatToolInputDetails("grep", { pattern: "TODO", include: "*.ts", path: "/src" });
-    expect(result).not.toBeNull();
-    expect(result!.pattern).toBe("TODO");
-    expect(result!.include).toBe("*.ts");
-  });
-
-  test("delegate details expose only the V2 contract", () => {
-    const result = formatToolInputDetails("delegate", delegateV2({
-      persona: "removed",
-      task: "removed",
-      context: "removed",
-    }));
-    expect(result).toMatchObject({
-      agent_type: "explore",
-      profile: "fast",
-      title: "Explore codebase",
-      objective: "Inspect the source",
-      skills: "[]",
-      background: "false",
-    });
-    expect(result?.persona).toBeUndefined();
-    expect(result?.task).toBeUndefined();
-    expect(result?.context).toBeUndefined();
-  });
-
-  test("resume and background details reject all retired display fields", () => {
-    const resume = formatToolInputDetails("resume_session", {
-      session_id: "ses_abc123", instruction: "Continue", background: false,
-      task: "removed", context: "removed",
-    });
-    expect(resume).toEqual({ session_id: "ses_abc123", instruction: "Continue", background: "false" });
-
-    const background = formatToolInputDetails("background_output", {
-      session_id: "ses_abc123", block: true, timeout_ms: 1000,
-      full_session: true, message_limit: 10, since_message_id: "m1", include_tool_results: true, include_reasoning: true, cursor: "old",
-    });
-    expect(background).toEqual({
-      session_id: "ses_abc123",
-      block: "true",
-      timeout_ms: "1000",
-      full_session: "true",
-      include_tool_results: "true",
-      include_reasoning: "true",
-    });
-  });
-
-  test("returns null for null input", () => {
-    expect(formatToolInputDetails("bash", null)).toBeNull();
-  });
-
-  test("returns null for undefined input", () => {
-    expect(formatToolInputDetails("bash", undefined)).toBeNull();
-  });
-
-  test("returns null for array input", () => {
-    expect(formatToolInputDetails("bash", [1, 2, 3])).toBeNull();
-  });
-
-  test("returns null for string input", () => {
-    expect(formatToolInputDetails("bash", "just a string")).toBeNull();
-  });
-
-  test("unknown tool shows first few fields", () => {
-    const result = formatToolInputDetails("unknown_tool", { a: 1, b: "hello", c: true, d: "extra" });
-    expect(result).not.toBeNull();
-    expect(result!.a).toBe("1");
-    expect(result!.b).toBe("hello");
-    expect(result!.c).toBe("true");
-    expect(result!.d).toBeUndefined();
-  });
-
-  test("truncates long string values", () => {
-    const longVal = "x".repeat(200);
-    const result = formatToolInputDetails("bash", { description: longVal, command: "pwd" });
-    expect(result!.description.length).toBeLessThanOrEqual(INLINE_VALUE_MAX_CHARS + 1);
-  });
-
-  test("summarizes content-like fields in unknown tools", () => {
-    const content = "a".repeat(300);
-    const result = formatToolInputDetails("unknown_tool", { content, name: "test" });
-    expect(result).not.toBeNull();
-    expect(result!.content).toContain("chars");
-    expect(result!.content).toContain("lines");
+  test("handles absent, empty, array, and primitive input deterministically", () => {
+    expect(getToolSummary("file_read", null).primary).toBe("—");
+    expect(getToolSummary("file_read", undefined).primary).toBe("—");
+    expect(getToolSummary("file_read", {}).primary).toBe("{0 fields}");
+    expect(getToolSummary("file_read", []).primary).toBe("[0 items]");
+    expect(getToolSummary("file_read", [1, 2, 3])).toMatchObject({ primary: "1", secondary: "2" });
+    expect(getToolSummary("file_read", "just a string").primary).toBe("just a string");
   });
 });
 
@@ -441,119 +202,5 @@ describe("summarizeToolDiffMetadata", () => {
 
   test("empty valid metadata reports only its file count", () => {
     expect(summarizeToolDiffMetadata({ files: [] })).toEqual({ fileCount: 0 });
-  });
-});
-
-describe("getToolInvalidInputMessage", () => {
-  test("bash missing description returns message", () => {
-    const result = getToolInvalidInputMessage("bash", { command: "pwd" });
-    expect(result).toBe("Invalid bash input: missing required description");
-  });
-
-  test("bash with empty description returns message", () => {
-    const result = getToolInvalidInputMessage("bash", { command: "pwd", description: "  " });
-    expect(result).toBe("Invalid bash input: missing required description");
-  });
-
-  test("bash with valid input returns null", () => {
-    const result = getToolInvalidInputMessage("bash", { command: "pwd", description: "Check directory" });
-    expect(result).toBeNull();
-  });
-
-  test("bash missing command returns message", () => {
-    const result = getToolInvalidInputMessage("bash", { description: "Do something" });
-    expect(result).toBe("Invalid bash input: missing required command");
-  });
-
-  test("file_write missing path returns message", () => {
-    const result = getToolInvalidInputMessage("file_write", { content: "hello" });
-    expect(result).toBe("Invalid file_write input: missing required file path");
-  });
-
-  test("file_read missing path returns message", () => {
-    const result = getToolInvalidInputMessage("file_read", {});
-    expect(result).toBe("Invalid file_read input: missing required file path");
-  });
-
-  test("delegate missing agent_type returns message", () => {
-    const result = getToolInvalidInputMessage("delegate", delegateV2({ agent_type: undefined }));
-    expect(result).toBe("Invalid delegate input: missing required agent_type");
-  });
-
-  test("delegate missing title returns message", () => {
-    const result = getToolInvalidInputMessage("delegate", delegateV2({ title: undefined }));
-    expect(result).toBe("Invalid delegate input: missing required title");
-  });
-
-  test("delegate validates the complete required V2 contract", () => {
-    expect(getToolInvalidInputMessage("delegate", delegateV2({ objective: undefined }))).toBe("Invalid delegate input: missing required objective");
-    expect(getToolInvalidInputMessage("delegate", delegateV2({ profile: undefined }))).toBe("Invalid delegate input: missing required profile");
-    expect(getToolInvalidInputMessage("delegate", delegateV2({ skills: undefined }))).toBe("Invalid delegate input: missing required skills");
-    expect(getToolInvalidInputMessage("delegate", delegateV2({ background: undefined }))).toBe("Invalid delegate input: missing required background");
-    expect(getToolInvalidInputMessage("delegate", delegateV2({ evidence: [] }))).toBe("Invalid delegate input: unexpected field evidence");
-  });
-
-  test("resume_session validates only session_id, instruction, and background", () => {
-    expect(getToolInvalidInputMessage("resume_session", { instruction: "Continue", background: false })).toBe("Invalid resume_session input: missing required session_id");
-    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123", background: false })).toBe("Invalid resume_session input: missing required instruction");
-    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123", instruction: "Continue" })).toBe("Invalid resume_session input: missing required background");
-    expect(getToolInvalidInputMessage("resume_session", { session_id: "ses_abc123", instruction: "Continue", background: false, new_evidence: [] })).toBe("Invalid resume_session input: unexpected field new_evidence");
-  });
-
-  test("background_output validates canonical session_id", () => {
-    expect(getToolInvalidInputMessage("background_output", { block: false, timeout_ms: 0 })).toBe("Invalid background_output input: missing required session_id");
-  });
-
-  test("null input returns message", () => {
-    const result = getToolInvalidInputMessage("bash", null);
-    expect(result).toBe("Invalid bash input: missing input");
-  });
-
-  test("undefined input returns message", () => {
-    const result = getToolInvalidInputMessage("bash", undefined);
-    expect(result).toBe("Invalid bash input: missing input");
-  });
-
-  test("array input returns message", () => {
-    const result = getToolInvalidInputMessage("bash", [1, 2]);
-    expect(result).toBe("Invalid bash input: expected object, got array");
-  });
-
-  test("string input returns message", () => {
-    const result = getToolInvalidInputMessage("bash", "just a string");
-    expect(result).toBe("Invalid bash input: expected object, got string");
-  });
-
-  test("unknown tool with valid object returns null", () => {
-    const result = getToolInvalidInputMessage("custom_tool", { foo: "bar" });
-    expect(result).toBeNull();
-  });
-
-  test("file_write with filePath is valid", () => {
-    const result = getToolInvalidInputMessage("file_write", { filePath: "/src/app.ts", content: "hello" });
-    expect(result).toBeNull();
-  });
-
-  test("file_write with file_path (underscore) is valid", () => {
-    const result = getToolInvalidInputMessage("file_write", { file_path: "/src/app.ts", content: "hello" });
-    expect(result).toBeNull();
-  });
-});
-
-describe("threshold constants", () => {
-  test("INLINE_VALUE_MAX_CHARS is 160", () => {
-    expect(INLINE_VALUE_MAX_CHARS).toBe(160);
-  });
-
-  test("INLINE_VALUE_MAX_LINES is 4", () => {
-    expect(INLINE_VALUE_MAX_LINES).toBe(4);
-  });
-
-  test("CONTENT_SUMMARY_THRESHOLD_CHARS is 200", () => {
-    expect(CONTENT_SUMMARY_THRESHOLD_CHARS).toBe(200);
-  });
-
-  test("CONTENT_SUMMARY_THRESHOLD_LINES is 8", () => {
-    expect(CONTENT_SUMMARY_THRESHOLD_LINES).toBe(8);
   });
 });

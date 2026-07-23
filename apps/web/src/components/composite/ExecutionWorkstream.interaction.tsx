@@ -84,18 +84,23 @@ function message(
   };
 }
 
-function completedTool(id: string, filePath: string, createdAt: number): CompletedToolPart {
+function completedTool(
+  id: string,
+  path: string,
+  createdAt: number,
+  toolName = "file_read",
+): CompletedToolPart {
   return {
     type: "tool",
     id,
     state: "completed",
     toolCallId: `call-${id}`,
-    toolName: "file_read",
-    input: { filePath },
+    toolName,
+    input: { path },
     result: {
       isError: false,
       output: {
-        preview: `contents of ${filePath}`,
+        preview: `contents of ${path}`,
         completeness: "complete",
         observed: { bytes: 10, lines: 1 },
         canonical: { bytes: 10, lines: 1 },
@@ -476,6 +481,7 @@ describe("ExecutionWorkstream", () => {
 
   test("renders text, five tools, text, and three tools as two settled Tool Runs", async () => {
     const intro = message("intro", "assistant", "execution", "First commentary", 2);
+    const firstToolNames = ["file_read", "grep", "glob", "bash", "lsp_symbols"];
     const firstTools: SessionMessage = {
       id: "first-tools",
       role: "assistant",
@@ -483,10 +489,16 @@ describe("ExecutionWorkstream", () => {
       createdAt: 3,
       completedAt: 8,
       parts: Array.from({ length: 5 }, (_, index) =>
-        completedTool(`first-${index + 1}`, `first-${index + 1}.ts`, index + 3)
+        completedTool(
+          `first-${index + 1}`,
+          `first-${index + 1}.ts`,
+          index + 3,
+          firstToolNames[index],
+        )
       ),
     };
     const middle = message("middle", "assistant", "execution", "Second commentary", 9);
+    const secondToolNames = ["memory_read", "output_search", "git_diff"];
     const secondTools: SessionMessage = {
       id: "second-tools",
       role: "assistant",
@@ -494,7 +506,12 @@ describe("ExecutionWorkstream", () => {
       createdAt: 10,
       completedAt: 13,
       parts: Array.from({ length: 3 }, (_, index) =>
-        completedTool(`second-${index + 1}`, `second-${index + 1}.ts`, index + 10)
+        completedTool(
+          `second-${index + 1}`,
+          `second-${index + 1}.ts`,
+          index + 10,
+          secondToolNames[index],
+        )
       ),
     };
     initializeSession([
@@ -518,20 +535,32 @@ describe("ExecutionWorkstream", () => {
     const body = workBody("execution");
     const runs = body?.querySelectorAll<HTMLElement>('[data-testid="tool-run-card"]');
     expect(runs).toHaveLength(2);
-    expect(runs?.[0]?.textContent).toContain("first-1.ts");
-    expect(runs?.[0]?.textContent).not.toContain("first-5.ts");
-    expect(runs?.[1]?.textContent).toContain("second-1.ts");
-    expect(runs?.[1]?.textContent).not.toContain("second-3.ts");
+    expect(runs?.[0]?.querySelector('[data-testid="tool-run-tool-names"]')?.textContent).toBe(
+      firstToolNames.join(", "),
+    );
+    expect(runs?.[1]?.querySelector('[data-testid="tool-run-tool-names"]')?.textContent).toBe(
+      secondToolNames.join(", "),
+    );
+    expect(runs?.[0]?.textContent).not.toContain("first-1.ts");
+    expect(runs?.[1]?.textContent).not.toContain("second-1.ts");
 
     const bodyText = body?.textContent ?? "";
-    expect(bodyText.indexOf("First commentary")).toBeLessThan(bodyText.indexOf("first-1.ts"));
-    expect(bodyText.indexOf("first-1.ts")).toBeLessThan(bodyText.indexOf("Second commentary"));
-    expect(bodyText.indexOf("Second commentary")).toBeLessThan(bodyText.indexOf("second-1.ts"));
+    expect(bodyText.indexOf("First commentary")).toBeLessThan(bodyText.indexOf(firstToolNames[0]));
+    expect(bodyText.indexOf(firstToolNames[0])).toBeLessThan(bodyText.indexOf("Second commentary"));
+    expect(bodyText.indexOf("Second commentary")).toBeLessThan(bodyText.indexOf(secondToolNames[0]));
 
     const firstRunToggle = runs?.[0]?.querySelector("button");
     if (!(firstRunToggle instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Tool Run toggle");
     await act(async () => firstRunToggle.click());
-    expect(runs?.[0]?.querySelectorAll("[data-tool-card]")).toHaveLength(5);
+    const expandedTools = runs?.[0]?.querySelectorAll<HTMLElement>("[data-tool-card]");
+    expect(expandedTools).toHaveLength(5);
+    expect(Array.from(expandedTools ?? [], (tool) => tool.textContent)).toEqual([
+      expect.stringContaining("first-1.ts"),
+      expect.stringContaining("first-2.ts"),
+      expect.stringContaining("first-3.ts"),
+      expect.stringContaining("first-4.ts"),
+      expect.stringContaining("first-5.ts"),
+    ]);
     expect(runs?.[0]?.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(5);
   });
 

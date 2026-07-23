@@ -40,9 +40,8 @@ export function SessionComposerDock({
 
   return (
     <div
-      className="relative z-[4] flex max-h-[min(60dvh,640px)] shrink-0 flex-col overflow-hidden border-t border-border-default bg-bg-surface max-[799px]:max-h-[min(70dvh,620px)]"
+      className="relative z-[4] flex max-h-[min(60dvh,640px)] shrink-0 flex-col overflow-visible border-t border-border-default bg-bg-surface max-[799px]:max-h-[min(70dvh,620px)]"
       data-testid="session-composer-dock"
-      style={{ scrollbarGutter: "stable" }}
     >
       <ConversationRail className="flex min-h-0 flex-col pb-3 pt-2" data-testid="conversation-composer-rail">
         {hasPendingHitl && (

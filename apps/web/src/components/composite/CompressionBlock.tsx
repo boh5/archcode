@@ -6,7 +6,6 @@ import type {
   CompressionBlockStatus,
   CompressionStrategy,
   CompressionTrigger,
-  AgentDescriptor,
   ToolChildSessionLink,
 } from "@archcode/protocol";
 import { TOOL_DELEGATE } from "@archcode/protocol";
@@ -55,10 +54,9 @@ export interface CompressionBlockProps {
   focusStoreSessionId: string;
   snapshot?: CompressionBlockSnapshot;
   childSessionLinks?: ToolChildSessionLink[];
-  agentDescriptors?: readonly AgentDescriptor[];
 }
 
-export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessionId, snapshot, childSessionLinks = [], agentDescriptors = [] }: CompressionBlockProps) {
+export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessionId, snapshot, childSessionLinks = [] }: CompressionBlockProps) {
   const [expanded, setExpanded] = useState(false);
   const [expansion, setExpansion] = useState<ExpansionState>({ status: "collapsed" });
 
@@ -171,7 +169,6 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
               projectSlug={projectSlug}
               focusStoreSessionId={focusStoreSessionId}
               childSessionLinks={childSessionLinks}
-              agentDescriptors={agentDescriptors}
             />
           )}
           {expansion.status === "collapsed" && null}
@@ -195,13 +192,11 @@ function OriginalRangeView({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
-  agentDescriptors,
 }: {
   data: CompressionOriginalRangeSuccess;
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
-  agentDescriptors: readonly AgentDescriptor[];
 }) {
   return (
     <div className="px-3 py-3 flex flex-col gap-2">
@@ -220,7 +215,6 @@ function OriginalRangeView({
           projectSlug={projectSlug}
           focusStoreSessionId={focusStoreSessionId}
           childSessionLinks={childSessionLinks}
-          agentDescriptors={agentDescriptors}
         />
       ))}
     </div>
@@ -232,13 +226,11 @@ function OriginalRangeEntry({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
-  agentDescriptors,
 }: {
   entry: CompressionOriginalRangeEntry;
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
-  agentDescriptors: readonly AgentDescriptor[];
 }) {
   const { ref, message } = entry;
   return (
@@ -255,7 +247,6 @@ function OriginalRangeEntry({
             projectSlug={projectSlug}
             focusStoreSessionId={focusStoreSessionId}
             childSessionLinks={childSessionLinks}
-            agentDescriptors={agentDescriptors}
           />
         ))}
       </div>
@@ -268,13 +259,11 @@ function OriginalRangePartView({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
-  agentDescriptors,
 }: {
   part: OriginalRangePart;
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
-  agentDescriptors: readonly AgentDescriptor[];
 }) {
   switch (part.type) {
     case "text":
@@ -299,7 +288,6 @@ function OriginalRangePartView({
             projectSlug={projectSlug}
             focusStoreSessionId={focusStoreSessionId}
             childSessionLinks={childSessionLinks}
-            agentDescriptors={agentDescriptors}
           />
         );
       }
@@ -335,19 +323,16 @@ function DelegateRangeCard({
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
-  agentDescriptors,
 }: {
   part: OriginalRangePart & { type: "tool" };
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: ToolChildSessionLink[];
-  agentDescriptors: readonly AgentDescriptor[];
 }) {
   return <DelegationCard {...buildDelegationCardViewModel({
     part,
     projectSlug,
     focusStoreSessionId,
     childSessionLinks,
-    agentDescriptors,
   })} />;
 }

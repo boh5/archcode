@@ -18,7 +18,7 @@ const artifactPart: CompletedToolPart = {
   state: "completed",
   toolCallId: "call-edit",
   toolName: "file_edit",
-  input: { filePath: "/target.ts", edits: [{ oldString: "old", newString: "new" }] },
+  input: { path: "/target.ts", edits: [{ oldString: "old", newString: "new" }] },
   result: {
     isError: false,
     output: {

@@ -207,8 +207,9 @@ describe("SessionComposerDock", () => {
     const card = container.querySelector('[data-testid="composer-card"]');
     const textarea = card?.querySelector("textarea");
     expect(dock?.className).toContain("max-h-[min(60dvh,640px)]");
-    expect((dock as HTMLElement | null)?.style.scrollbarGutter).toBe("stable");
     expect(dock?.className).toContain("max-[799px]:max-h-[min(70dvh,620px)]");
+    expect(dock?.className).toContain("overflow-visible");
+    expect(dock?.className).not.toContain("overflow-hidden");
     expect(dock?.classList.contains("border-t")).toBe(true);
     expect(rail?.className).toContain("max-w-[800px]");
     expect(attention).not.toBeNull();

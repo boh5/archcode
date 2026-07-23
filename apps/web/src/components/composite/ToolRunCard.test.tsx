@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CompletedToolPart, RunningToolPart, ToolPart } from "@archcode/protocol";
+import type {
+  CompletedToolPart,
+  ErrorToolPart,
+  RunningToolPart,
+  ToolPart,
+} from "@archcode/protocol";
 import type { ToolRunItem } from "../../lib/tool-runs";
 
 interface ElementLike {
@@ -31,6 +36,23 @@ function findButtons(value: unknown): ElementLike[] {
   };
   visit(value);
   return buttons;
+}
+
+function findByTestId(value: unknown, testId: string): ElementLike | undefined {
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const match = findByTestId(child, testId);
+      if (match) return match;
+    }
+    return undefined;
+  }
+  if (!isElement(value)) return undefined;
+  if (value.props?.["data-testid"] === testId) return value;
+  for (const child of childrenOf(value)) {
+    const match = findByTestId(child, testId);
+    if (match) return match;
+  }
+  return undefined;
 }
 
 function textContent(value: unknown): string {
@@ -107,31 +129,28 @@ mock.module("lucide-react", () => ({
   Zap: Icon,
 }));
 
-mock.module("./ReasoningBlock", () => ({
-  ReasoningBlock: ({ part }: { part: { text: string } }) => jsxDEV("div", { children: part.text }),
-}));
 mock.module("./ToolCard", () => ({
   ToolCard: ({ part }: { part: ToolPart }) => jsxDEV("button", {
     "data-child-tool": part.id,
     "aria-expanded": false,
-    children: `${part.toolName}:${"input" in part ? String((part.input as { filePath?: string }).filePath) : ""}`,
+    children: `${part.toolName}:${"input" in part ? String((part.input as { path?: string }).path) : ""}`,
   }),
 }));
 
 const { ToolRunCard } = await import("./ToolRunCard");
 
-function completed(id: string, filePath: string): CompletedToolPart {
+function completed(id: string, path: string, toolName = "file_read"): CompletedToolPart {
   return {
     type: "tool",
     id,
     state: "completed",
     toolCallId: `call-${id}`,
-    toolName: "file_read",
-    input: { filePath },
+    toolName,
+    input: { path },
     result: {
       isError: false,
       output: {
-        preview: `contents of ${filePath}`,
+        preview: `contents of ${path}`,
         completeness: "complete",
         observed: { bytes: 10, lines: 1 },
         canonical: { bytes: 10, lines: 1 },
@@ -146,16 +165,28 @@ function completed(id: string, filePath: string): CompletedToolPart {
   };
 }
 
-function running(id: string, filePath: string): RunningToolPart {
+function running(id: string, path: string): RunningToolPart {
   return {
     type: "tool",
     id,
     state: "running",
     toolCallId: `call-${id}`,
     toolName: "file_read",
-    input: { filePath },
+    input: { path },
     createdAt: 1,
     startedAt: 1,
+  };
+}
+
+function failed(id: string, path: string): ErrorToolPart {
+  const base = completed(id, path);
+  return {
+    ...base,
+    state: "error",
+    result: {
+      ...base.result,
+      isError: true,
+    },
   };
 }
 
@@ -211,29 +242,52 @@ describe("ToolRunCard", () => {
     expect(textContent(element)).toContain("Running");
   });
 
-  test("returns to the first tool after every call settles", () => {
+  test("shows every exact tool name in execution order after every call settles", () => {
     booleanStates = [false];
     const element = ToolRunCard(props([
       completed("one", "a.ts"),
-      completed("two", "b.ts"),
+      completed("two", "pattern", "grep"),
+      completed("three", "bun test", "bash"),
     ]));
+    const names = findByTestId(element, "tool-run-tool-names");
 
-    expect(textContent(element)).toContain("a.ts");
-    expect(textContent(element)).not.toContain("b.ts");
+    expect(textContent(names)).toBe("file_read, grep, bash");
+    expect(names?.props?.title).toBe("file_read, grep, bash");
+    expect(names?.props?.className).toContain("truncate");
+    expect(findButtons(element)[0]?.props?.["aria-label"]).toBe(
+      "3 tool calls, file_read, grep, bash, Completed",
+    );
+    expect(textContent(element)).not.toContain("a.ts");
     expect(textContent(element)).toContain("Completed");
   });
 
-  test("expands to a flat ordered list whose child tools remain collapsed", () => {
+  test("reports an aggregate error when an earlier tool failed", () => {
+    booleanStates = [false];
+    const element = ToolRunCard(props([
+      failed("one", "a.ts"),
+      completed("two", "b.ts"),
+    ]));
+    const summary = findByTestId(element, "tool-run-tool-names");
+    const summaryButton = findButtons(element)[0];
+    const summaryChildren = childrenOf(summaryButton);
+
+    expect(textContent(summary)).toBe("file_read, file_read");
+    expect(textContent(element)).toContain("Error");
+    expect(summaryButton?.props?.["aria-label"]).toBe(
+      "2 tool calls, file_read, file_read, Error",
+    );
+    expect(isElement(summaryChildren[0]) ? summaryChildren[0].props?.["data-tool-visual-kind"] : undefined).toBe(
+      "failed",
+    );
+  });
+
+  test("expands on demand to a downward ordered list whose child tools remain collapsed", () => {
     booleanStates = [true];
     const first = completed("one", "a.ts");
     const second = completed("two", "b.ts");
     const message = { id: "message", role: "assistant" as const, parts: [first, second], createdAt: 1 };
     const element = ToolRunCard(props([first, second], [
       { message, part: first },
-      {
-        message,
-        part: { type: "reasoning", id: "reason", text: "Reasoning detail", createdAt: 1, completedAt: 1 },
-      },
       { message, part: second },
     ]));
     const buttons = findButtons(element);
@@ -242,7 +296,7 @@ describe("ToolRunCard", () => {
     expect(buttons[0]?.props?.["aria-expanded"]).toBe(true);
     expect(buttons[1]?.props?.["aria-expanded"]).toBe(false);
     expect(buttons[2]?.props?.["aria-expanded"]).toBe(false);
-    expect(textContent(element).indexOf("a.ts")).toBeLessThan(textContent(element).indexOf("Reasoning detail"));
-    expect(textContent(element).indexOf("Reasoning detail")).toBeLessThan(textContent(element).indexOf("b.ts"));
+    const listText = textContent(findByTestId(element, "tool-run-list"));
+    expect(listText.indexOf("a.ts")).toBeLessThan(listText.indexOf("b.ts"));
   });
 });

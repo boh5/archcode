@@ -1,7 +1,6 @@
 import {
   TOOL_ASK_USER,
   TOOL_DELEGATE,
-  type ReasoningPart,
   type SessionMessage,
   type SessionPart,
   type ToolPart,
@@ -10,7 +9,7 @@ import type { ExecutionWorkstreamMessageSlice } from "./execution-workstream";
 
 export interface ToolRunItem {
   readonly message: SessionMessage;
-  readonly part: ReasoningPart | ToolPart;
+  readonly part: ToolPart;
 }
 
 export interface ToolRunTimelineMessage {
@@ -49,9 +48,10 @@ function isOrdinaryTool(part: SessionPart): part is ToolPart {
 /**
  * Projects ordered Work parts into flat message fragments and Tool Runs.
  *
- * Reasoning is transparent while tools are being called. Rendered text and
- * control parts are hard boundaries. A run is promoted only after its second
- * ordinary tool, so singleton tools keep the existing direct ToolCard surface.
+ * Only contiguous ordinary tools can form a Tool Run. Reasoning, rendered
+ * text, and control parts are hard boundaries and stay in the outer Work
+ * timeline. A run is promoted only after its second ordinary tool, so
+ * singleton tools keep the existing direct ToolCard surface.
  */
 export function buildToolRunTimeline(
   slices: readonly ExecutionWorkstreamMessageSlice[],
@@ -100,7 +100,7 @@ export function buildToolRunTimeline(
     }
 
     for (const part of slice.parts) {
-      if (part.type === "reasoning" || isOrdinaryTool(part)) {
+      if (isOrdinaryTool(part)) {
         candidates.push({ message: slice.message, part });
         continue;
       }

@@ -7,14 +7,13 @@ import type {
 } from "@archcode/protocol";
 import { ChevronRight } from "lucide-react";
 import {
-  formatToolInputDetails,
-  getToolInvalidInputMessage,
   getToolSummary,
   summarizeToolDiffMetadata,
 } from "../../lib/tool-format";
 import { DiffView } from "../diff/DiffView";
 import { StatusGlyph } from "../primitives/StatusGlyph";
 import { useStatusTransition } from "../primitives/useStatusTransition";
+import { ToolInputDetails } from "./ToolInputDetails";
 import { ToolOutputViewer } from "./ToolOutputViewer";
 import {
   STATUS_SUBTLE_CLASS,
@@ -63,14 +62,12 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
   const visualKind = toolVisualKind(part.state, isUnknownResult);
   const statusTransition = useStatusTransition(part.id, visualKind);
   const tone = statusVisual(visualKind).tone;
-  const summary = getToolSummary(part.toolName, "input" in part ? part.input : undefined);
-  const inputDetails = "input" in part ? formatToolInputDetails(part.toolName, part.input) : null;
-  const invalidMessage = "input" in part ? getToolInvalidInputMessage(part.toolName, part.input) : null;
+  const hasInput = "input" in part;
+  const summary = getToolSummary(part.toolName, hasInput ? part.input : undefined);
   const diffSummary = diffPresentation
     ? summarizeToolDiffMetadata({ files: diffPresentation.files, truncated: diffPresentation.truncated })
     : undefined;
-  const hasDetails = inputDetails !== null
-    || invalidMessage !== null
+  const hasDetails = hasInput
     || settled !== undefined
     || diffPresentation !== undefined
     || askPresentation !== undefined;
@@ -116,13 +113,7 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
         {hasDetails && <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />}
       </button>
 
-      {expanded && inputDetails && askPresentation === undefined && (
-        <KeyValueRows entries={inputDetails} />
-      )}
-
-      {expanded && invalidMessage && (
-        <div className="border-t border-border-subtle px-3 py-2 text-[11px] text-warning">{invalidMessage}</div>
-      )}
+      {expanded && hasInput && <ToolInputDetails input={part.input} />}
 
       {expanded && isUnknownResult && (
         <div className="inline-flex w-full items-center gap-1 border-t border-border-subtle px-3 py-2 text-[11px] text-warning">

@@ -1,12 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentDescriptor, ToolChildSessionLink, ToolPart } from "@archcode/protocol";
-import {
-  buildDelegationCardViewModel,
-  formatDelegationLinkStatus,
-  parseDelegationInput,
-} from "./delegation-card-model";
-
-const agents: AgentDescriptor[] = [{ name: "explore", displayName: "Explore" }];
+import type { ToolChildSessionLink, ToolPart } from "@archcode/protocol";
+import { buildDelegationCardViewModel } from "./delegation-card-model";
 
 function makePart(overrides: Partial<ToolPart> = {}): ToolPart {
   return {
@@ -40,21 +34,6 @@ function makeLink(overrides: Partial<ToolChildSessionLink> = {}): ToolChildSessi
 }
 
 describe("delegation card view-model", () => {
-  test("normalizes input and maps every link status", () => {
-    expect(parseDelegationInput({ agent_type: "explore", title: "Inspect source", objective: "test" })).toEqual({ agent_type: "explore", title: "Inspect source", objective: "test" });
-    expect(parseDelegationInput(JSON.stringify({ agent_type: "explore" }))).toEqual({ agent_type: "explore" });
-    expect(parseDelegationInput(null)).toBeNull();
-    expect(parseDelegationInput(undefined)).toBeNull();
-    expect(parseDelegationInput("invalid")).toBeNull();
-
-    const statuses: ToolChildSessionLink["status"][] = [
-      "linked", "running", "waiting_for_human", "cancelling", "completed", "failed", "timed_out", "cancelled", "interrupted",
-    ];
-    expect(statuses.map(formatDelegationLinkStatus)).toEqual([
-      "Running", "Running", "Needs you", "Running", "Completed", "Stopped", "Stopped", "Stopped", "Stopped",
-    ]);
-  });
-
   test("uses persisted child-link metadata over tool input", () => {
     const model = buildDelegationCardViewModel({
       part: makePart(),
@@ -64,61 +43,77 @@ describe("delegation card view-model", () => {
         title: "Child title",
         depth: 3,
       })],
-      agentDescriptors: agents,
     });
 
     expect(model).toMatchObject({
       sessionId: "child-1",
-      agentDisplayName: "Explore",
       taskTitle: "Child title",
-      taskSummary: "Inspect the source",
       visualKind: "running",
       executionStatusLabel: "Running",
       startedAt: 140,
-      background: false,
+      hasInput: true,
+      input: {
+        agent_type: "explore",
+        profile: "fast",
+        skills: ["analyze-work"],
+        background: true,
+        title: "Inspect source",
+        objective: "Inspect the source",
+      },
       canNavigate: true,
     });
   });
 
-  test("falls back to tool input and part state without a link", () => {
+  test("uses tool execution state without a link while preserving recorded input", () => {
     const model = buildDelegationCardViewModel({
       part: makePart({ state: "error", createdAt: 200 } as Partial<ToolPart>),
       projectSlug: "demo",
       focusStoreSessionId: "root-1",
       childSessionLinks: [],
-      agentDescriptors: agents,
     });
 
     expect(model).toMatchObject({
       sessionId: "",
-      agentDisplayName: "Explore",
-      taskTitle: "Inspect source",
-      taskSummary: "Inspect the source",
       visualKind: "failed",
       executionStatusLabel: "Stopped",
       executionStatusDetail: "Error",
       startedAt: 120,
-      profile: "fast",
-      skills: ["analyze-work"],
-      background: true,
+      hasInput: true,
       canNavigate: false,
     });
   });
 
-  test("omits metadata that is absent instead of fabricating defaults", () => {
+  test("passes through an empty recorded input without fabricating fields", () => {
     const model = buildDelegationCardViewModel({
       part: makePart({ input: {} }),
       projectSlug: "demo",
       focusStoreSessionId: "root-1",
       childSessionLinks: [],
-      agentDescriptors: agents,
     });
 
-    expect(model.agentDisplayName).toBeUndefined();
-    expect(model.profile).toBeUndefined();
-    expect(model.background).toBeUndefined();
+    expect(model.hasInput).toBe(true);
+    expect(model.input).toEqual({});
     expect(model.taskTitle).toBeUndefined();
-    expect(model.taskSummary).toBeUndefined();
+  });
+
+  test("distinguishes a pending part with no recorded input", () => {
+    const pendingPart: ToolPart = {
+      type: "tool",
+      id: "part-pending",
+      state: "pending",
+      toolCallId: "call-pending",
+      toolName: "delegate",
+      createdAt: 200,
+    };
+    const model = buildDelegationCardViewModel({
+      part: pendingPart,
+      projectSlug: "demo",
+      focusStoreSessionId: "root-1",
+      childSessionLinks: [],
+    });
+
+    expect(model.hasInput).toBe(false);
+    expect(model.input).toBeUndefined();
   });
 
   test("maps terminal child execution states without a second task status", () => {
@@ -136,7 +131,6 @@ describe("delegation card view-model", () => {
         projectSlug: "demo",
         focusStoreSessionId: "root-1",
         childSessionLinks: [makeLink({ status: linkStatus })],
-        agentDescriptors: agents,
       });
       expect(model.visualKind).toBe(visualKind);
       if (linkStatus !== "completed") {
@@ -149,7 +143,7 @@ describe("delegation card view-model", () => {
     for (const linkStatus of ["linked", "running", "waiting_for_human", "cancelling"] as const) {
       const model = buildDelegationCardViewModel({
         part: makePart(), projectSlug: "demo", focusStoreSessionId: "root-1",
-        childSessionLinks: [makeLink({ status: linkStatus })], agentDescriptors: agents,
+        childSessionLinks: [makeLink({ status: linkStatus })],
       });
       expect(model.visualKind).toBe(linkStatus === "waiting_for_human" ? "needs_you" : "running");
     }
@@ -158,7 +152,7 @@ describe("delegation card view-model", () => {
   test("uses tool execution state when the child link is absent", () => {
     const completed = buildDelegationCardViewModel({
       part: makePart({ state: "completed" }), projectSlug: "demo", focusStoreSessionId: "root-1",
-      childSessionLinks: [], agentDescriptors: agents,
+      childSessionLinks: [],
     });
     expect(completed.visualKind).toBe("completed");
   });

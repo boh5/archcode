@@ -25,7 +25,7 @@ function tool(id: string, toolName = "file_read", state: ToolPart["state"] = "ru
     id,
     toolCallId: `call-${id}`,
     toolName,
-    input: { filePath: `${id}.ts` },
+    input: { path: `${id}.ts` },
     createdAt,
     startedAt: createdAt,
   };
@@ -73,7 +73,7 @@ function slices(...messages: SessionMessage[]) {
 }
 
 describe("buildToolRunTimeline", () => {
-  test("projects text, five tools, text, and three tools as two independent runs", () => {
+  test("keeps Reasoning outside Tool Runs and groups only contiguous tools", () => {
     const result = buildToolRunTimeline(slices(
       message("intro", [text("text-a", "I will inspect this.")]),
       message("tools-a", [reasoning("reason-a"), tool("one"), tool("two")]),
@@ -84,31 +84,48 @@ describe("buildToolRunTimeline", () => {
 
     expect(result.map((entry) => entry.kind)).toEqual([
       "message",
+      "message",
+      "tool-run",
+      "message",
       "tool-run",
       "message",
       "tool-run",
     ]);
-    expect(result[1]?.kind === "tool-run" ? result[1].tools.map((entry) => entry.id) : []).toEqual([
-      "one", "two", "three", "four", "five",
+    expect(result[2]?.kind === "tool-run" ? result[2].tools.map((entry) => entry.id) : []).toEqual([
+      "one", "two", "three",
     ]);
-    expect(result[3]?.kind === "tool-run" ? result[3].tools.map((entry) => entry.id) : []).toEqual([
+    expect(result[4]?.kind === "tool-run" ? result[4].tools.map((entry) => entry.id) : []).toEqual([
+      "four", "five",
+    ]);
+    expect(result[6]?.kind === "tool-run" ? result[6].tools.map((entry) => entry.id) : []).toEqual([
       "six", "seven", "eight",
     ]);
+    expect(result.filter((entry) => entry.kind === "message").flatMap((entry) =>
+      entry.kind === "message" ? entry.parts.filter((part) => part.type === "reasoning").map((part) => part.id) : []
+    )).toEqual(["reason-a", "reason-b"]);
   });
 
-  test("keeps reasoning transparent across model messages", () => {
+  test("treats Reasoning as a hard boundary across model messages", () => {
     const result = buildToolRunTimeline(slices(
       message("first", [tool("one"), reasoning("between")]),
       message("second", [reasoning("next-step"), tool("two")]),
     ));
 
-    expect(result).toHaveLength(1);
-    expect(result[0]?.kind).toBe("tool-run");
-    if (result[0]?.kind === "tool-run") {
-      expect(result[0].items.map((item) => item.part.id)).toEqual([
-        "one", "between", "next-step", "two",
-      ]);
-    }
+    expect(result).toHaveLength(2);
+    expect(result.every((entry) => entry.kind === "message")).toBe(true);
+    expect(result.flatMap((entry) =>
+      entry.kind === "message" ? entry.parts.map((part) => part.id) : []
+    )).toEqual(["one", "between", "next-step", "two"]);
+  });
+
+  test("renders trailing Reasoning after a completed Tool Run in the outer timeline", () => {
+    const result = buildToolRunTimeline(slices(
+      message("source", [tool("one", "file_read", "completed"), tool("two", "grep", "completed"), reasoning("after-tools")]),
+    ));
+
+    expect(result.map((entry) => entry.kind)).toEqual(["tool-run", "message"]);
+    expect(result[0]?.kind === "tool-run" ? result[0].tools.map((part) => part.id) : []).toEqual(["one", "two"]);
+    expect(result[1]?.kind === "message" ? result[1].parts.map((part) => part.id) : []).toEqual(["after-tools"]);
   });
 
   test("keeps a singleton tool direct and preserves its message metadata", () => {

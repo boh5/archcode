@@ -5,20 +5,18 @@ import type { DelegationCardViewModel } from "../../lib/delegation-card-model";
 import { STATUS_TONE_CLASS, statusVisual } from "../../lib/status-visuals";
 import { StatusGlyph } from "../primitives/StatusGlyph";
 import { useStatusTransition } from "../primitives/useStatusTransition";
+import { ToolInputDetails } from "./ToolInputDetails";
 
 export function DelegationCard({
   sessionId,
   focusStoreSessionId,
-  agentDisplayName,
-  profile,
-  skills,
   taskTitle,
   visualKind,
   executionStatusLabel,
   executionStatusDetail,
   startedAt,
-  taskSummary,
-  background,
+  hasInput,
+  input,
   projectSlug,
   canNavigate = true,
 }: DelegationCardViewModel) {
@@ -62,15 +60,7 @@ export function DelegationCard({
         )}
       </div>
 
-      {(agentDisplayName || profile || background !== undefined || skills.length > 0 || taskSummary) && (
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 px-3 py-2 text-[12px]">
-        {agentDisplayName && <><dt className="text-text-tertiary">Agent</dt><dd className="min-w-0 truncate text-text-primary">{agentDisplayName}</dd></>}
-        {profile && <><dt className="text-text-tertiary">Profile</dt><dd className="font-mono text-text-secondary">{profile}</dd></>}
-        {background !== undefined && <><dt className="text-text-tertiary">Mode</dt><dd className="text-text-secondary">{background ? "Background" : "Foreground"}</dd></>}
-        {skills.length > 0 && <><dt className="text-text-tertiary">Skills</dt><dd className="min-w-0 break-words font-mono text-text-secondary">{skills.join(", ")}</dd></>}
-        {taskSummary && <><dt className="text-text-tertiary">Goal</dt><dd className="whitespace-pre-wrap text-text-secondary">{taskSummary}</dd></>}
-      </dl>
-      )}
+      {hasInput && <ToolInputDetails input={input} />}
     </div>
   );
 }

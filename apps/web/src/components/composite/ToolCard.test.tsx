@@ -165,16 +165,26 @@ describe("ToolCard strict result consumer", () => {
 
   test("renders diff and ask_user only from strict presentations", () => {
     const element = ToolCard({
-      part: completed({
-        isError: false,
-        output: { ...baseOutput, preview: "raw preview must not supply answers" },
-        details: {
-          presentations: [
-            { kind: "diff", files: [{ path: "src/a.ts", status: "modified", additions: 2, deletions: 1, hunks: [] }] },
-            { kind: "ask_user", answers: [{ question: "Proceed?", answers: ["Yes"] }] },
-          ],
+      part: {
+        ...completed({
+          isError: false,
+          output: { ...baseOutput, preview: "raw preview must not supply answers" },
+          details: {
+            presentations: [
+              { kind: "diff", files: [{ path: "src/a.ts", status: "modified", additions: 2, deletions: 1, hunks: [] }] },
+              { kind: "ask_user", answers: [{ question: "Proceed?", answers: ["Yes"] }] },
+            ],
+          },
+        }),
+        toolName: "ask_user",
+        input: {
+          questions: [{
+            header: "Scope",
+            question: "Proceed?",
+            options: [{ label: "Yes", description: "Continue" }],
+          }],
         },
-      }),
+      },
       projectSlug: "demo",
       sessionId: "root-1",
     });
@@ -182,6 +192,10 @@ describe("ToolCard strict result consumer", () => {
     expect(text).toContain("1 file · +2 −1");
     expect(text).toContain("Proceed?");
     expect(text).toContain("Yes");
+    expect(text).toContain("questions:");
+    expect(text).toContain("header:");
+    expect(text).toContain("options:");
+    expect(text).toContain("description:");
     expect(text).not.toContain("raw preview must not supply answers");
   });
 
@@ -235,7 +249,7 @@ describe("ToolCard strict result consumer", () => {
     expect(findAllWithClass(runningElement, "animate-activity")).toHaveLength(1);
   });
 
-  test("uses bash description, presents invalid inputs safely, and styles completed state", () => {
+  test("uses bash description and does not duplicate runtime schema validation in Web", () => {
     const valid = ToolCard({ part: completed({ isError: false, output: baseOutput }), projectSlug: "demo", sessionId: "root-1" });
     expect(textContent(valid)).toContain("Show path");
     expect(textContent(valid)).toContain("pwd");
@@ -244,8 +258,33 @@ describe("ToolCard strict result consumer", () => {
     stateIndex = 0;
     const invalidPart: CompletedToolPart = { ...completed({ isError: false, output: baseOutput }), input: { command: "pwd" } };
     const invalid = ToolCard({ part: invalidPart, projectSlug: "demo", sessionId: "root-1" });
-    expect(textContent(invalid)).toContain("Invalid bash input: missing required description");
+    expect(textContent(invalid)).toContain("command");
+    expect(textContent(invalid)).toContain("pwd");
+    expect(textContent(invalid)).not.toContain("Invalid bash input: missing required description");
     expect(textContent(valid)).toContain("Completed");
+  });
+
+  test("renders authoritative runtime schema errors from the finalized result", () => {
+    const part: ErrorToolPart = {
+      ...completed({
+        isError: true,
+        output: { ...baseOutput, preview: "Required field description is missing" },
+        details: {
+          error: {
+            kind: "validation",
+            code: "TOOL_SCHEMA_INVALID_INPUT",
+            name: "ToolInputValidationError",
+          },
+        },
+      }),
+      state: "error",
+      input: { command: "pwd" },
+    };
+
+    const element = ToolCard({ part, projectSlug: "demo", sessionId: "root-1" });
+    const text = textContent(element);
+    expect(text).toContain("TOOL_SCHEMA_INVALID_INPUT");
+    expect(text).toContain("Required field description is missing");
   });
 
   test("keeps strict diff and ask_user presentations out of collapsed cards", () => {
@@ -268,6 +307,25 @@ describe("ToolCard strict result consumer", () => {
     const expanded = ToolCard({ part, projectSlug: "demo", sessionId: "root-1" });
     expect(textContent(expanded)).toContain("Proceed?");
     expect(textContent(expanded)).toContain("Yes");
+  });
+
+  test("renders every MCP input key without synthetic tool/input aliases", () => {
+    const part: CompletedToolPart = {
+      ...completed({ isError: false, output: baseOutput }),
+      toolName: "mcp__docs__lookup",
+      input: {
+        query: "React",
+        libraryName: "react",
+        count: 3,
+      },
+    };
+    const element = ToolCard({ part, projectSlug: "demo", sessionId: "root-1" });
+    const text = textContent(element);
+    expect(text).toContain("query:");
+    expect(text).toContain("libraryName:");
+    expect(text).toContain("count:");
+    expect(text).not.toContain("tool:");
+    expect(text).not.toContain("input:");
   });
 
   test("renders MCP names and preserves error context for unknown results", () => {

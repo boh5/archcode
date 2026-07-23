@@ -103,28 +103,44 @@ describe("DelegationCard", () => {
   const baseProps = {
     sessionId: "session-child-1",
     focusStoreSessionId: "session-root-1",
-    agentDisplayName: "Explore",
-    profile: "fast",
-    skills: ["analyze-work"],
     taskTitle: "Find relevant files",
     visualKind: "running" as const,
     executionStatusLabel: "Running",
     startedAt: Date.now() - 60000,
-    taskSummary: "Searching for relevant files",
-    background: true,
+    hasInput: true,
+    input: {
+      agent_type: "explore",
+      profile: "fast",
+      skills: ["analyze-work"],
+      title: "Find relevant files",
+      objective: "Searching for relevant files",
+      background: true,
+    },
     projectSlug: "my-project",
   };
 
-  test("renders the real delegation fields without an avatar", () => {
+  test("renders every recorded delegation key without display aliases", () => {
     const result = DelegationCard(baseProps);
     const text = textContent(result);
     expect(text).toContain("delegate");
-    expect(text).toContain("Explore");
+    expect(text).toContain("agent_type");
+    expect(text).toContain("explore");
+    expect(text).toContain("profile");
     expect(text).toContain("fast");
+    expect(text).toContain("skills");
     expect(text).toContain("analyze-work");
-    expect(text).toContain("Background");
+    expect(text).toContain("title");
+    expect(text).toContain("background");
+    expect(text).toContain("true");
+    expect(text).toContain("objective");
     expect(text).toContain("Find relevant files");
     expect(text).toContain("Searching for relevant files");
+    expect(text).not.toContain("Agent");
+    expect(text).not.toContain("Profile");
+    expect(text).not.toContain("Skills");
+    expect(text).not.toContain("Goal");
+    expect(text).not.toContain("Mode");
+    expect(text).not.toContain("Foreground");
     expect(findAll(result, (element) => element.type === CornerDownRight)).toHaveLength(1);
     expect(findAllWithClass(result, "bg-agent-")).toHaveLength(0);
   });
@@ -154,10 +170,16 @@ describe("DelegationCard", () => {
     expect(findAll(result, (element) => element.props?.["data-child-visual-kind"] === "stopped")).toHaveLength(1);
   });
 
-  test("renders foreground mode when background is false", () => {
-    const result = DelegationCard({ ...baseProps, background: false });
+  test("renders the raw background parameter when it is false", () => {
+    const result = DelegationCard({
+      ...baseProps,
+      input: { ...(baseProps.input as Record<string, unknown>), background: false },
+    });
     const text = textContent(result);
-    expect(text).toContain("Foreground");
+    expect(text).toContain("background");
+    expect(text).toContain("false");
+    expect(text).not.toContain("Foreground");
+    expect(text).not.toContain("Mode");
   });
 
   test("child navigation is a native keyboard-accessible button", () => {
@@ -177,19 +199,16 @@ describe("DelegationCard", () => {
     const result = DelegationCard({
       ...baseProps,
       sessionId: "",
-      agentDisplayName: undefined,
-      profile: undefined,
-      skills: [],
       taskTitle: undefined,
-      taskSummary: undefined,
-      background: undefined,
+      hasInput: false,
+      input: undefined,
       canNavigate: false,
     });
     const text = textContent(result);
     expect(text).toContain("Child session pending");
     expect(text).not.toContain("Agent");
     expect(text).not.toContain("Profile");
-    expect(text).not.toContain("Mode");
+    expect(text).not.toContain("background");
     expect(findAll(result, (element) => element.type === "button")).toHaveLength(0);
   });
 });
