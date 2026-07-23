@@ -50,13 +50,15 @@ describe("StdioLspTransport integration", () => {
   it("captures bounded stderr for initialize failures", async () => {
     const transport = new StdioLspTransport({
       command: "bun",
-      args: ["-e", "console.error('lsp stderr marker'); setTimeout(() => {}, 1000);"],
+      args: ["-e", "setTimeout(() => console.error('x'.repeat(100) + 'lsp stderr marker'), 100); setTimeout(() => {}, 200);"],
       captureStderr: true,
       stderrBufferLimit: 64,
-      timeouts: { initializeMs: 50 },
+      timeouts: { initializeMs: 20 },
     });
     transports.push(transport);
     await expect(transport.connect({ processId: null, capabilities: {}, rootUri: null })).rejects.toThrow("timed out");
     expect(transport.stderrSnapshot).toContain("lsp stderr marker");
+    expect(transport.stderrSnapshot.length).toBeLessThanOrEqual(64);
+    await expect(transport.exited).resolves.toBe(0);
   });
 });

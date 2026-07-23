@@ -1,8 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { storeManager } from "../../store/store";
-import { createSessionStore } from "../../store/store";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { silentLogger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
@@ -12,6 +10,9 @@ import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 import { createTestModelInfo } from "../../testing/test-execution-fixtures";
 
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation", crypto.randomUUID());
+const WORKSPACE_ROOT = join(TEST_TMP, "workspace");
+const storeManager = new SessionStoreManager({ logger: silentLogger });
+const sessionIds = new Set<string>();
 
 const mockGenerateText = mock(
   async () => ({ text: "Short test title" }),
@@ -21,6 +22,11 @@ import { createTitleGenerationTask } from "./title-generation";
 import type { BackgroundTaskContext } from "../types";
 import type { ModelInfo } from "../../provider/model";
 import type { ExecutionModelBinding } from "../../models";
+
+function createStore(sessionId = crypto.randomUUID()) {
+  sessionIds.add(sessionId);
+  return storeManager.create(sessionId, WORKSPACE_ROOT, { agentName: "lead" });
+}
 
 function makeModelInfo(): ModelInfo {
   return createTestModelInfo();
@@ -46,54 +52,38 @@ function makeTaskContext(
   workspaceRoot: "/tmp", ...overrides,  };
 }
 
-async function readPersistedSession(sessionId: string): Promise<Record<string, unknown>> {
-  const path = join(TEST_TMP, sessionId, "session.json");
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (await Bun.file(path).exists()) {
-      return JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-
-  throw new Error(`Session file was not persisted for ${sessionId}`);
-}
-
-async function waitForPersistedSession(
-  sessionId: string,
-  predicate: (session: Record<string, unknown>) => boolean,
-): Promise<Record<string, unknown>> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const session = await readPersistedSession(sessionId);
-    if (predicate(session)) return session;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-
-  throw new Error(`Session file did not reach expected state for ${sessionId}`);
-}
-
 describe("createTitleGenerationTask", () => {
   beforeEach(async () => {
+    storeManager.clearAll();
     setLlmAdapterForTest({ generateText: mockGenerateText as unknown as typeof import("ai").generateText });
     mockGenerateText.mockReset();
     mockGenerateText.mockImplementation(
       async () => ({ text: "Short test title" }),
     );
+    await rm(TEST_TMP, { recursive: true, force: true });
     await mkdir(TEST_TMP, { recursive: true });
     __setSessionsDirForTest(() => TEST_TMP);
   });
 
-  afterEach(() => {
-    setLlmAdapterForTest(undefined);
-    __setSessionsDirForTest(undefined);
+  afterEach(async () => {
+    try {
+      await Promise.all([...sessionIds].map((sessionId) => storeManager.flushSession(sessionId, WORKSPACE_ROOT)));
+    } finally {
+      sessionIds.clear();
+      storeManager.clearAll();
+      setLlmAdapterForTest(undefined);
+      __setSessionsDirForTest(undefined);
+    }
   });
 
   afterAll(async () => {
+    __setSessionsDirForTest(undefined);
     await rm(TEST_TMP, { recursive: true, force: true });
   });
 
   test("generates title and sets it in store on success", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
+    const store = createStore();
     store.setState({
       messages: [
         {
@@ -138,10 +128,10 @@ describe("createTitleGenerationTask", () => {
     );
   });
 
-  test("generated title persists and survives store reload without external save or flush", async () => {
+  test("generated title persists and survives store reload", async () => {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
-    const store = createSessionStore(sessionId, TEST_TMP);
+    const store = createStore(sessionId);
     store.setState({
       messages: [
         {
@@ -165,8 +155,8 @@ describe("createTitleGenerationTask", () => {
     const task = createTitleGenerationTask(store);
     await task.run(makeTaskContext(store));
 
-    await waitForPersistedSession(sessionId, (session) => session.title === "Short test title");
-    const loaded = await new SessionStoreManager({ logger: silentLogger }).getOrLoad(sessionId, "ignored-by-test-override");
+    await storeManager.flushSession(sessionId, WORKSPACE_ROOT);
+    const loaded = await new SessionStoreManager({ logger: silentLogger }).getOrLoad(sessionId, WORKSPACE_ROOT);
 
     expect(loaded.getState().title).toBe("Short test title");
   });
@@ -174,7 +164,7 @@ describe("createTitleGenerationTask", () => {
   test("passes all whitelisted model options and strips variant", async () => {
     const now = Date.now();
     const providerOptions = { title: { mode: "full" } };
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
+    const store = createStore();
     store.setState({
       messages: [
         {
@@ -245,7 +235,7 @@ describe("createTitleGenerationTask", () => {
   });
 
   test("does nothing when no user message exists", async () => {
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
+    const store = createStore();
     store.setState({ messages: [] });
 
     const task = createTitleGenerationTask(store);
@@ -259,7 +249,7 @@ describe("createTitleGenerationTask", () => {
 
   test("skips command notices and titles the first textual user message", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
+    const store = createStore();
     store.setState({
       messages: [
         {
@@ -303,7 +293,7 @@ describe("createTitleGenerationTask", () => {
     mockGenerateText.mockRejectedValue(new Error("API error"));
 
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
+    const store = createStore();
     store.setState({
       messages: [
         {
@@ -348,7 +338,7 @@ describe("createTitleGenerationTask", () => {
     mockGenerateText.mockRejectedValue(new Error("provider timeout"));
 
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
+    const store = createStore();
     store.setState({
       messages: [
         {
@@ -375,7 +365,7 @@ describe("createTitleGenerationTask", () => {
 
   test("does nothing when user message has no text parts", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), TEST_TMP, { agentName: "lead" });
+    const store = createStore();
     store.setState({
       messages: [
         {

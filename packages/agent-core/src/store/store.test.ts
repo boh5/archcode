@@ -330,7 +330,8 @@ describe("SessionStoreManager", () => {
   test("reload from disk preserves stats and executions exactly while deriving executionCount", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-stats-executions");
-    const store = createSessionStore(sessionId, TMP_DIR);
+    const persistenceManager = new SessionStoreManager({ logger: silentLogger });
+    const store = persistenceManager.create(sessionId, TMP_DIR, { agentName: "lead" });
     const state = store.getState();
 
     state.append(executionStart("run-one"));
@@ -347,9 +348,9 @@ describe("SessionStoreManager", () => {
     state.append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } });
     state.append({ type: "execution-end", status: "failed", error: "child failed" });
 
-    await waitForPersistedSession(sessionId, (session) => Array.isArray(session.executions) && session.executions.length === 2);
     const expectedStats = store.getState().stats;
     const expectedExecutions = store.getState().executions;
+    await persistenceManager.flushSession(sessionId, TMP_DIR);
 
     const manager = new SessionStoreManager({ logger: silentLogger });
     const loaded = await manager.getOrLoad(sessionId, "ignored-by-test-override");

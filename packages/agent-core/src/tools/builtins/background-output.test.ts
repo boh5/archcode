@@ -15,10 +15,15 @@ import { testExecutionStart } from "../../testing/test-execution-fixtures";
 // Keep mutable fixtures out of the source worktree: constrained runners can mount it read-only.
 const root = join("/tmp", "archcode-background-source", crypto.randomUUID());
 const workspace = join(root, "workspace");
+const sessions: Array<{
+  manager: SessionStoreManager;
+  sessionId: string;
+}> = [];
 
 function context(): ToolExecutionContext {
   const manager = new SessionStoreManager({ logger: silentLogger });
   const id = crypto.randomUUID();
+  sessions.push({ manager, sessionId: id });
   return {
     store: manager.create(id, workspace, { agentName: "lead" }), storeManager: manager,
     toolName: "background_output", toolCallId: "call", input: {}, step: 1,
@@ -28,7 +33,9 @@ function context(): ToolExecutionContext {
 }
 
 function child(ctx: ToolExecutionContext) {
-  const store = ctx.storeManager.create(crypto.randomUUID(), workspace, { agentName: "lead" });
+  const sessionId = crypto.randomUUID();
+  const store = ctx.storeManager.create(sessionId, workspace, { agentName: "lead" });
+  sessions.push({ manager: ctx.storeManager, sessionId });
   store.getState().setParentSessionId(ctx.store.getState().sessionId);
   store.setState({ rootSessionId: ctx.store.getState().rootSessionId });
   return store;
@@ -78,11 +85,22 @@ function input(sessionId: string, overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(async () => {
+  sessions.length = 0;
   await rm(root, { recursive: true, force: true });
   await mkdir(workspace, { recursive: true });
   __setSessionsDirForTest(() => join(root, "sessions"));
 });
-afterEach(() => __setSessionsDirForTest(undefined));
+afterEach(async () => {
+  try {
+    await Promise.all(
+      sessions.map(({ manager, sessionId }) => manager.flushSession(sessionId, workspace)),
+    );
+  } finally {
+    for (const { manager } of sessions) manager.clearAll();
+    sessions.length = 0;
+    __setSessionsDirForTest(undefined);
+  }
+});
 afterAll(async () => { __setSessionsDirForTest(undefined); await rm(root, { recursive: true, force: true }); });
 
 describe("background_output source pages", () => {

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { ModelInfo } from "../provider/model";
 import type { ExecutionModelBinding } from "../models";
 import { SkillNotFoundError, SkillService } from "../skills";
-import { storeManager } from "../store/store";
+import { SessionStoreManager } from "../store/session-store-manager";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
@@ -34,6 +34,17 @@ const tmpRoot = join(tmpdir(), "archcode-configured-agent", crypto.randomUUID())
 const worktreeRoot = join(tmpdir(), "archcode-configured-agent-worktree", crypto.randomUUID());
 const registryFixtures: TestToolRegistryFixture[] = [];
 const outputAccessFixture = createTestToolRegistryFixture();
+const storeManager = new SessionStoreManager({ logger: silentLogger });
+const sessions = new Map<string, { sessionId: string; workspaceRoot: string }>();
+
+function createStore(
+  sessionId: string,
+  workspaceRoot: string,
+  options: Parameters<SessionStoreManager["create"]>[2],
+) {
+  sessions.set(`${workspaceRoot}\0${sessionId}`, { sessionId, workspaceRoot });
+  return storeManager.create(sessionId, workspaceRoot, options);
+}
 
 function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
   const fixture = createTestToolRegistryFixture({ descriptors });
@@ -213,10 +224,10 @@ function createAgent(options: {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const projectRoot = options.projectRoot ?? tmpRoot;
   const cwd = options.cwd ?? projectRoot;
-  const store = options.store ?? storeManager.create(crypto.randomUUID(), projectRoot, { cwd, agentName: options.definition.name });
+  const store = options.store ?? createStore(crypto.randomUUID(), projectRoot, { cwd, agentName: options.definition.name });
   if (options.definition.name !== "lead" && store.getState().parentSessionId === undefined) {
     const parentSessionId = crypto.randomUUID();
-    storeManager.create(parentSessionId, projectRoot, { cwd, agentName: "lead" });
+    createStore(parentSessionId, projectRoot, { cwd, agentName: "lead" });
     store.setState({ parentSessionId, rootSessionId: parentSessionId });
   }
   return new ConfiguredAgent({
@@ -279,8 +290,18 @@ describe("ConfiguredAgent", () => {
     __setSessionsDirForTest(() => join(tmpRoot, "sessions"));
   });
 
-  afterEach(() => {
-    setLlmAdapterForTest(undefined);
+  afterEach(async () => {
+    try {
+      await Promise.all(
+        [...sessions.values()].map(({ sessionId, workspaceRoot }) =>
+          storeManager.flushSession(sessionId, workspaceRoot)
+        ),
+      );
+    } finally {
+      sessions.clear();
+      storeManager.clearAll();
+      setLlmAdapterForTest(undefined);
+    }
   });
 
   afterAll(async () => {
@@ -363,7 +384,7 @@ describe("ConfiguredAgent", () => {
   test("Lead definition produces all configured lifecycle hooks", async () => {
     const streamFn = setupMockStreamText("root ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -400,7 +421,7 @@ describe("ConfiguredAgent", () => {
   test("injects the active Session Goal overlay only from the root Lead state", async () => {
     const streamFn = setupMockStreamText("continue goal");
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, tmpRoot, { agentName: "lead" });
+    const store = createStore(sessionId, tmpRoot, { agentName: "lead" });
     await new SessionGoalService(storeManager).create({
       workspaceRoot: tmpRoot,
       sessionId,
@@ -423,7 +444,7 @@ describe("ConfiguredAgent", () => {
   test("projects Todo Discussion maxDepth 2 into the Prompt from the authoritative binding", async () => {
     const streamFn = setupMockStreamText("discussion shaped");
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, tmpRoot, { agentName: "lead" });
+    const store = createStore(sessionId, tmpRoot, { agentName: "lead" });
     const projectContextResolver = createTestProjectContextResolver(storeManager);
     const projectContext = await projectContextResolver.resolve(tmpRoot);
     const todo = await projectContext.todos.createTodo({ title: "Shape runtime architecture" });
@@ -566,7 +587,7 @@ describe("ConfiguredAgent", () => {
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {
     const streamFn = setupMockStreamText("explore ok");
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     store.setState({
       reminders: [
         {
@@ -592,7 +613,7 @@ describe("ConfiguredAgent", () => {
   test("Lead definition dispatches memory background hooks", async () => {
     setupMockStreamText("Lead memory ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -630,7 +651,7 @@ describe("ConfiguredAgent", () => {
   test("memory config disabled skips memory background hooks", async () => {
     setupMockStreamText("memory disabled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -666,7 +687,7 @@ describe("ConfiguredAgent", () => {
   test("memory config custom thresholds are used by extraction hook", async () => {
     setupMockStreamText("memory custom ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -693,7 +714,7 @@ describe("ConfiguredAgent", () => {
   test("memory config absent uses default extraction thresholds", async () => {
     setupMockStreamText("memory defaults ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     store.setState({
       messages: [
         {
@@ -715,7 +736,7 @@ describe("ConfiguredAgent", () => {
   test('titleGeneration "unless-supplied" skips when store title already exists', async () => {
     setupMockStreamText("titled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     store.setState({ title: "Supplied Title" });
 
     const agent = createAgent({ definition: exploreAgentDefinition, store, btm });
@@ -819,8 +840,8 @@ describe("ConfiguredAgent", () => {
       worktreeExitTool,
     ]);
     const parentSessionId = crypto.randomUUID();
-    storeManager.create(parentSessionId, tmpRoot, { agentName: "lead" });
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
+    createStore(parentSessionId, tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, {
       rootSessionId: parentSessionId,
       parentSessionId,
       agentName: "explore",
@@ -879,7 +900,7 @@ describe("ConfiguredAgent", () => {
         return createTextToolResult("commented");
       },
     });
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     // ProjectContextResolver scans durable Session identities. Mirror the
     // production createSessionFile barrier instead of racing the queued write.
     await storeManager.flushSession(store.getState().sessionId, tmpRoot);
@@ -907,7 +928,7 @@ describe("ConfiguredAgent", () => {
   test("skill metadata allowed_tools is prompt metadata only and cannot grant missing tools", async () => {
     const streamFn = setupMockStreamText("skill metadata ok");
     const skillService = createSkillServiceWithToolGrant();
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
+    const store = createStore(crypto.randomUUID(), tmpRoot, {
       agentName: "lead",
       activeSkillNames: ["github-skill"],
     });
@@ -941,7 +962,7 @@ describe("ConfiguredAgent", () => {
       "Temporary instructions.",
     ].join("\n"));
 
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, {
+    const store = createStore(crypto.randomUUID(), tmpRoot, {
       agentName: "lead",
       activeSkillNames: [skillName],
     });
@@ -977,7 +998,7 @@ describe("ConfiguredAgent", () => {
     const skillService = {
       listForAgent: mock(async () => { throw new Error("skill index unreadable"); }),
     } as unknown as SkillService;
-    const store = storeManager.create(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     const agent = createAgent({ definition: leadAgentDefinition, skillService, store });
 
     await expect(runAgent(agent, "list skills")).rejects.toThrow("skill index unreadable");

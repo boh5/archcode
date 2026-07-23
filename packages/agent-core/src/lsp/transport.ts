@@ -263,6 +263,7 @@ export class StdioLspTransport implements LspTransport {
   private disposed = false;
   private initialized = false;
   private stderrReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  private stderrCapture: Promise<void> | undefined;
   private stderrBuffer = "";
 
   constructor(private readonly options: StdioLspTransportOptions) {
@@ -299,16 +300,20 @@ export class StdioLspTransport implements LspTransport {
     this.connection = createMessageConnection(reader, writer);
     this.connection.listen();
 
-    const result = await withTimeout(
-      this.connection.sendRequest("initialize", params),
-      this.timeouts.initializeMs,
-      "initialize",
-    ).catch((error) => {
+    let result: unknown;
+    try {
+      result = await withTimeout(
+        this.connection.sendRequest("initialize", params),
+        this.timeouts.initializeMs,
+        "initialize",
+      );
+    } catch (error) {
+      await this.dispose();
       this.#logger.error("lsp.transport.initialize.failed", {
         context: { code: "LSP_INITIALIZE_FAILED", stderrCaptured: this.stderrBuffer.length > 0 },
       });
       throw error;
-    });
+    }
     this.initialized = true;
     return result;
   }
@@ -377,32 +382,41 @@ export class StdioLspTransport implements LspTransport {
     const limit = this.options.stderrBufferLimit ?? DEFAULT_STDERR_BUFFER_LIMIT;
     const reader = stream.getReader();
     this.stderrReader = reader;
+    const append = (text: string): void => {
+      this.stderrBuffer += text;
+      if (this.stderrBuffer.length > limit) {
+        this.stderrBuffer = this.stderrBuffer.slice(-limit);
+      }
+    };
 
-    const pump = (): void => {
-      reader.read().then(({ done, value }) => {
-        if (done) return;
-        if (value) {
-          this.stderrBuffer += decoder.decode(value, { stream: true });
-          if (this.stderrBuffer.length > limit) {
-            this.stderrBuffer = this.stderrBuffer.slice(-limit);
+    this.stderrCapture = (async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            append(decoder.decode());
+            return;
+          }
+          if (value) {
+            append(decoder.decode(value, { stream: true }));
           }
         }
-        pump();
-      }).catch((error) => {
+      } catch {
         this.#logger.debug("lsp.transport.stderr.capture.failed", {
           context: { code: "LSP_STDERR_CAPTURE_FAILED" },
         });
-      });
-    };
-    pump();
+      }
+    })();
   }
 
   private async stopStderrCapture(): Promise<void> {
     const reader = this.stderrReader;
-    if (!reader) return;
+    const capture = this.stderrCapture;
     this.stderrReader = undefined;
+    this.stderrCapture = undefined;
+    if (!reader || !capture) return;
     try {
-      await reader.cancel();
+      await capture;
     } catch {
       // Stderr capture is best-effort and must not block transport disposal.
     }
