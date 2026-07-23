@@ -11,7 +11,13 @@ export interface DirectoryEntry {
   path: string;
 }
 
-export interface DirectoriesResponse {
+export interface DirectoryListResponse {
+  current?: DirectoryEntry;
+  entries: DirectoryEntry[];
+  truncated: boolean;
+}
+
+export interface DirectorySearchResponse {
   entries: DirectoryEntry[];
   truncated: boolean;
 }
@@ -73,9 +79,14 @@ export function createDirectoriesRoutes(options: DirectoriesRoutesOptions = {}):
     const rootStat = await safeStat(resolved);
 
     if (rootStat?.isDirectory()) {
+      const current = toDirectoryEntry({ name: basename(resolved) || resolved, path: resolved });
       const entries = await listDirectories(resolved);
       const sorted = entries.sort(compareDirectoryEntries);
-      return c.json({ entries: sorted.slice(0, limit), truncated: sorted.length > limit } satisfies DirectoriesResponse);
+      return c.json({
+        current,
+        entries: sorted.slice(0, limit),
+        truncated: sorted.length > limit,
+      } satisfies DirectoryListResponse);
     }
 
     // Path doesn't resolve to a directory — treat the last segment as a prefix filter on the parent.
@@ -85,7 +96,7 @@ export function createDirectoriesRoutes(options: DirectoriesRoutesOptions = {}):
     const parentStat = await safeStat(parent);
 
     if (!parentStat?.isDirectory()) {
-      return c.json({ entries: [], truncated: false } satisfies DirectoriesResponse);
+      return c.json({ entries: [], truncated: false } satisfies DirectoryListResponse);
     }
 
     const entries = await listDirectories(parent);
@@ -93,7 +104,10 @@ export function createDirectoriesRoutes(options: DirectoriesRoutesOptions = {}):
       ? entries.filter((e) => e.name.toLowerCase().startsWith(prefix.toLowerCase()))
       : entries;
     const sorted = filtered.sort(compareDirectoryEntries);
-    return c.json({ entries: sorted.slice(0, limit), truncated: sorted.length > limit } satisfies DirectoriesResponse);
+    return c.json({
+      entries: sorted.slice(0, limit),
+      truncated: sorted.length > limit,
+    } satisfies DirectoryListResponse);
   });
 
   app.get("/search", zValidator("query", SearchDirectoriesQuerySchema), async (c) => {
@@ -107,7 +121,7 @@ export function createDirectoriesRoutes(options: DirectoriesRoutesOptions = {}):
     const ranked = fuzzysort.go(query, candidates, { key: "target", all: false, limit: limit + 1 });
     const entries = ranked.slice(0, limit).map((result) => toDirectoryEntry(result.obj));
 
-    return c.json({ entries, truncated: ranked.length > limit } satisfies DirectoriesResponse);
+    return c.json({ entries, truncated: ranked.length > limit } satisfies DirectorySearchResponse);
   });
 
   return app;

@@ -1102,6 +1102,7 @@ export interface DirectoryEntry {
 }
 
 export interface DirectoryListResponse {
+  current?: DirectoryEntry;
   entries: DirectoryEntry[];
   truncated: boolean;
 }

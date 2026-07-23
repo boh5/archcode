@@ -3,14 +3,15 @@ import { chmod, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { errorHandler } from "../error-handler";
-import { createDirectoriesRoutes, type DirectoriesRoutesOptions, type DirectoryEntry } from "./directories";
+import {
+  createDirectoriesRoutes,
+  type DirectoriesRoutesOptions,
+  type DirectoryEntry,
+  type DirectoryListResponse,
+  type DirectorySearchResponse,
+} from "./directories";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "directories-routes");
-
-interface DirectoriesResponseBody {
-  entries: DirectoryEntry[];
-  truncated: boolean;
-}
 
 function createTestApp(options?: DirectoriesRoutesOptions): Hono {
   const app = new Hono();
@@ -24,8 +25,12 @@ async function createDir(path: string): Promise<string> {
   return path;
 }
 
-async function readDirectories(res: Response): Promise<DirectoriesResponseBody> {
-  return (await res.json()) as DirectoriesResponseBody;
+async function readDirectoryList(res: Response): Promise<DirectoryListResponse> {
+  return (await res.json()) as DirectoryListResponse;
+}
+
+async function readDirectorySearch(res: Response): Promise<DirectorySearchResponse> {
+  return (await res.json()) as DirectorySearchResponse;
 }
 
 describe("directories routes", () => {
@@ -38,7 +43,7 @@ describe("directories routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  test("GET /api/directories/list returns one-level directories only", async () => {
+  test("GET /api/directories/list returns current path and one-level children only", async () => {
     const root = await createDir(join(tempRoot, "list-success"));
     await createDir(join(root, "alpha"));
     await createDir(join(root, "beta"));
@@ -46,14 +51,31 @@ describe("directories routes", () => {
     const app = createTestApp();
 
     const res = await app.request(`/api/directories/list?path=${encodeURIComponent(root)}`);
-    const body = await readDirectories(res);
+    const body = await readDirectoryList(res);
 
     expect(res.status).toBe(200);
     expect(body).toEqual({
+      current: { name: "list-success", path: root },
       entries: [
         { name: "alpha", path: join(root, "alpha") },
         { name: "beta", path: join(root, "beta") },
       ],
+      truncated: false,
+    });
+  });
+
+  test("GET /api/directories/list returns current for leaf directories with empty children", async () => {
+    const root = await createDir(join(tempRoot, "leaf-dir"));
+    await Bun.write(join(root, "readme.txt"), "files only");
+    const app = createTestApp();
+
+    const res = await app.request(`/api/directories/list?path=${encodeURIComponent(root)}`);
+    const body = await readDirectoryList(res);
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      current: { name: "leaf-dir", path: root },
+      entries: [],
       truncated: false,
     });
   });
@@ -76,7 +98,8 @@ describe("directories routes", () => {
     const res = await app.request(`/api/directories/list?path=${encodeURIComponent(missing)}`);
 
     expect(res.status).toBe(200);
-    const body = await readDirectories(res);
+    const body = await readDirectoryList(res);
+    expect(body.current).toBeUndefined();
     expect(body.entries).toEqual([]);
     expect(body.truncated).toBe(false);
   });
@@ -89,7 +112,8 @@ describe("directories routes", () => {
     const res = await app.request(`/api/directories/list?path=${encodeURIComponent(filePath)}`);
 
     expect(res.status).toBe(200);
-    const body = await readDirectories(res);
+    const body = await readDirectoryList(res);
+    expect(body.current).toBeUndefined();
     expect(body.entries).toEqual([]);
     expect(body.truncated).toBe(false);
   });
@@ -104,7 +128,8 @@ describe("directories routes", () => {
     const res = await app.request(`/api/directories/list?path=${encodeURIComponent(join(root, "alp"))}`);
 
     expect(res.status).toBe(200);
-    const body = await readDirectories(res);
+    const body = await readDirectoryList(res);
+    expect(body.current).toBeUndefined();
     expect(body.entries.map((e) => e.name)).toEqual(["alpha", "alpha-extra"]);
   });
 
@@ -116,7 +141,7 @@ describe("directories routes", () => {
     const app = createTestApp();
 
     const res = await app.request(`/api/directories/list?path=${encodeURIComponent(root)}&limit=999`);
-    const body = await readDirectories(res);
+    const body = await readDirectoryList(res);
 
     expect(res.status).toBe(200);
     expect(body.entries).toHaveLength(100);
@@ -145,7 +170,7 @@ describe("directories routes", () => {
     const app = createTestApp();
 
     const res = await app.request(`/api/directories/list?path=${encodeURIComponent(root)}`);
-    const body = await readDirectories(res);
+    const body = await readDirectoryList(res);
 
     expect(res.status).toBe(200);
     expect(body.entries.map((entry) => entry.name)).toEqual(["alpha", "zeta", ".a-hidden", ".z-hidden"]);
@@ -161,7 +186,7 @@ describe("directories routes", () => {
     try {
       const probe = await Array.fromAsync(new Bun.Glob("*").scan({ cwd: unreadable, onlyFiles: false })).catch(() => undefined);
       const res = await app.request(`/api/directories/list?path=${encodeURIComponent(root)}`);
-      const body = await readDirectories(res);
+      const body = await readDirectoryList(res);
 
       expect(res.status).toBe(200);
       if (probe === undefined) {
@@ -217,7 +242,7 @@ describe("directories routes", () => {
     const app = createTestApp({ roots: [root] });
 
     const res = await app.request("/api/directories/search?query=project&limit=1");
-    const body = await readDirectories(res);
+    const body = await readDirectorySearch(res);
 
     expect(res.status).toBe(200);
     expect(body.entries).toHaveLength(1);
@@ -240,7 +265,7 @@ describe("directories routes", () => {
     const started = performance.now();
     const res = await app.request("/api/directories/search?query=match&limit=10");
     const elapsed = performance.now() - started;
-    const body = await readDirectories(res);
+    const body = await readDirectorySearch(res);
 
     expect(res.status).toBe(200);
     expect(elapsed).toBeLessThan(1500);
@@ -258,7 +283,7 @@ describe("directories routes", () => {
 
     try {
       const res = await app.request("/api/directories/search?query=needle&limit=10");
-      const body = await readDirectories(res);
+      const body = await readDirectorySearch(res);
 
       expect(res.status).toBe(200);
       expect(body.entries.map((entry) => entry.name)).toContain("needle-visible");

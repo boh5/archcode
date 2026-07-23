@@ -45,6 +45,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   const directoryList = useDirectoryList(pathMode ? debouncedInput : "", 50);
   const directorySearch = useDirectorySearch(!pathMode ? debouncedInput : "", 50);
 
+  const currentPath = pathMode ? directoryList.data?.current?.path ?? null : null;
   const candidates: DirectoryEntry[] = pathMode
     ? directoryList.data?.entries ?? []
     : directorySearch.data?.entries ?? [];
@@ -57,8 +58,27 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     : !!directorySearch.error;
 
   useEffect(() => {
-    setActiveIndex(candidates.length > 0 ? 0 : -1);
-  }, [candidates]);
+    if (!pathMode) return;
+    setSelectedPath(currentPath);
+  }, [pathMode, currentPath, debouncedInput]);
+
+  useEffect(() => {
+    if (pathMode && currentPath) {
+      setActiveIndex(-1);
+    }
+  }, [pathMode, currentPath]);
+
+  useEffect(() => {
+    setActiveIndex((previous) => {
+      if (pathMode && currentPath) {
+        if (previous < 0 || candidates.length === 0) return -1;
+        return Math.min(previous, candidates.length - 1);
+      }
+      if (candidates.length === 0) return -1;
+      if (previous >= 0 && previous < candidates.length) return previous;
+      return 0;
+    });
+  }, [candidates, pathMode, currentPath]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -70,15 +90,20 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setActiveIndex((prev) =>
-          prev < candidates.length - 1 ? prev + 1 : prev,
-        );
+        setActiveIndex((prev) => {
+          if (candidates.length === 0) return -1;
+          if (prev < 0) return 0;
+          return prev < candidates.length - 1 ? prev + 1 : prev;
+        });
         return;
       }
 
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setActiveIndex((prev) => (prev > 0 ? prev - 1 : 0));
+        setActiveIndex((prev) => {
+          if (prev <= 0) return pathMode && currentPath ? -1 : 0;
+          return prev - 1;
+        });
         return;
       }
 
@@ -90,14 +115,20 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
         return;
       }
 
-      if (e.key === "Enter" && activeIndex >= 0 && activeIndex < candidates.length) {
-        e.preventDefault();
-        const candidate = candidates[activeIndex];
-        setSelectedPath(candidate.path);
-        return;
+      if (e.key === "Enter") {
+        if (activeIndex >= 0 && activeIndex < candidates.length) {
+          e.preventDefault();
+          setSelectedPath(candidates[activeIndex].path);
+          return;
+        }
+        if (pathMode && currentPath) {
+          e.preventDefault();
+          setSelectedPath(currentPath);
+          return;
+        }
       }
     },
-    [onClose, candidates, activeIndex, pathMode],
+    [onClose, candidates, activeIndex, pathMode, currentPath],
   );
 
   useEffect(() => {
@@ -197,9 +228,38 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
 
         {showCandidates && (
           <div ref={listRef} className="flex-1 overflow-y-auto min-h-0 px-2 pb-2">
-            {!isLoading && !hasError && !hasCandidates && (
+            {pathMode && currentPath && !isLoading && !hasError && (
+              <button
+                type="button"
+                data-current-path={currentPath}
+                className={[
+                  "mb-1 flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand",
+                  selectedPath === currentPath
+                    ? "bg-bg-hover text-text-primary ring-1 ring-brand-subtle"
+                    : "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+                ].join(" ")}
+                onClick={() => {
+                  setSelectedPath(currentPath);
+                  setActiveIndex(-1);
+                }}
+              >
+                <Check size={15} className="shrink-0 text-brand" aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[11px] text-text-tertiary">Use this path</span>
+                  <span className="block truncate font-mono text-[13px]">{currentPath}</span>
+                </span>
+              </button>
+            )}
+
+            {!isLoading && !hasError && !hasCandidates && !currentPath && (
               <div className="flex items-center justify-center py-8 text-text-tertiary text-xs">
                 No directories found
+              </div>
+            )}
+
+            {!isLoading && !hasError && !hasCandidates && currentPath && (
+              <div className="flex items-center justify-center py-4 text-text-tertiary text-xs">
+                No subdirectories
               </div>
             )}
 

@@ -64,6 +64,7 @@ let AddProjectModal: AddProjectModalComponent;
 let stateIndex = 0;
 let stateValues: unknown[] = ["", "", null, -1];
 let directoryEntries: DirectoryEntry[] = [];
+let directoryCurrent: DirectoryEntry | null = null;
 let directoryTruncated = false;
 let directoryError: Error | null = null;
 let directoryLoading = false;
@@ -92,7 +93,11 @@ const useAddProject = mock(() => ({
   error: null,
 }));
 const useDirectoryList = mock((_path: string, _limit?: number) => ({
-  data: { entries: directoryEntries, truncated: directoryTruncated },
+  data: {
+    current: directoryCurrent ?? undefined,
+    entries: directoryEntries,
+    truncated: directoryTruncated,
+  },
   isLoading: directoryLoading,
   error: directoryError,
 }));
@@ -158,6 +163,7 @@ function resetMocks(): void {
   stateIndex = 0;
   stateValues = ["", "", null, -1];
   directoryEntries = [];
+  directoryCurrent = null;
   directoryTruncated = false;
   directoryError = null;
   directoryLoading = false;
@@ -256,6 +262,7 @@ describe("AddProjectModal", () => {
 
   test("manages directory selection from click, input change, Enter, and Tab", () => {
     directoryEntries = [{ name: "archcode", path: "/workspace/archcode" }];
+    directoryCurrent = { name: "workspace", path: "/workspace" };
     const tree = renderWithState(["/workspace", "/workspace", null, 0]);
     const candidate = findAll(tree, (element) => element.props?.["data-index"] === 0)[0];
     const input = findAll(tree, (element) => element.type === "input")[0];
@@ -270,6 +277,14 @@ describe("AddProjectModal", () => {
       target: { value: "/workspace/archcode/src" },
     });
     expect(setInput).toHaveBeenCalledWith("/workspace/archcode/src");
+    expect(setSelectedPath).toHaveBeenCalledWith(null);
+
+    setInput.mockClear();
+    setSelectedPath.mockClear();
+    (input?.props?.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: "keyword-search" },
+    });
+    expect(setInput).toHaveBeenCalledWith("keyword-search");
     expect(setSelectedPath).toHaveBeenCalledWith(null);
 
     const preventEnter = mock(() => {});
@@ -291,6 +306,35 @@ describe("AddProjectModal", () => {
     expect(preventTab).toHaveBeenCalled();
     expect(setInput).toHaveBeenCalledWith("/workspace/archcode/");
     expect(setSelectedPath).toHaveBeenCalledWith("/workspace/archcode");
+  });
+
+  test("auto-selects resolved current path and allows Enter without child highlight", () => {
+    directoryCurrent = { name: "archcode", path: "/workspace/archcode" };
+    directoryEntries = [];
+    const tree = renderWithState(["/workspace/archcode", "/workspace/archcode", null, -1]);
+
+    const currentButton = findAll(
+      tree,
+      (element) => element.props?.["data-current-path"] === "/workspace/archcode",
+    )[0];
+    expect(currentButton).toBeDefined();
+    expect(textContent(tree)).toContain("Use this path");
+    expect(textContent(tree)).toContain("No subdirectories");
+
+    const input = findAll(tree, (element) => element.type === "input")[0];
+    const preventEnter = mock(() => {});
+    setSelectedPath.mockClear();
+    (input?.props?.onKeyDown as (event: { key: string; preventDefault: () => void }) => void)({
+      key: "Enter",
+      preventDefault: preventEnter,
+    });
+    expect(preventEnter).toHaveBeenCalled();
+    expect(setSelectedPath).toHaveBeenCalledWith("/workspace/archcode");
+
+    setSelectedPath.mockClear();
+    (currentButton?.props?.onClick as () => void)();
+    expect(setSelectedPath).toHaveBeenCalledWith("/workspace/archcode");
+    expect(setActiveIndex).toHaveBeenCalledWith(-1);
   });
 
   test("input Escape handler closes the dialog", () => {
