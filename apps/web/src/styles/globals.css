@@ -271,6 +271,11 @@
   50% { opacity: 1; }
 }
 
+@keyframes tool-run-swap {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes overlay-enter {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
@@ -295,6 +300,10 @@
 
 .animate-streaming {
   animation: streaming-opacity var(--motion-activity) linear infinite;
+}
+
+.animate-tool-run-swap {
+  animation: tool-run-swap var(--motion-icon) var(--ease-enter) 1;
 }
 
 .animate-overlay-enter {

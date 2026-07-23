@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
+  CompletedToolPart,
   ExecutionModelBindingSummary,
   MessageModelAudit,
   SessionExecutionInputCheckpoint,
@@ -80,6 +81,32 @@ function message(
       createdAt,
       completedAt: createdAt,
     }],
+  };
+}
+
+function completedTool(id: string, filePath: string, createdAt: number): CompletedToolPart {
+  return {
+    type: "tool",
+    id,
+    state: "completed",
+    toolCallId: `call-${id}`,
+    toolName: "file_read",
+    input: { filePath },
+    result: {
+      isError: false,
+      output: {
+        preview: `contents of ${filePath}`,
+        completeness: "complete",
+        observed: { bytes: 10, lines: 1 },
+        canonical: { bytes: 10, lines: 1 },
+        stored: { bytes: 10, lines: 1 },
+        omitted: { bytes: 0, lines: 0 },
+        recovery: { kind: "none" },
+      },
+    },
+    createdAt,
+    startedAt: createdAt,
+    endedAt: createdAt + 1,
   };
 }
 
@@ -445,6 +472,67 @@ describe("ExecutionWorkstream", () => {
     expect(finalResponse("tool-only")).toBeNull();
     await clickWork("tool-only");
     expect(workBody("tool-only")?.textContent).toContain("file_read");
+  });
+
+  test("renders text, five tools, text, and three tools as two settled Tool Runs", async () => {
+    const intro = message("intro", "assistant", "execution", "First commentary", 2);
+    const firstTools: SessionMessage = {
+      id: "first-tools",
+      role: "assistant",
+      executionId: "execution",
+      createdAt: 3,
+      completedAt: 8,
+      parts: Array.from({ length: 5 }, (_, index) =>
+        completedTool(`first-${index + 1}`, `first-${index + 1}.ts`, index + 3)
+      ),
+    };
+    const middle = message("middle", "assistant", "execution", "Second commentary", 9);
+    const secondTools: SessionMessage = {
+      id: "second-tools",
+      role: "assistant",
+      executionId: "execution",
+      createdAt: 10,
+      completedAt: 13,
+      parts: Array.from({ length: 3 }, (_, index) =>
+        completedTool(`second-${index + 1}`, `second-${index + 1}.ts`, index + 10)
+      ),
+    };
+    initializeSession([
+      message("user", "user", "execution", "Inspect both phases", 1),
+      intro,
+      firstTools,
+      middle,
+      secondTools,
+    ], [execution("execution", 1)], "session-1", "project-1", [], [], [{
+      id: "terminal",
+      step: 0,
+      executionId: "execution",
+      startedAt: 1,
+      completedAt: 14,
+      finishReason: "stop",
+    }]);
+
+    await renderWorkstream();
+    await clickWork("execution");
+
+    const body = workBody("execution");
+    const runs = body?.querySelectorAll<HTMLElement>('[data-testid="tool-run-card"]');
+    expect(runs).toHaveLength(2);
+    expect(runs?.[0]?.textContent).toContain("first-1.ts");
+    expect(runs?.[0]?.textContent).not.toContain("first-5.ts");
+    expect(runs?.[1]?.textContent).toContain("second-1.ts");
+    expect(runs?.[1]?.textContent).not.toContain("second-3.ts");
+
+    const bodyText = body?.textContent ?? "";
+    expect(bodyText.indexOf("First commentary")).toBeLessThan(bodyText.indexOf("first-1.ts"));
+    expect(bodyText.indexOf("first-1.ts")).toBeLessThan(bodyText.indexOf("Second commentary"));
+    expect(bodyText.indexOf("Second commentary")).toBeLessThan(bodyText.indexOf("second-1.ts"));
+
+    const firstRunToggle = runs?.[0]?.querySelector("button");
+    if (!(firstRunToggle instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Tool Run toggle");
+    await act(async () => firstRunToggle.click());
+    expect(runs?.[0]?.querySelectorAll("[data-tool-card]")).toHaveLength(5);
+    expect(runs?.[0]?.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(5);
   });
 
   test("keeps running Work in authoritative message and part order with user-right and plain agent presentation", async () => {

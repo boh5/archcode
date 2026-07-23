@@ -311,19 +311,29 @@ Execution is a mandatory product entity, not an optional visual section.
 - An Execution without final Agent text does not receive a fabricated empty
   response block.
 - Binding row shows Agent/Profile, model/variant, and continuity state.
-- Timeline includes grouped reads, independent tool calls, delegation, and
-  running commands.
+- Timeline includes Tool Runs, singleton tool calls, delegation, and running
+  commands.
 - The running step uses lime; completed steps use green; delegation uses indigo.
 - Opening historical Work preserves the user's reading position and does not
   trigger live bottom-follow behavior.
 
 ### Tool Calls
 
-- Aggregate consecutive completed read-only tools when there are at least two.
-- Do not aggregate running, failed, write, permission, or delegation calls.
-- A collapsed group shows its semantic label, tool-name summary, and count.
-- Expanding a group reveals child ToolCards; each child keeps its own
-  independent expansion state.
+- Project two or more consecutive ordinary tool calls within one Execution as a
+  Tool Run, including calls split across model-step Assistant messages.
+- Reasoning does not split a Tool Run. Rendered Assistant text, `delegate`,
+  `ask_user`, Recovery, and Compaction do.
+- While a Tool Run is active, its single collapsed row shows the last tool in
+  authoritative order; parallel calls use the same last-entry rule.
+- After every call settles, the collapsed row returns to the first tool.
+- Do not layer semantic read-only aggregation on top. The row shows the
+  representative tool summary, a quiet numeric count, and state.
+- Tool Runs and singleton ToolCards use the same row skeleton: status on the
+  left and the disclosure chevron on the right. Count is the only additional
+  collapsed-row element for a Tool Run.
+- Expanding a Tool Run reveals the flat ordered list; each ToolCard keeps its
+  own independent expansion state.
+- A singleton tool renders directly as a ToolCard without an extra disclosure.
 - Independent ToolCards show tool name, target, change/result summary, state,
   and chevron in the collapsed row.
 - Expanded write tools disclose input parameters, Diff preview, completion

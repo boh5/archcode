@@ -304,11 +304,11 @@ document.querySelectorAll("[data-work-toggle]").forEach((button) => {
   });
 });
 
-document.querySelectorAll("[data-tool-group-toggle]").forEach((button) => {
+document.querySelectorAll("[data-tool-run-toggle]").forEach((button) => {
   button.addEventListener("click", () => {
     const expanded = button.getAttribute("aria-expanded") === "true";
     button.setAttribute("aria-expanded", String(!expanded));
-    button.closest(".tool-group-card").querySelector("[data-tool-group-children]").hidden = expanded;
+    button.closest(".tool-run-card").querySelector("[data-tool-run-list]").hidden = expanded;
   });
 });
 

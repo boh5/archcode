@@ -211,18 +211,20 @@
                     <span class="work-binding-state completed">Completed cleanly</span>
                   </div>
                   <ol class="execution-list">
-                    <li class="tool-group-event complete">
-                      <div class="tool-group-card">
-                        <button class="tool-group-toggle" type="button" aria-expanded="false" data-tool-group-toggle>
-                          <span class="tool-group-chevron" data-icon="chevron-right"></span>
-                          <span class="tool-group-icon" data-icon="search"></span>
-                          <span class="tool-group-copy">
-                            <strong>Ran 4 read-only tools</strong>
-                            <small>file_read · grep · glob · lsp_diagnostics</small>
+                    <li class="tool-run-event complete">
+                      <div class="tool-run-card">
+                        <button class="tool-run-toggle" type="button" aria-expanded="false" data-tool-run-toggle>
+                          <span class="tool-run-status" data-icon="check"></span>
+                          <span class="tool-run-copy">
+                            <strong><code>file_read</code><span>registry.ts</span></strong>
                           </span>
-                          <span class="tool-group-count">4</span>
+                          <span class="tool-run-meta">
+                            <span class="tool-run-count">4</span>
+                            <span class="tool-run-state">Completed</span>
+                          </span>
+                          <span class="tool-run-chevron" data-icon="chevron-right"></span>
                         </button>
-                        <div class="tool-group-children" data-tool-group-children hidden>
+                        <div class="tool-run-list" data-tool-run-list hidden>
                           <div class="tool-child">
                             <button type="button" aria-expanded="false" data-tool-child-toggle>
                               <span class="tool-child-status" data-icon="check"></span>
@@ -277,6 +279,9 @@
                           </div>
                         </div>
                       </div>
+                    </li>
+                    <li class="work-commentary-event">
+                      <p>I finished mapping the readers. Next I am applying the protected-path change.</p>
                     </li>
                     <li class="tool-call-event complete">
                       <div class="tool-call-card">

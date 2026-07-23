@@ -8,10 +8,8 @@ import {
 } from "react";
 import {
   ChevronDown,
-  ChevronRight,
   CircleAlert,
   Info,
-  Sparkles,
   TriangleAlert,
 } from "lucide-react";
 import {
@@ -19,7 +17,6 @@ import {
   type AgentDescriptor,
   type ExecutionModelBindingSummary,
   type ProfileName,
-  type ReasoningPart,
   type SessionExecutionInputCheckpoint,
   type SessionExecutionRecord,
   type SessionMessage,
@@ -37,7 +34,7 @@ import {
   stabilizeExecutionWorkstreamProjection,
 } from "../../lib/execution-workstream";
 import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
-import { groupReadOnlyToolParts } from "../../lib/group-tools";
+import { buildToolRunTimeline } from "../../lib/tool-runs";
 import { formatRelativeTime } from "../../lib/time-format";
 import { executionVisualKind, presentExecutionStatus } from "../../lib/execution-status-presentation";
 import { STATUS_TONE_CLASS, statusVisual } from "../../lib/status-visuals";
@@ -47,9 +44,10 @@ import { StatusGlyph } from "../primitives/StatusGlyph";
 import { useStatusTransition } from "../primitives/useStatusTransition";
 import { CompressionBlock } from "./CompressionBlock";
 import { DelegationCard } from "./DelegationCard";
-import { GroupedToolCard } from "./GroupedToolCard";
+import { ReasoningBlock } from "./ReasoningBlock";
 import { RecoveryNotice } from "./RecoveryNotice";
 import { ToolCard } from "./ToolCard";
+import { ToolRunCard } from "./ToolRunCard";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 100;
 
@@ -127,31 +125,6 @@ export function retainExecutionWorkstreamUiState(
       clearExecutionWorkstreamUiState(slug, routeScopeId);
     });
   };
-}
-
-function ReasoningBlock({ part }: { part: ReasoningPart }) {
-  const [expanded, setExpanded] = useState(false);
-  const streaming = !part.completedAt;
-
-  return (
-    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
-      <button
-        type="button"
-        className="flex w-full cursor-pointer select-none items-center gap-2 px-3 py-2 text-left text-[12px] text-text-tertiary hover:bg-bg-hover"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-      >
-        <ChevronRight size={12} className={`transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} />
-        <Sparkles size={12} className={`text-text-muted ${streaming ? "animate-streaming" : ""}`} aria-hidden="true" />
-        <span>{streaming ? "Thinking…" : "Reasoning"}</span>
-      </button>
-      {expanded && (
-        <div className="border-t border-border-subtle px-3 pb-2 text-[13px] italic leading-5 text-text-secondary">
-          <MarkdownContent isStreaming={streaming}>{part.text}</MarkdownContent>
-        </div>
-      )}
-    </div>
-  );
 }
 
 function selectionLabel(selection: { model: string; variant?: string }): string {
@@ -315,6 +288,7 @@ export function PartRenderer({
 function MsgAgent({
   message,
   parts = message.parts,
+  showMeta = true,
   identity,
   projectSlug,
   focusStoreSessionId,
@@ -323,6 +297,7 @@ function MsgAgent({
 }: {
   message: SessionMessage;
   parts?: readonly SessionPart[];
+  showMeta?: boolean;
   identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
@@ -332,15 +307,8 @@ function MsgAgent({
   return (
     <div className="min-w-0 max-w-[740px]" data-message-kind="agent">
       <div className="msg-parts">
-        {groupReadOnlyToolParts([...parts]).map((entry) => {
-          const partKind = entry.type === "grouped-tools" || entry.type === "tool" ? "tool" : "content";
-          if (entry.type === "grouped-tools") {
-            return (
-              <div key={entry.id} className="conversation-part" data-conversation-part={partKind}>
-                <GroupedToolCard tools={entry.tools} projectSlug={projectSlug} sessionId={focusStoreSessionId} />
-              </div>
-            );
-          }
+        {parts.map((entry) => {
+          const partKind = entry.type === "tool" ? "tool" : "content";
           return (
             <div key={entry.id} className="conversation-part" data-conversation-part={partKind}>
               <PartRenderer
@@ -354,13 +322,15 @@ function MsgAgent({
           );
         })}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-text-tertiary" data-testid={`agent-message-meta-${message.id}`}>
-        <span>{identity.displayName ?? identity.agentName}</span>
-        <span aria-hidden="true">·</span>
-        <span>{identity.profile}</span>
-        <span aria-hidden="true">·</span>
-        <time dateTime={new Date(message.createdAt).toISOString()}>{formatRelativeTime(message.createdAt)}</time>
-      </div>
+      {showMeta && (
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-text-tertiary" data-testid={`agent-message-meta-${message.id}`}>
+          <span>{identity.displayName ?? identity.agentName}</span>
+          <span aria-hidden="true">·</span>
+          <span>{identity.profile}</span>
+          <span aria-hidden="true">·</span>
+          <time dateTime={new Date(message.createdAt).toISOString()}>{formatRelativeTime(message.createdAt)}</time>
+        </div>
+      )}
     </div>
   );
 }
@@ -368,6 +338,7 @@ function MsgAgent({
 function SessionMessageView({
   message,
   parts = message.parts,
+  showMeta = true,
   identity,
   projectSlug,
   focusStoreSessionId,
@@ -377,6 +348,7 @@ function SessionMessageView({
 }: {
   message: SessionMessage;
   parts?: readonly SessionPart[];
+  showMeta?: boolean;
   identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
@@ -401,6 +373,7 @@ function SessionMessageView({
     <MsgAgent
       message={message}
       parts={parts}
+      showMeta={showMeta}
       identity={identity}
       projectSlug={projectSlug}
       focusStoreSessionId={focusStoreSessionId}
@@ -489,6 +462,10 @@ function WorkDisclosure({
   continuationExecutionNumber?: number;
   buttonRef: (button: HTMLButtonElement | null) => void;
 }) {
+  const timeline = useMemo(
+    () => buildToolRunTimeline(execution.workMessages),
+    [execution.workMessages],
+  );
   const status = presentExecutionStatus(execution.record.status, checkpoint);
   const visualKind = executionVisualKind(execution.record.status, checkpoint);
   const statusTransition = useStatusTransition(execution.id, visualKind);
@@ -560,19 +537,36 @@ function WorkDisclosure({
             <span aria-hidden="true">·</span>
             <span className="font-mono">{modelBindingLabel(execution.record.binding)}</span>
           </div>
-          {execution.workMessages.map((slice) => (
-            <SessionMessageView
-              key={slice.message.id}
-              message={slice.message}
-              parts={slice.parts}
-              identity={identity}
-              projectSlug={projectSlug}
-              focusStoreSessionId={focusStoreSessionId}
-              childSessionLinks={execution.childSessionLinks}
-              agents={agents}
-              onInspectModelAudit={onInspectModelAudit}
-            />
-          ))}
+          {timeline.map((entry) => entry.kind === "tool-run"
+            ? (
+              <div
+                key={entry.id}
+                className="conversation-part"
+                data-conversation-part="tool"
+              >
+                <ToolRunCard
+                  id={entry.id}
+                  items={entry.items}
+                  tools={entry.tools}
+                  projectSlug={projectSlug}
+                  sessionId={focusStoreSessionId}
+                />
+              </div>
+            )
+            : (
+              <SessionMessageView
+                key={entry.id}
+                message={entry.message}
+                parts={entry.parts}
+                showMeta={entry.showMeta}
+                identity={identity}
+                projectSlug={projectSlug}
+                focusStoreSessionId={focusStoreSessionId}
+                childSessionLinks={execution.childSessionLinks}
+                agents={agents}
+                onInspectModelAudit={onInspectModelAudit}
+              />
+            ))}
           {status.productStatus === "stopped" && status.detail && (
             <div
               className="rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[11px] text-text-secondary"

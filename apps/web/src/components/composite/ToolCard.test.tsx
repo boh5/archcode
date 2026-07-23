@@ -74,7 +74,7 @@ mock.module("lucide-react", () => ({
   Ban: () => null,
   Calendar: () => null,
   Check: () => null,
-  ChevronRight: () => null,
+  ChevronRight: (props: Record<string, unknown>) => ({ type: "svg", props }),
   Clock: () => null,
   Clock3: () => null,
   Circle: () => null,
@@ -210,6 +210,10 @@ describe("ToolCard strict result consumer", () => {
     expect(textContent(collapsed)).not.toContain("canonical preview");
     const button = findByType(collapsed, "button")!;
     expect(button.props?.["aria-expanded"]).toBe(false);
+    const summaryChildren = childrenOf(button);
+    expect(isElement(summaryChildren[0]) ? summaryChildren[0].props?.["data-tool-visual-kind"] : undefined).toBe("completed");
+    const lastSummaryChild = summaryChildren.at(-1);
+    expect(isElement(lastSummaryChild) ? lastSummaryChild.type : undefined).toBe("svg");
 
     stateValues = [true, false];
     stateIndex = 0;

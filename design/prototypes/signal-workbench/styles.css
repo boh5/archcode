@@ -1146,93 +1146,109 @@ kbd {
   line-height: 1.45;
 }
 
-.execution-list li.tool-group-event {
+.execution-list li.tool-run-event {
   min-height: 0;
   display: block;
   padding: 10px 4px;
 }
 
-.tool-group-card {
+.execution-list li.work-commentary-event {
+  min-height: 0;
+  display: block;
+  padding: 10px 4px;
+}
+
+.execution-list li.work-commentary-event p {
+  max-width: 68ch;
+  color: var(--ink-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.tool-run-card {
   overflow: hidden;
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   background: var(--surface-raised);
 }
 
-.tool-group-toggle {
+.tool-run-toggle {
   width: 100%;
-  min-height: 44px;
+  min-height: 40px;
   display: grid;
-  grid-template-columns: 16px 24px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto 12px;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 6px 10px;
   border: 0;
   color: var(--ink-secondary);
   background: transparent;
   text-align: left;
 }
 
-.tool-group-toggle:hover {
+.tool-run-toggle:hover {
   background: var(--surface-hover);
 }
 
-.tool-group-chevron {
+.tool-run-chevron {
   color: var(--ink-muted);
   transition: transform 160ms ease;
 }
 
-.tool-group-chevron svg {
-  width: 12px;
-  height: 12px;
+.tool-run-chevron svg {
+  width: 10px;
+  height: 10px;
 }
 
-.tool-group-toggle[aria-expanded="true"] .tool-group-chevron {
+.tool-run-toggle[aria-expanded="true"] .tool-run-chevron {
   transform: rotate(90deg);
 }
 
-.tool-group-icon {
-  width: 22px;
-  height: 22px;
+.tool-run-status {
+  width: 18px;
+  height: 18px;
   display: grid;
   place-items: center;
   border-radius: 4px;
-  color: var(--brand);
-  background: var(--brand-field);
+  color: var(--success);
+  background: var(--success-field);
 }
 
-.tool-group-icon svg {
-  width: 12px;
-  height: 12px;
+.tool-run-status svg {
+  width: 11px;
+  height: 11px;
 }
 
-.tool-group-copy {
+.tool-run-copy {
   min-width: 0;
 }
 
-.execution-list .tool-group-copy strong,
-.tool-group-copy small {
+.execution-list .tool-run-copy strong {
   overflow: hidden;
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.execution-list .tool-group-copy strong {
   margin: 0;
   color: var(--ink-secondary);
   font-size: 10px;
   font-weight: 650;
 }
 
-.tool-group-copy small {
-  margin-top: 3px;
-  color: var(--ink-muted);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 8px;
+.tool-run-copy code {
+  flex: none;
+  font-size: 10px;
 }
 
-.tool-group-count {
+.tool-run-copy strong span {
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.tool-run-count {
   min-width: 22px;
   padding: 3px 6px;
   border-radius: 4px;
@@ -1243,12 +1259,25 @@ kbd {
   text-align: center;
 }
 
-.tool-group-children[hidden],
+.tool-run-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-run-state {
+  color: var(--success);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.tool-run-list[hidden],
 .tool-child-detail[hidden] {
   display: none;
 }
 
-.tool-group-children {
+.tool-run-list {
   display: flex;
   flex-direction: column;
   margin: 0 8px 8px 19px;

@@ -94,29 +94,41 @@ running:    user message → expanded Work
 
 - The binding row shows Lead/Profile, model/variant, and continuity state.
 - Timeline rows distinguish:
-  - grouped completed read-only tools;
-  - independent tool calls;
+  - collapsed Tool Runs;
+  - singleton tool calls;
   - delegated Agent work;
   - currently running command or tool.
 - Running work receives the lime field and pulse. Completed work uses green;
   delegation uses indigo.
 
-## Tool Aggregation and Expansion
+## Tool Runs and Expansion
 
 - Tool details remain inside Work; do not move them to the Context Inspector.
-- Aggregate only consecutive completed read-only calls and only at a count of
-  two or more.
-- Mixed read tools use `Ran N read-only tools`; one repeated tool may use a
-  semantic label such as `Read N items`.
-- Group expansion reveals all child ToolCards.
+- Within one Execution, project two or more consecutive ordinary tool calls as
+  one Tool Run, even when model steps create multiple Assistant messages.
+- Reasoning emitted around tool-calling steps stays inside the same Tool Run.
+  Rendered Assistant text, `delegate`, `ask_user`, Recovery, and Compaction are
+  hard boundaries.
+- While any call remains pending or running, the collapsed row shows the last
+  tool in authoritative order. This same last-entry rule applies to parallel
+  calls.
+- Once every call settles, the collapsed row returns to the first tool call.
+  Keep only a quiet numeric count; do not reintroduce semantic labels from the
+  retired read-only aggregation.
+- Use the same row grammar for Tool Runs and singleton ToolCards: status glyph
+  at the left edge, disclosure chevron at the right edge. A Tool Run differs
+  only by its numeric count.
+- Tool Run expansion reveals the flat ordered call list and its reasoning.
 - Each child ToolCard expands independently to show its path and result.
-- Independent calls retain the same expansion model.
+- A singleton call renders directly as one collapsed ToolCard, without an
+  additional Tool Run disclosure.
 - An expanded write ToolCard includes:
   1. input parameters;
   2. Diff or mutation preview;
   3. completion status;
   4. observed and stored output quantities.
-- Running, errored, write, permission, and delegated work remain independent.
+- `delegate`, `ask_user`, Recovery, and Compaction retain their dedicated
+  presentation.
 
 ## Context Inspector
 

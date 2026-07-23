@@ -82,7 +82,7 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
         type="button"
         disabled={!hasDetails}
         aria-expanded={hasDetails ? expanded : undefined}
-        className={`grid min-h-10 w-full select-none grid-cols-[18px_auto_minmax(0,1fr)_auto_auto_12px] items-center gap-2 px-2.5 py-1.5 text-left transition-colors duration-[var(--motion-hover)] max-[560px]:grid-cols-[18px_auto_minmax(0,1fr)_auto_12px] ${
+        className={`grid min-h-10 w-full select-none grid-cols-[18px_minmax(0,1fr)_auto_12px] items-center gap-2 px-2.5 py-1.5 text-left transition-colors duration-[var(--motion-hover)] ${
           hasDetails ? "cursor-pointer hover:bg-bg-hover" : "cursor-default disabled:opacity-100"
         }`}
         onClick={() => { if (hasDetails) setExpanded((value) => !value); }}
@@ -93,20 +93,26 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
         >
           <StatusGlyph kind={visualKind} size={11} transition={statusTransition} />
         </span>
-        <span className={`shrink-0 whitespace-nowrap font-mono text-[12px] font-medium ${isUnknownResult ? "text-warning" : "text-text-secondary"}`}>
-          {ToolIcon ? <ToolIcon size={12} className="mr-1 inline-block align-text-bottom" /> : null}{part.toolName}
-        </span>
-        <span className="truncate text-[10px] text-text-secondary">{summary.primary}</span>
-        {summary.secondary && <span className="truncate text-[9px] text-text-tertiary max-[560px]:hidden">{summary.secondary}</span>}
-        {diffSummary && (
-          <span className="whitespace-nowrap font-mono text-[9px] tabular-nums text-text-tertiary max-[560px]:hidden">
-            {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
-            {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
-              ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
-              : null}
+        <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
+          <span className={`shrink-0 whitespace-nowrap font-mono text-[12px] font-medium ${isUnknownResult ? "text-warning" : "text-text-secondary"}`}>
+            {ToolIcon ? <ToolIcon size={12} className="mr-1 inline-block align-text-bottom" /> : null}{part.toolName}
           </span>
-        )}
-        <span className={`text-[9px] font-semibold ${part.state === "running" ? "text-signal-foreground" : STATUS_TONE_CLASS[tone]}`}>{isUnknownResult ? "Unknown" : STATUS_LABEL[part.state]}</span>
+          <span className="truncate text-[10px] text-text-secondary">{summary.primary}</span>
+          {summary.secondary && <span className="truncate text-[9px] text-text-tertiary max-[560px]:hidden">{summary.secondary}</span>}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {diffSummary && (
+            <span className="whitespace-nowrap font-mono text-[9px] tabular-nums text-text-tertiary max-[560px]:hidden">
+              {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
+              {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
+                ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
+                : null}
+            </span>
+          )}
+          <span className={`text-[9px] font-semibold ${part.state === "running" ? "text-signal-foreground" : STATUS_TONE_CLASS[tone]}`}>
+            {isUnknownResult ? "Unknown" : STATUS_LABEL[part.state]}
+          </span>
+        </span>
         {hasDetails && <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />}
       </button>
 
