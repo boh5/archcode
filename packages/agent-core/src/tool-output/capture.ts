@@ -93,7 +93,8 @@ export interface StreamingCaptureOptions {
   readonly committer: CaptureCommitter;
   readonly queueMaxBytes?: number;
   readonly queueWaitMs?: number;
-  readonly finalizeWaitMs?: number;
+  readonly completeWaitMs?: number;
+  readonly commitWaitMs?: number;
   readonly artifactMaxBytes?: number;
   readonly headMaxBytes?: number;
   readonly tailMaxBytes?: number;
@@ -188,7 +189,8 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
   private readonly preview = new PreviewAccumulator();
   private readonly queueMaxBytes: number;
   private readonly queueWaitMs: number;
-  private readonly finalizeWaitMs: number;
+  private readonly completeWaitMs: number;
+  private readonly commitWaitMs: number;
   private readonly artifactMaxBytes: number;
   private readonly headMaxBytes: number;
   private readonly tailMaxBytes: number;
@@ -226,7 +228,8 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
     this.signal = this.controller.signal;
     this.queueMaxBytes = options.queueMaxBytes ?? TOOL_OUTPUT_CAPTURE_QUEUE_MAX_BYTES;
     this.queueWaitMs = options.queueWaitMs ?? TOOL_OUTPUT_CAPTURE_QUEUE_WAIT_MS;
-    this.finalizeWaitMs = options.finalizeWaitMs ?? TOOL_OUTPUT_CAPTURE_FINALIZE_WAIT_MS;
+    this.completeWaitMs = options.completeWaitMs ?? TOOL_OUTPUT_CAPTURE_FINALIZE_WAIT_MS;
+    this.commitWaitMs = options.commitWaitMs ?? TOOL_OUTPUT_CAPTURE_FINALIZE_WAIT_MS;
     this.artifactMaxBytes = options.artifactMaxBytes ?? TOOL_OUTPUT_ARTIFACT_MAX_BYTES;
     this.headMaxBytes = options.headMaxBytes ?? TOOL_OUTPUT_ARTIFACT_HEAD_MAX_BYTES;
     this.tailMaxBytes = options.tailMaxBytes ?? TOOL_OUTPUT_ARTIFACT_TAIL_MAX_BYTES;
@@ -300,7 +303,7 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
           throw this.writerFailure ?? new ToolOutputError("TOOL_OUTPUT_UNAVAILABLE");
         }
         return this.materializeDraft(generation);
-      })(), this.finalizeWaitMs, () => this.enterDiscarding());
+      })(), this.completeWaitMs, () => this.enterDiscarding());
       if (!this.isActiveGeneration(generation)) throw new ToolOutputError("TOOL_OUTPUT_UNAVAILABLE");
       const output: CapturedOutput = {
         projection: draft.projection,
@@ -338,7 +341,7 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
           record.draft,
           () => this.isActiveGeneration(record.generation),
         ),
-        this.finalizeWaitMs,
+        this.commitWaitMs,
         () => this.enterDiscarding(),
       );
       if (!this.isActiveGeneration(record.generation)) {

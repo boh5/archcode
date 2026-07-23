@@ -350,7 +350,7 @@ describe("StreamingToolOutputCapture", () => {
     const capture = new StreamingToolOutputCapture({
       tempDir,
       input: { owner: OWNER, redactor: identityRedactor() },
-      finalizeWaitMs: 10,
+      commitWaitMs: 10,
       committer: {
         async commit(_draft: CapturedArtifactDraft, active) {
           generationIsActive = active;
