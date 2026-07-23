@@ -389,6 +389,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.preflight.outputs.tag }}
         run: |
