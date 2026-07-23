@@ -149,6 +149,8 @@ jobs:
           BUNDLE_DIR: ${{ steps.package.outputs.bundle_dir }}
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
+          mv "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/build-only-node_modules"
+
           binary="$BUNDLE_DIR/archcode"
           test "$("$binary" --version)" = "archcode $VERSION"
           "$binary" --help | grep -F "Usage: archcode [options]"

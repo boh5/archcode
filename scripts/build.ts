@@ -14,6 +14,7 @@ const cssTreePatchPath = join(rootDir, "node_modules", "css-tree", "data", "patc
 const cssTreePackagePath = join(rootDir, "node_modules", "css-tree", "package.json");
 const jsdomDefaultStyleSheetPath = join(rootDir, "node_modules", "jsdom", "lib", "jsdom", "browser", "default-stylesheet.css");
 const jsdomComputedStylePath = join(rootDir, "node_modules", "jsdom", "lib", "jsdom", "living", "css", "helpers", "computed-style.js");
+const jsdomXmlHttpRequestPath = join(rootDir, "node_modules", "jsdom", "lib", "jsdom", "living", "xhr", "XMLHttpRequest-impl.js");
 const supportedBuildTargets = new Set([
   "bun-darwin-arm64",
   "bun-darwin-x64",
@@ -148,6 +149,13 @@ async function compileBinary(buildTarget: Bun.Build.CompileTarget | undefined): 
       "If jsdom was upgraded and this file moved, update the path in scripts/build.ts.",
     );
   }
+  const jsdomXmlHttpRequestExists = await Bun.file(jsdomXmlHttpRequestPath).exists();
+  if (!jsdomXmlHttpRequestExists) {
+    throw new Error(
+      "jsdom XMLHttpRequest-impl.js not found at node_modules/jsdom/lib/jsdom/living/xhr/XMLHttpRequest-impl.js. " +
+      "If jsdom was upgraded and this file moved, update the path in scripts/build.ts.",
+    );
+  }
   const jsdomDefaultStyleSheetContents = await Bun.file(jsdomDefaultStyleSheetPath).text();
 
   const cssTreePatchJson = await Bun.file(cssTreePatchPath).text();
@@ -225,6 +233,29 @@ async function compileBinary(buildTarget: Bun.Build.CompileTarget | undefined): 
           /const defaultStyleSheet = fs\.readFileSync\([\s\S]*?\);\n/,
           `const defaultStyleSheet = ${JSON.stringify(jsdomDefaultStyleSheetContents)};\n`,
         );
+        return { contents, loader: "js" };
+      });
+      build.onLoad({ filter: /jsdom\/lib\/jsdom\/living\/xhr\/XMLHttpRequest-impl\.js$/ }, async (args) => {
+        const source = await Bun.file(args.path).text();
+        const workerPathDeclaration = 'const syncWorkerFile = require.resolve("./xhr-sync-worker.js");';
+        const workerCreation = "    syncWorker = new Worker(syncWorkerFile);";
+        if (!source.includes(workerPathDeclaration) || !source.includes(workerCreation)) {
+          throw new Error(
+            "jsdom synchronous XHR patch target not found in XMLHttpRequest-impl.js. " +
+            "If jsdom was upgraded, update scripts/build.ts.",
+          );
+        }
+        const contents = source
+          .replace(workerPathDeclaration, "const syncWorkerFile = undefined;")
+          .replace(
+            workerCreation,
+            [
+              "    if (!syncWorkerFile) {",
+              '      throw new Error("Synchronous XMLHttpRequest is not supported in packaged ArchCode");',
+              "    }",
+              workerCreation,
+            ].join("\n"),
+          );
         return { contents, loader: "js" };
       });
     },
