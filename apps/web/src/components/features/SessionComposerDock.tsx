@@ -1,25 +1,24 @@
 import { useEffect, useMemo, useRef } from "react";
 import { selectSessionFamilyHitl, useAttentionVisibleScopedHitl, useHitlProjectInitialized } from "../../store/hitl-store";
 import { useSessionFamilyActivity } from "../../store/session-runtime-store";
+import { useSessionStore } from "../../store/session-store";
 import { ConversationRail } from "../primitives/ConversationRail";
 import { ChatInput } from "./ChatInput";
 import { HitlDecisionCard } from "./HitlCard";
-import type { SessionGoalView } from "../../api/types";
 import { SessionGoalSummaryRow } from "./SessionGoalSummaryRow";
 import { ComposerQueueList } from "./ComposerQueueList";
 
 export function SessionComposerDock({
   slug,
   sessionId,
-  goal,
   focusHitlId,
 }: {
   slug: string;
   sessionId: string;
-  goal?: SessionGoalView;
   focusHitlId?: string | null;
 }) {
   const activity = useSessionFamilyActivity(slug, sessionId);
+  const goal = useSessionStore(sessionId, (state) => state.goal, slug);
   const hitlReady = useHitlProjectInitialized(slug);
   const attentionVisibleHitl = useAttentionVisibleScopedHitl([slug]);
   const familyHitl = useMemo(

@@ -115,6 +115,7 @@ describe("SessionComposerDock", () => {
       rootSessionId: "session-1",
       eventCursor: -1,
       agentName: "lead",
+      goal: activeGoal,
       ...modelState,
       pendingMessages: [{
         id: "queued-user",
@@ -191,7 +192,7 @@ describe("SessionComposerDock", () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <SettingsModalProvider><SessionComposerDock slug="project-1" sessionId="session-1" goal={activeGoal} /></SettingsModalProvider>
+          <SettingsModalProvider><SessionComposerDock slug="project-1" sessionId="session-1" /></SettingsModalProvider>
         </QueryClientProvider>,
       );
       await Promise.resolve();

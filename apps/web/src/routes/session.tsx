@@ -135,6 +135,7 @@ export function SessionRoute() {
         activeModelBinding,
         cwd,
         compression,
+        goal,
       } = session;
       store.getState().initializeFromSnapshot({
         messages,
@@ -156,6 +157,7 @@ export function SessionRoute() {
         activeModelBinding,
         cwd,
         compression,
+        goal,
       });
     }
   }, [session, sessionId, slug]);
@@ -284,7 +286,6 @@ export function SessionRoute() {
             <SessionComposerDock
               slug={slug}
               sessionId={rootSessionId}
-              goal={(session as import("../api/types").SessionWithGoal).goal}
               focusHitlId={focusHitlId}
             />
           </>
@@ -298,7 +299,6 @@ export function SessionRoute() {
       <ChatHeader
         slug={slug}
         sessionId={rootSessionId}
-        goal={(session as import("../api/types").SessionWithGoal).goal}
         projectRoot={projectRoot}
         onToggleInspector={toggleInspectorSurface}
         inspectorExpanded={layout.inspectorExpanded}
@@ -354,7 +354,6 @@ export function SessionRoute() {
           <SessionComposerDock
             slug={slug}
             sessionId={rootSessionId}
-            goal={(session as import("../api/types").SessionWithGoal).goal}
             focusHitlId={focusHitlId}
           />
         </>

@@ -56,6 +56,7 @@ beforeEach(() => {
     Object.defineProperty(globalThis, name, { value, configurable: true });
   }
   __resetWebSessionStoresForTest();
+  getWebSessionStore("session", "demo").setState({ goal });
   container = document.getElementById("root")!;
   root = createRoot(container);
 });
@@ -76,7 +77,6 @@ async function render(onToggleInspector = () => {}): Promise<void> {
     <ChatHeader
       slug="demo"
       sessionId="session"
-      goal={goal}
       projectRoot="/workspace"
       inspectorExpanded={false}
       onToggleInspector={onToggleInspector}

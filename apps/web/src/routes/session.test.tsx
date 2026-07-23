@@ -28,12 +28,14 @@ function createSession(input: {
   title: string;
   messages: NonNullable<Session["messages"]>;
   childSessionLinks?: ToolChildSessionLink[];
+  goal?: Session["goal"];
 }): Session {
   return {
     sessionId: input.id,
     cwd: "/workspace",
     rootSessionId: input.rootSessionId,
     parentSessionId: input.parentSessionId,
+    goal: input.goal,
     title: input.title,
     createdAt: 1,
     updatedAt: 1,
@@ -262,6 +264,114 @@ describe("SessionRoute focused view store behavior", () => {
   afterEach(() => {
     restoreGlobals();
     mock.restore();
+  });
+
+  test("hydrates the Session Goal and renders usage changes directly from the live store", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const initialGoal: NonNullable<Session["goal"]> = {
+      instanceId: "goal-live",
+      generation: 1,
+      objective: "Keep Goal usage live after settlement",
+      status: "active",
+      usage: {
+        tokens: {
+          inputTokens: 1_000,
+          outputTokens: 500,
+          totalTokens: 1_500,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+        },
+        executionTimeMs: 90_000,
+        executionCount: 1,
+      },
+      createdAt: 1,
+      activatedAt: 1,
+      updatedAt: 1,
+    };
+    const rootSession = createSession({
+      id: "root-session",
+      rootSessionId: "root-session",
+      title: "Live Goal usage",
+      messages: [],
+      goal: initialGoal,
+    });
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/api/projects") return Response.json({ projects: [] });
+      if (path === "/api/agents") return Response.json({ agents: [] });
+      if (path === "/api/projects/demo/todos") return Response.json({ todos: [] });
+      if (path === "/api/projects/demo/sessions/root-session") return Response.json(rootSession);
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderSessionRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        const row = container.querySelector('[data-testid="session-goal-summary-row"]');
+        expect(row?.textContent).toContain("1,500");
+        expect(getWebSessionStore("root-session", "demo").getState().goal).toEqual(initialGoal);
+      });
+
+      const updatedGoal: NonNullable<Session["goal"]> = {
+        ...initialGoal,
+        usage: {
+          tokens: {
+            inputTokens: 1_750,
+            outputTokens: 1_000,
+            totalTokens: 2_750,
+            reasoningTokens: 250,
+            cachedInputTokens: 500,
+          },
+          executionTimeMs: 150_000,
+          executionCount: 2,
+        },
+      };
+      await act(async () => {
+        getWebSessionStore("root-session", "demo").getState().applyRemoteEnvelope({
+          type: "event",
+          slug: "demo",
+          sessionId: "root-session",
+          eventId: 1,
+          createdAt: 2,
+          agentName: "lead",
+          payload: {
+            type: "session.goal_changed",
+            action: "usage_recorded",
+            instanceId: updatedGoal.instanceId,
+            generation: updatedGoal.generation,
+            goal: updatedGoal,
+            status: updatedGoal.status,
+            occurredAt: 2,
+          },
+        });
+      });
+
+      await waitFor(() => {
+        const row = container.querySelector('[data-testid="session-goal-summary-row"]');
+        expect(row?.textContent).toContain("2,750");
+        expect(row?.textContent).not.toContain("1,500");
+      });
+      expect(fetchMock.mock.calls.filter(([input]) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        return new URL(url, "http://localhost").pathname === "/api/projects/demo/sessions/root-session";
+      })).toHaveLength(1);
+    } finally {
+      await act(async () => reactRoot.unmount());
+      queryClient.clear();
+      dom.window.close();
+    }
   });
 
   test("opens the Context inspector when an invalidated message requests model details", async () => {

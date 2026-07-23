@@ -1,5 +1,4 @@
 import type { SessionExecutionRecord } from "@archcode/protocol";
-import type { SessionGoalView } from "../../api/types";
 import { useSessionStore } from "../../store/session-store";
 import { TodoProgressButton } from "./TodoProgressButton";
 import { InspectorToggleButton } from "./InspectorToggleButton";
@@ -12,7 +11,6 @@ import { presentSessionGoalStatus } from "../../lib/session-goal-presentation";
 interface ChatHeaderProps {
   slug: string;
   sessionId: string;
-  goal?: SessionGoalView;
   projectRoot?: string;
   onToggleInspector: () => void;
   inspectorExpanded: boolean;
@@ -23,8 +21,9 @@ function formatModelBinding(execution: SessionExecutionRecord): string {
   return execution.binding.selection.variant ? `${model} · ${execution.binding.selection.variant}` : model;
 }
 
-export function ChatHeader({ slug, sessionId, goal, projectRoot, onToggleInspector, inspectorExpanded }: ChatHeaderProps) {
+export function ChatHeader({ slug, sessionId, projectRoot, onToggleInspector, inspectorExpanded }: ChatHeaderProps) {
   const title = useSessionStore(sessionId, (state) => state.title, slug);
+  const goal = useSessionStore(sessionId, (state) => state.goal, slug);
   const stats = useSessionStore(sessionId, (state) => state.stats, slug);
   const cwd = useSessionStore(sessionId, (state) => state.cwd, slug);
   const executions = useSessionStore(sessionId, (state) => state.executions, slug);
