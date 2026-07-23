@@ -12,3 +12,4 @@ apps/server/src/web-manifest.ts
 __test_tmp__/
 __test__/
 .turbo/
+docs/interview-prep/
