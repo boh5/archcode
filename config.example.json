@@ -1,0 +1,40 @@
+{
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenAI-compatible provider",
+      "options": {
+        "baseURL": "http://localhost:8090/v1",
+        "apiKey": "replace-me"
+      },
+      "models": {
+        "your-model-id": {
+          "name": "Your model",
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "profiles": {
+    "principal": {
+      "model": "local:your-model-id"
+    },
+    "deep": {
+      "model": "local:your-model-id"
+    },
+    "fast": {
+      "model": "local:your-model-id"
+    }
+  }
+}

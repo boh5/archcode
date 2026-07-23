@@ -3,6 +3,7 @@
 import type { BunPlugin } from "bun";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, extname, join, relative, sep } from "node:path";
+import { readReleaseVersion } from "./release";
 
 const rootDir = join(import.meta.dir, "..");
 const webDistDir = join(rootDir, "apps", "web", "dist");
@@ -13,6 +14,12 @@ const cssTreePatchPath = join(rootDir, "node_modules", "css-tree", "data", "patc
 const cssTreePackagePath = join(rootDir, "node_modules", "css-tree", "package.json");
 const jsdomDefaultStyleSheetPath = join(rootDir, "node_modules", "jsdom", "lib", "jsdom", "browser", "default-stylesheet.css");
 const jsdomComputedStylePath = join(rootDir, "node_modules", "jsdom", "lib", "jsdom", "living", "css", "helpers", "computed-style.js");
+const supportedBuildTargets = new Set([
+  "bun-darwin-arm64",
+  "bun-darwin-x64",
+  "bun-linux-arm64",
+  "bun-linux-x64-baseline",
+]);
 
 async function collectFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -48,7 +55,21 @@ function toBuildImportPath(path: string): string {
   return importPath.startsWith(".") ? importPath : `./${importPath}`;
 }
 
-async function writeProductionEntrypoint(): Promise<void> {
+function readBuildTarget(): Bun.Build.CompileTarget | undefined {
+  const target = Bun.env.ARCHCODE_BUILD_TARGET;
+  if (!target) {
+    return undefined;
+  }
+  if (!supportedBuildTargets.has(target)) {
+    throw new Error(
+      `Unsupported ARCHCODE_BUILD_TARGET ${JSON.stringify(target)}. ` +
+      `Expected one of: ${[...supportedBuildTargets].join(", ")}`,
+    );
+  }
+  return target as Bun.Build.CompileTarget;
+}
+
+async function writeProductionEntrypoint(version: string): Promise<void> {
   const indexStat = await stat(join(webDistDir, "index.html")).catch(() => undefined);
   if (!indexStat?.isFile()) {
     throw new Error("apps/web/dist/index.html is missing. Run the Vite build before compiling.");
@@ -73,7 +94,10 @@ async function writeProductionEntrypoint(): Promise<void> {
     ...entries,
     "]);",
     "",
-    "startProductionArchCode(embeddedWebAssets);",
+    "startProductionArchCode(embeddedWebAssets, {",
+    "  args: Bun.argv.slice(2),",
+    `  version: ${JSON.stringify(version)},`,
+    "});",
     "",
   ].join("\n");
 
@@ -94,7 +118,7 @@ async function runWebBuild(): Promise<void> {
   }
 }
 
-async function compileBinary(): Promise<void> {
+async function compileBinary(buildTarget: Bun.Build.CompileTarget | undefined): Promise<void> {
   // Guard: verify css-tree package exists in node_modules
   const cssTreePackageExists = await Bun.file(cssTreePackagePath).exists();
   if (!cssTreePackageExists) {
@@ -210,11 +234,12 @@ async function compileBinary(): Promise<void> {
 
   const result = await Bun.build({
     entrypoints: [buildEntrypointPath],
-    outdir: join(rootDir, "dist"),
-    naming: "[name].[ext]",
     minify: true,
     target: "bun",
-    compile: true,
+    compile: {
+      ...(buildTarget ? { target: buildTarget } : {}),
+      outfile,
+    },
     plugins: [cssTreePatchPlugin],
   });
 
@@ -225,21 +250,17 @@ async function compileBinary(): Promise<void> {
     throw new Error(`Bun.build() failed with ${result.logs.length} errors`);
   }
 
-  const builtBinary = join(rootDir, "dist", "main");
-  if (builtBinary !== outfile) {
-    const { rename } = await import("node:fs/promises");
-    await rename(builtBinary, outfile);
-  }
-
   const bundleArtifact = join(rootDir, "dist", "main.js");
   await Bun.file(bundleArtifact).exists() && await import("node:fs/promises").then((fs) => fs.unlink(bundleArtifact));
 }
 
 await rm(buildTempDir, { recursive: true, force: true });
 try {
+  const version = await readReleaseVersion();
+  const buildTarget = readBuildTarget();
   await runWebBuild();
-  await writeProductionEntrypoint();
-  await compileBinary();
+  await writeProductionEntrypoint(version);
+  await compileBinary(buildTarget);
 } finally {
   await rm(buildTempDir, { recursive: true, force: true });
 }

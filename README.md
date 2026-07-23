@@ -15,17 +15,40 @@ Unlike a coding CLI that runs a task and exits, ArchCode keeps the engineering w
 - **Bring your own models** — configure official AI SDK language Providers or custom OpenAI-compatible/Responses endpoints and route work through `principal`, `deep`, and `fast` Profiles.
 - **Self-hosted by default** — your workspaces stay on the machine where ArchCode runs.
 
-## Quick start
+## Install from a GitHub Release
 
-### 1. Install dependencies
+Download the archive for your machine from the
+[GitHub Releases page](https://github.com/boh5/archcode/releases), extract it,
+and verify the executable before starting it.
 
-ArchCode uses [Bun](https://bun.sh/) and a Turborepo workspace.
+| System | Architecture | Release asset |
+|---|---|---|
+| macOS 13 or newer | Apple silicon (arm64) | `archcode-aarch64-apple-darwin.tar.gz` |
+| macOS 13 or newer | Intel (x64) | `archcode-x86_64-apple-darwin.tar.gz` |
+| Linux with glibc 2.17 or newer | arm64 | `archcode-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux with glibc 2.17 or newer | x64 | `archcode-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows 10/11 | WSL2 | Use the Linux asset matching the WSL architecture |
+
+Each Release also includes `SHA256SUMS` and `release-manifest.json`. After
+checking the checksum, verify the binary reports the expected version:
 
 ```sh
-bun install
+./archcode --version
 ```
 
-### 2. Configure models
+The macOS archives produced by the current workflow are not signed or
+notarized. macOS may quarantine the binary; only after its checksum matches the
+official Release, explicitly allow it in **System Settings → Privacy &
+Security**, or remove quarantine from that specific file with
+`xattr -d com.apple.quarantine ./archcode`.
+
+On Windows, install WSL2 and run ArchCode inside the Linux environment. Its
+configuration lives at `~/.archcode/config.json` inside WSL, while a Windows
+browser can open `http://localhost:4096`. Keep registered repositories in the
+WSL Linux filesystem for reliable permissions and better filesystem
+performance. Native Windows execution is not supported in this release.
+
+### Configure models
 
 Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses a custom OpenAI-compatible local endpoint and assigns the same model to all three required Profiles:
 
@@ -58,6 +81,17 @@ Create `~/.archcode/config.json`. ArchCode reads this single server-wide file fo
 
 Provider IDs and model IDs combine as `provider:modelId`, such as `local:glm-5`. The ID is the runtime namespace; `provider.name` is display-only. Provider factory options are literal JSON values and are not expanded from environment-variable expressions. See [provider configuration](docs/configuration.md) for all supported packages, secret handling, and custom endpoints.
 
+The downloaded archive also contains `config.example.json`, which can be copied
+as a starting point:
+
+```sh
+mkdir -p ~/.archcode
+install -m 600 config.example.json ~/.archcode/config.json
+```
+
+Replace the placeholder endpoint, API key, model ID, and limits before starting
+ArchCode.
+
 Existing development checkouts can copy the former repository-local file once:
 
 ```sh
@@ -69,24 +103,33 @@ ArchCode does not read, migrate, or fall back to the old file.
 
 The Web UI edits the same global file from **Settings → Models / Profiles**. Saving validates, prepares, atomically writes, and immediately applies Models and Profile defaults. MCP, Memory, and GitHub integration changes are reported as the precise restart-required sections. Direct edits to the file have no watcher; save through Settings or restart to load them.
 
-### 3. Start ArchCode
-
-For local development or a quick trial:
+### Start ArchCode
 
 ```sh
+./archcode
+```
+
+By default, ArchCode listens on port `4096`. Open
+`http://localhost:4096` in your browser and add a project workspace.
+
+## Develop from source
+
+ArchCode uses [Bun](https://bun.sh/) and a Turborepo workspace.
+
+```sh
+bun install
 bun run dev
 ```
 
-This starts the Hono API/SSE server and the React Web UI. By default, the server listens on port `4096`, and the Vite web app proxies API calls during development.
-
-For a production build:
+For a local production build:
 
 ```sh
 bun run build
 ./dist/archcode
 ```
 
-Then open the Web UI in your browser and add a project workspace.
+Development mode starts the Hono API/SSE server and the React Web UI through
+Vite. The Vite app proxies API calls to the server.
 
 ## Using the workbench
 

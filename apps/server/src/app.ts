@@ -33,6 +33,7 @@ export interface CreateServerAppOptions {
   dev?: boolean;
   embeddedWebAssets?: EmbeddedWebAssets;
   password?: string;
+  version?: string;
 }
 
 export function createServerApp(
@@ -80,7 +81,10 @@ export function createServerApp(
     });
   }
 
-  app.get("/api/health", (c) => c.json({ ok: true }));
+  app.get("/api/health", (c) => c.json({
+    ok: true,
+    version: options.version ?? "development",
+  }));
 
   const projects = createProjectsRoutes(serverRuntime, {
     onProjectRegistered: async (project) => {

@@ -7,6 +7,7 @@ import type { EmbeddedWebAssets } from "./serve-web";
 
 export interface BootServerOptions {
   embeddedWebAssets?: EmbeddedWebAssets;
+  version?: string;
 }
 
 export async function bootServer(
@@ -19,6 +20,7 @@ export async function bootServer(
     dev,
     embeddedWebAssets: options.embeddedWebAssets,
     password: Bun.env[ENV_SERVER_PASSWORD],
+    version: options.version,
   });
 
   await runtime.recoverSessionContinuations();
@@ -29,7 +31,8 @@ export async function bootServer(
   });
   setupGracefulShutdown(server, runtime);
 
-  console.info(`${PRODUCT_DISPLAY_NAME} server running at ${url}`);
+  const versionLabel = options.version ? ` v${options.version}` : "";
+  console.info(`${PRODUCT_DISPLAY_NAME}${versionLabel} server running at ${url}`);
 
   if (Bun.env[ENV_OPEN_BROWSER]) {
     // Browser opening will be implemented when the web UI workflow is ready.

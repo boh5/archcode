@@ -22,10 +22,10 @@ const mockRuntime = {
 
 describe("createServerApp", () => {
   test("returns the health endpoint response", async () => {
-    const { app } = createServerApp(mockRuntime, { dev: true });
+    const { app } = createServerApp(mockRuntime, { dev: true, version: "1.2.3" });
     const res = await app.request("/api/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, version: "1.2.3" });
   });
 
   test("mounts the runtime Agent catalog endpoint", async () => {
