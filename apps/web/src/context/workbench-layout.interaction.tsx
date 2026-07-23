@@ -10,11 +10,14 @@ const originals = new Map<string, PropertyDescriptor | undefined>();
 interface MutableMediaQuery {
   media: MediaQueryList;
   setMatches: (matches: boolean) => void;
+  flushAnimationFrames: (count: number) => void;
 }
 
 function installDom(initialMatches = true): JSDOM & { mutableMedia: MutableMediaQuery } {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  const animationFrames = new Map<number, FrameRequestCallback>();
+  let animationFrameId = 0;
   const media = {
     matches: initialMatches,
     media: "(max-width: 760px)",
@@ -33,6 +36,14 @@ function installDom(initialMatches = true): JSDOM & { mutableMedia: MutableMedia
     HTMLElement: dom.window.HTMLElement,
     MouseEvent: dom.window.MouseEvent,
     IS_REACT_ACT_ENVIRONMENT: true,
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      animationFrameId += 1;
+      animationFrames.set(animationFrameId, callback);
+      return animationFrameId;
+    },
+    cancelAnimationFrame: (id: number) => {
+      animationFrames.delete(id);
+    },
   })) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
     Object.defineProperty(globalThis, name, { value, configurable: true });
@@ -44,6 +55,13 @@ function installDom(initialMatches = true): JSDOM & { mutableMedia: MutableMedia
         media.matches = matches;
         const event = { matches, media: media.media } as MediaQueryListEvent;
         for (const listener of listeners) listener(event);
+      },
+      flushAnimationFrames: (count: number) => {
+        for (let frame = 0; frame < count; frame += 1) {
+          const pending = Array.from(animationFrames.values());
+          animationFrames.clear();
+          for (const callback of pending) callback(performance.now());
+        }
       },
     },
   });
@@ -143,7 +161,7 @@ describe("WorkbenchLayout mobile inspector", () => {
     openNavigation.focus();
 
     await act(async () => dom.mutableMedia.setMatches(false));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
     expect(container.querySelector('[data-testid="mobile-mode"]')?.textContent).toBe("false");
     expect(container.querySelector('[data-testid="navigation-open"]')?.textContent).toBe("false");
     expect(container.querySelector('[data-testid="inspector-open"]')?.textContent).toBe("false");
@@ -163,7 +181,7 @@ describe("WorkbenchLayout mobile inspector", () => {
     await act(async () => openInspector.click());
     openInspector.focus();
     await act(async () => dom.mutableMedia.setMatches(false));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
     expect(document.activeElement?.textContent).toBe("Inspector active tab");
 
     await act(async () => root.unmount());
@@ -179,7 +197,7 @@ describe("WorkbenchLayout mobile inspector", () => {
     const dashboard = container.querySelector('button[aria-label="Open dashboard"]') as HTMLButtonElement;
     dashboard.focus();
     await act(async () => dom.mutableMedia.setMatches(true));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Open work navigation");
 
     await act(async () => root.unmount());
@@ -195,7 +213,7 @@ describe("WorkbenchLayout mobile inspector", () => {
     const inspectorTab = Array.from(container.querySelectorAll('[role="tab"]')).find((element) => element.textContent === "Inspector active tab") as HTMLButtonElement;
     inspectorTab.focus();
     await act(async () => dom.mutableMedia.setMatches(true));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Open context inspector");
 
     await act(async () => root.unmount());
@@ -210,7 +228,7 @@ describe("WorkbenchLayout mobile inspector", () => {
 
     (container.querySelector('[role="separator"][aria-controls="project-sidebar"]') as HTMLElement).focus();
     await act(async () => dom.mutableMedia.setMatches(true));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Open work navigation");
 
     await act(async () => root.unmount());
@@ -225,7 +243,7 @@ describe("WorkbenchLayout mobile inspector", () => {
 
     (container.querySelector('[role="separator"][aria-controls="context-inspector"]') as HTMLElement).focus();
     await act(async () => dom.mutableMedia.setMatches(true));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Open context inspector");
 
     await act(async () => root.unmount());
@@ -256,7 +274,7 @@ describe("WorkbenchLayout mobile inspector", () => {
     document.body.append(replacement);
 
     focusElementAfterLayoutChange('button[aria-label="Expand project sidebar"]');
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => dom.mutableMedia.flushAnimationFrames(1));
     expect(document.activeElement).toBe(replacement);
 
     dom.window.close();
