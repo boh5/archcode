@@ -36,12 +36,12 @@ Bash input
 
 ## Hard-Cut Constraints
 
-- 删除 `tools/security/bash-classifier.ts`、security Bash `policy.ts/effects.ts/scopes.ts` 及其旧测试/导出；同步清理 security、permission、tools barrels 和 Bash builtin imports。删除 `ShellEffect*`、`attachShellEffects`、request/invocation `effects`、`bash-command` scope 和旧 `bash-exact.normalized/effects`。
+- Bash 权限只保留当前的有限语法分析、路径事实和单一决策边界；security、permission 与 builtin 之间保持单向依赖。
 - 删除 command allowlist、通用 Git/package/network 分类、unknown/mutating、parser-uncertain、opaque-interpreter、普通删除/重定向/Git push/SSH ask，以及对应 rule id、fixture 和兼容壳；只保留下述窄规则。
 - 新 Bash scope 固定为 `{ kind: "bash-exact", command, cwd, accesses }`。`command` 是 trimmed raw command，`cwd` 是 canonical structured cwd，`accesses` 是按 operation + path 排序去重的全部已提取 literal access：`{ operation: "read" | "write" | "delete" | "execute", path }[]`。
 - blocked state 只持久化 `SHA-256(stable JSON(exact scope))` fingerprint，不持久化未脱敏 raw scope。恢复后仅当新 ask fingerprint 完全相同才消费 `approve_once/approve_always`；scope 变化则创建新 HITL，deny 立即拒绝，当前已变为 allow 则忽略旧 decision 并执行。
 - raw command 命中 secret-content detector，或分析含上述动态引用时，ask 必须 `persistentApprovalEligible=false`。HITL redacted view 暴露该布尔值，Web 隐藏 “Always allow”，服务端拒绝伪造的 `approve_always`；`approve_once` 仍可执行。raw secret 不得进入 HITL display、blocked fingerprint 原文或 `permissions.json`。
-- 不自动、也不无条件删除 `.archcode/permissions.json`。本 Goal 明确保留的非 Bash scope 是 `tool-operation`、`file-path`、`web-origin`，只含这些 scope 的文件继续加载；含 `bash-command` 或旧形状 `bash-exact` 的文件整体以带文件路径和清理指引的 `ProjectApprovalLoadError` 失败。操作者可删除旧 Bash entries，或明确选择删除整文件；生产代码不迁移、不忽略、不 fallback。缺失文件只加载空内存，直到下一次 persistent approval 才创建。
+- `.archcode/permissions.json` 只按当前严格 Schema 加载；非法数据统一返回带文件路径的 `ProjectApprovalLoadError`。生产代码不识别或迁移其他格式。缺失文件只加载空内存，直到下一次 persistent approval 才创建。
 - 单一 `classifySensitivePath({ inputBasename, effectiveCanonicalPath })` 返回 `bashCredential` 与 `fileToolSensitive` 两个事实，避免消费者复制 regex。`bashCredential` 按 operation-aware effective path 判断，封闭集合为：`.env`/`.env.*`（排除 `.env.example/.sample/.template`）、`.npmrc/.pypirc/.netrc`、`*.pem/*.key/*.p12`、`id_rsa*/id_dsa*/id_ecdsa*/id_ed25519*`，以及 `.ssh/**`、`.aws/**`、`.azure/**`、`.config/gcloud/**`。`fileToolSensitive` 严格按原始 input basename 和现有规则判断，以保持 `file_read/file_write` 当前 symlink 行为；file edit 等其他非 Bash 合同不在本 Goal 改动。
 - `createProtectedPathPermission` 继续供 file/AST tools 使用，只删除其 Bash parser 分支；受保护路径事实仍只有一个 symlink-safe 生产来源。
 - 不新增 Policy Engine、规则 DSL、插件系统、命令知识库、sandbox abstraction、新 manager 或第二套路径模型。现有 Registry、scheduler、HITL 仅增加 fingerprint 传递/核对和 eligibility 展示合同。
@@ -91,6 +91,6 @@ Bash input
 ### AC-05：验证与完成证据充分
 
 - 回归覆盖 compound chain、wrapper 支持/不支持形状、cwd set、multi-path、redirection、source/destination、leaf symlink follow/non-follow、destination directory/symlink-to-directory、`mv/ln -T`、scope-bound resume、secret eligibility 和 deny 优先级；真实 Bash 进程测试继续覆盖 env、stdin、timeout、abort、signal 和 structured cwd。
-- 审计不存在 `ShellEffect`、`attachShellEffects`、旧 ask rule ids、command allowlist、Bash `bash-command` scope、旧 `normalized/effects` 或 compatibility export。
+- 审计生产代码只暴露当前 Bash 分析、权限决策和 approval schema。
 - `bun run typecheck`、`bun run test`、`bun run build`、`git diff --check` 全部退出码为 0。
 - Reviewer 逐项给出 AC-01 至 AC-05 的代码、测试、搜索和运行证据，并明确声明策略只覆盖静态可识别的明显误操作；不能以“测试通过”或“已保证安全”代替验收。

@@ -12,7 +12,6 @@ available. There is no terminal UI beyond printing the one-time Setup URL.
 Responsibilities:
 
 - Classify the single server-wide `~/.archcode/config.json` as setup, ready, or invalid.
-- Fail closed when the retired environment-password deployment path is still present.
 - Initialize provider and model configuration.
 - Register builtin tools, memory tools, LSP tools, and MCP tools.
 - Create project services and call `bootServer()`.

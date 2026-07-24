@@ -238,43 +238,4 @@ describe("ProjectApprovalManager", () => {
     expect(reloaded.listApprovals()).toHaveLength(2);
   });
 
-  test.each([
-    { kind: "bash-command", command: "bun", subcommands: ["test"], argumentMode: "any", effects: ["execute-code"] },
-    { kind: "bash-exact", normalized: "bun test", effects: ["execute-code"] },
-  ])("rejects a file containing legacy Bash scope $kind with cleanup guidance", async (scope) => {
-    writePermissionsFixture(JSON.stringify({
-      approvals: [{
-        id: crypto.randomUUID(),
-        scope,
-        display: "Legacy Bash approval",
-        reason: "Legacy",
-        grantedAt: new Date().toISOString(),
-      }],
-    }));
-
-    await expect(makeManager().load(WORKSPACE)).rejects.toThrow(/Remove every bash-command or old-shape bash-exact entry/);
-  });
-
-  test("rejects a mixed valid non-Bash and legacy Bash file with its path and cleanup guidance", async () => {
-    writePermissionsFixture(JSON.stringify({
-      approvals: [
-        {
-          id: crypto.randomUUID(), scope: FILE_SCOPE, display: "Write file", reason: "Valid non-Bash approval", grantedAt: new Date().toISOString(),
-        },
-        {
-          id: crypto.randomUUID(), scope: { kind: "bash-command", command: "bun" }, display: "Legacy Bash", reason: "Legacy", grantedAt: new Date().toISOString(),
-        },
-      ],
-    }));
-
-    let failure: unknown;
-    try {
-      await makeManager().load(WORKSPACE);
-    } catch (error) {
-      failure = error;
-    }
-    expect(failure).toBeInstanceOf(ProjectApprovalLoadError);
-    expect(String(failure)).toContain(PERMISSIONS_PATH);
-    expect(String(failure)).toContain("Remove every bash-command or old-shape bash-exact entry");
-  });
 });

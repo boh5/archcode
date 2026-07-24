@@ -7,8 +7,8 @@ Worktree：`/Users/bo/.codex/worktrees/019f91b2/archcode`
 
 ## 目标
 
-依据 `docs/plan/first-run-setup-authentication.md` 完成首次设置、可选密码登录与旧
-Basic Auth/ENV 启动链路的硬切实现，并通过独立审查与完整验证。
+依据 `docs/plan/first-run-setup-authentication.md` 完成首次设置与可选密码登录，
+并通过独立审查与完整验证。
 
 ## 执行记录
 
@@ -29,8 +29,6 @@ Basic Auth/ENV 启动链路的硬切实现，并通过独立审查与完整验�
   - Web 的 fetch/SSE 401 必须统一触发认证失效并卸载 Workbench。
   - Auth 增加密码输入字节上限、Session 数量上限和 credential generation，
     防止资源滥用及旧密码并发签发 Session。
-  - 原方案“旧 ENV fail-fast”与“仓库零出现旧 ENV 名称”冲突；验收修正为旧名称
-    只能存在于唯一 fail-fast guard、对应测试及迁移说明，正常认证路径零兼容。
 - 已实现并验证进程内一次性 `SetupGrant`；开始实现 `ServerAuthService`。
 - Config 领域已硬切到 `activateForStartup()`、create-only
   `initialize()` 与显式 `ServerConfigActivation`；`AgentRuntime` 不再读盘，也不
@@ -47,9 +45,8 @@ Basic Auth/ENV 启动链路的硬切实现，并通过独立审查与完整验�
 - Web 已在 Query、SSE 和 Router 外增加 `BootstrapGate`，复用现有
   Models/Profiles 受控组件，并增加 Login 与 Settings Security。REST/SSE 401
   共用认证失效入口，清空 Query cache 后卸载工作台。
-- 旧 Basic Auth、环境密码常量、Web password cookie、Runtime 隐式 Config
-  读取及旧 App factory 已硬删除；旧环境变量只剩唯一 fail-fast guard、测试和
-  迁移说明。
+- 认证仅由 Config、专用 Auth API 和 opaque Session Cookie 组成；Server 启动
+  不读取或识别其他密码来源。
 - 自审和真实浏览器流程发现并修复：
   - 嵌入式静态响应会覆盖外壳预写安全头，改为响应完成后统一附加
     `Referrer-Policy: no-referrer` 与 `X-Content-Type-Options: nosniff`。

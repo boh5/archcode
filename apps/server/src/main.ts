@@ -18,7 +18,6 @@ import { resolveCliInvocation } from "./cli";
 import { resolveLoggingConfig } from "./logging-config";
 import { readSourceProductVersion } from "./product-version";
 import { ArchCodeServerHost } from "./server-host";
-import { assertRetiredServerPasswordEnvAbsent } from "./legacy-auth-env";
 
 export { createRuntime, type AgentRuntime, type AgentRuntimeOptions } from "@archcode/agent-core";
 
@@ -33,7 +32,6 @@ async function main(
   logger: Logger,
   accessLog: boolean,
 ) {
-  assertRetiredServerPasswordEnvAbsent(Bun.env);
   const configService = new ServerConfigService();
   const compiled = import.meta.url.startsWith("file:///$bunfs/");
   const host = await ArchCodeServerHost.create({

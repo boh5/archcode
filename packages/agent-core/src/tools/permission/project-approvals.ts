@@ -116,7 +116,6 @@ export class ProjectApprovalManager {
     const fileMtime = file.lastModified;
     try {
       const raw = JSON.parse(await file.text());
-      assertNoLegacyBashApprovals(raw, filePath);
       const parsed = PermissionApprovalFileSchema.parse(raw);
       this.#workspaceRoot = workspaceRoot;
       this.#approvalFile = parsed;
@@ -193,25 +192,5 @@ export class ProjectApprovalManager {
 
   listApprovals(): ProjectApproval[] {
     return cloneApprovalFile(this.#approvalFile).approvals;
-  }
-}
-
-function assertNoLegacyBashApprovals(value: unknown, filePath: string): void {
-  if (value === null || typeof value !== "object") return;
-  const approvals = (value as { approvals?: unknown }).approvals;
-  if (!Array.isArray(approvals)) return;
-  const legacy = approvals.some((approval) => {
-    if (approval === null || typeof approval !== "object") return false;
-    const scope = (approval as { scope?: unknown }).scope;
-    if (scope === null || typeof scope !== "object") return false;
-    const record = scope as Record<string, unknown>;
-    return record.kind === "bash-command"
-      || (record.kind === "bash-exact" && (
-        !("command" in record) || !("cwd" in record) || !("accesses" in record)
-        || "normalized" in record || "effects" in record
-      ));
-  });
-  if (legacy) {
-    throw new Error(`Legacy Bash approvals are not supported in ${filePath}. Remove every bash-command or old-shape bash-exact entry, or delete the file explicitly, then retry.`);
   }
 }

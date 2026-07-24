@@ -214,10 +214,9 @@ Setup 的 Security 步骤默认勾选 `Require login`。用户取消时必须确
 - 密码变更撤销全部旧 Session，并为当前请求签发新 Session；移除密码后清空
   Session。
 
-彻底删除 `ARCHCODE_SERVER_PASSWORD`、现有 Basic Auth middleware 及相关
-Protocol 常量、测试和文档。若进程仍传入已退役的
-`ARCHCODE_SERVER_PASSWORD`，启动必须给出明确的 hard-cut 错误，不能静默忽略
-后变成无认证服务。开发模式不得再由“是否配置密码”推断。
+认证配置的唯一来源是 Config 中的 `auth.passwordHash`。Server 不读取任何
+环境变量密码，也不保留迁移守卫、兼容入口或特殊错误。开发模式由编译/显式
+Server 选项决定，不得由“是否配置密码”推断。
 
 ## 7. Web 首次设置
 
@@ -269,13 +268,10 @@ Protocol DTO。
 | `ServerConfigService.loadForStartup()` | `activateForStartup()` + Ready 前置条件 |
 | `createRuntime()` 内隐式读 Config | 显式注入 Config service 与同次产生的 activation |
 | 缺失 Config 的 fatal exit | Setup Mode |
-| `ARCHCODE_SERVER_PASSWORD` | `auth.passwordHash`；旧 ENV 存在时 fail-fast |
-| Basic Authorization | 登录 API + opaque Session Cookie |
 | 密码是否存在决定 dev/CORS | 编译/显式 Server 选项决定开发模式 |
 | Web 启动即连接 SSE | BootstrapGate 后才挂载 Workbench |
 
-不得保留环境变量密码、Basic Auth、旧启动 fallback、自动迁移、双路 Config
-读取或兼容别名。
+不得保留环境变量密码、启动兼容路径、自动迁移、双路 Config 读取或兼容别名。
 
 ## 10. 非目标
 
@@ -293,12 +289,11 @@ Protocol DTO。
    initialize，重构 Runtime factory，删除旧 `loadForStartup()` 隐式链路。
 2. **Server Host**：抽出单 listener/mode dispatcher、Setup Grant、受限 Setup
    API 和可选 Runtime 生命周期。
-3. **Auth**：增加严格 Config 字段、Argon2id、Session/Cookie、专用 Auth API，
-   删除环境变量 Basic Auth。
+3. **Auth**：增加严格 Config 字段、Argon2id、Session/Cookie 和专用 Auth API。
 4. **Web**：增加 BootstrapGate、Setup/Login/ConfigError 页面，抽取并复用
    Config editor，增加 Settings Security。
 5. **纵向清理**：更新 README、`docs/architecture.md`、`docs/web/architecture.md`
-   和 AGENTS；删除旧文案、常量、测试夹具和 fallback。
+   和 AGENTS；只保留当前架构文案和测试。
 
 每一步完成后保持可测试，但不以长期双路径兼容为代价拆分上线。
 
@@ -315,9 +310,8 @@ Protocol DTO。
 - 无密码时不登录；有密码时 API/SSE 全面受保护，密码错误受限速。
 - Config 和 API 永不返回明文密码或 Password Hash；Cookie 不进入 Web Storage。
 - 修改密码撤销旧 Session；Session 到期和重启进程都会使其失效。
-- `ARCHCODE_SERVER_PASSWORD` 只允许存在于唯一 fail-fast guard、对应测试和迁移
-  说明；Protocol 常量、Web Cookie、Basic Auth、Runtime secret 注入和正常认证
-  路径中不得存在。旧 Config 启动 fallback 必须为零。
+- 认证只读取 Config 与 opaque Session Cookie；生产代码、测试和当前文档不保留
+  其他认证入口的名称、检测、迁移说明或拒绝分支。
 - Server/Agent Core/Web 定向测试、全仓 typecheck/test/build、`git diff --check`
   通过；生产二进制在临时 HOME 完成首次设置、登录、刷新、重启和无密码路径验收。
 - 浏览器在 390px 和桌面宽度验证 Setup、错误、登录和工作台切换；控制台无错误，

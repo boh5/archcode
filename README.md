@@ -157,10 +157,6 @@ The optional password is configured only through first-run Setup or
 and uses an HttpOnly, process-local Session cookie. No password means no login;
 there is no local-versus-remote behavior branch.
 
-Upgrading from the retired Basic Auth deployment path requires unsetting
-`ARCHCODE_SERVER_PASSWORD`; ArchCode fails closed while that variable remains
-present so an old remote deployment cannot silently start without protection.
-
 ### Start ArchCode
 
 ```sh

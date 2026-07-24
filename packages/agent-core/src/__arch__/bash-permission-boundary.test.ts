@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dir, "../../../..");
@@ -18,18 +18,6 @@ function productionFiles(root: string): string[] {
 }
 
 describe("Bash permission hard-cut architecture", () => {
-  test("removes the legacy classifier, effects, policy, and scopes modules", () => {
-    const removed = [
-      "tools/security/bash-classifier.ts",
-      "tools/security/bash/effects.ts",
-      "tools/security/bash/parse.ts",
-      "tools/security/bash/policy.ts",
-      "tools/security/bash/scopes.ts",
-    ].map((path) => join(agentCoreRoot, path));
-
-    expect(removed.filter(existsSync).map((path) => relative(projectRoot, path))).toEqual([]);
-  });
-
   test("keeps analysis independent from permission and HITL policy", () => {
     const violations = productionFiles(bashSecurityRoot)
       .filter((file) => /from\s+["'][^"']*(?:permission|hitl)/.test(readFileSync(file, "utf8")))
@@ -59,7 +47,7 @@ describe("Bash permission hard-cut architecture", () => {
 
   test("keeps protected-path permission free of Bash parsing", () => {
     const protectedPath = readFileSync(join(agentCoreRoot, "tools/permission/protected-path.ts"), "utf8");
-    expect(protectedPath).not.toMatch(/\banalyzeBash\b|bash-classifier|security\/bash/);
+    expect(protectedPath).not.toMatch(/\banalyzeBash\b|security\/bash/);
   });
 
   test("has one production owner for sensitive and protected path facts", () => {
@@ -73,19 +61,5 @@ describe("Bash permission hard-cut architecture", () => {
 
     expect(sensitiveOwners).toEqual(["packages/agent-core/src/tools/permission/sensitive-file.ts"]);
     expect(protectedOwners).toEqual(["packages/agent-core/src/tools/permission/protected-path.ts"]);
-  });
-
-  test("keeps legacy Bash schema names only in the strict rejection boundary", () => {
-    const production = productionFiles(join(agentCoreRoot, "tools"));
-    const forbidden = /\bShellEffect\b|\battachShellEffects\b|bash-classifier|security\/bash\/(?:effects|policy|scopes)|\bnormalized\s*:/;
-    const symbolViolations = production
-      .filter((file) => forbidden.test(readFileSync(file, "utf8")))
-      .map((file) => relative(projectRoot, file));
-    expect(symbolViolations).toEqual([]);
-
-    const legacyLiteralOwners = production
-      .filter((file) => readFileSync(file, "utf8").includes("bash-command"))
-      .map((file) => relative(projectRoot, file));
-    expect(legacyLiteralOwners).toEqual(["packages/agent-core/src/tools/permission/project-approvals.ts"]);
   });
 });
