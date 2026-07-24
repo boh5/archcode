@@ -1,5 +1,5 @@
 import type { AgentRuntime } from "@archcode/agent-core";
-import { ENV_OPEN_BROWSER, ENV_PORT, ENV_SERVER_PASSWORD, PRODUCT_DISPLAY_NAME } from "@archcode/protocol";
+import { ENV_OPEN_BROWSER, ENV_SERVER_PASSWORD, PRODUCT_DISPLAY_NAME } from "@archcode/protocol";
 import { createServerApp } from "./app";
 import { setupGracefulShutdown } from "./lifecycle";
 import { startServer } from "./listen";
@@ -7,6 +7,7 @@ import type { EmbeddedWebAssets } from "./serve-web";
 
 export interface BootServerOptions {
   embeddedWebAssets?: EmbeddedWebAssets;
+  port?: number;
   version?: string;
 }
 
@@ -27,7 +28,7 @@ export async function bootServer(
   await runtime.recoverProjectTodos();
   await runtime.startAutomationSchedulers();
   const { url, server } = await startServer(app, {
-    port: parseInt(Bun.env[ENV_PORT] ?? "4096", 10) || undefined,
+    port: options.port,
   });
   setupGracefulShutdown(server, runtime);
 

@@ -7,6 +7,8 @@ import { parse } from "semver";
 const rootDir = join(import.meta.dir, "..");
 const packageJsonPath = join(rootDir, "package.json");
 const changelogPath = join(rootDir, "CHANGELOG.md");
+const installerTemplatePath = join(rootDir, "scripts", "install.sh");
+const installerVersionPlaceholder = "__ARCHCODE_VERSION__";
 const workspacePackageJsonPaths = [
   "apps/server/package.json",
   "apps/web/package.json",
@@ -41,24 +43,25 @@ export const releaseTargets = [
   },
 ] as const;
 
-export function releaseBinaryAssetName(
+export function releaseArchiveAssetName(
   target: (typeof releaseTargets)[number],
   version: string,
 ): string {
-  return `${target.assetBaseName}-v${parseReleaseVersion(version)}`;
+  return `${target.assetBaseName}-v${parseReleaseVersion(version)}.tar.gz`;
 }
 
-export function releaseBinaryAssetNameForTarget(targetTriple: string, version: string): string {
+export function releaseArchiveAssetNameForTarget(targetTriple: string, version: string): string {
   const target = releaseTargets.find((candidate) => candidate.target === targetTriple);
   if (!target) {
     throw new Error(`Unsupported release target: ${targetTriple}`);
   }
-  return releaseBinaryAssetName(target, version);
+  return releaseArchiveAssetName(target, version);
 }
 
 export function releaseAssetNamesForVersion(version: string): string[] {
   return [
-    ...releaseTargets.map((target) => releaseBinaryAssetName(target, version)),
+    ...releaseTargets.map((target) => releaseArchiveAssetName(target, version)),
+    "install.sh",
     "SHA256SUMS",
     "release-manifest.json",
   ];
@@ -165,6 +168,70 @@ async function sha256(path: string): Promise<string> {
   return hasher.digest("hex");
 }
 
+async function readProcessText(command: string[]): Promise<string> {
+  const process = Bun.spawn(command, {
+    cwd: rootDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    process.exited,
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(
+      `${command[0]} failed with exit code ${exitCode}: ${stderr.trim() || "(no error output)"}`,
+    );
+  }
+  return stdout;
+}
+
+async function inspectArchiveBinary(path: string): Promise<{
+  name: "archcode";
+  sha256: string;
+  size: number;
+}> {
+  const entries = (await readProcessText(["tar", "-tzf", path]))
+    .split(/\r?\n/)
+    .filter(Boolean);
+  if (entries.length !== 1 || entries[0] !== "archcode") {
+    throw new Error(`${path} must contain exactly one entry named archcode`);
+  }
+
+  const listing = await readProcessText(["tar", "-tvzf", path]);
+  if (!listing.startsWith("-")) {
+    throw new Error(`${path} must contain archcode as a regular file`);
+  }
+
+  const process = Bun.spawn(["tar", "-xOzf", path, "archcode"], {
+    cwd: rootDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const hasher = new Bun.CryptoHasher("sha256");
+  let size = 0;
+  for await (const chunk of process.stdout) {
+    hasher.update(chunk);
+    size += chunk.byteLength;
+  }
+  const [exitCode, stderr] = await Promise.all([
+    process.exited,
+    new Response(process.stderr).text(),
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(
+      `tar failed to read archcode from ${path}: ${stderr.trim() || "(no error output)"}`,
+    );
+  }
+
+  return {
+    name: "archcode",
+    sha256: hasher.digest("hex"),
+    size,
+  };
+}
+
 async function listReleaseAssetNames(assetDir: string): Promise<string[]> {
   const entries = await readdir(assetDir, { withFileTypes: true });
   return entries
@@ -242,6 +309,25 @@ async function writeNotes(outputPath: string): Promise<void> {
   await Bun.write(outputPath, notes);
 }
 
+export function renderReleaseInstaller(template: string, version: string): string {
+  parseReleaseVersion(version);
+  const parts = template.split(installerVersionPlaceholder);
+  if (parts.length !== 2) {
+    throw new Error(
+      `Installer template must contain ${installerVersionPlaceholder} exactly once`,
+    );
+  }
+  return `${parts[0]}${version}${parts[1]}`;
+}
+
+async function writeInstaller(outputPath: string): Promise<void> {
+  const [template, version] = await Promise.all([
+    Bun.file(installerTemplatePath).text(),
+    readReleaseVersion(),
+  ]);
+  await Bun.write(outputPath, renderReleaseInstaller(template, version));
+}
+
 async function readExistingReleaseState(
   metadataPath: string,
   notesPath: string,
@@ -256,12 +342,12 @@ async function readExistingReleaseState(
   });
 }
 
-async function writeBundleMetadata(assetDir: string): Promise<void> {
+export async function writeBundleMetadata(assetDir: string): Promise<void> {
   const version = await readReleaseVersion();
   const assets = [];
 
   for (const target of releaseTargets) {
-    const name = releaseBinaryAssetName(target, version);
+    const name = releaseArchiveAssetName(target, version);
     const path = join(assetDir, name);
     const file = Bun.file(path);
     if (!await file.exists()) {
@@ -269,23 +355,40 @@ async function writeBundleMetadata(assetDir: string): Promise<void> {
     }
     assets.push({
       name,
+      kind: "archive",
       platform: target.platform,
       architecture: target.architecture,
+      archiveFormat: "tar.gz",
       size: file.size,
       sha256: await sha256(path),
+      binary: await inspectArchiveBinary(path),
     });
   }
 
-  const checksumText = assets
+  const installerName = "install.sh";
+  const installerPath = join(assetDir, installerName);
+  const installerFile = Bun.file(installerPath);
+  if (!await installerFile.exists()) {
+    throw new Error(`Missing release asset: ${installerName}`);
+  }
+  const installerAsset = {
+    name: installerName,
+    kind: "installer",
+    size: installerFile.size,
+    sha256: await sha256(installerPath),
+  } as const;
+
+  const checksumAssets = [...assets, installerAsset];
+  const checksumText = checksumAssets
     .map((asset) => `${asset.sha256}  ${asset.name}`)
     .join("\n");
   await Bun.write(join(assetDir, "SHA256SUMS"), `${checksumText}\n`);
   await Bun.write(join(assetDir, "release-manifest.json"), `${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: "archcode",
     version,
     tag: `v${version}`,
-    assets,
+    assets: checksumAssets,
   }, null, 2)}\n`);
   await verifyReleaseAssetDirectory(assetDir, version);
 }
@@ -334,10 +437,15 @@ async function run(): Promise<void> {
       console.log(releaseAssetNamesForVersion(await readReleaseVersion()).join("\n"));
       return;
     case "asset":
-      console.log(releaseBinaryAssetNameForTarget(
+      console.log(releaseArchiveAssetNameForTarget(
         requireArgument(args[0], "bun run scripts/release.ts asset <target-triple>"),
         await readReleaseVersion(),
       ));
+      return;
+    case "installer":
+      await writeInstaller(
+        requireArgument(args[0], "bun run scripts/release.ts installer <output-path>"),
+      );
       return;
     case "notes":
       await writeNotes(requireArgument(args[0], "bun run scripts/release.ts notes <output-path>"));
@@ -366,7 +474,7 @@ async function run(): Promise<void> {
     default:
       throw new Error(
         `Unknown command ${JSON.stringify(command)}. ` +
-        "Expected version, preflight, prerelease, asset, assets, notes, state, bundle, or compare.",
+        "Expected version, preflight, prerelease, asset, assets, installer, notes, state, bundle, or compare.",
       );
   }
 }

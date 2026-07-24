@@ -5,6 +5,25 @@ All notable changes to ArchCode are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.0.3] - 2026-07-24
+
+### Added
+
+- Add `--port` / `-p` startup options with strict validation and precedence over
+  `ARCHCODE_PORT`.
+- Publish an immutable `install.sh` Release asset that verifies and atomically
+  installs the matching archive without `sudo` or configuration changes.
+
+### Changed
+
+- Package macOS/Linux release executables as versioned `.tar.gz` assets
+  with a stable inner `archcode` filename.
+- Fail startup with an actionable error when the selected port is occupied
+  instead of silently switching to a random port.
+- Record both archive and embedded binary digests in the Release manifest.
+
 ## [0.0.2] - 2026-07-24
 
 ### Changed

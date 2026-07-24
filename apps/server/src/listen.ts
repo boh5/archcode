@@ -1,4 +1,3 @@
-import { ENV_PORT } from "@archcode/protocol";
 import type { Hono } from "hono";
 
 export interface StartServerOptions {
@@ -12,18 +11,38 @@ export interface ServerInfo {
   port: number;
 }
 
+export class ServerPortInUseError extends Error {
+  readonly code = "EADDRINUSE";
+
+  constructor(readonly port: number, options?: ErrorOptions) {
+    super(
+      `Port ${port} is already in use. Stop the conflicting process or start ArchCode with --port <port>.`,
+      options,
+    );
+    this.name = "ServerPortInUseError";
+  }
+}
+
 export async function startServer(
   app: Hono,
   options: StartServerOptions = {},
 ): Promise<ServerInfo> {
-  const preferredPort = options.port ?? parseInt(Bun.env[ENV_PORT] ?? "4096", 10);
+  const preferredPort = options.port ?? 4096;
   const hostname = options.hostname ?? "0.0.0.0";
 
   try {
     return createServerInfo(app, hostname, preferredPort);
   } catch (err) {
-    if (preferredPort === 0) throw err;
-    return createServerInfo(app, hostname, 0);
+    if (
+      preferredPort !== 0 &&
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      err.code === "EADDRINUSE"
+    ) {
+      throw new ServerPortInUseError(preferredPort, { cause: err });
+    }
+    throw err;
   }
 }
 

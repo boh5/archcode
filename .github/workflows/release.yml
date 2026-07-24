@@ -122,7 +122,7 @@ jobs:
           ARCHCODE_BUILD_TARGET: ${{ matrix.bun_target }}
         run: bun run scripts/build.ts
 
-      - name: Stage release binary
+      - name: Package release archive
         id: package
         shell: bash
         env:
@@ -130,26 +130,62 @@ jobs:
         run: |
           asset_name="$(bun run scripts/release.ts asset "$TARGET")"
           asset_path="$RUNNER_TEMP/$asset_name"
-          install -m 755 dist/archcode "$asset_path"
+          package_dir="$RUNNER_TEMP/archcode-package"
+          mkdir -p "$package_dir"
+          install -m 755 dist/archcode "$package_dir/archcode"
+          TZ=UTC touch -t 198001010000 "$package_dir/archcode"
+          archive_tar="$RUNNER_TEMP/archcode.tar"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            COPYFILE_DISABLE=1 tar \
+              --format ustar \
+              --uid 0 \
+              --gid 0 \
+              --uname root \
+              --gname root \
+              -cf "$archive_tar" \
+              -C "$package_dir" \
+              archcode
+          else
+            tar \
+              --format=ustar \
+              --owner=0 \
+              --group=0 \
+              --numeric-owner \
+              -cf "$archive_tar" \
+              -C "$package_dir" \
+              archcode
+          fi
+          gzip -n -9 "$archive_tar"
+          mv "$archive_tar.gz" "$asset_path"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test release binary
+      - name: Smoke test packaged release
         shell: bash
         env:
-          BINARY_PATH: ${{ steps.package.outputs.asset_path }}
+          ARCHIVE_PATH: ${{ steps.package.outputs.asset_path }}
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           mv "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/build-only-node_modules"
 
-          binary="$BINARY_PATH"
+          archive_entries="$(tar -tzf "$ARCHIVE_PATH")"
+          test "$archive_entries" = "archcode"
+          archive_listing="$(tar -tvzf "$ARCHIVE_PATH")"
+          [[ "$archive_listing" == -* ]]
+
+          extract_dir="$RUNNER_TEMP/extracted-release"
+          mkdir -p "$extract_dir"
+          tar -xzf "$ARCHIVE_PATH" -C "$extract_dir"
+          binary="$extract_dir/archcode"
+          test -x "$binary"
           test "$("$binary" --version)" = "archcode $VERSION"
           "$binary" --help | grep -F "Usage: archcode [options]"
+          "$binary" --help | grep -F -- "--port <port>"
 
           smoke_home="$RUNNER_TEMP/archcode-home"
           mkdir -p "$smoke_home/.archcode"
           install -m 600 .github/fixtures/smoke-config.json "$smoke_home/.archcode/config.json"
 
-          HOME="$smoke_home" ARCHCODE_PORT=41967 "$binary" > "$RUNNER_TEMP/archcode-smoke.log" 2>&1 &
+          HOME="$smoke_home" "$binary" --port 41967 > "$RUNNER_TEMP/archcode-smoke.log" 2>&1 &
           server_pid=$!
           cleanup() {
             kill "$server_pid" 2>/dev/null || true
@@ -182,7 +218,7 @@ jobs:
             if (!html.includes("<div id=\"root\"></div>")) process.exit(1);
           ' "$RUNNER_TEMP/archcode-index.html"
 
-      - name: Upload target binary
+      - name: Upload target archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.target }}
@@ -213,15 +249,18 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Download target binaries
+      - name: Download target archives
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
           path: release-assets
           merge-multiple: true
 
-      - name: Generate checksums and manifest
-        run: bun run scripts/release.ts bundle release-assets
+      - name: Generate installer, checksums, and manifest
+        run: |
+          bun run scripts/release.ts installer release-assets/install.sh
+          chmod 755 release-assets/install.sh
+          bun run scripts/release.ts bundle release-assets
 
       - name: Upload complete release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

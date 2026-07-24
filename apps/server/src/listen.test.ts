@@ -25,18 +25,18 @@ describe("startServer", () => {
     expect(info.url).toBe(`http://127.0.0.1:${info.port}`);
   });
 
-  test("falls back to a random port when the preferred port is busy", async () => {
+  test("fails with an actionable error when the preferred port is busy", async () => {
     const blocker = await startServer(createApp(), { hostname: "127.0.0.1", port: 0 });
     servers.push(blocker);
 
-    const info = await startServer(createApp(), {
+    await expect(startServer(createApp(), {
       hostname: "127.0.0.1",
       port: blocker.port,
+    })).rejects.toMatchObject({
+      code: "EADDRINUSE",
+      message: `Port ${blocker.port} is already in use. ` +
+        "Stop the conflicting process or start ArchCode with --port <port>.",
+      port: blocker.port,
     });
-    servers.push(info);
-
-    expect(info.port).toBeGreaterThan(0);
-    expect(info.port).not.toBe(blocker.port);
-    expect(info.url).toBe(`http://127.0.0.1:${info.port}`);
   });
 });

@@ -17,39 +17,63 @@ Unlike a coding CLI that runs a task and exits, ArchCode keeps the engineering w
 
 ## Install from a GitHub Release
 
-Download the binary for your machine from the
-[GitHub Releases page](https://github.com/boh5/archcode/releases), verify it,
-grant execute permission, and start it directly.
-
-| System | Architecture | Release asset |
-|---|---|---|
-| macOS 13 or newer | Apple silicon (arm64) | `archcode-macos-arm64-v0.0.2` |
-| macOS 13 or newer | Intel (x64) | `archcode-macos-x64-v0.0.2` |
-| Linux with glibc 2.17 or newer | arm64 | `archcode-linux-arm64-v0.0.2` |
-| Linux with glibc 2.17 or newer | x64 | `archcode-linux-x64-v0.0.2` |
-| Windows 10/11 | WSL2 | Use the Linux asset matching the WSL architecture |
-
-For example, download and verify the Apple silicon build:
+The Release workflow publishes an immutable installer alongside versioned
+archives. It detects macOS/Linux and arm64/x64, verifies the archive against
+`SHA256SUMS`, checks the extracted binary version, and installs it to
+`~/.local/bin/archcode` without `sudo`:
 
 ```sh
-version=0.0.2
-asset="archcode-macos-arm64-v${version}"
+curl -fsSL https://github.com/boh5/archcode/releases/latest/download/install.sh | sh
+```
+
+The installer only installs the executable: it does not edit `~/.archcode`,
+modify your shell, create a service, or change server authentication. If
+`~/.local/bin` is not on `PATH`, it prints the exact export to add.
+
+Installer options can select a release or installation prefix:
+
+```sh
+curl -fsSL https://github.com/boh5/archcode/releases/latest/download/install.sh \
+  | sh -s -- --version 0.0.3 --prefix "$HOME/.local"
+```
+
+Use `--dry-run` to inspect the resolved platform, asset, and destination
+without downloading or changing files.
+
+Each new Release contains these archives:
+
+| System | Architecture | Release asset pattern |
+|---|---|---|
+| macOS 13 or newer | Apple silicon (arm64) | `archcode-macos-arm64-vVERSION.tar.gz` |
+| macOS 13 or newer | Intel (x64) | `archcode-macos-x64-vVERSION.tar.gz` |
+| Linux with glibc 2.17 or newer | arm64 | `archcode-linux-arm64-vVERSION.tar.gz` |
+| Linux with glibc 2.17 or newer | x64 | `archcode-linux-x64-vVERSION.tar.gz` |
+| Windows 10/11 | WSL2 | Use the Linux archive matching the WSL architecture |
+
+To install an archive manually, download it from the
+[GitHub Releases page](https://github.com/boh5/archcode/releases), then verify
+and extract it. For example, for the Apple silicon release:
+
+```sh
+version=0.0.3
+asset="archcode-macos-arm64-v${version}.tar.gz"
 curl -fLO "https://github.com/boh5/archcode/releases/download/v${version}/${asset}"
 curl -fLO "https://github.com/boh5/archcode/releases/download/v${version}/SHA256SUMS"
 grep "  ${asset}$" SHA256SUMS | shasum -a 256 -c -
-chmod +x "$asset"
-./"$asset" --version
+tar -xzf "$asset"
+mkdir -p "$HOME/.local/bin"
+install -m 755 archcode "$HOME/.local/bin/archcode"
+"$HOME/.local/bin/archcode" --version
 ```
 
 Linux users can replace `shasum -a 256` with `sha256sum`. Each Release also
 includes `release-manifest.json`, which records the platform, architecture,
-size, and SHA-256 digest of every binary.
+archive size/digest, and embedded binary size/digest.
 
-The macOS binaries produced by the current workflow are not signed or
-notarized. macOS may quarantine the binary; only after its checksum matches the
-official Release, explicitly allow it in **System Settings → Privacy &
-Security**, or remove quarantine from that specific file with
-`xattr -d com.apple.quarantine "./$asset"`.
+The macOS binary is a command-line server, not an app bundle, and is not
+currently signed or notarized. The installer downloads it with `curl`, verifies
+the official checksum, and extracts it in the terminal. It does not bypass
+Gatekeeper or remove quarantine attributes.
 
 On Windows, install WSL2 and run ArchCode inside the Linux environment. Its
 configuration lives at `~/.archcode/config.json` inside WSL, while a Windows
@@ -94,7 +118,7 @@ You can download the versioned `config.example.json` from the source tag as a
 starting point:
 
 ```sh
-version=0.0.2
+version=0.0.3
 mkdir -p ~/.archcode
 curl -fL "https://raw.githubusercontent.com/boh5/archcode/v${version}/config.example.json" \
   -o ~/.archcode/config.json
@@ -118,11 +142,20 @@ The Web UI edits the same global file from **Settings → Models / Profiles**. S
 ### Start ArchCode
 
 ```sh
-./archcode
+archcode
 ```
 
 By default, ArchCode listens on port `4096`. Open
 `http://localhost:4096` in your browser and add a project workspace.
+Choose another port with:
+
+```sh
+archcode --port 5096
+```
+
+`--port` takes precedence over `ARCHCODE_PORT`. If the selected port is already
+in use, startup fails with an actionable error instead of silently switching to
+a random port.
 
 ## Develop from source
 
@@ -193,7 +226,7 @@ Root Lead defaults to `principal`; Analyst uses `deep`; Explore and Librarian us
 
 | Variable | Default | Description |
 |---|---|---|
-| `ARCHCODE_PORT` | `4096` | Hono server port. If unavailable, ArchCode falls back to an ephemeral port. |
+| `ARCHCODE_PORT` | `4096` | Hono server port. `--port` takes precedence; startup fails if the selected port is unavailable. |
 | `ARCHCODE_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*` when set. Set this for remote deployments. |
 | `ARCHCODE_HOST` | unset | Externally advertised host for deployments or clients that need it. |
 | `ARCHCODE_OPEN_BROWSER` | unset | Reserved for opening the Web UI automatically when the server boots. |

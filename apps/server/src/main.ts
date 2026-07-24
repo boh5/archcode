@@ -1,6 +1,6 @@
 import { bootServer } from "./boot";
 import { createConsoleLogger, createRuntime, type AgentRuntime } from "@archcode/agent-core";
-import { ENV_SERVER_PASSWORD } from "@archcode/protocol";
+import { ENV_PORT, ENV_SERVER_PASSWORD } from "@archcode/protocol";
 import {
   requireEmbeddedWebAssets,
   type EmbeddedWebAssets,
@@ -14,6 +14,7 @@ const logger = createConsoleLogger({ level: "info" });
 
 export interface StartArchCodeOptions {
   embeddedWebAssets?: EmbeddedWebAssets;
+  port?: number;
   version?: string;
 }
 
@@ -26,6 +27,7 @@ async function main(options: StartArchCodeOptions) {
 
   await bootServer(runtime, {
     embeddedWebAssets: options.embeddedWebAssets,
+    port: options.port,
     version: options.version,
   });
 }
@@ -33,7 +35,7 @@ async function main(options: StartArchCodeOptions) {
 export function startArchCode(options: StartArchCodeOptions = {}): void {
   main(options).catch((err) => {
     logger.error("server.fatal", {
-      message: "Server startup failed",
+      message: err instanceof Error ? err.message : "Server startup failed",
       meta: {
         errorName: err instanceof Error ? err.name : "NonErrorThrow",
         errorCode: typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
@@ -51,7 +53,11 @@ export interface RunArchCodeCliOptions extends StartArchCodeOptions {
 }
 
 export function runArchCodeCli(options: RunArchCodeCliOptions): void {
-  const invocation = resolveCliInvocation(options.args, options.version);
+  const invocation = resolveCliInvocation(
+    options.args,
+    options.version,
+    Bun.env[ENV_PORT],
+  );
   if (invocation.kind === "print") {
     const stream = invocation.stream === "stdout" ? process.stdout : process.stderr;
     stream.write(invocation.output);
@@ -59,7 +65,11 @@ export function runArchCodeCli(options: RunArchCodeCliOptions): void {
     return;
   }
 
-  startArchCode(options);
+  startArchCode({
+    embeddedWebAssets: options.embeddedWebAssets,
+    port: invocation.port,
+    version: options.version,
+  });
 }
 
 export function startProductionArchCode(

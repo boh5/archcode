@@ -5,7 +5,49 @@ import { readSourceProductVersion } from "./product-version";
 
 describe("resolveCliInvocation", () => {
   test("starts the server when no arguments are provided", () => {
-    expect(resolveCliInvocation([], "1.2.3")).toEqual({ kind: "start" });
+    expect(resolveCliInvocation([], "1.2.3")).toEqual({ kind: "start", port: 4096 });
+  });
+
+  test("uses ARCHCODE_PORT when no CLI port is provided", () => {
+    expect(resolveCliInvocation([], "1.2.3", "5096")).toEqual({
+      kind: "start",
+      port: 5096,
+    });
+  });
+
+  test.each([
+    [["--port", "5096"], "5096"],
+    [["--port=5096"], "6000"],
+    [["-p", "5096"], undefined],
+  ] as const)("accepts a CLI port and gives it precedence for %j", (args, environmentPort) => {
+    expect(resolveCliInvocation(args, "1.2.3", environmentPort)).toEqual({
+      kind: "start",
+      port: 5096,
+    });
+  });
+
+  test.each([
+    [["--port", "0"], undefined],
+    [["--port=65536"], undefined],
+    [["-p", "12x"], undefined],
+    [[], "0"],
+    [[], "4096x"],
+  ] as const)("rejects an invalid port for %j", (args, environmentPort) => {
+    expect(resolveCliInvocation(args, "1.2.3", environmentPort)).toEqual({
+      kind: "print",
+      exitCode: 1,
+      output: expect.stringContaining("expected an integer from 1 to 65535"),
+      stream: "stderr",
+    });
+  });
+
+  test.each(["--port", "-p"])("rejects a missing value for %s", (flag) => {
+    expect(resolveCliInvocation([flag], "1.2.3")).toEqual({
+      kind: "print",
+      exitCode: 1,
+      output: expect.stringContaining(`Missing value for ${flag}.`),
+      stream: "stderr",
+    });
   });
 
   test.each(["--version", "-V"])("prints the version for %s", (flag) => {
@@ -21,7 +63,7 @@ describe("resolveCliInvocation", () => {
     expect(resolveCliInvocation([flag], "1.2.3")).toEqual({
       kind: "print",
       exitCode: 0,
-      output: expect.stringContaining("Usage: archcode [options]"),
+      output: expect.stringContaining("-p, --port <port>"),
       stream: "stdout",
     });
   });
