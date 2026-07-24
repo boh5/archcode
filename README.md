@@ -81,9 +81,22 @@ browser can open `http://localhost:4096`. Keep registered repositories in the
 WSL Linux filesystem for reliable permissions and better filesystem
 performance. Native Windows execution is not supported in this release.
 
-### Configure models
+### First run
 
-Create `~/.archcode/config.json`. ArchCode reads this single server-wide file for every registered project; project directories are never searched for configuration. This minimal example uses a custom OpenAI-compatible local endpoint and assigns the same model to all three required Profiles:
+Run `archcode` without preparing a configuration file. When
+`~/.archcode/config.json` is missing, the server prints a one-time Setup URL.
+Open that URL to configure the first Provider, Model, all three required
+Profiles, and an optional server password. ArchCode then activates the full
+workbench on the same port without restarting.
+
+If a Config already exists but is invalid, ArchCode shows a read-only error
+instead of reopening Setup or overwriting the file.
+
+For advanced or automated provisioning, you may still create the single
+server-wide `~/.archcode/config.json` before startup. Project directories are
+never searched for configuration. This minimal example uses a custom
+OpenAI-compatible local endpoint and assigns the same model to all three
+required Profiles:
 
 ```json
 {
@@ -138,6 +151,15 @@ install -m 600 .archcode.json ~/.archcode/config.json
 ArchCode does not read, migrate, or fall back to the old file.
 
 The Web UI edits the same global file from **Settings → Models / Profiles**. Saving validates, prepares, atomically writes, and immediately applies Models and Profile defaults. MCP, Memory, and GitHub integration changes are reported as the precise restart-required sections. Direct edits to the file have no watcher; save through Settings or restart to load them.
+
+The optional password is configured only through first-run Setup or
+**Settings → Security**. ArchCode stores an Argon2id password hash in the Config
+and uses an HttpOnly, process-local Session cookie. No password means no login;
+there is no local-versus-remote behavior branch.
+
+Upgrading from the retired Basic Auth deployment path requires unsetting
+`ARCHCODE_SERVER_PASSWORD`; ArchCode fails closed while that variable remains
+present so an old remote deployment cannot silently start without protection.
 
 ### Start ArchCode
 
@@ -227,7 +249,6 @@ Root Lead defaults to `principal`; Analyst uses `deep`; Explore and Librarian us
 | Variable | Default | Description |
 |---|---|---|
 | `ARCHCODE_PORT` | `4096` | Hono server port. `--port` takes precedence; startup fails if the selected port is unavailable. |
-| `ARCHCODE_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*` when set. Set this for remote deployments. |
 | `ARCHCODE_HOST` | unset | Externally advertised host for deployments or clients that need it. |
 | `ARCHCODE_OPEN_BROWSER` | unset | Reserved for opening the Web UI automatically when the server boots. |
 | `ARCHCODE_PROJECTS_DIR` | unset | Base directory used by project-selection flows. |
@@ -294,8 +315,13 @@ The command compiles the same real Prompt V2 for each explicitly listed model an
 
 ArchCode can run on a remote server so it stays available while agents work. For any non-local deployment:
 
-- Set `ARCHCODE_SERVER_PASSWORD`.
-- Put ArchCode behind HTTPS or a trusted reverse proxy.
+- Enable **Require login** during Setup, or set a password later in
+  **Settings → Security**.
+- Put ArchCode behind HTTPS or a trusted reverse proxy. Preserve the browser's
+  original `Host` header (for Nginx: `proxy_set_header Host $http_host;`);
+  ArchCode deliberately does not trust `X-Forwarded-*`. If the proxy replaces
+  `Host` with its upstream address, same-origin Setup, login, and mutation
+  requests fail with `403`.
 - Keep `~/.archcode/config.json` and environment variables private. The configuration file should be readable and writable only by the server user (`0600`).
 - Register only project directories you intend ArchCode to access.
 - Use a single ArchCode server process as the writer for a registered project.

@@ -61,10 +61,14 @@ Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns
 
 ```
 apps/server/src/
-├── main.ts                     # Boot entry: createRuntime() → bootServer(runtime)
+├── main.ts                     # Boot entry: create Config service → ServerHost → listener
 ├── index.ts                     # Barrel: re-exports app, boot, error-handler, errors, listen, logger
-├── app.ts                       # Hono app builder (routes, CORS, error handling)
-├── boot.ts                      # Server bootstrap + graceful shutdown on SIGINT/SIGTERM
+├── app.ts                       # Runtime-backed route composition only
+├── server-host.ts               # Single HTTP shell, bootstrap modes, Runtime lifecycle
+├── server-auth-service.ts       # Password verification, bounded sessions, SSE revocation
+├── setup-grant.ts               # Process-local one-time first-run capability
+├── auth-http.ts                 # Cookie and same-origin HTTP adapters
+├── boot.ts                      # Listener bootstrap + graceful shutdown on SIGINT/SIGTERM
 ├── ask-user-service.ts         # Deferred question request/response pattern
 ├── permission-service.ts       # Deferred permission request/response pattern
 ├── error-handler.ts            # Hono error handler
@@ -75,7 +79,7 @@ apps/server/src/
 ├── resolve.ts                  # Request path resolution
 ├── validation.ts               # Hono validator + Zod → BadRequestError thin adapter
 ├── serve-web.ts                # Embedded web asset serving through an explicit asset-map input
-├── routes/                     # Route modules: dashboard, directories, files,
+├── routes/                     # Route modules: setup, auth, dashboard, directories, files,
 │                               #   automations, global-events, hitl, mcp, messages,
 │                               #   permissions, projects, questions, sessions, todos
 └── events/                     # global-event-bus.ts
@@ -157,17 +161,18 @@ packages/utils/src/
 
 **Data flow:**
 ```
-~/.archcode/config.json → config → providers → registerBuiltinTools → fire-and-forget MCP background load
-  → Hono server → Session-scoped Lead / Automation / HITL routes
+~/.archcode/config.json → startup activation or token-protected Setup
+  → optional Session auth → providers → registerBuiltinTools → fire-and-forget MCP background load
+  → Hono Runtime routes → Session-scoped Lead / Automation / HITL routes
   → SessionExecutionManager → ConfiguredAgent → query loop → store → SSE → Web UI
 
 Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resume_session` preserves its Agent, Profile, Skills, and responsibility. Every child finishes with a normal assistant response; synchronous delegation returns that final response directly, while background work is read through `background_output`. SessionExecutionManager owns admission, concurrency, execution, and terminal records. There is no Build owned-scope or lease subsystem.
 ```
 
 **Server + Web UI:**
-- `apps/server/src/main.ts` creates `AgentRuntime`, registers providers/tools/MCP, initializes `ProjectRegistry` + `ProjectContextResolver`, then calls `bootServer(runtime)`.
-- `apps/server/src/app.ts` builds the Hono app: request logging, CORS, optional Basic auth via `ARCHCODE_SERVER_PASSWORD`, `/api/health`, dashboard, project/session/message/event/permission/question/Automation/HITL/MCP/file routes, and centralized errors. Session Goal controls live under their root Session routes.
-- `apps/server/src/boot.ts` starts the server on `ARCHCODE_PORT` (default `4096`) and wires graceful shutdown. Development mode is inferred when `ARCHCODE_SERVER_PASSWORD` is unset.
+- `apps/server/src/main.ts` creates `ServerConfigService`, classifies Config state, and creates `ArchCodeServerHost`. Missing Config enters token-protected Setup without constructing an `AgentRuntime`.
+- `apps/server/src/server-host.ts` owns the single HTTP shell, bootstrap mode, Setup coordination, optional Session auth, Runtime activation, and optional Runtime shutdown. `apps/server/src/app.ts` composes Runtime-backed routes only.
+- `apps/server/src/boot.ts` starts the Host on `ARCHCODE_PORT` (default `4096`) and wires graceful shutdown. Development mode is derived from the source/compiled runtime, never from authentication state.
 - `apps/web/` is the React frontend. In development it runs through Vite (`bun run --cwd apps/web dev`); production uses `bun run build` and runs `dist/archcode` so Hono can serve API + UI from one port.
 
 **Build pipeline** (`scripts/build.ts`):
@@ -415,7 +420,6 @@ HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_M
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ARCHCODE_PORT` | `4096` | Hono server port (falls back to ephemeral if busy) |
-| `ARCHCODE_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*`. Unset = dev mode |
 | `ARCHCODE_HOST` | unset | Externally advertised host |
 | `ARCHCODE_OPEN_BROWSER` | unset | Auto-open Web UI on boot (reserved) |
 | `ARCHCODE_PROJECTS_DIR` | unset | Base directory for project selection flows |

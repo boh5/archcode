@@ -374,8 +374,12 @@ async function runtimeFixture(options: {
   await options.beforeRuntime?.({ workspaceRoot, projectSlug: project.slug });
   const clock = new FakeClock(START);
   const timer = new FakeTimer(clock);
+  const configService = new ServerConfigService({ homeDir: root });
+  const activationResult = await configService.activateForStartup();
+  if (activationResult.status !== "ready") throw new Error(`Expected ready config, received ${activationResult.status}`);
   const runtime = await createRuntime({
-    configService: new ServerConfigService({ homeDir: root }),
+    configService,
+    activation: activationResult.activation,
     projectRegistryHomeDir: root,
     mcpManagerFactory: () => mcpManager(),
     automationSchedulerClock: clock,

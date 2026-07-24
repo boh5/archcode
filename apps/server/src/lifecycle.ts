@@ -1,12 +1,13 @@
-import type { AgentRuntime } from "@archcode/agent-core";
-import { globalEventBus } from "./events/global-event-bus";
-
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10000;
 
 export type ShutdownSignal = "SIGINT" | "SIGTERM";
 
 export interface LifecycleServer {
   stop(force?: boolean): void;
+}
+
+export interface LifecycleTarget {
+  shutdown(): Promise<void>;
 }
 
 export interface SignalProcess {
@@ -30,7 +31,7 @@ export interface GracefulShutdownHandle {
 
 export function setupGracefulShutdown(
   server: LifecycleServer,
-  runtime: AgentRuntime,
+  target: LifecycleTarget,
   options: GracefulShutdownOptions = {},
 ): GracefulShutdownHandle {
   const processRef = options.process ?? process;
@@ -42,7 +43,7 @@ export function setupGracefulShutdown(
   const shutdown = async (_signal?: ShutdownSignal): Promise<number> => {
     if (shutdownPromise) return await shutdownPromise;
 
-    shutdownPromise = runShutdown(server, runtime, timeoutMs, log, error);
+    shutdownPromise = runShutdown(server, target, timeoutMs, log, error);
     const exitCode = await shutdownPromise;
     processRef.exit(exitCode);
     return exitCode;
@@ -68,19 +69,18 @@ export function setupGracefulShutdown(
 
 async function runShutdown(
   server: LifecycleServer,
-  runtime: AgentRuntime,
+  target: LifecycleTarget,
   timeoutMs: number,
   log: (message: string) => void,
   error: (message: string) => void,
 ): Promise<number> {
   log("Shutting down gracefully...");
-  pushShutdownEvents(runtime);
 
   const timeout = new Promise<"timeout">((resolve) => {
     setTimeout(() => resolve("timeout"), timeoutMs);
   });
   const result = await Promise.race([
-    runtime.shutdown().then(() => "completed" as const),
+    target.shutdown().then(() => "completed" as const),
     timeout,
   ]);
   const exitCode = result === "timeout" ? 1 : 0;
@@ -91,11 +91,6 @@ async function runShutdown(
 
   server.stop();
   return exitCode;
-}
-
-function pushShutdownEvents(runtime: AgentRuntime): void {
-  globalEventBus.emit({ type: "shutdown", reason: "server_shutdown" });
-  runtime.notifyRuntimeShutdown("server_shutdown");
 }
 
 function removeSignalHandler(processRef: SignalProcess, signal: ShutdownSignal, handler: () => void): void {

@@ -86,9 +86,13 @@ async function runtimeFixture(): Promise<{
   const registry = new ProjectRegistry({ homeDir: root, logger: silentLogger });
   await registry.add({ workspaceRoot, name: "Automation One" });
   const clock = new FakeClock(START);
+  const configService = new ServerConfigService({ homeDir: root });
+  const activationResult = await configService.activateForStartup();
+  if (activationResult.status !== "ready") throw new Error(`Expected ready config, received ${activationResult.status}`);
   const runtime = await createRuntime({
     logger: silentLogger,
-    configService: new ServerConfigService({ homeDir: root }),
+    configService,
+    activation: activationResult.activation,
     projectRegistryHomeDir: root,
     mcpManagerFactory: () => mcpManager(),
     automationSchedulerClock: clock,

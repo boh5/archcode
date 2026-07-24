@@ -2,7 +2,7 @@ import { BUILTIN_MCP_SERVER_NAMES } from "@archcode/protocol";
 import type { ServerConfig } from "../../api/config";
 import { ApiError } from "../../api/client";
 
-export type SettingsSection = "models" | "profiles" | "mcp" | "memory" | "github";
+export type SettingsSection = "models" | "profiles" | "mcp" | "memory" | "github" | "security";
 export type FieldErrors = Record<string, string>;
 
 export const PROFILE_NAMES = [

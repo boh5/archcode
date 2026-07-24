@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
 import type { GlobalSSEEvent, HitlView } from "@archcode/protocol";
 import { Hono } from "hono";
-import { createServerApp } from "../app";
+import { createRuntimeApp } from "../app";
 import { errorHandler } from "../error-handler";
 import { GlobalEventBus, globalEventBus, type GlobalEventBusListener } from "../events/global-event-bus";
 import { createGlobalEventsRoutes } from "./global-events";
@@ -133,17 +133,23 @@ function sessionRuntimeChange(rootSessionId: string, activity: "idle" | "running
 }
 
 describe("global events route", () => {
-  test("inherits /api auth middleware when mounted in the server app", async () => {
-    const { app } = createServerApp(createGlobalServerRuntime(), { dev: true, password: "secret" });
+  test("closes the stream and unsubscribes when its auth session is revoked", async () => {
+    const bus = new CountingGlobalEventBus();
+    const revoked = new AbortController();
+    const release = mock(() => undefined);
+    const response = await createApp(bus, {
+      streamLease: () => ({ signal: revoked.signal, release }),
+    }).request("/api/events");
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Expected response body");
+    expect(bus.listenerCount).toBe(1);
 
-    const unauthorized = await app.request("/api/events");
-    expect(unauthorized.status).toBe(401);
+    revoked.abort();
+    const result = await reader.read();
 
-    const authorized = await app.request("/api/events", {
-      headers: { Authorization: `Basic ${btoa("user:secret")}` },
-    });
-    expect(authorized.status).toBe(200);
-    await authorized.body?.cancel();
+    expect(result.done).toBe(true);
+    expect(bus.listenerCount).toBe(0);
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   test("sends heartbeat events on the configured interval", async () => {
@@ -306,7 +312,7 @@ describe("global events route", () => {
   });
 
   test("server app uses the shared global event bus singleton", async () => {
-    const { app } = createServerApp(createGlobalServerRuntime(), { dev: true });
+    const { app } = createRuntimeApp(createGlobalServerRuntime());
     const response = await app.request("/api/events");
 
     globalEventBus.emit(sessionEvent({ slug: "shared", sessionId: "singleton", eventId: 1, message: "from-singleton" }));
@@ -316,7 +322,7 @@ describe("global events route", () => {
   });
 
   test("server app no longer registers the old per-session SSE endpoint", async () => {
-    const { app } = createServerApp(createGlobalServerRuntime(), { dev: true });
+    const { app } = createRuntimeApp(createGlobalServerRuntime());
 
     const response = await app.request("/api/projects/project/sessions/session/events");
 

@@ -35,6 +35,17 @@ export const memoryExtractionConfigSchema = z.strictObject({
   cooldownMs: z.number().int().min(0).default(300_000),
 }).optional();
 
+const ARGON2ID_PHC_PATTERN = /^\$argon2id\$v=19\$m=[1-9]\d*,t=[1-9]\d*,p=[1-9]\d*\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$/;
+
+export const authConfigSchema = z
+  .object({
+    passwordHash: z.string().regex(
+      ARGON2ID_PHC_PATTERN,
+      "Password hash must be an Argon2id PHC string",
+    ),
+  })
+  .strict();
+
 export const archcodeConfigSchema = z
   .object({
     provider: providersConfigSchema,
@@ -46,6 +57,7 @@ export const archcodeConfigSchema = z
       fast: profileConfigSchema,
     }),
     memory: memoryExtractionConfigSchema,
+    auth: authConfigSchema.optional(),
   })
   .strict();
 
@@ -55,6 +67,7 @@ export type ProfileConfig = z.infer<typeof profileConfigSchema>;
 export type GithubIntegrationConfig = z.infer<typeof githubIntegrationConfigSchema>;
 export type IntegrationsConfig = z.infer<typeof integrationsConfigSchema>;
 export type MemoryExtractionConfig = NonNullable<z.infer<typeof memoryExtractionConfigSchema>>;
+export type AuthConfig = z.infer<typeof authConfigSchema>;
 export type ArchCodeConfig = z.infer<typeof archcodeConfigSchema>;
 
 export interface ResolvedGithubIntegrationConfig {

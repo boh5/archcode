@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ProjectRegistry, SessionCommandOutcomeError, SessionInputConflictError, SessionSteerUnavailableError, silentLogger } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { createServerApp } from "../app";
+import { createRuntimeApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
 const requestedModelSelection = {
@@ -42,7 +42,7 @@ async function createTestApp(testName: string) {
   const projectRegistry = new ProjectRegistry({ homeDir: join(tempRoot, "homes", testName), logger: silentLogger });
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
   const runtime = createTestRuntime(projectRegistry);
-  return { app: createServerApp(runtime, { dev: true }).app, project, runtime };
+  return { app: createRuntimeApp(runtime).app, project, runtime };
 }
 
 describe("messages routes", () => {

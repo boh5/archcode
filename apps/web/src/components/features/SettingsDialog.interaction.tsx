@@ -110,7 +110,7 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).toContain("Providers and their model profiles");
   });
 
-  test("navigates all five server settings sections", () => {
+  test("navigates all server settings sections", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     const sections: Array<[string, string]> = [
       ["Models", "Providers and their model profiles"],
@@ -124,6 +124,61 @@ describe("SettingsDialog interactions", () => {
       click(label);
       expect(container.textContent).toContain(heading);
     }
+  });
+
+  test("reloads the Config snapshot after changing the auth credential", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: mock(async (url: string, init?: RequestInit) => {
+        requests.push({ url, init });
+        if (url === "/api/auth/status") {
+          return Response.json({ required: true });
+        }
+        if (url === "/api/auth/password") {
+          return Response.json({ required: true });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    });
+    const onReload = mock(async () => {});
+    act(() => root.render(
+      <DialogRoot open>
+        <SettingsBody snapshot={snapshot} servers={{}} onReload={onReload} />
+      </DialogRoot>,
+    ));
+
+    await act(async () => {
+      click("Security");
+      await Promise.resolve();
+    });
+    const changeButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Change password") as HTMLButtonElement;
+    expect(changeButton.disabled).toBe(true);
+
+    change(input("Current password"), "current password");
+    change(input("New password"), "replacement password");
+    change(input("Confirm password"), "replacement password");
+    expect(changeButton.disabled).toBe(false);
+
+    await act(async () => {
+      changeButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(requests.map(({ url }) => url)).toEqual([
+      "/api/auth/status",
+      "/api/auth/password",
+    ]);
+    expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({
+      action: "change",
+      currentPassword: "current password",
+      password: "replacement password",
+    });
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(input("Current password").value).toBe("");
+    expect(changeButton.disabled).toBe(true);
   });
 
   test("adds a provider and model while exposing options and variants as JSON", () => {

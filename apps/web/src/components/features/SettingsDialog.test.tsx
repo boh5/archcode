@@ -82,7 +82,7 @@ describe("SettingsDialog", () => {
     const labels = findAll(tree, (element) => element.type === "button").map(textContent);
 
     expect(textContent(tree)).toContain("Server");
-    expect(labels).toEqual(["Models", "Profiles", "MCP", "Memory", "GitHub"]);
+    expect(labels).toEqual(["Models", "Profiles", "Security", "MCP", "Memory", "GitHub"]);
     expect(textContent(tree)).not.toContain("General");
     expect(textContent(tree)).not.toContain("MCP Status");
     expect(textContent(tree)).not.toContain("Providers");

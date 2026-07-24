@@ -13,13 +13,16 @@ import type {
 } from "./mcp/index";
 import type { AnyToolDescriptor } from "./tools/types";
 import { defineTool } from "./tools/index";
-import { createRuntime as createProductionRuntime } from "./runtime";
+import {
+  createRuntime as createProductionRuntime,
+  type AgentRuntimeOptions,
+} from "./runtime";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { ToolOutputArtifactStore } from "./tool-output/artifact-store";
 import { REDACTION_MARKER, type SecretRedactionPolicy } from "./security";
 import { createInMemoryLogger } from "./logger";
 
-type RuntimeTestOptions = NonNullable<Parameters<typeof createProductionRuntime>[0]> & {
+type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation"> & {
   toolOutputStoreFactory?: (rootDir: string) => ToolOutputArtifactStore;
 };
 
@@ -38,10 +41,16 @@ async function makeTempRoot(): Promise<string> {
 }
 
 async function createRuntime(
-  options: RuntimeTestOptions = {},
+  options: RuntimeTestOptions,
 ): ReturnType<typeof createProductionRuntime> {
+  const result = await options.configService.activateForStartup();
+  if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
   const projectRegistryHomeDir = options.projectRegistryHomeDir ?? await makeTempRoot();
-  return createProductionRuntime({ ...options, projectRegistryHomeDir } as Parameters<typeof createProductionRuntime>[0]);
+  return createProductionRuntime({
+    ...options,
+    activation: result.activation,
+    projectRegistryHomeDir,
+  });
 }
 
 async function writeConfig(config: Record<string, unknown>): Promise<ServerConfigService> {

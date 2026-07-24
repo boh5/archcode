@@ -4,7 +4,10 @@ import { defaultAgentDefinitions } from "./agents";
 import type { AgentName } from "./agents";
 import { AgentRunningError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError } from "./agents/errors";
 import { SessionAgentManager } from "./agents/session-agent-manager";
-import { ServerConfigService } from "./config/server-config-service";
+import {
+  ServerConfigService,
+  type ServerConfigActivation,
+} from "./config/server-config-service";
 import { configureDefaultLspClientPoolLogger } from "./lsp/client-pool";
 import { configureDefaultBinaryManagerLogger } from "./binary/manager";
 import { configureDefaultProcessRunnerLogger } from "./process/runner";
@@ -213,10 +216,12 @@ export class SessionCommandOutcomeError extends Error {
 }
 
 export interface AgentRuntimeOptions {
-  /** Explicit dependency-injection seam for isolated tests. */
-  configService?: ServerConfigService;
+  /** Process-owned configuration service that produced activation. */
+  configService: ServerConfigService;
+  /** Explicit, validated startup activation. Runtime never reads configuration from disk. */
+  activation: ServerConfigActivation;
   mcpManagerFactory?: (config: ResolvedMcpConfig, redactionPolicy: SecretRedactionPolicy) => McpManager;
-  /** Already-resolved process-owned secrets, such as the server password. */
+  /** Already-resolved process-owned secret literals that are not part of global Config. */
   externalSecretLiterals?: readonly string[];
   projectRegistryHomeDir?: string;
   /** Internal storage location override for isolated tests. */
@@ -400,13 +405,13 @@ export interface HitlMutationResult {
 }
 
 export async function createRuntime(
-  options: AgentRuntimeOptions = {},
+  options: AgentRuntimeOptions,
 ): Promise<AgentRuntime> {
   const internalOptions = options as AgentRuntimeInternalOptions;
   const logger = options.logger ?? createConsoleLogger({ level: "info" });
   const warnings: McpWarning[] = [];
-  const configService = options.configService ?? new ServerConfigService();
-  const config = await configService.loadForStartup();
+  const configService = options.configService;
+  const config = configService.resolveRuntimeConfig(options.activation);
   const modelRuntime = configService.modelRuntime;
   const modelSelectionResolver = new ModelSelectionResolver();
 

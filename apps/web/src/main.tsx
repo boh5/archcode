@@ -5,6 +5,7 @@ import { RouterProvider } from "react-router-dom";
 import { ApiError } from "./api/client";
 import { ErrorBoundary } from "./components/composite/ErrorBoundary";
 import { ToastContainer } from "./components/composite/Toast";
+import { BootstrapGate } from "./components/bootstrap/BootstrapGate";
 import { AddProjectModalProvider } from "./context/add-project-modal";
 import { GlobalSSEProvider } from "./context/global-sse";
 import { SettingsModalProvider } from "./context/settings-modal";
@@ -36,12 +37,25 @@ const queryClient = new QueryClient({
   queryCache: new QueryCache({ onError: handleQueryError }),
   mutationCache: new MutationCache({ onError: handleQueryError }),
 });
+const clearQueryCache = () => queryClient.clear();
 
 function App() {
   const { toasts, show, dismiss } = useToast();
 
   setGlobalToastCallback(show);
 
+  return <BootstrapGate onAuthInvalidated={clearQueryCache}>
+    <WorkbenchProviders toasts={toasts} onDismiss={dismiss} />
+  </BootstrapGate>;
+}
+
+function WorkbenchProviders({
+  toasts,
+  onDismiss,
+}: {
+  toasts: ReturnType<typeof useToast>["toasts"];
+  onDismiss: ReturnType<typeof useToast>["dismiss"];
+}) {
   return (
     <QueryClientProvider client={queryClient}>
       <GlobalSSEProvider>
@@ -50,7 +64,7 @@ function App() {
             <ErrorBoundary>
               <RouterProvider router={router} />
             </ErrorBoundary>
-            <ToastContainer toasts={toasts} onDismiss={dismiss} />
+            <ToastContainer toasts={toasts} onDismiss={onDismiss} />
           </SettingsModalProvider>
         </AddProjectModalProvider>
       </GlobalSSEProvider>

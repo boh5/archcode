@@ -1,12 +1,18 @@
 import { bootServer } from "./boot";
-import { createConsoleLogger, createRuntime, type AgentRuntime } from "@archcode/agent-core";
-import { ENV_PORT, ENV_SERVER_PASSWORD } from "@archcode/protocol";
+import {
+  createConsoleLogger,
+  createRuntime,
+  ServerConfigService,
+} from "@archcode/agent-core";
+import { ENV_PORT } from "@archcode/protocol";
 import {
   requireEmbeddedWebAssets,
   type EmbeddedWebAssets,
 } from "./serve-web";
 import { resolveCliInvocation } from "./cli";
 import { readSourceProductVersion } from "./product-version";
+import { ArchCodeServerHost } from "./server-host";
+import { assertRetiredServerPasswordEnvAbsent } from "./legacy-auth-env";
 
 export { createRuntime, type AgentRuntime, type AgentRuntimeOptions } from "@archcode/agent-core";
 
@@ -19,14 +25,18 @@ export interface StartArchCodeOptions {
 }
 
 async function main(options: StartArchCodeOptions) {
-  const serverPassword = Bun.env[ENV_SERVER_PASSWORD];
-  const runtime: AgentRuntime = await createRuntime({
+  assertRetiredServerPasswordEnvAbsent(Bun.env);
+  const configService = new ServerConfigService();
+  const compiled = import.meta.url.startsWith("file:///$bunfs/");
+  const host = await ArchCodeServerHost.create({
+    configService,
+    createRuntime,
     logger,
-    externalSecretLiterals: serverPassword === undefined ? [] : [serverPassword],
-  });
-
-  await bootServer(runtime, {
+    dev: !compiled,
     embeddedWebAssets: options.embeddedWebAssets,
+    version: options.version,
+  });
+  await bootServer(host, {
     port: options.port,
     version: options.version,
   });

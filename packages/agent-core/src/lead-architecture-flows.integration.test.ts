@@ -305,9 +305,13 @@ async function runtimeFixture(projectName: string): Promise<{
   await writeFile(resolveServerConfigPath(root), JSON.stringify(config()));
   const registry = new ProjectRegistry({ homeDir: root, logger: silentLogger });
   const project = await registry.add({ workspaceRoot, name: projectName });
+  const configService = new ServerConfigService({ homeDir: root });
+  const activationResult = await configService.activateForStartup();
+  if (activationResult.status !== "ready") throw new Error(`Expected ready config, received ${activationResult.status}`);
   const runtime = await createRuntime({
     logger: silentLogger,
-    configService: new ServerConfigService({ homeDir: root }),
+    configService,
+    activation: activationResult.activation,
     projectRegistryHomeDir: root,
     mcpManagerFactory: () => mcpManager(),
   });

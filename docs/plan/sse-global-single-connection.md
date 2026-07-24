@@ -8,7 +8,7 @@
 2. **无谓重连** — 即使目标 session 没有活跃 agent，切换时也会建立 SSE 连接
 3. **服务端泄漏** — `sessionStreams` Map 在连接断开后不清理；客户端 `sessionRegistry` Map 永不驱逐
 4. **不支持多项目并发** — 每个 session 独占一个 SSE 连接，多项目同时活跃时连接数线性增长
-5. **Auth 不可用** — 浏览器 `EventSource` 无法发送 `Authorization` header，导致 `ARCHCODE_SERVER_PASSWORD` 开启时 SSE 连接被 auth 中间件 401 拒绝
+5. **旧认证传输不适配** — 浏览器 `EventSource` 无法控制认证请求和区分 401；当前实现已硬切为 HttpOnly Session Cookie + Fetch stream
 
 ## 目标架构
 
@@ -58,7 +58,7 @@
 连接不带任何查询参数。服务端推送所有项目的所有事件，客户端按 `{slug, sessionId}` 自行路由到对应 store。
 
 **为什么不过滤：**
-- ArchCode 是单用户系统（`ARCHCODE_SERVER_PASSWORD`），所有项目属同一用户，无隔离需求
+- ArchCode 是单用户实例，所有项目属同一实例所有者，无跨用户隔离需求
 - 空闲项目产生零事件，不存在无效带宽消耗
 - 客户端丢弃没有 store 的事件，成本仅一次 `JSON.parse` + `Map.get()`
 - 避免了"新增项目需要重连 SSE"的问题
@@ -66,7 +66,7 @@
 ### 2. 传输层：Fetch + ReadableStream 替代 EventSource
 
 浏览器原生 `EventSource` 有三个致命限制：
-- **无法发送自定义 header** → Auth 中间件 401，生产环境 SSE 完全不可用
+- **无法控制认证请求** → 不适合当前 Cookie Session 失效后的统一 401 处理
 - **无法获取 HTTP 错误状态码** → 401/429/500 全部触发同一个 `onerror`，无法区分处理
 - **自动重连不可控** → 浏览器自动重试，无法自定义策略（指数退避、同步检查等）
 

@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
 import type { McpServerStatus } from "@archcode/protocol";
-import { createServerApp } from "../app";
+import { createRuntimeApp } from "../app";
 
 interface McpStatusResponseBody {
   servers: Record<string, McpServerStatus>;
@@ -43,7 +43,7 @@ describe("GET /api/mcp/status", () => {
       ["disabled-server", { state: "disabled" }],
     ]);
     const runtime = createTestRuntime(statuses);
-    const { app } = createServerApp(runtime, { dev: true });
+    const { app } = createRuntimeApp(runtime);
 
     const res = await app.request("/api/mcp/status");
     const body = (await res.json()) as McpStatusResponseBody;
@@ -59,7 +59,7 @@ describe("GET /api/mcp/status", () => {
 
   test("returns 200 with empty servers object when no MCP servers configured", async () => {
     const runtime = createTestRuntime(new Map());
-    const { app } = createServerApp(runtime, { dev: true });
+    const { app } = createRuntimeApp(runtime);
 
     const res = await app.request("/api/mcp/status");
     const body = (await res.json()) as McpStatusResponseBody;
@@ -75,7 +75,7 @@ describe("GET /api/mcp/status", () => {
       ["failed-srv", { state: "failed", error: "boom" }],
     ]);
     const runtime = createTestRuntime(statuses);
-    const { app } = createServerApp(runtime, { dev: true });
+    const { app } = createRuntimeApp(runtime);
 
     const res = await app.request("/api/mcp/status");
     const body = (await res.json()) as McpStatusResponseBody;
@@ -88,7 +88,7 @@ describe("GET /api/mcp/status", () => {
 
   test("route is mounted at /api/mcp/status (global, no project slug)", async () => {
     const runtime = createTestRuntime(new Map());
-    const { app } = createServerApp(runtime, { dev: true });
+    const { app } = createRuntimeApp(runtime);
 
     const res = await app.request("/api/mcp/status");
 
@@ -98,7 +98,7 @@ describe("GET /api/mcp/status", () => {
 
   test("old project-scoped path /api/projects/:slug/mcp/status no longer matches", async () => {
     const runtime = createTestRuntime(new Map());
-    const { app } = createServerApp(runtime, { dev: true });
+    const { app } = createRuntimeApp(runtime);
 
     const res = await app.request("/api/projects/my-project/mcp/status");
 

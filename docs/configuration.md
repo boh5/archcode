@@ -2,6 +2,12 @@
 
 ArchCode uses one server-wide `~/.archcode/config.json`: `provider` contains named Provider entries, each with `npm`, display-only `name`, JSON `options`, and `models`; `profiles` contains exactly `principal`, `deep`, and `fast`, each selecting a `providerId:modelId` plus optional `variant` and call `options`. The removed per-Agent `agents` section is rejected. The Provider ID is the runtime namespace and is not derived from `name`.
 
+When the file is missing, use the one-time Setup URL printed by the server
+instead of creating it manually. Setup can also enable the optional instance
+password. Its Argon2id hash is stored under internal `auth.passwordHash`, but
+that field is deliberately absent from Config API snapshots and edits. Set,
+change, or remove the password only through **Settings → Security**.
+
 ## Supported packages
 
 The catalog contains exactly these official AI SDK language Provider packages:

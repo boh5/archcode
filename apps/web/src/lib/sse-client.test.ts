@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { JSDOM } from "jsdom";
+import { subscribeAuthInvalidation } from "../api/client";
 import { connectSSE, HTTPStatusError } from "./sse-client";
 
 type FetchMock = ReturnType<typeof mock<(...args: Parameters<typeof fetch>) => Promise<Response>>>;
@@ -194,8 +195,7 @@ describe("connectSSE", () => {
     expect(onEvent).not.toHaveBeenCalled();
   });
 
-  test("sends Basic auth header from ARCHCODE_SERVER_PASSWORD cookie", async () => {
-    document.cookie = "ARCHCODE_SERVER_PASSWORD=secret%20value";
+  test("uses the browser session cookie without reconstructing credential headers", async () => {
     const fetchMock: FetchMock = mock(async () => createOpenSseResponse());
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -205,7 +205,22 @@ describe("connectSSE", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init.headers).toBeInstanceOf(Headers);
-    expect((init.headers as Headers).get("Authorization")).toBe(`Basic ${btoa(":secret value")}`);
+    expect((init.headers as Headers).get("Authorization")).toBeNull();
+  });
+
+  test("notifies the outer bootstrap gate when a session-authenticated SSE stream is rejected", async () => {
+    const notified = mock(() => {});
+    const unsubscribe = subscribeAuthInvalidation(notified);
+    const fetchMock: FetchMock = mock(async () => new Response("unauthorized", { status: 401 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = connectSSE("/api/events", { onEvent: () => {}, onError: () => {} });
+    await flushMicrotasks();
+    client.abort();
+    await client.closed;
+    unsubscribe();
+
+    expect(notified).toHaveBeenCalledTimes(1);
   });
 
   test("aborts without leaving a reconnect timer pending", async () => {

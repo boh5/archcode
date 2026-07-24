@@ -24,7 +24,7 @@ export interface ResolvedSnapshotSelection {
 
 export interface ModelRuntimeSnapshotOptions {
   readonly revision: string;
-  readonly config: ArchCodeConfig;
+  readonly config: Omit<ArchCodeConfig, "auth">;
   readonly providerRegistry: ProviderRegistry;
 }
 
@@ -129,7 +129,7 @@ export class ModelRuntimeSnapshot {
 }
 
 function buildCatalog(
-  config: ArchCodeConfig,
+  config: Omit<ArchCodeConfig, "auth">,
   revision: string,
 ): ModelRuntimeCatalog {
   const providers = Object.entries(config.provider).map(([providerId, provider]) => ({

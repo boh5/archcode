@@ -10,3 +10,5 @@ export * from "./delegation";
 export * from "./model-runtime";
 export * from "./session-goal";
 export * from "./dashboard";
+export * from "./bootstrap";
+export * from "./auth";

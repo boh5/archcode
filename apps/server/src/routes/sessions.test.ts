@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionModelSelectionNotAllowedError, silentLogger } from "@archcode/agent-core";
-import { createServerApp } from "../app";
+import { createRuntimeApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
 
@@ -272,7 +272,7 @@ async function createTestApp(testName: string) {
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
 
   return {
-    app: createServerApp(runtime, { dev: true }).app,
+    app: createRuntimeApp(runtime).app,
     project,
     workspaceRoot,
     sessions,

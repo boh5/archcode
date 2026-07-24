@@ -4,3 +4,4 @@ export * from "./error-handler";
 export * from "./errors";
 export * from "./listen";
 export * from "./logger";
+export * from "./server-host";

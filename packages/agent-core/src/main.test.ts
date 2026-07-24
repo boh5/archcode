@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -16,7 +16,10 @@ import { defineTool, type ToolExecutionContext } from "./tools/index";
 import { REDACTION_MARKER, SecretRedactionPolicy } from "./security";
 import { expectSettledResult } from "./tools/test-results";
 import type { AnyToolDescriptor } from "./tools/types";
-import { createRuntime as createProductionRuntime } from "./runtime";
+import {
+  createRuntime as createProductionRuntime,
+  type AgentRuntimeOptions,
+} from "./runtime";
 import { SessionStoreManager } from "./store/session-store-manager";
 import type { SessionToolBatch } from "./store/types";
 import { createTestProjectContext } from "./tools/test-project-context";
@@ -49,7 +52,16 @@ function makeFakeMcpManager(result: McpDiscoveryResult | Error, secrets: readonl
   return { discover: mock(async () => { if (result instanceof Error) throw result; return result; }), closeAll: mock(async () => []), getStatus: mock(() => new Map()), onStatusChange: mock(() => () => {}), startBackgroundDiscovery: mock((onDescriptors: (d: AnyToolDescriptor[]) => void, onWarning: (w: McpWarning) => void) => { if (result instanceof Error) { onWarning({ message: policy.redactString(`Failed to discover MCP tools during startup: ${result.message}`) }); return; } for (const warning of result.warnings) onWarning(warning); if (result.descriptors.length) onDescriptors(result.descriptors); }) } as unknown as McpManager;
 }
 function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead" }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
-async function createRuntime(options: Parameters<typeof createProductionRuntime>[0] = {}) { return createProductionRuntime({ ...options, projectRegistryHomeDir: options.projectRegistryHomeDir ?? await makeTempRoot() }); }
+type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation">;
+async function createRuntime(options: RuntimeTestOptions) {
+  const result = await options.configService.activateForStartup();
+  if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
+  return createProductionRuntime({
+    ...options,
+    activation: result.activation,
+    projectRegistryHomeDir: options.projectRegistryHomeDir ?? await makeTempRoot(),
+  });
+}
 async function waitFor(assertion: () => boolean | Promise<boolean>, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!await assertion()) {
@@ -98,6 +110,26 @@ function createStoppedStream(): unknown {
 
 describe("createRuntime", () => {
   test("constructs runtime without booting server concerns", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.toolRegistry).toBeDefined(); expect(runtime.acceptSessionMessage).toBeDefined(); });
+  test("consumes an explicit activation without rereading disk or registering the auth hash", async () => {
+    const passwordHash = "$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA";
+    const config = { ...makeConfig({ servers: {} }), auth: { passwordHash } };
+    const configService = await writeConfig(config);
+    const result = await configService.activateForStartup();
+    if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
+    await rm(configService.configPath);
+    let policy: SecretRedactionPolicy | undefined;
+    const runtime = await createProductionRuntime({
+      configService,
+      activation: result.activation,
+      projectRegistryHomeDir: await makeTempRoot(),
+      mcpManagerFactory: (_config, runtimePolicy) => {
+        policy = runtimePolicy;
+        return makeFakeMcpManager({ descriptors: [], warnings: [] });
+      },
+    });
+    expect(runtime.toolRegistry).toBeDefined();
+    expect(policy?.redactString(passwordHash)).toBe(passwordHash);
+  });
   test("injects the runtime log safety boundary into the default LSP pool", async () => {
     const literal = "runtime-secret-literal-123456";
     const workspaceRoot = "/private/tmp/archcode-runtime-log-workspace";

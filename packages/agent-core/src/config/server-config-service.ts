@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readFile, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   type ConfigSecretMutation,
   BUILTIN_MCP_SERVER_NAMES,
@@ -27,11 +27,43 @@ import {
   validateProviderAdapterOptions,
 } from "./provider-adapter-catalog";
 import { findSecretBearingProviderOptionPaths } from "./provider";
-import { archcodeConfigSchema, type ArchCodeConfig } from "./schema";
+import {
+  archcodeConfigSchema,
+  type ArchCodeConfig,
+  type AuthConfig,
+} from "./schema";
 
 const SERVER_CONFIG_DIRECTORY = ".archcode";
 const SERVER_CONFIG_FILE_NAME = "config.json";
 const BUILTIN_MCP_NAMES = new Set<string>(BUILTIN_MCP_SERVER_NAMES);
+const ACTIVATION_OWNER = Symbol("ServerConfigActivationOwner");
+
+export type ServerAuthCredential = Readonly<AuthConfig> | undefined;
+
+export interface ServerAuthConfigUpdate {
+  readonly credential: ServerAuthCredential;
+  readonly revision: string;
+}
+
+export interface ServerConfigActivation {
+  readonly revision: string;
+  readonly [ACTIVATION_OWNER]: ServerConfigService;
+  readonly runtimeConfig: Omit<ArchCodeConfig, "auth">;
+}
+
+export interface ServerConfigInitialization {
+  readonly activation: ServerConfigActivation;
+  readonly auth: ServerAuthCredential;
+}
+
+export type ServerConfigActivationResult =
+  | { readonly status: "setup" }
+  | {
+    readonly status: "ready";
+    readonly activation: ServerConfigActivation;
+    readonly auth: ServerAuthCredential;
+  }
+  | { readonly status: "config_error"; readonly error: ConfigSemanticValidationError };
 
 export interface ServerConfigServiceOptions {
   /** Explicit test seam. Production callers construct the service without options. */
@@ -59,6 +91,16 @@ export class ConfigSemanticValidationError extends Error {
     this.name = "ConfigSemanticValidationError";
   }
 }
+
+export class ConfigInitializationConflictError extends Error {
+  constructor(public readonly configPath: string) {
+    super(`Global configuration already exists at ${configPath}`);
+    this.name = "ConfigInitializationConflictError";
+  }
+}
+
+class MissingServerConfigError extends Error {}
+class ExistingServerConfigError extends Error {}
 
 export class BuiltinMcpConfigNameError extends ConfigSemanticValidationError {
   constructor(name: string) {
@@ -89,19 +131,58 @@ export class ServerConfigService {
     this.modelRuntime = options.modelRuntime ?? new ModelRuntime();
   }
 
-  async loadForStartup(): Promise<ArchCodeConfig> {
+  async activateForStartup(): Promise<ServerConfigActivationResult> {
     try {
       const loaded = await this.readDiskConfig();
-      const prepared = this.prepareModelRuntime(loaded.config, loaded.revision);
-      this.modelRuntime.publish(prepared);
-      this.startupConfig = loaded.config;
-      return loaded.config;
+      const runtimeRevision = await runtimeRevisionForConfig(loaded.config);
+      return { status: "ready", ...this.activate(loaded.config, runtimeRevision) };
     } catch (error) {
+      if (error instanceof MissingServerConfigError) return { status: "setup" };
       if (error instanceof ConfigSemanticValidationError) {
-        throw new ConfigSemanticValidationError(error.issues, `Invalid global configuration at ${this.configPath}: ${error.message}`);
+        return {
+          status: "config_error",
+          error: new ConfigSemanticValidationError(
+            error.issues,
+            `Invalid global configuration at ${this.configPath}: ${error.message}`,
+          ),
+        };
       }
       throw error;
     }
+  }
+
+  async initialize(candidate: unknown): Promise<ServerConfigInitialization> {
+    return this.withWriteLock(async () => {
+      const validated = validateConfig(materializeInitialConfig(candidate));
+      const text = stableJson(validated);
+      const runtimeConfig = omitAuth(validated);
+      const runtimeRevision = await runtimeRevisionForConfig(validated);
+      const prepared = this.prepareModelRuntime(runtimeConfig, runtimeRevision);
+
+      try {
+        await createConfigFile(this.configPath, text);
+      } catch (cause) {
+        if (cause instanceof ExistingServerConfigError) {
+          throw new ConfigInitializationConflictError(this.configPath);
+        }
+        throw new ConfigSemanticValidationError([{
+          path: this.configPath,
+          message: `Failed to initialize global configuration at ${this.configPath}: ${errorMessage(cause)}`,
+        }]);
+      }
+
+      return this.activate(validated, runtimeRevision, prepared);
+    });
+  }
+
+  resolveRuntimeConfig(activation: ServerConfigActivation): Omit<ArchCodeConfig, "auth"> {
+    if (activation[ACTIVATION_OWNER] !== this) {
+      throw new TypeError("ServerConfigActivation belongs to a different ServerConfigService");
+    }
+    if (this.modelRuntime.current.revision !== activation.revision) {
+      throw new TypeError("ServerConfigActivation is stale");
+    }
+    return activation.runtimeConfig;
   }
 
   async getSnapshot(): Promise<ServerConfigSnapshot> {
@@ -136,7 +217,12 @@ export class ServerConfigService {
       const text = stableJson(validated);
       const unchanged = text === stableJson(current.config);
       const revision = unchanged ? current.revision : await revisionForText(text);
-      const prepared = this.prepareModelRuntime(validated, revision);
+      const runtimeConfig = omitAuth(validated);
+      const runtimeRevision = await runtimeRevisionForConfig(validated);
+      const runtimeUnchanged = runtimeRevision === this.modelRuntime.current.revision;
+      const prepared = runtimeUnchanged
+        ? undefined
+        : this.prepareModelRuntime(runtimeConfig, runtimeRevision);
 
       if (!unchanged) {
         try {
@@ -148,7 +234,7 @@ export class ServerConfigService {
           }]);
         }
       }
-      this.modelRuntime.publish(prepared);
+      if (prepared !== undefined) this.modelRuntime.publish(prepared);
       return {
         config: redactConfig(validated),
         revision,
@@ -159,8 +245,37 @@ export class ServerConfigService {
     });
   }
 
+  async updateAuthPasswordHash(
+    passwordHash: string | undefined,
+  ): Promise<ServerAuthConfigUpdate> {
+    return this.withWriteLock(async () => {
+      const current = await this.readDiskConfig();
+      const candidate: unknown = passwordHash === undefined
+        ? omitAuth(current.config)
+        : { ...current.config, auth: { passwordHash } };
+      const validated = validateConfig(candidate);
+      const text = stableJson(validated);
+      const revision = await revisionForText(text);
+
+      if (text !== stableJson(current.config)) {
+        try {
+          await atomicWrite(this.configPath, text, { mode: 0o600 });
+        } catch (cause) {
+          throw new ConfigSemanticValidationError([{
+            path: this.configPath,
+            message: `Failed to write global configuration at ${this.configPath}: ${errorMessage(cause)}`,
+          }]);
+        }
+      }
+      const credential = validated.auth === undefined
+        ? undefined
+        : Object.freeze({ ...validated.auth });
+      return { credential, revision };
+    });
+  }
+
   private prepareModelRuntime(
-    config: ArchCodeConfig,
+    config: Omit<ArchCodeConfig, "auth">,
     revision: string,
   ): ModelRuntimeSnapshot {
     try {
@@ -174,11 +289,35 @@ export class ServerConfigService {
     }
   }
 
+  private activate(
+    config: ArchCodeConfig,
+    runtimeRevision: string,
+    prepared: ModelRuntimeSnapshot = this.prepareModelRuntime(
+      omitAuth(config),
+      runtimeRevision,
+    ),
+  ): ServerConfigInitialization {
+    this.modelRuntime.publish(prepared);
+    this.startupConfig = config;
+    const { auth, ...runtimeConfig } = config;
+    return {
+      activation: Object.freeze({
+        revision: runtimeRevision,
+        runtimeConfig: Object.freeze(runtimeConfig),
+        [ACTIVATION_OWNER]: this,
+      }),
+      auth: auth === undefined ? undefined : Object.freeze({ ...auth }),
+    };
+  }
+
   private async readDiskConfig(): Promise<{ config: ArchCodeConfig; revision: string }> {
     let raw: string;
     try {
       raw = await readFile(this.configPath, "utf8");
     } catch (cause) {
+      if (isNodeError(cause, "ENOENT") && await pathIsAbsent(this.configPath)) {
+        throw new MissingServerConfigError();
+      }
       throw new ConfigSemanticValidationError([{
         path: this.configPath,
         message: `Failed to read global configuration at ${this.configPath}: ${errorMessage(cause)}`,
@@ -298,6 +437,8 @@ function validateConfig(value: unknown): ArchCodeConfig {
 
 function applySecretMutations(input: ServerConfigUpdate, current: ArchCodeConfig): unknown {
   const candidate = structuredClone(input) as Record<string, any>;
+  delete candidate.auth;
+  if (current.auth !== undefined) candidate.auth = structuredClone(current.auth);
   for (const [providerId, provider] of Object.entries(candidate.provider ?? {}) as Array<[string, { npm?: unknown; options?: Record<string, unknown> }]>) {
     if (!isRecord(provider.options)) continue;
     const adapter = typeof provider.npm === "string"
@@ -324,6 +465,120 @@ function applySecretMutations(input: ServerConfigUpdate, current: ArchCodeConfig
     );
   }
   return candidate;
+}
+
+function materializeInitialConfig(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+  const candidate = structuredClone(input);
+  const issues: ServerConfigValidationIssue[] = [];
+  const providers = isRecord(candidate.provider) ? candidate.provider : {};
+  for (const [providerId, provider] of Object.entries(providers)) {
+    if (!isRecord(provider) || !isRecord(provider.options)) continue;
+    const adapter = typeof provider.npm === "string"
+      ? providerAdapterCatalog.get(provider.npm)
+      : undefined;
+    if (!adapter) continue;
+    for (const secretPath of adapter.secretPaths) {
+      const normalizedPath = secretPath.endsWith(".*")
+        ? secretPath.slice(0, -2)
+        : secretPath;
+      if (secretPath.endsWith(".*")) {
+        materializeInitialSecretRecord(
+          provider.options,
+          normalizedPath,
+          `provider.${providerId}.options.${normalizedPath}`,
+          issues,
+        );
+      } else {
+        materializeInitialSecret(
+          provider.options,
+          normalizedPath,
+          `provider.${providerId}.options.${normalizedPath}`,
+          issues,
+        );
+      }
+    }
+  }
+  const mcpServers = isRecord(candidate.mcp) && isRecord(candidate.mcp.servers)
+    ? candidate.mcp.servers
+    : {};
+  for (const [name, server] of Object.entries(mcpServers)) {
+    if (!isRecord(server) || server.headers === undefined) continue;
+    if (!isRecord(server.headers)) {
+      issues.push({
+        path: `mcp.servers.${name}.headers`,
+        message: "Initial secret record must contain replace actions",
+      });
+      continue;
+    }
+    const headers: Record<string, string> = {};
+    for (const [header, mutation] of Object.entries(server.headers)) {
+      const path = `mcp.servers.${name}.headers.${header}`;
+      if (!isInitialSecretReplacement(mutation)) {
+        issues.push({ path, message: "Initial secret must use a replace action" });
+      } else {
+        headers[header] = mutation.value;
+      }
+    }
+    server.headers = headers;
+  }
+  if (issues.length > 0) throw new ConfigSemanticValidationError(issues);
+  return candidate;
+}
+
+function materializeInitialSecret(
+  target: Record<string, unknown>,
+  secretPath: string,
+  issuePath: string,
+  issues: ServerConfigValidationIssue[],
+): void {
+  const mutation = getPath(target, secretPath);
+  if (mutation === undefined) return;
+  if (!isInitialSecretReplacement(mutation)) {
+    issues.push({ path: issuePath, message: "Initial secret must use a replace action" });
+    return;
+  }
+  setPath(target, secretPath, mutation.value);
+}
+
+function materializeInitialSecretRecord(
+  target: Record<string, unknown>,
+  secretPath: string,
+  issuePath: string,
+  issues: ServerConfigValidationIssue[],
+): void {
+  const mutations = getPath(target, secretPath);
+  if (mutations === undefined) return;
+  if (!isRecord(mutations)) {
+    issues.push({ path: issuePath, message: "Initial secret record must contain replace actions" });
+    return;
+  }
+  const materialized: Record<string, string> = {};
+  for (const [name, mutation] of Object.entries(mutations)) {
+    if (!isInitialSecretReplacement(mutation)) {
+      issues.push({
+        path: `${issuePath}.${name}`,
+        message: "Initial secret must use a replace action",
+      });
+    } else {
+      materialized[name] = mutation.value;
+    }
+  }
+  setPath(target, secretPath, materialized);
+}
+
+function isInitialSecretReplacement(
+  value: unknown,
+): value is { readonly action: "replace"; readonly value: string } {
+  return isRecord(value)
+    && value.action === "replace"
+    && typeof value.value === "string"
+    && Object.keys(value).length === 2;
+}
+
+function omitAuth(config: ArchCodeConfig): Omit<ArchCodeConfig, "auth"> {
+  const { auth: _auth, ...withoutAuth } = config;
+  return withoutAuth;
 }
 
 function validateSecretMutationPayload(input: unknown): void {
@@ -648,7 +903,8 @@ function isCredentialBearingUrl(value: string): boolean {
 }
 
 function redactConfig(config: ArchCodeConfig): ServerConfigEditableView {
-  const view = structuredClone(config) as unknown as ServerConfigEditableView;
+  const { auth: _auth, ...editableConfig } = config;
+  const view = structuredClone(editableConfig) as unknown as ServerConfigEditableView;
   for (const provider of Object.values(view.provider)) {
     const adapter = providerAdapterCatalog.get(provider.npm);
     if (!adapter || !isRecord(provider.options)) continue;
@@ -658,6 +914,43 @@ function redactConfig(config: ArchCodeConfig): ServerConfigEditableView {
     redactSecretRecord(server.headers);
   }
   return view;
+}
+
+async function createConfigFile(configPath: string, content: string): Promise<void> {
+  const directory = dirname(configPath);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700);
+  const tempPath = join(directory, `.tmp-${crypto.randomUUID()}`);
+  const handle = await open(tempPath, "wx", 0o600);
+  try {
+    try {
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      await link(tempPath, configPath);
+    } catch (cause) {
+      if (isNodeError(cause, "EEXIST")) throw new ExistingServerConfigError();
+      throw cause;
+    }
+  } finally {
+    await unlink(tempPath).catch(() => undefined);
+  }
+}
+
+function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+async function pathIsAbsent(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return false;
+  } catch (cause) {
+    return isNodeError(cause, "ENOENT");
+  }
 }
 
 function redactProviderOptions(
@@ -687,6 +980,10 @@ function stableJson(value: unknown): string {
 async function revisionForText(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function runtimeRevisionForConfig(config: ArchCodeConfig): Promise<string> {
+  return await revisionForText(stableJson(omitAuth(config)));
 }
 
 function errorMessage(cause: unknown): string {
