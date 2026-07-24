@@ -24,7 +24,7 @@
     },
     "apps/server": {
       "name": "@archcode/server",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "bin": {
         "archcode": "./src/main.ts",
       },
@@ -44,7 +44,7 @@
     },
     "apps/web": {
       "name": "@archcode/web",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@archcode/protocol": "workspace:*",
         "@radix-ui/react-context-menu": "^2.2.16",
@@ -75,7 +75,7 @@
     },
     "packages/agent-core": {
       "name": "@archcode/agent-core",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "@ai-sdk/alibaba": "^1.0.0",
         "@ai-sdk/amazon-bedrock": "^4.0.0",
@@ -129,14 +129,14 @@
     },
     "packages/protocol": {
       "name": "@archcode/protocol",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "devDependencies": {
         "typescript": "^6.0.3",
       },
     },
     "packages/utils": {
       "name": "@archcode/utils",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "devDependencies": {
         "typescript": "^6.0.3",
       },

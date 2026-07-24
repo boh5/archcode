@@ -9,7 +9,9 @@ import {
   extractReleaseNotes,
   isPrereleaseVersion,
   parseReleaseVersion,
-  releaseAssetNames,
+  releaseAssetNamesForVersion,
+  releaseBinaryAssetName,
+  releaseBinaryAssetNameForTarget,
   releaseTargets,
 } from "./release";
 
@@ -33,13 +35,21 @@ describe("release metadata", () => {
     );
   });
 
-  test("defines one stable archive name per supported target", () => {
-    expect(releaseTargets.map((target) => target.archive)).toEqual([
-      "archcode-aarch64-apple-darwin.tar.gz",
-      "archcode-x86_64-apple-darwin.tar.gz",
-      "archcode-aarch64-unknown-linux-gnu.tar.gz",
-      "archcode-x86_64-unknown-linux-gnu.tar.gz",
+  test("defines one friendly versioned binary name per supported target", () => {
+    expect(releaseTargets.map((target) => releaseBinaryAssetName(target, "1.2.3"))).toEqual([
+      "archcode-macos-arm64-v1.2.3",
+      "archcode-macos-x64-v1.2.3",
+      "archcode-linux-arm64-v1.2.3",
+      "archcode-linux-x64-v1.2.3",
     ]);
+    expect(releaseBinaryAssetNameForTarget(
+      "aarch64-unknown-linux-gnu",
+      "1.2.3",
+    )).toBe("archcode-linux-arm64-v1.2.3");
+    expect(() => releaseBinaryAssetNameForTarget(
+      "x86_64-pc-windows-msvc",
+      "1.2.3",
+    )).toThrow("Unsupported release target");
   });
 
   test.each([
@@ -58,13 +68,13 @@ describe("release metadata", () => {
 
   test("requires every private workspace package to match the product version", () => {
     expect(() => assertWorkspacePackageVersions([
-      { name: "@archcode/server", version: "0.0.1" },
-      { name: "@archcode/web", version: "0.0.1" },
-    ], "0.0.1")).not.toThrow();
+      { name: "@archcode/server", version: "0.0.2" },
+      { name: "@archcode/web", version: "0.0.2" },
+    ], "0.0.2")).not.toThrow();
     expect(() => assertWorkspacePackageVersions([
-      { name: "@archcode/server", version: "0.0.1" },
+      { name: "@archcode/server", version: "0.0.2" },
       { name: "@archcode/web", version: "0.1.0" },
-    ], "0.0.1")).toThrow("@archcode/web version \"0.1.0\" does not match 0.0.1");
+    ], "0.0.2")).toThrow("@archcode/web version \"0.1.0\" does not match 0.0.2");
   });
 
   test("classifies existing drafts as recoverable and exact published releases as complete", () => {
@@ -124,6 +134,7 @@ describe("release metadata", () => {
   test("compares complete release asset directories by content", async () => {
     const expectedDir = await mkdtemp(join(tmpdir(), "archcode-release-expected-"));
     const actualDir = await mkdtemp(join(tmpdir(), "archcode-release-actual-"));
+    const releaseAssetNames = releaseAssetNamesForVersion("0.0.2");
     try {
       for (const name of releaseAssetNames) {
         await Promise.all([

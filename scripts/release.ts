@@ -16,32 +16,53 @@ const workspacePackageJsonPaths = [
 ] as const;
 export const releaseTargets = [
   {
-    archive: "archcode-aarch64-apple-darwin.tar.gz",
+    assetBaseName: "archcode-macos-arm64",
     platform: "macOS",
     architecture: "arm64",
+    target: "aarch64-apple-darwin",
   },
   {
-    archive: "archcode-x86_64-apple-darwin.tar.gz",
+    assetBaseName: "archcode-macos-x64",
     platform: "macOS",
     architecture: "x64",
+    target: "x86_64-apple-darwin",
   },
   {
-    archive: "archcode-aarch64-unknown-linux-gnu.tar.gz",
+    assetBaseName: "archcode-linux-arm64",
     platform: "Linux",
     architecture: "arm64",
+    target: "aarch64-unknown-linux-gnu",
   },
   {
-    archive: "archcode-x86_64-unknown-linux-gnu.tar.gz",
+    assetBaseName: "archcode-linux-x64",
     platform: "Linux",
     architecture: "x64",
+    target: "x86_64-unknown-linux-gnu",
   },
 ] as const;
 
-export const releaseAssetNames = [
-  ...releaseTargets.map((target) => target.archive),
-  "SHA256SUMS",
-  "release-manifest.json",
-] as const;
+export function releaseBinaryAssetName(
+  target: (typeof releaseTargets)[number],
+  version: string,
+): string {
+  return `${target.assetBaseName}-v${parseReleaseVersion(version)}`;
+}
+
+export function releaseBinaryAssetNameForTarget(targetTriple: string, version: string): string {
+  const target = releaseTargets.find((candidate) => candidate.target === targetTriple);
+  if (!target) {
+    throw new Error(`Unsupported release target: ${targetTriple}`);
+  }
+  return releaseBinaryAssetName(target, version);
+}
+
+export function releaseAssetNamesForVersion(version: string): string[] {
+  return [
+    ...releaseTargets.map((target) => releaseBinaryAssetName(target, version)),
+    "SHA256SUMS",
+    "release-manifest.json",
+  ];
+}
 
 export interface ExistingReleaseMetadata {
   body: string;
@@ -152,9 +173,14 @@ async function listReleaseAssetNames(assetDir: string): Promise<string[]> {
     .sort((a, b) => a.localeCompare(b));
 }
 
-export async function verifyReleaseAssetDirectory(assetDir: string): Promise<void> {
+export async function verifyReleaseAssetDirectory(
+  assetDir: string,
+  version?: string,
+): Promise<void> {
+  const resolvedVersion = version ?? await readReleaseVersion();
   const actual = await listReleaseAssetNames(assetDir);
-  const expected = [...releaseAssetNames].sort((a, b) => a.localeCompare(b));
+  const expected = releaseAssetNamesForVersion(resolvedVersion)
+    .sort((a, b) => a.localeCompare(b));
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(
       `Release asset set mismatch. Expected ${expected.join(", ")}; received ${actual.join(", ") || "(none)"}`,
@@ -166,12 +192,14 @@ export async function compareReleaseAssetDirectories(
   expectedDir: string,
   actualDir: string,
 ): Promise<void> {
+  const version = await readReleaseVersion();
+  const assetNames = releaseAssetNamesForVersion(version);
   await Promise.all([
-    verifyReleaseAssetDirectory(expectedDir),
-    verifyReleaseAssetDirectory(actualDir),
+    verifyReleaseAssetDirectory(expectedDir, version),
+    verifyReleaseAssetDirectory(actualDir, version),
   ]);
 
-  for (const name of releaseAssetNames) {
+  for (const name of assetNames) {
     const expectedPath = join(expectedDir, name);
     const actualPath = join(actualDir, name);
     const [expectedFile, actualFile] = [Bun.file(expectedPath), Bun.file(actualPath)];
@@ -233,13 +261,14 @@ async function writeBundleMetadata(assetDir: string): Promise<void> {
   const assets = [];
 
   for (const target of releaseTargets) {
-    const path = join(assetDir, target.archive);
+    const name = releaseBinaryAssetName(target, version);
+    const path = join(assetDir, name);
     const file = Bun.file(path);
     if (!await file.exists()) {
-      throw new Error(`Missing release asset: ${target.archive}`);
+      throw new Error(`Missing release asset: ${name}`);
     }
     assets.push({
-      name: target.archive,
+      name,
       platform: target.platform,
       architecture: target.architecture,
       size: file.size,
@@ -258,7 +287,7 @@ async function writeBundleMetadata(assetDir: string): Promise<void> {
     tag: `v${version}`,
     assets,
   }, null, 2)}\n`);
-  await verifyReleaseAssetDirectory(assetDir);
+  await verifyReleaseAssetDirectory(assetDir, version);
 }
 
 function requireArgument(value: string | undefined, usage: string): string {
@@ -302,7 +331,13 @@ async function run(): Promise<void> {
       console.log(isPrereleaseVersion(await readReleaseVersion()));
       return;
     case "assets":
-      console.log(releaseAssetNames.join("\n"));
+      console.log(releaseAssetNamesForVersion(await readReleaseVersion()).join("\n"));
+      return;
+    case "asset":
+      console.log(releaseBinaryAssetNameForTarget(
+        requireArgument(args[0], "bun run scripts/release.ts asset <target-triple>"),
+        await readReleaseVersion(),
+      ));
       return;
     case "notes":
       await writeNotes(requireArgument(args[0], "bun run scripts/release.ts notes <output-path>"));
@@ -331,7 +366,7 @@ async function run(): Promise<void> {
     default:
       throw new Error(
         `Unknown command ${JSON.stringify(command)}. ` +
-        "Expected version, preflight, prerelease, assets, notes, state, bundle, or compare.",
+        "Expected version, preflight, prerelease, asset, assets, notes, state, bundle, or compare.",
       );
   }
 }

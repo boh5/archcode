@@ -61,7 +61,7 @@ export interface McpClientFactories {
 export function createDefaultMcpClientFactories(): McpClientFactories {
   return {
     createClient(): McpSdkClientLike {
-      return new Client({ name: MCP_CLIENT_NAME, version: "0.0.1" }) as McpSdkClientLike;
+      return new Client({ name: MCP_CLIENT_NAME, version: "0.0.2" }) as McpSdkClientLike;
     },
     createTransport(
       url: URL,

@@ -17,30 +17,39 @@ Unlike a coding CLI that runs a task and exits, ArchCode keeps the engineering w
 
 ## Install from a GitHub Release
 
-Download the archive for your machine from the
-[GitHub Releases page](https://github.com/boh5/archcode/releases), extract it,
-and verify the executable before starting it.
+Download the binary for your machine from the
+[GitHub Releases page](https://github.com/boh5/archcode/releases), verify it,
+grant execute permission, and start it directly.
 
 | System | Architecture | Release asset |
 |---|---|---|
-| macOS 13 or newer | Apple silicon (arm64) | `archcode-aarch64-apple-darwin.tar.gz` |
-| macOS 13 or newer | Intel (x64) | `archcode-x86_64-apple-darwin.tar.gz` |
-| Linux with glibc 2.17 or newer | arm64 | `archcode-aarch64-unknown-linux-gnu.tar.gz` |
-| Linux with glibc 2.17 or newer | x64 | `archcode-x86_64-unknown-linux-gnu.tar.gz` |
+| macOS 13 or newer | Apple silicon (arm64) | `archcode-macos-arm64-v0.0.2` |
+| macOS 13 or newer | Intel (x64) | `archcode-macos-x64-v0.0.2` |
+| Linux with glibc 2.17 or newer | arm64 | `archcode-linux-arm64-v0.0.2` |
+| Linux with glibc 2.17 or newer | x64 | `archcode-linux-x64-v0.0.2` |
 | Windows 10/11 | WSL2 | Use the Linux asset matching the WSL architecture |
 
-Each Release also includes `SHA256SUMS` and `release-manifest.json`. After
-checking the checksum, verify the binary reports the expected version:
+For example, download and verify the Apple silicon build:
 
 ```sh
-./archcode --version
+version=0.0.2
+asset="archcode-macos-arm64-v${version}"
+curl -fLO "https://github.com/boh5/archcode/releases/download/v${version}/${asset}"
+curl -fLO "https://github.com/boh5/archcode/releases/download/v${version}/SHA256SUMS"
+grep "  ${asset}$" SHA256SUMS | shasum -a 256 -c -
+chmod +x "$asset"
+./"$asset" --version
 ```
 
-The macOS archives produced by the current workflow are not signed or
+Linux users can replace `shasum -a 256` with `sha256sum`. Each Release also
+includes `release-manifest.json`, which records the platform, architecture,
+size, and SHA-256 digest of every binary.
+
+The macOS binaries produced by the current workflow are not signed or
 notarized. macOS may quarantine the binary; only after its checksum matches the
 official Release, explicitly allow it in **System Settings → Privacy &
 Security**, or remove quarantine from that specific file with
-`xattr -d com.apple.quarantine ./archcode`.
+`xattr -d com.apple.quarantine "./$asset"`.
 
 On Windows, install WSL2 and run ArchCode inside the Linux environment. Its
 configuration lives at `~/.archcode/config.json` inside WSL, while a Windows
@@ -81,12 +90,15 @@ Create `~/.archcode/config.json`. ArchCode reads this single server-wide file fo
 
 Provider IDs and model IDs combine as `provider:modelId`, such as `local:glm-5`. The ID is the runtime namespace; `provider.name` is display-only. Provider factory options are literal JSON values and are not expanded from environment-variable expressions. See [provider configuration](docs/configuration.md) for all supported packages, secret handling, and custom endpoints.
 
-The downloaded archive also contains `config.example.json`, which can be copied
-as a starting point:
+You can download the versioned `config.example.json` from the source tag as a
+starting point:
 
 ```sh
+version=0.0.2
 mkdir -p ~/.archcode
-install -m 600 config.example.json ~/.archcode/config.json
+curl -fL "https://raw.githubusercontent.com/boh5/archcode/v${version}/config.example.json" \
+  -o ~/.archcode/config.json
+chmod 600 ~/.archcode/config.json
 ```
 
 Replace the placeholder endpoint, API key, model ID, and limits before starting

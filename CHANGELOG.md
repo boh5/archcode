@@ -5,6 +5,17 @@ All notable changes to ArchCode are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.2] - 2026-07-24
+
+### Changed
+
+- Publish four standalone executables with user-facing macOS/Linux and arm64/x64
+  names that include the release version.
+- Replace target-triple `.tar.gz` Release assets with binaries that can be
+  downloaded and run directly after granting execute permission.
+- Retain SHA-256 checksums, the machine-readable release manifest, provenance
+  attestations, and isolated startup tests for every supported build.
+
 ## [0.0.1] - 2026-07-24
 
 Initial public preview of the ArchCode always-on workbench.
