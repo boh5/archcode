@@ -2,14 +2,13 @@ import { bootServer } from "./boot";
 import {
   createConsoleLogger,
   createRuntime,
-  type AgentRuntime,
   type Logger,
+  ServerConfigService,
 } from "@archcode/agent-core";
 import {
   ENV_ACCESS_LOG,
   ENV_LOG_LEVEL,
   ENV_PORT,
-  ENV_SERVER_PASSWORD,
 } from "@archcode/protocol";
 import {
   requireEmbeddedWebAssets,
@@ -18,6 +17,8 @@ import {
 import { resolveCliInvocation } from "./cli";
 import { resolveLoggingConfig } from "./logging-config";
 import { readSourceProductVersion } from "./product-version";
+import { ArchCodeServerHost } from "./server-host";
+import { assertRetiredServerPasswordEnvAbsent } from "./legacy-auth-env";
 
 export { createRuntime, type AgentRuntime, type AgentRuntimeOptions } from "@archcode/agent-core";
 
@@ -32,18 +33,22 @@ async function main(
   logger: Logger,
   accessLog: boolean,
 ) {
-  const serverPassword = Bun.env[ENV_SERVER_PASSWORD];
-  const runtime: AgentRuntime = await createRuntime({
+  assertRetiredServerPasswordEnvAbsent(Bun.env);
+  const configService = new ServerConfigService();
+  const compiled = import.meta.url.startsWith("file:///$bunfs/");
+  const host = await ArchCodeServerHost.create({
+    configService,
+    createRuntime,
     logger,
-    externalSecretLiterals: serverPassword === undefined ? [] : [serverPassword],
-  });
-
-  await bootServer(runtime, {
+    accessLog,
+    dev: !compiled,
     embeddedWebAssets: options.embeddedWebAssets,
+    version: options.version,
+  });
+  await bootServer(host, {
     port: options.port,
     version: options.version,
     logger,
-    accessLog,
   });
 }
 

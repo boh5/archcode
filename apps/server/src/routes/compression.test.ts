@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentRuntime, CompressionOriginalRangeResult } from "@archcode/agent-core";
 import { ProjectRegistry, SessionFileNotFoundError, silentLogger } from "@archcode/agent-core";
-import { createServerApp } from "../app";
+import { createRuntimeApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "compression-routes");
 
@@ -106,7 +106,7 @@ async function createTestApp(testName: string) {
   const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
   const runtimeFixture = createTestRuntime(projectRegistry);
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
-  return { app: createServerApp(runtimeFixture.runtime, { dev: true }).app, project, workspaceRoot, ...runtimeFixture };
+  return { app: createRuntimeApp(runtimeFixture.runtime).app, project, workspaceRoot, ...runtimeFixture };
 }
 
 describe("compression routes", () => {

@@ -1,48 +1,30 @@
 import {
   createConsoleLogger,
-  type AgentRuntime,
   type Logger,
 } from "@archcode/agent-core";
-import { ENV_OPEN_BROWSER, ENV_SERVER_PASSWORD, PRODUCT_DISPLAY_NAME } from "@archcode/protocol";
-import { createServerApp } from "./app";
+import { ENV_OPEN_BROWSER, PRODUCT_DISPLAY_NAME } from "@archcode/protocol";
 import { setupGracefulShutdown } from "./lifecycle";
 import { startServer } from "./listen";
-import type { EmbeddedWebAssets } from "./serve-web";
+import type { ArchCodeServerHost } from "./server-host";
 
 export interface BootServerOptions {
-  embeddedWebAssets?: EmbeddedWebAssets;
   port?: number;
   version?: string;
   logger?: Logger;
-  accessLog?: boolean;
 }
 
 export async function bootServer(
-  runtime: AgentRuntime,
+  host: ArchCodeServerHost,
   options: BootServerOptions = {},
 ): Promise<void> {
-  const compiled = import.meta.url.startsWith("file:///$bunfs/");
-  const dev = !compiled && !Bun.env[ENV_SERVER_PASSWORD];
   const logger = options.logger ?? createConsoleLogger({
     level: "info",
     module: "server",
   });
-  const { app } = createServerApp(runtime, {
-    dev,
-    embeddedWebAssets: options.embeddedWebAssets,
-    password: Bun.env[ENV_SERVER_PASSWORD],
-    version: options.version,
-    logger,
-    accessLog: options.accessLog,
-  });
-
-  await runtime.recoverSessionContinuations();
-  await runtime.recoverProjectTodos();
-  await runtime.startAutomationSchedulers();
-  const { url, server } = await startServer(app, {
+  const { url, server } = await startServer(host.app, {
     port: options.port,
   });
-  setupGracefulShutdown(server, runtime, {
+  setupGracefulShutdown(server, host, {
     logger: logger.child({ module: "server.lifecycle" }),
   });
 
@@ -54,6 +36,9 @@ export async function bootServer(
       ...(options.version ? { version: options.version } : {}),
     },
   });
+  for (const instruction of host.setupInstructions(url)) {
+    logger.info("server.setup.required", { message: instruction });
+  }
 
   if (Bun.env[ENV_OPEN_BROWSER]) {
     // Browser opening will be implemented when the web UI workflow is ready.

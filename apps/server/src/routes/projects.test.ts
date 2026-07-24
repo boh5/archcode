@@ -5,7 +5,7 @@ import type { AgentRuntime } from "@archcode/agent-core";
 import { ProjectRegistry, ProjectRuntimeActiveError, silentLogger } from "@archcode/agent-core";
 import type { ProjectInfo } from "@archcode/agent-core";
 import type { GlobalSSEEvent } from "@archcode/protocol";
-import { createServerApp } from "../app";
+import { createRuntimeApp } from "../app";
 import { globalEventBus } from "../events/global-event-bus";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "projects-routes");
@@ -105,7 +105,7 @@ async function createTestApp(testName: string) {
   const homeDir = join(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
   const runtime = createTestRuntime(new ProjectRegistry({ homeDir, logger: silentLogger }));
-  return createServerApp(runtime, { dev: true }).app;
+  return createRuntimeApp(runtime).app;
 }
 
 describe("projects routes", () => {
@@ -173,7 +173,7 @@ describe("projects routes", () => {
         },
       }),
     });
-    const app = createServerApp(runtime, { dev: true }).app;
+    const app = createRuntimeApp(runtime).app;
     const observed: GlobalSSEEvent[] = [];
     const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
     const workspaceRoot = await makeWorkspace("alpha-control-plane");
@@ -243,7 +243,7 @@ describe("projects routes", () => {
     const runtime = createTestRuntime(projectRegistry, {
       getProjectControlPlaneSnapshot,
     });
-    const app = createServerApp(runtime, { dev: true }).app;
+    const app = createRuntimeApp(runtime).app;
     const observed: GlobalSSEEvent[] = [];
     const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
     const workspaceRoot = await makeWorkspace("racing-control-plane");
@@ -277,7 +277,7 @@ describe("projects routes", () => {
         throw new Error("snapshot failed");
       },
     });
-    const app = createServerApp(runtime, { dev: true }).app;
+    const app = createRuntimeApp(runtime).app;
     const workspaceRoot = await makeWorkspace("failed-control-plane");
 
     const response = await app.request("/api/projects", {
@@ -393,7 +393,7 @@ describe("projects routes", () => {
         throw new ProjectRuntimeActiveError(project.slug, [{ rootSessionId: "root-running", activity: "running" }]);
       },
     });
-    const app = createServerApp(runtime, { dev: true }).app;
+    const app = createRuntimeApp(runtime).app;
 
     const res = await app.request(`/api/projects/${project.slug}`, { method: "DELETE" });
 

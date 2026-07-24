@@ -1,5 +1,3 @@
-import { COOKIE_SERVER_PASSWORD } from "@archcode/protocol";
-
 interface ApiErrorPayload {
   error?: {
     code?: unknown;
@@ -24,34 +22,45 @@ export class ApiError extends Error {
 
 export interface ApiFetchOptions extends Omit<RequestInit, "body"> {
   body?: BodyInit | Record<string, unknown> | null;
+  /** Login and Setup handle their own credential failures inline. */
+  authFailure?: "invalidate" | "ignore";
+}
+
+type AuthInvalidationListener = () => void;
+const authInvalidationListeners = new Set<AuthInvalidationListener>();
+
+export function subscribeAuthInvalidation(listener: AuthInvalidationListener): () => void {
+  authInvalidationListeners.add(listener);
+  return () => authInvalidationListeners.delete(listener);
+}
+
+export function notifyAuthInvalidated(): void {
+  for (const listener of authInvalidationListeners) listener();
 }
 
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
-  const headers = createApiHeaders(options.headers);
-  const body = normalizeBody(options.body, headers);
+  const { authFailure = "invalidate", body: requestedBody, ...requestOptions } = options;
+  const headers = createApiHeaders(requestOptions.headers);
+  const body = normalizeBody(requestedBody, headers);
 
   const response = await fetch(`${apiBaseUrl()}${path}`, {
-    ...options,
+    ...requestOptions,
     body,
     headers,
+    credentials: "same-origin",
   });
 
   if (response.ok) {
     return parseJson<T>(response);
   }
 
-  throw await createApiError(response);
+  const error = await createApiError(response);
+  if (error.status === 401 && authFailure !== "ignore") notifyAuthInvalidated();
+  throw error;
 }
 
 export function createApiHeaders(input?: HeadersInit): Headers {
-  const headers = new Headers(input);
-  const password = readServerPasswordCookie();
-
-  if (password && !headers.has("Authorization")) {
-    headers.set("Authorization", `Basic ${btoa(`:${password}`)}`);
-  }
-
-  return headers;
+  return new Headers(input);
 }
 
 export function apiBaseUrl(): string {
@@ -114,15 +123,4 @@ async function safeParseErrorPayload(response: Response): Promise<ApiErrorPayloa
   } catch {
     return undefined;
   }
-}
-
-function readServerPasswordCookie(): string | undefined {
-  const cookiePrefix = `${COOKIE_SERVER_PASSWORD}=`;
-  const cookie = document.cookie
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(cookiePrefix));
-
-  if (!cookie) return undefined;
-  return decodeURIComponent(cookie.slice(cookiePrefix.length));
 }

@@ -34,6 +34,30 @@ archcode/
 
 ---
 
+## Startup and Authentication Boundary
+
+`ServerConfigService` is the sole owner of the global Config file. It returns a
+typed startup result instead of letting `AgentRuntime` read disk implicitly:
+
+```text
+missing Config -> restricted Setup Host
+valid Config   -> Runtime activation -> Ready Host
+invalid Config -> read-only Config Error Host
+```
+
+`ArchCodeServerHost` owns the single listener, bootstrap mode, one-time
+process-local Setup Grant, optional Runtime lifecycle, and optional password
+Session auth. `AgentRuntime` receives only a Config activation whose runtime
+projection excludes the password hash. The hash is Argon2id-only and is
+available exclusively to `ServerAuthService`; it is never sent through
+Protocol DTOs, Web storage, Prompt, Tools, logs, or SSE.
+
+Setup is one create-only transition, not a general installer framework. Config
+initialization uses an OS-level no-replace commit; an invalid existing Config is
+never replaced or treated as first run.
+
+---
+
 ## Dependency Direction
 
 ```

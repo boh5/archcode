@@ -21,7 +21,11 @@ const fixturePath = resolve(import.meta.dir, "../src/prompt/live-eval-scenarios.
 const manifest = PromptLiveEvalManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
 const fixture = PromptLiveEvalScenariosSchema.parse(JSON.parse(await readFile(fixturePath, "utf8")));
 const configService = new ServerConfigService(homeDirArgument === undefined ? {} : { homeDir: resolve(homeDirArgument) });
-const config = await configService.loadForStartup();
+const activationResult = await configService.activateForStartup();
+if (activationResult.status !== "ready") {
+  throw new Error(`Prompt live eval requires a valid global Config; received ${activationResult.status}`);
+}
+const config = configService.resolveRuntimeConfig(activationResult.activation);
 const registry = createRegistry(config.provider);
 const result = await runPromptLiveEval(manifest, fixture, async (qualifiedId, system, prompt) => {
   const model = registry.getModel(qualifiedId);

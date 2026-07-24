@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import {
   createConsoleLogger,
   type AgentRuntime,
@@ -8,8 +7,6 @@ import {
 } from "@archcode/agent-core";
 import type { GlobalSSEEvent } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
-import { UnauthorizedError } from "./errors";
-import { requestLogger } from "./logger";
 import { createConfigRoutes } from "./routes/config";
 import { createAgentsRoutes } from "./routes/agents";
 import { createCompressionRoutes } from "./routes/compression";
@@ -25,77 +22,31 @@ import { createProjectsRoutes } from "./routes/projects";
 import { createSessionsRoutes } from "./routes/sessions";
 import { createTodosRoutes } from "./routes/todos";
 import { createToolOutputRoutes } from "./routes/tool-outputs";
-import {
-  createEmbeddedAssetHandler,
-  type EmbeddedWebAssets,
-} from "./serve-web";
 import { globalEventBus } from "./events/global-event-bus";
+import type { GlobalEventStreamLease } from "./routes/global-events";
 
-export interface CreateServerAppOptions {
-  dev?: boolean;
-  embeddedWebAssets?: EmbeddedWebAssets;
-  password?: string;
-  version?: string;
-  logger?: Logger;
-  accessLog?: boolean;
+export interface RuntimeAppOptions {
+  readonly globalEventStreamLease?: (
+    request: Request,
+  ) => GlobalEventStreamLease | undefined;
+  readonly logger?: Logger;
 }
 
-export function createServerApp(
+/**
+ * Composes only Runtime-backed API routes and realtime bridges.
+ * Shared HTTP concerns and readiness/auth dispatch belong to ServerHost.
+ */
+export function createRuntimeApp(
   runtime: AgentRuntime,
-  options: CreateServerAppOptions = {},
+  options: RuntimeAppOptions = {},
 ): { app: Hono; runtime: AgentRuntime } {
   const app = new Hono();
   const serverRuntime = runtime;
   const logger = options.logger ?? createConsoleLogger({
     level: "info",
-    module: "server",
+    module: "server.http",
   });
-  const httpLogger = logger.child({ module: "server.http" });
-
-  app.onError((error, context) => errorHandler(error, context, httpLogger));
-  if (options.accessLog !== false) {
-    app.use("*", requestLogger(httpLogger));
-  }
-  app.use(
-    "*",
-    cors({
-      origin: options.dev ? "*" : "",
-      credentials: !options.dev,
-    }),
-  );
-
-  if (options.password) {
-    app.use("/api/*", async (c, next) => {
-      const auth = c.req.header("Authorization");
-      if (!auth) {
-        throw new UnauthorizedError("Authentication required");
-      }
-
-      if (!auth.startsWith("Basic ")) {
-        throw new UnauthorizedError("Invalid credentials");
-      }
-
-      let decoded: string;
-      try {
-        decoded = atob(auth.slice("Basic ".length));
-      } catch {
-        throw new UnauthorizedError("Invalid credentials");
-      }
-
-      const separatorIndex = decoded.indexOf(":");
-      const password = separatorIndex >= 0 ? decoded.slice(separatorIndex + 1) : "";
-      if (password !== options.password) {
-        throw new UnauthorizedError("Invalid credentials");
-      }
-
-      await next();
-    });
-  }
-
-  app.get("/api/health", (c) => c.json({
-    ok: true,
-    version: options.version ?? "development",
-  }));
+  app.onError((error, context) => errorHandler(error, context, logger));
 
   const projects = createProjectsRoutes(serverRuntime, {
     onProjectRegistered: async (project) => {
@@ -115,6 +66,7 @@ export function createServerApp(
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus, {
+    streamLease: options.globalEventStreamLease,
     initialEvents: async () => {
       const [sessionRuntimeEvents, hitlEvents] = await Promise.all([
         serverRuntime.listSessionRuntimeEvents(),
@@ -148,10 +100,6 @@ export function createServerApp(
   app.route("/api/agents", agents);
   app.route("/api/files", new Hono());
   app.route("/api/directories", directories);
-
-  if (options.embeddedWebAssets) {
-    app.use("/*", createEmbeddedAssetHandler(options.embeddedWebAssets));
-  }
 
   wireHitlRealtimeBridge(serverRuntime, globalEventBus);
   wireSessionEventBridge(serverRuntime, globalEventBus);

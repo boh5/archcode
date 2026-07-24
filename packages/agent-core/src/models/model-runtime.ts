@@ -22,7 +22,7 @@ export class ModelRuntime {
   }
 
   /** Build a fully usable snapshot without mutating the current pointer. */
-  prepare(config: ArchCodeConfig, revision: string): ModelRuntimeSnapshot {
+  prepare(config: Omit<ArchCodeConfig, "auth">, revision: string): ModelRuntimeSnapshot {
     const detachedConfig = structuredClone(config);
     const providerRegistry = createRegistry(detachedConfig.provider);
     return new ModelRuntimeSnapshot({ revision, config: detachedConfig, providerRegistry });

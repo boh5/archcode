@@ -7,6 +7,7 @@ import { useMcpStatusStore } from "../../store/mcp-status-store";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
 import { cloneConfig, hasConfigChanges, toFieldErrors, type SettingsSection } from "./settings-helpers";
 import { SettingsProfilesPanel, SettingsGithubPanel, SettingsMcpPanel, SettingsMemoryPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
+import { SettingsSecurityPanel } from "./SettingsSecurityPanel";
 
 export { SettingsMcpPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
 
@@ -102,6 +103,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, sect
     <div className="flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6">
       <div hidden={section !== "models"}><SettingsModelsPanel config={draft} adapterCatalog={adapterCatalog} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
       <div hidden={section !== "profiles"}><SettingsProfilesPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
+      {section === "security" && <SettingsSecurityPanel onConfigChanged={onReload} />}
       <div hidden={section !== "mcp"}><SettingsMcpPanel config={draft} servers={servers} onChange={setDraft} errors={errors} /></div>
       <div hidden={section !== "memory"}><SettingsMemoryPanel config={draft} onChange={setDraft} errors={errors} /></div>
       <div hidden={section !== "github"}><SettingsGithubPanel config={draft} onChange={setDraft} errors={errors} /></div>

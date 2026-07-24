@@ -14,6 +14,12 @@ export interface GlobalEventsRoutesOptions {
   maxQueuedEvents?: number;
   onBeforeWrite?: (event: GlobalSSEEvent) => Promise<void> | void;
   initialEvents?: () => Promise<readonly GlobalSSEEvent[]> | readonly GlobalSSEEvent[];
+  streamLease?: (request: Request) => GlobalEventStreamLease | undefined;
+}
+
+export interface GlobalEventStreamLease {
+  readonly signal: AbortSignal;
+  release(): void;
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15000;
@@ -29,6 +35,7 @@ export function createGlobalEventsRoutes(
   const app = new Hono();
 
   app.get("/", (c) => {
+    const streamLease = options?.streamLease?.(c.req.raw);
     return streamSSE(c, async (stream) => {
       let closed = false;
       let unsubscribe: (() => void) | undefined;
@@ -52,6 +59,11 @@ export function createGlobalEventsRoutes(
       };
 
       stream.onAbort(cleanup);
+      const onSessionRevoked = (): void => cleanup();
+      if (streamLease?.signal.aborted) cleanup();
+      else streamLease?.signal.addEventListener("abort", onSessionRevoked, {
+        once: true,
+      });
 
       const writeEvent = async (event: GlobalSSEEvent): Promise<void> => {
         if (closed) return;
@@ -112,6 +124,8 @@ export function createGlobalEventsRoutes(
       } finally {
         await writeQueue.catch(() => undefined);
         cleanup();
+        streamLease?.signal.removeEventListener("abort", onSessionRevoked);
+        streamLease?.release();
       }
     });
   });

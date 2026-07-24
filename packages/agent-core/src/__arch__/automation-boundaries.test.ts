@@ -40,6 +40,8 @@ describe("Automation architecture boundaries", () => {
     const dispatcher = readFileSync(join(automationRoot, "dispatcher.ts"), "utf8");
     const scheduler = readFileSync(join(automationRoot, "scheduler.ts"), "utf8");
     const boot = readFileSync(join(projectRoot, "apps/server/src/boot.ts"), "utf8");
+    const serverHost = readFileSync(join(projectRoot, "apps/server/src/server-host.ts"), "utf8");
+    const serverMain = readFileSync(join(projectRoot, "apps/server/src/main.ts"), "utf8");
     const runtime = readFileSync(join(agentCoreRoot, "runtime.ts"), "utf8");
     const sessionRecovery = runtime.slice(
       runtime.indexOf("async function recoverSessionContinuations"),
@@ -62,9 +64,19 @@ describe("Automation architecture boundaries", () => {
       .not.toContain("AutomationRunner");
     expect(boot).not.toContain("setManagedSessionExecutionForwarder");
     expect(boot).not.toContain("forwardSessionExecution");
-    expect(boot.indexOf("recoverSessionContinuations")).toBeLessThan(boot.indexOf("recoverProjectTodos"));
-    expect(boot.indexOf("recoverProjectTodos")).toBeLessThan(boot.indexOf("startAutomationSchedulers"));
-    expect(boot.indexOf("startAutomationSchedulers")).toBeLessThan(boot.indexOf("startServer(app"));
+    expect(serverHost.indexOf("runtime.recoverSessionContinuations")).toBeLessThan(
+      serverHost.indexOf("runtime.recoverProjectTodos"),
+    );
+    expect(serverHost.indexOf("runtime.recoverProjectTodos")).toBeLessThan(
+      serverHost.indexOf("runtime.startAutomationSchedulers"),
+    );
+    expect(serverHost.indexOf("runtime.startAutomationSchedulers")).toBeLessThan(
+      serverHost.indexOf("this.runtimeApp = createRuntimeApp(runtime"),
+    );
+    expect(serverMain.indexOf("await ArchCodeServerHost.create")).toBeLessThan(
+      serverMain.indexOf("await bootServer(host"),
+    );
+    expect(boot).toContain("startServer(host.app");
     expect(sessionRecovery).toContain("reconcileAnsweredHitl");
     expect(sessionRecovery).toContain("continueRunnableToolBatches");
     expect(sessionRecovery).not.toContain("context.todos.reconcileAll()");

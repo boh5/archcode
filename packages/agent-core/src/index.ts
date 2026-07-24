@@ -6,10 +6,18 @@ export {
   BuiltinMcpConfigNameError,
   ConfigRevisionConflictError,
   ConfigSemanticValidationError,
+  ConfigInitializationConflictError,
   ServerConfigService,
   resolveServerConfigPath,
 } from "./config";
-export type { ServerConfigServiceOptions } from "./config";
+export type {
+  ServerAuthCredential,
+  ServerAuthConfigUpdate,
+  ServerConfigActivation,
+  ServerConfigActivationResult,
+  ServerConfigInitialization,
+  ServerConfigServiceOptions,
+} from "./config";
 
 export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";

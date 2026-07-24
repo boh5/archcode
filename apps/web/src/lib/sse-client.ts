@@ -1,5 +1,5 @@
 import { EventSourceParserStream } from "eventsource-parser/stream";
-import { apiBaseUrl, createApiHeaders } from "../api/client";
+import { apiBaseUrl, createApiHeaders, notifyAuthInvalidated } from "../api/client";
 
 export const INITIAL_RECONNECT_DELAY_MS = 1_000;
 export const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -126,6 +126,7 @@ async function connectOnce(
   if (signal.aborted) return;
 
   if (!response.ok) {
+    if (response.status === 401) notifyAuthInvalidated();
     throw new HTTPStatusError({ status: response.status, statusText: response.statusText, url });
   }
 

@@ -24,7 +24,7 @@ const CURSOR_KEY = new Uint8Array(32).fill(19);
 const roots = new Set<string>();
 const stores = new Set<ToolOutputArtifactStore>();
 
-type RuntimeTestOptions = NonNullable<Parameters<typeof createProductionRuntime>[0]> & {
+type RuntimeTestOptions = Omit<NonNullable<Parameters<typeof createProductionRuntime>[0]>, "activation"> & {
   toolOutputStoreFactory?: (rootDir: string) => ToolOutputArtifactStore;
 };
 
@@ -148,7 +148,12 @@ function fakeMcpManager(): McpManager {
 }
 
 async function createRuntime(options: RuntimeTestOptions) {
-  return createProductionRuntime(options as Parameters<typeof createProductionRuntime>[0]);
+  const result = await options.configService.activateForStartup();
+  if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
+  return createProductionRuntime({
+    ...options,
+    activation: result.activation,
+  } as Parameters<typeof createProductionRuntime>[0]);
 }
 
 afterEach(async () => {

@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ServerConfigEditableView, ServerConfigUpdate } from "@archcode/protocol";
 import {
   BuiltinMcpConfigNameError,
+  ConfigInitializationConflictError,
   ConfigRevisionConflictError,
   ConfigSemanticValidationError,
   ServerConfigService,
@@ -13,6 +14,7 @@ import {
 import { providerAdapterCatalog, type ProviderAdapter } from "./provider-adapter-catalog";
 
 const roots: string[] = [];
+const PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA";
 
 afterAll(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
@@ -57,6 +59,22 @@ function config(): Record<string, unknown> {
   };
 }
 
+function initialConfig(passwordHash?: string): Record<string, unknown> {
+  const candidate = config() as Record<string, any>;
+  candidate.provider.local.options.apiKey = { action: "replace", value: "provider-secret" };
+  candidate.provider.local.options.headers = {
+    Authorization: { action: "replace", value: "header-secret" },
+  };
+  candidate.provider.local.options.queryParams = {
+    token: { action: "replace", value: "query-secret" },
+  };
+  candidate.mcp.servers.custom.headers = {
+    Authorization: { action: "replace", value: "mcp-secret" },
+  };
+  if (passwordHash !== undefined) candidate.auth = { passwordHash };
+  return candidate;
+}
+
 function preserveSecrets(view: ServerConfigEditableView): ServerConfigUpdate {
   const update = structuredClone(view) as unknown as ServerConfigUpdate;
   update.provider.local.options.apiKey = { action: "preserve" };
@@ -73,7 +91,7 @@ async function createService(): Promise<ServerConfigService> {
   await mkdir(join(homeDir, ".archcode"), { recursive: true });
   await writeFile(path, `${JSON.stringify(config(), null, 2)}\n`, { mode: 0o600 });
   const service = new ServerConfigService({ homeDir });
-  await service.loadForStartup();
+  await activateReady(service);
   return service;
 }
 
@@ -141,8 +159,14 @@ async function createAdapterService(adapter: ProviderAdapter): Promise<ServerCon
   const service = await createUnloadedService();
   await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
   await writeFile(service.configPath, `${JSON.stringify(adapterConfig(adapter), null, 2)}\n`, { mode: 0o600 });
-  await service.loadForStartup();
+  await activateReady(service);
   return service;
+}
+
+async function activateReady(service: ServerConfigService) {
+  const result = await service.activateForStartup();
+  if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
+  return result.activation;
 }
 
 function secretMutationUpdate(
@@ -180,12 +204,158 @@ function setRawSecretMutation(update: ServerConfigUpdate, secretPath: string): v
 }
 
 describe("ServerConfigService", () => {
+  test("classifies only a missing config as setup", async () => {
+    const missing = await createUnloadedService();
+    expect(await missing.activateForStartup()).toEqual({ status: "setup" });
+
+    const unreadable = await createUnloadedService();
+    await mkdir(unreadable.configPath, { recursive: true });
+    expect(await unreadable.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: { issues: [{ path: unreadable.configPath }] },
+    });
+  });
+
+  test("classifies a dangling Config symlink as config_error, not setup", async () => {
+    const service = await createUnloadedService();
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await symlink(
+      join(service.homeDir, "missing-config-target.json"),
+      service.configPath,
+    );
+
+    const result = await service.activateForStartup();
+
+    expect(result.status).toBe("config_error");
+    if (result.status === "config_error") {
+      expect(result.error.issues[0]?.path).toBe(service.configPath);
+    }
+  });
+
+  test("initializes once with OS-level no-replace and separated auth projection", async () => {
+    const first = await createUnloadedService();
+    const homeDir = first.homeDir;
+    const second = new ServerConfigService({ homeDir });
+
+    const results = await Promise.allSettled([
+      first.initialize(initialConfig(PASSWORD_HASH)),
+      second.initialize(initialConfig(PASSWORD_HASH)),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status === "rejected" ? rejected.reason : undefined)
+      .toBeInstanceOf(ConfigInitializationConflictError);
+
+    const activationResult = await new ServerConfigService({ homeDir }).activateForStartup();
+    expect(activationResult.status).toBe("ready");
+    if (activationResult.status !== "ready") return;
+    expect(activationResult.auth).toEqual({ passwordHash: PASSWORD_HASH });
+    expect(activationResult.activation).not.toHaveProperty("auth");
+    expect(activationResult.activation.runtimeConfig).not.toHaveProperty("auth");
+    expect(JSON.stringify(activationResult.activation.runtimeConfig)).not.toContain(PASSWORD_HASH);
+    expect((await stat(join(homeDir, ".archcode"))).mode & 0o777).toBe(0o700);
+    expect((await stat(resolveServerConfigPath(homeDir))).mode & 0o777).toBe(0o600);
+  });
+
+  test("requires replace actions for every initial secret", async () => {
+    for (const action of ["preserve", "delete"] as const) {
+      const service = await createUnloadedService();
+      const candidate = initialConfig() as Record<string, any>;
+      candidate.provider.local.options.apiKey = { action };
+      await expect(service.initialize(candidate)).rejects.toMatchObject({
+        issues: [{
+          path: "provider.local.options.apiKey",
+          message: "Initial secret must use a replace action",
+        }],
+      });
+      expect(await service.activateForStartup()).toEqual({ status: "setup" });
+    }
+  });
+
+  test("keeps auth out of editable config and preserves it across generic saves", async () => {
+    const service = await createUnloadedService();
+    await service.initialize(initialConfig(PASSWORD_HASH));
+    const snapshot = await service.getSnapshot();
+    expect(snapshot.config).not.toHaveProperty("auth");
+    expect(JSON.stringify(snapshot)).not.toContain(PASSWORD_HASH);
+
+    const update = preserveSecrets(snapshot.config);
+    update.provider.local.name = "Updated";
+    await service.save({ expectedRevision: snapshot.revision, config: update });
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).auth)
+      .toEqual({ passwordHash: PASSWORD_HASH });
+
+    const malicious = preserveSecrets((await service.getSnapshot()).config) as unknown as Record<string, any>;
+    malicious.auth = { passwordHash: "$argon2id$v=19$m=1,t=1,p=1$ZXZpbA$ZXZpbA" };
+    const current = await service.getSnapshot();
+    await service.save({
+      expectedRevision: current.revision,
+      config: malicious as ServerConfigUpdate,
+    });
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).auth)
+      .toEqual({ passwordHash: PASSWORD_HASH });
+  });
+
+  test("updates auth without preparing or publishing the model runtime", async () => {
+    const service = await createUnloadedService();
+    await service.initialize(initialConfig());
+    const beforeRuntime = service.modelRuntime.current;
+    let publications = 0;
+    const unsubscribe = service.modelRuntime.subscribe(() => {
+      publications += 1;
+    });
+    await expect(service.updateAuthPasswordHash("plaintext")).rejects.toMatchObject({
+      issues: [{ path: "auth.passwordHash" }],
+    });
+    const enabled = await service.updateAuthPasswordHash(PASSWORD_HASH);
+    expect(enabled.credential).toEqual({ passwordHash: PASSWORD_HASH });
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).auth)
+      .toEqual({ passwordHash: PASSWORD_HASH });
+    const authSnapshot = await service.getSnapshot();
+    await service.save({
+      expectedRevision: authSnapshot.revision,
+      config: preserveSecrets(authSnapshot.config),
+    });
+    const disabled = await service.updateAuthPasswordHash(undefined);
+    expect(disabled.credential).toBeUndefined();
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).auth).toBeUndefined();
+    expect(service.modelRuntime.current).toBe(beforeRuntime);
+    expect(publications).toBe(0);
+    unsubscribe();
+  });
+
+  test("keeps the auth-free model revision stable across different password hashes", async () => {
+    const first = await createUnloadedService();
+    const second = await createUnloadedService();
+    await first.initialize(initialConfig(PASSWORD_HASH));
+    await second.initialize(initialConfig(
+      "$argon2id$v=19$m=65536,t=3,p=1$c2FsdDI$aGFzaDI",
+    ));
+
+    expect(first.modelRuntime.current.revision)
+      .toBe(second.modelRuntime.current.revision);
+    expect((await first.getSnapshot()).revision)
+      .not.toBe((await second.getSnapshot()).revision);
+  });
+
+  test("rejects foreign and stale Runtime activations", async () => {
+    const service = await createUnloadedService();
+    const initialized = await service.initialize(initialConfig());
+    const foreign = new ServerConfigService({ homeDir: service.homeDir });
+    expect(() => foreign.resolveRuntimeConfig(initialized.activation))
+      .toThrow("belongs to a different ServerConfigService");
+
+    await service.updateAuthPasswordHash(PASSWORD_HASH);
+    expect(service.resolveRuntimeConfig(initialized.activation))
+      .toBe(initialized.activation.runtimeConfig);
+  });
+
   test("owns the fixed user config path and returns a redacted snapshot", async () => {
     const service = await createService();
     const snapshot = await service.getSnapshot();
 
     expect(snapshot.configPath).toBe(resolveServerConfigPath(service.homeDir));
-    expect(snapshot.modelRuntimeRevision).toBe(snapshot.revision);
+    expect(snapshot.modelRuntimeRevision).toBe(service.modelRuntime.current.revision);
     expect(snapshot.restartRequiredSections).toEqual([]);
     expect(snapshot.config.provider.local.options).toEqual({
       baseURL: "http://localhost:8090/v1",
@@ -425,13 +595,12 @@ describe("ServerConfigService", () => {
     await expect(service.save({ expectedRevision: snapshot.revision, config: headerEmpty })).resolves.toMatchObject({ restartRequiredSections: [] });
   });
 
-  test("fails startup only at the absolute global path and never falls back to a legacy local file", async () => {
+  test("classifies missing only at the absolute global path and never falls back to a legacy local file", async () => {
     const service = await createUnloadedService();
     await writeFile(join(service.homeDir, ".archcode.json"), JSON.stringify(config()));
 
-    await expect(service.loadForStartup()).rejects.toMatchObject({
-      message: expect.stringContaining(service.configPath),
-      issues: [{ path: service.configPath }],
+    expect(await service.activateForStartup()).toMatchObject({
+      status: "setup",
     });
   });
 
@@ -439,12 +608,18 @@ describe("ServerConfigService", () => {
     const invalidJson = await createUnloadedService();
     await mkdir(join(invalidJson.homeDir, ".archcode"), { recursive: true });
     await writeFile(invalidJson.configPath, "{");
-    await expect(invalidJson.loadForStartup()).rejects.toMatchObject({ message: expect.stringContaining(invalidJson.configPath) });
+    expect(await invalidJson.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: { message: expect.stringContaining(invalidJson.configPath) },
+    });
 
     const invalidSchema = await createUnloadedService();
     await mkdir(join(invalidSchema.homeDir, ".archcode"), { recursive: true });
     await writeFile(invalidSchema.configPath, JSON.stringify({ provider: {} }));
-    await expect(invalidSchema.loadForStartup()).rejects.toMatchObject({ message: expect.stringContaining(invalidSchema.configPath) });
+    expect(await invalidSchema.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: { message: expect.stringContaining(invalidSchema.configPath) },
+    });
   });
 
   test("rejects singular and plural undeclared credential options during startup and GET", async () => {
@@ -464,8 +639,9 @@ describe("ServerConfigService", () => {
       await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
       await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`);
 
-      await expect(service.loadForStartup()).rejects.toMatchObject({
-        issues: [{ path: `provider.local.options.${key}` }],
+      expect(await service.activateForStartup()).toMatchObject({
+        status: "config_error",
+        error: { issues: [{ path: `provider.local.options.${key}` }] },
       });
       await expect(service.getSnapshot()).rejects.toMatchObject({
         issues: [{ path: `provider.local.options.${key}` }],
@@ -480,8 +656,9 @@ describe("ServerConfigService", () => {
     await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
     await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`);
 
-    await expect(service.loadForStartup()).rejects.toMatchObject({
-      issues: [{ path: "provider.local.options.googleAuthOptions.credentials" }],
+    expect(await service.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: { issues: [{ path: "provider.local.options.googleAuthOptions.credentials" }] },
     });
     await expect(service.getSnapshot()).rejects.toMatchObject({
       issues: [{ path: "provider.local.options.googleAuthOptions.credentials" }],
@@ -506,7 +683,10 @@ describe("ServerConfigService", () => {
       { path: "provider.local.options.advanced.mirroredMcp" },
       { path: "provider.local.models.test-model.name" },
     ];
-    await expect(unloaded.loadForStartup()).rejects.toMatchObject({ issues: expectedIssues });
+    expect(await unloaded.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: { issues: expectedIssues },
+    });
     await expect(unloaded.getSnapshot()).rejects.toMatchObject({ issues: expectedIssues });
 
     const service = await createService();
@@ -535,8 +715,9 @@ describe("ServerConfigService", () => {
     invalid.provider.local.options.baseURL = "not-a-url";
     await mkdir(join(startup.homeDir, ".archcode"), { recursive: true });
     await writeFile(startup.configPath, `${JSON.stringify(invalid, null, 2)}\n`);
-    await expect(startup.loadForStartup()).rejects.toMatchObject({
-      issues: [{ path: "provider.local.options.baseURL" }],
+    expect(await startup.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: { issues: [{ path: "provider.local.options.baseURL" }] },
     });
 
     const service = await createService();
@@ -562,8 +743,9 @@ describe("ServerConfigService", () => {
       await mkdir(join(unloaded.homeDir, ".archcode"), { recursive: true });
       await writeFile(unloaded.configPath, `${JSON.stringify(invalid, null, 2)}\n`);
 
-      await expect(unloaded.loadForStartup()).rejects.toMatchObject({
-        issues: [{ path: "provider.local.options.baseURL" }],
+      expect(await unloaded.activateForStartup()).toMatchObject({
+        status: "config_error",
+        error: { issues: [{ path: "provider.local.options.baseURL" }] },
       });
       await expect(unloaded.getSnapshot()).rejects.toMatchObject({
         issues: [{ path: "provider.local.options.baseURL" }],
@@ -596,8 +778,9 @@ describe("ServerConfigService", () => {
       await mkdir(join(unloaded.homeDir, ".archcode"), { recursive: true });
       await writeFile(unloaded.configPath, `${JSON.stringify(invalid, null, 2)}\n`);
 
-      await expect(unloaded.loadForStartup()).rejects.toMatchObject({
-        issues: [{ path: "provider.local.options.endpoint" }],
+      expect(await unloaded.activateForStartup()).toMatchObject({
+        status: "config_error",
+        error: { issues: [{ path: "provider.local.options.endpoint" }] },
       });
       await expect(unloaded.getSnapshot()).rejects.toMatchObject({
         issues: [{ path: "provider.local.options.endpoint" }],
@@ -625,8 +808,9 @@ describe("ServerConfigService", () => {
     await mkdir(join(unloaded.homeDir, ".archcode"), { recursive: true });
     await writeFile(unloaded.configPath, `${JSON.stringify(invalid, null, 2)}\n`);
 
-    await expect(unloaded.loadForStartup()).rejects.toMatchObject({
-      issues: [{ path: "provider.local.options.name" }],
+    expect(await unloaded.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: { issues: [{ path: "provider.local.options.name" }] },
     });
     await expect(unloaded.getSnapshot()).rejects.toMatchObject({
       issues: [{ path: "provider.local.options.name" }],
@@ -654,8 +838,9 @@ describe("ServerConfigService", () => {
     await mkdir(join(unloaded.homeDir, ".archcode"), { recursive: true });
     await writeFile(unloaded.configPath, `${JSON.stringify(invalid, null, 2)}\n`);
 
-    await expect(unloaded.loadForStartup()).rejects.toMatchObject({
-      issues: [{ path: "provider.local.options.queryParams" }],
+    expect(await unloaded.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: { issues: [{ path: "provider.local.options.queryParams" }] },
     });
     await expect(unloaded.getSnapshot()).rejects.toMatchObject({
       issues: [{ path: "provider.local.options.queryParams" }],
@@ -667,7 +852,7 @@ describe("ServerConfigService", () => {
     delete validOpenAi.provider.local.options.queryParams;
     await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
     await writeFile(service.configPath, `${JSON.stringify(validOpenAi, null, 2)}\n`);
-    await service.loadForStartup();
+    await activateReady(service);
     const snapshot = await service.getSnapshot();
     const update = preserveSecrets(snapshot.config);
     update.provider.local.options.queryParams = { opaque: "query-value" } as never;
@@ -685,25 +870,30 @@ describe("ServerConfigService", () => {
     const service = await createUnloadedService();
     await mkdir(service.configPath, { recursive: true });
 
-    await expect(service.loadForStartup()).rejects.toMatchObject({
-      message: expect.stringContaining(service.configPath),
-      issues: [{ path: service.configPath }],
+    expect(await service.activateForStartup()).toMatchObject({
+      status: "config_error",
+      error: {
+        message: expect.stringContaining(service.configPath),
+        issues: [{ path: service.configPath }],
+      },
     });
   });
 
-  test("publishes a no-op save and reports restart-required non-model sections", async () => {
+  test("does not republish a semantic no-op and reports restart-required sections", async () => {
     const service = await createService();
     const snapshot = await service.getSnapshot();
+    const beforeRuntime = service.modelRuntime.current;
     const unchanged = await service.save({ expectedRevision: snapshot.revision, config: preserveSecrets(snapshot.config) });
     expect(unchanged.revision).toBe(snapshot.revision);
-    expect(unchanged.modelRuntimeRevision).toBe(snapshot.revision);
+    expect(unchanged.modelRuntimeRevision).toBe(snapshot.modelRuntimeRevision);
+    expect(service.modelRuntime.current).toBe(beforeRuntime);
     expect(unchanged.restartRequiredSections).toEqual([]);
 
     const changed = preserveSecrets(snapshot.config);
     changed.provider.local.name = "Changed";
     await service.save({ expectedRevision: snapshot.revision, config: changed });
     const restarted = new ServerConfigService({ homeDir: service.homeDir });
-    await restarted.loadForStartup();
+    await activateReady(restarted);
     expect((await restarted.getSnapshot()).restartRequiredSections).toEqual([]);
   });
 
@@ -729,22 +919,23 @@ describe("ServerConfigService", () => {
     expect(disk.mcp.servers.custom.headers).toBeUndefined();
   });
 
-  test("publishes the disk revision after an external edit even when PUT is a no-op", async () => {
+  test("publishes an externally changed runtime config on a generic no-op save", async () => {
     const service = await createService();
-    const beforeRevision = service.modelRuntime.current.revision;
+    const beforeRuntime = service.modelRuntime.current;
     const externallyEdited = config() as Record<string, any>;
     externallyEdited.provider.local.name = "Edited outside the service";
     const externalText = `${JSON.stringify(externallyEdited, null, 2)}\n`;
     await writeFile(service.configPath, externalText);
 
     const snapshot = await service.getSnapshot();
-    expect(snapshot.modelRuntimeRevision).toBe(beforeRevision);
+    expect(snapshot.modelRuntimeRevision).toBe(beforeRuntime.revision);
     const saved = await service.save({
       expectedRevision: snapshot.revision,
       config: preserveSecrets(snapshot.config),
     });
 
-    expect(saved.modelRuntimeRevision).toBe(snapshot.revision);
+    expect(saved.modelRuntimeRevision).not.toBe(beforeRuntime.revision);
+    expect(service.modelRuntime.current).not.toBe(beforeRuntime);
     expect(await readFile(service.configPath, "utf8")).toBe(externalText);
   });
 

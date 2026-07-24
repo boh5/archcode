@@ -73,7 +73,10 @@ export class ProviderRegistry {
  * import { createRegistry } from "./provider/index";
  * import { generateText } from "ai";
  *
- * const config = await new ServerConfigService().loadForStartup();
+ * const configService = new ServerConfigService();
+ * const result = await configService.activateForStartup();
+ * if (result.status !== "ready") throw new Error("A valid Config is required");
+ * const config = configService.resolveRuntimeConfig(result.activation);
  * const registry = createRegistry(config.provider);
  *
  * const model = registry.getModel("xxx:gpt-5.2");

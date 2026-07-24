@@ -1,12 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
-import {
-  createConsoleLogger,
-  createInMemoryLogger,
-  type AgentRuntime,
-  type ConsoleLike,
-} from "@archcode/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import type { GlobalSSEEvent, McpServerStatus } from "@archcode/protocol";
-import { createServerApp } from "./app";
+import { createRuntimeApp } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
 const mockRuntime = {
@@ -25,107 +20,12 @@ const mockRuntime = {
   getMcpServerStatuses: mock(() => new Map()),
 } as unknown as AgentRuntime;
 
-describe("createServerApp", () => {
-  test("returns the health endpoint response", async () => {
-    const { app } = createServerApp(mockRuntime, { dev: true, version: "1.2.3" });
-    const res = await app.request("/api/health");
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, version: "1.2.3" });
-  });
-
-  test("can disable access logging without suppressing request failures", async () => {
-    const { logger, entries } = createInMemoryLogger();
-    const { app } = createServerApp(mockRuntime, {
-      dev: true,
-      logger,
-      accessLog: false,
-    });
-    app.get("/boom", () => {
-      throw new Error("boom");
-    });
-
-    const res = await app.request("/boom");
-
-    expect(res.status).toBe(500);
-    expect(entries.map((entry) => entry.event)).toEqual(["http.request.failed"]);
-  });
-
-  test("honors the configured log level for access logs", async () => {
-    const sink = {
-      debug: mock(() => undefined),
-      info: mock(() => undefined),
-      warn: mock(() => undefined),
-      error: mock(() => undefined),
-    } satisfies ConsoleLike;
-    const logger = createConsoleLogger({
-      console: sink,
-      level: "warn",
-      module: "server",
-    });
-    const { app } = createServerApp(mockRuntime, {
-      dev: true,
-      logger,
-      accessLog: true,
-    });
-
-    expect((await app.request("/api/health")).status).toBe(200);
-    expect(sink.info).not.toHaveBeenCalled();
-  });
-
-  test("records a handled 500 as both an application failure and an access error", async () => {
-    const { logger, entries } = createInMemoryLogger();
-    const { app } = createServerApp(mockRuntime, {
-      dev: true,
-      logger,
-      accessLog: true,
-    });
-    app.get("/boom", () => {
-      throw new Error("boom");
-    });
-
-    expect((await app.request("/boom")).status).toBe(500);
-    expect(entries.map((entry) => [entry.level, entry.event])).toEqual([
-      ["error", "http.request.failed"],
-      ["error", "http.request.completed"],
-    ]);
-  });
-
+describe("createRuntimeApp", () => {
   test("mounts the runtime Agent catalog endpoint", async () => {
     const runtime = { ...mockRuntime, listAgentDescriptors: mock(() => [{ name: "lead", displayName: "Lead" }]) } as unknown as AgentRuntime;
-    const response = await createServerApp(runtime, { dev: true }).app.request("/api/agents");
+    const response = await createRuntimeApp(runtime).app.request("/api/agents");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ agents: [{ name: "lead", displayName: "Lead" }] });
-  });
-
-  test("adds wildcard CORS headers in dev mode", async () => {
-    const res = await createServerApp(mockRuntime, { dev: true }).app.request("/api/health", { headers: { Origin: "http://localhost:5173" } });
-    expect(res.headers.get("access-control-allow-origin")).toBe("*");
-  });
-
-  test("serves explicitly injected Web assets outside development mode", async () => {
-    const embeddedWebAssets = new Map([["/index.html", import.meta.path]]);
-    const app = createServerApp(mockRuntime, { dev: false, embeddedWebAssets }).app;
-
-    const indexResponse = await app.request("/");
-    expect(indexResponse.status).toBe(200);
-    expect(indexResponse.headers.get("content-type")).toBe("text/html; charset=utf-8");
-    expect(await indexResponse.text()).toContain("createServerApp");
-
-    expect((await app.request("/assets/missing.js")).status).toBe(404);
-    expect((await app.request("/api/health")).status).toBe(200);
-  });
-
-  test("rejects an embedded Web asset map without its SPA entrypoint", () => {
-    expect(() => createServerApp(mockRuntime, {
-      dev: false,
-      embeddedWebAssets: new Map(),
-    })).toThrow("Embedded Web assets must include /index.html");
-  });
-
-  test("requires Basic auth when configured", async () => {
-    const app = createServerApp(mockRuntime, { dev: true, password: "secret" }).app;
-    expect((await app.request("/api/health")).status).toBe(401);
-    expect((await app.request("/api/health", { headers: { Authorization: `Basic ${btoa("user:secret")}` } })).status).toBe(200);
   });
 
   test("wires runtime session events exactly once through the global bus", () => {
@@ -152,7 +52,7 @@ describe("createServerApp", () => {
       }),
     } as unknown as AgentRuntime;
     const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
-    createServerApp(runtime, { dev: true });
+    createRuntimeApp(runtime);
     expect(runtime.subscribeSessionEvents).toHaveBeenCalledTimes(1);
     expect(observed.map((event) => event.type === "event" ? event.payload.type : event.type)).toEqual(["execution-start", "execution-end"]);
     unsubscribe();
@@ -166,7 +66,7 @@ describe("createServerApp", () => {
     } as unknown as AgentRuntime;
     const observed: GlobalSSEEvent[] = [];
     const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
-    createServerApp(runtime, { dev: true });
+    createRuntimeApp(runtime);
     listener!("context7", { state: "ready", toolCount: 1, warningCount: 0 });
     expect(observed[0]).toMatchObject({ type: "mcp_status", serverName: "context7" });
     unsubscribe();
@@ -180,7 +80,7 @@ describe("createServerApp", () => {
     } as unknown as AgentRuntime;
     const observed: GlobalSSEEvent[] = [];
     const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
-    createServerApp(runtime, { dev: true });
+    createRuntimeApp(runtime);
     listener!({ type: "model_runtime.changed", revision: "revision-2", createdAt: 2 });
     expect(observed[0]).toEqual({ type: "model_runtime.changed", revision: "revision-2", createdAt: 2 });
     unsubscribe();

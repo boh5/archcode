@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createProcessRunner, type AgentRuntime } from "@archcode/agent-core";
 import { ProjectRegistry, silentLogger } from "@archcode/agent-core";
-import { createServerApp } from "../app";
+import { createRuntimeApp } from "../app";
 import { parseUnifiedDiff, type DiffFile } from "./files";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "files-routes");
@@ -57,7 +57,7 @@ async function createTestApp(testName: string, options: CreateTestAppOptions = {
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
 
   return {
-    app: createServerApp(runtime, { dev: true }).app,
+    app: createRuntimeApp(runtime).app,
     project,
     workspaceRoot,
   };
@@ -281,7 +281,7 @@ Binary files a/assets/logo.png and b/assets/logo.png differ
       ...await getSessionFile(projectRoot, sessionId),
       cwd: worktreeRoot,
     });
-    const app = createServerApp(runtime, { dev: true }).app;
+    const app = createRuntimeApp(runtime).app;
 
     const canonical = await app.request(`/api/projects/${project.slug}/diff`);
     const session = await app.request(`/api/projects/${project.slug}/diff?sessionId=session-1`);
@@ -312,7 +312,7 @@ Binary files a/assets/logo.png and b/assets/logo.png differ
       ...await getSessionFile(projectRoot, sessionId),
       cwd: foreignRoot,
     });
-    const app = createServerApp(runtime, { dev: true }).app;
+    const app = createRuntimeApp(runtime).app;
 
     const response = await app.request(`/api/projects/${project.slug}/diff?sessionId=session-1`);
 
@@ -349,7 +349,7 @@ Binary files a/assets/logo.png and b/assets/logo.png differ
     const runtime = createTestRuntime(projectRegistry);
     // Create workspace directory WITHOUT git init
     const project = await projectRegistry.add({ workspaceRoot, name: "no-git-workspace" });
-    const app = createServerApp(runtime, { dev: true }).app;
+    const app = createRuntimeApp(runtime).app;
 
     const res = await app.request(`/api/projects/${project.slug}/diff`);
 

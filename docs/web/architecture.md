@@ -4,11 +4,15 @@ ArchCode runs as a headless server with a browser-based Web UI. The system is or
 
 ## 1. CLI Layer (`src/main.ts`)
 
-The CLI layer is the headless entry point. It creates the `AgentRuntime`, loads configuration, registers providers, tools, and MCP servers, then boots the Hono server. There is no terminal UI in this layer; all user interaction flows through the server and Web UI.
+The CLI layer is the headless entry point. It creates the global Config service
+and the `ArchCodeServerHost`. A missing Config starts the restricted first-run
+shell; a valid Config activates the `AgentRuntime` before the workbench becomes
+available. There is no terminal UI beyond printing the one-time Setup URL.
 
 Responsibilities:
 
-- Load and validate the single server-wide `~/.archcode/config.json` through the config domain service.
+- Classify the single server-wide `~/.archcode/config.json` as setup, ready, or invalid.
+- Fail closed when the retired environment-password deployment path is still present.
 - Initialize provider and model configuration.
 - Register builtin tools, memory tools, LSP tools, and MCP tools.
 - Create project services and call `bootServer()`.
@@ -27,11 +31,15 @@ Responsibilities:
 
 ## 3. Server Layer (`src/server/`)
 
-The server layer exposes Hono REST and SSE endpoints. It handles request logging, CORS, optional Basic auth, lifecycle events, project routing, and centralized error responses.
+The server layer exposes Hono REST and SSE endpoints. `ArchCodeServerHost` owns
+one listener, bootstrap mode, the one-time Setup Grant, optional password
+Session auth, shared HTTP middleware, and optional Runtime lifecycle.
 
 Responsibilities:
 
 - Serve health, agent catalog, project, session, message, event, Automation, HITL, command, and file routes.
+- Expose only bootstrap and grant-protected Setup APIs until Config initialization succeeds.
+- Protect Runtime REST and SSE with an HttpOnly Session cookie when a password is configured.
 - Scope API requests to registered projects.
 - Manage server startup and graceful shutdown.
 - Coordinate permission and question workflows across network boundaries.
@@ -51,11 +59,15 @@ Responsibilities:
 
 ## 5. Web Layer (`src/web/`)
 
-The Web layer is a React application built with Vite and Tailwind. It consumes project-scoped REST endpoints and the session SSE stream to render live agent activity, tool calls, todos, permissions, and questions.
+The Web layer is a React application built with Vite and Tailwind.
+`BootstrapGate` selects Setup, Login, Config Error, Startup Error, or the
+workbench before project queries and SSE are mounted.
 
 Responsibilities:
 
 - Render the browser UI with React.
+- Complete first-run model/security setup and remove the Setup Grant fragment from the address bar.
+- Unmount the workbench and return to Login when REST or SSE reports an expired/revoked Session.
 - Build and serve development assets through Vite.
 - Use a client store for UI/session state.
 - Use TanStack Query for REST-backed data fetching and mutations.
@@ -65,7 +77,7 @@ Responsibilities:
 ## Data Flow
 
 ```text
-~/.archcode/config.json → config → providers → tools → MCP → bootServer() → Hono → project-scoped Agent → query loop → store → SSE → Web UI
+Config classification → Host shell → Setup or Runtime activation → optional Session auth → project-scoped Agent → query loop → store → SSE → Web UI
 ```
 
 ## Key Design Decisions
