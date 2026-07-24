@@ -166,7 +166,7 @@ Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resum
 
 **Server + Web UI:**
 - `apps/server/src/main.ts` creates `AgentRuntime`, registers providers/tools/MCP, initializes `ProjectRegistry` + `ProjectContextResolver`, then calls `bootServer(runtime)`.
-- `apps/server/src/app.ts` builds the Hono app: request logging, CORS, optional Basic auth via `ARCHCODE_SERVER_PASSWORD`, `/api/health`, dashboard, project/session/message/event/permission/question/Automation/HITL/MCP/file routes, and centralized errors. Session Goal controls live under their root Session routes.
+- `apps/server/src/app.ts` builds the Hono app: structured request logging controlled by `ARCHCODE_ACCESS_LOG`, CORS, optional Basic auth via `ARCHCODE_SERVER_PASSWORD`, `/api/health`, dashboard, project/session/message/event/permission/question/Automation/HITL/MCP/file routes, and centralized errors. Session Goal controls live under their root Session routes.
 - `apps/server/src/boot.ts` starts the server on `ARCHCODE_PORT` (default `4096`) and wires graceful shutdown. Development mode is inferred when `ARCHCODE_SERVER_PASSWORD` is unset.
 - `apps/web/` is the React frontend. In development it runs through Vite (`bun run --cwd apps/web dev`); production uses `bun run build` and runs `dist/archcode` so Hono can serve API + UI from one port.
 
@@ -416,6 +416,8 @@ HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_M
 |----------|---------|---------|
 | `ARCHCODE_PORT` | `4096` | Hono server port (falls back to ephemeral if busy) |
 | `ARCHCODE_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*`. Unset = dev mode |
+| `ARCHCODE_LOG_LEVEL` | `info` | Minimum structured log level: `debug`, `info`, `warn`, or `error` |
+| `ARCHCODE_ACCESS_LOG` | `on` | Enables (`on`) or disables (`off`) HTTP access logs independently |
 | `ARCHCODE_HOST` | unset | Externally advertised host |
 | `ARCHCODE_OPEN_BROWSER` | unset | Auto-open Web UI on boot (reserved) |
 | `ARCHCODE_PROJECTS_DIR` | unset | Base directory for project selection flows |

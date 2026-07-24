@@ -228,11 +228,23 @@ Root Lead defaults to `principal`; Analyst uses `deep`; Explore and Librarian us
 |---|---|---|
 | `ARCHCODE_PORT` | `4096` | Hono server port. `--port` takes precedence; startup fails if the selected port is unavailable. |
 | `ARCHCODE_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*` when set. Set this for remote deployments. |
+| `ARCHCODE_LOG_LEVEL` | `info` | Minimum structured log level: `debug`, `info`, `warn`, or `error`. |
+| `ARCHCODE_ACCESS_LOG` | `on` | Enables (`on`) or disables (`off`) HTTP access logs without hiding other application logs. |
 | `ARCHCODE_HOST` | unset | Externally advertised host for deployments or clients that need it. |
 | `ARCHCODE_OPEN_BROWSER` | unset | Reserved for opening the Web UI automatically when the server boots. |
 | `ARCHCODE_PROJECTS_DIR` | unset | Base directory used by project-selection flows. |
 | `GITHUB_TOKEN` | unset | Fallback token for GitHub integration when configured. |
 | `GH_TOKEN` | unset | Secondary GitHub token fallback. `GITHUB_TOKEN` wins when both are set. |
+
+HTTP `2xx`, `3xx`, and `4xx` access records are Info events; `5xx` records are
+Error events. To keep application Info logs while disabling only request
+records, start ArchCode with:
+
+```sh
+ARCHCODE_ACCESS_LOG=off archcode
+```
+
+Invalid logging values fail startup before the Runtime is initialized.
 
 ## GitHub integration
 

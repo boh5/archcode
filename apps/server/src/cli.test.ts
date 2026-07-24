@@ -93,4 +93,50 @@ describe("resolveCliInvocation", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe(`archcode ${version}\n`);
   });
+
+  test("the source bin rejects an invalid logging environment before startup", async () => {
+    const proc = Bun.spawn([process.execPath, join(import.meta.dir, "main.ts")], {
+      env: {
+        ...Bun.env,
+        ARCHCODE_LOG_LEVEL: "verbose",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Invalid ARCHCODE_LOG_LEVEL");
+    expect(stderr).toContain("verbose");
+    expect(stderr).toContain("expected debug, info, warn, or error");
+  });
+
+  test("version output does not depend on the logging environment", async () => {
+    const version = await readSourceProductVersion();
+    const proc = Bun.spawn(
+      [process.execPath, join(import.meta.dir, "main.ts"), "--version"],
+      {
+        env: {
+          ...Bun.env,
+          ARCHCODE_ACCESS_LOG: "invalid",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`archcode ${version}\n`);
+  });
 });

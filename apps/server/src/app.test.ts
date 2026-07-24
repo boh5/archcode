@@ -1,5 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { AgentRuntime } from "@archcode/agent-core";
+import {
+  createConsoleLogger,
+  createInMemoryLogger,
+  type AgentRuntime,
+  type ConsoleLike,
+} from "@archcode/agent-core";
 import type { GlobalSSEEvent, McpServerStatus } from "@archcode/protocol";
 import { createServerApp } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
@@ -26,6 +31,63 @@ describe("createServerApp", () => {
     const res = await app.request("/api/health");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, version: "1.2.3" });
+  });
+
+  test("can disable access logging without suppressing request failures", async () => {
+    const { logger, entries } = createInMemoryLogger();
+    const { app } = createServerApp(mockRuntime, {
+      dev: true,
+      logger,
+      accessLog: false,
+    });
+    app.get("/boom", () => {
+      throw new Error("boom");
+    });
+
+    const res = await app.request("/boom");
+
+    expect(res.status).toBe(500);
+    expect(entries.map((entry) => entry.event)).toEqual(["http.request.failed"]);
+  });
+
+  test("honors the configured log level for access logs", async () => {
+    const sink = {
+      debug: mock(() => undefined),
+      info: mock(() => undefined),
+      warn: mock(() => undefined),
+      error: mock(() => undefined),
+    } satisfies ConsoleLike;
+    const logger = createConsoleLogger({
+      console: sink,
+      level: "warn",
+      module: "server",
+    });
+    const { app } = createServerApp(mockRuntime, {
+      dev: true,
+      logger,
+      accessLog: true,
+    });
+
+    expect((await app.request("/api/health")).status).toBe(200);
+    expect(sink.info).not.toHaveBeenCalled();
+  });
+
+  test("records a handled 500 as both an application failure and an access error", async () => {
+    const { logger, entries } = createInMemoryLogger();
+    const { app } = createServerApp(mockRuntime, {
+      dev: true,
+      logger,
+      accessLog: true,
+    });
+    app.get("/boom", () => {
+      throw new Error("boom");
+    });
+
+    expect((await app.request("/boom")).status).toBe(500);
+    expect(entries.map((entry) => [entry.level, entry.event])).toEqual([
+      ["error", "http.request.failed"],
+      ["error", "http.request.completed"],
+    ]);
   });
 
   test("mounts the runtime Agent catalog endpoint", async () => {

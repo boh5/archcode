@@ -1,4 +1,8 @@
-import type { AgentRuntime } from "@archcode/agent-core";
+import {
+  createConsoleLogger,
+  type AgentRuntime,
+  type Logger,
+} from "@archcode/agent-core";
 import { ENV_OPEN_BROWSER, ENV_SERVER_PASSWORD, PRODUCT_DISPLAY_NAME } from "@archcode/protocol";
 import { createServerApp } from "./app";
 import { setupGracefulShutdown } from "./lifecycle";
@@ -9,6 +13,8 @@ export interface BootServerOptions {
   embeddedWebAssets?: EmbeddedWebAssets;
   port?: number;
   version?: string;
+  logger?: Logger;
+  accessLog?: boolean;
 }
 
 export async function bootServer(
@@ -17,11 +23,17 @@ export async function bootServer(
 ): Promise<void> {
   const compiled = import.meta.url.startsWith("file:///$bunfs/");
   const dev = !compiled && !Bun.env[ENV_SERVER_PASSWORD];
+  const logger = options.logger ?? createConsoleLogger({
+    level: "info",
+    module: "server",
+  });
   const { app } = createServerApp(runtime, {
     dev,
     embeddedWebAssets: options.embeddedWebAssets,
     password: Bun.env[ENV_SERVER_PASSWORD],
     version: options.version,
+    logger,
+    accessLog: options.accessLog,
   });
 
   await runtime.recoverSessionContinuations();
@@ -30,10 +42,18 @@ export async function bootServer(
   const { url, server } = await startServer(app, {
     port: options.port,
   });
-  setupGracefulShutdown(server, runtime);
+  setupGracefulShutdown(server, runtime, {
+    logger: logger.child({ module: "server.lifecycle" }),
+  });
 
   const versionLabel = options.version ? ` v${options.version}` : "";
-  console.info(`${PRODUCT_DISPLAY_NAME}${versionLabel} server running at ${url}`);
+  logger.info("server.started", {
+    message: `${PRODUCT_DISPLAY_NAME}${versionLabel} server running at ${url}`,
+    meta: {
+      url,
+      ...(options.version ? { version: options.version } : {}),
+    },
+  });
 
   if (Bun.env[ENV_OPEN_BROWSER]) {
     // Browser opening will be implemented when the web UI workflow is ready.

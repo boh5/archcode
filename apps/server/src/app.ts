@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type {
-  AgentRuntime,
-  ProjectInfo,
+import {
+  createConsoleLogger,
+  type AgentRuntime,
+  type Logger,
+  type ProjectInfo,
 } from "@archcode/agent-core";
 import type { GlobalSSEEvent } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
@@ -34,6 +36,8 @@ export interface CreateServerAppOptions {
   embeddedWebAssets?: EmbeddedWebAssets;
   password?: string;
   version?: string;
+  logger?: Logger;
+  accessLog?: boolean;
 }
 
 export function createServerApp(
@@ -42,9 +46,16 @@ export function createServerApp(
 ): { app: Hono; runtime: AgentRuntime } {
   const app = new Hono();
   const serverRuntime = runtime;
+  const logger = options.logger ?? createConsoleLogger({
+    level: "info",
+    module: "server",
+  });
+  const httpLogger = logger.child({ module: "server.http" });
 
-  app.onError(errorHandler);
-  app.use("*", requestLogger());
+  app.onError((error, context) => errorHandler(error, context, httpLogger));
+  if (options.accessLog !== false) {
+    app.use("*", requestLogger(httpLogger));
+  }
   app.use(
     "*",
     cors({

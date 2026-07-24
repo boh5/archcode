@@ -1,4 +1,8 @@
-import type { AgentRuntime } from "@archcode/agent-core";
+import {
+  createConsoleLogger,
+  type AgentRuntime,
+  type Logger,
+} from "@archcode/agent-core";
 import { globalEventBus } from "./events/global-event-bus";
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10000;
@@ -19,8 +23,7 @@ export interface SignalProcess {
 export interface GracefulShutdownOptions {
   timeoutMs?: number;
   process?: SignalProcess;
-  log?: (message: string) => void;
-  error?: (message: string) => void;
+  logger?: Logger;
 }
 
 export interface GracefulShutdownHandle {
@@ -35,14 +38,16 @@ export function setupGracefulShutdown(
 ): GracefulShutdownHandle {
   const processRef = options.process ?? process;
   const timeoutMs = options.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
-  const log = options.log ?? console.info;
-  const error = options.error ?? console.error;
+  const logger = options.logger ?? createConsoleLogger({
+    level: "info",
+    module: "server.lifecycle",
+  });
   let shutdownPromise: Promise<number> | undefined;
 
   const shutdown = async (_signal?: ShutdownSignal): Promise<number> => {
     if (shutdownPromise) return await shutdownPromise;
 
-    shutdownPromise = runShutdown(server, runtime, timeoutMs, log, error);
+    shutdownPromise = runShutdown(server, runtime, timeoutMs, logger);
     const exitCode = await shutdownPromise;
     processRef.exit(exitCode);
     return exitCode;
@@ -70,10 +75,9 @@ async function runShutdown(
   server: LifecycleServer,
   runtime: AgentRuntime,
   timeoutMs: number,
-  log: (message: string) => void,
-  error: (message: string) => void,
+  logger: Logger,
 ): Promise<number> {
-  log("Shutting down gracefully...");
+  logger.info("server.shutdown.started");
   pushShutdownEvents(runtime);
 
   const timeout = new Promise<"timeout">((resolve) => {
@@ -86,7 +90,10 @@ async function runShutdown(
   const exitCode = result === "timeout" ? 1 : 0;
 
   if (result === "timeout") {
-    error(`Graceful shutdown timed out after ${timeoutMs}ms`);
+    logger.error("server.shutdown.timeout", {
+      message: `Graceful shutdown timed out after ${timeoutMs}ms`,
+      meta: { timeoutMs },
+    });
   }
 
   server.stop();

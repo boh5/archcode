@@ -1,16 +1,25 @@
 import { bootServer } from "./boot";
-import { createConsoleLogger, createRuntime, type AgentRuntime } from "@archcode/agent-core";
-import { ENV_PORT, ENV_SERVER_PASSWORD } from "@archcode/protocol";
+import {
+  createConsoleLogger,
+  createRuntime,
+  type AgentRuntime,
+  type Logger,
+} from "@archcode/agent-core";
+import {
+  ENV_ACCESS_LOG,
+  ENV_LOG_LEVEL,
+  ENV_PORT,
+  ENV_SERVER_PASSWORD,
+} from "@archcode/protocol";
 import {
   requireEmbeddedWebAssets,
   type EmbeddedWebAssets,
 } from "./serve-web";
 import { resolveCliInvocation } from "./cli";
+import { resolveLoggingConfig } from "./logging-config";
 import { readSourceProductVersion } from "./product-version";
 
 export { createRuntime, type AgentRuntime, type AgentRuntimeOptions } from "@archcode/agent-core";
-
-const logger = createConsoleLogger({ level: "info" });
 
 export interface StartArchCodeOptions {
   embeddedWebAssets?: EmbeddedWebAssets;
@@ -18,7 +27,11 @@ export interface StartArchCodeOptions {
   version?: string;
 }
 
-async function main(options: StartArchCodeOptions) {
+async function main(
+  options: StartArchCodeOptions,
+  logger: Logger,
+  accessLog: boolean,
+) {
   const serverPassword = Bun.env[ENV_SERVER_PASSWORD];
   const runtime: AgentRuntime = await createRuntime({
     logger,
@@ -29,22 +42,50 @@ async function main(options: StartArchCodeOptions) {
     embeddedWebAssets: options.embeddedWebAssets,
     port: options.port,
     version: options.version,
+    logger,
+    accessLog,
   });
 }
 
 export function startArchCode(options: StartArchCodeOptions = {}): void {
-  main(options).catch((err) => {
-    logger.error("server.fatal", {
-      message: err instanceof Error ? err.message : "Server startup failed",
-      meta: {
-        errorName: err instanceof Error ? err.name : "NonErrorThrow",
-        errorCode: typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
-          ? err.code
-          : "SERVER_START_FAILED",
-      },
-    });
-    process.exit(1);
+  const bootstrapLogger = createConsoleLogger({
+    level: "error",
+    module: "server",
   });
+  let logging: ReturnType<typeof resolveLoggingConfig>;
+  try {
+    logging = resolveLoggingConfig({
+      logLevel: Bun.env[ENV_LOG_LEVEL],
+      accessLog: Bun.env[ENV_ACCESS_LOG],
+    });
+  } catch (error) {
+    logFatal(bootstrapLogger, error);
+    return;
+  }
+
+  const logger = createConsoleLogger({
+    level: logging.level,
+    module: "server",
+  });
+  main(options, logger, logging.accessLog).catch((error) => {
+    logFatal(logger, error);
+  });
+}
+
+function logFatal(
+  logger: Logger,
+  error: unknown,
+): void {
+  logger.error("server.fatal", {
+    message: error instanceof Error ? error.message : "Server startup failed",
+    meta: {
+      errorName: error instanceof Error ? error.name : "NonErrorThrow",
+      errorCode: typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+        ? error.code
+        : "SERVER_START_FAILED",
+    },
+  });
+  process.exit(1);
 }
 
 export interface RunArchCodeCliOptions extends StartArchCodeOptions {

@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { AgentRuntime } from "@archcode/agent-core";
+import { createInMemoryLogger, type AgentRuntime } from "@archcode/agent-core";
 import { globalEventBus } from "./events/global-event-bus";
 import { setupGracefulShutdown, type ShutdownSignal, type SignalProcess } from "./lifecycle";
 
@@ -69,7 +69,8 @@ describe("server lifecycle", () => {
       throw new ExitError(code);
     });
 
-    const handle = setupGracefulShutdown(server, runtime, { process: processRef, log: () => undefined });
+    const { logger, entries } = createInMemoryLogger();
+    const handle = setupGracefulShutdown(server, runtime, { process: processRef, logger });
     expect(handlers.has("SIGTERM")).toBe(true);
     await expectExitCode(handle.shutdown("SIGTERM"), 0);
     unsubscribeGlobalEvents();
@@ -78,6 +79,10 @@ describe("server lifecycle", () => {
     expect(runtime.shutdown).toHaveBeenCalled();
     expect(globalEvents).toContainEqual({ type: "shutdown", reason: "server_shutdown" });
     expect(order).toEqual(["runtime-shutdown", "stop", "exit:0"]);
+    expect(entries).toContainEqual(expect.objectContaining({
+      level: "info",
+      event: "server.shutdown.started",
+    }));
   });
 
   test("shutdown exits with code 1 when running jobs exceed timeout", async () => {
@@ -86,13 +91,21 @@ describe("server lifecycle", () => {
       await new Promise(() => undefined);
     }));
     const { handlers, processRef } = createProcess();
-    const error = mock((_message: string) => undefined);
+    const { logger, entries } = createInMemoryLogger();
 
-    const handle = setupGracefulShutdown(server, runtime, { process: processRef, timeoutMs: 1, log: () => undefined, error });
+    const handle = setupGracefulShutdown(server, runtime, {
+      process: processRef,
+      timeoutMs: 1,
+      logger,
+    });
     expect(handlers.has("SIGINT")).toBe(true);
 
     await expectExitCode(handle.shutdown("SIGINT"), 1);
-    expect(error).toHaveBeenCalledWith("Graceful shutdown timed out after 1ms");
+    expect(entries).toContainEqual(expect.objectContaining({
+      level: "error",
+      event: "server.shutdown.timeout",
+      meta: { timeoutMs: 1 },
+    }));
     expect(server.stop).toHaveBeenCalled();
   });
 });

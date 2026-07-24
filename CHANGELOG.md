@@ -7,6 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- Add strict `ARCHCODE_LOG_LEVEL` and `ARCHCODE_ACCESS_LOG` controls while
+  preserving HTTP access status semantics in the shared structured logger.
+
 ## [0.0.3] - 2026-07-24
 
 ### Added

@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from "hono";
-import { formatIsoTime } from "@archcode/utils";
+import type { Logger } from "@archcode/agent-core";
 
-export function requestLogger(): MiddlewareHandler {
+export function requestLogger(logger: Logger): MiddlewareHandler {
   return async (c, next) => {
     const start = Date.now();
     await next();
@@ -9,9 +9,19 @@ export function requestLogger(): MiddlewareHandler {
     const status = c.res.status;
     const method = c.req.method;
     const path = c.req.path;
-    const time = formatIsoTime(new Date(start).toISOString());
-    const log = status >= 500 ? console.error : console.info;
+    const fields = {
+      context: {
+        method,
+        path,
+        status,
+        durationMs: duration,
+      },
+    };
 
-    log(`[${time}] ${method} ${path} ${status} ${duration}ms`);
+    if (status >= 500) {
+      logger.error("http.request.completed", fields);
+    } else {
+      logger.info("http.request.completed", fields);
+    }
   };
 }
