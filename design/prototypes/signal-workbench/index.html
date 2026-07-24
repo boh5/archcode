@@ -8,7 +8,7 @@
       content="ArchCode Indigo Ink and Signal Lime visual direction prototype"
     />
     <title>ArchCode — Signal Workbench Design Prototype</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=implementation-alignment-1" />
   </head>
   <body>
     <!--
@@ -154,8 +154,17 @@
             <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
             <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
             <div class="work-title">
-              <strong>Runtime authority migration</strong>
-              <span>ArchCode / codex/runtime-authority</span>
+              <div class="work-title-line">
+                <strong>Runtime authority migration</strong>
+                <span class="session-status running"><span class="session-status-dot"></span>Running</span>
+              </div>
+              <div class="work-title-meta">
+                <span class="header-cwd">/Users/bo/Developer/AI/archcode</span>
+                <span aria-hidden="true">·</span>
+                <span>Execution 2 · GLM-5 · deep</span>
+                <span aria-hidden="true">·</span>
+                <span>18 messages · 12 tools · 42,806 tokens</span>
+              </div>
             </div>
             <div class="work-actions">
               <button class="secondary-button todo-button" data-action="打开 Session Todo">
@@ -163,60 +172,58 @@
                 Todo
                 <span class="button-count">3/5</span>
               </button>
-              <button class="secondary-button inspector-trigger" data-open-inspector aria-expanded="true" aria-controls="changes-inspector">
+              <button class="secondary-button inspector-trigger" aria-label="Collapse context inspector" data-open-inspector aria-expanded="true" aria-controls="changes-inspector">
                 <span data-icon="panel"></span>
-                Inspector
               </button>
             </div>
           </header>
 
-          <div class="conversation">
-            <section class="task-heading" aria-labelledby="task-title">
-              <div class="task-meta">
-                <span class="agent-chip"><span class="mini-mark">A</span> Lead</span>
-                <span>principal</span>
-                <span>started 14 minutes ago</span>
-              </div>
-              <h1 id="task-title">Move project runtime authority into <code>.archcode/runtime</code></h1>
-              <p>One protected home for system-owned project state. No dual reads, no compatibility aliases, no hidden fallback paths.</p>
-            </section>
+          <div class="session-source">
+            <span>Activation source Todo</span>
+            <button type="button" data-action="打开 Runtime authority migration Todo">Runtime authority migration</button>
+          </div>
 
-            <section class="message user-message" aria-label="User message">
-              <div class="message-author">You</div>
-              <p>Move all project-owned runtime state under <code>.archcode/runtime</code>. Make it a hard cut, and keep plans and skills directly editable.</p>
+          <div class="conversation">
+            <section class="user-turn" aria-label="User message">
+              <div class="message user-message">
+                <p>Move all project-owned runtime state under <code>.archcode/runtime</code>. Make it a hard cut, and keep plans and skills directly editable.</p>
+              </div>
+              <time class="message-time">14 minutes ago</time>
             </section>
 
             <section class="agent-response" aria-label="ArchCode response">
-              <header class="response-author">
-                <span class="agent-avatar">A</span>
-                <div><strong>ArchCode</strong><span>Lead Agent</span></div>
-              </header>
-
               <section class="work-disclosure completed" aria-label="Execution 1 work">
                 <button class="work-summary" type="button" aria-expanded="false" aria-controls="completed-work-body" data-work-toggle>
                   <span class="work-summary-primary">
                     <span class="work-state-icon complete" data-icon="check"></span>
-                    <strong>Worked for 12m 18s</strong>
+                    <span class="work-summary-copy">
+                      <strong>Worked for 12m 18s</strong>
+                      <span>Execution 1 · 6 steps · 9 tools · 1 child</span>
+                    </span>
                   </span>
-                  <span class="work-summary-meta">
-                    <span>Execution 1 · 6 steps · 9 tools · 1 child</span>
-                    <span class="work-chevron" data-icon="chevron-right"></span>
-                  </span>
+                  <span class="work-chevron" data-icon="chevron-right"></span>
                 </button>
                 <div class="work-body" id="completed-work-body" data-work-body hidden>
-                  <p class="work-commentary">I mapped every runtime reader and writer before changing the boundary. The migration touches Sessions, HITL, approvals, Todos, Automations, and memory.</p>
                   <div class="work-binding">
                     <span>Lead · principal</span>
+                    <span aria-hidden="true">·</span>
                     <span>GLM-5 · deep</span>
-                    <span class="work-binding-state completed">Completed cleanly</span>
                   </div>
+                  <p class="work-commentary">I mapped every runtime reader and writer before changing the boundary. The migration touches Sessions, HITL, approvals, Todos, Automations, and memory.</p>
                   <ol class="execution-list">
                     <li class="tool-run-event complete">
                       <div class="tool-run-card">
-                        <button class="tool-run-toggle" type="button" aria-expanded="false" data-tool-run-toggle>
+                        <button
+                          class="tool-run-toggle"
+                          type="button"
+                          aria-expanded="false"
+                          aria-controls="completed-tool-run-list"
+                          aria-label="4 tool calls, file_read, grep, glob, lsp_diagnostics, Completed"
+                          data-tool-run-toggle
+                        >
                           <span class="tool-run-status" data-icon="check"></span>
-                          <span class="tool-run-copy">
-                            <strong><code>file_read</code><span>registry.ts</span></strong>
+                          <span class="tool-run-names" title="file_read, grep, glob, lsp_diagnostics">
+                            file_read, grep, glob, lsp_diagnostics
                           </span>
                           <span class="tool-run-meta">
                             <span class="tool-run-count">4</span>
@@ -224,7 +231,7 @@
                           </span>
                           <span class="tool-run-chevron" data-icon="chevron-right"></span>
                         </button>
-                        <div class="tool-run-list" data-tool-run-list hidden>
+                        <div class="tool-run-list" id="completed-tool-run-list" data-tool-run-list hidden>
                           <div class="tool-child">
                             <button type="button" aria-expanded="false" data-tool-child-toggle>
                               <span class="tool-child-status" data-icon="check"></span>
@@ -339,38 +346,35 @@
                   <li>Legacy reads and compatibility aliases were removed; the focused verification suite passes.</li>
                 </ul>
               </div>
-              <div class="response-meta">ArchCode · principal · completed just now</div>
+              <div class="response-meta">Lead · principal · just now</div>
             </section>
 
-            <section class="message user-message follow-up-message" aria-label="User message">
-              <div class="message-author">You</div>
-              <p>Do one final independent review and make sure the Web UI explains the new boundary clearly.</p>
+            <section class="user-turn follow-up-message" aria-label="User message">
+              <div class="message user-message">
+                <p>Do one final independent review and make sure the Web UI explains the new boundary clearly.</p>
+              </div>
+              <time class="message-time">just now</time>
             </section>
 
             <section class="agent-response active-turn" aria-label="ArchCode response in progress">
-              <header class="response-author">
-                <span class="agent-avatar">A</span>
-                <div><strong>ArchCode</strong><span>Lead Agent</span></div>
-              </header>
-
               <section class="work-disclosure running" aria-label="Execution 2 work">
                 <button class="work-summary" type="button" aria-expanded="true" aria-controls="running-work-body" data-work-toggle>
                   <span class="work-summary-primary">
                     <span class="live-pulse"></span>
-                    <strong>Working · <span class="elapsed">02:14</span></strong>
+                    <span class="work-summary-copy">
+                      <strong>Working · <span class="elapsed">02:14</span></strong>
+                      <span>Execution 2 · 2 steps · 3 tools · 1 child</span>
+                    </span>
                   </span>
-                  <span class="work-summary-meta">
-                    <span>Execution 2 · 2 steps · 3 tools · 1 child</span>
-                    <span class="work-chevron" data-icon="chevron-right"></span>
-                  </span>
+                  <span class="work-chevron" data-icon="chevron-right"></span>
                 </button>
                 <div class="work-body" id="running-work-body" data-work-body>
-                  <p class="work-commentary">The implementation is already verified. I’m checking the user-facing explanation and asking an Analyst to challenge the final wording.</p>
                   <div class="work-binding">
                     <span>Lead · principal</span>
+                    <span aria-hidden="true">·</span>
                     <span>GLM-5 · deep</span>
-                    <span class="work-binding-state live">Working continuously</span>
                   </div>
+                  <p class="work-commentary">The implementation is already verified. I’m checking the user-facing explanation and asking an Analyst to challenge the final wording.</p>
                   <ol class="execution-list">
                     <li class="complete">
                       <span class="step-glyph" data-icon="check"></span>
@@ -394,53 +398,57 @@
           </div>
 
           <section class="session-composer-dock" aria-label="Session composer">
-            <div class="composer-shell">
+            <div class="composer-rail">
               <section class="composer-attention" aria-label="HITL permission request">
                 <div class="composer-status-mark attention-mark">!</div>
                 <div class="composer-status-copy">
-                  <div><strong>HITL · Permission required</strong><span>bash · 1 pending call</span></div>
-                  <code>bun run docs:verify</code>
-                  <small>This call is waiting while the background Analyst review continues.</small>
+                  <span class="attention-type">Permission</span>
+                  <strong>Run documentation verification</strong>
+                  <dl>
+                    <div><dt>Tool</dt><dd>bash</dd></div>
+                    <div><dt>Command</dt><dd><code>bun run docs:verify</code></dd></div>
+                  </dl>
                 </div>
                 <div class="attention-actions">
-                  <button type="button" data-action="拒绝权限">Deny</button>
                   <button class="attention-primary" type="button" data-action="允许本次执行">Allow once</button>
+                  <button type="button" data-action="拒绝权限">Deny</button>
+                  <button type="button" data-action="取消请求">Cancel</button>
                 </div>
               </section>
 
-              <form class="composer" id="composer">
-                <div class="composer-meta">
-                  <button class="composer-goal-summary" type="button" data-action="打开 Goal 控制">
-                    <span class="composer-status-mark goal-mark">G</span>
-                    <span>
-                      <strong>Goal active</strong>
-                      <small>Move runtime authority without compatibility paths</small>
-                    </span>
-                    <span data-icon="chevron-right"></span>
-                  </button>
-                </div>
-                <section class="composer-queue" aria-label="Queued messages">
-                  <span class="queue-count">1 queued</span>
-                  <p>After the tests, summarize the remaining migration risk.</p>
-                  <button type="button" data-action="编辑队列消息">Edit</button>
-                </section>
-                <label for="follow-up">Continue the task</label>
+              <section class="composer-goal-row" aria-label="Session goal">
+                <span class="composer-status-mark goal-mark">G</span>
+                <span class="goal-label">Goal</span>
+                <strong>Active</strong>
+                <span class="goal-objective">Move runtime authority without compatibility paths</span>
+                <span class="goal-metrics">2 executions · 42,806 tokens · 14m</span>
+                <button type="button" data-action="打开 Goal 控制">Edit</button>
+              </section>
+
+              <section class="composer-queue" aria-label="Queued messages">
+                <span class="queue-count">Queued</span>
+                <p>After the tests, summarize the remaining migration risk.</p>
+                <span class="queue-model">GLM-5 · deep</span>
+                <button type="button" data-action="编辑队列消息">Edit</button>
+              </section>
+
+              <div class="composer-input-slot">
+                <form class="composer-card" id="composer">
                 <textarea id="follow-up" rows="1" placeholder="Queue a message while ArchCode is running…"></textarea>
                 <div class="composer-foot">
                   <div class="composer-context">
-                    <button type="button" data-action="选择 Agent"><span class="agent-dot"></span> Lead</button>
-                    <button type="button" data-action="选择 Profile">principal <span data-icon="chevron"></span></button>
                     <button type="button" data-action="选择下一次模型">GLM-5 · deep <span data-icon="chevron"></span></button>
+                    <span class="composer-divider"></span>
+                    <span class="composer-runtime-status"><span class="attention-dot"></span>Waiting for input</span>
                   </div>
                   <div class="composer-actions">
+                    <span class="composer-hint">Enter to queue</span>
                     <button class="stop-button" type="button" aria-label="Stop Session" data-action="停止 Session" data-icon="stop"></button>
-                    <button class="queue-button" type="submit">
-                      Queue
-                      <span data-icon="arrow"></span>
-                    </button>
+                    <button class="queue-button" type="submit" aria-label="Queue message" data-icon="arrow"></button>
                   </div>
                 </div>
-              </form>
+                </form>
+              </div>
             </div>
           </section>
         </section>
