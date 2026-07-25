@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -15,7 +16,6 @@ import {
 import {
   TOOL_DELEGATE,
   type AgentDescriptor,
-  type ExecutionModelBindingSummary,
   type ProfileName,
   type SessionExecutionInputCheckpoint,
   type SessionExecutionRecord,
@@ -36,12 +36,10 @@ import {
 import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
 import { buildToolRunTimeline } from "../../lib/tool-runs";
 import { formatRelativeTime } from "../../lib/time-format";
-import { executionVisualKind, presentExecutionStatus } from "../../lib/execution-status-presentation";
-import { STATUS_TONE_CLASS, statusVisual } from "../../lib/status-visuals";
+import { presentExecutionStatus } from "../../lib/execution-status-presentation";
+import { getToolSummary } from "../../lib/tool-format";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ConversationRail } from "../primitives/ConversationRail";
-import { StatusGlyph } from "../primitives/StatusGlyph";
-import { useStatusTransition } from "../primitives/useStatusTransition";
 import { CompressionBlock } from "./CompressionBlock";
 import { DelegationCard } from "./DelegationCard";
 import { ReasoningBlock } from "./ReasoningBlock";
@@ -154,7 +152,7 @@ export function MsgUser({
         if (part.type === "text") {
           return (
             <div key={part.id} className="flex justify-end">
-              <div className="max-w-[640px] whitespace-pre-wrap break-words rounded-xl rounded-br-sm bg-bg-active px-4 py-3 text-[13px] leading-[1.65] text-text-primary">
+              <div className="max-w-[660px] whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-bg-muted px-4 py-3.5 text-[15px] leading-[1.66] text-text-primary">
                 {part.text}
               </div>
             </div>
@@ -171,7 +169,7 @@ export function MsgUser({
           </div>
         );
       })}
-      <div className="flex flex-wrap items-center justify-end gap-x-2 text-[11px] text-text-tertiary">
+      <div className="flex flex-wrap items-center justify-end gap-x-2 text-[12px] text-text-tertiary">
         {modelChanged && message.modelAudit && (
           <span className="text-warning" data-testid={`message-model-change-${message.id}`}>
             Model changed: {selectionLabel(message.modelAudit.requested.selection)} → {selectionLabel(message.modelAudit.actual)}
@@ -241,7 +239,7 @@ export function PartRenderer({
     case "text": {
       const interrupted = (part.meta as Record<string, unknown> | undefined)?.interrupted === true;
       return (
-        <div className="max-w-[740px] text-[13px] leading-[1.7] text-text-secondary">
+        <div className="max-w-[72ch] text-[13px] leading-[1.7] text-text-secondary">
           {interrupted && <InterruptedBadge />}
           <MarkdownContent isStreaming={!part.completedAt}>{part.text}</MarkdownContent>
         </div>
@@ -282,22 +280,18 @@ export function PartRenderer({
 function MsgAgent({
   message,
   parts = message.parts,
-  showMeta = true,
-  identity,
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
 }: {
   message: SessionMessage;
   parts?: readonly SessionPart[];
-  showMeta?: boolean;
-  identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: readonly ToolChildSessionLink[];
 }) {
   return (
-    <div className="min-w-0 max-w-[740px]" data-message-kind="agent">
+    <div className="w-full min-w-0" data-message-kind="agent">
       <div className="msg-parts">
         {parts.map((entry) => {
           const partKind = entry.type === "tool" ? "tool" : "content";
@@ -313,15 +307,6 @@ function MsgAgent({
           );
         })}
       </div>
-      {showMeta && (
-        <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-text-tertiary" data-testid={`agent-message-meta-${message.id}`}>
-          <span>{identity.displayName ?? identity.agentName}</span>
-          <span aria-hidden="true">·</span>
-          <span>{identity.profile}</span>
-          <span aria-hidden="true">·</span>
-          <time dateTime={new Date(message.createdAt).toISOString()}>{formatRelativeTime(message.createdAt)}</time>
-        </div>
-      )}
     </div>
   );
 }
@@ -329,8 +314,6 @@ function MsgAgent({
 function SessionMessageView({
   message,
   parts = message.parts,
-  showMeta = true,
-  identity,
   projectSlug,
   focusStoreSessionId,
   childSessionLinks,
@@ -338,8 +321,6 @@ function SessionMessageView({
 }: {
   message: SessionMessage;
   parts?: readonly SessionPart[];
-  showMeta?: boolean;
-  identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
   childSessionLinks: readonly ToolChildSessionLink[];
@@ -361,8 +342,6 @@ function SessionMessageView({
     <MsgAgent
       message={message}
       parts={parts}
-      showMeta={showMeta}
-      identity={identity}
       projectSlug={projectSlug}
       focusStoreSessionId={focusStoreSessionId}
       childSessionLinks={childSessionLinks}
@@ -380,45 +359,56 @@ function formatDuration(record: SessionExecutionRecord): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-function modelBindingLabel(binding: ExecutionModelBindingSummary): string {
-  return binding.selection.variant
-    ? `${binding.modelDisplayName} · ${binding.selection.variant}`
-    : binding.modelDisplayName;
+function useExecutionDuration(record: SessionExecutionRecord): string {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (record.status !== "running") return;
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
+    return () => window.clearInterval(timer);
+  }, [record.status, record.startedAt]);
+  return formatDuration(record);
+}
+
+function currentExecutionActivity(execution: ExecutionWorkstreamExecution): string | undefined {
+  const parts = execution.workMessages.flatMap((slice) => slice.parts);
+  let latestActiveTool: Extract<SessionPart, { type: "tool" }> | undefined;
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part?.type !== "tool") continue;
+    if (part.state === "pending" || part.state === "running") {
+      latestActiveTool = part;
+      break;
+    }
+  }
+  if (latestActiveTool === undefined) return undefined;
+  const summary = getToolSummary(
+    latestActiveTool.toolName,
+    "input" in latestActiveTool ? latestActiveTool.input : undefined,
+  );
+  return summary.primary === "—"
+    ? latestActiveTool.toolName
+    : `${latestActiveTool.toolName} ${summary.primary}`;
 }
 
 function FinalAgentResponse({
   message,
   textParts,
-  identity,
 }: {
   message: SessionMessage;
   textParts: readonly TextPart[];
-  identity: { agentName: string; displayName?: string; profile: ProfileName };
 }) {
   const text = textParts.map((part) => part.text).join("");
 
   return (
     <section
-      className="min-w-0 max-w-[740px]"
+      className="w-full min-w-0"
       data-message-kind="agent"
       data-testid={`final-response-${message.executionId ?? message.id}`}
     >
       <div className="msg-parts">
         <div className="conversation-part" data-conversation-part="content">
-          <div className="max-w-[740px] text-[13px] leading-[1.7] text-text-secondary">
-            <MarkdownContent>{text}</MarkdownContent>
-          </div>
+          <MarkdownContent variant="response">{text}</MarkdownContent>
         </div>
-      </div>
-      <div
-        className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-text-tertiary"
-        data-testid={`agent-message-meta-${message.id}`}
-      >
-        <span>{identity.displayName ?? identity.agentName}</span>
-        <span aria-hidden="true">·</span>
-        <span>{identity.profile}</span>
-        <span aria-hidden="true">·</span>
-        <time dateTime={new Date(message.createdAt).toISOString()}>{formatRelativeTime(message.createdAt)}</time>
       </div>
     </section>
   );
@@ -427,7 +417,6 @@ function FinalAgentResponse({
 function WorkDisclosure({
   execution,
   expanded,
-  identity,
   projectSlug,
   focusStoreSessionId,
   onToggle,
@@ -438,7 +427,6 @@ function WorkDisclosure({
 }: {
   execution: ExecutionWorkstreamExecution;
   expanded: boolean;
-  identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
   onToggle: (button: HTMLButtonElement) => void;
@@ -452,76 +440,75 @@ function WorkDisclosure({
     [execution.workMessages],
   );
   const status = presentExecutionStatus(execution.record.status, checkpoint);
-  const visualKind = executionVisualKind(execution.record.status, checkpoint);
-  const statusTransition = useStatusTransition(execution.id, visualKind);
-  const statusTone = statusVisual(visualKind).tone;
-  const duration = formatDuration(execution.record);
+  const duration = useExecutionDuration(execution.record);
+  const currentActivity = execution.record.status === "running"
+    ? currentExecutionActivity(execution)
+    : undefined;
   const primaryLabel = execution.record.status === "running"
     ? `Working · ${duration}`
     : execution.record.status === "completed"
       ? `Worked for ${duration}`
-      : status.label;
-  const metadata = [
+      : status.productStatus === "stopped" && status.detail
+        ? `${status.label} · ${status.detail}`
+        : status.label;
+  const accessibleState = execution.record.status === "completed"
+    ? "completed"
+    : execution.record.status === "running"
+      ? "running"
+      : status.label.toLowerCase();
+  const accessibleName = [
     `Execution ${execution.number}`,
-    execution.stepCount > 0 ? `${execution.stepCount} ${execution.stepCount === 1 ? "step" : "steps"}` : null,
-    execution.toolCount > 0 ? `${execution.toolCount} ${execution.toolCount === 1 ? "tool" : "tools"}` : null,
-    execution.childCount > 0 ? `${execution.childCount} ${execution.childCount === 1 ? "child" : "children"}` : null,
-    continuationExecutionNumber === undefined ? null : `Continued in Execution ${continuationExecutionNumber}`,
-  ].filter(Boolean).join(" · ");
-  const accessibleName = [primaryLabel, status.detail, metadata].filter(Boolean).join(", ");
+    accessibleState,
+    execution.record.status === "completed" ? `worked for ${duration}` : `elapsed ${duration}`,
+    currentActivity,
+    status.detail,
+    continuationExecutionNumber === undefined
+      ? undefined
+      : `continued in Execution ${continuationExecutionNumber}`,
+  ].filter(Boolean).join(", ");
 
   return (
     <section
-      className={`min-w-0 border-y border-border-default ${execution.record.status === "running" ? "border-l-[3px] border-l-signal bg-signal-field" : "border-l-[3px] border-l-transparent bg-transparent"}`}
+      className="min-w-0"
       data-testid={`work-disclosure-${execution.id}`}
       data-work-expanded={expanded ? "true" : "false"}
       data-product-status={status.productStatus}
-      data-visual-kind={visualKind}
-      title={`Model: ${modelBindingLabel(execution.record.binding)}${status.detail ? ` · ${status.label}: ${status.detail}` : ""}`}
+      title={status.detail ? `${status.label} · ${status.detail}` : status.label}
     >
       <button
         ref={buttonRef}
         type="button"
-        className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_18px] items-center gap-x-3 gap-y-1 px-2 py-2 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+        className="work-summary-control flex min-h-8 max-w-full items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={(event) => onToggle(event.currentTarget)}
         aria-expanded={expanded}
         aria-controls={`work-body-${execution.id}`}
         aria-label={accessibleName}
         data-testid={`work-summary-${execution.id}`}
       >
-        <span className="min-w-0">
-          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span className={`inline-flex items-center gap-2 text-[11px] font-semibold ${execution.record.status === "running" ? "text-signal-foreground" : STATUS_TONE_CLASS[statusTone]}`}>
-              <StatusGlyph kind={visualKind} size={14} transition={statusTransition} />
-              <span className="tabular-nums">{primaryLabel}</span>
-            </span>
-            {status.detail && execution.record.status !== "completed" && execution.record.status !== "running" && (
-              <span className="text-[10px] font-medium text-text-tertiary">· {status.detail}</span>
-            )}
+        <ChevronDown
+          size={13}
+          className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "" : "-rotate-90"}`}
+          aria-hidden="true"
+        />
+        {execution.record.status === "running" && (
+          <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-signal" aria-hidden="true" />
+        )}
+        <strong className="shrink-0 text-[12px] font-semibold leading-4 text-inherit">
+          <span className="tabular-nums">{primaryLabel}</span>
+        </strong>
+        {currentActivity && (
+          <span className="min-w-0 truncate text-[12px] leading-4 text-text-tertiary">
+            <span aria-hidden="true" className="mr-2 text-border-strong">—</span>
+            {currentActivity}
           </span>
-          <span className="mt-1 block min-w-0 whitespace-normal font-mono text-[9px] leading-4 text-text-tertiary">
-            {metadata}
-          </span>
-        </span>
-        <ChevronDown size={15} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "" : "-rotate-90"}`} aria-hidden="true" />
+        )}
       </button>
       {expanded && (
         <div
           id={`work-body-${execution.id}`}
-          className="flex flex-col gap-4 border-t border-border-subtle px-1 py-4 sm:px-2"
+          className="flex w-full min-w-0 flex-col gap-2.5 pb-1 pl-5 pt-2"
           data-testid={`work-body-${execution.id}`}
         >
-          <div
-            className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[9px] text-text-tertiary"
-            data-testid={`work-binding-${execution.id}`}
-            title={`${execution.record.binding.providerDisplayName} · ${selectionLabel(execution.record.binding.selection)}`}
-          >
-            <span className="font-medium text-text-secondary">
-              {identity.displayName ?? identity.agentName} · {identity.profile}
-            </span>
-            <span aria-hidden="true">·</span>
-            <span className="font-mono">{modelBindingLabel(execution.record.binding)}</span>
-          </div>
           {timeline.map((entry) => entry.kind === "tool-run"
             ? (
               <div
@@ -543,8 +530,6 @@ function WorkDisclosure({
                 key={entry.id}
                 message={entry.message}
                 parts={entry.parts}
-                showMeta={entry.showMeta}
-                identity={identity}
                 projectSlug={projectSlug}
                 focusStoreSessionId={focusStoreSessionId}
                 childSessionLinks={execution.childSessionLinks}
@@ -577,7 +562,6 @@ function WorkDisclosure({
 interface ExecutionTurnProps {
   execution: ExecutionWorkstreamExecution;
   expanded: boolean;
-  identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
   onToggle: (executionId: string, button: HTMLButtonElement) => void;
@@ -590,7 +574,6 @@ interface ExecutionTurnProps {
 const ExecutionTurn = memo(function ExecutionTurn({
   execution,
   expanded,
-  identity,
   projectSlug,
   focusStoreSessionId,
   onToggle,
@@ -602,7 +585,7 @@ const ExecutionTurn = memo(function ExecutionTurn({
   executionTurnRenderObserverForTest?.(execution.id);
 
   return (
-    <article className="flex min-w-0 flex-col gap-4" data-testid={`execution-turn-${execution.id}`}>
+    <article className="flex min-w-0 flex-col gap-3" data-testid={`execution-turn-${execution.id}`}>
       {execution.userMessages.map((message) => (
         <MsgUser
           key={message.id}
@@ -616,7 +599,6 @@ const ExecutionTurn = memo(function ExecutionTurn({
       <WorkDisclosure
         execution={execution}
         expanded={expanded}
-        identity={identity}
         projectSlug={projectSlug}
         focusStoreSessionId={focusStoreSessionId}
         checkpoint={checkpoint}
@@ -629,7 +611,6 @@ const ExecutionTurn = memo(function ExecutionTurn({
         <FinalAgentResponse
           message={execution.finalResponse.message}
           textParts={execution.finalResponse.textParts}
-          identity={identity}
         />
       )}
     </article>
@@ -638,13 +619,11 @@ const ExecutionTurn = memo(function ExecutionTurn({
 
 function DiagnosticBlock({
   diagnostic,
-  identity,
   projectSlug,
   focusStoreSessionId,
   onInspectModelAudit,
 }: {
   diagnostic: ExecutionWorkstreamDiagnostic;
-  identity: { agentName: string; displayName?: string; profile: ProfileName };
   projectSlug: string;
   focusStoreSessionId: string;
   onInspectModelAudit?: (messageId: string) => void;
@@ -668,7 +647,6 @@ function DiagnosticBlock({
             <SessionMessageView
               key={message.id}
               message={message}
-              identity={identity}
               projectSlug={projectSlug}
               focusStoreSessionId={focusStoreSessionId}
               childSessionLinks={[]}
@@ -939,7 +917,6 @@ export function ExecutionWorkstream({
               <DiagnosticBlock
                 key={`${diagnostic.code}-${"executionId" in diagnostic ? diagnostic.executionId : diagnostic.message.id}-${index}`}
                 diagnostic={diagnostic}
-                identity={projection.session}
                 projectSlug={slug}
                 focusStoreSessionId={focusStoreSessionId}
                 onInspectModelAudit={onInspectModelAudit}
@@ -956,7 +933,6 @@ export function ExecutionWorkstream({
                     key={`execution-${item.id}`}
                     execution={item}
                     expanded={expandedIds.has(item.id)}
-                    identity={projection.session}
                     projectSlug={slug}
                     focusStoreSessionId={focusStoreSessionId}
                     checkpoint={checkpoint}
@@ -981,10 +957,9 @@ export function ExecutionWorkstream({
                 );
               }
               return (
-                <section key={`activity-${item.id}`} className="rounded-md border border-border-subtle bg-bg-surface px-3 py-3">
+                <section key={`activity-${item.id}`} className="border-l-2 border-warning px-3 py-2">
                   <SessionMessageView
                     message={item.message}
-                    identity={projection.session}
                     projectSlug={slug}
                     focusStoreSessionId={focusStoreSessionId}
                     childSessionLinks={[]}

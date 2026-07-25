@@ -1,4 +1,5 @@
 import {
+  getToolCategory,
   TOOL_ASK_USER,
   TOOL_DELEGATE,
   type SessionMessage,
@@ -17,7 +18,6 @@ export interface ToolRunTimelineMessage {
   readonly id: string;
   readonly message: SessionMessage;
   readonly parts: readonly SessionPart[];
-  readonly showMeta: boolean;
 }
 
 export interface ToolRunTimelineRun {
@@ -34,24 +34,29 @@ interface MutableMessageEntry {
   id: string;
   message: SessionMessage;
   parts: SessionPart[];
-  showMeta: boolean;
 }
 
 type MutableTimelineEntry = MutableMessageEntry | ToolRunTimelineRun;
 
 function isOrdinaryTool(part: SessionPart): part is ToolPart {
-  return part.type === "tool"
-    && part.toolName !== TOOL_DELEGATE
-    && part.toolName !== TOOL_ASK_USER;
+  if (
+    part.type !== "tool"
+    || part.toolName === TOOL_DELEGATE
+    || part.toolName === TOOL_ASK_USER
+  ) {
+    return false;
+  }
+  const category = getToolCategory(part.toolName);
+  return category !== "fileWrite" && category !== "shell";
 }
 
 /**
  * Projects ordered Work parts into flat message fragments and Tool Runs.
  *
- * Only contiguous ordinary tools can form a Tool Run. Reasoning, rendered
- * text, and control parts are hard boundaries and stay in the outer Work
- * timeline. A run is promoted only after its second ordinary tool, so
- * singleton tools keep the existing direct ToolCard surface.
+ * Only contiguous ordinary tools can form a Tool Run. Reasoning, rendered text,
+ * and control parts are hard boundaries and remain independent entries in the
+ * outer Work timeline. A run is promoted only after its second ordinary tool,
+ * so singleton tools keep the direct ToolCard presentation.
  */
 export function buildToolRunTimeline(
   slices: readonly ExecutionWorkstreamMessageSlice[],
@@ -70,14 +75,13 @@ export function buildToolRunTimeline(
       id: `message-fragment:${message.id}:${part.id}`,
       message,
       parts: [part],
-      showMeta: false,
     });
   };
 
   const flushCandidates = (): void => {
     if (candidates.length === 0) return;
-    const tools = candidates.flatMap((item) => item.part.type === "tool" ? [item.part] : []);
-    if (tools.length >= 2) {
+    if (candidates.length >= 2) {
+      const tools = candidates.map((item) => item.part);
       timeline.push({
         kind: "tool-run",
         id: `tool-run:${tools[0].id}`,
@@ -110,18 +114,5 @@ export function buildToolRunTimeline(
   }
   flushCandidates();
 
-  const lastTimelineEntryByMessageId = new Map<string, number>();
-  timeline.forEach((entry, index) => {
-    if (entry.kind === "message") {
-      lastTimelineEntryByMessageId.set(entry.message.id, index);
-      return;
-    }
-    for (const item of entry.items) {
-      lastTimelineEntryByMessageId.set(item.message.id, index);
-    }
-  });
-
-  return timeline.map((entry, index) => entry.kind === "message"
-    ? { ...entry, showMeta: lastTimelineEntryByMessageId.get(entry.message.id) === index }
-    : entry);
+  return timeline;
 }

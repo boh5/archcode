@@ -700,7 +700,8 @@ describe("SessionRoute focused view store behavior", () => {
         expect(decision).not.toBeNull();
         expect(surface?.classList.contains("border-t")).toBe(true);
         expect(surface?.classList.contains("px-5")).toBe(false);
-        expect(rail?.className).toContain("max-w-[800px]");
+        expect(rail?.className).toContain("w-full");
+        expect(rail?.className).not.toContain("max-w-[");
         expect(rail?.className).toContain("px-4");
         expect(rail?.className).toContain("sm:px-5");
         expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
@@ -782,6 +783,7 @@ describe("SessionRoute focused view store behavior", () => {
         expect(link?.textContent).toBe("Add resilient offline mode");
         expect(link?.getAttribute("href")).toBe("/projects/demo/todos?todo=todo-offline-mode");
         expect(container.textContent).toContain("Discussion Todo · Activation source");
+        expect(link?.closest("header")).not.toBeNull();
       });
 
       const link = container.querySelector('[data-testid="project-todo-backlink"]');

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ExecutionWorkstream,
   retainExecutionWorkstreamUiState,
@@ -10,7 +10,7 @@ import { SessionComposerDock } from "../components/features/SessionComposerDock"
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
-import { useAgents, useFocusedSession, useProjects, useProjectTodos, useSession } from "../api/queries";
+import { useAgents, useFocusedSession, useProjectTodos, useSession } from "../api/queries";
 import { getWebSessionStore, markSessionForeground } from "../store/session-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
 
@@ -29,8 +29,6 @@ export function SessionRoute() {
   const { data: session, isLoading: isSessionLoading, error: sessionError } = useSession(slug, sessionId);
   const { data: projectTodos = [] } = useProjectTodos(slug);
   const { data: agents = [] } = useAgents();
-  const { data: projects = [] } = useProjects();
-  const projectRoot = projects.find((project) => project.slug === slug)?.workspaceRoot;
   const rootSessionId = session?.rootSessionId ?? sessionId;
   const linkedProjectTodo = projectTodos.find((todo) => todo.discussionSessionId === rootSessionId)
     ?? projectTodos.find((todo) => todo.activation?.sourceSessionId === rootSessionId);
@@ -299,22 +297,14 @@ export function SessionRoute() {
       <ChatHeader
         slug={slug}
         sessionId={rootSessionId}
-        projectRoot={projectRoot}
+        source={linkedProjectTodo ? {
+          label: linkedProjectTodoContext,
+          title: linkedProjectTodo.title,
+          to: `/projects/${encodeURIComponent(slug)}/todos?todo=${encodeURIComponent(linkedProjectTodo.id)}`,
+        } : undefined}
         onToggleInspector={toggleInspectorSurface}
         inspectorExpanded={layout.inspectorExpanded}
       />
-      {linkedProjectTodo && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-base px-4 py-2 text-[11px] sm:px-5">
-          <span className="text-text-tertiary">{linkedProjectTodoContext}</span>
-          <Link
-            className="min-w-0 truncate font-medium text-brand hover:underline"
-            data-testid="project-todo-backlink"
-            to={`/projects/${encodeURIComponent(slug)}/todos?todo=${encodeURIComponent(linkedProjectTodo.id)}`}
-          >
-            {linkedProjectTodo.title}
-          </Link>
-        </div>
-      )}
       {canvasView === "diff" ? (
         <div className="flex min-h-0 flex-1 flex-col" data-testid="session-diff-canvas">
           <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-default bg-bg-surface px-4">

@@ -211,7 +211,8 @@ describe("SessionComposerDock", () => {
     expect(dock?.className).toContain("overflow-visible");
     expect(dock?.className).not.toContain("overflow-hidden");
     expect(dock?.classList.contains("border-t")).toBe(true);
-    expect(rail?.className).toContain("max-w-[800px]");
+    expect(rail?.className).toContain("w-full");
+    expect(rail?.className).not.toContain("max-w-[");
     expect(attention).not.toBeNull();
     expect(attention?.className).toContain("overflow-y-auto");
     expect(queue?.className).toContain("max-h-[160px]");

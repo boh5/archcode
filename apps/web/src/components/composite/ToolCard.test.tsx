@@ -31,26 +31,14 @@ function findByType(value: unknown, type: unknown): ElementLike | undefined {
   }
   return undefined;
 }
-function findAllWithClass(value: unknown, className: string): ElementLike[] {
-  const matches: ElementLike[] = [];
-  const visit = (node: unknown): void => {
-    if (Array.isArray(node)) { for (const child of node) visit(child); return; }
-    if (!isElement(node)) return;
-    if (typeof node.props?.className === "string" && node.props.className.includes(className)) matches.push(node);
-    for (const child of childrenOf(node)) visit(child);
-  };
-  visit(value);
-  return matches;
-}
-function findByData(value: unknown, key: string, expected: string): ElementLike | undefined {
-  if (isElement(value) && value.props?.[key] === expected) return value;
+function findByProp(value: unknown, name: string, expected: unknown): ElementLike | undefined {
+  if (isElement(value) && value.props?.[name] === expected) return value;
   for (const child of childrenOf(value)) {
-    const found = findByData(child, key, expected);
+    const found = findByProp(child, name, expected);
     if (found) return found;
   }
   return undefined;
 }
-
 const Fragment = Symbol.for("react.fragment");
 const jsx = mock((type: unknown, props: Record<string, unknown> | null, key?: unknown) => {
   const normalized = props ?? {};
@@ -108,7 +96,10 @@ mock.module("./ToolOutputViewer", () => ({
   ToolOutputViewer: ({ outputRef }: { outputRef: string }) => ({ type: "viewer", props: { children: outputRef } }),
 }));
 mock.module("../diff/DiffView", () => ({
-  DiffView: ({ files }: { files: Array<{ path: string }> }) => ({ type: "diff", props: { children: files.map((file) => file.path).join(",") } }),
+  DiffView: ({ files, defaultExpanded }: { files: Array<{ path: string }>; defaultExpanded?: boolean }) => ({
+    type: "diff",
+    props: { "data-default-expanded": defaultExpanded, children: files.map((file) => file.path).join(",") },
+  }),
 }));
 
 const { ToolCard } = await import("./ToolCard");
@@ -145,7 +136,7 @@ beforeEach(() => {
 });
 
 describe("ToolCard strict result consumer", () => {
-  test("renders unified preview, completeness, counts, omitted and process details", () => {
+  test("renders Bash output as a terminal with concise process details", () => {
     const element = ToolCard({
       part: completed({
         isError: false,
@@ -157,9 +148,10 @@ describe("ToolCard strict result consumer", () => {
     });
     const text = textContent(element);
     expect(text).toContain("canonical preview");
-    expect(text).toContain("partial");
-    expect(text).toContain("observed 200 B / 20 lines");
-    expect(text).toContain("omitted 60 B / 6 lines");
+    expect(text).not.toContain("observed 200 B / 20 lines");
+    expect(text).not.toContain("canonical 180 B / 18 lines");
+    expect(text).toContain("60 B / 6 lines omitted");
+    expect(text).toContain("exit 0");
     expect(text).toContain("42 ms");
   });
 
@@ -192,11 +184,36 @@ describe("ToolCard strict result consumer", () => {
     expect(text).toContain("1 file · +2 −1");
     expect(text).toContain("Proceed?");
     expect(text).toContain("Yes");
-    expect(text).toContain("questions:");
-    expect(text).toContain("header:");
-    expect(text).toContain("options:");
-    expect(text).toContain("description:");
+    expect(text).not.toContain("questions:");
+    expect(text).not.toContain("header:");
+    expect(text).not.toContain("options:");
+    expect(text).not.toContain("description:");
     expect(text).not.toContain("raw preview must not supply answers");
+    expect(findByType(element, "diff")?.props?.["data-default-expanded"]).toBe(true);
+  });
+
+  test("caps a long canonical tool name while preserving its full title", () => {
+    const element = ToolCard({
+      part: {
+        type: "tool",
+        id: "tool-long",
+        state: "running",
+        toolCallId: "call-long",
+        toolName: "mcp__context7__resolve-library-id",
+        input: { libraryName: "react" },
+        createdAt: 1,
+        startedAt: 2,
+      },
+      projectSlug: "demo",
+      sessionId: "root-1",
+    });
+    const summary = findByProp(element, "data-tool-summary-static", "");
+    const toolName = findByProp(summary, "title", "mcp__context7__resolve-library-id");
+
+    expect(summary?.props?.className).toContain("minmax(0,112px)");
+    expect(isElement(toolName) && toolName.props?.className).toContain("truncate");
+    expect(isElement(toolName) && toolName.props?.title).toBe("mcp__context7__resolve-library-id");
+    expect(findByType(element, "button")).toBeUndefined();
   });
 
   test("uses details.unknownResult and exposes artifact recovery with stable testid", () => {
@@ -220,14 +237,13 @@ describe("ToolCard strict result consumer", () => {
     stateValues = [false, false];
     stateIndex = 0;
     const collapsed = ToolCard({ part: completed({ isError: false, output: baseOutput }), projectSlug: "demo", sessionId: "root-1" });
-    expect(textContent(collapsed)).toContain("Show path");
+    expect(textContent(collapsed)).toContain("pwd");
     expect(textContent(collapsed)).not.toContain("canonical preview");
     const button = findByType(collapsed, "button")!;
     expect(button.props?.["aria-expanded"]).toBe(false);
-    const summaryChildren = childrenOf(button);
-    expect(isElement(summaryChildren[0]) ? summaryChildren[0].props?.["data-tool-visual-kind"] : undefined).toBe("completed");
-    const lastSummaryChild = summaryChildren.at(-1);
-    expect(isElement(lastSummaryChild) ? lastSummaryChild.type : undefined).toBe("svg");
+    expect(button.props?.["aria-controls"]).toBe("tool-1-details");
+    expect(findByType(button, "svg")).toBeDefined();
+    expect(findByProp(button, "title", "pwd")).toBeDefined();
 
     stateValues = [true, false];
     stateIndex = 0;
@@ -243,25 +259,40 @@ describe("ToolCard strict result consumer", () => {
     expect(textContent(pendingElement)).toContain("Pending");
     expect(textContent(runningElement)).toContain("Running");
     expect(textContent(runningElement)).toContain("needle");
-    const statusBase = findByData(runningElement, "data-tool-visual-kind", "loading");
-    expect(statusBase).toBeDefined();
-    expect(String(statusBase?.props?.className)).not.toContain("animate-");
-    expect(findAllWithClass(runningElement, "animate-activity")).toHaveLength(1);
+    expect(findByType(pendingElement, "button")).toBeUndefined();
+    expect(findByType(runningElement, "button")).toBeUndefined();
+    expect(findByProp(runningElement, "data-tool-summary-static", "")?.props?.["aria-label"]).toContain("Running");
   });
 
-  test("uses bash description and does not duplicate runtime schema validation in Web", () => {
+  test("shows the exact Bash command and does not duplicate runtime schema validation in Web", () => {
     const valid = ToolCard({ part: completed({ isError: false, output: baseOutput }), projectSlug: "demo", sessionId: "root-1" });
-    expect(textContent(valid)).toContain("Show path");
     expect(textContent(valid)).toContain("pwd");
+    expect(textContent(valid)).not.toContain("Show path");
 
     stateValues = [true, false];
     stateIndex = 0;
     const invalidPart: CompletedToolPart = { ...completed({ isError: false, output: baseOutput }), input: { command: "pwd" } };
     const invalid = ToolCard({ part: invalidPart, projectSlug: "demo", sessionId: "root-1" });
-    expect(textContent(invalid)).toContain("command");
     expect(textContent(invalid)).toContain("pwd");
     expect(textContent(invalid)).not.toContain("Invalid bash input: missing required description");
-    expect(textContent(valid)).toContain("Completed");
+    expect(textContent(valid)).not.toContain("Completed");
+  });
+
+  test("prefers the exact Bash command over a human description", () => {
+    const element = ToolCard({
+      part: {
+        ...completed({ isError: false, output: baseOutput }),
+        input: {
+          description: "Run the focused verification",
+          command: "bun test ./src/focused.test.ts",
+        },
+      },
+      projectSlug: "demo",
+      sessionId: "session-1",
+    });
+
+    expect(textContent(element)).toContain("bun test ./src/focused.test.ts");
+    expect(textContent(element)).not.toContain("Run the focused verification");
   });
 
   test("renders authoritative runtime schema errors from the finalized result", () => {
@@ -287,6 +318,23 @@ describe("ToolCard strict result consumer", () => {
     expect(text).toContain("Required field description is missing");
   });
 
+  test("keeps a bounded ordinary-tool error preview available without raw input tables", () => {
+    const part: ErrorToolPart = {
+      ...completed({
+        isError: true,
+        output: { ...baseOutput, preview: "README.md could not be read" },
+      }),
+      state: "error",
+      toolName: "file_read",
+      input: { path: "README.md" },
+    };
+
+    const element = ToolCard({ part, projectSlug: "demo", sessionId: "root-1" });
+    const text = textContent(element);
+    expect(text).toContain("README.md could not be read");
+    expect(text).not.toContain("path:");
+  });
+
   test("keeps strict diff and ask_user presentations out of collapsed cards", () => {
     const part = completed({
       isError: false,
@@ -309,7 +357,7 @@ describe("ToolCard strict result consumer", () => {
     expect(textContent(expanded)).toContain("Yes");
   });
 
-  test("renders every MCP input key without synthetic tool/input aliases", () => {
+  test("summarizes ordinary MCP calls without exposing a raw argument table", () => {
     const part: CompletedToolPart = {
       ...completed({ isError: false, output: baseOutput }),
       toolName: "mcp__docs__lookup",
@@ -321,9 +369,11 @@ describe("ToolCard strict result consumer", () => {
     };
     const element = ToolCard({ part, projectSlug: "demo", sessionId: "root-1" });
     const text = textContent(element);
-    expect(text).toContain("query:");
-    expect(text).toContain("libraryName:");
-    expect(text).toContain("count:");
+    expect(text).toContain("mcp__docs__lookup");
+    expect(text).toContain("React");
+    expect(text).not.toContain("query:");
+    expect(text).not.toContain("libraryName:");
+    expect(text).not.toContain("count:");
     expect(text).not.toContain("tool:");
     expect(text).not.toContain("input:");
   });
@@ -339,6 +389,5 @@ describe("ToolCard strict result consumer", () => {
     expect(textContent(element)).toContain("mcp__docs__lookup");
     expect(textContent(element)).toContain("Unknown");
     expect(textContent(element)).toContain("TOOL_UNKNOWN_RESULT");
-    expect(findByData(element, "data-tool-visual-kind", "warning")).toBeDefined();
   });
 });

@@ -63,7 +63,7 @@ export function IconAction({
         ref={buttonRef}
         aria-describedby={open ? tooltipId : undefined}
         aria-label={label}
-        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-transparent text-text-tertiary transition-[background-color,border-color,color] duration-[var(--motion-hover)] hover:border-border-default hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 ${danger ? "hover:text-error focus-visible:text-error" : "hover:text-text-primary"} ${className}`}
+        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-transparent text-text-tertiary transition-[background-color,border-color,color] duration-[var(--motion-hover)] hover:border-border-default hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${danger ? "hover:text-error focus-visible:text-error" : "hover:text-text-primary"} ${className}`}
         onBlur={(event) => {
           focusedRef.current = false;
           setOpen(false);

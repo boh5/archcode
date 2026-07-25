@@ -1,6 +1,7 @@
 # Signal Workbench Design System
 
-> Persisted from the approved interactive prototype on 2026-07-23.
+> Persisted from the approved interactive prototype, last synchronized on
+> 2026-07-25.
 >
 > When designing or implementing a page, read this file first and then read
 > `pages/[page-name].md`. A page file overrides this Master only where it says
@@ -30,15 +31,17 @@ Primary users are developers and small engineering teams who need to:
    single chat column.
 3. State is shown with text or icon plus color. Color alone is never the only
    signal.
-4. The interface is dense, but hierarchy and whitespace must keep it calm.
+4. The interface is dense, but hierarchy, readable type, and selective
+   disclosure must keep it calm.
 5. Light and dark modes are designed together. The theme control stays at the
    bottom of the project rail; do not move it into the main header.
 
 ## Design Concept
 
-**Operational warmth.** The interface combines the clarity of a developer tool
-with a warm, mineral material palette. It should feel focused and alive without
-becoming severe, sterile, playful, or decorative.
+**Quiet operational clarity.** The interface combines the legibility of an
+editorial transcript with the compactness of a developer tool. Neutral surfaces
+keep the conversation dominant; low-chroma semantic color appears only where it
+communicates selection, live work, attention, success, or failure.
 
 Design dials:
 
@@ -50,12 +53,13 @@ Design dials:
 
 Core visual principles:
 
-- warm canvas rather than pure white or cool gray;
+- neutral near-white and charcoal surfaces with visible, restrained separation;
 - indigo for selection and intentional actions;
 - lime only for live/running signals;
-- thin rules and surface changes before shadows;
+- thin rules and small surface shifts before cards or shadows;
 - mostly 4–8px radii;
-- editorial reading rhythm in the conversation;
+- user intent, final Agent response, and current work form the dominant reading
+  sequence;
 - monospace only for code, paths, commands, metrics, and tool names.
 
 ## Color System
@@ -66,71 +70,89 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 
 | Token | Value | Role |
 |---|---|---|
-| `--canvas` | `#f3f1e9` | Warm mineral workspace background |
-| `--surface` | `#faf9f4` | Rails, headers, large work surfaces |
+| `--canvas` | `#f7f7f7` | Neutral workspace background |
+| `--surface` | `#fbfbfb` | Navigation, headers, large work surfaces |
 | `--surface-raised` | `#ffffff` | Inputs, ToolCards, compact controls |
-| `--surface-muted` | `#ebe8de` | User messages and secondary fields |
-| `--surface-hover` | `#e4e1d7` | Hover state |
-| `--surface-active` | `#dcd9ce` | Pressed or selected neutral state |
-| `--border-soft` | `#e2ded3` | Internal separators |
-| `--border` | `#d2cec2` | Default boundary |
-| `--border-strong` | `#aaa69b` | Structural boundary |
-| `--ink` | `#24241f` | Primary text |
-| `--ink-secondary` | `#5e5d55` | Body and explanation text |
-| `--ink-tertiary` | `#696860` | Secondary metadata |
-| `--ink-muted` | `#6f6e66` | De-emphasized metadata |
-| `--brand` | `#4b50c8` | Selection, primary action, active navigation |
-| `--brand-hover` | `#3f43af` | Primary action hover |
-| `--brand-field` | `#e8e7f8` | Selected/brand-tinted field |
+| `--surface-muted` | `#f1f1f1` | User messages and secondary fields |
+| `--surface-hover` | `#ebebeb` | Hover state |
+| `--surface-active` | `#e3e3e3` | Pressed neutral state |
+| `--border-soft` | `#e5e5e5` | Internal separators |
+| `--border` | `#d6d6d6` | Default boundary |
+| `--border-strong` | `#aaaaaa` | Structural boundary |
+| `--ink` | `#202020` | Primary text |
+| `--ink-secondary` | `#505050` | Body and explanation text |
+| `--ink-tertiary` | `#606060` | Secondary metadata |
+| `--ink-muted` | `#686868` | De-emphasized metadata |
+| `--brand` | `#5053c5` | Selection, primary action, active navigation |
+| `--brand-hover` | `#4447ad` | Primary action hover |
+| `--brand-field` | `#eff0fb` | Explicit brand-tinted field |
 | `--brand-ink` | `#ffffff` | Text on brand |
-| `--signal` | `#b8d94a` | Running/live only |
-| `--signal-ink` | `#252c0b` | Text on signal |
-| `--signal-field` | `#edf4cf` | Running row background |
-| `--success` | `#397454` | Completed/success |
-| `--success-field` | `#e3efe8` | Completed field |
-| `--warning` | `#91651c` | Attention/decision required |
-| `--warning-field` | `#f3e8ce` | Attention field |
-| `--danger` | `#b4473f` | Error/destructive/diff removal |
-| `--danger-field` | `#f5dfdc` | Error/removal field |
-| `--rail` | `#24241f` | Project rail |
-| `--rail-ink` | `#f4f2e9` | Active rail content |
-| `--rail-muted` | `#85847a` | Inactive rail content |
-| `--focus` | `0 0 0 3px rgb(75 80 200 / 22%)` | Focus ring |
+| `--signal` | `#7d991c` | Running/live indicator |
+| `--signal-ink` | `#202807` | Text on signal |
+| `--signal-foreground` | `#4f6110` | Live text on neutral surfaces |
+| `--signal-field` | `#eff4d8` | Explicit running status field |
+| `--success` | `#347553` | Completed/success |
+| `--success-field` | `#eaf4ed` | Completed field |
+| `--warning` | `#8a5f16` | Attention/decision required |
+| `--warning-field` | `#f8efe0` | Explicit attention status field |
+| `--danger` | `#b14840` | Error/destructive/diff removal |
+| `--danger-field` | `#f8e9e7` | Error/removal field |
+| `--selection-field` | `#eff0ed` | Quiet selected row |
+| `--running-field` | `#f5f7ed` | Quiet running row |
+| `--attention-field` | `#fbf7ef` | Quiet attention band |
+| `--rail` | `#222222` | Project rail |
+| `--rail-ink` | `#f3f4ee` | Active rail content |
+| `--rail-muted` | `#92978c` | Inactive rail content |
+| `--terminal-bg` | `#252620` | Bash output surface |
+| `--terminal-text` | `#d7d6cd` | Bash output foreground |
+| `--terminal-muted` | `#aaa99f` | Bash process metadata |
+| `--terminal-success` | `#b6d84b` | Successful Bash exit |
+| `--terminal-error` | `#ed8178` | Failed Bash exit |
+| `--focus` | `0 0 0 3px rgb(80 83 197 / 22%)` | Focus ring |
 
 ### Dark Theme
 
 | Token | Value | Role |
 |---|---|---|
-| `--canvas` | `#141512` | Workspace background |
-| `--surface` | `#1b1d19` | Rails, headers, large work surfaces |
-| `--surface-raised` | `#22241f` | Inputs, ToolCards, controls |
-| `--surface-muted` | `#282a24` | Secondary fields |
-| `--surface-hover` | `#2f322b` | Hover state |
-| `--surface-active` | `#383b33` | Pressed neutral state |
-| `--border-soft` | `#292b26` | Internal separators |
-| `--border` | `#393c34` | Default boundary |
-| `--border-strong` | `#595d51` | Structural boundary |
-| `--ink` | `#f1f0e8` | Primary text |
-| `--ink-secondary` | `#b8b7ad` | Body text |
-| `--ink-tertiary` | `#a3a198` | Secondary metadata |
-| `--ink-muted` | `#85847c` | De-emphasized metadata |
-| `--brand` | `#858bff` | Selection and primary action |
-| `--brand-hover` | `#9ca1ff` | Primary action hover |
-| `--brand-field` | `#2b2d4b` | Selected/brand-tinted field |
-| `--brand-ink` | `#151626` | Text on brand |
-| `--signal` | `#c5e85a` | Running/live only |
-| `--signal-ink` | `#1c2206` | Text on signal |
-| `--signal-field` | `#2c3518` | Running field |
-| `--success` | `#72b88a` | Completed/success |
-| `--success-field` | `#1d3224` | Completed field |
-| `--warning` | `#dfb85d` | Attention/decision required |
-| `--warning-field` | `#382e18` | Attention field |
-| `--danger` | `#ec7b72` | Error/destructive/diff removal |
-| `--danger-field` | `#3b211f` | Error/removal field |
-| `--rail` | `#0f100e` | Project rail |
-| `--rail-ink` | `#f1f0e8` | Active rail content |
-| `--rail-muted` | `#74746d` | Inactive rail content |
-| `--focus` | `0 0 0 3px rgb(133 139 255 / 25%)` | Focus ring |
+| `--canvas` | `#181818` | Workspace background |
+| `--surface` | `#202020` | Navigation, headers, large work surfaces |
+| `--surface-raised` | `#272727` | Inputs, ToolCards, controls |
+| `--surface-muted` | `#2d2d2d` | Secondary fields |
+| `--surface-hover` | `#343434` | Hover state |
+| `--surface-active` | `#3b3b3b` | Pressed neutral state |
+| `--border-soft` | `#303030` | Internal separators |
+| `--border` | `#424242` | Default boundary |
+| `--border-strong` | `#666666` | Structural boundary |
+| `--ink` | `#f1f1f1` | Primary text |
+| `--ink-secondary` | `#bcbcbc` | Body text |
+| `--ink-tertiary` | `#989898` | Secondary metadata |
+| `--ink-muted` | `#888888` | De-emphasized metadata |
+| `--brand` | `#9699ff` | Selection and primary action |
+| `--brand-hover` | `#afb1ff` | Primary action hover |
+| `--brand-field` | `#2d2f4a` | Explicit brand-tinted field |
+| `--brand-ink` | `#17181f` | Text on brand |
+| `--signal` | `#c0df62` | Running/live indicator |
+| `--signal-ink` | `#202807` | Text on signal |
+| `--signal-foreground` | `#d7eb88` | Live text on neutral surfaces |
+| `--signal-field` | `#2d361e` | Explicit running status field |
+| `--success` | `#7dbd94` | Completed/success |
+| `--success-field` | `#213329` | Completed field |
+| `--warning` | `#d8b66c` | Attention/decision required |
+| `--warning-field` | `#332a1b` | Explicit attention status field |
+| `--danger` | `#ed8178` | Error/destructive/diff removal |
+| `--danger-field` | `#3a2421` | Error/removal field |
+| `--selection-field` | `#292c27` | Quiet selected row |
+| `--running-field` | `#25291d` | Quiet running row |
+| `--attention-field` | `#29261f` | Quiet attention band |
+| `--rail` | `#111111` | Project rail |
+| `--rail-ink` | `#f1f1f1` | Active rail content |
+| `--rail-muted` | `#8d8d8d` | Inactive rail content |
+| `--terminal-bg` | `#0f100e` | Bash output surface |
+| `--terminal-text` | `#dad9d1` | Bash output foreground |
+| `--terminal-muted` | `#aaa99f` | Bash process metadata |
+| `--terminal-success` | `#b6d84b` | Successful Bash exit |
+| `--terminal-error` | `#ed8178` | Failed Bash exit |
+| `--focus` | `0 0 0 3px rgb(150 153 255 / 25%)` | Focus ring |
 
 ### Color Discipline
 
@@ -138,7 +160,9 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 - Lime means currently live or running. Never use it as a general accent.
 - Green means completed; amber means attention; red means error/destructive.
 - Large surfaces remain neutral. Semantic colors appear as narrow fields,
-  status glyphs, labels, or inset rules.
+  status glyphs, short labels, or inset rules.
+- Selection, running, and attention use separate low-chroma neutral fields so
+  their large surfaces do not become colored blocks.
 - Never introduce purple/pink gradients or an orange imitation of another
   developer tool.
 
@@ -147,8 +171,7 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 No network font dependency is required.
 
 ```css
---font-ui: "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont,
-  "Segoe UI", sans-serif;
+--font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 ```
 
@@ -156,18 +179,20 @@ Type scale:
 
 | Role | Size | Weight | Notes |
 |---|---:|---:|---|
-| Dense metadata | 8–9px | 500–700 | Counts, elapsed time, tool metadata |
-| Compact label | 10px | 600–750 | Buttons, row labels, section labels |
-| Operational title | 11–12px | 650–700 | Navigation, cards, rows |
-| Body | 12–13px | 400–500 | Conversation and explanations |
+| Dense metadata | 10–11px | 500–700 | Counts, elapsed time, compact state |
+| Compact label | 11–12px | 600–700 | Buttons, row labels, section labels |
+| Operational title | 12–13px | 600–650 | Navigation, tool targets, rows |
+| Commentary | 13–14px | 400–500 | Process explanation inside Work |
+| User message | 15px | 400–500 | User intent |
+| Final response | 16px | 400–600 | Agent outcome and supporting detail |
 | Page title | 18px | 700 | Dashboard and flat Todo views |
-| Session objective | 22–30px | 650 | Responsive `clamp`, −0.03em tracking |
 
 Rules:
 
-- Body text uses 1.6–1.7 line-height and a maximum of 68ch.
-- Code inside a large Session objective inherits the UI font so the heading
-  reads as one sentence; inline and operational code uses monospace.
+- Conversation text uses 1.62–1.68 line-height. Long prose blocks use a
+  65–72ch reading measure; Work, tools, code, tables, Diffs, and message
+  structure use the available Session canvas.
+- Inline and operational code uses monospace.
 - Numeric timers and counters use tabular figures.
 - Small text is metadata only; primary mobile input text remains at least 16px.
 
@@ -184,7 +209,8 @@ Radius strategy:
 | 3–4px | Status badges, tight metadata fields |
 | 5–6px | Tool children, rows, cards, page marks |
 | 7–8px | Inputs, segmented controls, primary icon buttons |
-| 12px | Composer and the user message bubble only |
+| 8px | User message surface |
+| 12px | Composer only |
 | 50% / 999px | Status orbits, pulses, compact numeric counters only |
 
 Do not make every surface a rounded card. Structural groups should prefer
@@ -195,7 +221,7 @@ Elevation:
 - Ordinary rows and cards have no drop shadow.
 - The compact Composer input surface uses one soft shadow inside its bottom dock.
 - Inspectors, drawers, and off-canvas navigation use
-  `0 18px 48px rgb(31 30 25 / 18%)` in light mode and
+  `0 18px 48px rgb(25 28 22 / 16%)` in light mode and
   `0 18px 48px rgb(0 0 0 / 46%)` in dark mode.
 - Do not raise cards on hover; use border, fill, or a 2–3px inset rule.
 
@@ -224,7 +250,9 @@ Desktop shell defaults:
 - User-adjusted widths persist across visits. Collapse and focus mode never
   discard the last expanded width.
 - Header height: 56px; page headers may use 58px.
-- Conversation reading width: 760px; agent response max: 740px.
+- Conversation structure follows the flexible work canvas with safe horizontal
+  gutters; prose inside Agent responses uses a 65–72ch reading measure and user
+  messages remain capped at 660px.
 - Dashboard content max: 1100px.
 - Todos content max: 1500px.
 - Main regions scroll independently only where the product structure requires it.
@@ -242,7 +270,8 @@ Narrow-screen rules:
 
 - no document-level horizontal scrolling;
 - Diff and terminal overflow stays inside its own component;
-- secondary metadata may hide, but the entity and primary action remain;
+- secondary metadata may hide, but the entity, primary action, Tool count, and
+  Token usage remain;
 - the Composer Dock participates in the vertical layout rather than covering
   conversation content;
 - page titles truncate only where a reachable detail surface preserves the full
@@ -256,6 +285,16 @@ Narrow-screen rules:
   workspace; active in-project navigation uses indigo.
 - Project Dashboard and Todos remain explicit destinations above the
   Sessions/Automations switcher.
+- Session and Automation lists use one compact row per item:
+  `state icon → single-line title → optional goal/attention/time marker`.
+- Use icons for running, completed, Goal, permission, question, and Automation
+  states. Reserve short text tags for states that require immediate user action,
+  such as `Permission` or `Question`.
+- Do not repeat ordinary state and time in a second descriptive line. Put the
+  full state explanation in the accessible name and tooltip.
+- Organize Sessions by decision value: `Needs you`, `Running`, then `Recent`.
+- Mark the currently open Session with `aria-current="page"` and move that
+  attribute whenever the user changes Sessions.
 - The theme switch stays at the bottom of the project rail.
 - Project navigation and Context Inspector retain resize, collapse, persisted
   width, and focus-mode behavior on desktop.
@@ -264,19 +303,20 @@ Narrow-screen rules:
 
 ## Status Language
 
-Use a status orbit, icon, or narrow bar plus visible text:
+Use visible text or a recognizable icon in addition to color. Always provide
+the complete state in the accessible name:
 
 | State | Visual |
 |---|---|
-| Running/live | Filled lime orbit, optional outer ring, `Running` text |
+| Running/live | Lime-accented spinner/orbit or live pulse plus accessible state |
 | Completed | Green check/status text |
-| Needs attention | Amber orbit/field and explanatory copy |
+| Needs attention | Amber icon plus short `Permission` or `Question` tag |
 | Selected/active | Indigo field or inset rule |
 | Idle/neutral | Outline neutral orbit |
 | Error/destructive | Red icon/field and recovery wording |
 
-Avoid decorative status animation. Only a live Execution pulse and terminal
-cursor may loop.
+Avoid decorative status animation. Only a running Session spinner, live Work
+pulse, and terminal cursor may loop.
 
 ## Component Specifications
 
@@ -296,24 +336,48 @@ cursor may loop.
 - Selection uses a 2px indigo inset rule plus border change.
 - Running or attention rows may use a semantic field and 3px inset rule.
 
+### Session Header
+
+- The first line contains the Session title and current state.
+- The second line contains:
+  `working directory · Tool count + Token usage · activation source`.
+- Keep Tool count and Token usage visible as useful Session-level orientation.
+  Use tabular figures and slightly stronger metadata color than the working
+  directory and activation source.
+- Do not restore Execution number, model/variant, or message count to this
+  header. Those values do not improve primary reading orientation.
+- The working directory is the flexible truncation region. Preserve the usage
+  metrics and truncate the activation source only after the path has yielded.
+- At `≤760px`, hide the working directory, separators, and activation source;
+  retain only Tool count and Token usage beneath the title.
+- Show Todo/source context in the same metadata line; do not add a separate
+  activation-source banner above the conversation.
+
 ### Execution, Work, and Final Response
 
 Execution is a mandatory product entity, not an optional visual section.
 
-- One Execution's process is presented through a `Work` disclosure. Keep the
-  Execution number and real counts as quiet metadata rather than wrapping the
-  whole turn in an Execution card.
-- Running Work is expanded so progress remains visible. Completed Work may
-  collapse to a summary with state, elapsed time, step/Tool/Child counts, and an
-  expansion affordance.
+- One Execution's process is presented through a compact `Work` disclosure,
+  without wrapping the whole turn in an Execution card.
+- Running Work is expanded so current progress remains visible. Completed Work
+  collapses to `Worked for {duration}` with only a chevron and expansion
+  affordance.
+- A running summary reads `Working · {duration}` and may append one current
+  activity label after an em dash.
+- Do not show Execution number, model, message count, step count, Tool count, or
+  Child count in the visible Work row. Preserve Execution identity in semantics,
+  data, and the accessible name.
+- The accessible disclosure name includes Execution number, terminal/live state,
+  elapsed duration, and current activity when present.
 - A final Agent response is editorial content after Work and remains visible
   when Work is collapsed. Never place the final response inside the disclosure.
 - An Execution without final Agent text does not receive a fabricated empty
   response block.
-- Binding row shows Agent/Profile, model/variant, and continuity state.
-- Timeline includes Tool Runs, singleton tool calls, delegation, and running
-  commands.
-- The running step uses lime; completed steps use green; delegation uses indigo.
+- The Work body includes only useful commentary, completed Tool history,
+  delegation, recovery/compaction events, and the current active item. Do not
+  add a binding/status strip before the content.
+- Live Work should normally expose one concise current tool or delegated-Agent
+  line rather than a large running-state panel.
 - Opening historical Work preserves the user's reading position and does not
   trigger live bottom-follow behavior.
 
@@ -321,24 +385,29 @@ Execution is a mandatory product entity, not an optional visual section.
 
 - Project two or more consecutive ordinary tool calls within one Execution as a
   Tool Run, including calls split across model-step Assistant messages.
-- Reasoning does not split a Tool Run. Rendered Assistant text, `delegate`,
-  `ask_user`, Recovery, and Compaction do.
-- While a Tool Run is active, its single collapsed row shows the last tool in
-  authoritative order; parallel calls use the same last-entry rule.
-- After every call settles, the collapsed row returns to the first tool.
-- Do not layer semantic read-only aggregation on top. The row shows the
-  representative tool summary, a quiet numeric count, and state.
-- Tool Runs and singleton ToolCards use the same row skeleton: status on the
-  left and the disclosure chevron on the right. Count is the only additional
-  collapsed-row element for a Tool Run.
-- Expanding a Tool Run reveals the flat ordered list; each ToolCard keeps its
-  own independent expansion state.
+- Reasoning is an independent Work timeline module and a hard Tool Run boundary.
+  Rendered Assistant text, `delegate`, `ask_user`, Recovery, and Compaction are
+  also hard boundaries.
+- A settled Tool Run summary is the ordered, comma-separated canonical tool-name
+  list, for example `file_read, grep, glob, lsp_diagnostics`.
+- Do not add a Tool count, completed label, representative target, or repeated
+  success icon to the settled group row. The comma-separated names are the
+  compact record.
+- Expanding a settled Tool Run reveals one flat ordered tool list. Each
+  successful ordinary row shows `tool name + target` without another
+  disclosure. Failed, unknown-outcome, or artifact-backed rows retain a focused
+  details affordance so errors and recoverable output are not lost.
 - A singleton tool renders directly as a ToolCard without an extra disclosure.
-- Independent ToolCards show tool name, target, change/result summary, state,
-  and chevron in the collapsed row.
-- Expanded write tools disclose input parameters, Diff preview, completion
-  boundary, observed amount, and stored amount.
-- Use monospace for tool names, paths, Diff, commands, and output metrics.
+- Read/search/navigation tools show what they acted on, not raw arguments or
+  verbose results: `file_read registry.ts`, `grep ".archcode/runtime"`.
+- File mutations show `tool name + file target + diffstat`; expansion reveals
+  the Diff or mutation preview without a generic parameter table.
+- Bash shows the exact command in the collapsed row. Expansion reveals the
+  terminal output and exit/duration summary.
+- Dedicated workflow events such as `delegate`, `ask_user`, Recovery, and
+  Compaction keep their own concise presentation.
+- Use monospace for tool names, paths, Diff, commands, and output metrics; use
+  readable UI text for human-oriented targets.
 - On narrow screens, hide secondary summary metadata before hiding state; Diff
   may scroll inside the card.
 
@@ -453,7 +522,12 @@ Motion explains state changes; it is not decoration.
 - [ ] Confirm the Composer Dock, headers, and drawers do not hide content.
 - [ ] Confirm pending HITL is the first Composer decision surface and Goal uses
       no progress bar.
-- [ ] Confirm grouped and independent ToolCards both expand/collapse.
+- [ ] Confirm settled Tool Runs expand and mutation/Bash ToolCards independently
+      expand.
+- [ ] Confirm settled Tool Runs use the ordered comma-separated tool-name list
+      and expanded ordinary rows show their targets.
+- [ ] Confirm the Session header preserves Tool count and Token usage without
+      restoring Execution/model/message metadata at 390px, 760px, and desktop.
 - [ ] Confirm keyboard focus and accessible expansion state.
 - [ ] Confirm `prefers-reduced-motion`.
 - [ ] Confirm browser console is clean.

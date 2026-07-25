@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import { MemoryRouter } from "react-router-dom";
 import type { ExecutionModelBindingSummary, SessionExecutionRecord } from "@archcode/protocol";
-import type { SessionGoalView } from "../../api/types";
 import { __resetWebSessionStoresForTest, getWebSessionStore } from "../../store/session-store";
 import { ChatHeader } from "./ChatHeader";
 
@@ -15,21 +15,6 @@ const binding: ExecutionModelBindingSummary = {
   modelDisplayName: "Test Model",
   resolution: "profile_default",
   modelRuntimeRevision: "m1",
-};
-
-const goal: SessionGoalView = {
-  instanceId: "goal-1",
-  generation: 1,
-  objective: "Ship the workbench",
-  status: "active",
-  usage: {
-    tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 },
-    executionTimeMs: 0,
-    executionCount: 0,
-  },
-  createdAt: 1,
-  activatedAt: 1,
-  updatedAt: 1,
 };
 
 function execution(id: string, status: SessionExecutionRecord["status"]): SessionExecutionRecord {
@@ -56,7 +41,6 @@ beforeEach(() => {
     Object.defineProperty(globalThis, name, { value, configurable: true });
   }
   __resetWebSessionStoresForTest();
-  getWebSessionStore("session", "demo").setState({ goal });
   container = document.getElementById("root")!;
   root = createRoot(container);
 });
@@ -74,21 +58,33 @@ afterEach(async () => {
 
 async function render(onToggleInspector = () => {}): Promise<void> {
   await act(async () => root.render(
-    <ChatHeader
-      slug="demo"
-      sessionId="session"
-      projectRoot="/workspace"
-      inspectorExpanded={false}
-      onToggleInspector={onToggleInspector}
-    />,
+    <MemoryRouter>
+      <ChatHeader
+        slug="demo"
+        sessionId="session"
+        source={{
+          label: "Discussion Todo",
+          title: "Harden the execution boundary",
+          to: "/projects/demo/todos?todo=todo-1",
+        }}
+        inspectorExpanded={false}
+        onToggleInspector={onToggleInspector}
+      />
+    </MemoryRouter>,
   ));
 }
 
 describe("ChatHeader", () => {
-  test("shows the current Execution status and its actual model binding", async () => {
+  test("shows the title, current state, compact usage, and linked source without legacy metadata", async () => {
     getWebSessionStore("session", "demo").setState({
       title: "Refine Bash policy",
       cwd: "/workspace/.archcode/worktrees/build",
+      stats: {
+        messages: { user: 10, assistant: 11, total: 21 },
+        tools: { calls: 12, completed: 12, failed: 0 },
+        steps: { started: 2, completed: 2 },
+        usage: { inputTokens: 40_000, outputTokens: 2_806, totalTokens: 42_806, reasoningTokens: 0, cachedInputTokens: 0 },
+      },
       executions: [execution("current", "running"), execution("newer-record", "completed")],
       currentExecutionId: "current",
     });
@@ -98,11 +94,17 @@ describe("ChatHeader", () => {
     expect(container.querySelector("h1")?.textContent).toBe("Refine Bash policy");
     expect(container.querySelector('[data-testid="session-execution-status"]')?.textContent).toContain("Running");
     expect(container.querySelector('[data-testid="session-execution-status"]')?.getAttribute("data-execution-status")).toBe("running");
-    expect(container.querySelector('[data-testid="session-execution-meta"]')?.textContent).toBe("Execution 1 · Test Model · deep");
-    expect(container.querySelector('[data-testid="goal-status-badge"]')?.textContent).toContain("Active");
-    expect(container.querySelector('[data-testid="goal-status-badge"] [data-visual-kind="goal-active"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="session-execution-status"] [data-testid="activity-arc"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="session-worktree-badge"]')?.getAttribute("title")).toBe("/workspace/.archcode/worktrees/build");
+    expect(container.querySelector('[data-testid="session-cwd"]')?.textContent).toBe("/workspace/.archcode/worktrees/build");
+    expect(container.querySelector('[data-testid="session-stats"]')?.textContent).toBe("12 tools · 42,806 tokens");
+    expect(container.querySelector('[data-testid="session-source"]')?.textContent).toContain("Discussion Todo");
+    expect(container.querySelector('[data-testid="project-todo-backlink"]')?.getAttribute("href")).toBe("/projects/demo/todos?todo=todo-1");
+    expect(container.querySelector('[data-testid="session-execution-meta"]')).toBeNull();
+    expect(container.textContent).not.toContain("Test Model");
+    expect(container.textContent).not.toContain("21 messages");
+    expect(container.querySelector('[data-testid="session-cwd"]')?.className).toContain("max-[760px]:hidden");
+    expect(container.querySelector('[data-testid="session-source"]')?.className).toContain("max-[760px]:hidden");
+    expect(container.querySelector('[data-testid="session-stats"]')?.className).not.toContain("max-[760px]:hidden");
   });
 
   test("falls back to the latest Execution and keeps the Inspector entry available", async () => {
@@ -122,7 +124,7 @@ describe("ChatHeader", () => {
     expect(status?.getAttribute("data-product-status")).toBe("needs_you");
     expect(status?.getAttribute("data-execution-status")).toBe("waiting_for_human");
     expect(container.querySelector('[data-testid="session-cwd"]')?.textContent).toBe("/workspace");
-    expect(container.querySelector('[data-testid="session-worktree-badge"]')).toBeNull();
+    expect(container.querySelector('[data-testid="session-stats"]')?.textContent).toBe("0 tools · 0 tokens");
 
     const inspector = container.querySelector('button[aria-label="Expand context inspector"]') as HTMLButtonElement;
     expect(inspector).not.toBeNull();

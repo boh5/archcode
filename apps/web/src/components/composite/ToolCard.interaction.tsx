@@ -37,7 +37,26 @@ const artifactPart: CompletedToolPart = {
       },
     },
     details: {
-      presentations: [{ kind: "diff", files: [{ path: "src/changed.ts", status: "modified", additions: 2, deletions: 1, hunks: [] }] }],
+      presentations: [{
+        kind: "diff",
+        files: [{
+          path: "src/changed.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          hunks: [{
+            header: "@@ -1 +1 @@",
+            oldStart: 1,
+            oldLines: 1,
+            newStart: 1,
+            newLines: 1,
+            lines: [
+              { type: "delete", content: "const value = 'old';" },
+              { type: "add", content: "const value = 'new';" },
+            ],
+          }],
+        }],
+      }],
     },
   },
   createdAt: 1,
@@ -77,6 +96,14 @@ afterEach(() => {
 });
 
 describe("ToolCard output viewer", () => {
+  test("reveals a mutation diff hunk with the first ToolCard expansion", async () => {
+    await renderExpandedCard();
+
+    expect(container.textContent).toContain("@@ -1 +1 @@");
+    expect(container.textContent).toContain("const value = 'old';");
+    expect(container.textContent).toContain("const value = 'new';");
+  });
+
   test("opens persisted ref after refresh, reads next cursor, and searches without requesting a full body", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input);
@@ -117,7 +144,7 @@ describe("ToolCard output viewer", () => {
     });
 
     await renderExpandedCard();
-    expect(container.textContent).toContain("Edit applied successfully");
+    expect(container.textContent).not.toContain("Edit applied successfully");
 
     const openButton = requiredButton('[data-testid="tool-output-open"]');
     await act(async () => { openButton.click(); await flush(); });

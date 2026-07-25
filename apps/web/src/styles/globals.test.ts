@@ -56,23 +56,23 @@ function reducedMotionDeclarations(): string {
 const locked = {
   light: {
     selector: ":root",
-    surface: ["#f3f1e9", "#faf9f4", "#ffffff", "#ffffff"],
-    interaction: ["#e4e1d7", "#dcd9ce"],
-    border: ["#e2ded3", "#d2cec2", "#aaa69b"],
-    text: ["#24241f", "#5e5d55", "#696860", "#6f6e66"],
-    semantic: ["#4b50c8", "#397454", "#91651c", "#b4473f", "#696860"],
-    signal: ["#b8d94a", "#edf4cf", "#53631d", "#252c0b"],
-    rail: ["#24241f", "#f4f2e9", "#85847a"],
+    surface: ["#f7f7f7", "#fbfbfb", "#ffffff", "#ffffff"],
+    interaction: ["#ebebeb", "#e3e3e3"],
+    border: ["#e5e5e5", "#d6d6d6", "#aaaaaa"],
+    text: ["#202020", "#505050", "#606060", "#686868"],
+    semantic: ["#5053c5", "#347553", "#8a5f16", "#b14840", "#606060"],
+    signal: ["#7d991c", "#eff4d8", "#4f6110", "#202807"],
+    rail: ["#222222", "#f3f4ee", "#92978c"],
   },
   dark: {
     selector: '[data-theme="dark"]',
-    surface: ["#141512", "#1b1d19", "#22241f", "#22241f"],
-    interaction: ["#2f322b", "#383b33"],
-    border: ["#292b26", "#393c34", "#595d51"],
-    text: ["#f1f0e8", "#b8b7ad", "#a3a198", "#85847c"],
-    semantic: ["#858bff", "#72b88a", "#dfb85d", "#ec7b72", "#a3a198"],
-    signal: ["#c5e85a", "#2c3518", "#c5e85a", "#1c2206"],
-    rail: ["#0f100e", "#f1f0e8", "#74746d"],
+    surface: ["#181818", "#202020", "#272727", "#272727"],
+    interaction: ["#343434", "#3b3b3b"],
+    border: ["#303030", "#424242", "#666666"],
+    text: ["#f1f1f1", "#bcbcbc", "#989898", "#888888"],
+    semantic: ["#9699ff", "#7dbd94", "#d8b66c", "#ed8178", "#989898"],
+    signal: ["#c0df62", "#2d361e", "#d7eb88", "#202807"],
+    rail: ["#111111", "#f1f1f1", "#8d8d8d"],
   },
 } as const;
 
@@ -87,7 +87,7 @@ const groups = {
 } as const;
 
 describe("workbench visual tokens", () => {
-  test("matches the locked mineral light and dark palettes exactly", () => {
+  test("matches the locked neutral light and dark palettes exactly", () => {
     for (const theme of Object.values(locked)) {
       const source = block(theme.selector);
       for (const [groupName, names] of Object.entries(groups)) {
@@ -108,6 +108,24 @@ describe("workbench visual tokens", () => {
       const brand = rgb(variable(source, "brand"));
       for (const surface of surfaces) expect(contrast(brand, surface)).toBeGreaterThanOrEqual(3);
       expect(variable(source, "control-border")).toBe("var(--border-default)");
+    }
+  });
+
+  test("keeps every semantic foreground readable on its tinted field", () => {
+    const pairs = [
+      ["brand", "brand-field"],
+      ["success", "success-field"],
+      ["warning", "warning-field"],
+      ["error", "error-field"],
+      ["neutral", "neutral-field"],
+    ] as const;
+    for (const theme of Object.values(locked)) {
+      const source = block(theme.selector);
+      for (const [foregroundName, fieldName] of pairs) {
+        expect(
+          contrast(rgb(variable(source, foregroundName)), rgb(variable(source, fieldName))),
+        ).toBeGreaterThanOrEqual(4.5);
+      }
     }
   });
 
@@ -155,7 +173,7 @@ describe("workbench visual tokens", () => {
     expect(css).toContain("--color-primary: var(--brand)");
     expect(css).toContain("--color-primary-foreground: var(--brand-ink)");
     expect(css).toContain('@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));');
-    expect(css).toContain('font-stack-sans: "Avenir Next", Avenir');
+    expect(css).toContain('font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI"');
     expect(css).toContain('font-stack-mono: "SFMono-Regular"');
     expect(css).toContain("overlay-exit var(--motion-overlay) var(--ease-exit)");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");

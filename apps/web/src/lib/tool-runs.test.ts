@@ -73,7 +73,7 @@ function slices(...messages: SessionMessage[]) {
 }
 
 describe("buildToolRunTimeline", () => {
-  test("keeps Reasoning outside Tool Runs and groups only contiguous tools", () => {
+  test("keeps Reasoning visible as a hard boundary between Tool Runs", () => {
     const result = buildToolRunTimeline(slices(
       message("intro", [text("text-a", "I will inspect this.")]),
       message("tools-a", [reasoning("reason-a"), tool("one"), tool("two")]),
@@ -101,30 +101,33 @@ describe("buildToolRunTimeline", () => {
       "six", "seven", "eight",
     ]);
     expect(result.filter((entry) => entry.kind === "message").flatMap((entry) =>
-      entry.kind === "message" ? entry.parts.filter((part) => part.type === "reasoning").map((part) => part.id) : []
-    )).toEqual(["reason-a", "reason-b"]);
+      entry.kind === "message" ? entry.parts.map((part) => part.id) : []
+    )).toEqual(["text-a", "reason-a", "reason-b", "text-b"]);
+    expect(result.filter((entry) => entry.kind === "tool-run").flatMap((entry) =>
+      entry.kind === "tool-run" ? entry.items.map((item) => item.part.id) : []
+    )).toEqual(["one", "two", "three", "four", "five", "six", "seven", "eight"]);
   });
 
-  test("treats Reasoning as a hard boundary across model messages", () => {
+  test("does not merge tools across Reasoning in another model message", () => {
     const result = buildToolRunTimeline(slices(
       message("first", [tool("one"), reasoning("between")]),
       message("second", [reasoning("next-step"), tool("two")]),
     ));
 
-    expect(result).toHaveLength(2);
-    expect(result.every((entry) => entry.kind === "message")).toBe(true);
+    expect(result.map((entry) => entry.kind)).toEqual(["message", "message"]);
     expect(result.flatMap((entry) =>
       entry.kind === "message" ? entry.parts.map((part) => part.id) : []
     )).toEqual(["one", "between", "next-step", "two"]);
   });
 
-  test("renders trailing Reasoning after a completed Tool Run in the outer timeline", () => {
+  test("renders trailing Reasoning after a completed Tool Run", () => {
     const result = buildToolRunTimeline(slices(
       message("source", [tool("one", "file_read", "completed"), tool("two", "grep", "completed"), reasoning("after-tools")]),
     ));
 
     expect(result.map((entry) => entry.kind)).toEqual(["tool-run", "message"]);
     expect(result[0]?.kind === "tool-run" ? result[0].tools.map((part) => part.id) : []).toEqual(["one", "two"]);
+    expect(result[0]?.kind === "tool-run" ? result[0].items.map((item) => item.part.id) : []).toEqual(["one", "two"]);
     expect(result[1]?.kind === "message" ? result[1].parts.map((part) => part.id) : []).toEqual(["after-tools"]);
   });
 
@@ -136,7 +139,6 @@ describe("buildToolRunTimeline", () => {
     expect(result[0]?.kind).toBe("message");
     if (result[0]?.kind === "message") {
       expect(result[0].parts.map((part) => part.id)).toEqual(["why", "one", "after"]);
-      expect(result[0].showMeta).toBe(true);
     }
   });
 
@@ -169,6 +171,29 @@ describe("buildToolRunTimeline", () => {
     )).toEqual(["delegate", "three", "ask", "four", "notice", "reply"]);
   });
 
+  test("keeps mutations and Bash direct so their specialized disclosure remains available", () => {
+    const result = buildToolRunTimeline(slices(
+      message("assistant", [
+        tool("one"),
+        tool("two", "grep"),
+        tool("write", "file_write", "completed"),
+        tool("three", "glob"),
+        tool("four"),
+        tool("shell", "bash", "completed"),
+      ]),
+    ));
+
+    expect(result.filter((entry) => entry.kind === "tool-run").map((entry) =>
+      entry.kind === "tool-run" ? entry.tools.map((part) => part.id) : []
+    )).toEqual([
+      ["one", "two"],
+      ["three", "four"],
+    ]);
+    expect(result.filter((entry) => entry.kind === "message").flatMap((entry) =>
+      entry.kind === "message" ? entry.parts.map((part) => part.id) : []
+    )).toEqual(["write", "shell"]);
+  });
+
   test("derives a stable run id only from its first tool while more calls append", () => {
     const first = message("first", [tool("one"), tool("two")]);
     const initial = buildToolRunTimeline(slices(first));
@@ -178,7 +203,7 @@ describe("buildToolRunTimeline", () => {
     expect(appended[0]?.id).toBe(initial[0]?.id);
   });
 
-  test("shows message metadata once after a message is split around a run", () => {
+  test("keeps message fragments on both sides of a run", () => {
     const source = message("mixed", [
       text("before", "Before"),
       tool("one"),
@@ -191,10 +216,13 @@ describe("buildToolRunTimeline", () => {
     );
 
     expect(messageEntries).toHaveLength(2);
-    expect(messageEntries.map((entry) => entry.showMeta)).toEqual([false, true]);
+    expect(messageEntries.map((entry) => entry.parts.map((part) => part.id))).toEqual([
+      ["before"],
+      ["after"],
+    ]);
   });
 
-  test("does not insert message metadata between text and a trailing Tool Run", () => {
+  test("does not insert an extra message between text and a trailing Tool Run", () => {
     const source = message("mixed", [
       text("before", "Before"),
       tool("one"),
@@ -203,6 +231,6 @@ describe("buildToolRunTimeline", () => {
     const result = buildToolRunTimeline(slices(source));
 
     expect(result.map((entry) => entry.kind)).toEqual(["message", "tool-run"]);
-    expect(result[0]?.kind === "message" ? result[0].showMeta : undefined).toBe(false);
+    expect(result[0]?.kind === "message" ? result[0].parts.map((part) => part.id) : []).toEqual(["before"]);
   });
 });

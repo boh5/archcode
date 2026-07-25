@@ -75,11 +75,12 @@ describe("compact icon control hard cut", () => {
     expect(compression).toContain('active: "Active"');
   });
 
-  test("persistent Execution and Delegation cards use card radius and nested surfaces", async () => {
+  test("Work stays flat while Delegation retains its nested surface", async () => {
     const workstream = await source("components/composite/ExecutionWorkstream.tsx");
     const delegation = await source("components/composite/DelegationCard.tsx");
-    expect(workstream).not.toContain("rounded-lg");
-    expect(workstream).toContain("rounded-md border border-border-subtle bg-bg-elevated");
+    expect(workstream).toContain("work-summary-control flex min-h-8");
+    expect(workstream).toContain("hover:bg-bg-hover");
+    expect(workstream).not.toContain("data-work-binding");
     expect(delegation).toContain("rounded-md border border-border-subtle bg-bg-elevated");
     expect(delegation).toContain("border-b border-border-subtle bg-transparent");
     expect(delegation).not.toContain("border-border-default bg-bg-surface");

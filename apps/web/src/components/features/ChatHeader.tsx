@@ -1,29 +1,27 @@
-import type { SessionExecutionRecord } from "@archcode/protocol";
+import { Link } from "react-router-dom";
 import { useSessionStore } from "../../store/session-store";
 import { TodoProgressButton } from "./TodoProgressButton";
 import { InspectorToggleButton } from "./InspectorToggleButton";
 import { executionVisualKind, presentExecutionStatus } from "../../lib/execution-status-presentation";
 import { STATUS_SUBTLE_CLASS, STATUS_TONE_CLASS, statusVisual } from "../../lib/status-visuals";
 import { StatusGlyph } from "../primitives/StatusGlyph";
-import { GoalStatusMark } from "./GoalStatusMark";
-import { presentSessionGoalStatus } from "../../lib/session-goal-presentation";
+
+export interface ChatHeaderSource {
+  label: string;
+  title: string;
+  to: string;
+}
 
 interface ChatHeaderProps {
   slug: string;
   sessionId: string;
-  projectRoot?: string;
+  source?: ChatHeaderSource;
   onToggleInspector: () => void;
   inspectorExpanded: boolean;
 }
 
-function formatModelBinding(execution: SessionExecutionRecord): string {
-  const model = execution.binding.modelDisplayName || execution.binding.modelId;
-  return execution.binding.selection.variant ? `${model} · ${execution.binding.selection.variant}` : model;
-}
-
-export function ChatHeader({ slug, sessionId, projectRoot, onToggleInspector, inspectorExpanded }: ChatHeaderProps) {
+export function ChatHeader({ slug, sessionId, source, onToggleInspector, inspectorExpanded }: ChatHeaderProps) {
   const title = useSessionStore(sessionId, (state) => state.title, slug);
-  const goal = useSessionStore(sessionId, (state) => state.goal, slug);
   const stats = useSessionStore(sessionId, (state) => state.stats, slug);
   const cwd = useSessionStore(sessionId, (state) => state.cwd, slug);
   const executions = useSessionStore(sessionId, (state) => state.executions, slug);
@@ -40,8 +38,6 @@ export function ChatHeader({ slug, sessionId, projectRoot, onToggleInspector, in
     : executionInputCheckpoints.find((checkpoint) => checkpoint.executionId === execution.id);
   const executionStatus = execution ? presentExecutionStatus(execution.status, executionCheckpoint) : undefined;
   const executionKind = execution ? executionVisualKind(execution.status, executionCheckpoint) : undefined;
-  const hasStats = stats.messages.total > 0 || stats.tools.calls > 0 || stats.usage.totalTokens > 0;
-  const isWorktree = cwd !== null && projectRoot !== undefined && cwd !== projectRoot;
 
   return (
     <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border-default bg-bg-surface px-4 py-2 sm:px-5">
@@ -63,43 +59,35 @@ export function ChatHeader({ slug, sessionId, projectRoot, onToggleInspector, in
           )}
         </div>
 
-        <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-text-tertiary">
+        <div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden text-[11px] text-text-tertiary">
           {cwd !== null && (
-            <span className="min-w-0 max-w-[420px] truncate font-mono max-[639px]:hidden" title={cwd} data-testid="session-cwd">
+            <span
+              className="min-w-0 max-w-[420px] truncate font-mono [flex:0_10_auto] max-[760px]:hidden"
+              title={cwd}
+              data-testid="session-cwd"
+            >
               {cwd}
             </span>
           )}
-          {isWorktree && (
-            <span
-              data-testid="session-worktree-badge"
-              title={cwd ?? undefined}
-              className="shrink-0 rounded-sm bg-info-muted px-2 py-1 font-mono text-[11px] text-info"
-            >
-              worktree
-            </span>
+          {cwd !== null && (
+            <span aria-hidden="true" className="shrink-0 text-border-strong max-[760px]:hidden">·</span>
           )}
-          {goal && (
+          <span className="shrink-0 tabular-nums" data-testid="session-stats">
+            {stats.tools.calls.toLocaleString()} tools · {stats.usage.totalTokens.toLocaleString()} tokens
+          </span>
+          {source && (
             <>
-              <span aria-hidden="true" className="text-border-strong">·</span>
-              <span data-testid="goal-status-badge" className="inline-flex shrink-0 items-center gap-1 text-text-secondary">
-                <GoalStatusMark identity={goal.instanceId} status={goal.status} size={12} label={`Goal ${presentSessionGoalStatus(goal.status).label}`} />
-                <span>{presentSessionGoalStatus(goal.status).label}</span>
-              </span>
-            </>
-          )}
-          {execution && (
-            <>
-              <span aria-hidden="true" className="text-border-strong max-[719px]:hidden">·</span>
-              <span data-testid="session-execution-meta" className="min-w-0 truncate max-[719px]:hidden">
-                Execution {executionIndex + 1} · {formatModelBinding(execution)}
-              </span>
-            </>
-          )}
-          {hasStats && (
-            <>
-              <span aria-hidden="true" className="text-border-strong max-[1099px]:hidden">·</span>
-              <span className="shrink-0 max-[1099px]:hidden" data-testid="session-stats">
-                {stats.messages.total} messages · {stats.tools.calls} tools · {stats.usage.totalTokens.toLocaleString()} tokens
+              <span aria-hidden="true" className="shrink-0 text-border-strong max-[760px]:hidden">·</span>
+              <span className="min-w-0 truncate [flex:1_1_195px] max-[760px]:hidden" data-testid="session-source">
+                <span className="text-text-tertiary">{source.label}</span>{" "}
+                <Link
+                  className="font-medium text-text-secondary transition-colors hover:text-text-primary hover:underline"
+                  data-testid="project-todo-backlink"
+                  title={source.title}
+                  to={source.to}
+                >
+                  {source.title}
+                </Link>
               </span>
             </>
           )}
@@ -112,7 +100,7 @@ export function ChatHeader({ slug, sessionId, projectRoot, onToggleInspector, in
           expanded={inspectorExpanded}
           onToggle={onToggleInspector}
           iconSize={16}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border border-border-default bg-transparent text-text-tertiary transition-colors hover:border-border-strong hover:bg-bg-hover hover:text-text-primary"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border border-border-default bg-transparent text-text-tertiary transition-colors hover:border-border-strong hover:bg-bg-hover hover:text-text-primary [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
         />
       </div>
     </header>

@@ -8,7 +8,7 @@
       content="ArchCode Indigo Ink and Signal Lime visual direction prototype"
     />
     <title>ArchCode — Signal Workbench Design Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=implementation-alignment-1" />
+    <link rel="stylesheet" href="./styles.css?v=readability-hierarchy-4" />
   </head>
   <body>
     <!--
@@ -89,35 +89,72 @@
           </div>
 
           <div class="sidebar-section">
-            <div class="section-label"><span>Active</span><span>2</span></div>
-            <button class="thread active" data-thread="runtime">
-              <span class="thread-state live" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Runtime authority migration</strong><small>running · just now</small></span>
-              <time></time>
+            <div class="section-label"><span>Needs you</span><span>2</span></div>
+            <button
+              class="thread attention"
+              data-thread="output"
+              aria-label="Tool output boundary, permission required"
+              title="Permission required"
+            >
+              <span class="thread-state permission" data-icon="review" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Tool output boundary</strong></span>
+              <span class="thread-tail">
+                <span class="thread-attention-tag">Permission</span>
+              </span>
             </button>
-            <button class="thread" data-thread="provider">
+            <button
+              class="thread attention"
+              data-thread="hitl"
+              aria-label="HITL queue cleanup, answer required"
+              title="Answer required"
+            >
+              <span class="thread-state question" data-icon="question" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>HITL queue cleanup</strong></span>
+              <span class="thread-tail">
+                <span class="thread-attention-tag">Question</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="section-label"><span>Running</span><span>2</span></div>
+            <button
+              class="thread active"
+              data-thread="runtime"
+              aria-current="page"
+              aria-label="Runtime authority migration, running now, active goal"
+              title="Running now · Active goal"
+            >
               <span class="thread-state live" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Provider stream recovery</strong><small>running · 6m ago</small></span>
-              <time></time>
+              <span class="thread-copy"><strong>Runtime authority migration</strong></span>
+              <span class="thread-tail">
+                <span class="thread-goal" data-icon="target" aria-hidden="true" title="Active goal"></span>
+                <time class="thread-time">now</time>
+              </span>
+            </button>
+            <button
+              class="thread"
+              data-thread="provider"
+              aria-label="Provider stream recovery, running for 6 minutes"
+              title="Running · 6 minutes"
+            >
+              <span class="thread-state live" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Provider stream recovery</strong></span>
+              <span class="thread-tail"><time class="thread-time">6m</time></span>
             </button>
           </div>
 
           <div class="sidebar-section history">
-            <div class="section-label"><span>Sessions</span><span></span></div>
-            <button class="thread attention" data-thread="output">
-              <span class="thread-state wait" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Tool output boundary</strong><small>idle · Review active</small></span>
-              <span class="attention-badge">1</span>
-            </button>
-            <button class="thread" data-thread="model">
-              <span class="thread-state done" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Model runtime snapshots</strong><small>idle · Tuesday</small></span>
-              <time></time>
-            </button>
-            <button class="thread" data-thread="hitl">
-              <span class="thread-state done" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>HITL queue cleanup</strong><small>idle · Monday</small></span>
-              <time></time>
+            <div class="section-label"><span>Recent</span><span></span></div>
+            <button
+              class="thread"
+              data-thread="model"
+              aria-label="Model runtime snapshots, completed Tuesday"
+              title="Completed Tuesday"
+            >
+              <span class="thread-state done" data-icon="check" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Model runtime snapshots</strong></span>
+              <span class="thread-tail"><time class="thread-time">Tue</time></span>
             </button>
           </div>
         </div>
@@ -136,13 +173,25 @@
           </div>
           <div class="sidebar-section">
             <div class="section-label"><span>Automations</span><span>2</span></div>
-            <button class="thread" data-action="打开 Nightly regression review">
-              <span class="thread-state live" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Nightly regression review</strong><small>cron 0 2 * * * · review</small></span>
+            <button
+              class="thread"
+              data-action="打开 Nightly regression review"
+              aria-label="Nightly regression review, next run at 02:00"
+              title="Next run · 02:00"
+            >
+              <span class="thread-state automation" data-icon="automation" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Nightly regression review</strong></span>
+              <span class="thread-tail"><time class="thread-time">02:00</time></span>
             </button>
-            <button class="thread" data-action="打开 Dependency watch">
-              <span class="thread-state done" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Dependency watch</strong><small>interval 24h · active</small></span>
+            <button
+              class="thread"
+              data-action="打开 Dependency watch"
+              aria-label="Dependency watch, next run in 24 hours"
+              title="Next run · 24 hours"
+            >
+              <span class="thread-state automation" data-icon="automation" aria-hidden="true"></span>
+              <span class="thread-copy"><strong>Dependency watch</strong></span>
+              <span class="thread-tail"><time class="thread-time">24h</time></span>
             </button>
           </div>
         </div>
@@ -159,11 +208,11 @@
                 <span class="session-status running"><span class="session-status-dot"></span>Running</span>
               </div>
               <div class="work-title-meta">
-                <span class="header-cwd">/Users/bo/Developer/AI/archcode</span>
-                <span aria-hidden="true">·</span>
-                <span>Execution 2 · GLM-5 · deep</span>
-                <span aria-hidden="true">·</span>
-                <span>18 messages · 12 tools · 42,806 tokens</span>
+                <span class="header-cwd" title="/Users/bo/Developer/AI/archcode">/Users/bo/Developer/AI/archcode</span>
+                <span class="header-separator" aria-hidden="true">·</span>
+                <span class="header-usage">12 tools · 42,806 tokens</span>
+                <span class="header-separator" aria-hidden="true">·</span>
+                <span class="header-source" title="Todo · Runtime authority migration">Todo · Runtime authority migration</span>
               </div>
             </div>
             <div class="work-actions">
@@ -178,11 +227,6 @@
             </div>
           </header>
 
-          <div class="session-source">
-            <span>Activation source Todo</span>
-            <button type="button" data-action="打开 Runtime authority migration Todo">Runtime authority migration</button>
-          </div>
-
           <div class="conversation">
             <section class="user-turn" aria-label="User message">
               <div class="message user-message">
@@ -193,22 +237,22 @@
 
             <section class="agent-response" aria-label="ArchCode response">
               <section class="work-disclosure completed" aria-label="Execution 1 work">
-                <button class="work-summary" type="button" aria-expanded="false" aria-controls="completed-work-body" data-work-toggle>
+                <button
+                  class="work-summary"
+                  type="button"
+                  aria-label="Execution 1, completed, worked for 12 minutes 18 seconds"
+                  aria-expanded="false"
+                  aria-controls="completed-work-body"
+                  data-work-toggle
+                >
                   <span class="work-summary-primary">
-                    <span class="work-state-icon complete" data-icon="check"></span>
+                    <span class="work-chevron" data-icon="chevron-right"></span>
                     <span class="work-summary-copy">
                       <strong>Worked for 12m 18s</strong>
-                      <span>Execution 1 · 6 steps · 9 tools · 1 child</span>
                     </span>
                   </span>
-                  <span class="work-chevron" data-icon="chevron-right"></span>
                 </button>
                 <div class="work-body" id="completed-work-body" data-work-body hidden>
-                  <div class="work-binding">
-                    <span>Lead · principal</span>
-                    <span aria-hidden="true">·</span>
-                    <span>GLM-5 · deep</span>
-                  </div>
                   <p class="work-commentary">I mapped every runtime reader and writer before changing the boundary. The migration touches Sessions, HITL, approvals, Todos, Automations, and memory.</p>
                   <ol class="execution-list">
                     <li class="tool-run-event complete">
@@ -221,120 +265,123 @@
                           aria-label="4 tool calls, file_read, grep, glob, lsp_diagnostics, Completed"
                           data-tool-run-toggle
                         >
-                          <span class="tool-run-status" data-icon="check"></span>
+                          <span class="tool-run-chevron" data-icon="chevron-right"></span>
                           <span class="tool-run-names" title="file_read, grep, glob, lsp_diagnostics">
                             file_read, grep, glob, lsp_diagnostics
                           </span>
-                          <span class="tool-run-meta">
-                            <span class="tool-run-count">4</span>
-                            <span class="tool-run-state">Completed</span>
-                          </span>
-                          <span class="tool-run-chevron" data-icon="chevron-right"></span>
                         </button>
                         <div class="tool-run-list" id="completed-tool-run-list" data-tool-run-list hidden>
                           <div class="tool-child">
-                            <button type="button" aria-expanded="false" data-tool-child-toggle>
-                              <span class="tool-child-status" data-icon="check"></span>
+                            <div
+                              class="tool-child-row"
+                              title="packages/agent-core/src/projects/registry.ts"
+                              aria-label="file_read, packages/agent-core/src/projects/registry.ts"
+                            >
                               <code>file_read</code>
-                              <span>registry.ts</span>
-                              <small>Completed</small>
-                              <span class="tool-child-chevron" data-icon="chevron-right"></span>
-                            </button>
-                            <div class="tool-child-detail" hidden>
-                              <code>packages/agent-core/src/projects/registry.ts</code>
-                              <span>complete · 18.4 KB / 412 lines</span>
+                              <span class="tool-child-target">registry.ts</span>
                             </div>
                           </div>
                           <div class="tool-child">
-                            <button type="button" aria-expanded="false" data-tool-child-toggle>
-                              <span class="tool-child-status" data-icon="check"></span>
+                            <div
+                              class="tool-child-row"
+                              title="Search for .archcode/runtime in packages/agent-core/src"
+                              aria-label="grep, .archcode/runtime"
+                            >
                               <code>grep</code>
-                              <span>.archcode/runtime</span>
-                              <small>Completed</small>
-                              <span class="tool-child-chevron" data-icon="chevron-right"></span>
-                            </button>
-                            <div class="tool-child-detail" hidden>
-                              <code>packages/agent-core/src</code>
-                              <span>48 matches across 21 files</span>
+                              <span class="tool-child-target">“.archcode/runtime”</span>
                             </div>
                           </div>
                           <div class="tool-child">
-                            <button type="button" aria-expanded="false" data-tool-child-toggle>
-                              <span class="tool-child-status" data-icon="check"></span>
+                            <div
+                              class="tool-child-row"
+                              title="Find **/*runtime* under packages/agent-core"
+                              aria-label="glob, **/*runtime*"
+                            >
                               <code>glob</code>
-                              <span>**/*runtime*</span>
-                              <small>Completed</small>
-                              <span class="tool-child-chevron" data-icon="chevron-right"></span>
-                            </button>
-                            <div class="tool-child-detail" hidden>
-                              <code>packages/agent-core</code>
-                              <span>12 paths returned</span>
+                              <span class="tool-child-target">**/*runtime*</span>
                             </div>
                           </div>
                           <div class="tool-child">
-                            <button type="button" aria-expanded="false" data-tool-child-toggle>
-                              <span class="tool-child-status" data-icon="check"></span>
+                            <div
+                              class="tool-child-row"
+                              title="packages/agent-core/src/runtime.ts"
+                              aria-label="lsp_diagnostics, packages/agent-core/src/runtime.ts"
+                            >
                               <code>lsp_diagnostics</code>
-                              <span>runtime.ts</span>
-                              <small>Completed</small>
-                              <span class="tool-child-chevron" data-icon="chevron-right"></span>
-                            </button>
-                            <div class="tool-child-detail" hidden>
-                              <code>packages/agent-core/src/runtime.ts</code>
-                              <span>No diagnostics</span>
+                              <span class="tool-child-target">runtime.ts</span>
                             </div>
                           </div>
                         </div>
                       </div>
+                    </li>
+                    <li class="reasoning-block">
+                      <button
+                        class="reasoning-toggle"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="completed-reasoning-body"
+                        data-reasoning-toggle
+                      >
+                        <span class="reasoning-chevron" data-icon="chevron-right"></span>
+                        <span data-icon="sparkles"></span>
+                        <span>Reasoning</span>
+                      </button>
+                      <p class="reasoning-body" id="completed-reasoning-body" hidden>
+                        I checked the registry and every runtime-path reference before changing the protected boundary.
+                      </p>
                     </li>
                     <li class="work-commentary-event">
                       <p>I finished mapping the readers. Next I am applying the protected-path change.</p>
                     </li>
                     <li class="tool-call-event complete">
                       <div class="tool-call-card">
-                        <button class="tool-call-toggle" type="button" aria-expanded="true" aria-controls="tool-call-file-edit-detail" data-tool-call-toggle>
-                          <span class="tool-call-status" data-icon="check"></span>
+                        <button class="tool-call-toggle" type="button" aria-expanded="false" aria-controls="tool-call-file-edit-detail" data-tool-call-toggle>
+                          <span class="tool-call-chevron" data-icon="chevron-right"></span>
                           <code>file_edit</code>
                           <span class="tool-call-summary">workspace-guard.ts</span>
                           <span class="tool-call-diff">1 file · +24 −10</span>
-                          <span class="tool-call-state">Completed</span>
-                          <span class="tool-call-chevron" data-icon="chevron-right"></span>
                         </button>
-                        <div class="tool-call-detail" id="tool-call-file-edit-detail" data-tool-call-detail>
-                          <dl class="tool-input-details">
-                            <div><dt>path</dt><dd>packages/agent-core/src/tools/hooks/workspace-guard.ts</dd></div>
-                            <div><dt>operation</dt><dd>replace protected-path resolution</dd></div>
-                          </dl>
+                        <div class="tool-call-detail" id="tool-call-file-edit-detail" data-tool-call-detail hidden>
                           <div class="tool-diff-preview">
                             <header><span data-icon="changes"></span><strong>workspace-guard.ts</strong><span>+24 −10</span></header>
                             <pre><span class="diff-remove">− const protectedRoot = resolve(workspace, ".archcode");</span>
 <span class="diff-add">+ const protectedRoot = resolve(workspace, ".archcode/runtime");</span>
 <span class="diff-add">+ return isWithinPath(target, protectedRoot);</span></pre>
                           </div>
-                          <div class="tool-output-meta">
-                            <span>complete</span>
-                            <span>observed 1.2 KB / 31 lines</span>
-                            <span>stored 1.2 KB / 31 lines</span>
-                          </div>
                         </div>
                       </div>
                     </li>
-                    <li class="delegation">
+                    <li class="tool-call-event complete">
+                      <div class="tool-call-card shell-call">
+                        <button
+                          class="tool-call-toggle shell-toggle"
+                          type="button"
+                          aria-expanded="false"
+                          aria-controls="tool-call-bash-detail"
+                          aria-label="bash, bun run test --filter runtime-path-hygiene"
+                          data-tool-call-toggle
+                        >
+                          <span class="tool-call-chevron" data-icon="chevron-right"></span>
+                          <code>bash</code>
+                          <span class="tool-call-command"><span aria-hidden="true">$</span><code>bun run test --filter runtime-path-hygiene</code></span>
+                        </button>
+                        <div class="tool-call-detail terminal-detail" id="tool-call-bash-detail" data-tool-call-detail hidden>
+                          <pre><span>✓ runtime path authority</span>
+<span>✓ protected ancestor mutations</span>
+<span>✓ retired compatibility paths</span></pre>
+                          <div class="terminal-meta"><span>132 passed</span><span>exit 0 · 8.4s</span></div>
+                        </div>
+                      </div>
+                    </li>
+                    <li class="compact-step delegation">
                       <span class="step-glyph delegation-glyph" data-icon="delegate"></span>
                       <div><strong>Delegated to Build</strong><p>Verify mutation guards and runtime path hygiene independently.</p></div>
-                      <span class="step-state">Completed</span>
                     </li>
-                    <li class="complete">
+                    <li class="compact-step complete">
                       <span class="step-glyph" data-icon="check"></span>
                       <div><strong>Architecture verification</strong><p>Checked ancestor mutations, protected paths, and retired runtime locations.</p></div>
-                      <span class="step-state">Completed</span>
                     </li>
                   </ol>
-                  <div class="terminal-line">
-                    <span>$</span>
-                    <code>bun run test --filter runtime-path-hygiene</code>
-                    <span class="terminal-result">132 passed</span>
-                  </div>
                 </div>
               </section>
 
@@ -358,39 +405,29 @@
 
             <section class="agent-response active-turn" aria-label="ArchCode response in progress">
               <section class="work-disclosure running" aria-label="Execution 2 work">
-                <button class="work-summary" type="button" aria-expanded="true" aria-controls="running-work-body" data-work-toggle>
+                <button
+                  class="work-summary"
+                  type="button"
+                  aria-label="Execution 2, running, working for 2 minutes 14 seconds, Analyst review"
+                  aria-expanded="true"
+                  aria-controls="running-work-body"
+                  data-work-toggle
+                >
                   <span class="work-summary-primary">
+                    <span class="work-chevron" data-icon="chevron-right"></span>
                     <span class="live-pulse"></span>
                     <span class="work-summary-copy">
                       <strong>Working · <span class="elapsed">02:14</span></strong>
-                      <span>Execution 2 · 2 steps · 3 tools · 1 child</span>
                     </span>
+                    <span class="work-summary-current">Analyst review</span>
                   </span>
-                  <span class="work-chevron" data-icon="chevron-right"></span>
                 </button>
                 <div class="work-body" id="running-work-body" data-work-body>
-                  <div class="work-binding">
-                    <span>Lead · principal</span>
-                    <span aria-hidden="true">·</span>
-                    <span>GLM-5 · deep</span>
-                  </div>
                   <p class="work-commentary">The implementation is already verified. I’m checking the user-facing explanation and asking an Analyst to challenge the final wording.</p>
-                  <ol class="execution-list">
-                    <li class="complete">
-                      <span class="step-glyph" data-icon="check"></span>
-                      <div><strong>Read the runtime boundary copy</strong><p>Compared Settings, Session, and protected-path explanations.</p></div>
-                      <span class="step-state">Completed</span>
-                    </li>
-                    <li class="current">
-                      <span class="step-glyph active-glyph" data-icon="delegate"></span>
-                      <div><strong>Analyst review</strong><p>Checking whether the final explanation is precise and free of migration ambiguity.</p></div>
-                      <span class="running-word">RUNNING</span>
-                    </li>
-                  </ol>
-                  <div class="terminal-line">
-                    <span>$</span>
-                    <code>review runtime boundary copy</code>
-                    <span class="terminal-cursor" aria-hidden="true"></span>
+                  <div class="active-tool-line" aria-label="delegate Analyst, in progress">
+                    <span class="active-tool-indicator" aria-hidden="true"></span>
+                    <code>delegate</code>
+                    <span>Analyst · Review the boundary explanation</span>
                   </div>
                 </div>
               </section>
@@ -798,6 +835,6 @@
 
     <div class="scrim" data-close-overlays></div>
     <div class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=readability-hierarchy-4"></script>
   </body>
 </html>

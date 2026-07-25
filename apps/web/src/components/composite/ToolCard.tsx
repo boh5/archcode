@@ -10,17 +10,9 @@ import {
   getToolSummary,
   summarizeToolDiffMetadata,
 } from "../../lib/tool-format";
+import { getToolCategory } from "@archcode/protocol";
 import { DiffView } from "../diff/DiffView";
-import { StatusGlyph } from "../primitives/StatusGlyph";
-import { useStatusTransition } from "../primitives/useStatusTransition";
-import { ToolInputDetails } from "./ToolInputDetails";
 import { ToolOutputViewer } from "./ToolOutputViewer";
-import {
-  STATUS_SUBTLE_CLASS,
-  STATUS_TONE_CLASS,
-  statusVisual,
-  type VisualStatusKind,
-} from "../../lib/status-visuals";
 
 const STATUS_LABEL: Record<ToolPart["state"], string> = {
   pending: "Pending",
@@ -28,14 +20,6 @@ const STATUS_LABEL: Record<ToolPart["state"], string> = {
   completed: "Completed",
   error: "Error",
 };
-
-function toolVisualKind(state: ToolPart["state"], unknownResult: boolean): VisualStatusKind {
-  if (unknownResult) return "warning";
-  if (state === "pending") return "pending";
-  if (state === "running") return "loading";
-  if (state === "completed") return "completed";
-  return "failed";
-}
 
 export interface ToolCardProps {
   readonly part: ToolPart;
@@ -59,108 +43,147 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
   const recovery = settled?.output.recovery;
   const artifactRecovery = recovery?.kind === "artifact" ? recovery : undefined;
 
-  const visualKind = toolVisualKind(part.state, isUnknownResult);
-  const statusTransition = useStatusTransition(part.id, visualKind);
-  const tone = statusVisual(visualKind).tone;
   const hasInput = "input" in part;
+  const category = getToolCategory(part.toolName);
+  const isShell = category === "shell";
   const summary = getToolSummary(part.toolName, hasInput ? part.input : undefined);
+  const shellCommand = isShell && hasInput ? getShellCommand(part.input) : undefined;
+  const summaryPrimary = shellCommand ?? summary.primary;
   const diffSummary = diffPresentation
     ? summarizeToolDiffMetadata({ files: diffPresentation.files, truncated: diffPresentation.truncated })
     : undefined;
-  const hasDetails = hasInput
-    || settled !== undefined
-    || diffPresentation !== undefined
-    || askPresentation !== undefined;
-  const ToolIcon = summary.icon;
+  const hasDetails = diffPresentation !== undefined
+    || askPresentation !== undefined
+    || isUnknownResult
+    || details?.error !== undefined
+    || artifactRecovery !== undefined
+    || (isShell && settled !== undefined)
+    || (!isShell && part.state === "error" && (settled?.output.preview.length ?? 0) > 0);
+  const statusLabel = isUnknownResult ? "Unknown" : STATUS_LABEL[part.state];
+  const statusClass = part.state === "running"
+    ? "text-signal-foreground"
+    : part.state === "error"
+      ? "text-error"
+      : isUnknownResult
+        ? "text-warning"
+        : "text-text-tertiary";
+  const detailsId = `${part.id}-details`;
+  const summaryClass = "tool-card-summary-control grid min-h-9 w-full select-none grid-cols-[12px_minmax(0,160px)_minmax(0,1fr)_auto] items-center gap-2 rounded-md border-0 bg-transparent py-1 pl-0 pr-1.5 text-left max-[560px]:grid-cols-[12px_minmax(0,112px)_minmax(0,1fr)_auto]";
+  const summaryContent = (
+    <>
+      {hasDetails
+        ? <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
+        : <span aria-hidden="true" />}
+      <span
+        className={`min-w-0 truncate font-mono text-[12px] font-semibold ${isUnknownResult ? "text-warning" : "text-text-tertiary"}`}
+        title={part.toolName}
+      >
+        {part.toolName}
+      </span>
+      <span
+        className={`min-w-0 truncate text-[13px] font-medium ${isShell ? "font-mono text-text-secondary" : "text-text-primary"}`}
+        title={summaryPrimary}
+      >
+        {summaryPrimary}
+      </span>
+      <span className="flex shrink-0 items-center gap-2">
+        {diffSummary && (
+          <span className="whitespace-nowrap font-mono text-[11px] tabular-nums text-text-tertiary max-[560px]:hidden">
+            {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
+            {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
+              ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
+              : null}
+          </span>
+        )}
+        {(part.state !== "completed" || isUnknownResult) && (
+          <span className={`text-[10px] font-semibold ${statusClass}`}>{statusLabel}</span>
+        )}
+      </span>
+    </>
+  );
 
   return (
-    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated" data-tool-card="">
-      <button
-        type="button"
-        disabled={!hasDetails}
-        aria-expanded={hasDetails ? expanded : undefined}
-        className={`grid min-h-10 w-full select-none grid-cols-[18px_minmax(0,1fr)_auto_12px] items-center gap-2 px-2.5 py-1.5 text-left transition-colors duration-[var(--motion-hover)] ${
-          hasDetails ? "cursor-pointer hover:bg-bg-hover" : "cursor-default disabled:opacity-100"
-        }`}
-        onClick={() => { if (hasDetails) setExpanded((value) => !value); }}
-      >
-        <span
-          className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-sm ${STATUS_SUBTLE_CLASS[tone]}`}
-          data-tool-visual-kind={visualKind}
+    <div className="w-full min-w-0 shrink-0 overflow-hidden" data-tool-card="">
+      {hasDetails ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={detailsId}
+          className={`${summaryClass} cursor-pointer transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand`}
+          onClick={() => setExpanded((value) => !value)}
         >
-          <StatusGlyph kind={visualKind} size={11} transition={statusTransition} />
-        </span>
-        <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
-          <span className={`shrink-0 whitespace-nowrap font-mono text-[12px] font-medium ${isUnknownResult ? "text-warning" : "text-text-secondary"}`}>
-            {ToolIcon ? <ToolIcon size={12} className="mr-1 inline-block align-text-bottom" /> : null}{part.toolName}
-          </span>
-          <span className="truncate text-[10px] text-text-secondary">{summary.primary}</span>
-          {summary.secondary && <span className="truncate text-[9px] text-text-tertiary max-[560px]:hidden">{summary.secondary}</span>}
-        </span>
-        <span className="flex shrink-0 items-center gap-2">
-          {diffSummary && (
-            <span className="whitespace-nowrap font-mono text-[9px] tabular-nums text-text-tertiary max-[560px]:hidden">
-              {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
-              {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
-                ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
-                : null}
-            </span>
+          {summaryContent}
+        </button>
+      ) : (
+        <div
+          className={`${summaryClass} cursor-default`}
+          data-tool-summary-static=""
+          aria-label={`${part.toolName}, ${summaryPrimary}, ${statusLabel}`}
+        >
+          {summaryContent}
+        </div>
+      )}
+
+      {expanded && hasDetails && (
+        <div id={detailsId}>
+          {isUnknownResult && (
+            <div className="ml-[18px] w-[calc(100%-18px)] border-l-2 border-warning px-3 py-2 text-[12px] text-warning">
+              Result unknown — execution was interrupted before completion
+            </div>
           )}
-          <span className={`text-[9px] font-semibold ${part.state === "running" ? "text-signal-foreground" : STATUS_TONE_CLASS[tone]}`}>
-            {isUnknownResult ? "Unknown" : STATUS_LABEL[part.state]}
-          </span>
-        </span>
-        {hasDetails && <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />}
-      </button>
 
-      {expanded && hasInput && <ToolInputDetails input={part.input} />}
+          {diffPresentation && diffPresentation.files.length > 0 && (
+            <div className="ml-[18px] overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
+              <DiffView files={diffPresentation.files} defaultExpanded />
+            </div>
+          )}
 
-      {expanded && isUnknownResult && (
-        <div className="inline-flex w-full items-center gap-1 border-t border-border-subtle px-3 py-2 text-[11px] text-warning">
-          <StatusGlyph kind="warning" size={11} /> Result unknown — execution was interrupted before completion
+          {askPresentation && <AskUserResult presentation={askPresentation} />}
+
+          {details?.error && (
+            <KeyValueRows entries={{
+              error: details.error.kind,
+              code: details.error.code,
+              name: details.error.name,
+              ...(details.error.hint ? { hint: details.error.hint } : {}),
+            }} />
+          )}
+
+          {!isShell && part.state === "error" && settled?.output.preview && (
+            <ToolErrorOutput preview={settled.output.preview} />
+          )}
+
+          {isShell && settled && (
+            <ShellOutput output={settled.output} process={details?.process} />
+          )}
+
+          {artifactRecovery && (
+            <div className="border-t border-border-subtle px-3 py-2">
+              <button
+                type="button"
+                data-testid="tool-output-open"
+                className="h-8 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                onClick={() => setViewerOpen((value) => !value)}
+              >
+                {viewerOpen ? "关闭输出" : "查看输出"}
+              </button>
+              <span className="ml-2 text-[11px] text-text-tertiary">expires {new Date(artifactRecovery.expiresAt).toLocaleString()}</span>
+            </div>
+          )}
+
+          {viewerOpen && artifactRecovery && (
+            <ToolOutputViewer projectSlug={projectSlug} sessionId={sessionId} outputRef={artifactRecovery.outputRef} />
+          )}
         </div>
-      )}
-
-      {expanded && diffPresentation && diffPresentation.files.length > 0 && (
-        <div className="border-t border-border-subtle"><DiffView files={diffPresentation.files} defaultExpanded={false} /></div>
-      )}
-
-      {expanded && askPresentation && <AskUserResult presentation={askPresentation} />}
-
-      {expanded && details?.error && (
-        <KeyValueRows entries={{
-          error: details.error.kind,
-          code: details.error.code,
-          name: details.error.name,
-          ...(details.error.hint ? { hint: details.error.hint } : {}),
-        }} />
-      )}
-
-      {expanded && details?.process && <ProcessDetails details={details.process} />}
-
-      {expanded && settled && askPresentation === undefined && (
-        <ToolOutputSummary partState={settled.isError ? "error" : "completed"} output={settled.output} />
-      )}
-
-      {expanded && artifactRecovery && (
-        <div className="border-t border-border-subtle px-3 py-2">
-          <button
-            type="button"
-            data-testid="tool-output-open"
-            className="h-8 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-            onClick={() => setViewerOpen((value) => !value)}
-          >
-            {viewerOpen ? "关闭输出" : "查看输出"}
-          </button>
-          <span className="ml-2 text-[11px] text-text-tertiary">expires {new Date(artifactRecovery.expiresAt).toLocaleString()}</span>
-        </div>
-      )}
-
-      {expanded && viewerOpen && artifactRecovery && (
-        <ToolOutputViewer projectSlug={projectSlug} sessionId={sessionId} outputRef={artifactRecovery.outputRef} />
       )}
     </div>
   );
+}
+
+function getShellCommand(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
+  const command = (input as Record<string, unknown>).command;
+  return typeof command === "string" && command.length > 0 ? command : undefined;
 }
 
 function KeyValueRows({ entries }: { entries: Record<string, string> }) {
@@ -197,35 +220,36 @@ function AskUserResult({ presentation }: { presentation: ToolAskUserPresentation
   );
 }
 
-function ProcessDetails({ details }: { details: ToolProcessDetails }) {
-  const rows = {
-    exit: details.exitCode === null ? "—" : String(details.exitCode),
-    signal: details.signal ?? "—",
-    duration: `${details.durationMs} ms`,
-    timedOut: String(details.timedOut),
-    aborted: String(details.aborted),
-  };
-  return <KeyValueRows entries={rows} />;
+function ToolErrorOutput({ preview }: { preview: string }) {
+  return (
+    <pre className="ml-[18px] overflow-x-auto whitespace-pre-wrap break-all border-l-2 border-error px-3 py-2 font-mono text-[12px] leading-[1.6] text-error">
+      {preview}
+    </pre>
+  );
 }
 
-function ToolOutputSummary({ partState, output }: {
-  partState: "completed" | "error";
+function ShellOutput({ output, process }: {
   output: Extract<ToolPart, { state: "completed" | "error" }>["result"]["output"];
+  process?: ToolProcessDetails;
 }) {
   return (
-    <div className="border-t border-border-subtle px-3 py-2">
-      <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-text-tertiary">
-        <span>{output.completeness}</span>
-        <span>observed {formatCount(output.observed)}</span>
-        <span>canonical {formatCount(output.canonical)}</span>
-        <span>stored {formatCount(output.stored)}</span>
-        {(output.omitted.bytes > 0 || output.omitted.lines > 0) && <span>omitted {formatCount(output.omitted)}</span>}
-      </div>
+    <div className="ml-[18px] mt-0.5 overflow-hidden rounded-md bg-[var(--terminal-bg)] text-[var(--terminal-text)]">
       {output.preview.length > 0 && (
-        <pre className={`font-mono text-[12px] leading-[18px] bg-bg-elevated p-2 rounded-sm border border-border-subtle whitespace-pre-wrap break-all overflow-x-auto ${
-          partState === "completed" ? "text-success" : "text-error"
-        }`}>{output.preview}</pre>
+        <pre className="overflow-x-auto whitespace-pre-wrap break-all px-3 py-2.5 font-mono text-[12px] leading-[1.65]">
+          {output.preview}
+        </pre>
       )}
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[var(--terminal-border)] px-3 py-1.5 font-mono text-[11px] text-[var(--terminal-muted)]">
+        <span className={process?.exitCode === 0 ? "text-[var(--terminal-success)]" : process?.exitCode == null ? "" : "text-[var(--terminal-error)]"}>
+          exit {process?.exitCode ?? "—"}
+        </span>
+        <span>
+          {process ? `${process.durationMs} ms` : output.completeness}
+          {(output.omitted.bytes > 0 || output.omitted.lines > 0)
+            ? ` · ${formatCount(output.omitted)} omitted`
+            : ""}
+        </span>
+      </div>
     </div>
   );
 }

@@ -513,7 +513,7 @@ describe("CompressionBlock", () => {
     expect(text).toContain("Retry");
   });
 
-  test("renders artifact output preview and ref without inlining an artifact body", async () => {
+  test("keeps the artifact ref without exposing an ordinary read preview", async () => {
     resetStateSlots();
     fetchCompressionOriginalRangeMock.mockClear();
 
@@ -593,7 +593,7 @@ describe("CompressionBlock", () => {
     const text = textContent(el2);
 
     expect(text).toContain("abcdefghijklmnopqrstuv");
-    expect(text).toContain("first 2000 chars preview");
+    expect(text).not.toContain("first 2000 chars preview");
   });
 
   test("renders DelegationCard for delegate tool parts in expanded originals", async () => {

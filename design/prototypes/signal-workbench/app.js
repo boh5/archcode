@@ -19,11 +19,14 @@ const iconPaths = {
   moon: "M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z",
   panel: "M4 4h16v16H4zM15 4v16",
   plus: "M12 5v14M5 12h14",
+  question: "M9.1 9a3 3 0 1 1 4.8 2.4c-1.2.8-1.9 1.4-1.9 2.6m0 4h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z",
   review: "M12 3 5 6v5c0 4.6 2.9 8.3 7 10 4.1-1.7 7-5.4 7-10V6zM9 12l2 2 4-5",
   search: "m20 20-4.3-4.3M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z",
   settings: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM19 13.5l2 1-2 3-2-1.1a8 8 0 0 1-2 1.2L14.8 20h-3.6l-.2-2.4a8 8 0 0 1-2-1.2L7 17.5l-2-3 2-1a8 8 0 0 1 0-3L5 9.5l2-3 2 1.1a8 8 0 0 1 2-1.2l.2-2.4h3.6l.2 2.4a8 8 0 0 1 2 1.2L19 6.5l2 3-2 1a8 8 0 0 1 0 3Z",
+  sparkles: "m12 3 1.2 3.3L16.5 7.5l-3.3 1.2L12 12l-1.2-3.3-3.3-1.2 3.3-1.2ZM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8Z",
   stop: "M7 7h10v10H7z",
   sun: "M12 4V2m0 20v-2M4 12H2m20 0h-2m-2.3-5.7 1.4-1.4M4.9 19.1l1.4-1.4m0-11.4L4.9 4.9m14.2 14.2-1.4-1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z",
+  target: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-4a6 6 0 1 0 0-12 6 6 0 0 0 0 12Zm0-4a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z",
   terminal: "m5 7 5 5-5 5m8 0h6",
   todo: "M8 6h12M8 12h12M8 18h12M3.5 6h.01M3.5 12h.01M3.5 18h.01",
 };
@@ -242,10 +245,21 @@ document.querySelectorAll("[data-action]").forEach((button) => {
   button.addEventListener("click", () => showToast(button.dataset.action));
 });
 
+function setCurrentThread(nextThread) {
+  document.querySelectorAll("[data-thread]").forEach((thread) => {
+    const current = thread === nextThread;
+    thread.classList.toggle("active", current);
+    if (current) {
+      thread.setAttribute("aria-current", "page");
+    } else {
+      thread.removeAttribute("aria-current");
+    }
+  });
+}
+
 document.querySelectorAll("[data-thread]").forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll("[data-thread]").forEach((thread) => thread.classList.remove("active"));
-    button.classList.add("active");
+    setCurrentThread(button);
     showCanvas("session");
     showToast(`切换到 ${button.querySelector("strong").textContent}`);
   });
@@ -254,8 +268,7 @@ document.querySelectorAll("[data-thread]").forEach((button) => {
 document.querySelectorAll("[data-thread-jump]").forEach((button) => {
   button.addEventListener("click", () => {
     const target = document.querySelector(`[data-thread="${button.dataset.threadJump}"]`);
-    document.querySelectorAll("[data-thread]").forEach((thread) => thread.classList.remove("active"));
-    target?.classList.add("active");
+    if (target) setCurrentThread(target);
     showCanvas("session");
     showToast(`切换到 ${target?.querySelector("strong")?.textContent ?? "Session"}`);
   });
@@ -312,11 +325,11 @@ document.querySelectorAll("[data-tool-run-toggle]").forEach((button) => {
   });
 });
 
-document.querySelectorAll("[data-tool-child-toggle]").forEach((button) => {
+document.querySelectorAll("[data-reasoning-toggle]").forEach((button) => {
   button.addEventListener("click", () => {
     const expanded = button.getAttribute("aria-expanded") === "true";
     button.setAttribute("aria-expanded", String(!expanded));
-    button.closest(".tool-child").querySelector(".tool-child-detail").hidden = expanded;
+    document.getElementById(button.getAttribute("aria-controls")).hidden = expanded;
   });
 });
 

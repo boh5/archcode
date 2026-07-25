@@ -261,11 +261,11 @@ describe("ExecutionWorkstream", () => {
       ["running", "Working", undefined, "running"],
       ["waiting_for_human", "Needs you", undefined, "needs_you"],
       ["completed", "Worked for", undefined, "completed"],
-      ["max_steps", "Stopped", "Max steps", "failed"],
-      ["failed", "Stopped", "Failed", "failed"],
+      ["max_steps", "Stopped", "Max steps", "stopped"],
+      ["failed", "Stopped", "Failed", "stopped"],
       ["aborted", "Stopped", "Aborted", "stopped"],
       ["cancelled", "Stopped", "Cancelled", "stopped"],
-      ["timed_out", "Stopped", "Timed out", "failed"],
+      ["timed_out", "Stopped", "Timed out", "stopped"],
       ["interrupted", "Stopped", "Interrupted", "stopped"],
     ];
     initializeSession(
@@ -281,11 +281,11 @@ describe("ExecutionWorkstream", () => {
 
     await renderWorkstream();
 
-    for (const [status, label, detail, visualKind] of statuses) {
+    for (const [status, label, detail, productStatus] of statuses) {
       expect(turn(`execution-${status}`).textContent).toContain(label);
       if (detail) expect(turn(`execution-${status}`).textContent).toContain(detail);
       if (detail) expect(workSummary(`execution-${status}`).getAttribute("aria-label")).toContain(detail);
-      expect(workDisclosure(`execution-${status}`).getAttribute("data-visual-kind")).toBe(visualKind);
+      expect(workDisclosure(`execution-${status}`).getAttribute("data-product-status")).toBe(productStatus);
     }
     expect(turn("execution-waiting_for_human").textContent).not.toContain("Paused for input");
   });
@@ -307,7 +307,8 @@ describe("ExecutionWorkstream", () => {
     await renderWorkstream();
 
     expect(turn("source").textContent).toContain("Input received");
-    expect(turn("source").textContent).toContain("Continued in Execution 2");
+    expect(turn("source").textContent).not.toContain("Continued in Execution 2");
+    expect(workSummary("source").getAttribute("aria-label")).toContain("continued in Execution 2");
     expect(turn("source").textContent).not.toContain("Needs you");
   });
 
@@ -449,6 +450,29 @@ describe("ExecutionWorkstream", () => {
     expect(finalResponse("execution")?.textContent).toContain("Inspection complete");
   });
 
+  test("does not retain a completed tool as current activity during later reasoning", async () => {
+    const workMessage: SessionMessage = {
+      id: "working",
+      role: "assistant",
+      executionId: "execution",
+      createdAt: 2,
+      parts: [
+        completedTool("read", "finished.ts", 2),
+        { type: "reasoning", id: "reasoning", text: "Now considering the result", createdAt: 4 },
+      ],
+    };
+    initializeSession([
+      message("user", "user", "execution", "Inspect", 1),
+      workMessage,
+    ], [execution("execution", 1, "running")], "session-1", "project-1");
+
+    await renderWorkstream();
+
+    expect(workSummary("execution").textContent).toContain("Working");
+    expect(workSummary("execution").getAttribute("aria-label")).not.toContain("finished.ts");
+    expect(workSummary("execution").getAttribute("aria-label")).not.toContain("file_read");
+  });
+
   test("does not render an empty final-response shell when a Tool directly completes an Execution", async () => {
     const record = execution("tool-only", 1);
     const toolOnly: SessionMessage = {
@@ -481,7 +505,7 @@ describe("ExecutionWorkstream", () => {
 
   test("renders text, five tools, text, and three tools as two settled Tool Runs", async () => {
     const intro = message("intro", "assistant", "execution", "First commentary", 2);
-    const firstToolNames = ["file_read", "grep", "glob", "bash", "lsp_symbols"];
+    const firstToolNames = ["file_read", "grep", "glob", "lsp_diagnostics", "lsp_symbols"];
     const firstTools: SessionMessage = {
       id: "first-tools",
       role: "assistant",
@@ -552,7 +576,7 @@ describe("ExecutionWorkstream", () => {
     const firstRunToggle = runs?.[0]?.querySelector("button");
     if (!(firstRunToggle instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Tool Run toggle");
     await act(async () => firstRunToggle.click());
-    const expandedTools = runs?.[0]?.querySelectorAll<HTMLElement>("[data-tool-card]");
+    const expandedTools = runs?.[0]?.querySelectorAll<HTMLElement>('[data-testid="tool-run-child"]');
     expect(expandedTools).toHaveLength(5);
     expect(Array.from(expandedTools ?? [], (tool) => tool.textContent)).toEqual([
       expect.stringContaining("first-1.ts"),
@@ -561,7 +585,57 @@ describe("ExecutionWorkstream", () => {
       expect.stringContaining("first-4.ts"),
       expect.stringContaining("first-5.ts"),
     ]);
-    expect(runs?.[0]?.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(5);
+    expect(runs?.[0]?.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(0);
+  });
+
+  test("renders model reasoning as an independent disclosure after a Tool Run", async () => {
+    const leakedReasoning = "The user wants me to optimize the animation effects of the 2048 game.";
+    const toolsMessage: SessionMessage = {
+      id: "tools",
+      role: "assistant",
+      executionId: "execution",
+      createdAt: 2,
+      completedAt: 5,
+      parts: [
+        completedTool("read-one", "2048.html", 2),
+        completedTool("read-two", "checklist.md", 3),
+        completedTool("read-three", "findings.md", 4),
+      ],
+    };
+    const finalMessage: SessionMessage = {
+      id: "final",
+      role: "assistant",
+      executionId: "execution",
+      createdAt: 6,
+      completedAt: 7,
+      parts: [
+        { type: "reasoning", id: "internal-plan", text: leakedReasoning, createdAt: 6, completedAt: 7 },
+        { type: "text", id: "final-text", text: "Animation review complete.", createdAt: 6, completedAt: 7 },
+      ],
+    };
+    initializeSession([
+      message("user", "user", "execution", "Optimize animations", 1),
+      toolsMessage,
+      finalMessage,
+    ], [execution("execution", 1)]);
+
+    await renderWorkstream();
+    await clickWork("execution");
+
+    expect(workBody("execution")?.querySelectorAll('[data-testid="tool-run-card"]')).toHaveLength(1);
+    expect(workBody("execution")?.textContent).toContain("file_read, file_read, file_read");
+    expect(workBody("execution")?.textContent).not.toContain(leakedReasoning);
+    const reasoning = workBody("execution")?.querySelector<HTMLElement>('[data-testid="reasoning-block"]');
+    const toolRun = workBody("execution")?.querySelector<HTMLElement>('[data-testid="tool-run-card"]');
+    expect(reasoning).not.toBeNull();
+    expect(reasoning?.textContent).toContain("Reasoning");
+    expect(toolRun?.contains(reasoning ?? null)).toBe(false);
+    const reasoningToggle = reasoning?.querySelector("button");
+    if (!(reasoningToggle instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Reasoning toggle");
+    await act(async () => reasoningToggle.click());
+    expect(reasoning?.textContent).toContain(leakedReasoning);
+    expect(toolRun?.textContent).not.toContain(leakedReasoning);
+    expect(finalResponse("execution")?.textContent).toContain("Animation review complete.");
   });
 
   test("keeps running Work in authoritative message and part order with user-right and plain agent presentation", async () => {
@@ -593,20 +667,20 @@ describe("ExecutionWorkstream", () => {
 
     const user = container.querySelector<HTMLElement>('[data-message-kind="canonical-user"]');
     const userBubble = user?.querySelector<HTMLElement>(".justify-end > div");
-    expect(userBubble?.className).toContain("max-w-[640px]");
-    expect(userBubble?.className).toContain("rounded-xl");
-    expect(userBubble?.className).toContain("bg-bg-active");
+    expect(userBubble?.className).toContain("max-w-[660px]");
+    expect(userBubble?.className).toContain("rounded-lg");
+    expect(userBubble?.className).toContain("bg-bg-muted");
     expect(userBubble?.className).not.toContain("shadow-");
 
     const agent = container.querySelector<HTMLElement>('[data-message-kind="agent"]');
     expect(agent).not.toBeNull();
-    expect(agent?.className).toContain("max-w-[740px]");
+    expect(agent?.className).toContain("w-full");
     expect(agent?.className).not.toContain("rounded");
     expect(agent?.className).not.toContain("border-agent");
     expect(agent?.className).not.toContain("bg-agent");
     expect(agent?.querySelector("img")).toBeNull();
     expect(agent?.querySelector('[data-agent-avatar]')).toBeNull();
-    expect(container.querySelector('[data-testid="agent-message-meta-assistant"]')?.textContent).toContain("Lead Engineer·principal·");
+    expect(container.querySelector('[data-testid="agent-message-meta-assistant"]')).toBeNull();
   });
 
   test("renders each typed integrity diagnostic once without hiding its message", async () => {

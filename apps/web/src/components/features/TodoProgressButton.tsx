@@ -176,7 +176,7 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
         aria-label={`Todo progress, ${completedLabel}, ${STATE_LABEL[progress.state].toLowerCase()}`}
         aria-expanded={open}
         aria-controls={popoverId}
-        className={`flex h-8 items-center gap-2 rounded-sm border border-border-default px-2 text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-brand ${STATUS_SUBTLE_CLASS[tone]} ${STATUS_TONE_CLASS[tone]}`}
+        className={`flex h-8 items-center gap-2 rounded-sm border border-border-default px-2 text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-brand [@media(pointer:coarse)]:h-11 ${STATUS_SUBTLE_CLASS[tone]} ${STATUS_TONE_CLASS[tone]}`}
         onFocus={() => {
           if (ignoreNextFocusPreview.current) {
             ignoreNextFocusPreview.current = false;

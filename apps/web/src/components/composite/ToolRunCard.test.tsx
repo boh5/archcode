@@ -101,6 +101,7 @@ mock.module("lucide-react", () => ({
   Check: Icon,
   Circle: Icon,
   CircleAlert: Icon,
+  ChevronDown: Icon,
   ChevronRight: Icon,
   CircleCheck: Icon,
   CircleDashed: Icon,
@@ -129,12 +130,8 @@ mock.module("lucide-react", () => ({
   Zap: Icon,
 }));
 
-mock.module("./ToolCard", () => ({
-  ToolCard: ({ part }: { part: ToolPart }) => jsxDEV("button", {
-    "data-child-tool": part.id,
-    "aria-expanded": false,
-    children: `${part.toolName}:${"input" in part ? String((part.input as { path?: string }).path) : ""}`,
-  }),
+mock.module("../primitives/MarkdownContent", () => ({
+  MarkdownContent: ({ children }: { children: unknown }) => jsxDEV("div", { children }),
 }));
 
 const { ToolRunCard } = await import("./ToolRunCard");
@@ -190,16 +187,36 @@ function failed(id: string, path: string): ErrorToolPart {
   };
 }
 
+function artifact(id: string, path: string): CompletedToolPart {
+  const base = completed(id, path);
+  return {
+    ...base,
+    result: {
+      ...base.result,
+      output: {
+        ...base.result.output,
+        recovery: {
+          kind: "artifact",
+          outputRef: "abcdefghijklmnopqrstuv",
+          expiresAt: 10,
+          canRead: true,
+          canSearch: true,
+        },
+      },
+    },
+  };
+}
+
 function props(tools: ToolPart[], items?: ToolRunItem[]) {
   return {
     id: `tool-run:${tools[0]?.id ?? "empty"}`,
     tools,
+    projectSlug: "project",
+    sessionId: "session",
     items: items ?? tools.map((part) => ({
       message: { id: "message", role: "assistant" as const, parts: [part], createdAt: 1 },
       part,
     })),
-    projectSlug: "demo",
-    sessionId: "root-1",
   };
 }
 
@@ -219,27 +236,40 @@ describe("ToolRunCard", () => {
     expect(findButtons(element)).toHaveLength(1);
     expect(findButtons(element)[0]?.props?.["aria-controls"]).toBe("tool-run:one-body");
     expect(findButtons(element)[0]?.props?.["aria-label"]).toBe("2 tool calls, file_read, b.ts, Running");
-    const summaryChildren = childrenOf(findButtons(element)[0]);
-    expect(isElement(summaryChildren[0]) ? summaryChildren[0].props?.["data-tool-visual-kind"] : undefined).toBe("loading");
-    const lastSummaryChild = summaryChildren.at(-1);
-    expect(isElement(lastSummaryChild) ? lastSummaryChild.type : undefined).toBe("svg");
+    expect(findByTestId(element, "tool-run-representative")?.props?.["data-tool-id"]).toBe("two");
     expect(textContent(element)).toContain("file_read");
     expect(textContent(element)).toContain("b.ts");
     expect(textContent(element)).not.toContain("a.ts");
-    expect(textContent(element)).toContain("2");
-    expect(textContent(element)).toContain("Running");
+    expect(textContent(element)).not.toContain("Running");
   });
 
-  test("still selects the last tool for a parallel run when an earlier call remains active", () => {
+  test("selects the last active tool when a later parallel call has already settled", () => {
     booleanStates = [false];
     const element = ToolRunCard(props([
       running("one", "a.ts"),
       completed("two", "b.ts"),
     ]));
 
-    expect(textContent(element)).toContain("b.ts");
-    expect(textContent(element)).not.toContain("a.ts");
-    expect(textContent(element)).toContain("Running");
+    expect(textContent(element)).toContain("a.ts");
+    expect(textContent(element)).not.toContain("b.ts");
+    expect(textContent(element)).not.toContain("Running");
+    expect(findButtons(element)[0]?.props?.["aria-label"]).toContain("Running");
+    expect(findByTestId(element, "tool-run-representative")?.props?.["data-tool-id"]).toBe("one");
+  });
+
+  test("caps long canonical names so the active target keeps a readable column", () => {
+    booleanStates = [false];
+    const element = ToolRunCard(props([
+      { ...running("one", "react"), toolName: "mcp__context7__resolve-library-id" },
+      { ...completed("two", "react-dom"), toolName: "mcp__context7__resolve-library-id" },
+    ]));
+    const representative = findByTestId(element, "tool-run-representative");
+    const toolName = childrenOf(representative)[1];
+
+    expect(isElement(toolName) && toolName.props?.className).toContain("max-w-[180px]");
+    expect(isElement(toolName) && toolName.props?.className).toContain("truncate");
+    expect(isElement(toolName) && toolName.props?.title).toBe("mcp__context7__resolve-library-id");
+    expect(textContent(element)).toContain("react");
   });
 
   test("shows every exact tool name in execution order after every call settles", () => {
@@ -258,7 +288,7 @@ describe("ToolRunCard", () => {
       "3 tool calls, file_read, grep, bash, Completed",
     );
     expect(textContent(element)).not.toContain("a.ts");
-    expect(textContent(element)).toContain("Completed");
+    expect(textContent(element)).not.toContain("Completed");
   });
 
   test("reports an aggregate error when an earlier tool failed", () => {
@@ -269,19 +299,15 @@ describe("ToolRunCard", () => {
     ]));
     const summary = findByTestId(element, "tool-run-tool-names");
     const summaryButton = findButtons(element)[0];
-    const summaryChildren = childrenOf(summaryButton);
 
     expect(textContent(summary)).toBe("file_read, file_read");
     expect(textContent(element)).toContain("Error");
     expect(summaryButton?.props?.["aria-label"]).toBe(
       "2 tool calls, file_read, file_read, Error",
     );
-    expect(isElement(summaryChildren[0]) ? summaryChildren[0].props?.["data-tool-visual-kind"] : undefined).toBe(
-      "failed",
-    );
   });
 
-  test("expands on demand to a downward ordered list whose child tools remain collapsed", () => {
+  test("expands on demand to a flat tool-only ordered list", () => {
     booleanStates = [true];
     const first = completed("one", "a.ts");
     const second = completed("two", "b.ts");
@@ -292,11 +318,22 @@ describe("ToolRunCard", () => {
     ]));
     const buttons = findButtons(element);
 
-    expect(buttons).toHaveLength(3);
+    expect(buttons).toHaveLength(1);
     expect(buttons[0]?.props?.["aria-expanded"]).toBe(true);
-    expect(buttons[1]?.props?.["aria-expanded"]).toBe(false);
-    expect(buttons[2]?.props?.["aria-expanded"]).toBe(false);
     const listText = textContent(findByTestId(element, "tool-run-list"));
     expect(listText.indexOf("a.ts")).toBeLessThan(listText.indexOf("b.ts"));
+    expect(findByTestId(element, "tool-run-list")?.props?.role).toBe("list");
+  });
+
+  test("keeps per-call error state and artifact recovery inside an expanded run", () => {
+    booleanStates = [true, false, false, true, false];
+    const element = ToolRunCard(props([
+      failed("one", "a.ts"),
+      artifact("two", "large.txt"),
+    ]));
+
+    expect(textContent(findByTestId(element, "tool-run-list"))).toContain("Error");
+    expect(findByTestId(element, "tool-output-open")).toBeDefined();
+    expect(findByTestId(element, "tool-run-list")?.props?.role).toBe("list");
   });
 });

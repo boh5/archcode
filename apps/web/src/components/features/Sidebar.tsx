@@ -13,14 +13,18 @@ import type { SessionFamilyActivity } from "@archcode/protocol";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
-import { formatRelativeTime } from "../../lib/time-format";
+import { formatRelativeTime, formatShortRelativeTime } from "../../lib/time-format";
 import { useWorkbenchLayout } from "../../context/workbench-layout";
 import {
   runtimeFamilyKey,
   useSessionRuntimeFamilies,
   useSessionRuntimeInitialized,
 } from "../../store/session-runtime-store";
-import { selectSessionFamilyHitl, useAttentionVisibleScopedHitl } from "../../store/hitl-store";
+import {
+  selectSessionFamilyHitl,
+  type ScopedHitlView,
+  useAttentionVisibleScopedHitl,
+} from "../../store/hitl-store";
 import { StatusGlyph } from "../primitives/StatusGlyph";
 import { GoalStatusMark } from "./GoalStatusMark";
 import { presentSessionGoalStatus } from "../../lib/session-goal-presentation";
@@ -56,12 +60,73 @@ export function deriveSidebarTabFromPath(pathname: string): SidebarTab | null {
   return null;
 }
 
-// Status dots
+// Session list projection
 
-function SessionStatusGlyph({ activity }: { activity: SessionFamilyActivity | undefined }) {
+type SessionListGroup = "needs-you" | "running" | "recent";
+
+interface SessionAttention {
+  readonly count: number;
+  readonly label: "Permission" | "Question" | "Requests";
+}
+
+interface SidebarSessionRow {
+  readonly session: SessionSummaryWithGoal;
+  readonly activity: SessionFamilyActivity | undefined;
+  readonly attention?: SessionAttention;
+}
+
+function sessionAttention(entries: readonly ScopedHitlView[]): SessionAttention | undefined {
+  const primary = entries[0];
+  if (!primary) return undefined;
+  const sourceTypes = new Set(entries.map((entry) => entry.view.source.type));
+  return {
+    count: entries.length,
+    label: sourceTypes.size > 1
+      ? "Requests"
+      : primary.view.source.type === "tool_permission"
+        ? "Permission"
+        : "Question",
+  };
+}
+
+function attentionLabel(attention: SessionAttention): string {
+  return attention.label === "Requests"
+    ? `${attention.count} requests`
+    : attention.label;
+}
+
+function sessionListGroup(
+  activity: SessionFamilyActivity | undefined,
+  attention: SessionAttention | undefined,
+): SessionListGroup {
+  if (attention) return "needs-you";
+  if (activity === "running" || activity === "stopping") return "running";
+  return "recent";
+}
+
+function sessionStateLabel(
+  activity: SessionFamilyActivity | undefined,
+  attention: SessionAttention | undefined,
+): string {
+  if (attention) return "Needs attention";
+  if (activity === "running") return "Running";
+  if (activity === "stopping") return "Stopping";
+  if (activity === "idle") return "Idle";
+  return "Status unavailable";
+}
+
+// Status glyphs
+
+function SessionStatusGlyph({
+  activity,
+  attention,
+}: {
+  activity: SessionFamilyActivity | undefined;
+  attention?: SessionAttention;
+}) {
+  if (attention) return <StatusGlyph kind="needs_you" tone="warning" label="Needs attention" size={12} />;
   const visual = sessionFamilyVisual(activity);
-  const label = activity === undefined ? "Status unavailable" : activity === "stopping" ? "Stopping" : activity === "running" ? "Running" : "Idle";
-  return <StatusGlyph kind={visual.kind} tone={visual.tone} label={label} size={10} />;
+  return <StatusGlyph kind={visual.kind} tone={visual.tone} label={sessionStateLabel(activity, undefined)} size={12} />;
 }
 
 function AutomationStatusGlyph({ status }: { status: Automation["status"] }) {
@@ -73,47 +138,73 @@ function AutomationStatusGlyph({ status }: { status: Automation["status"] }) {
 function SessionItem({
   session,
   activity,
-  attentionCount,
+  attention,
   isActive,
   onClick,
 }: {
   session: SessionSummaryWithGoal;
   activity: SessionFamilyActivity | undefined;
-  attentionCount: number;
+  attention?: SessionAttention;
   isActive: boolean;
   onClick: () => void;
 }) {
   const updatedAt = session.updatedAt;
+  const goalLabel = session.goal ? presentSessionGoalStatus(session.goal.status).label : undefined;
+  const stateLabel = sessionStateLabel(activity, attention);
+  const visibleAttentionLabel = attention ? attentionLabel(attention) : undefined;
+  const accessibleName = [
+    session.title || "Untitled",
+    stateLabel,
+    attention
+      ? attention.label === "Requests"
+        ? `${attention.count} requests waiting`
+        : `${attention.label} waiting${attention.count > 1 ? `, ${attention.count} requests` : ""}`
+      : undefined,
+    goalLabel ? `Goal ${goalLabel}` : undefined,
+    formatRelativeTime(updatedAt),
+  ].filter((part): part is string => part !== undefined).join(" · ");
 
   return (
     <button
       type="button"
-      className={`relative flex w-full items-center gap-2 px-4 py-2 text-left transition-colors duration-[var(--motion-hover)] ${
-        isActive ? "bg-brand-subtle" : "hover:bg-bg-hover"
+      aria-current={isActive ? "page" : undefined}
+      aria-label={accessibleName}
+      title={accessibleName}
+      className={`relative flex h-8 min-h-8 w-full items-center gap-2 px-4 text-left transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
+        isActive ? "bg-selection-field" : "hover:bg-bg-hover"
       }`}
+      data-testid={`sidebar-session-${session.sessionId}`}
       onClick={onClick}
     >
       {isActive && (
-        <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-sm bg-brand" />
+        <div className="absolute inset-y-1 left-0 w-0.5 rounded-r-sm bg-brand" aria-hidden="true" />
       )}
-      <SessionStatusGlyph activity={activity} />
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
-          {session.title || "Untitled"}
-        </div>
-        <div className="mt-px flex items-center gap-2 text-[11px] text-text-tertiary">
-          <span>
-            {activity ?? "status unavailable"} · {formatRelativeTime(updatedAt)}
+      <SessionStatusGlyph activity={activity} attention={attention} />
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary" data-testid={`sidebar-session-title-${session.sessionId}`}>
+        {session.title || "Untitled"}
+      </span>
+      <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-text-tertiary">
+        {session.goal && (
+          <span title={`Goal ${goalLabel}`} data-testid={`sidebar-session-goal-${session.sessionId}`}>
+            <GoalStatusMark identity={session.goal.instanceId} status={session.goal.status} size={11} label={`Goal ${goalLabel}`} />
           </span>
-          {session.goal && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-text-secondary">
-              <GoalStatusMark identity={session.goal.instanceId} status={session.goal.status} size={11} label={`Goal ${presentSessionGoalStatus(session.goal.status).label}`} />
-              {presentSessionGoalStatus(session.goal.status).label}
-            </span>
-          )}
-        </div>
-      </div>
-      {attentionCount > 0 && <span className="grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-[14px] text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
+        )}
+        {attention && (
+          <span
+            className="inline-flex items-center gap-1 font-medium text-warning"
+            data-testid={`sidebar-session-attention-${session.sessionId}`}
+            title={attention.label === "Requests"
+              ? `${attention.count} mixed requests need attention`
+              : `${attention.count} ${attention.label.toLowerCase()} request${attention.count === 1 ? "" : "s"} need attention`}
+          >
+            <StatusGlyph kind="needs_you" tone="warning" size={11} />
+            <span>{visibleAttentionLabel}</span>
+          </span>
+        )}
+        <time dateTime={new Date(updatedAt).toISOString()} title={formatRelativeTime(updatedAt)}>
+          {formatShortRelativeTime(updatedAt)}
+        </time>
+      </span>
     </button>
   );
 }
@@ -128,29 +219,31 @@ function AutomationItem({
   onClick: () => void;
 }) {
   const scheduleLabel = automation.trigger.kind === "once" ? "once" : automation.trigger.kind === "interval" ? `interval ${automation.trigger.everyMs}ms` : `cron ${automation.trigger.expression}`;
+  const actionLabel = automation.action.kind.replaceAll("_", " ");
+  const accessibleName = `${automation.name} · ${automation.status} · ${scheduleLabel} · ${actionLabel} · ${automation.id}`;
 
   return (
     <button
       type="button"
-      className={`relative flex w-full items-center gap-2 px-4 py-2 text-left transition-colors duration-[var(--motion-hover)] ${
+      aria-current={isActive ? "page" : undefined}
+      aria-label={accessibleName}
+      title={accessibleName}
+      className={`relative flex h-8 min-h-8 w-full items-center gap-2 px-4 text-left transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
         isActive ? "bg-brand-subtle" : "hover:bg-bg-hover"
       }`}
+      data-testid={`sidebar-automation-${automation.id}`}
       onClick={onClick}
     >
       {isActive && (
         <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-sm bg-brand" />
       )}
       <AutomationStatusGlyph status={automation.status} />
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-text-primary whitespace-nowrap overflow-hidden text-ellipsis">
-          {automation.name}
-        </div>
-        <div className="mt-px flex items-center gap-2 text-[11px] text-text-tertiary">
-          <span className="font-mono">{automation.id.slice(0, 8)}</span>
-          {scheduleLabel && <span className="truncate">{scheduleLabel}</span>}
-          <span className="capitalize">{automation.action.kind.replaceAll("_", " ")}</span>
-        </div>
-      </div>
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
+        {automation.name}
+      </span>
+      <span className="max-w-[42%] shrink-0 truncate font-mono text-[11px] text-text-tertiary">
+        {scheduleLabel}
+      </span>
     </button>
   );
 }
@@ -188,7 +281,7 @@ function CreateButton({
 
 function SubGroupHeader({ title, count }: { title: string; count?: number }) {
   return (
-    <div className="flex items-center justify-between px-4 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider cursor-pointer select-none hover:text-text-tertiary">
+    <div className="flex items-center justify-between px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
       <span>{title}</span>
       {count !== undefined && (
         <span style={{ fontSize: 10, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>
@@ -317,26 +410,22 @@ export function Sidebar({
     });
   }, [sessions, sessionsSearch]);
 
-  const activityForSession = (session: SessionSummaryWithGoal): SessionFamilyActivity | undefined => {
-    if (!runtimeInitialized) return undefined;
-    return runtimeFamilies[runtimeFamilyKey(slug, session.sessionId)]?.activity ?? "idle";
-  };
-
-  const { activeSessions, inactiveSessions } = useMemo(() => {
-    const active: SessionSummaryWithGoal[] = [];
-    const inactive: SessionSummaryWithGoal[] = [];
+  const sessionGroups = useMemo(() => {
+    const groups: Record<SessionListGroup, SidebarSessionRow[]> = {
+      "needs-you": [],
+      running: [],
+      recent: [],
+    };
     for (const session of filteredSessions) {
       const activity = runtimeInitialized
         ? runtimeFamilies[runtimeFamilyKey(slug, session.sessionId)]?.activity ?? "idle"
         : undefined;
-      if (activity === "running" || activity === "stopping") {
-        active.push(session);
-      } else {
-        inactive.push(session);
-      }
+      const attention = sessionAttention(selectSessionFamilyHitl(attentionVisibleHitl, slug, session.sessionId));
+      const group = sessionListGroup(activity, attention);
+      groups[group].push({ session, activity, attention });
     }
-    return { activeSessions: active, inactiveSessions: inactive };
-  }, [filteredSessions, runtimeFamilies, runtimeInitialized, slug]);
+    return groups;
+  }, [attentionVisibleHitl, filteredSessions, runtimeFamilies, runtimeInitialized, slug]);
 
   const filteredAutomations = useMemo(() => {
     const list = automations ?? [];
@@ -373,7 +462,7 @@ export function Sidebar({
               trigger={
                 <button
                   aria-label="Project actions"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
                   title="Project actions"
                 >
                   ⋯
@@ -383,7 +472,7 @@ export function Sidebar({
           )}
             <button
               type="button"
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand max-[760px]:hidden"
+              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand max-[760px]:hidden [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
               aria-label="Collapse project sidebar"
               aria-controls="project-sidebar"
               aria-expanded="true"
@@ -393,7 +482,7 @@ export function Sidebar({
             </button>
             <button
               type="button"
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand"
+              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
               aria-label="Enter focus mode"
               onClick={onEnterFocusMode ?? toggleFocusMode}
             >
@@ -470,15 +559,15 @@ export function Sidebar({
             </div>
           </div>
 
-          {activeSessions.length > 0 && (
-            <div className="mb-1">
-              <SubGroupHeader title="Active" count={activeSessions.length} />
-              {activeSessions.map((session) => (
+          {sessionGroups["needs-you"].length > 0 && (
+            <div className="mb-1" data-testid="sidebar-session-group-needs-you">
+              <SubGroupHeader title="Needs you" count={sessionGroups["needs-you"].length} />
+              {sessionGroups["needs-you"].map(({ session, activity, attention }) => (
                 <SessionItem
                   key={session.sessionId}
                   session={session}
-                  activity={activityForSession(session)}
-                  attentionCount={selectSessionFamilyHitl(attentionVisibleHitl, slug, session.sessionId).length}
+                  activity={activity}
+                  attention={attention}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
                 />
@@ -486,15 +575,31 @@ export function Sidebar({
             </div>
           )}
 
-          {inactiveSessions.length > 0 && (
-            <div className="mb-1">
-              <SubGroupHeader title="Sessions" />
-              {inactiveSessions.map((session) => (
+          {sessionGroups.running.length > 0 && (
+            <div className="mb-1" data-testid="sidebar-session-group-running">
+              <SubGroupHeader title="Running" count={sessionGroups.running.length} />
+              {sessionGroups.running.map(({ session, activity, attention }) => (
                 <SessionItem
                   key={session.sessionId}
                   session={session}
-                  activity={activityForSession(session)}
-                  attentionCount={selectSessionFamilyHitl(attentionVisibleHitl, slug, session.sessionId).length}
+                  activity={activity}
+                  attention={attention}
+                  isActive={session.sessionId === sessionId}
+                  onClick={() => handleSessionClick(session.sessionId)}
+                />
+              ))}
+            </div>
+          )}
+
+          {sessionGroups.recent.length > 0 && (
+            <div className="mb-1" data-testid="sidebar-session-group-recent">
+              <SubGroupHeader title="Recent" count={sessionGroups.recent.length} />
+              {sessionGroups.recent.map(({ session, activity, attention }) => (
+                <SessionItem
+                  key={session.sessionId}
+                  session={session}
+                  activity={activity}
+                  attention={attention}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
                 />

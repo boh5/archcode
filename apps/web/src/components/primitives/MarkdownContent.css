@@ -39,6 +39,30 @@
   line-height: 20px;
 }
 
+.markdown-content--response {
+  --markdown-text: var(--text-primary);
+  width: 100%;
+  max-width: none;
+  font-size: 16px;
+  line-height: 1.68;
+}
+
+.markdown-content--response
+  > :where(
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    p,
+    ol,
+    ul,
+    blockquote
+  ) {
+  max-width: 72ch;
+}
+
 /* Markdown owns semantic rhythm. The renderer's uniform root spacing is
  * neutralized once, then headings and technical blocks establish hierarchy. */
 .markdown-content > * {

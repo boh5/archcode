@@ -66,11 +66,9 @@ describe("visual system hard cut", () => {
       ["components/features/ProjectBar.tsx", 2],
       ["components/primitives/IconAction.tsx", 1],
       ["components/composite/Toast.tsx", 1],
-    ]);
-    const roundedXlAllowlist = new Map<string, number>([
-      ["components/features/ChatInput.tsx", 1],
       ["components/composite/ExecutionWorkstream.tsx", 1],
     ]);
+    const roundedXlAllowlist = new Map<string, number>([["components/features/ChatInput.tsx", 1]]);
     const shadowSmAllowlist = new Map<string, number>([["components/features/ChatInput.tsx", 1]]);
     for (const { path, source } of sources) {
       for (const [name, rule] of globalRules) {
@@ -82,7 +80,7 @@ describe("visual system hard cut", () => {
         }
       }
       for (const match of source.matchAll(/\btext-\[(\d+(?:\.\d+)?)px\]/g)) {
-        if (![8, 9, 10, 11, 12, 13, 14, 16, 18, 22, 30].includes(Number(match[1]))) violations.push(`${path}: out-of-scale type size ${match[0]}`);
+        if (![8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 22, 30].includes(Number(match[1]))) violations.push(`${path}: out-of-scale type size ${match[0]}`);
       }
       const roundedLgCount = [...source.matchAll(/\brounded-lg\b/g)].length;
       if (roundedLgCount !== (roundedLgAllowlist.get(path) ?? 0)) {

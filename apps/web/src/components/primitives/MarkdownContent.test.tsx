@@ -66,6 +66,14 @@ describe("MarkdownContent", () => {
     expect(html).not.toContain("conversation-markdown-body");
   });
 
+  test("uses a primary 16px response variant for final Agent output", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent variant="response">{"Final response"}</MarkdownContent>,
+    );
+
+    expect(html).toContain("markdown-content markdown-content--response space-y-0");
+  });
+
   test("preserves Streamdown streaming behavior and disables incomplete code actions", () => {
     const html = renderToStaticMarkup(
       <MarkdownContent isStreaming>{"```typescript\nconst pending = true;"}</MarkdownContent>,
@@ -96,6 +104,12 @@ describe("MarkdownContent", () => {
     expect(componentSource).not.toContain("space-y-3");
     expect(componentSource).not.toContain("space-y-4");
     expect(componentCss).toContain("--markdown-panel-body:");
+    expect(componentCss).toContain(".markdown-content--response");
+    expect(componentCss).toContain("max-width: none");
+    expect(componentCss).toContain("max-width: 72ch");
+    expect(componentCss).toContain("    p,");
+    expect(componentCss).toContain("    blockquote");
+    expect(componentCss).toContain("font-size: 16px");
     expect(componentCss).toContain("> :not(:first-child)");
     expect(componentCss).toContain('[data-streamdown="code-block"]');
     expect(componentCss).toContain('[data-streamdown="code-block-body"]');
