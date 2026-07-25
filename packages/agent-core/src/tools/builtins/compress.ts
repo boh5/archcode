@@ -8,10 +8,27 @@ import {
   COMPRESSION_SUMMARY_SECTION_NAMES,
   prepareDynamicRangeCompression,
 } from "../../compression";
+import type { CompressionSummarySectionName } from "../../compression";
+
+const COMPRESSION_SECTION_DESCRIPTIONS = {
+  "Current Objective": "Active objective and intended outcome.",
+  "User Constraints": "User constraints that remain in force.",
+  "Decisions Made": "Settled decisions and essential rationale.",
+  "Open Tasks": "Unfinished work, pending decisions, and verification.",
+  "Important Files": "Files and code locations needed to continue.",
+  "Tool Results": "Material completed tool results needed later.",
+  "Errors/Unknown Results": "Failures, uncertainties, and unconfirmed results.",
+  "Protected Refs": "Visible or protected projection refs and their relevance.",
+  "Child Block Refs": "Nested block refs consumed and what each contributes.",
+  "Resume Instructions": "Concrete next actions for resuming work.",
+} satisfies Record<CompressionSummarySectionName, string>;
 
 const CompressionSummarySectionsSchema = z.strictObject(
   Object.fromEntries(
-    COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [section, z.string().min(1)]),
+    COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+      section,
+      z.string().min(1).describe(COMPRESSION_SECTION_DESCRIPTIONS[section]),
+    ]),
   ) as Record<(typeof COMPRESSION_SUMMARY_SECTION_NAMES)[number], z.ZodString>,
 );
 
@@ -19,8 +36,10 @@ export const CompressInputSchema = z.strictObject({
   startId: z.string().describe("Projection start ref, e.g. m0001 or a known block ref like b1."),
   endId: z.string().describe("Projection end ref, e.g. m0004 or a known block ref like b1."),
   summary: z.strictObject({
-    sections: CompressionSummarySectionsSchema,
-    childBlockRefs: z.array(z.string().regex(/^b\d+$/)).describe("Nested child block refs that this summary consumes."),
+    sections: CompressionSummarySectionsSchema
+      .describe("All ten required semantic sections that preserve the compressed range's continuation context."),
+    childBlockRefs: z.array(z.string().regex(/^b\d+$/))
+      .describe("Required nested refs in the range: list each once, no unknown refs, and mention each exactly once as (bN) across the sections."),
   }).describe("Strict structured compression summary with all required sections."),
 });
 

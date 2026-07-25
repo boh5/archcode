@@ -11,9 +11,12 @@ import {
 } from "./delegate";
 
 export const ResumeSessionInputSchema = z.strictObject({
-  session_id: z.string().trim().min(1),
-  instruction: z.string().trim().min(1),
-  background: z.boolean(),
+  session_id: z.string().trim().min(1)
+    .describe("Stopped direct child Session ID from delegate, resume_session, a terminal reminder, or a prior child result."),
+  instruction: z.string().trim().min(1)
+    .describe("Self-contained follow-up for the child's existing responsibility; cannot change its Agent, Profile, Skills, title, or objective."),
+  background: z.boolean()
+    .describe("false waits for the execution to stop and returns its status plus any completed final response; true returns the Session ID immediately for terminal-reminder and background_output follow-up."),
 });
 
 export type ResumeSessionInput = z.output<typeof ResumeSessionInputSchema>;

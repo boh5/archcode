@@ -14,16 +14,23 @@ const OUTPUT_READ_RECORD_LIMIT = 32;
 const OUTPUT_SEARCH_CONTENT_BUDGET = 36 * 1024;
 
 export const OutputReadInputSchema = z.object({
-  outputRef: z.string().min(1),
-  cursor: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(1_000).default(200),
+  outputRef: z.string().min(1)
+    .describe("Artifact ref from prior recovery metadata; must belong to the current project and Session family."),
+  cursor: z.string().min(1).optional()
+    .describe("Prior output_read nextInput cursor; copy unchanged for the same outputRef."),
+  limit: z.number().int().min(1).max(1_000).default(200)
+    .describe("Records requested per page (1-1000, default 200); at most 32 are returned, possibly fewer under the byte budget."),
 }).strict();
 
 export const OutputSearchInputSchema = z.object({
-  outputRef: z.string().min(1).optional(),
-  pattern: z.string().min(1).refine(patternBytes, "pattern must be at most 1 KiB UTF-8"),
-  cursor: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(100).default(50),
+  outputRef: z.string().min(1).optional()
+    .describe("Artifact ref from prior recovery metadata; omit to search the current project and Session family."),
+  pattern: z.string().min(1).refine(patternBytes, "pattern must be at most 1 KiB UTF-8")
+    .describe("Ripgrep-compatible regex, limited to 1 KiB UTF-8."),
+  cursor: z.string().min(1).optional()
+    .describe("Prior output_search nextInput cursor; copy unchanged to continue the same search."),
+  limit: z.number().int().min(1).max(100).default(50)
+    .describe("Matches requested per page (1-100, default 50); the byte budget may yield fewer."),
 }).strict();
 
 export const outputReadTool = defineTool({

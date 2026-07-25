@@ -13,18 +13,25 @@ import { SOURCE_PAGE_MAX_BYTES, SOURCE_PAGE_MAX_LINES } from "./source-page";
 const DEFAULT_TIMEOUT_MS = 1_800_000;
 const MAX_TIMEOUT_MS = 1_800_000;
 
+const BackgroundOutputCursorPositionShape = {
+  message_id: z.string().min(1)
+    .describe("Message at the current pagination position."),
+  unit_index: z.number().int().safe().nonnegative()
+    .describe("Content-unit index within that message."),
+  text_offset: z.number().int().safe().nonnegative()
+    .describe("Text offset within that content unit."),
+};
+
 const BackgroundOutputCursorSchema = z.discriminatedUnion("mode", [
   z.strictObject({
-    mode: z.literal("latest"),
-    message_id: z.string().min(1),
-    unit_index: z.number().int().nonnegative().safe(),
-    text_offset: z.number().int().nonnegative().safe(),
+    mode: z.literal("latest")
+      .describe("Paginate the latest assistant message."),
+    ...BackgroundOutputCursorPositionShape,
   }),
   z.strictObject({
-    mode: z.literal("full_session"),
-    message_id: z.string().min(1),
-    unit_index: z.number().int().nonnegative().safe(),
-    text_offset: z.number().int().nonnegative().safe(),
+    mode: z.literal("full_session")
+      .describe("Paginate filtered messages across the full Session."),
+    ...BackgroundOutputCursorPositionShape,
   }),
 ]);
 
@@ -34,7 +41,7 @@ export const BackgroundOutputInputSchema = z
     block: z.boolean().default(false).describe("true waits while the Session is running; false returns an immediate live snapshot. Default false."),
     timeout_ms: z.number().int().min(0).max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS).describe("Max wait time in ms when blocking, from 0 to 1800000. Default 1800000 (30 minutes)."),
     full_session: z.boolean().default(false).describe("false pages through the latest assistant message; true pages through filtered stored messages. Default false."),
-    cursor: BackgroundOutputCursorSchema.optional().describe("Exact forward cursor returned in the previous page's nextInput. Do not construct or modify it."),
+    cursor: BackgroundOutputCursorSchema.optional().describe("Exact forward cursor copied unchanged from the previous page's nextInput. Do not construct or modify it."),
     include_tool_results: z.boolean().default(false).describe("Include bounded unified tool previews, strict details, and recovery references in full_session output. Hidden by default."),
     include_reasoning: z.boolean().default(false).describe("Include assistant reasoning in full_session output. Hidden by default."),
   })

@@ -34,8 +34,10 @@ const ProjectTodoDiscussionPatchSchema = z
   });
 
 export const ProjectTodoUpdateInputSchema = z.strictObject({
-  expectedRevision: z.number().int().positive(),
-  patch: ProjectTodoDiscussionPatchSchema,
+  expectedRevision: z.number().int().positive()
+    .describe("Latest Todo revision for optimistic concurrency; stale updates are rejected."),
+  patch: ProjectTodoDiscussionPatchSchema
+    .describe("Content corrections and required decision for the bound Todo."),
 });
 
 export const projectTodoUpdateTool = defineTool({

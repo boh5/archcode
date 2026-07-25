@@ -25,12 +25,14 @@ export const CreateGoalInputSchema = z.strictObject({
 export const GetGoalInputSchema = z.strictObject({});
 
 const CompleteGoalInputSchema = z.strictObject({
-  status: z.literal("complete"),
+  status: z.literal("complete")
+    .describe("Mark complete only after a fresh independent Goal review proves the objective achieved."),
   reason: z.string().trim().min(1).describe("Evidence-backed completion reason after a fresh independent Goal review approved the work."),
   review_session_id: z.string().trim().min(1).describe("Fresh direct deep Analyst child with goal-review whose one terminal review output returned VERDICT: APPROVED."),
 });
 const BlockGoalInputSchema = z.strictObject({
-  status: z.literal("blocked"),
+  status: z.literal("blocked")
+    .describe("Mark blocked only when a genuine blocker prevents meaningful progress."),
   reason: z.string().trim().min(1).describe("The genuine blocker preventing meaningful progress."),
 });
 
