@@ -115,7 +115,10 @@ export const delegateTool = defineTool({
   name: "delegate",
   description: [
     "Create one direct child Session from a strict DelegationRequest.",
-    "Select the allowed child Agent and Profile for task intensity, list the workflow Skills to load, and put all task requirements in objective.",
+    "Select the allowed child Agent and its permitted Profile; use deep or fast for Build according to task intensity, and list only the workflow Skills it needs.",
+    "A fresh child receives its own runtime-provided system context and visible tools, but does not inherit the parent conversation or prior tool results.",
+    "Write objective as the minimum self-contained task-specific handoff: state the requested outcome or question, material parent-local facts or decisions, scope or non-goals, expected final output or evidence, and verification when applicable.",
+    "Do not rely on the child to reconstruct parent-local understanding, and do not repeat generic context already supplied by the runtime.",
     "The child returns a normal final response. Use resume_session for corrections or follow-up on the same responsibility.",
     "background=false waits and returns the completed execution's final output. background=true returns the Session ID; wait for its terminal reminder, then use background_output.",
   ].join("\n"),
