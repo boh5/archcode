@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationRequest, type FinalizedToolResult, type ToolChildSessionLink } from "@archcode/protocol";
-import { createEmptyCompressionState } from "../compression";
+import { COMPRESSION_SUMMARY_SECTION_NAMES, createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
 import { SessionFileIdentityConflictError } from "./session-store-manager";
@@ -41,7 +41,14 @@ describe("SessionStoreManager", () => {
       strategy: "dynamic-range",
       trigger: "model_tool_call",
       range: { startMessageId: "msg-1", endMessageId: "msg-2", startRef: "m0001", endRef: "m0002", startIndex: 0, endIndex: 1 },
-      summary: "Persisted compression summary",
+      summary: {
+        sections: Object.fromEntries(
+          COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+            section,
+            section === "Current Objective" ? "Persisted compression summary" : "None",
+          ]),
+        ) as CompressionBlockSnapshot["summary"]["sections"],
+      },
       childBlockRefs: [],
       protectedRefs: ["m0002"],
       tokenEstimate: { originalTokens: 100, summaryTokens: 25, savedTokens: 75, estimatedAt: 1234 },
@@ -549,22 +556,6 @@ describe("SessionStoreManager", () => {
       .toThrow(expect.objectContaining({ name: "InvalidSessionCwdError" }));
   });
 
-  test("create() does not expose legacy pending interactions", () => {
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(sessionId(), TMP_DIR, { agentName: "lead" });
-
-    expect(store.getState()).not.toHaveProperty("pendingInteractions");
-  });
-
-  test("legacy pending interaction mutators are not part of the store API", () => {
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(sessionId(), TMP_DIR, { agentName: "lead" });
-
-    expect(store.getState()).not.toHaveProperty("addPendingInteraction");
-    expect(store.getState()).not.toHaveProperty("answerPendingInteraction");
-    expect(store.getState()).not.toHaveProperty("expirePendingInteractions");
-  });
-
   test("compression events persist compression state to disk", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
@@ -1026,7 +1017,7 @@ describe("SessionStoreManager", () => {
     expect(file.title).toBe("child-title");
   });
 
-  test("create() persists child sessions in their own owner directory without legacy files", async () => {
+  test("create() persists child sessions in their canonical directory", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const childSessionId = sessionId();
@@ -1045,8 +1036,6 @@ describe("SessionStoreManager", () => {
       parentSessionId: rootSessionId,
       title: "child-title",
     });
-    expect(await Bun.file(join(TMP_DIR, ".archcode", "runtime", "sessions", `${childSessionId}.json`)).exists()).toBe(false);
-    expect(await Bun.file(join(TMP_DIR, ".archcode", "runtime", "sessions", rootSessionId, `${childSessionId}.json`)).exists()).toBe(false);
     const childPath = canonicalSessionPath(childSessionId);
     await waitForFile(childPath);
     const childFile = JSON.parse(await Bun.file(childPath).text()) as Record<string, unknown>;
@@ -1200,10 +1189,6 @@ describe("SessionStoreManager", () => {
     expect(tree.root.children[0].session.agentName).toBe("explore");
     expect(tree.root.children[0].children).toHaveLength(1);
     expect(tree.root.children[0].children[0].session.sessionId).toBe(grandchildSessionId);
-    expect("childSessionIds" in tree.root.session).toBe(false);
-    expect("subAgentDescriptions" in tree.root.session).toBe(false);
-    expect("childSessionIds" in tree.root.children[0].session).toBe(false);
-    expect("subAgentDescriptions" in tree.root.children[0].session).toBe(false);
   });
 
   test("buildSessionTree() fails instead of skipping invalid descendants", async () => {
@@ -1291,7 +1276,7 @@ describe("SessionStoreManager", () => {
     });
   });
 
-  test("buildSessionTree() rejects a descendant with the removed schemaVersion field", async () => {
+  test("buildSessionTree() rejects a descendant with an unknown field", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const childSessionId = sessionId();
@@ -1299,7 +1284,7 @@ describe("SessionStoreManager", () => {
     await writeRawSessionFile(childSessionId, JSON.stringify({ ...persistedSession(childSessionId, {
       rootSessionId,
       parentSessionId: rootSessionId,
-    }), schemaVersion: 1 }));
+    }), unexpectedField: true }));
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
       name: "SessionTreeIntegrityError",

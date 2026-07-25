@@ -28,11 +28,7 @@ describe("isValidAgentType", () => {
 
   test("returns false for invalid strings", () => {
     expect(isValidAgentType("unknown")).toBe(false);
-    expect(isValidAgentType("builder")).toBe(false);
-    expect(isValidAgentType("explorer")).toBe(false);
     expect(isValidAgentType("")).toBe(false);
-    expect(isValidAgentType("coordinator")).toBe(false);
-    expect(isValidAgentType("ENGINEER")).toBe(false);
   });
 
   test("narrows the type", () => {

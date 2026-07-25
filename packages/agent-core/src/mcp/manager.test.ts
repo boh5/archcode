@@ -856,14 +856,3 @@ describe("McpManager setStatus listener isolation (M3)", () => {
     expect(status).toEqual({ state: "ready", toolCount: 1, warningCount: 0 });
   });
 });
-
-// ─── Removed discover() method ───────────────────────────────────────────────
-
-describe("McpManager removed discover() method", () => {
-  test("discover is no longer a public method", () => {
-    const fake = makeFakeServer([tool("lookup")]);
-    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
-    // The old discover() method must not exist on the instance.
-    expect((manager as unknown as Record<string, unknown>).discover).toBeUndefined();
-  });
-});

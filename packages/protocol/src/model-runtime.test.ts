@@ -32,7 +32,6 @@ describe("model runtime protocol contracts", () => {
     } satisfies MessageModelAudit;
 
     expect(serializeRoundTrip({ binding, audit })).toEqual({ binding, audit });
-    expect("executionOrigin" in binding).toBe(false);
   });
 
   test("represents the secret-free Provider, Model, Variant, and Agent catalog", () => {

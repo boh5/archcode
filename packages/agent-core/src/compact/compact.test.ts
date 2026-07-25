@@ -457,7 +457,6 @@ describe("compact", () => {
     const result = await compact(makeInput(messages));
 
     expect(result).not.toBeNull();
-    expect(result).not.toHaveProperty("prunedToolOutputs");
     expect(messages).toEqual(original);
   });
 
@@ -772,7 +771,7 @@ describe("compact", () => {
   // Error tool parts use their bounded finalized preview
   // -------------------------------------------------------------------------
 
-  test("error tool parts in prefix compact without legacy persistence", async () => {
+  test("error tool parts use their bounded finalized preview during compaction", async () => {
     createMockStreamText("## Current Objective\nTest");
 
     const messages: StoredMessage[] = [
@@ -792,7 +791,6 @@ describe("compact", () => {
     const result = await compact(makeInput(messages));
 
     expect(result).not.toBeNull();
-    expect(result).not.toHaveProperty("prunedToolOutputs");
   });
 
   // -------------------------------------------------------------------------

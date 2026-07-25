@@ -244,11 +244,11 @@ describe("McpWarning", () => {
     const warning: McpWarning = {
       serverName: "my-server",
       toolName: "my-tool",
-      message: "Deprecated parameter ignored",
+      message: "Parameter warning",
     };
     expect(warning.serverName).toBe("my-server");
     expect(warning.toolName).toBe("my-tool");
-    expect(warning.message).toBe("Deprecated parameter ignored");
+    expect(warning.message).toBe("Parameter warning");
   });
 
   test("works with only a message (serverName and toolName optional)", () => {

@@ -1054,7 +1054,7 @@ describe("SessionExecutionManager", () => {
     await expect(joined).resolves.toEqual({ kind: "joined", error: failure });
   });
 
-  test("Stop aborts an active command, barriers old Queue, and writes no unrelated execution fact", async () => {
+  test("Stop aborts an active command, barriers queued work, and writes no unrelated execution fact", async () => {
     const rootId = crypto.randomUUID();
     const store = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
@@ -2248,34 +2248,6 @@ describe("SessionExecutionManager", () => {
     expect(tool).toMatchObject({ type: "tool", state: "running", toolCallId: "late-tool" });
   });
 
-  test("session runs do not inject legacy deferred permission or question callbacks", async () => {
-    const run = deferred<MockAgentResult>();
-    const sessionId = crypto.randomUUID();
-    let runOptions: AgentRunOptions | undefined;
-    const agent = {
-      store: storeManager.create(sessionId, workspaceRoot, { agentName: "lead" }),
-      classifyCommand: mock((_input: string) => null),
-      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
-      run: mock(async (options?: AgentRunOptions): Promise<AgentResult> => {
-        runOptions = options;
-        const result = await withAbort(run.promise, options?.abort);
-        return { ...result, status: result.status ?? "completed" };
-      }),
-      dispose: mock(() => undefined),
-    } as unknown as MockAgent;
-    const { manager } = createManager({ [sessionId]: agent });
-
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" } });
-    await waitFor(() => runOptions !== undefined);
-    if (!runOptions) throw new Error("Expected AgentRunOptions");
-    const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
-    run.resolve({ text: "done", steps: 1 });
-    await execution.promise;
-    await stopping;
-
-    expect(agent.store.getState().executions.at(-1)?.status).toBe("cancelled");
-  });
-
   test("family stop is isolated by workspace root for identical session ids", async () => {
     const sessionId = crypto.randomUUID();
     const otherWorkspaceRoot = join(tmpdir(), "archcode-session-execution-manager-other-workspace", crypto.randomUUID());
@@ -2553,17 +2525,6 @@ describe("SessionExecutionManager", () => {
     expect(second.abortController.signal.aborted).toBe(true);
     expect(manager.getSessionFamilyActivity(workspaceRoot, firstSessionId)).toBe("idle");
     expect(manager.getSessionFamilyActivity(workspaceRoot, secondSessionId)).toBe("idle");
-  });
-
-  test("checked execution omits legacy permission and question service callbacks", async () => {
-    const sessionId = crypto.randomUUID();
-    const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
-    const { manager } = createManager({ [sessionId]: agent });
-
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" } });
-    await execution.promise;
-    const options = agent.runMock.mock.calls[0]?.[0];
-    if (!options) throw new Error("Expected AgentRunOptions");
   });
 
   test("startChildExecution validates through factory and runs a child session", async () => {

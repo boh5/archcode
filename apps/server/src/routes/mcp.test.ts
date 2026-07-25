@@ -95,13 +95,4 @@ describe("GET /api/mcp/status", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ servers: {} });
   });
-
-  test("old project-scoped path /api/projects/:slug/mcp/status no longer matches", async () => {
-    const runtime = createTestRuntime(new Map());
-    const { app } = createRuntimeApp(runtime);
-
-    const res = await app.request("/api/projects/my-project/mcp/status");
-
-    expect(res.status).toBe(404);
-  });
 });

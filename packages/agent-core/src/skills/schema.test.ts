@@ -48,17 +48,12 @@ Follow the plan.
     expect(parsed.when_to_use).toBe("Use before implementation.");
   });
 
-  test("rejects unknown legacy invocation fields", () => {
+  test("rejects unknown metadata fields", () => {
     expect(() => SkillMetadataSchema.parse({
       name: "git-master",
       description: "Git guidance",
-      user_invocable: "true",
-    })).toThrow();
-
-    expect(() => SkillMetadataSchema.parse({
-      name: "git-master",
-      description: "Git guidance",
-      disable_model_invocation: "true",
+      when_to_use: "Use for Git work.",
+      unexpectedField: true,
     })).toThrow();
   });
 

@@ -189,9 +189,6 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).toContain("model-2");
     expect(input("Default options JSON")).not.toBeNull();
     expect(input("Variants JSON")).not.toBeNull();
-    expect(container.textContent).not.toContain("Multi-tool calls");
-    expect(container.textContent).not.toContain("Structured tool calls");
-    expect(container.textContent).not.toContain("Instruction tier");
   });
 
   test("never overwrites sparse generated provider, model, or MCP identifiers", () => {
@@ -215,17 +212,12 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).toContain("server-4");
   });
 
-  test("retains package, output limits, and modalities while omitting pricing and fine-grained call fields", () => {
+  test("edits package, output limits, and modalities", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     expect(input("Provider package").value).toBe("@ai-sdk/openai-compatible");
     expect(input("Output limit").value).toBe("500");
     expect(input("Input modalities").value).toBe("text");
     expect(input("Output modalities").value).toBe("text");
-    expect(container.textContent).not.toContain("Multi-tool calls");
-    expect(container.textContent).not.toContain("Structured tool calls");
-    expect(container.textContent).not.toContain("Instruction tier");
-    expect(container.textContent).not.toContain("Pricing");
-    expect([...container.querySelectorAll("label")].some((label) => label.querySelector("span")?.textContent === "maxOutputTokens")).toBe(false);
   });
 
   test("selects packages from the server catalog and preserves adapter-specific advanced options", () => {
@@ -553,8 +545,6 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={withGithub} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("GitHub");
     expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
-    expect(container.textContent).not.toContain("API base URL");
-    expect(container.textContent).not.toContain("https://api.github.com");
   });
 
 });

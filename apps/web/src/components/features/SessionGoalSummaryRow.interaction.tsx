@@ -16,7 +16,7 @@ let SessionGoalSummaryRow: SessionGoalSummaryRowComponent;
 const activeGoal: SessionGoalView = {
   instanceId: "goal-1",
   generation: 2,
-  objective: "Finish the Composer hard cut",
+  objective: "Complete the current work",
   status: "active",
   usage: {
     executionCount: 3,
@@ -170,7 +170,7 @@ describe("SessionGoalSummaryRow", () => {
     if (!(objective instanceof dom.window.HTMLTextAreaElement) || !(budget instanceof dom.window.HTMLInputElement)) {
       throw new Error("Missing Goal Edit fields");
     }
-    change(objective, "Finish and verify the Composer hard cut");
+    change(objective, "Complete and verify the current work");
     change(budget, "6500");
     await act(async () => {
       button("Save").click();
@@ -181,12 +181,12 @@ describe("SessionGoalSummaryRow", () => {
     const objectiveRequest = requests.find(({ path, init }) => path.endsWith("/goal") && init?.method === "PATCH");
     const budgetRequest = requests.find(({ path, init }) => path.endsWith("/goal/budget") && init?.method === "POST");
     expect(JSON.parse(String(objectiveRequest?.init?.body))).toEqual({
-      objective: "Finish and verify the Composer hard cut",
+      objective: "Complete and verify the current work",
       expectedGeneration: 2,
     });
     expect(JSON.parse(String(budgetRequest?.init?.body))).toEqual({ tokenBudget: 6500 });
 
-    renderGoal(client, { ...budgetLimitedGoal, tokenBudget: 6_500, objective: "Finish and verify the Composer hard cut", generation: 3 });
+    renderGoal(client, { ...budgetLimitedGoal, tokenBudget: 6_500, objective: "Complete and verify the current work", generation: 3 });
     await act(async () => {
       button("Edit goal").click();
       await Promise.resolve();

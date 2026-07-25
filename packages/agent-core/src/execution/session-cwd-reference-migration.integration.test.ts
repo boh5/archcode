@@ -34,17 +34,17 @@ afterAll(async () => {
 });
 
 describe("SessionCwdReferenceMigrationService", () => {
-  test("rejects a migration journal carrying the removed version field", async () => {
+  test("rejects a migration journal carrying an unknown field", async () => {
     const digest = new Bun.CryptoHasher("sha256").update(WORKTREE_ROOT).digest("hex");
     const journalPath = join(projectRuntimePath(PROJECT_ROOT, "session-cwd-migrations"), `${digest}.json`);
     await mkdir(dirname(journalPath), { recursive: true });
     await writeFile(journalPath, JSON.stringify({
-      version: 1,
       projectRoot: PROJECT_ROOT,
       fromCwd: WORKTREE_ROOT,
       toCwd: PROJECT_ROOT,
       phase: "prepared",
       references: [],
+      unexpectedField: true,
     }));
     const operation = mock(async () => ({ removed: true }));
     const migration = new SessionCwdReferenceMigrationService({
@@ -60,7 +60,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     expect(operation).not.toHaveBeenCalled();
   });
 
-  test("real worktree removal migrates crash-old and retry-new Sessions before Git cleanup", async () => {
+  test("real worktree removal migrates existing and retried Sessions before Git cleanup", async () => {
     await initializeGitRepo(PROJECT_ROOT);
     const worktrees = new WorktreeService({ canonicalRoot: PROJECT_ROOT });
     const created = await worktrees.create({
@@ -222,7 +222,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     expect(await git(PROJECT_ROOT, ["rev-parse", `refs/heads/${created.branchName}`])).toBe(advancedSha);
   });
 
-  test("cold-start cleanup migrates every old and retried Session reference before removal", async () => {
+  test("cold-start cleanup migrates every existing and retried Session reference before removal", async () => {
     const writer = new SessionStoreManager({ logger: silentLogger });
     const oldRootId = crypto.randomUUID();
     const oldChildId = crypto.randomUUID();

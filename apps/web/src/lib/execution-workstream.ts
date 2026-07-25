@@ -1,5 +1,6 @@
 import {
   TOOL_DELEGATE,
+  renderCompressionSummarySnapshot,
   type AgentDescriptor,
   type CompressionBlockPart,
   type CompressionBlockSnapshot,
@@ -466,7 +467,7 @@ export function buildExecutionWorkstream(
       status: snapshot.status,
       strategy: snapshot.strategy,
       trigger: snapshot.trigger,
-      summary: snapshot.summary,
+      summary: renderCompressionSummarySnapshot(snapshot.summary),
       startRef: snapshot.range.startRef,
       endRef: snapshot.range.endRef,
       childBlockRefs: snapshot.childBlockRefs,

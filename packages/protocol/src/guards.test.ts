@@ -7,7 +7,22 @@ import {
   isStreamEvent,
   isTerminalChildSessionStatus,
 } from "./guards";
+import {
+  COMPRESSION_SUMMARY_SECTION_NAMES,
+  type CompressionSummarySnapshot,
+} from "./compression";
 import type { SessionEventPayload } from "./types";
+
+function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
+  return {
+    sections: Object.fromEntries(
+      COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+        section,
+        section === "Current Objective" ? currentObjective : "None",
+      ]),
+    ) as CompressionSummarySnapshot["sections"],
+  };
+}
 
 const displayPayload = { title: "Question", redacted: true as const };
 const requestedModelSelection = {
@@ -45,7 +60,7 @@ const compressionBlock = {
     startIndex: 0,
     endIndex: 0,
   },
-  summary: "summary",
+  summary: compressionSummary("summary"),
   childBlockRefs: [],
   protectedRefs: [],
   createdAt: 1,
@@ -209,17 +224,10 @@ describe("protocol event guards", () => {
     expect(validPayloads.filter((event) => !isSessionEventPayload(event)).map((event) => event.type)).toEqual([]);
     expect(validPayloads.every(isSessionEventPayload)).toBe(true);
     for (const event of validPayloads) {
-      expect(isSessionEventPayload({ ...event, legacy: true })).toBe(false);
+      expect(isSessionEventPayload({ ...event, unexpectedField: true })).toBe(false);
     }
     expect(isSessionEventPayload({ type: "text-delta" })).toBe(false);
     expect(isSessionEventPayload({ type: "text-delta", text: 1 })).toBe(false);
-    expect(isSessionEventPayload({
-      type: "tool-result",
-      toolCallId: "call-1",
-      toolName: "file_read",
-      output: "legacy",
-      isError: false,
-    })).toBe(false);
     expect(isSessionEventPayload({
       type: "tool-result",
       toolCallId: "call-1",
@@ -308,8 +316,20 @@ describe("protocol event guards", () => {
       toolName: "file_read",
       result: { ...finalizedResult, details: { arbitrary: "metadata escape" } },
     })).toBe(false);
-    expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[23]!.link, legacy: true } })).toBe(false);
+    expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[23]!.link, unexpectedField: true } })).toBe(false);
     expect(isSessionEventPayload({ type: "compression.block_committed", block: { ...compressionBlock, range: { ...compressionBlock.range, endIndex: "0" } } })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "compression.block_committed",
+      block: {
+        ...compressionBlock,
+        summary: {
+          sections: {
+            ...compressionBlock.summary.sections,
+            unexpected: "field",
+          },
+        },
+      },
+    })).toBe(false);
     expect(isSessionEventPayload({ type: "hitl.request" })).toBe(false);
     expect(isSessionEventPayload({ ...validPayloads.at(-1), trace: { ...(validPayloads.at(-1) as any).trace, mcp: { docs: "unknown" } } })).toBe(false);
     expect(isSessionEventPayload({})).toBe(false);

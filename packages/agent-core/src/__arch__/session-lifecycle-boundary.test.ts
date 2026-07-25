@@ -6,7 +6,7 @@ describe("Session lifecycle architecture", () => {
   test("generic execution manager uses injected lifecycle capabilities without direct Goal imports", () => {
     const source = readFileSync(resolve(import.meta.dir, "../execution/session-execution-manager.ts"), "utf8");
 
-    expect(source).not.toMatch(/from\s+["']\.\.\/goals(?:\/|["'])/);
+    expect(source).not.toMatch(/from\s+["']\.\.\/session-goal(?:\/|["'])/);
     expect(source).toContain("deletionLifecycle");
     expect(source).toContain("assertDeletable");
     expect(source).toContain("prepareForDeletion");

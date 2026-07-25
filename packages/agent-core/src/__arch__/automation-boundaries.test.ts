@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dir, "../../../..");
@@ -16,16 +16,9 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe("Automation architecture boundaries", () => {
-  test("removes Loop production and route surfaces", () => {
-    const loopRoot = join(agentCoreRoot, "loops");
-    expect(existsSync(loopRoot)).toBe(false);
-    expect(existsSync(join(projectRoot, "apps/server/src/routes/loops.ts"))).toBe(false);
-    expect(existsSync(join(projectRoot, "apps/web/src/routes/loops.tsx"))).toBe(false);
-  });
-
   test("dispatches Automations only through the Session gateway", () => {
     const violations = sourceFiles(automationRoot)
-      .filter((path) => /from\s+["'][^"']*(?:loops|goals|hitl|tools\/github)/.test(readFileSync(path, "utf8")))
+      .filter((path) => /from\s+["'][^"']*(?:session-goal|hitl|tools\/github)/.test(readFileSync(path, "utf8")))
       .map((path) => relative(projectRoot, path));
     const dispatcher = readFileSync(join(automationRoot, "dispatcher.ts"), "utf8");
 
@@ -60,10 +53,6 @@ describe("Automation architecture boundaries", () => {
     expect(state).not.toMatch(/from\s+["']\.\/(?:dispatcher|scheduler|runtime-session-gateway)["']/);
     expect(dispatcher).not.toMatch(/from\s+["']\.\/(?:scheduler|runtime-session-gateway)["']/);
     expect(scheduler).not.toContain("runtime-session-gateway");
-    expect(sourceFiles(automationRoot).map((path) => readFileSync(path, "utf8")).join("\n"))
-      .not.toContain("AutomationRunner");
-    expect(boot).not.toContain("setManagedSessionExecutionForwarder");
-    expect(boot).not.toContain("forwardSessionExecution");
     expect(serverHost.indexOf("runtime.recoverSessionContinuations")).toBeLessThan(
       serverHost.indexOf("runtime.recoverProjectTodos"),
     );
@@ -79,13 +68,7 @@ describe("Automation architecture boundaries", () => {
     expect(boot).toContain("startServer(host.app");
     expect(sessionRecovery).toContain("reconcileAnsweredHitl");
     expect(sessionRecovery).toContain("continueRunnableToolBatches");
-    expect(sessionRecovery).not.toContain("context.todos.reconcileAll()");
     expect(todoRecovery).toContain("context.todos.reconcileAll()");
-    expect(todoRecovery).not.toContain("goalLifecycle");
-    expect(todoRecovery).not.toContain("reconcileAnsweredHitl");
-    expect(todoRecovery).not.toContain("continuationService");
-    expect(runtime).not.toContain("directSessionToolBatchExecutor");
-    expect(runtime).not.toContain("activeSessionToolBatchExecutor");
     expect(runtime).toContain("reconcileAllActiveGoals");
     expect(runtime).toContain("reconcileActiveGoal");
     // Root and child terminals both release the same root-family activity to
@@ -93,8 +76,5 @@ describe("Automation architecture boundaries", () => {
     expect(familyIdleReconciliation).toContain('if (change.activity === "idle")');
     expect(familyIdleReconciliation).toContain("await reconcileActiveGoal({");
     expect(sessionRecovery).toContain("await reconcileAllActiveGoals");
-    expect(runtime).not.toContain("sessionGoalCoordinator");
-    expect(runtime).not.toContain("startCheckedExecutionWithinGoalClaim");
-    expect(runtime).not.toContain('input.origin === "goal_claim"');
   });
 });

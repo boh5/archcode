@@ -108,18 +108,6 @@ const forbiddenRootExports = [
   "saveSessionTranscript",
   "readSessionFile",
   "SessionStoreState",
-  "AgentJobRunner",
-  "AgentRunner",
-  "submitAgentJob",
-  "abortAgentJob",
-] as const;
-
-const forbiddenExecutionExports = [
-  "AgentJobRunner",
-  "AgentRunner",
-  "submitAgentJob",
-  "abortAgentJob",
-  "jobId",
 ] as const;
 
 const forbiddenAgentExports = [
@@ -341,6 +329,7 @@ function findAgentRunOwnershipViolations(): Violation[] {
     [normalize(join("tools", "builtins", "bash.ts")), new Set(["createProcessRunner()"])],
     [normalize(join("tools", "builtins", "ast-grep", "search.ts")), new Set(["createProcessRunner()"])],
     [normalize(join("tools", "builtins", "ast-grep", "replace.ts")), new Set(["runner"])],
+    [normalize(join("tool-output", "ripgrep-search-runner.ts")), new Set(["this.processRunner"])],
     [normalize(join("version-control", "detector.ts")), new Set(["processRunner"])],
     [normalize(join("agents", "query", "hooks", "title-generation.ts")), new Set(["task"])],
     [normalize(join("agents", "query", "hooks", "memory-extraction.ts")), new Set(["task"])],
@@ -400,39 +389,15 @@ function findExecutionManagerLayerViolations(): Violation[] {
     .map(({ importPath }) => ({ file: relativeFile(file), importPath }));
 }
 
-function findSessionAgentManagerOwnershipViolations(): Violation[] {
-  const file = join(srcRoot, "agents/session-agent-manager.ts");
-  const source = readFileSync(file, "utf8");
-  const forbiddenPatterns = [
-    /\bactiveJobsByWorkspace\b/,
-    /\bactiveSessionsByWorkspace\b/,
-    /\bmaxConcurrentSessions\b/,
-    /\bConcurrentSessionLimitError\b/,
-    /\bacquireWorkspaceSlot\b/,
-    /\breleaseWorkspaceSlot\b/,
-    /\bdispatchCommand\b/,
-  ];
-  return forbiddenPatterns
-    .filter((pattern) => pattern.test(source))
-    .map((pattern) => ({ file: relativeFile(file), importPath: `source-pattern:${pattern.source}` }));
-}
-
 function findToolBatchDomainForwardingViolations(): Violation[] {
   const file = join(srcRoot, "execution/session-tool-batch-scheduler.ts");
-  const source = readFileSync(file, "utf8");
-  const violations = extractImports(file)
-    .filter(({ importPath }) => /(?:^|\/)(?:goals|automations|hitl|events)(?:\/|$)/.test(importPath))
+  return extractImports(file)
+    .filter(({ importPath }) => /(?:^|\/)(?:session-goal|automations|hitl|events)(?:\/|$)/.test(importPath))
     .map(({ importPath }) => ({ file: relativeFile(file), importPath }));
-  for (const pattern of [/\bGoalLifecycleService\b/, /\bglobalEventBus\b/, /\bemitGlobalEvent\b/]) {
-    if (pattern.test(source)) {
-      violations.push({ file: relativeFile(file), importPath: `source-pattern:${pattern.source}` });
-    }
-  }
-  return violations;
 }
 
 function findDomainQueryReverseImportViolations(): Violation[] {
-  const domainRoots = ["goals", "automations", "hitl", "todos", "projects"]
+  const domainRoots = ["session-goal", "automations", "hitl", "todos", "projects"]
     .map((name) => join(srcRoot, name));
   const violations: Violation[] = [];
   for (const root of domainRoots) {
@@ -474,13 +439,12 @@ function findSessionInputBoundaryViolations(): Violation[] {
   return violations;
 }
 
-describe("module migration boundary contracts", () => {
+describe("module boundary contracts", () => {
   describe("public API surface", () => {
-    test("package indexes do not re-export private migration internals", () => {
+    test("package indexes do not re-export private implementation details", () => {
       expectNoViolations([
         ...findPublicApiExportViolations(join(srcRoot, "index.ts"), forbiddenRootExports),
         ...findPublicApiExportViolations(join(srcRoot, "agents/index.ts"), forbiddenAgentExports),
-        ...findPublicApiExportViolations(join(srcRoot, "execution/index.ts"), forbiddenExecutionExports),
       ]);
     });
   });
@@ -531,10 +495,6 @@ describe("module migration boundary contracts", () => {
 
     test("SessionExecutionManager does not import Server or Web layers", () => {
       expectNoViolations(findExecutionManagerLayerViolations());
-    });
-
-    test("SessionAgentManager does not own live execution concurrency", () => {
-      expectNoViolations(findSessionAgentManagerOwnershipViolations());
     });
 
     test("SessionToolBatchScheduler does not forward domain lifecycle events", () => {

@@ -10,6 +10,7 @@ import { SkillService } from "../skills";
 import { createCompactCommand } from "./compact";
 import type { CommandContext } from "./types";
 import { createTestModelInfo } from "../testing/test-execution-fixtures";
+import { COMPRESSION_SUMMARY_SECTION_NAMES } from "../compression";
 
 function makeUserMessage(id: string, text: string): StoredMessage {
   return {
@@ -55,7 +56,14 @@ function compressionBlockSnapshot(): CompressionBlockSnapshot {
     strategy: "dynamic-range",
     trigger: "model_tool_call",
     range: { startMessageId: "u1", endMessageId: "a1", startRef: "m0001", endRef: "m0002", startIndex: 0, endIndex: 1 },
-    summary: "## Current Objective\nKeep going",
+    summary: {
+      sections: Object.fromEntries(
+        COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+          section,
+          section === "Current Objective" ? "Keep going" : "None",
+        ]),
+      ) as CompressionBlockSnapshot["summary"]["sections"],
+    },
     childBlockRefs: [],
     protectedRefs: [],
     createdAt: 123456789,

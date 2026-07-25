@@ -32,7 +32,7 @@ async function execute(
 afterEach(() => mock.restore());
 
 describe("adaptMcpTool", () => {
-  test("declares the hard-cut artifact policy and preserves the MCP schema", () => {
+  test("declares the artifact policy and preserves the MCP schema", () => {
     const descriptor = adaptMcpTool(
       {
         name: "resolve-library-id",

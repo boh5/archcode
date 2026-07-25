@@ -76,7 +76,7 @@ function descriptor(overrides: Partial<ToolDescriptor> = {}): ToolDescriptor {
   };
 }
 
-describe("ToolRegistry hard-cut lifecycle", () => {
+describe("ToolRegistry lifecycle", () => {
   test("blocked permission calls execute/finalize zero times", async () => {
     const execute = mock(async () => ({ isError: false, draft: { kind: "text" as const, text: "forbidden" } }));
     const created = fixture({

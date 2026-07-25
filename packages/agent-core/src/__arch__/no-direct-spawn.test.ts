@@ -1,20 +1,8 @@
-/**
- * Architecture regression test: production runtime code should not reintroduce
- * direct short-lived Bun.spawn calls outside the explicit migration allowlist.
- *
- * Allowed exceptions are documented in packages/agent-core/src/process/allowlist.ts:
- * - packages/agent-core/src/process/**: ProcessRunner owns the short-lived spawn boundary.
- * - packages/agent-core/src/lsp/transport.ts: long-lived JSON-RPC stdio process ownership.
- * - scripts/**: build-time tooling is not runtime code.
- * - test files: fixtures and assertions may spawn children.
- */
-
 import { expect, test } from "bun:test";
 
-const allowedPathPatterns = [
-  /^packages\/agent-core\/src\/process\//,
+const subprocessOwners = [
+  /^packages\/agent-core\/src\/process\/runner\.ts$/,
   /^packages\/agent-core\/src\/lsp\/transport\.ts$/,
-  /^scripts\//,
   /(^|\/)__tests__\//,
   /\.test\.ts$/,
   /\.test\.tsx$/,
@@ -29,7 +17,7 @@ function findDirectSpawnViolations(scopeDir: string): string[] {
   return stdout.split("\n").filter((line) => {
     const filePath = line.split(":")[0];
     if (!filePath || filePath.includes("__test_tmp__")) return false;
-    return !allowedPathPatterns.some((pattern) => pattern.test(filePath));
+    return !subprocessOwners.some((pattern) => pattern.test(filePath));
   });
 }
 
@@ -42,10 +30,10 @@ function expectNoDirectSpawnViolations(scopeDir: string, scopeLabel: string): vo
   expect(violations, message).toEqual([]);
 }
 
-test("agent-core runtime does not add direct Bun.spawn outside the allowlist", () => {
+test("agent-core runtime centralizes subprocess ownership", () => {
   expectNoDirectSpawnViolations("packages/agent-core/src/", "agent-core");
 });
 
-test("server runtime does not add direct Bun.spawn outside the allowlist", () => {
+test("server runtime delegates subprocess ownership to agent-core", () => {
   expectNoDirectSpawnViolations("apps/server/src/", "server");
 });

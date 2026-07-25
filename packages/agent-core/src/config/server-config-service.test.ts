@@ -485,24 +485,18 @@ describe("ServerConfigService", () => {
     expect(saved.restartRequiredSections).toEqual([]);
   });
 
-  test("rejects removed fixed config fields without touching preserved secrets", async () => {
-    for (const mutate of [
-      (draft: Record<string, any>) => { draft.$schema = "https://archcode.dev/schema.json"; },
-      (draft: Record<string, any>) => { draft.mcp.servers.custom.transport = "http"; },
-      (draft: Record<string, any>) => { draft.integrations = { github: { enabled: false, apiBaseUrl: "https://api.github.com" } }; },
-    ]) {
-      const service = await createService();
-      const snapshot = await service.getSnapshot();
-      const before = await readFile(service.configPath, "utf8");
-      const invalid = preserveSecrets(snapshot.config) as unknown as Record<string, any>;
-      mutate(invalid);
+  test("preserves the file when strict validation rejects an unknown field", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const before = await readFile(service.configPath, "utf8");
+    const invalid = preserveSecrets(snapshot.config) as unknown as Record<string, any>;
+    invalid.unexpectedField = true;
 
-      await expect(service.save({
-        expectedRevision: snapshot.revision,
-        config: invalid as ServerConfigUpdate,
-      })).rejects.toBeInstanceOf(ConfigSemanticValidationError);
-      expect(await readFile(service.configPath, "utf8")).toBe(before);
-    }
+    await expect(service.save({
+      expectedRevision: snapshot.revision,
+      config: invalid as ServerConfigUpdate,
+    })).rejects.toBeInstanceOf(ConfigSemanticValidationError);
+    expect(await readFile(service.configPath, "utf8")).toBe(before);
   });
 
   test("rejects unsupported provider packages, unknown variants, and invalid MCP URLs before writing", async () => {
@@ -595,9 +589,8 @@ describe("ServerConfigService", () => {
     await expect(service.save({ expectedRevision: snapshot.revision, config: headerEmpty })).resolves.toMatchObject({ restartRequiredSections: [] });
   });
 
-  test("classifies missing only at the absolute global path and never falls back to a legacy local file", async () => {
+  test("classifies a missing canonical config as setup", async () => {
     const service = await createUnloadedService();
-    await writeFile(join(service.homeDir, ".archcode.json"), JSON.stringify(config()));
 
     expect(await service.activateForStartup()).toMatchObject({
       status: "setup",

@@ -3,7 +3,7 @@ import type { SessionStoreState } from "../store/types";
 
 /**
  * Returns the final assistant text for one completed execution only.
- * No other execution, including an earlier successful run, is a fallback.
+ * No other execution, including an earlier successful run, is eligible.
  */
 export function finalOutputForExecution(
   state: Pick<SessionStoreState, "executions" | "messages">,

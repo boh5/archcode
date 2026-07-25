@@ -141,15 +141,6 @@ chmod 600 ~/.archcode/config.json
 Replace the placeholder endpoint, API key, model ID, and limits before starting
 ArchCode.
 
-Existing development checkouts can copy the former repository-local file once:
-
-```sh
-mkdir -p ~/.archcode
-install -m 600 .archcode.json ~/.archcode/config.json
-```
-
-ArchCode does not read, migrate, or fall back to the old file.
-
 The Web UI edits the same global file from **Settings → Models / Profiles**. Saving validates, prepares, atomically writes, and immediately applies Models and Profile defaults. MCP, Memory, and GitHub integration changes are reported as the precise restart-required sections. Direct edits to the file have no watcher; save through Settings or restart to load them.
 
 The optional password is configured only through first-run Setup or
@@ -299,12 +290,11 @@ Custom MCP servers use the current HTTP-only configuration shape without a trans
 ## Configuration notes
 
 - `~/.archcode/config.json` uses strict validation; unknown fields are rejected.
-- `$schema`, MCP `transport`, and GitHub `apiBaseUrl` are not configuration fields; HTTP and GitHub.com are fixed implementation choices.
-- The `profiles` section must contain exactly the required `principal`, `deep`, and `fast` entries. The removed `agents` configuration is rejected.
+- The `profiles` section must contain exactly the required `principal`, `deep`, and `fast` entries.
 - All configured models use the same Prompt contracts. Provider and model differences stay in API call options rather than branching Prompt behavior.
 - Model options use AI SDK-style camelCase names, such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `timeout`, and `providerOptions`.
 - Settings edits model options, complete variant maps, and per-Profile overrides as validated JSON objects; provider-specific call settings belong under `providerOptions`.
-- `maxRetries` is not configurable. ArchCode owns LLM recovery and always disables AI SDK retries internally.
+- ArchCode owns LLM recovery and disables AI SDK retries internally.
 - Profile-default options are merged in this order: `model.options → variants[profile.variant] → profiles[profile].options`. A Session override resolves independently and does not inherit Profile options.
 - `providerOptions` is shallow-replaced by later layers, not deep-merged.
 - MCP URLs and headers retain their existing `${VAR}` / `${VAR:-default}` expansion; Provider options do not use this expansion.

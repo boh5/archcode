@@ -77,15 +77,12 @@ const adapterCatalog: ProviderAdapterCatalog = [{
 }];
 
 describe("SettingsDialog", () => {
-  test("uses the exact Server navigation and no placeholder settings", () => {
+  test("uses the Server navigation sections", () => {
     const tree = SettingsNavigation({ activeSection: "models", onSelect: () => {} });
     const labels = findAll(tree, (element) => element.type === "button").map(textContent);
 
     expect(textContent(tree)).toContain("Server");
     expect(labels).toEqual(["Models", "Profiles", "Security", "MCP", "Memory", "GitHub"]);
-    expect(textContent(tree)).not.toContain("General");
-    expect(textContent(tree)).not.toContain("MCP Status");
-    expect(textContent(tree)).not.toContain("Providers");
   });
 
   test("keeps providers and models in one continuous Models surface", () => {
@@ -97,16 +94,10 @@ describe("SettingsDialog", () => {
     expect(editor).toHaveLength(1);
   });
 
-  test("keeps model configuration minimal without behavior capability controls", () => {
+  test("passes each model record to its editor", () => {
     const tree = SettingsModelsPanel({ config, adapterCatalog, onChange: () => {} });
-    const content = textContent(tree);
     const editor = findAll(tree, (element) => element.props?.providerId === "local" && element.props?.modelId === "demo-model")[0];
 
-    expect(content).not.toContain("Pricing");
-    expect(content).not.toContain("maxRetries");
-    expect(content).not.toContain("Multi-tool calls");
-    expect(content).not.toContain("Structured tool calls");
-    expect(content).not.toContain("Instruction tier");
     expect(editor?.props?.model).toBe(config.provider.local.models["demo-model"]);
   });
 

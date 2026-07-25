@@ -46,9 +46,6 @@ describe("ProjectHitlQueue", () => {
       join(TMP_ROOT, ".archcode", "runtime", "hitl-queue.json"),
     );
     expect(await Bun.file(projectHitlQueuePath(TMP_ROOT)).exists()).toBe(true);
-    expect(await Bun.file(join(TMP_ROOT, ".archcode", "hitl-queue.json")).exists()).toBe(false);
-    expect(await Bun.file(join(TMP_ROOT, ".archcode", "sessions", "session-1", "hitl.json")).exists()).toBe(false);
-    expect(await Bun.file(join(TMP_ROOT, ".archcode", "goals", "goal-1", "hitl.json")).exists()).toBe(false);
     expect((await queue.list()).map((record) => record.requestKey)).toEqual(["question-1", "permission-1"]);
   });
 
@@ -64,12 +61,11 @@ describe("ProjectHitlQueue", () => {
     })).rejects.toBeInstanceOf(HitlConflictError);
   });
 
-  test("strict parsing rejects old queue and owner-local shapes", async () => {
+  test("strict parsing rejects unknown queue fields", async () => {
     await Bun.write(projectHitlQueuePath(TMP_ROOT), JSON.stringify({
-      owner: { projectSlug: "archcode", ownerType: "session", ownerId: "session-1" },
-      pending: [],
-      recentTerminal: [],
+      records: [],
       updatedAt: new Date().toISOString(),
+      unexpectedField: true,
     }));
 
     const queue = new ProjectHitlQueue({ workspaceRoot: TMP_ROOT, codec });

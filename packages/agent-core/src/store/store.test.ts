@@ -105,7 +105,7 @@ function compressionBlockSnapshot(): CompressionBlockSnapshot {
     strategy: "dynamic-range",
     trigger: "model_tool_call",
     range: { startMessageId: "msg-1", endMessageId: "msg-2", startRef: "m0001", endRef: "m0002", startIndex: 0, endIndex: 1 },
-    summary: "Old discussion summary",
+    summary: compressionSummarySnapshot("Current objective"),
     childBlockRefs: [],
     protectedRefs: ["m0002"],
     tokenEstimate: { originalTokens: 100, summaryTokens: 20, savedTokens: 80, estimatedAt: 123 },
@@ -114,10 +114,28 @@ function compressionBlockSnapshot(): CompressionBlockSnapshot {
   };
 }
 
-function renderedStructuredSummary(): string {
-  return COMPRESSION_SUMMARY_SECTION_NAMES
-    .map((section) => `## ${section}\n${section} content`)
-    .join("\n\n");
+function compressionSummarySnapshot(
+  currentObjective: string,
+): CompressionBlockSnapshot["summary"] {
+  return {
+    sections: Object.fromEntries(
+      COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+        section,
+        section === "Current Objective" ? currentObjective : "None",
+      ]),
+    ) as CompressionBlockSnapshot["summary"]["sections"],
+  };
+}
+
+function structuredSummarySnapshot(): CompressionBlockSnapshot["summary"] {
+  return {
+    sections: Object.fromEntries(
+      COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+        section,
+        `${section} content${section === "Current Objective" ? "\n## Detail\nContinue\n## User Constraints\nQuoted template" : ""}`,
+      ]),
+    ) as CompressionBlockSnapshot["summary"]["sections"],
+  };
 }
 
 function sessionFilePath(sessionId: string): string {
@@ -966,7 +984,7 @@ describe("tool streaming", () => {
   });
 
   test("tool-result updates the stored tool part when it already exists", () => {
-    const store = createFreshStore("tool-result-fallback");
+    const store = createFreshStore("tool-result-existing-part");
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: "input" });
     store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("ok") });
 
@@ -1450,20 +1468,20 @@ describe("compression events", () => {
     if (compression === undefined) throw new Error("Expected compression event to materialize compression state");
 
     expect(compression.activeBlockRefs).toEqual(["b1"]);
-    expect(compression.blocksByRef.b1?.summary.sections["Current Objective"]).toBe("Old discussion summary");
+    expect(compression.blocksByRef.b1?.summary.sections["Current Objective"]).toBe("Current objective");
     expect(compression.blocksByRef.b1?.tokenEstimate?.savedTokens).toBe(80);
     expect(compression.protectedRefs[0]?.ref).toBe("m0002");
     expect(state.messages.some((message) => message.compacted === true)).toBe(false);
   });
 
-  test("compression.block_committed preserves rendered structured summaries without fallback sections", () => {
+  test("compression.block_committed preserves rendered structured summaries", () => {
     const store = createFreshStore("compression-structured-summary");
     appendUserMessage(store, "old");
     appendUserMessage(store, "tail");
 
     store.getState().append({
       type: "compression.block_committed",
-      block: { ...compressionBlockSnapshot(), summary: renderedStructuredSummary() },
+      block: { ...compressionBlockSnapshot(), summary: structuredSummarySnapshot() },
     });
 
     const rendered = JSON.stringify(store.getState().toModelMessages());
@@ -1471,9 +1489,11 @@ describe("compression events", () => {
 
     expect(currentObjectiveMatches).toHaveLength(1);
     expect(rendered).toContain("Current Objective content");
+    expect(rendered).toContain("## Detail");
+    expect(rendered).toContain("Quoted template");
+    expect(rendered.match(/## User Constraints/g)).toHaveLength(2);
     expect(rendered).toContain("Resume Instructions content");
     expect(rendered).not.toContain("## Current Objective\\n## Current Objective");
-    expect(rendered).not.toContain("Not provided by compression snapshot");
   });
 
   test("compact event clears dynamic compression state before model projection", () => {

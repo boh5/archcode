@@ -46,10 +46,7 @@ describe("resume_session V2 contract", () => {
   it("accepts only required session_id, instruction, and background", () => {
     const valid = { session_id: "child", instruction: "repair", background: false };
     expect(ResumeSessionInputSchema.safeParse(valid).success).toBe(true);
-    for (const field of ["task", "context", "agent_type", "persona", "skills", "title", "owned_scope"]) {
-      expect(ResumeSessionInputSchema.safeParse({ ...valid, [field]: "legacy" }).success).toBe(false);
-    }
-    expect(ResumeSessionInputSchema.safeParse({ ...valid, new_evidence: [] }).success).toBe(false);
+    expect(ResumeSessionInputSchema.safeParse({ ...valid, unexpectedField: true }).success).toBe(false);
     expect(ResumeSessionInputSchema.safeParse({ session_id: "child", instruction: "repair" }).success).toBe(false);
   });
 

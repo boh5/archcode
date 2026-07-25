@@ -25,7 +25,7 @@ import { runQueryLoop } from "./loop";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { createTestModelInfo } from "../../testing/test-execution-fixtures";
 
-const ROOT = join("/tmp", "archcode-query-loop-hard-cut", crypto.randomUUID());
+const ROOT = join("/tmp", "archcode-query-loop", crypto.randomUUID());
 const skillService = new SkillService({ builtinSkills: {} });
 const dummyModelInfo = createTestModelInfo({
   model: { modelId: "mock", provider: "mock" } as never,
@@ -156,7 +156,7 @@ function toolEvents(harness: Awaited<ReturnType<typeof createHarness>>) {
   return harness.store.getState().events.flatMap((event) => event.payload.type === "tool-result" ? [event.payload] : []);
 }
 
-describe("QueryLoop Tool Output Plane hard cut", () => {
+describe("QueryLoop Tool Output Plane", () => {
   test("executes a model tool batch and appends nested finalized results", async () => {
     const harness = await createHarness();
     registerInline(harness, "echo", async (input) => createTextToolResult(input.value ?? "ok"));

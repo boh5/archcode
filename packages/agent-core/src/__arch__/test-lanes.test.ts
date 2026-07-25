@@ -48,10 +48,13 @@ function hasUnsafeDefaultProcessRunner(source: string): boolean {
   return false;
 }
 
-function findLegacyIntegrationNames(): string[] {
+function findNonCanonicalIntegrationNames(): string[] {
   return findTestFiles(srcRoot)
     .map(relativeFile)
-    .filter((file) => file.endsWith("-integration.test.ts"));
+    .filter((file) => {
+      const basename = file.split("/").at(-1) ?? file;
+      return basename.includes("integration") && !basename.endsWith(".integration.test.ts");
+    });
 }
 
 function findUnitResourceViolations(): string[] {
@@ -86,7 +89,7 @@ function findUnitResourceViolations(): string[] {
 
 describe("test lane boundaries", () => {
   test("uses only the canonical .integration.test.ts suffix", () => {
-    expect(findLegacyIntegrationNames()).toEqual([]);
+    expect(findNonCanonicalIntegrationNames()).toEqual([]);
   });
 
   test("keeps real OS resources out of unit test files", () => {

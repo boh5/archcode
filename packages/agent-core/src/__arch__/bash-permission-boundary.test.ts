@@ -17,7 +17,7 @@ function productionFiles(root: string): string[] {
   });
 }
 
-describe("Bash permission hard-cut architecture", () => {
+describe("Bash permission architecture", () => {
   test("keeps analysis independent from permission and HITL policy", () => {
     const violations = productionFiles(bashSecurityRoot)
       .filter((file) => /from\s+["'][^"']*(?:permission|hitl)/.test(readFileSync(file, "utf8")))

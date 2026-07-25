@@ -24,6 +24,7 @@ import type {
   FinalizedToolResult,
 } from "./types";
 import type { SessionGoalChangedEvent } from "./session-goal";
+import { renderCompressionSummarySnapshot } from "./compression";
 import { addUsage, createEmptySessionStats, normalizeUsage } from "./usage";
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
@@ -822,7 +823,7 @@ function toCompressionBlockPart(
     status: block.status,
     strategy: block.strategy,
     trigger: block.trigger,
-    summary: block.summary,
+    summary: renderCompressionSummarySnapshot(block.summary),
     startRef: block.range.startRef,
     endRef: block.range.endRef,
     childBlockRefs: block.childBlockRefs,

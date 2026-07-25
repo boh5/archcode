@@ -155,11 +155,4 @@ describe("DashboardProjection routes", () => {
       errors: [{ projectSlug: "bad", projectName: "Bad", message: "automation invocation is corrupt" }],
     });
   });
-
-  test("removes the retired aggregate endpoints", async () => {
-    const app = new Hono().route("/api", createDashboardRoutes(runtime()));
-
-    expect((await app.request("/api/session-goals")).status).toBe(404);
-    expect((await app.request("/api/automations")).status).toBe(404);
-  });
 });

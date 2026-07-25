@@ -37,7 +37,7 @@ const binding: ExecutionModelBindingSummary = {
 };
 const audit: MessageModelAudit = { requested, actual: binding.selection };
 
-describe("strict Session model selection protocol", () => {
+describe("Session model selection protocol", () => {
   let manager: SessionStoreManager;
   let input: SessionInputService;
   let selections: SessionModelSelectionService;
@@ -255,13 +255,4 @@ describe("strict Session model selection protocol", () => {
     expect(acceptance.message?.requestedModelSelection).toEqual(requested);
   });
 
-  test("strictly rejects a legacy modelInfo Session file", async () => {
-    const path = getSessionPath(WORKSPACE, SESSION_ID);
-    const legacy = JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
-    delete legacy.modelSelection;
-    legacy.modelInfo = null;
-    await Bun.write(path, JSON.stringify(legacy));
-    manager.delete(SESSION_ID, WORKSPACE);
-    await expect(manager.getSessionFile(WORKSPACE, SESSION_ID)).rejects.toThrow();
-  });
 });

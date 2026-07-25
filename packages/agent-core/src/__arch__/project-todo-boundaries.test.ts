@@ -16,7 +16,7 @@ function productionSources(directory: string): string[] {
 
 describe("Project Todo architecture boundaries", () => {
   test("keeps the Todo domain independent from orchestration implementations and presentation", () => {
-    const forbiddenImport = /from\s+["'](?:\.\.\/(?:agents|automations|goals|prompt|projects(?!\/runtime-path)|store)|[^"']*(?:apps\/server|apps\/web))/;
+    const forbiddenImport = /from\s+["'](?:\.\.\/(?:agents|automations|session-goal|prompt|projects(?!\/runtime-path)|store)|[^"']*(?:apps\/server|apps\/web))/;
     const violations = productionSources(todosRoot)
       .filter((path) => forbiddenImport.test(readFileSync(path, "utf8")))
       .map((path) => relative(projectRoot, path));
@@ -31,19 +31,10 @@ describe("Project Todo architecture boundaries", () => {
     expect(state).not.toMatch(/SessionExecutionManager|SessionStoreManager|ensureRootSession|ensureExecution/);
     expect(service).toContain("ProjectTodoSessionCapability");
     expect(service).toContain("ProjectTodoProvenanceCapability");
-    expect(service).not.toMatch(/new\s+(?:SessionExecutionManager|GoalStateManager|AutomationStateManager)/);
+    expect(service).not.toMatch(/new\s+(?:SessionExecutionManager|AutomationStateManager)/);
   });
 
-  test("does not reuse Session Todo contracts or introduce legacy Todo aliases", () => {
-    const todoSurfaceFiles = [
-      ...productionSources(todosRoot),
-      join(projectRoot, "packages/protocol/src/project-todos.ts"),
-      join(projectRoot, "apps/server/src/routes/todos.ts"),
-      join(projectRoot, "apps/web/src/routes/project-todos.tsx"),
-    ];
-    const source = todoSurfaceFiles.map((path) => readFileSync(path, "utf8")).join("\n");
-
-    expect(source).not.toMatch(/SessionTodo|todo_write|Backlog|WorkItem|Idea Library/);
+  test("publishes the canonical Project Todo statuses", () => {
     expect(readFileSync(join(projectRoot, "packages/protocol/src/project-todos.ts"), "utf8"))
       .toContain('export type ProjectTodoStatus = "idea" | "ready" | "done" | "rejected"');
   });

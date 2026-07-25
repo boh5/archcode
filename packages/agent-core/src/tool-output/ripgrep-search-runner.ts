@@ -5,6 +5,8 @@ import type {
   ArtifactSearchSegment,
 } from "./artifact-types";
 import { createBinaryManager } from "../binary/manager";
+import { createProcessRunner } from "../process/runner";
+import type { ProcessOutputSink, ProcessRunner, ProcessRunnerResult } from "../process/types";
 import { decodeUtf8, safeUtf8End, utf8ByteLength } from "./utf8";
 
 interface RunnerCursor {
@@ -118,48 +120,20 @@ class BoundedRgLineParser {
   }
 }
 
-async function drain(stream: ReadableStream<Uint8Array>): Promise<void> {
-  const reader = stream.getReader();
-  try {
-    while (!(await reader.read()).done) {
-      // Deliberately discard diagnostics. Raw paths/output never enter an error.
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-export interface RipgrepArtifactSearchProcess {
-  readonly stdout: ReadableStream<Uint8Array>;
-  readonly stderr: ReadableStream<Uint8Array>;
-  readonly exited: Promise<number>;
-  kill(): void;
-}
-
 export interface RipgrepArtifactSearchRunnerOptions {
   readonly binaryResolver?: {
     resolve(binaryId: "rg"): Promise<string>;
   };
-  readonly spawn?: (argv: readonly string[]) => RipgrepArtifactSearchProcess;
-}
-
-function spawnRipgrep(argv: readonly string[]): RipgrepArtifactSearchProcess {
-  const process = Bun.spawn([...argv], { stdout: "pipe", stderr: "pipe" });
-  return {
-    stdout: process.stdout,
-    stderr: process.stderr,
-    exited: process.exited,
-    kill: () => process.kill(),
-  };
+  readonly processRunner?: ProcessRunner;
 }
 
 export class RipgrepArtifactSearchRunner implements ArtifactSearchRunner {
   private readonly binaryResolver: NonNullable<RipgrepArtifactSearchRunnerOptions["binaryResolver"]>;
-  private readonly spawn: (argv: readonly string[]) => RipgrepArtifactSearchProcess;
+  private readonly processRunner: ProcessRunner;
 
   constructor(options: RipgrepArtifactSearchRunnerOptions = {}) {
     this.binaryResolver = options.binaryResolver ?? createBinaryManager();
-    this.spawn = options.spawn ?? spawnRipgrep;
+    this.processRunner = options.processRunner ?? createProcessRunner();
   }
 
   async search(input: Parameters<ArtifactSearchRunner["search"]>[0]): Promise<{
@@ -195,27 +169,9 @@ export class RipgrepArtifactSearchRunner implements ArtifactSearchRunner {
       let ordinal = -1;
       const skipOrdinal = segmentIndex === cursor.segmentIndex ? cursor.ordinal : -1;
       let stoppedForPage = false;
-      let process: RipgrepArtifactSearchProcess;
-      try {
-        process = this.spawn(
-          [
-            binary,
-            "--no-heading",
-            "--color=never",
-            "--line-number",
-            "--byte-offset",
-            "--only-matching",
-            "--regexp",
-            input.pattern,
-            segment.path,
-          ],
-        );
-      } catch {
-        throw new ToolOutputError("TOOL_OUTPUT_UNAVAILABLE");
-      }
-      const abort = () => process.kill();
-      input.signal.addEventListener("abort", abort, { once: true });
-      const stderr = drain(process.stderr);
+      const processAbort = new AbortController();
+      const abortForCaller = () => processAbort.abort(input.signal.reason);
+      input.signal.addEventListener("abort", abortForCaller, { once: true });
       const parser = new BoundedRgLineParser(1_024, (parsed) => {
         ordinal += 1;
         if (ordinal <= skipOrdinal) return true;
@@ -226,7 +182,7 @@ export class RipgrepArtifactSearchRunner implements ArtifactSearchRunner {
         ) {
           hasMore = true;
           stoppedForPage = true;
-          process.kill();
+          processAbort.abort("artifact-search-page-complete");
           return false;
         }
         matches.push({
@@ -239,31 +195,52 @@ export class RipgrepArtifactSearchRunner implements ArtifactSearchRunner {
         lastReturned = { segmentIndex, ordinal };
         return true;
       });
+      const sink: ProcessOutputSink = {
+        write(stream, chunk) {
+          if (stream === "stdout" && !stoppedForPage) parser.feed(chunk);
+        },
+      };
+      let result: ProcessRunnerResult;
       try {
-        const reader = process.stdout.getReader();
-        try {
-          while (true) {
-            const item = await reader.read();
-            if (item.done) break;
-            if (!parser.feed(item.value)) break;
-          }
-          if (!stoppedForPage) parser.finish();
-        } finally {
-          reader.releaseLock();
-        }
-        const exitCode = await process.exited;
-        await stderr;
+        result = await this.processRunner.run({
+          argv: [
+            binary,
+            "--no-heading",
+            "--color=never",
+            "--line-number",
+            "--byte-offset",
+            "--only-matching",
+            "--regexp",
+            input.pattern,
+            segment.path,
+          ],
+          timeoutMs: Math.max(1, input.deadlineAt - Date.now()),
+          maxOutputBytes: 0,
+          outputSink: sink,
+          signal: processAbort.signal,
+        });
         if (input.signal.aborted || Date.now() >= input.deadlineAt) {
           throw new ToolOutputError("TOOL_OUTPUT_SEARCH_TIMEOUT");
         }
-        if (!stoppedForPage && exitCode === 2) {
-          throw new ToolOutputError("TOOL_OUTPUT_INVALID_PATTERN");
+        if (result.kind !== "spawn-failure" && result.output.sinkStatus !== "complete") {
+          throw new ToolOutputError("TOOL_OUTPUT_UNAVAILABLE");
         }
-        if (!stoppedForPage && exitCode !== 0 && exitCode !== 1) {
+        if (!stoppedForPage) parser.finish();
+        if (stoppedForPage) {
+          if (result.kind !== "aborted") throw new ToolOutputError("TOOL_OUTPUT_UNAVAILABLE");
+        } else if (result.kind === "timeout" || result.kind === "aborted") {
+          throw new ToolOutputError("TOOL_OUTPUT_SEARCH_TIMEOUT");
+        } else if (result.kind === "nonzero" && result.exitCode === 2) {
+          throw new ToolOutputError("TOOL_OUTPUT_INVALID_PATTERN");
+        } else if (
+          result.kind === "spawn-failure"
+          || result.kind === "signal"
+          || (result.kind === "nonzero" && result.exitCode !== 1)
+        ) {
           throw new ToolOutputError("TOOL_OUTPUT_UNAVAILABLE");
         }
       } finally {
-        input.signal.removeEventListener("abort", abort);
+        input.signal.removeEventListener("abort", abortForCaller);
       }
       if (hasMore) break;
     }

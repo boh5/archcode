@@ -108,8 +108,6 @@ describe("buildToolInputTree", () => {
     expect(summarySource).toContain("summarizeToolInput(input)");
     expect(summarySource).not.toContain("toolName ===");
     expect(summarySource).not.toContain("input.");
-    expect(toolFormatSource).not.toContain("formatToolInputDetails");
-    expect(toolFormatSource).not.toContain("getToolInvalidInputMessage");
 
     const delegationSource = await Bun.file(new URL("./delegation-card-model.ts", import.meta.url)).text();
     for (const contractField of ["agent_type", "profile", "skills", "objective", "background"]) {

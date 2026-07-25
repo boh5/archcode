@@ -82,10 +82,10 @@ describe("mcpServerConfigSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  test("rejects the removed transport field", () => {
+  test("rejects unknown server fields", () => {
     const result = mcpServerConfigSchema.safeParse({
-      transport: "http",
-      url: "http://localhost:3000",
+      ...VALID_SERVER,
+      unexpectedField: true,
     });
     expect(result.success).toBe(false);
   });
@@ -574,11 +574,11 @@ describe("archcodeConfigSchema with mcp", () => {
     expect(result.success).toBe(false);
   });
 
-  test("rejects the removed transport field in full config", () => {
+  test("rejects unknown server fields in full config", () => {
     const result = archcodeConfigSchema.safeParse({
       ...BASE,
       mcp: {
-        servers: { s: { transport: "http", url: "http://localhost" } },
+        servers: { s: { url: "http://localhost", unexpectedField: true } },
       },
     });
     expect(result.success).toBe(false);

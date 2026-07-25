@@ -191,7 +191,7 @@ describe("background_output source pages", () => {
     expect(sourceDraftText(result)).toContain("not a final deliverable");
   });
 
-  test("does not fall back to output from an older completed execution", async () => {
+  test("uses only the latest execution output", async () => {
     const ctx = context();
     const store = child(ctx);
     store.getState().append(testExecutionStart("old"));
@@ -208,10 +208,9 @@ describe("background_output source pages", () => {
     expect(sourceDraftText(result)).toContain("Execution error: boom");
   });
 
-  test("hard-cuts legacy message cursors and limits from the strict schema", () => {
+  test("rejects unknown input fields", () => {
     const session_id = crypto.randomUUID();
-    expect(BackgroundOutputInputSchema.safeParse({ session_id, since_message_id: "old" }).success).toBe(false);
-    expect(BackgroundOutputInputSchema.safeParse({ session_id, message_limit: 20 }).success).toBe(false);
+    expect(BackgroundOutputInputSchema.safeParse({ session_id, unexpectedField: true }).success).toBe(false);
   });
 
   test("rejects the current Session with a bounded Raw error", async () => {

@@ -226,10 +226,10 @@ describe("ProjectRegistry", () => {
     await expect(registry.list()).rejects.toThrow(ProjectRegistryError);
   });
 
-  test("load rejects the removed registry version field", async () => {
+  test("load rejects unknown registry fields", async () => {
     const registryDir = join(tmpHome, ".archcode", "projects");
     await mkdir(registryDir, { recursive: true });
-    await writeFile(join(registryDir, "index.json"), JSON.stringify({ version: 1, projects: [] }));
+    await writeFile(join(registryDir, "index.json"), JSON.stringify({ projects: [], unexpectedField: true }));
 
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 

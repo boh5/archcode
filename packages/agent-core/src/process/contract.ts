@@ -1,4 +1,3 @@
-import { DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST, DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST_NOTE } from "./allowlist";
 import type {
   ProcessRunnerAbortResult,
   ProcessRunnerInput,
@@ -50,8 +49,6 @@ export interface ProcessRunnerContractDescriptor {
     readonly combinedTruncated: "true when the combined output was clipped by maxOutputBytes";
   };
   readonly resultKinds: readonly ProcessRunnerResultKind[];
-  readonly migrationAllowlist: readonly string[];
-  readonly migrationAllowlistNote: string;
 }
 
 export const PROCESS_RUNNER_CONTRACT: ProcessRunnerContractDescriptor = {
@@ -83,8 +80,6 @@ export const PROCESS_RUNNER_CONTRACT: ProcessRunnerContractDescriptor = {
     combinedTruncated: "true when the combined output was clipped by maxOutputBytes",
   },
   resultKinds: PROCESS_RUNNER_RESULT_KINDS,
-  migrationAllowlist: DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST,
-  migrationAllowlistNote: DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST_NOTE,
 };
 
 export function createProcessRunnerContract(): ProcessRunnerContractDescriptor {

@@ -116,8 +116,8 @@ describe("getToolDiffMetadata", () => {
     expect(getToolDiffMetadata([])).toBeUndefined();
   });
 
-  test("rejects old versions while accepting the current unversioned shape", () => {
-    expect(getToolDiffMetadata({ version: 1, files: [] })).toBeUndefined();
+  test("accepts only the exact current metadata shape", () => {
+    expect(getToolDiffMetadata({ unexpectedField: true, files: [] })).toBeUndefined();
     expect(getToolDiffMetadata({ files: [] })).toEqual({ files: [] });
   });
 

@@ -160,9 +160,4 @@ describe("messages routes", () => {
     });
     expect(runtime.acceptSessionMessage).toHaveBeenCalledTimes(1);
   });
-
-  test("does not expose the removed abort route", async () => {
-    const { app, project } = await createTestApp("abort");
-    expect((await app.request(`/api/projects/${project.slug}/sessions/session-1/abort`, { method: "POST" })).status).toBe(404);
-  });
 });

@@ -90,7 +90,7 @@ describe("RipgrepService", () => {
     expect(typeof svc.ensure).toBe("function");
   });
 
-  test("delegates resolution to BinaryManager seam with cached fallback removed", async () => {
+  test("delegates resolution to the BinaryManager seam", async () => {
     const seam = createMockSeam({
       which: () => undefined,
       exists: () => true,

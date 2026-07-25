@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST,
-  DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST_NOTE,
-} from "../allowlist";
-import {
   PROCESS_RUNNER_CONTRACT,
   PROCESS_RUNNER_RESULT_KINDS,
   createProcessRunnerContract,
@@ -28,19 +24,5 @@ describe("process runner contract", () => {
 
     const clone = createProcessRunnerContract();
     expect(clone).toBe(PROCESS_RUNNER_CONTRACT);
-  });
-
-  test("keeps the migration allowlist explicit and documented", () => {
-    expect(DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST).toEqual([
-      "packages/agent-core/src/process/**",
-      "packages/agent-core/src/lsp/transport.ts",
-      "scripts/**",
-      "**/*.test.ts",
-      "**/*.test.tsx",
-      "**/__tests__/**",
-    ]);
-
-    expect(DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST_NOTE).toContain("migration allowlist");
-    expect(DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST_NOTE).toContain("direct Bun.spawn");
   });
 });

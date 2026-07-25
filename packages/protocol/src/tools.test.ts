@@ -208,21 +208,9 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("github_get_pull_request")).toBe("git");
     expect(getToolCategory("github_create_issue_comment")).toBe("git");
     expect(getToolCategory("github_rerun_workflow_run")).toBe("git");
-    expect(getToolCategory("workflow_create")).toBe("other");
-    expect(getToolCategory("workflow_update_stage")).toBe("other");
-    expect(getToolCategory("artifact_read")).toBe("other");
-    expect(getToolCategory("artifact_write")).toBe("other");
     expect(getToolCategory("create_goal")).toBe("goal");
     expect(getToolCategory("get_goal")).toBe("goal");
     expect(getToolCategory("update_goal")).toBe("goal");
-    expect(getToolCategory("goal_lock")).toBe("other");
-    expect(getToolCategory("goal_run")).toBe("other");
-    expect(getToolCategory("goal_retry")).toBe("other");
-    expect(getToolCategory("goal_check_done")).toBe("other");
-    expect(getToolCategory("goal_manage")).toBe("other");
-    expect(getToolCategory("goal_evidence")).toBe("other");
-    expect(getToolCategory("goal_artifact_read")).toBe("other");
-    expect(getToolCategory("goal_artifact_write")).toBe("other");
     expect(getToolCategory("compress")).toBe("other");
   });
 });
@@ -231,8 +219,6 @@ describe("isBuiltinToolName()", () => {
   test("returns true for known builtin names", () => {
     expect(isBuiltinToolName("file_read")).toBe(true);
     expect(isBuiltinToolName("grep")).toBe(true);
-    expect(isBuiltinToolName("workflow_update_stage")).toBe(false);
-    expect(isBuiltinToolName("artifact_read")).toBe(false);
     expect(isBuiltinToolName("ast_grep_replace")).toBe(true);
     expect(isBuiltinToolName("github_get_pull_request")).toBe(true);
     expect(isBuiltinToolName("github_create_issue_comment")).toBe(true);
@@ -240,9 +226,6 @@ describe("isBuiltinToolName()", () => {
     expect(isBuiltinToolName("create_goal")).toBe(true);
     expect(isBuiltinToolName("get_goal")).toBe(true);
     expect(isBuiltinToolName("update_goal")).toBe(true);
-    expect(isBuiltinToolName("goal_evidence")).toBe(false);
-    expect(isBuiltinToolName("goal_artifact_read")).toBe(false);
-    expect(isBuiltinToolName("goal_artifact_write")).toBe(false);
     expect(isBuiltinToolName("compress")).toBe(true);
   });
 
@@ -251,16 +234,6 @@ describe("isBuiltinToolName()", () => {
     expect(isBuiltinToolName("unknown_tool")).toBe(false);
     expect(isBuiltinToolName("")).toBe(false);
   });
-
-  test("returns false for removed Goal executable names", () => {
-    expect(isBuiltinToolName("goal_create")).toBe(false);
-    expect(isBuiltinToolName("goal_manage")).toBe(false);
-    expect(isBuiltinToolName("goal_lock")).toBe(false);
-    expect(isBuiltinToolName("goal_run")).toBe(false);
-    expect(isBuiltinToolName("goal_retry")).toBe(false);
-    expect(isBuiltinToolName("goal_check_done")).toBe(false);
-  });
-
   test("acts as a type guard narrowing to BuiltinToolName", () => {
     const name: string = "file_read";
     if (isBuiltinToolName(name)) {

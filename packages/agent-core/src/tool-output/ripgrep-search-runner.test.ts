@@ -1,39 +1,53 @@
 import { describe, expect, test } from "bun:test";
-import {
-  RipgrepArtifactSearchRunner,
-  type RipgrepArtifactSearchProcess,
-} from "./ripgrep-search-runner";
+import type { ProcessRunnerInput, ProcessRunnerResult } from "../process/types";
+import { RipgrepArtifactSearchRunner } from "./ripgrep-search-runner";
 
-function byteStream(...chunks: readonly string[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  return new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
-      controller.close();
-    },
-  });
+function outputCapture() {
+  return {
+    stdout: "",
+    stderr: "",
+    combined: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    combinedTruncated: false,
+    maxOutputBytes: 0,
+    stdoutBytes: 0,
+    stderrBytes: 0,
+    sinkStatus: "complete" as const,
+  };
 }
 
 function createRunner(stdout: string, exitCode = 0): {
   readonly runner: RipgrepArtifactSearchRunner;
-  readonly spawnedArgv: (readonly string[])[];
+  readonly inputs: ProcessRunnerInput[];
 } {
-  const spawnedArgv: (readonly string[])[] = [];
-  const spawn = (argv: readonly string[]): RipgrepArtifactSearchProcess => {
-    spawnedArgv.push(argv);
-    return {
-      stdout: byteStream(stdout),
-      stderr: byteStream(),
-      exited: Promise.resolve(exitCode),
-      kill: () => undefined,
-    };
+  const inputs: ProcessRunnerInput[] = [];
+  const processRunner = {
+    async run(input: ProcessRunnerInput): Promise<ProcessRunnerResult> {
+      inputs.push(input);
+      await input.outputSink?.write("stdout", new TextEncoder().encode(stdout));
+      const base = {
+        argv: input.argv,
+        cwd: input.cwd,
+        startedAt: 1,
+        finishedAt: 2,
+        durationMs: 1,
+        output: outputCapture(),
+      };
+      if (input.signal?.aborted) {
+        return { ...base, kind: "aborted", exitCode: null, reason: String(input.signal.reason ?? "aborted") };
+      }
+      return exitCode === 0
+        ? { ...base, kind: "success", exitCode: 0 }
+        : { ...base, kind: "nonzero", exitCode };
+    },
   };
   return {
     runner: new RipgrepArtifactSearchRunner({
       binaryResolver: { resolve: async () => "/managed/bin/rg" },
-      spawn,
+      processRunner,
     }),
-    spawnedArgv,
+    inputs,
   };
 }
 
@@ -55,7 +69,7 @@ function baseSearch(pattern: string) {
 
 describe("RipgrepArtifactSearchRunner", () => {
   test("returns bounded matches and a strictly advancing cursor", async () => {
-    const { runner, spawnedArgv } = createRunner("1:0:needle\n3:17:needle\n");
+    const { runner, inputs } = createRunner("1:0:needle\n3:17:needle\n");
     const base = {
       ...baseSearch("needle"),
       segments: [{
@@ -73,8 +87,8 @@ describe("RipgrepArtifactSearchRunner", () => {
     expect(second.matches).toHaveLength(1);
     expect(second.matches[0]!.canonicalStart).toBeGreaterThan(first.matches[0]!.canonicalStart);
     expect(second.nextCursor).toBeUndefined();
-    expect(spawnedArgv).toHaveLength(2);
-    expect(spawnedArgv[0]).toEqual([
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]?.argv).toEqual([
       "/managed/bin/rg",
       "--no-heading",
       "--color=never",
@@ -85,6 +99,8 @@ describe("RipgrepArtifactSearchRunner", () => {
       "needle",
       "/artifact/body.txt",
     ]);
+    expect(inputs[0]?.maxOutputBytes).toBe(0);
+    expect(inputs[0]?.outputSink).toBeDefined();
   });
 
   test.each(["^", "$", "a*"])("paginates zero-width pattern %s to terminal without duplicates", async (pattern) => {
@@ -158,6 +174,57 @@ describe("RipgrepArtifactSearchRunner", () => {
     await expect(runner.search(baseSearch("["))).rejects.toMatchObject({
       code: "TOOL_OUTPUT_INVALID_PATTERN",
     });
+  });
+
+  test("maps ProcessRunner timeout to the bounded search timeout", async () => {
+    const runner = new RipgrepArtifactSearchRunner({
+      binaryResolver: { resolve: async () => "/managed/bin/rg" },
+      processRunner: {
+        async run(input) {
+          return {
+            kind: "timeout",
+            argv: input.argv,
+            cwd: input.cwd,
+            startedAt: 1,
+            finishedAt: 2,
+            durationMs: 1,
+            timeoutMs: input.timeoutMs ?? 1,
+            exitCode: null,
+            output: outputCapture(),
+          };
+        },
+      },
+    });
+    await expect(runner.search(baseSearch("needle"))).rejects.toMatchObject({
+      code: "TOOL_OUTPUT_SEARCH_TIMEOUT",
+    });
+  });
+
+  test("ignores output delivered after a page boundary abort", async () => {
+    const runner = new RipgrepArtifactSearchRunner({
+      binaryResolver: { resolve: async () => "/managed/bin/rg" },
+      processRunner: {
+        async run(input) {
+          await input.outputSink?.write("stdout", new TextEncoder().encode("1:0:first\n2:6:second\n"));
+          await input.outputSink?.write("stdout", new TextEncoder().encode("partial garbage after abort"));
+          return {
+            kind: "aborted",
+            argv: input.argv,
+            cwd: input.cwd,
+            startedAt: 1,
+            finishedAt: 2,
+            durationMs: 1,
+            exitCode: null,
+            output: outputCapture(),
+          };
+        },
+      },
+    });
+
+    const result = await runner.search(baseSearch("first|second"));
+
+    expect(result.matches.map((match) => match.snippet)).toEqual(["first"]);
+    expect(result.nextCursor).toBeDefined();
   });
 
   test("does not resolve a managed binary when there are no artifact segments", async () => {

@@ -1,21 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  CompressionBlockSnapshot,
-  CompressionStateSnapshot,
-  ExecutionModelBindingSummary,
-  SessionExecutionRecord,
-  SessionMessage,
-  SessionPart,
-  SessionStep,
-  TextPart,
-  ToolChildSessionLink,
-  ToolPart,
+import {
+  COMPRESSION_SUMMARY_SECTION_NAMES,
+  type CompressionBlockSnapshot,
+  type CompressionStateSnapshot,
+  type CompressionSummarySnapshot,
+  type ExecutionModelBindingSummary,
+  type SessionExecutionRecord,
+  type SessionMessage,
+  type SessionPart,
+  type SessionStep,
+  type TextPart,
+  type ToolChildSessionLink,
+  type ToolPart,
 } from "@archcode/protocol";
 import {
   buildExecutionWorkstream,
   stabilizeExecutionWorkstreamProjection,
   type ExecutionWorkstreamInput,
 } from "./execution-workstream";
+
+function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
+  return {
+    sections: Object.fromEntries(
+      COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+        section,
+        section === "Current Objective" ? currentObjective : "None",
+      ]),
+    ) as CompressionSummarySnapshot["sections"],
+  };
+}
 
 const BINDING: ExecutionModelBindingSummary = {
   selection: { model: "local:test" },
@@ -142,7 +155,7 @@ function compressionSnapshot(
       startIndex: 0,
       endIndex: 1,
     },
-    summary: "Snapshot summary",
+    summary: compressionSummary("Snapshot summary"),
     childBlockRefs: [],
     protectedRefs: [],
     createdAt: 1,
@@ -543,7 +556,7 @@ describe("buildExecutionWorkstream", () => {
     const snapshot = compressionSnapshot("b1", {
       id: "block-id",
       status: "superseded",
-      summary: "Authoritative summary",
+      summary: compressionSummary("Authoritative summary"),
       createdAt: 20,
     });
     const compression: CompressionStateSnapshot = {
@@ -571,7 +584,7 @@ describe("buildExecutionWorkstream", () => {
     if (item?.kind === "compression") {
       expect(item.id).toBe("compression:b1:block-id");
       expect(item.block.status).toBe("superseded");
-      expect(item.block.summary).toBe("Authoritative summary");
+      expect(item.block.summary).toContain("## Current Objective\nAuthoritative summary");
       expect(item.snapshot).toBe(snapshot);
     }
     expect(coldResult.items[0]).toEqual(item);

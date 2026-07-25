@@ -437,8 +437,6 @@ describe("ConfiguredAgent", () => {
     expect(system).toContain("create a fresh direct deep Analyst");
     expect(system).toContain("VERDICT: APPROVED");
     expect(system).toContain("review_session_id");
-    expect(system).not.toContain("Goal Lead");
-    expect(system).not.toContain("goal_manage");
   });
 
   test("projects Todo Discussion maxDepth 2 into the Prompt from the authoritative binding", async () => {

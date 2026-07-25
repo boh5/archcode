@@ -9,6 +9,7 @@ export * from "./project-todos";
 export * from "./delegation";
 export * from "./model-runtime";
 export * from "./session-goal";
+export * from "./compression";
 export * from "./dashboard";
 export * from "./bootstrap";
 export * from "./auth";

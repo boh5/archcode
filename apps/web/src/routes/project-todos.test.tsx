@@ -199,7 +199,7 @@ describe("ProjectTodosRoute presentation contracts", () => {
     sessionRuntimeStore.getState().reset();
   });
 
-  test("preserves workflow grouping and the flat responsive grid contract", async () => {
+  test("groups workflow states in a flat responsive grid", async () => {
     expect(deriveProjectTodoGroups(todos)).toMatchObject({
       idea: [todos[0], todos[6]], ready: [todos[1], todos[4]], in_progress: [todos[2]], done: [todos[3], todos[5]],
     });
@@ -208,11 +208,10 @@ describe("ProjectTodosRoute presentation contracts", () => {
     expect(board?.className).toContain("grid-cols-1");
     expect(board?.className).toContain("min-[621px]:grid-cols-2");
     expect(board?.className).toContain("min-[1181px]:grid-cols-4");
-    expect(board?.className).not.toContain("min-w-[880px]");
     expect(Array.from(container.querySelectorAll("section[aria-label]")).map((lane) => lane.getAttribute("aria-label"))).toEqual(["Ideas", "Ready", "In Progress", "Done"]);
   });
 
-  test("uses archived presentation priority and preserves URL-driven archived view", async () => {
+  test("uses archived presentation priority and URL-driven archived view", async () => {
     await render("/projects/demo/todos?todo=archived", "Archived Todos");
     await waitFor(() => expect(container.querySelector('[data-testid="todo-archived"]')?.textContent).toContain("Archived"));
     expect(container.querySelector('[data-testid="todo-archived"] button')?.getAttribute("aria-expanded")).toBe("true");
@@ -234,17 +233,16 @@ describe("ProjectTodosRoute presentation contracts", () => {
     expect(card.querySelector('[aria-label="Activation session"] [data-testid="activity-arc"], [data-testid="activity-arc"]')).not.toBeNull();
   });
 
-  test("keeps the original editable body affordance", async () => {
+  test("uses a resizable four-row body editor", async () => {
     await render();
     const drawer = await expand("idea");
     await act(async () => Array.from(drawer.querySelectorAll("button")).find((button) => button.textContent === "Edit")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
     const textarea = drawer.querySelector('textarea[aria-label="Todo body"]') as HTMLTextAreaElement;
     expect(textarea.rows).toBe(4);
     expect(textarea.className).toContain("resize-y");
-    expect(textarea.className).not.toContain("min-h-");
   });
 
-  test("preserves every lifecycle action matrix and adds no drag or More-menu affordance", async () => {
+  test("exposes the lifecycle action matrix", async () => {
     await render();
     expect(actionLabels(await expand("idea"))).toEqual(["Edit", "Discuss", "Mark Ready", "Reject", "Archive"]);
     expect(actionLabels(await expand("ready"))).toEqual(["Edit", "Discuss", "Start Session", "Create Automation", "Move to Idea", "Reject", "Mark Done", "Archive"]);
@@ -255,12 +253,9 @@ describe("ProjectTodosRoute presentation contracts", () => {
     expect(actionLabels(await expand("rejected"))).toEqual(["Edit", "Discuss", "Restore to Idea", "Archive"]);
     await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Archived")?.click());
     expect(actionLabels(await expand("archived"))).toEqual(["Edit", "Restore"]);
-
-    expect(container.querySelector("[draggable=true]")).toBeNull();
-    expect(container.querySelector("[ondrop], [ondragstart], [aria-label*=More]")).toBeNull();
   });
 
-  test("keeps status, activation, and lifecycle actions on their original mutation endpoints", async () => {
+  test("routes status, activation, and lifecycle actions to their mutation endpoints", async () => {
     await render();
 
     const idea = await expand("idea");
@@ -280,7 +275,7 @@ describe("ProjectTodosRoute presentation contracts", () => {
     });
   });
 
-  test("keeps discussion and terminal lifecycle actions on their original handlers", async () => {
+  test("routes discussion and terminal lifecycle actions to their handlers", async () => {
     await render();
 
     const active = await expand("active");
@@ -297,7 +292,7 @@ describe("ProjectTodosRoute presentation contracts", () => {
     expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/archived/restore", method: "POST", body: { expectedRevision: 1 } });
   });
 
-  test("preserves Discuss, Continue, Session activation, and every remaining lifecycle handler", async () => {
+  test("routes Discuss, Continue, Session activation, and lifecycle actions", async () => {
     await render();
 
     await clickAction(await expand("idea"), "Discuss");
@@ -328,7 +323,7 @@ describe("ProjectTodosRoute presentation contracts", () => {
     expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/rejected", method: "PATCH", body: { expectedRevision: 1, patch: { status: "idea" } } });
   });
 
-  test("preserves Reject submission and Edit-save payloads", async () => {
+  test("submits Reject and Edit-save payloads", async () => {
     await render();
     const idea = await expand("idea");
     await act(async () => Array.from(idea.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Reject")?.click());
@@ -354,7 +349,7 @@ describe("ProjectTodosRoute presentation contracts", () => {
     });
   });
 
-  test("keeps the 320px and 390px Todo drawer above the persistent project rail", async () => {
+  test("positions the 320px and 390px Todo drawer above the project rail", async () => {
     const todoSource = await Bun.file(new URL("./project-todos.tsx", import.meta.url)).text();
     const layoutSource = await Bun.file(new URL("./root-layout.tsx", import.meta.url)).text();
 

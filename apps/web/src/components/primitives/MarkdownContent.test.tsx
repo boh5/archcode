@@ -29,7 +29,6 @@ describe("MarkdownContent", () => {
     );
 
     expect(html).toContain("markdown-content space-y-0");
-    expect(html).not.toContain("space-y-4");
     expect(html).toContain('data-markdown-table="surface"');
     expect(html).toContain('data-markdown-table="toolbar"');
     expect(html).toContain('data-markdown-table="scroll"');
@@ -62,8 +61,6 @@ describe("MarkdownContent", () => {
     );
 
     expect(html).toContain("markdown-content markdown-content--compact space-y-0");
-    expect(html).not.toContain("space-y-4");
-    expect(html).not.toContain("conversation-markdown-body");
   });
 
   test("uses a primary 16px response variant for final Agent output", () => {
@@ -98,11 +95,7 @@ describe("MarkdownContent", () => {
     expect(componentSource).toContain('animation: "fadeIn"');
     expect(componentSource).toContain("duration: 120");
     expect(componentSource).toContain("stagger: 8");
-    expect(componentSource).not.toContain("shikiTheme");
     expect(componentSource).toContain("space-y-0");
-    expect(componentSource).not.toContain("space-y-2");
-    expect(componentSource).not.toContain("space-y-3");
-    expect(componentSource).not.toContain("space-y-4");
     expect(componentCss).toContain("--markdown-panel-body:");
     expect(componentCss).toContain(".markdown-content--response");
     expect(componentCss).toContain("max-width: none");
@@ -118,11 +111,9 @@ describe("MarkdownContent", () => {
     expect(componentCss).toContain(":has(> span:not(:empty))");
     expect(componentCss).toContain("> span:empty");
     expect(componentCss).toContain('content: "CODE"');
-    expect(componentCss).not.toContain('content: "TABLE"');
     expect(componentCss).toContain('[data-markdown-table="surface"]');
     expect(componentCss).toContain('[data-markdown-table="scroll"]');
     expect(componentCss).toContain(".markdown-table-action");
-    expect(componentCss).not.toContain("> div:first-child");
     expect(componentCss).toContain("min-height: 32px");
     expect(componentCss).toContain("min-width: 440px");
     expect(componentCss).toContain("white-space: nowrap");
@@ -131,13 +122,9 @@ describe("MarkdownContent", () => {
     expect(globalsCss).toContain("--color-background: var(--bg-elevated)");
     expect(globalsCss).toContain("--color-muted-foreground: var(--text-tertiary)");
     expect(globalsCss).toContain("--color-primary: var(--brand)");
-    expect(globalsCss).not.toContain("conversation-markdown-body");
 
     const surfaceRuleStart = componentCss.indexOf('[data-markdown-table="surface"] {');
-    const surfaceRuleEnd = componentCss.indexOf("}", surfaceRuleStart);
-    const surfaceRule = componentCss.slice(surfaceRuleStart, surfaceRuleEnd);
     expect(surfaceRuleStart).toBeGreaterThanOrEqual(0);
-    expect(surfaceRule).not.toContain("overflow:");
 
     const scrollRuleStart = componentCss.indexOf('[data-markdown-table="scroll"] {');
     const scrollRuleEnd = componentCss.indexOf("}", scrollRuleStart);

@@ -134,7 +134,7 @@ export function compressionBlockSnapshot(block: CompressionBlock): CompressionBl
     strategy: block.strategy,
     trigger: block.trigger,
     range: block.range,
-    summary: renderCompressionSummary(block.summary),
+    summary: { sections: { ...block.summary.sections } },
     childBlockRefs: block.childBlockRefs,
     protectedRefs: block.protectedRefs.map((ref) => ref.ref),
     ...(block.tokenEstimate === undefined ? {} : { tokenEstimate: block.tokenEstimate }),

@@ -144,7 +144,7 @@ const EXPECTED_TOOL_MATRIX = {
 } as const;
 
 describe("Lead Agent catalog", () => {
-  test("is a closed five-Agent hard cut with no legacy or visual identity", () => {
+  test("defines the complete five-Agent catalog", () => {
     expect(agentDefinitions.map(({ name, displayName }) => ({ name, displayName }))).toEqual([
       { name: "lead", displayName: "Lead" },
       { name: "analyst", displayName: "Analyst" },
@@ -152,7 +152,6 @@ describe("Lead Agent catalog", () => {
       { name: "explore", displayName: "Explore" },
       { name: "librarian", displayName: "Librarian" },
     ]);
-    expect(agentDefinitions.map((definition) => definition.name)).not.toContain("visual");
     expect(new Set(agentDefinitions.map((definition) => definition.name)).size).toBe(5);
   });
 

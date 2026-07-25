@@ -202,7 +202,7 @@ describe("SSE liveness watchdog", () => {
     expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions"])).toBe(true);
     expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions", "root-1"])).toBe(true);
     expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions", "child-1", "focused"])).toBe(true);
-    expect(isSessionSnapshotQueryKey(["projects", "demo", "goals", "goal-1"])).toBe(false);
+    expect(isSessionSnapshotQueryKey(["projects", "demo", "automations", "automation-1"])).toBe(false);
     expect(isSessionSnapshotQueryKey(["sessions", "root-1"])).toBe(false);
   });
 
@@ -212,7 +212,7 @@ describe("SSE liveness watchdog", () => {
       ["projects", "demo", "todos", "todo-1"],
       ["projects", "other", "todos"],
       ["projects", "demo", "sessions"],
-      ["projects", "demo", "goals", "goal-1"],
+      ["projects", "demo", "automations", "automation-1"],
       ["projects", "demo", "todos", "todo-1", "history"],
       ["todos", "demo"],
     ] as const;
@@ -281,19 +281,7 @@ describe("parseSSEEvent", () => {
       payload: {},
       agentName: "lead",
     });
-    const removedKind = JSON.stringify({
-      type: "event",
-      slug: "p",
-      sessionId: "s",
-      eventId: 1,
-      createdAt: 0,
-      kind: "text-start",
-      payload: { type: "text-start" },
-      agentName: "lead",
-    });
-
     expect(parseSSEEvent("event", missingType)).toBeNull();
-    expect(parseSSEEvent("event", removedKind)).toBeNull();
   });
 
   test("parses heartbeat event", () => {
@@ -365,7 +353,7 @@ describe("parseSSEEvent", () => {
     expect(result).toEqual(event);
   });
 
-  test("rejects removed and malformed global event contracts", () => {
+  test("rejects malformed global event contracts", () => {
     const hitlEvent = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" });
     const resourceEvent = {
       type: "resource.changed",
@@ -382,7 +370,7 @@ describe("parseSSEEvent", () => {
     expect(parseSSEEvent("hitl.event", JSON.stringify({ type: "hitl.event" }))).toBeNull();
     expect(parseSSEEvent("resource.changed", JSON.stringify({
       ...resourceEvent,
-      reason: "created",
+      unexpectedField: true,
     }))).toBeNull();
     expect(parseSSEEvent("resource.changed", JSON.stringify({ type: "resource.changed" }))).toBeNull();
   });
@@ -623,11 +611,6 @@ describe("handleSSEEvent", () => {
       createdAt: 123,
     });
   });
-
-  test("session-local HITL stream events are no longer accepted", () => {
-    expect(parseSSEEvent("event", JSON.stringify({ type: "event", payload: { type: "hitl.resolved" } }))).toBeNull();
-  });
-
   test("stores the scoped hitl.event view without touching query caches", () => {
     const event = hitlRealtimeEvent({
       projectSlug: "proj",

@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { reduceStreamEvent } from "./reduce";
 import type { ReduceContext } from "./reduce";
 import { createEmptySessionStats } from "./usage";
+import {
+  COMPRESSION_SUMMARY_SECTION_NAMES,
+  type CompressionSummarySnapshot,
+} from "./compression";
 import type {
   CompressionBlockSnapshot,
   CompressionRefMapSnapshot,
@@ -16,6 +20,17 @@ import type {
   ToolDiffMetadata,
   ToolResultDetails,
 } from "./types";
+
+function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
+  return {
+    sections: Object.fromEntries(
+      COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+        section,
+        section === "Current Objective" ? currentObjective : "None",
+      ]),
+    ) as CompressionSummarySnapshot["sections"],
+  };
+}
 
 const REQUESTED_MODEL_SELECTION = {
   mode: "profile_default" as const,
@@ -191,7 +206,7 @@ function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {})
       startIndex: 0,
       endIndex: 1,
     },
-    summary: "## Current Objective\nKeep going",
+    summary: compressionSummary("Keep going"),
     childBlockRefs: [],
     protectedRefs: [],
     createdAt: 123456789,
@@ -1151,7 +1166,6 @@ describe("reduceStreamEvent", () => {
     expect(state.executions).toEqual([
       expect.objectContaining({ id: "execution-a", status: "running", stopRequestedAt: 13 }),
     ]);
-    expect(state).not.toHaveProperty("autoDispatchPaused");
   });
 
   test("records execution errors on matching or synthetic steps", () => {

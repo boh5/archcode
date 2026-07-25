@@ -654,7 +654,7 @@ describe("toModelMessagesFromStoredMessages", () => {
 });
 
 describe("toModelMessagesFromStoredMessages compaction", () => {
-  test("projection after compaction: summary + tail appear, old prefix excluded", () => {
+  test("projection after compaction includes the summary and tail", () => {
     const tailMsg = storedMessage("user", [textPart("tail question")]);
     const tailAssistantMsg = storedMessage("assistant", [textPart("tail answer")]);
 

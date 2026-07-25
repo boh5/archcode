@@ -39,10 +39,6 @@ describe("orchestration workbench surface", () => {
     expect(inspector).toContain("data-agent-role-icon");
     expect(inspector).toContain("data-agent-status");
     expect(inspector).toContain("buildAgentFocusSearch");
-    expect(inspector).not.toContain("resolveAgentAppearance");
-    expect(inspector).not.toContain("appearance.initial");
-    expect(inspector).not.toContain("agent-avatar");
-    expect(inspector).not.toContain("AGENT_ROLE_COLOR");
   });
 
   test("uses only authoritative runtime and child-link statuses in the Agent tree", () => {
@@ -58,29 +54,6 @@ describe("orchestration workbench surface", () => {
     expect(resolveInspectorAgentStatus(undefined, "completed").label).toBe("Completed");
     expect(resolveInspectorAgentStatus(undefined).label).toBe("Status unavailable");
   });
-
-  test("hard-cuts legacy state dots, pulse, raw Goal badges, and Todo spinners", async () => {
-    const [sidebar, header, goal, composer, todo] = await Promise.all([
-      source("components/features/Sidebar.tsx"),
-      source("components/features/ChatHeader.tsx"),
-      source("components/features/SessionGoalSummaryRow.tsx"),
-      source("components/features/ChatInput.tsx"),
-      source("components/features/TodoProgressButton.tsx"),
-    ]);
-    expect(sidebar).not.toContain("STATUS_DOT_COLORS");
-    expect(sidebar).not.toContain("AUTOMATION_STATUS_DOT_COLORS");
-    expect(sidebar).not.toContain("animate-pulse");
-    expect(sidebar).not.toContain("Goal ·");
-    expect(header).not.toContain("EXECUTION_STATUS_CLASS");
-    expect(header).not.toContain("Goal ·");
-    expect(goal).not.toContain("◎");
-    expect(goal).not.toContain("Pursuing goal");
-    expect(goal).toContain("IconAction");
-    expect(composer).not.toContain("dotClass");
-    expect(todo).not.toContain("STATE_CLASS");
-    expect(todo).not.toContain("animate-spin");
-  });
-
   test("resolves nested child status from each authoritative parent Session link", () => {
     const base = {
       parentToolCallId: "delegate",

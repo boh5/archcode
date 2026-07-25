@@ -159,7 +159,7 @@ async function markRunning(
   }));
 }
 
-describe("SessionToolBatchScheduler hard-cut output ownership", () => {
+describe("SessionToolBatchScheduler output ownership", () => {
   test("persists and appends only nested FinalizedToolResult", async () => {
     const harness = await createHarness();
     await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: { value: "hello" } }], 0);

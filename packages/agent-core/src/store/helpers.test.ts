@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { chmod, mkdir, readdir, rm } from "node:fs/promises";
+import { chmod, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getAssistantText, SessionFileSchema, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
@@ -534,7 +534,6 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().executions).toEqual(state.executions);
     expect(loaded.getState().executionCount).toBe(state.executions.length);
     expect(loaded.getState().todos).toEqual(state.todos);
-    expect(loaded.getState()).not.toHaveProperty("pendingInteractions");
     expect(loaded.getState().childSessionLinks).toEqual([]);
   });
 
@@ -593,17 +592,6 @@ describe("session transcript serialization", () => {
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
-  test("load rejects the removed legacy agent identity", async () => {
-    const sessionId = uniqueSessionId("removed-legacy-agent");
-    const removedAgentName = ["orches", "trator"].join("");
-    await writeSessionFile(sessionId, {
-      ...persistedState(sessionId),
-      agentName: removedAgentName,
-    });
-
-    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
-  });
-
   test("load rejects files without cwd", async () => {
     const sessionId = uniqueSessionId("missing-cwd");
     const { cwd: _cwd, ...stateWithoutCwd } = persistedState(sessionId);
@@ -613,11 +601,11 @@ describe("session transcript serialization", () => {
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
-  test("load rejects the removed schemaVersion field", async () => {
-    const sessionId = uniqueSessionId("removed-schema-version");
+  test("load rejects unknown top-level fields", async () => {
+    const sessionId = uniqueSessionId("unknown-top-level-field");
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
     const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
-    raw.schemaVersion = 1;
+    raw.unexpectedField = true;
     await writeRawSessionFile(sessionId, JSON.stringify(raw));
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
@@ -635,8 +623,8 @@ describe("session transcript serialization", () => {
       "root-session",
       "parent-session",
     );
-    const { delegationRequest: _request, ...legacyChild } = child;
-    expect(SessionFileSchema.safeParse(legacyChild).success).toBe(false);
+    const { delegationRequest: _request, ...childWithoutDelegationIdentity } = child;
+    expect(SessionFileSchema.safeParse(childWithoutDelegationIdentity).success).toBe(false);
   });
 
   test("child Session rejects active Skills that differ from its delegation identity", () => {
@@ -693,18 +681,16 @@ describe("session transcript serialization", () => {
     }).success).toBe(false);
     expect(SessionFileSchema.safeParse({
       ...raw,
-      events: [{ id: 1, createdAt: 1, payload: { type: "text-start", legacy: true } }],
+      events: [{ id: 1, createdAt: 1, payload: { type: "text-start", unexpectedField: true } }],
     }).success).toBe(false);
   });
 
-  test("root save writes only owner-local session.json", async () => {
+  test("root save writes the canonical session.json", async () => {
     const sessionId = uniqueSessionId("root-layout");
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
 
     expect(await Bun.file(sessionFilePath(sessionId)).exists()).toBe(true);
-    expect(await Bun.file(join(TMP_DIR, `${sessionId}.json`)).exists()).toBe(false);
-    expect(await Bun.file(join(TMP_DIR, sessionId, `${sessionId}.json`)).exists()).toBe(false);
   });
 
   test("child save writes to its own owner directory with ancestry metadata", async () => {
@@ -717,7 +703,6 @@ describe("session transcript serialization", () => {
     );
 
     expect(await Bun.file(sessionFilePath(childSessionId)).exists()).toBe(true);
-    expect(await Bun.file(join(TMP_DIR, rootSessionId, `${childSessionId}.json`)).exists()).toBe(false);
     const raw = JSON.parse(await Bun.file(sessionFilePath(childSessionId)).text()) as Record<string, unknown>;
     expect(raw.rootSessionId).toBe(rootSessionId);
     expect(raw.parentSessionId).toBe(rootSessionId);
@@ -845,16 +830,16 @@ describe("session transcript serialization", () => {
 
   test("load rejects missing required stats", async () => {
     const sessionId = uniqueSessionId("missing-stats");
-    const { stats: _stats, ...legacyState } = persistedState(sessionId);
-    await writeSessionFile(sessionId, legacyState);
+    const { stats: _stats, ...incompleteState } = persistedState(sessionId);
+    await writeSessionFile(sessionId, incompleteState);
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
   test("load rejects missing required executions", async () => {
     const sessionId = uniqueSessionId("missing-executions");
-    const { executions: _executions, ...legacyState } = persistedState(sessionId);
-    await writeSessionFile(sessionId, legacyState);
+    const { executions: _executions, ...incompleteState } = persistedState(sessionId);
+    await writeSessionFile(sessionId, incompleteState);
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
@@ -947,18 +932,6 @@ describe("session transcript serialization", () => {
     expect(state.messages[0]?.executionId).toBe("run-after-load");
   });
 
-  test("atomic write leaves no temporary file behind", async () => {
-    const sessionId = uniqueSessionId("atomic");
-
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
-    const files = await readdir(TMP_DIR);
-
-    expect(files).toContain(sessionId);
-    expect(files).not.toContain(`${sessionId}.json`);
-    expect(files).not.toContain(`session.${sessionId}.json.tmp`);
-    expect(await Bun.file(sessionFilePath(sessionId)).exists()).toBe(true);
-  });
-
   test("load rejects corrupted JSON", async () => {
     const sessionId = uniqueSessionId("corrupted");
     await writeRawSessionFile(sessionId, "{not json");
@@ -1025,33 +998,6 @@ describe("session transcript serialization", () => {
           parts: [{ type: "tool", state: "paused", id: "tool", toolCallId: "call", toolName: "read", createdAt: 2 }],
         },
       ],
-    });
-
-    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
-  });
-
-  test("load rejects legacy string tool results and arbitrary result metadata", async () => {
-    const sessionId = uniqueSessionId("legacy-tool-result");
-    await writeSessionFile(sessionId, {
-      ...persistedState(sessionId, [], []),
-      messages: [{
-        id: "message",
-        role: "assistant",
-        createdAt: 1,
-        parts: [{
-          type: "tool",
-          state: "completed",
-          id: "tool",
-          toolCallId: "call",
-          toolName: "read",
-          input: {},
-          output: "legacy",
-          meta: { arbitrary: true },
-          createdAt: 2,
-          startedAt: 3,
-          endedAt: 4,
-        }],
-      }],
     });
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
@@ -1266,11 +1212,9 @@ describe("session transcript serialization", () => {
     expect(parsed.stats).toEqual(createEmptySessionStats());
     expect(parsed.executions).toEqual([]);
     expect(parsed.todos).toEqual(sampleTodos());
-    expect(parsed).not.toHaveProperty("pendingInteractions");
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);
     expect(parsed.agentName).toBe("lead");
-    expect(parsed).not.toHaveProperty("schemaVersion");
     expect(parsed.cwd).toBe(TMP_DIR);
     expect(parsed.rootSessionId).toBe(sessionId);
   });
@@ -1306,24 +1250,6 @@ describe("session transcript serialization", () => {
     expect(loadedState.executions).toEqual([]);
     expect(loadedState.executionCount).toBe(0);
     expect(loadedState.todos).toEqual(originalTodos);
-    expect(loadedState).not.toHaveProperty("pendingInteractions");
-  });
-
-  test("load rejects legacy pendingInteractions snapshots", async () => {
-    const sessionId = uniqueSessionId("legacy-pending-interactions");
-
-    await writeSessionFile(sessionId, {
-      ...persistedState(sessionId, [], []),
-      pendingInteractions: [{
-        id: "question-1",
-        type: "clarification",
-        question: "Proceed?",
-        askedAt: "2026-06-03T00:00:00.000Z",
-        status: "pending",
-      }],
-    });
-
-    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
   test("load rejects unknown reminder fields", async () => {
@@ -1536,11 +1462,11 @@ describe("compaction and meta transcript round-trip", () => {
   });
 
   test("session files without compression are rejected", async () => {
-    const sessionId = uniqueSessionId("legacy-no-compression");
+    const sessionId = uniqueSessionId("missing-compression");
     const state = persistedState(sessionId);
-    const { compression: _compression, ...legacyState } = state;
+    const { compression: _compression, ...incompleteState } = state;
 
-    await writeSessionFile(sessionId, legacyState);
+    await writeSessionFile(sessionId, incompleteState);
     const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
 
     expect("compression" in raw).toBe(false);

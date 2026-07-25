@@ -55,7 +55,7 @@ bun run --cwd packages/agent-core test:arch         # Architecture contracts, is
 
 Validation order: `typecheck` → `test` (enforced by Turborepo task graph).
 
-Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns real subprocess, Git/worktree, and LSP process lifecycles; `src/__arch__/**/*.test.ts` owns architecture contracts; all remaining `*.test.ts` files are unit tests. Do not use `test.concurrent`, `--concurrent`, retry fallback, or the retired `*-integration.test.ts` suffix.
+Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns real subprocess, Git/worktree, and LSP process lifecycles; `src/__arch__/**/*.test.ts` owns architecture contracts; all remaining `*.test.ts` files are unit tests. Do not use `test.concurrent`, `--concurrent`, test-runner retries, or retry-based flaky-test mitigation.
 
 ## Architecture
 
@@ -102,6 +102,7 @@ packages/agent-core/src/
 ├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
 ├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation
 ├── execution/session-execution-manager.ts # Sole live Execution admission, concurrency, abort, and terminal owner
+├── process/                    # ProcessRunner lifecycle, bounded streaming, timeout/abort, and structured results
 ├── tools/define-tool.ts        # defineTool() → ToolDescriptor (strict RawToolResult + explicit outputPolicy)
 ├── tools/registry.ts           # admission/blocked handling and exactly-once Raw → Finalized finalization
 ├── tools/builtins/             # Base, delegation/resume, memory, Session Goal, and worktree tools
@@ -149,6 +150,7 @@ packages/protocol/src/
 ├── index.ts                    # Barrel export
 ├── types.ts                    # SSE, session, todo, reminder, HITL, Automation types
 ├── automation.ts               # Cross-layer Automation limits
+├── compression.ts              # Structured compression summary snapshot + renderer
 ├── guards.ts                   # Cross-layer StreamEvent/terminal-child guards
 └── reduce.ts                   # Stream event reduction logic
 
@@ -201,7 +203,7 @@ Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resum
 └── skills/**                        # project Skills
 ```
 - Agent mutation tools hard-deny `.archcode/runtime/**`, mutations of ancestors that would affect that runtime tree, and `.git/**` (reads remain allowed). Direct mutations under `plans/` and `skills/` stay outside runtime and are not denied by that guard.
-- System services still persist under `runtime/` via their own writers (not agent mutation tools). Hard-cut: no dual-path reads of pre-runtime project paths.
+- System services persist under `runtime/` via their own writers (not agent mutation tools).
 
 **SSE + Deferred pattern:**
 - Session streaming lives in `apps/server/src/routes/events.ts`; clients connect to `/api/projects/:slug/sessions/:sessionId/events`.
@@ -220,14 +222,14 @@ partitionToolCalls → global permissions
 
 Every descriptor declares an explicit `outputPolicy`. Registry is the sole Raw-to-Finalized conversion boundary: blocked requests produce no settled result, while settled and synthetic results are finalized exactly once. `ToolOutputFinalizer` owns redaction of output/details and streaming capture redacts before artifact persistence; model, Session/SSE/UI, audit, and logger consume only finalized data. Large one-shot output is recovered through authorized, bounded `output_read` and `output_search` pages rather than a full-output escape hatch.
 
-**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, timeout}`. Strict Zod. Removed per-Agent config is rejected. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
+**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, timeout}`. Strict Zod. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 
 **Model configuration** (`~/.archcode/config.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
 - All configured models use the same Prompt contracts. Provider and model differences stay in API call options rather than branching Prompt behavior.
 - `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `timeout`, and `providerOptions`.
 - `provider.<id>.models.<modelId>.variants.<variantName>` defines named option variants for the same model. A Profile or Session override may reference one; the variant name is consumed during resolution and never passed to the AI SDK call.
-- `profiles.principal`, `profiles.deep`, and `profiles.fast` are all required. Unknown or removed per-Agent keys fail strict validation.
+- `profiles.principal`, `profiles.deep`, and `profiles.fast` are all required, and unknown configuration keys fail strict validation.
 - Profile-default merge order is shallow: model `options` → selected `variants[variant]` → Profile `options`. A root Lead Session override resolves independently and never inherits principal Profile options.
 - `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
 - Unknown model ids, unknown variant names, and missing Profile config all fail fast with actionable errors.
@@ -354,7 +356,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | Web | web_fetch✅ | — |
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
 | Delegation / Skills | delegate❌, resume_session❌, background_output✅, wait_for_reminder✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` accepts only strict `{ agent_type, profile, title, objective, skills, background }`; `resume_session` accepts only `{ session_id, instruction, background }`; delegated roles return ordinary final assistant text. Only Lead has family cancel. |
-| Tool output recovery | output_read✅, output_search✅ | All agents may retrieve only authorized, bounded artifact pages or search results; `view_tool_output` is removed. |
+| Tool output recovery | output_read✅, output_search✅ | All agents may retrieve only authorized, bounded artifact pages or search results. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
 | Goal / Automation creation | create_goal❌, get_goal✅, update_goal❌, automation_create❌ | A non-Discussion root Lead may call strict `create_goal({ objective })` only from an exact fresh persistent user request or the current resumed ask_user authorization. `update_goal` records a genuine blocker or completes only after validating a fresh direct deep Analyst with `goal-review`; no Review workflow state is stored. User controls edit, pause, resume, clear, and budget through the Session API/UI. |
 

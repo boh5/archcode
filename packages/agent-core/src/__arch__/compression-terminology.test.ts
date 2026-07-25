@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, normalize, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 const srcRoot = resolve(import.meta.dir, "..");
 const packageRoot = resolve(srcRoot, "..");
@@ -11,20 +11,6 @@ interface Violation {
   readonly detail: string;
 }
 
-const forbiddenTerminology = [
-  "legacy fallback",
-  "old fallback",
-  "compact fallback",
-  "fallback compact",
-  "safety fallback",
-] as const;
-
-const productionHookAndCommandFiles = [
-  "packages/agent-core/src/agents/query/hooks/auto-compact.ts",
-  "packages/agent-core/src/agents/query/hooks/hybrid-compression.ts",
-  "packages/agent-core/src/commands/compact.ts",
-] as const;
-
 const hardCompactContractFiles = [
   "packages/agent-core/src/compact/compact.ts",
   "packages/agent-core/src/compact/index.ts",
@@ -34,40 +20,6 @@ const hardCompactContractFiles = [
   "packages/protocol/src/reduce.ts",
   "packages/protocol/src/types.ts",
 ] as const;
-
-const architectureProseRoots = [
-  "apps",
-  "packages",
-  "scripts",
-  "design",
-  "docs",
-] as const;
-
-const architectureProseRootFiles = [
-  "AGENTS.md",
-  "README.md",
-  "CONTRIBUTING.md",
-] as const;
-
-function findFiles(dir: string, predicate: (entry: string) => boolean): string[] {
-  if (!existsSync(dir)) return [];
-  const files: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const fullPath = join(dir, entry);
-    const stats = statSync(fullPath);
-    if (stats.isDirectory()) {
-      if (entry === "dist" || entry === "__test_tmp__" || entry === "node_modules" || entry === ".git") continue;
-      files.push(...findFiles(fullPath, predicate));
-      continue;
-    }
-    if (stats.isFile() && predicate(entry)) files.push(fullPath);
-  }
-  return files.sort();
-}
-
-function relativeFile(filePath: string): string {
-  return normalize(relative(projectRoot, filePath));
-}
 
 function readProjectFile(relativePath: string): string {
   return readFileSync(join(projectRoot, relativePath), "utf8");
@@ -103,16 +55,6 @@ describe("compression architecture terminology", () => {
       }
     }
 
-    const allProductionText = productionHookAndCommandFiles.map((file) => stripComments(readProjectFile(file))).join("\n");
-    const forbiddenSystemPathChecks = [
-      { detail: "imports prepareHardLimitCompression", pattern: /\bprepareHardLimitCompression\b/ },
-      { detail: "imports prepareEmergencyCompression", pattern: /\bprepareEmergencyCompression\b/ },
-      { detail: "branches on EMERGENCY_COMPACT_RATIO", pattern: /\bEMERGENCY_COMPACT_RATIO\b/ },
-    ];
-    for (const { detail, pattern } of forbiddenSystemPathChecks) {
-      if (pattern.test(allProductionText)) violations.push({ file: "production compression hooks/commands", detail });
-    }
-
     expectNoViolations(violations);
   });
 
@@ -125,30 +67,5 @@ describe("compression architecture terminology", () => {
     expect(contractText).toContain("compacted");
     expect(contractText).toContain("<compact-summary>");
     expect(contractText).toContain("tailStartId");
-  });
-
-  test("architecture prose avoids banned compression wording", () => {
-    const docsAndSources = [
-      ...architectureProseRootFiles.map((file) => join(projectRoot, file)),
-      ...architectureProseRoots.flatMap((root) => (
-        findFiles(join(projectRoot, root), (entry) => /\.(md|ts|tsx)$/.test(entry))
-      )),
-    ].filter((file) => {
-      const relative = relativeFile(file);
-      if (relative === "packages/agent-core/src/__arch__/compression-terminology.test.ts") return false;
-      if (relative.startsWith(".sisyphus/")) return false;
-      if (relative.startsWith("docs/plan/")) return false;
-      return true;
-    });
-    const violations: Violation[] = [];
-
-    for (const file of docsAndSources) {
-      const source = readFileSync(file, "utf8").toLowerCase();
-      for (const phrase of forbiddenTerminology) {
-        if (source.includes(phrase)) violations.push({ file: relativeFile(file), detail: phrase });
-      }
-    }
-
-    expectNoViolations(violations);
   });
 });

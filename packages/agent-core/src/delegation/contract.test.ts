@@ -14,18 +14,23 @@ function request(overrides: Record<string, unknown> = {}): Record<string, unknow
 }
 
 describe("DelegationRequestSchema", () => {
-  test("accepts only the six-field hard-cut contract", () => {
+  test("accepts only the six required fields", () => {
     expect(DelegationRequestSchema.safeParse(request()).success).toBe(true);
-    expect(() => DelegationRequestSchema.parse(request({ owned_scope: [] }))).toThrow();
-    expect(() => DelegationRequestSchema.parse(request({ write_scope: [] }))).toThrow();
+    expect(() => DelegationRequestSchema.parse(request({ unexpectedField: true }))).toThrow();
     expect(() => DelegationRequestSchema.parse(request({ profile: undefined }))).toThrow();
     expect(() => DelegationRequestSchema.parse(request({ skills: undefined }))).toThrow();
   });
 
-  test("rejects removed and non-runnable Agent identities", () => {
-    for (const agent_type of ["lead", "engineer", "plan", "reviewer", "shaper", "visual"]) {
-      expect(() => DelegationRequestSchema.parse(request({ agent_type }))).toThrow();
+  test("accepts exactly the runnable child Agent identities", () => {
+    for (const [agent_type, profile] of [
+      ["analyst", "deep"],
+      ["build", "deep"],
+      ["explore", "fast"],
+      ["librarian", "fast"],
+    ] as const) {
+      expect(DelegationRequestSchema.parse(request({ agent_type, profile })).agent_type).toBe(agent_type);
     }
+    expect(() => DelegationRequestSchema.parse(request({ agent_type: "unknown" }))).toThrow();
   });
 
   test("enforces the target Profile matrix before child creation", () => {

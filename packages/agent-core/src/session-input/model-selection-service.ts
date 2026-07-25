@@ -52,7 +52,7 @@ type DurableModelSelectionIdentity = Pick<
 /**
  * Returns the durable override only for a root Lead. Child model identity comes
  * exclusively from its delegated Profile, so any mutable selection state is a
- * corrupt identity rather than a fallback candidate.
+ * corrupt identity.
  */
 export function resolveDurableSessionModelOverride(
   state: DurableModelSelectionIdentity,

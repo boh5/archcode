@@ -147,13 +147,13 @@ describe("compressTool", () => {
     expect(store.getState().events.at(-1)?.payload.type).toBe("compression.block_failed");
   });
 
-  test("rejects the removed summary version field", async () => {
+  test("rejects unknown summary fields", async () => {
     const registry = registryFixture.registry;
 
     const result = await registry.execute({
       toolCallId: "compress-call-version",
       toolName: TOOL_COMPRESS,
-      input: { startId: "m0001", endId: "m0004", summary: { ...summary(), version: 1 } },
+      input: { startId: "m0001", endId: "m0004", summary: { ...summary(), unexpectedField: true } },
     }, makeCtx(makeStore()));
 
     expect(expectSettledResult(result).isError).toBe(true);

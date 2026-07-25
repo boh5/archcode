@@ -65,10 +65,9 @@ describe("tool error formatter", () => {
     expect(utf8ByteLength(error.message ?? "")).toBeLessThanOrEqual(TOOL_ERROR_MESSAGE_MAX_BYTES);
   });
 
-  test("uses the transport limit hint without exposing a retired input knob", () => {
+  test("uses the transport safety limit hint", () => {
     const formatted = formatToolError({ kind: "webfetch-size-exceeded" });
     expect(formatted.hint).toContain("5 MiB transport safety limit");
-    expect(formatted.hint).not.toContain("maxLength");
   });
 
   test("normalizes unstructured failures and preserves structured failures", () => {

@@ -39,7 +39,7 @@ const modelRuntime = {
 const activeGoal: SessionGoalView = {
   instanceId: "goal-1",
   generation: 2,
-  objective: "Finish the Composer hard cut",
+  objective: "Complete the current work",
   status: "active",
   usage: {
     executionCount: 3,

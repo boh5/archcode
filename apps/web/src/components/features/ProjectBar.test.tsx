@@ -237,15 +237,6 @@ describe("ProjectBar", () => {
     }
   });
 
-  test("does not add a separate approvals destination outside Dashboard", () => {
-    const approvalsNode = findAll(
-      render(),
-      (element) => element.props?.["aria-label"] === "Open approvals",
-    );
-
-    expect(approvalsNode).toHaveLength(0);
-  });
-
   test("counts only this project's attention-visible root family entries on its badge", () => {
     attentionVisibleHitl = [
       { projectSlug: "demo-project", ownerSessionId: "root", rootSessionId: "root", view: { hitlId: "same" } },

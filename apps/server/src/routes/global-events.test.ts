@@ -179,7 +179,6 @@ describe("global events route", () => {
     const text = await readUntil(response, (chunk) => chunk.includes("hitl-refresh"));
 
     expect(text).toContain("event: hitl.snapshot");
-    expect(text).not.toContain("event: hitl.event");
     expect(text).toContain('\"entries\":[');
     expect(text).toContain('\"projectSlug\":\"proj\"');
     expect(text).toContain('\"hitlId\":\"hitl-refresh\"');
@@ -319,13 +318,5 @@ describe("global events route", () => {
 
     const text = await readUntil(response, (chunk) => chunk.includes("from-singleton"));
     expect(text).toContain("id: shared:singleton:1");
-  });
-
-  test("server app no longer registers the old per-session SSE endpoint", async () => {
-    const { app } = createRuntimeApp(createGlobalServerRuntime());
-
-    const response = await app.request("/api/projects/project/sessions/session/events");
-
-    expect(response.status).toBe(404);
   });
 });

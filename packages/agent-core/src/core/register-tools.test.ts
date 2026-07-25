@@ -28,7 +28,7 @@ function createRegisteredFixture(): TestToolRegistryFixture {
   return fixture;
 }
 
-describe("registerBuiltinTools hard-cut wiring", () => {
+describe("registerBuiltinTools wiring", () => {
   test("every registered descriptor declares one explicit output policy", () => {
     const fixture = createRegisteredFixture();
     expect(fixture.registry.getAll().length).toBeGreaterThan(createBuiltinToolDescriptors().length);

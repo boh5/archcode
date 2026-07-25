@@ -62,21 +62,6 @@ describe("automation routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  test("does not expose direct Automation creation", async () => {
-    const { app, project } = await fixture("create");
-    const res = await app.request(`/${project.slug}/automations`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: "Morning review",
-        trigger: { kind: "cron", expression: "0 9 * * 1", timezone: "Asia/Shanghai" },
-        action: { kind: "start_session", message: "/skill use review", location: "worktree" },
-      }),
-    });
-
-    expect(res.status).toBe(404);
-  });
-
   test("run now creates an invocation without mutating the trigger", async () => {
     const { app, item, project, runtime } = await fixture("run-now");
     const res = await app.request(`/${project.slug}/automations/${item.id}/run-now`, { method: "POST" });

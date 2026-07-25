@@ -82,13 +82,6 @@ describe("SkillService", () => {
     expect(listed.map((entry) => entry.name)).not.toContain("goal-review");
   });
 
-  test("the removed goal-create name has no builtin reservation", async () => {
-    await writeSkill(projectSkillsRoot, "goal-create", skillMarkdown("goal-create", "project override"));
-    const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
-
-    expect((await service.readForAgent(projectRoot, "goal-create"))?.source).toBe("project");
-  });
-
   test("falls back to statically bundled builtin manifest", async () => {
     const service = new SkillService({ userSkillsRoot });
     const skill = await service.readForAgent(projectRoot, "codemap");

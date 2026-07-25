@@ -199,18 +199,22 @@ describe("fileEditTool", () => {
     );
   });
 
-  test("rejects the removed flat edit input", async () => {
-    await writeWorkspaceFile("flat-input.txt", "before\n");
-    const ctx = await makeReadCtx("flat-input.txt");
+  test("rejects unknown edit input fields without modifying the file", async () => {
+    await writeWorkspaceFile("invalid-input.txt", "before\n");
+    const ctx = await makeReadCtx("invalid-input.txt");
 
     const result = await executeThroughRegistry(
-      { path: "flat-input.txt", oldString: "before", newString: "after" },
+      {
+        path: "invalid-input.txt",
+        edits: [{ oldString: "before", newString: "after" }],
+        unexpectedField: true,
+      },
       ctx,
     );
 
     expect(resultIsError(result)).toBe(true);
-    expect(resultText(result)).toContain("Invalid input");
-    expect(await Bun.file(join(testDir, "flat-input.txt")).text()).toBe("before\n");
+    expect(resultText(result)).toContain("TOOL_SCHEMA_INVALID_INPUT");
+    expect(await Bun.file(join(testDir, "invalid-input.txt")).text()).toBe("before\n");
   });
 
   test("prepareInput normalizes smart punctuation in oldString", async () => {

@@ -31,8 +31,8 @@ describe("compression summary schema", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("summary rejects the removed version field", () => {
-    expect(validateCompressionSummary({ ...validSummary(), version: 1 }).ok).toBe(false);
+  test("summary rejects unknown fields", () => {
+    expect(validateCompressionSummary({ ...validSummary(), unexpectedField: true }).ok).toBe(false);
   });
 
   test("summary requires child placeholders exactly once", () => {

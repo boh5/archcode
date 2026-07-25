@@ -12,7 +12,7 @@ import {
 } from "./workbench-layout";
 
 describe("workbench layout", () => {
-  test("uses only the current unversioned browser storage key", () => {
+  test("uses the workbench browser storage key", () => {
     expect(WORKBENCH_PREFERENCES_KEY).toBe("archcode.workbench.layout");
   });
 
@@ -35,7 +35,7 @@ describe("workbench layout", () => {
     expect(getInspectorKind("/")).toBeNull();
     expect(getInspectorKind("/projects/archcode")).toBeNull();
     expect(getInspectorKind("/projects/archcode/sessions/session-1")).toBe("session");
-    expect(getInspectorKind("/projects/archcode/goals/goal-1")).toBeNull();
+    expect(getInspectorKind("/projects/archcode/automations/automation-1")).toBeNull();
   });
 
   test("keeps inspector detail selection from closing mobile workbench surfaces", () => {

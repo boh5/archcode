@@ -75,7 +75,7 @@ async function render(onToggleInspector = () => {}): Promise<void> {
 }
 
 describe("ChatHeader", () => {
-  test("shows the title, current state, compact usage, and linked source without legacy metadata", async () => {
+  test("shows the title, current state, compact usage, and linked source", async () => {
     getWebSessionStore("session", "demo").setState({
       title: "Refine Bash policy",
       cwd: "/workspace/.archcode/worktrees/build",

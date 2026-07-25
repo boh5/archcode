@@ -7,7 +7,6 @@ import { z } from "zod";
 import type { McpServerStatus } from "@archcode/protocol";
 import type { ResolvedMcpConfig } from "./config/mcp";
 import type {
-  McpDiscoveryResult,
   McpManager,
   McpWarning,
 } from "./mcp/index";
@@ -140,10 +139,6 @@ function makeMockMcpManager(options: MockMcpManagerOptions = {}): {
   });
 
   const manager = {
-    discover: mock(async (): Promise<McpDiscoveryResult> => ({
-      descriptors: options.descriptors ?? [],
-      warnings: options.warnings ?? [],
-    })),
     closeAll: mock(async () => []),
     getStatus: mock((): Map<string, McpServerStatus> => new Map(serverStatuses)),
     onStatusChange: mock(
@@ -277,7 +272,7 @@ describe("createRuntime MCP background loading", () => {
     expect(statuses.get("docs")).toEqual({ state: "pending" });
   });
 
-  test("createRuntime calls startBackgroundDiscovery (not discover)", async () => {
+  test("createRuntime starts background discovery", async () => {
     const configService = await writeConfig(makeConfig({ servers: {} }));
     const { manager } = makeMockMcpManager();
 
@@ -287,8 +282,6 @@ describe("createRuntime MCP background loading", () => {
     });
 
     expect((manager as unknown as { startBackgroundDiscovery: { mock: { calls: unknown[] } } }).startBackgroundDiscovery.mock.calls).toHaveLength(1);
-    expect((manager as unknown as { discover: { mock: { calls: unknown[] } } }).discover.mock.calls).toHaveLength(0);
-    // sanity: runtime still returned
     expect(runtime.toolRegistry).toBeDefined();
   });
 

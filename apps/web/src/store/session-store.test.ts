@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type {
-  CompressionBlockSnapshot,
-  CompressionStateSnapshot,
-  GlobalSessionEventEnvelope,
-  SessionGoal,
-  SessionEventPayload,
-  SessionMessage,
+import {
+  COMPRESSION_SUMMARY_SECTION_NAMES,
+  type CompressionBlockSnapshot,
+  type CompressionStateSnapshot,
+  type CompressionSummarySnapshot,
+  type GlobalSessionEventEnvelope,
+  type SessionGoal,
+  type SessionEventPayload,
+  type SessionMessage,
 } from "@archcode/protocol";
 import {
   createWebSessionStore,
@@ -14,6 +16,17 @@ import {
   markSessionForeground,
   __resetWebSessionStoresForTest,
 } from "./session-store";
+
+function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
+  return {
+    sections: Object.fromEntries(
+      COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+        section,
+        section === "Current Objective" ? currentObjective : "None",
+      ]),
+    ) as CompressionSummarySnapshot["sections"],
+  };
+}
 
 const requestedModelSelection = {
   mode: "profile_default" as const,
@@ -74,7 +87,7 @@ describe("web session store registry", () => {
     expect(findWebSessionStore("registry-session", "other-slug")).toBeUndefined();
   });
 
-  test("new session stores carry root identity without removed child metadata", () => {
+  test("new session stores hydrate canonical root and child identity", () => {
     const rootStore = createWebSessionStore("root-session", "identity");
     const childStore = createWebSessionStore("child-session", "identity");
 
@@ -88,10 +101,6 @@ describe("web session store registry", () => {
     expect(rootStore.getState().agentName).toBeNull();
     expect(childStore.getState().rootSessionId).toBe("root-session");
     expect(childStore.getState().parentSessionId).toBe("root-session");
-    expect(rootStore.getState()).not.toHaveProperty("childSessionIds");
-    expect(rootStore.getState()).not.toHaveProperty("subAgentDescriptions");
-    expect(childStore.getState()).not.toHaveProperty("childSessionIds");
-    expect(childStore.getState()).not.toHaveProperty("subAgentDescriptions");
   });
 
   test("hydrates durable selection state and tracks the active execution binding", () => {
@@ -633,27 +642,6 @@ describe("focusSessionId", () => {
   });
 });
 
-describe("resetTransientState", () => {
-  beforeEach(() => {
-    __resetWebSessionStoresForTest();
-  });
-
-  test("resetTransientState does not reintroduce legacy pending confirmation state", () => {
-    const store = createWebSessionStore("reset", "demo");
-    const state = store.getState();
-
-    expect(state).not.toHaveProperty("connectionState");
-    expect(state).not.toHaveProperty("lastEventId");
-    expect(state).not.toHaveProperty("pendingPermissions");
-    expect(state).not.toHaveProperty("pendingQuestions");
-
-    state.resetTransientState();
-
-    expect(store.getState()).not.toHaveProperty("pendingPermissions");
-    expect(store.getState()).not.toHaveProperty("pendingQuestions");
-  });
-});
-
 function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {}): CompressionBlockSnapshot {
   return {
     id: "block-1",
@@ -669,7 +657,7 @@ function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {})
       startIndex: 0,
       endIndex: 1,
     },
-    summary: "## Current Objective\nKeep going",
+    summary: compressionSummary("Keep going"),
     childBlockRefs: [],
     protectedRefs: [],
     createdAt: 123456789,

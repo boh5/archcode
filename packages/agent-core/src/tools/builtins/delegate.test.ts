@@ -61,10 +61,7 @@ describe("delegate request", () => {
     expect(DelegateInputSchema.safeParse(request()).success).toBe(true);
     expect(DelegateInputSchema.safeParse(request({ agent_type: "build", profile: "deep" })).success).toBe(true);
     expect(DelegateInputSchema.safeParse(request({ agent_type: "build", profile: "fast" })).success).toBe(true);
-    expect(DelegateInputSchema.safeParse({ ...request(), owned_scope: [] }).success).toBe(false);
-    for (const field of ["non_goals", "acceptance_criteria", "evidence", "verification", "depends_on", "persona", "description", "task", "context", "session_id"]) {
-      expect(DelegateInputSchema.safeParse({ ...request(), [field]: [] }).success).toBe(false);
-    }
+    expect(DelegateInputSchema.safeParse({ ...request(), unexpectedField: true }).success).toBe(false);
     expect(DelegateInputSchema.safeParse({ ...request(), background: undefined }).success).toBe(false);
   });
 

@@ -83,8 +83,8 @@ describe("ProjectApprovalManager", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  test("removed permissions file version fails closed instead of resetting authority", async () => {
-    writePermissionsFixture(JSON.stringify({ version: 1, approvals: [] }));
+  test("unknown permissions fields fail closed instead of resetting authority", async () => {
+    writePermissionsFixture(JSON.stringify({ approvals: [], unexpectedField: true }));
     const manager = makeManager();
 
     await expect(manager.load(WORKSPACE)).rejects.toMatchObject({
@@ -131,7 +131,6 @@ describe("ProjectApprovalManager", () => {
 
     const raw = readFileSync(PERMISSIONS_PATH, "utf8");
     expect(raw.endsWith("\n")).toBe(true);
-    expect(raw).not.toContain('"version"');
     expect(raw).toContain('    {\n      "id"');
     expect(PermissionApprovalFileSchema.parse(JSON.parse(raw)).approvals[0]).toEqual(approval);
 

@@ -88,8 +88,6 @@ describe("PromptContractCompiler", () => {
 
     expect(result.prompt).toContain("Goal: none");
     expect(result.prompt).not.toContain("## Session Goal");
-    expect(result.prompt).not.toContain("Goal Lead");
-    expect(result.prompt).not.toContain("goal_manage");
     expect(result.trace.sections.map(({ name }) => name)).toEqual([
       "Shared Kernel",
       "Runtime Envelope",
@@ -118,7 +116,6 @@ describe("PromptContractCompiler", () => {
     expect(result.prompt).not.toContain("fresh direct deep Analyst");
     expect(result.prompt).not.toContain("goal-review");
     expect(result.prompt).not.toContain("Do not self-review");
-    expect(result.prompt).not.toContain("goal_manage");
     expect(result.trace.sections.filter(({ name }) => name === "Session Goal")).toHaveLength(1);
   });
 
@@ -146,7 +143,6 @@ describe("PromptContractCompiler", () => {
     expect(result.prompt).toContain("Completion authority: delegated-scope");
     expect(result.prompt).not.toContain("VERDICT: APPROVED");
     expect(result.prompt).not.toContain("VERDICT: CHANGES_REQUESTED");
-    expect(result.prompt).not.toContain("submit_child_result");
     expect(result.prompt).not.toContain("## Session Goal");
   });
 
@@ -168,8 +164,6 @@ describe("PromptContractCompiler", () => {
     expect(result.prompt).toContain("Delegation title: Implement parser");
     expect(result.prompt).toContain("Delegation objective: Implement the parser and verify the change.");
     expect(result.prompt).toContain("Background: true");
-    expect(result.prompt).not.toContain("contract hash");
-    expect(result.prompt).not.toContain("Acceptance criteria:");
   });
 
   test("compiles every formal Agent in a legal mode", async () => {

@@ -12,6 +12,5 @@ describe("DialogContent", () => {
     expect(content.props.className).toContain("bg-bg-overlay");
     expect(content.props.className).toContain("data-[state=open]:animate-overlay-enter");
     expect(content.props.className).toContain("data-[state=closed]:animate-overlay-exit");
-    expect(content.props.className).not.toContain("zoom-");
   });
 });

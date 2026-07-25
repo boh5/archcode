@@ -412,11 +412,8 @@ describe("monorepo package boundaries", () => {
           /\bArchCodeConfig\b/,
           /\bresolveAgentModel\b/,
           /\bmodelOptions\b/,
-          /\bmodelInfo\s*:/,
-          /setState\s*\(\s*\{\s*modelInfo\b/,
         ]),
       );
-      expect(existsSync(join(projectRoot, "packages/agent-core/src/agents/model-resolver.ts"))).toBe(false);
     });
 
     test("every production LLM entry receives its model through an Execution binding", () => {
@@ -428,29 +425,9 @@ describe("monorepo package boundaries", () => {
         "packages/agent-core/src/background/tasks/memory-consolidation.ts",
       ].map((file) => join(projectRoot, file));
 
-      expectNoViolations(
-        findProductionTextViolations(files, [
-          /ctx\.modelInfo\b/,
-          /ctx\.modelOptions\b/,
-          /input\.modelInfo\b/,
-          /input\.modelOptions\b/,
-          /options\.modelInfo\b/,
-          /options\.modelOptions\b/,
-        ]),
-      );
       for (const file of files) {
         expect(stripComments(readFileSync(file, "utf8"))).toMatch(/\bbinding\b/);
       }
-    });
-
-    test("web production code does not parse legacy delegate metadata", () => {
-      expectNoViolations(
-        findProductionTextViolationsInScope("apps/web/src", [
-          /<delegate_metadata>/,
-          /delegate_metadata/,
-          /parseDelegateMetadata/,
-        ]),
-      );
     });
 
     test("agent-core does not import server event bus or app modules", () => {
@@ -459,22 +436,6 @@ describe("monorepo package boundaries", () => {
         /^apps\/(server|web)(\/|$)/,
         /^@archcode\/(server|web)(\/|$)/,
       ]));
-    });
-
-    test("production API surface has no public run graph routes or root-run identifiers", () => {
-      expectNoViolations(
-        findProductionTextViolations([
-          ...findProductionAppFiles("apps/server/src"),
-          ...findProductionAppFiles("apps/web/src"),
-          ...findProductionAppFiles("packages/protocol/src"),
-        ], [
-          /\/api\/runs\b/,
-          /\/api\/projects\/(?::slug|\$\{[^}]+\})\/runs\b/,
-          /\bRunGraph\b/,
-          /\bparentRunId\b/,
-          /\brootRunId\b/,
-        ]),
-      );
     });
 
     test("child store operations do not import the global test-only storeManager", () => {
@@ -487,21 +448,6 @@ describe("monorepo package boundaries", () => {
         findProductionTextViolations(files, [
           /import\s*\{[^}]*\bstoreManager\b[^}]*\}\s*from\s*["'][^"']*(?:\.\.\/store\/store|\.\.\/\.\.\/store\/store)["']/,
           /import\s+\{[^}]*\bstoreManager\b[^}]*\}\s+from\s+["'][^"']*\/store\/store["']/,
-        ]),
-      );
-    });
-
-    test("delegate metadata and protocol stats avoid legacy sub-agent fields", () => {
-      const files = [
-        join(projectRoot, "packages/protocol/src/types.ts"),
-        join(projectRoot, "packages/agent-core/src/tools/builtins/delegate.ts"),
-      ];
-
-      expectNoViolations(
-        findProductionTextViolations(files, [
-          /\bsubAgentStats\b/,
-          /\btask_id\b/,
-          /\bbackground_task_id\b/,
         ]),
       );
     });

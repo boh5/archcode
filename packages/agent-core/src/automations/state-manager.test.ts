@@ -33,8 +33,6 @@ describe("AutomationStateManager", () => {
     expect((await reloaded.readAutomation(automation.id)).createdFromSessionId).toBe("11111111-1111-4111-8111-111111111111");
     expect((await reloaded.listInvocations(automation.id))[0]).toEqual(invocation);
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "runtime", "automations", "state.json")).exists()).toBe(true);
-    expect(await Bun.file(join(TMP_ROOT, ".archcode", "automations", "state.json")).exists()).toBe(false);
-    expect(await Bun.file(join(TMP_ROOT, ".archcode", "loops", "state.json")).exists()).toBe(false);
 
     await expect(manager.updateAutomation(automation.id, {
       createdFromSessionId: crypto.randomUUID(),

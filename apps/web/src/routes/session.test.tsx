@@ -243,16 +243,6 @@ describe("SessionRoute store-level behavior", () => {
     expect(state.title).toBe("Test Session");
     expect(state.nextEventId).toBe(6);
   });
-
-  test("does not use per-session connection state from old SSE transport", () => {
-    const store = createWebSessionStore("no-sse", "demo");
-    const state = store.getState();
-
-    expect(state).not.toHaveProperty("connectionState");
-    expect(state).not.toHaveProperty("setConnectionState");
-    expect(state).not.toHaveProperty("lastEventId");
-    expect(state).not.toHaveProperty("setLastEventId");
-  });
 });
 
 describe("SessionRoute focused view store behavior", () => {

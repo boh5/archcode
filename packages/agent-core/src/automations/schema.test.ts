@@ -32,7 +32,7 @@ describe("automation schemas", () => {
     expect(AutomationCreateSchema.safeParse({ ...valid, trigger: { kind: "interval", everyMs: MIN_AUTOMATION_INTERVAL_MS - 1 } }).success).toBe(false);
     expect(AutomationUpdateSchema.safeParse({}).success).toBe(false);
     expect(AutomationUpdateSchema.safeParse({ name: "renamed" }).success).toBe(true);
-    expect(AutomationUpdateSchema.safeParse({ name: "renamed", legacy: true }).success).toBe(false);
+    expect(AutomationUpdateSchema.safeParse({ name: "renamed", unexpectedField: true }).success).toBe(false);
   });
 
   test("rejects invalid cron syntax and IANA timezones at the schema boundary", () => {
@@ -54,10 +54,13 @@ describe("automation schemas", () => {
       nextFireAt: "2026-07-13T00:00:30.000Z",
     };
     expect(AutomationSchema.safeParse(automation).success).toBe(true);
-    expect(AutomationSchema.safeParse({ ...automation, loopId: "legacy" }).success).toBe(false);
-    const { createdFromSessionId: _, ...legacy } = automation;
-    expect(AutomationSchema.safeParse(legacy).success).toBe(false);
-    expect(AutomationStateFileSchema.safeParse({ version: 1, automations: [automation], invocations: [] }).success).toBe(false);
-    expect(AutomationStateFileSchema.safeParse({ version: 2, automations: [automation], invocations: [], loops: [] }).success).toBe(false);
+    expect(AutomationSchema.safeParse({ ...automation, unexpectedField: true }).success).toBe(false);
+    const { createdFromSessionId: _, ...missingOwner } = automation;
+    expect(AutomationSchema.safeParse(missingOwner).success).toBe(false);
+    expect(AutomationStateFileSchema.safeParse({
+      automations: [automation],
+      invocations: [],
+      unexpectedField: true,
+    }).success).toBe(false);
   });
 });

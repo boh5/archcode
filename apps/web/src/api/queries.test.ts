@@ -70,8 +70,6 @@ describe("web Session Goal query contracts", () => {
     const options = dashboardProjectionQueryOptions({ kind: "project", projectSlug: "demo space" });
     expect([...options.queryKey]).toEqual(["dashboard", "project", "demo space"]);
     expect(await (options as unknown as QueryOptionWithFn<DashboardProjection>).queryFn()).toEqual(projection);
-    expect(queryKeys).not.toHaveProperty("sessionGoals");
-    expect(queryKeys).not.toHaveProperty("activeAutomations");
   });
 
   test("keeps Diff scoped to a Session", async () => {

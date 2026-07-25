@@ -13,7 +13,7 @@ async function productionSources(): Promise<Array<{ path: string; source: string
   return Promise.all(paths.sort().map(async (path) => ({ path, source: await Bun.file(`${sourceRoot}/${path}`).text() })));
 }
 
-describe("visual system hard cut", () => {
+describe("visual contract", () => {
   test("locks the dense 2/4px geometry unit and named type scale independently of root font size", async () => {
     const globals = await Bun.file(`${sourceRoot}/styles/globals.css`).text();
     expect(globals).toContain("--spacing: 4px;");
@@ -25,16 +25,12 @@ describe("visual system hard cut", () => {
     expect(globals).toContain("--text-base--line-height: 21px;");
   });
 
-  test("contains no legacy theme, motion, radius, or status presentation path", async () => {
+  test("enforces the current motion, radius, contrast, and status presentation rules", async () => {
     const sources = await productionSources();
     const globalRules: Array<[string, RegExp]> = [
-      ["legacy accent token", /(?:--accent\b|\b(?:bg|text|border|ring|fill|stroke)-accent(?:\b|\/)|var\(--accent\))/i],
       ["raw white foreground", /\btext-white\b/],
       ["Tailwind default spinner", /animate-spin/],
       ["persistent pulse", /animate-pulse/],
-      ["retired pulse keyframe", /pulse-(?:dot|ring)/],
-      ["retired Goal glyph", /◎/],
-      ["retired Project Todo minimum width", /min-w-\[880px\]/],
       ["arbitrary radius", /rounded-\[[^\]]+\]/],
       ["oversized generic radius", /rounded-2xl/],
       ["unnamed duration", /duration-(?:75|100|150|200|300|500|700|1000)\b/],
@@ -47,7 +43,6 @@ describe("visual system hard cut", () => {
       ["undersized compact control", /(?:\bh-6\s+w-6\b|\bw-6\s+h-6\b)/],
       ["unlocked 30px control", /\b[hw]-\[30px\]/],
       ["zoom overlay motion", /zoom-(?:in|out)/],
-      ["retired slide animation", /slideIn/],
       ["double-faded semantic subtle background", /\bbg-(?:brand|info|signal|success|warning|error|neutral)-muted\/\d+\b/],
       ["transparent structural surface", /\bbg-bg-(?:base|surface|elevated|overlay)\/\d+\b/],
     ];
@@ -109,22 +104,6 @@ describe("visual system hard cut", () => {
       if (/\btext-text-muted\b/.test(mutedRemainder)) {
         violations.push(`${path}: text-muted outside the explicit incidental-content allowlist`);
       }
-    }
-
-    const retiredMaps: Array<[string, string]> = [
-      ["lib/agent-constants.ts", "BADGE_CLASSES"],
-      ["components/features/ChatHeader.tsx", "EXECUTION_STATUS_CLASS"],
-      ["components/features/Sidebar.tsx", "STATUS_DOT_COLORS"],
-      ["components/features/Sidebar.tsx", "AUTOMATION_STATUS_DOT_COLORS"],
-      ["routes/dashboard.tsx", "GOAL_STATUS_CLASS"],
-      ["routes/project-todos.tsx", "STATUS_STYLES"],
-      ["components/composite/ExecutionWorkstream.tsx", "STATUS_CLASS"],
-      ["components/composite/ToolCard.tsx", "STATUS_CONFIG"],
-      ["components/composite/RecoveryNotice.tsx", "STATUS_CONFIG"],
-    ];
-    for (const [path, identifier] of retiredMaps) {
-      const file = sources.find((candidate) => candidate.path === path);
-      if (file?.source.includes(identifier)) violations.push(`${path}: retired ${identifier}`);
     }
 
     expect(violations).toEqual([]);

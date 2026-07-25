@@ -7,6 +7,7 @@ import type {
   StreamEvent,
   ToolChildSessionLinkStatus,
 } from "./types";
+import { COMPRESSION_SUMMARY_SECTION_NAMES } from "./compression";
 import type { SessionGoalChangedEvent } from "./session-goal";
 
 const TERMINAL_CHILD_SESSION_STATUSES = new Set<ToolChildSessionLinkStatus>([
@@ -656,6 +657,18 @@ function isCompressionTokenEstimate(value: unknown): boolean {
     && isFiniteNumber(estimate.savedTokens) && isFiniteNumber(estimate.estimatedAt);
 }
 
+function isCompressionSummary(value: unknown): boolean {
+  const summary = record(value);
+  return summary !== undefined
+    && exact(summary, ["sections"])
+    && (() => {
+      const sections = record(summary.sections);
+      return sections !== undefined
+        && exact(sections, COMPRESSION_SUMMARY_SECTION_NAMES)
+        && COMPRESSION_SUMMARY_SECTION_NAMES.every((section) => isString(sections[section]));
+    })();
+}
+
 function isCompressionBlock(value: unknown): boolean {
   const block = record(value);
   return block !== undefined
@@ -668,7 +681,7 @@ function isCompressionBlock(value: unknown): boolean {
     && oneOf(block.status, ["active", "inactive", "superseded"])
     && block.strategy === "dynamic-range"
     && oneOf(block.trigger, ["model_tool_call", "soft_nudge_response", "strong_nudge_response"])
-    && isCompressionRange(block.range) && isString(block.summary)
+    && isCompressionRange(block.range) && isCompressionSummary(block.summary)
     && arrayOf(block.childBlockRefs, isBlockRef)
     && arrayOf(block.protectedRefs, (item) => isMessageRef(item) || isBlockRef(item))
     && (block.tokenEstimate === undefined || isCompressionTokenEstimate(block.tokenEstimate))

@@ -98,7 +98,7 @@ function createManager(
 
 const IDENTITY_SKILL_NAME = "identity-skill";
 const IDENTITY_SKILL_BODY = "Canonical child identity instructions.";
-const identityEngineerDefinition = {
+const identityLeadDefinition = {
   ...leadAgentDefinition,
   roleContract: {
     ...leadAgentDefinition.roleContract,
@@ -126,7 +126,7 @@ const identityExploreDefinition = {
   tools: {
     tools: ["file_read", "identity_probe"],
   },
-  hooks: identityEngineerDefinition.hooks,
+  hooks: identityLeadDefinition.hooks,
   includeMemoryInPrompt: false,
   skills: [IDENTITY_SKILL_NAME],
 } as const satisfies AgentDefinition;
@@ -179,7 +179,7 @@ function createIdentityManager(
   });
 
   return new SessionAgentManager({
-    definitions: [identityEngineerDefinition, identityExploreDefinition],
+    definitions: [identityLeadDefinition, identityExploreDefinition],
     toolRegistry,
     skillService,
     storeManager,
@@ -216,7 +216,7 @@ describe("SessionAgentManager", () => {
     await rm(workspaceRoot, { recursive: true, force: true });
   });
 
-  test("cold schema-invalid Session fails closed instead of washing persisted identity", async () => {
+  test("cold schema-invalid Session fails closed", async () => {
     const workspaceRoot = join(import.meta.dir, "__test_tmp__", `invalid-session-${crypto.randomUUID()}`);
     const sessionId = crypto.randomUUID();
     const storeManager = new SessionStoreManager({ logger: silentLogger });

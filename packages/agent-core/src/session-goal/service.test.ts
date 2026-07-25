@@ -36,7 +36,7 @@ function usage(totalTokens: number) {
 }
 
 describe("SessionGoalSchema", () => {
-  test("accepts exactly the compact Goal contract and rejects every removed state family", () => {
+  test("accepts exactly the current Goal contract", () => {
     const goal = {
       instanceId: crypto.randomUUID(),
       generation: 1,
@@ -62,21 +62,7 @@ describe("SessionGoalSchema", () => {
       "usage",
     ]);
 
-    const removedFields = [
-      "evaluatorCount",
-      "lastEvaluator",
-      "noProgressCount",
-      "blockerCandidate",
-      "failureCount",
-      "nextRetryAt",
-      "userInputCursor",
-      "sourceMutationEpoch",
-      "review",
-      "lastReviewReceipt",
-    ];
-    for (const field of removedFields) {
-      expect(SessionGoalSchema.safeParse({ ...goal, [field]: 0 }).success).toBe(false);
-    }
+    expect(SessionGoalSchema.safeParse({ ...goal, unexpectedField: true }).success).toBe(false);
   });
 
   test("enforces terminal and visible status metadata invariants", () => {

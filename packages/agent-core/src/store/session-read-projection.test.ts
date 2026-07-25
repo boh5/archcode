@@ -137,8 +137,8 @@ describe("projectSessionCompression", () => {
 
     const projection = projectSessionCompression(state);
 
-    expect(projection.blocksByRef.b1?.summary).toContain("## Current Objective\nEarlier intent");
-    expect(projection.blocksByRef.b2?.summary).toContain("## Current Objective\nLater intent");
+    expect(projection.blocksByRef.b1?.summary.sections["Current Objective"]).toBe("Earlier intent");
+    expect(projection.blocksByRef.b2?.summary.sections["Current Objective"]).toBe("Later intent");
     expect(projection.activeBlockRefs).toEqual(["b2", "b1"]);
   });
 });

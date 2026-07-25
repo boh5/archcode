@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { HITL_RECENT_TERMINAL_LIMIT, hitlIdentityKey } from "./types";
 import { createEmptySessionStats } from "./usage";
+import {
+  COMPRESSION_SUMMARY_SECTION_NAMES,
+  type CompressionSummarySnapshot,
+} from "./compression";
 import type {
   CompressionBlockCommittedEvent,
   CompressionBlockPart,
@@ -33,6 +37,17 @@ import type {
   FinalizedToolResult,
   ServerConfigUpdate,
 } from "./types";
+
+function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
+  return {
+    sections: Object.fromEntries(
+      COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+        section,
+        section === "Current Objective" ? currentObjective : "None",
+      ]),
+    ) as CompressionSummarySnapshot["sections"],
+  };
+}
 
 function serializeRoundTrip<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -108,7 +123,7 @@ describe("current tool and config wire types", () => {
     expect(serializeRoundTrip(config)).toEqual(config);
   });
 
-  test("represents model settings without Prompt behavior capability metadata", () => {
+  test("represents model settings", () => {
     const config = {
       provider: {
         local: {
@@ -332,7 +347,7 @@ describe("compression protocol types", () => {
         startIndex: 0,
         endIndex: 1,
       },
-      summary: "summary",
+      summary: compressionSummary("summary"),
       childBlockRefs: [],
       protectedRefs: ["m0002"],
       tokenEstimate: { originalTokens: 100, summaryTokens: 20, savedTokens: 80, estimatedAt: 1 },

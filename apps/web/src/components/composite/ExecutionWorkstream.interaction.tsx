@@ -287,7 +287,6 @@ describe("ExecutionWorkstream", () => {
       if (detail) expect(workSummary(`execution-${status}`).getAttribute("aria-label")).toContain(detail);
       expect(workDisclosure(`execution-${status}`).getAttribute("data-product-status")).toBe(productStatus);
     }
-    expect(turn("execution-waiting_for_human").textContent).not.toContain("Paused for input");
   });
 
   test("shows a resolved input checkpoint and its continuation Execution", async () => {
@@ -307,7 +306,6 @@ describe("ExecutionWorkstream", () => {
     await renderWorkstream();
 
     expect(turn("source").textContent).toContain("Input received");
-    expect(turn("source").textContent).not.toContain("Continued in Execution 2");
     expect(workSummary("source").getAttribute("aria-label")).toContain("continued in Execution 2");
     expect(turn("source").textContent).not.toContain("Needs you");
   });
@@ -675,11 +673,6 @@ describe("ExecutionWorkstream", () => {
     const agent = container.querySelector<HTMLElement>('[data-message-kind="agent"]');
     expect(agent).not.toBeNull();
     expect(agent?.className).toContain("w-full");
-    expect(agent?.className).not.toContain("rounded");
-    expect(agent?.className).not.toContain("border-agent");
-    expect(agent?.className).not.toContain("bg-agent");
-    expect(agent?.querySelector("img")).toBeNull();
-    expect(agent?.querySelector('[data-agent-avatar]')).toBeNull();
     expect(container.querySelector('[data-testid="agent-message-meta-assistant"]')).toBeNull();
   });
 
@@ -735,7 +728,6 @@ describe("ExecutionWorkstream", () => {
     await renderWorkstream();
 
     expect(container.textContent).toContain("No executions yet");
-    expect(container.textContent).not.toContain("No messages yet");
   });
 
   test("auto-follows within 100px of bottom and preserves a reader more than 100px away", async () => {

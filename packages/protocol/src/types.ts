@@ -1,4 +1,5 @@
 import type { DelegationRequest } from "./delegation";
+import type { CompressionSummarySnapshot } from "./compression";
 import type { SessionGoal, SessionGoalChangedEvent } from "./session-goal";
 import type {
   ExecutionModelBindingSummary,
@@ -434,7 +435,7 @@ export interface CompressionBlockSnapshot {
   strategy: CompressionStrategy;
   trigger: CompressionTrigger;
   range: CompressionRangeSnapshot;
-  summary: string;
+  summary: CompressionSummarySnapshot;
   childBlockRefs: CompressionBlockRef[];
   protectedRefs: Array<CompressionMessageRef | CompressionBlockRef>;
   tokenEstimate?: CompressionTokenEstimateSnapshot;
@@ -1122,7 +1123,6 @@ export interface SessionSummary {
   sessionId: string;
   /** Current execution directory. */
   cwd: string;
-  // Tree relationships derive from child session files, not childSessionIds/subAgentDescriptions caches.
   rootSessionId: string;
   parentSessionId?: string;
   delegationRequest?: DelegationRequest;

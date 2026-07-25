@@ -77,22 +77,22 @@ function collectLatestTailRefs(
 function collectTodoRefs(
   protectedRefs: ProtectedRef[],
   state: Pick<SessionStoreState, "todos">,
-  fallbackRef: MessageRef,
+  anchorRef: MessageRef,
 ): void {
   const activeTodos = state.todos.filter((todo) => todo.status === "pending" || todo.status === "in_progress");
   if (activeTodos.length > 0) {
-    protectedRefs.push(protectedRef(fallbackRef, "todo", `Active todos are pending: ${activeTodos.map((todo) => todo.id).join(", ")}`));
+    protectedRefs.push(protectedRef(anchorRef, "todo", `Active todos are pending: ${activeTodos.map((todo) => todo.id).join(", ")}`));
   }
 }
 
 function collectReminderRefs(
   protectedRefs: ProtectedRef[],
   state: Pick<SessionStoreState, "reminders">,
-  fallbackRef: MessageRef,
+  anchorRef: MessageRef,
 ): void {
   const unconsumed = state.reminders.filter((reminder) => reminder.consumedAt === null);
   if (unconsumed.length > 0) {
-    protectedRefs.push(protectedRef(fallbackRef, "reminder", `Unconsumed reminders are pending: ${unconsumed.map((r) => r.id).join(", ")}`));
+    protectedRefs.push(protectedRef(anchorRef, "reminder", `Unconsumed reminders are pending: ${unconsumed.map((r) => r.id).join(", ")}`));
   }
 }
 

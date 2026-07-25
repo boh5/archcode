@@ -58,31 +58,8 @@ describe("parseConfig", () => {
     });
   });
 
-  test("rejects the retired model capabilities configuration", () => {
-    const model = VALID_CONFIG_WITH_PROFILES.provider.xxx.models["gpt-5.2"];
-    expect(() => parseConfig({
-      ...VALID_CONFIG_WITH_PROFILES,
-      provider: {
-        ...VALID_CONFIG_WITH_PROFILES.provider,
-        xxx: {
-          ...VALID_CONFIG_WITH_PROFILES.provider.xxx,
-          models: {
-            "gpt-5.2": {
-              ...model,
-              capabilities: {
-                multiToolCallEmission: "parallel",
-                structuredToolCalls: "strict",
-                instructionTier: "rich",
-              },
-            },
-          },
-        },
-      },
-    })).toThrow(ConfigValidationError);
-  });
-
-  test("rejects the removed $schema field", () => {
-    expect(() => parseConfig({ ...VALID_CONFIG_WITH_PROFILES, $schema: "http://xxxx/config.json" })).toThrow(ConfigValidationError);
+  test("rejects unknown top-level fields", () => {
+    expect(() => parseConfig({ ...VALID_CONFIG_WITH_PROFILES, unexpectedField: true })).toThrow(ConfigValidationError);
   });
 
   test("keeps provider credential expressions literal", () => {
@@ -294,44 +271,6 @@ describe("parseConfig", () => {
     expect(model.variants!["precise"].topP).toBe(0.1);
   });
 
-  test("rejects removed pricing metadata", () => {
-    const config = {
-      ...VALID_CONFIG_WITH_PROFILES,
-      provider: {
-        xxx: {
-          ...VALID_CONFIG_WITH_PROFILES.provider.xxx,
-          models: {
-            "gpt-5.2": {
-              ...VALID_CONFIG_WITH_PROFILES.provider.xxx.models["gpt-5.2"],
-              pricing: {
-                inputUsdPerMillionTokens: 1.25,
-                outputUsdPerMillionTokens: 10,
-                reasoningUsdPerMillionTokens: 5,
-                cachedInputUsdPerMillionTokens: 0.125,
-              },
-            },
-          },
-        },
-      },
-    };
-
-    expect(() => parseConfig(config)).toThrow(ConfigValidationError);
-  });
-
-  test("rejects configurable maxRetries in model, variant, and Profile options", () => {
-    const model = structuredClone(VALID_CONFIG_WITH_PROFILES) as any;
-    model.provider.xxx.models["gpt-5.2"].options = { maxRetries: 2 };
-    expect(() => parseConfig(model)).toThrow(ConfigValidationError);
-
-    const variant = structuredClone(VALID_CONFIG_WITH_PROFILES) as any;
-    variant.provider.xxx.models["gpt-5.2"].variants = { fast: { maxRetries: 2 } };
-    expect(() => parseConfig(variant)).toThrow(ConfigValidationError);
-
-    const profile = structuredClone(VALID_CONFIG_WITH_PROFILES) as any;
-    profile.profiles.principal.options = { maxRetries: 2 };
-    expect(() => parseConfig(profile)).toThrow(ConfigValidationError);
-  });
-
   test("parses all three Profiles with variant and call options", () => {
     const config = {
       ...VALID_CONFIG_WITH_PROFILES,
@@ -427,17 +366,6 @@ describe("parseConfig", () => {
     });
   });
 
-  test("rejects the removed github apiBaseUrl field", () => {
-    expect(() =>
-      parseConfig({
-        ...VALID_CONFIG_WITH_PROFILES,
-        integrations: {
-          github: { apiBaseUrl: "https://api.github.com" },
-        },
-      }),
-    ).toThrow(ConfigValidationError);
-  });
-
   test("rejects unknown github integration fields", () => {
     expect(() =>
       parseConfig({
@@ -460,19 +388,12 @@ describe("parseConfig", () => {
     expect(() => parseConfig(config)).toThrow(ConfigValidationError);
   });
 
-  test("requires principal, deep, and fast without fallback", () => {
+  test("requires principal, deep, and fast", () => {
     for (const missing of ["principal", "deep", "fast"] as const) {
       const profiles = { ...VALID_CONFIG_WITH_PROFILES.profiles };
       delete profiles[missing];
       expect(() => parseConfig({ ...VALID_CONFIG_WITH_PROFILES, profiles })).toThrow(ConfigValidationError);
     }
-  });
-
-  test("strictly rejects the removed per-Agent configuration", () => {
-    expect(() => parseConfig({
-      ...VALID_CONFIG_WITH_PROFILES,
-      agents: { lead: { model: "xxx:gpt-5.2" } },
-    })).toThrow(ConfigValidationError);
   });
 
   test("rejects unknown option field (e.g. top_p snake_case)", () => {

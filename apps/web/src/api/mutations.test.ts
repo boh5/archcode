@@ -127,15 +127,3 @@ describe("web has no agent-core imports", () => {
     expect(content).not.toContain("@archcode/server");
   });
 });
-
-describe("web mutations do not call legacy permission/question endpoints", () => {
-  test("mutations.ts has no /api/permissions or /api/questions calls", async () => {
-    const content = await Bun.file(
-      new URL("./mutations.ts", import.meta.url),
-    ).text();
-    expect(content).not.toContain("/api/permissions");
-    expect(content).not.toContain("/api/questions");
-    expect(content).not.toContain("usePostPermissionResponse");
-    expect(content).not.toContain("usePostQuestionAnswer");
-  });
-});

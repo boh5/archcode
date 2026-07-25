@@ -1,10 +1,32 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { CompressionBlockPart, CompressionBlockSnapshot, CompactionPart, ToolChildSessionLink, RecoveryNoticePart, SessionMessage, TextPart, ReasoningPart } from "@archcode/protocol";
+import {
+  COMPRESSION_SUMMARY_SECTION_NAMES,
+  type CompressionBlockPart,
+  type CompressionBlockSnapshot,
+  type CompressionSummarySnapshot,
+  type CompactionPart,
+  type ToolChildSessionLink,
+  type RecoveryNoticePart,
+  type SessionMessage,
+  type TextPart,
+  type ReasoningPart,
+} from "@archcode/protocol";
 import { MsgUser, PartRenderer } from "./ExecutionWorkstream";
 import { CompressionBlock } from "./CompressionBlock";
 import type { CompressionOriginalRangeSuccess } from "../../api/compression";
 
 const Fragment = Symbol.for("react.fragment");
+
+function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
+  return {
+    sections: Object.fromEntries(
+      COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
+        section,
+        section === "Current Objective" ? currentObjective : "None",
+      ]),
+    ) as CompressionSummarySnapshot["sections"],
+  };
+}
 
 const stateSlots: unknown[] = [];
 let stateSlotIndex = 0;
@@ -270,7 +292,7 @@ describe("CompressionBlock", () => {
         startIndex: 0,
         endIndex: 3,
       },
-      summary: "## Current Objective\nKeep going",
+      summary: compressionSummary("Keep going"),
       childBlockRefs: [],
       protectedRefs: ["m0003", "b0"],
       tokenEstimate: { originalTokens: 10000, summaryTokens: 2000, savedTokens: 8000, estimatedAt: 123456789 },
@@ -303,7 +325,7 @@ describe("CompressionBlock", () => {
         startIndex: 0,
         endIndex: 3,
       },
-      summary: "## Current Objective\nKeep going",
+      summary: compressionSummary("Keep going"),
       childBlockRefs: [],
       protectedRefs: ["m0003"],
       tokenEstimate: { originalTokens: 5000, summaryTokens: 5000, savedTokens: 0, estimatedAt: 123456789 },
@@ -334,7 +356,7 @@ describe("CompressionBlock", () => {
         startIndex: 0,
         endIndex: 3,
       },
-      summary: "## Current Objective\nKeep going",
+      summary: compressionSummary("Keep going"),
       childBlockRefs: [],
       protectedRefs: [],
       createdAt: 123456789,
@@ -552,7 +574,7 @@ describe("CompressionBlock", () => {
                 result: {
                   isError: false,
                   output: {
-                    preview: "first 2000 chars preview…",
+                    preview: "bounded original preview…",
                     completeness: "partial",
                     observed: { bytes: 5000, lines: 100 },
                     canonical: { bytes: 4900, lines: 98 },
@@ -593,7 +615,6 @@ describe("CompressionBlock", () => {
     const text = textContent(el2);
 
     expect(text).toContain("abcdefghijklmnopqrstuv");
-    expect(text).not.toContain("first 2000 chars preview");
   });
 
   test("renders DelegationCard for delegate tool parts in expanded originals", async () => {
@@ -703,7 +724,6 @@ describe("CompressionBlock", () => {
     expect(text).toContain("agent_type");
     expect(text).toContain("explore");
     expect(text).toContain("Completed");
-    expect(text).not.toContain("Task:");
   });
 });
 

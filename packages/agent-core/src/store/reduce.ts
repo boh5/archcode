@@ -11,10 +11,14 @@ import {
   type CompressionBlockSnapshot,
   type CompressionFailureSnapshot,
   type CompressionRefMapSnapshot,
+  type CompressionSummarySnapshot,
   type CompressionStateSnapshot,
   type SessionProjection,
 } from "@archcode/protocol";
-import { COMPRESSION_SUMMARY_SECTION_NAMES, createEmptyCompressionState } from "../compression";
+import {
+  assertValidCompressionSummary,
+  createEmptyCompressionState,
+} from "../compression";
 import type { BlockRef, CompressionBlock, CompressionFailure, CompressionRefMap, CompressionState, CompressionSummary, MessageRef, ProtectedRef } from "../compression";
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
@@ -176,51 +180,16 @@ function compressionBlockFromSnapshot(block: CompressionBlockSnapshot): Compress
   };
 }
 
-function summaryFromSnapshot(summary: string, childBlockRefs: BlockRef[]): CompressionSummary {
-  const parsed = parseRenderedSummarySnapshot(summary);
-  if (parsed !== undefined) return { sections: parsed, childBlockRefs };
-
-  const sections = Object.fromEntries(
-    COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => {
-      if (section === "Current Objective") return [section, summary.length === 0 ? "Not provided" : summary];
-      if (section === "Child Block Refs") return [section, childBlockRefs.length === 0 ? "None" : childBlockRefs.map((ref) => `(${ref})`).join(" ")];
-      return [section, "Not provided by compression snapshot"];
-    }),
-  ) as CompressionSummary["sections"];
-
-  return { sections, childBlockRefs };
-}
-
-function parseRenderedSummarySnapshot(summary: string): CompressionSummary["sections"] | undefined {
-  const headingMatches = [...summary.matchAll(/^## (.+)$/gm)];
-  if (headingMatches.length === 0) return undefined;
-
-  const sectionNames = new Set<string>(COMPRESSION_SUMMARY_SECTION_NAMES);
-  const sectionRanges = new Map<string, { contentStart: number; contentEnd: number }>();
-
-  for (let index = 0; index < headingMatches.length; index += 1) {
-    const match = headingMatches[index]!;
-    const name = match[1];
-    if (name === undefined || !sectionNames.has(name)) return undefined;
-    if (sectionRanges.has(name)) return undefined;
-
-    const contentStart = match.index + match[0].length;
-    const nextMatch = headingMatches[index + 1];
-    const contentEnd = nextMatch?.index ?? summary.length;
-    sectionRanges.set(name, { contentStart, contentEnd });
-  }
-
-  if (sectionRanges.size !== COMPRESSION_SUMMARY_SECTION_NAMES.length) return undefined;
-
-  const sections = Object.fromEntries(
-    COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => {
-      const range = sectionRanges.get(section);
-      if (range === undefined) return [section, ""];
-      return [section, summary.slice(range.contentStart, range.contentEnd).trim()];
-    }),
-  ) as CompressionSummary["sections"];
-
-  return sections;
+function summaryFromSnapshot(
+  summary: CompressionSummarySnapshot,
+  childBlockRefs: BlockRef[],
+): CompressionSummary {
+  const result = {
+    sections: { ...summary.sections },
+    childBlockRefs,
+  };
+  assertValidCompressionSummary(result, childBlockRefs);
+  return result;
 }
 
 function compressionFailureFromSnapshot(failure: CompressionFailureSnapshot): CompressionFailure {

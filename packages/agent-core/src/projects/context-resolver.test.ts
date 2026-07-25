@@ -116,17 +116,14 @@ describe("ProjectContextResolver", () => {
     expect(loadMock).toHaveBeenCalledTimes(2);
   });
 
-  test("default factories expose the hard-cut project services", async () => {
+  test("default factories expose the current project services", async () => {
     const workspace = await makeWorkspace("defaults");
     const context = await createResolver().resolve(workspace);
-    const record = context as unknown as Record<string, unknown>;
     expect(context.hitl).toBeInstanceOf(ProjectHitlQueue);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
     expect(context.todos).toBeInstanceOf(ProjectTodoService);
     expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "runtime", "memory"));
     expect(context.memory.userRoot).toBe(join(homedir(), USER_DATA_DIR_NAME, "memory"));
-    expect(record.goalArtifacts).toBeUndefined();
-    expect(record.workflowState).toBeUndefined();
   });
 
   test("projectInfoFactory supplies registry-backed contexts", async () => {

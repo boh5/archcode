@@ -590,7 +590,7 @@ export class SessionStoreManager {
     const disk = new Map<string, SessionCwdReference>();
     const names = await this.#strictSessionDirectoryNames(workspaceRoot);
     for (const name of names.sort()) {
-      const fallbackPath = join(getSessionsDir(workspaceRoot), name, "session.json");
+      const candidatePath = join(getSessionsDir(workspaceRoot), name, "session.json");
       try {
         assertSafeSessionId(name);
         const parsed = await sessionFileInternals.readSessionFile(name, workspaceRoot);
@@ -605,8 +605,8 @@ export class SessionStoreManager {
       } catch (error) {
         throw new SessionCwdReferenceScanError(
           workspaceRoot,
-          fallbackPath,
-          `Invalid Session file blocks cwd reference migration: ${fallbackPath}`,
+          candidatePath,
+          `Invalid Session file blocks cwd reference migration: ${candidatePath}`,
           error,
         );
       }

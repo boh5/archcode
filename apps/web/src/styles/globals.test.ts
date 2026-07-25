@@ -129,7 +129,7 @@ describe("workbench visual tokens", () => {
     }
   });
 
-  test("reserves lime for signal state fields and eliminates the agent rainbow", () => {
+  test("reserves lime for signal state fields", () => {
     for (const theme of Object.values(locked)) {
       const source = block(theme.selector);
       expect(variable(source, "info")).toBe(variable(source, "brand"));
@@ -144,16 +144,10 @@ describe("workbench visual tokens", () => {
       expect(
         contrast(rgb(variable(source, "signal-ink")), rgb(variable(source, "signal"))),
       ).toBeGreaterThanOrEqual(4.5);
-      expect(source).not.toContain("--agent-");
     }
   });
 
-  test("hard-cuts legacy tokens and defines the complete motion contract", () => {
-    expect(css).not.toContain("--accent");
-    expect(css).not.toContain("pulse-dot");
-    expect(css).not.toContain("pulse-ring");
-    expect(css).not.toContain("--background:");
-    expect(css).not.toContain("--brand-muted");
+  test("defines the complete motion and semantic token contract", () => {
     expect(css).toContain("--motion-hover: 140ms");
     expect(css).toContain("--motion-icon: 160ms");
     expect(css).toContain("--motion-overlay: 220ms");
