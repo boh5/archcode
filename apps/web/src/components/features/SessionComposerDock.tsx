@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { selectSessionFamilyHitl, useAttentionVisibleScopedHitl, useHitlProjectInitialized } from "../../store/hitl-store";
 import { useSessionFamilyActivity } from "../../store/session-runtime-store";
 import { useSessionStore } from "../../store/session-store";
@@ -26,7 +26,24 @@ export function SessionComposerDock({
     [attentionVisibleHitl, sessionId, slug],
   );
   const hasPendingHitl = familyHitl.length > 0;
+  const [activeHitlId, setActiveHitlId] = useState<string | null>(null);
   const focusApplied = useRef<string | null>(null);
+  const activeHitlIndex = Math.max(0, familyHitl.findIndex((entry) => entry.view.hitlId === activeHitlId));
+  const activeHitl = familyHitl[activeHitlIndex];
+
+  useEffect(() => {
+    if (familyHitl.length === 0) {
+      setActiveHitlId(null);
+      return;
+    }
+    if (focusHitlId && familyHitl.some((entry) => entry.view.hitlId === focusHitlId)) {
+      setActiveHitlId(focusHitlId);
+      return;
+    }
+    setActiveHitlId((current) => familyHitl.some((entry) => entry.view.hitlId === current)
+      ? current
+      : familyHitl[0].view.hitlId);
+  }, [familyHitl, focusHitlId]);
 
   useEffect(() => {
     if (!hitlReady || !focusHitlId || focusApplied.current === focusHitlId) return;
@@ -36,27 +53,40 @@ export function SessionComposerDock({
     target.scrollIntoView({ block: "nearest" });
     target.setAttribute("tabindex", "-1");
     target.focus({ preventScroll: true });
-  }, [focusHitlId, hitlReady, familyHitl]);
+  }, [activeHitlId, focusHitlId, hitlReady, familyHitl]);
 
   return (
     <div
-      className="relative z-[4] flex max-h-[min(60dvh,640px)] shrink-0 flex-col overflow-visible border-t border-border-default bg-bg-surface max-[799px]:max-h-[min(70dvh,620px)]"
+      className="relative z-[4] shrink-0 border-t border-border-default bg-bg-surface"
       data-testid="session-composer-dock"
     >
-      <ConversationRail className="flex min-h-0 flex-col pb-3 pt-2" data-testid="conversation-composer-rail">
-        {hasPendingHitl && (
+      <ConversationRail className="flex flex-col pb-2 pt-2" data-testid="conversation-composer-rail">
+        {activeHitl && (
           <div
-            className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pb-2"
+            className="min-w-0 pb-2"
             data-testid="composer-attention-stack"
           >
-            <div className="flex flex-col gap-2" aria-label="Requests needing attention">
-              {familyHitl.map((entry) => <HitlDecisionCard key={`${entry.projectSlug}:${entry.ownerSessionId}:${entry.view.hitlId}`} entry={entry} />)}
+            <div className="min-w-0" aria-label="Requests needing attention">
+              <HitlDecisionCard
+                key={`${activeHitl.projectSlug}:${activeHitl.ownerSessionId}:${activeHitl.view.hitlId}`}
+                entry={activeHitl}
+                requestPosition={activeHitlIndex + 1}
+                requestCount={familyHitl.length}
+                onPreviousRequest={() => {
+                  const previous = familyHitl[activeHitlIndex - 1];
+                  if (previous) setActiveHitlId(previous.view.hitlId);
+                }}
+                onNextRequest={() => {
+                  const next = familyHitl[activeHitlIndex + 1];
+                  if (next) setActiveHitlId(next.view.hitlId);
+                }}
+              />
             </div>
           </div>
         )}
         <SessionGoalSummaryRow slug={slug} sessionId={sessionId} goal={goal} />
         <ComposerQueueList slug={slug} sessionId={sessionId} />
-        <div className="shrink-0 pt-2" data-testid="composer-input-slot">
+        <div className="shrink-0 pt-1.5" data-testid="composer-input-slot">
           <ChatInput
             slug={slug}
             sessionId={sessionId}

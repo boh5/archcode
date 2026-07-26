@@ -50,6 +50,7 @@ export function ChatInput({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [hitlComposerExpanded, setHitlComposerExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
 
@@ -90,6 +91,10 @@ export function ChatInput({
   useEffect(() => {
     adjustHeight();
   }, [value, adjustHeight]);
+
+  useEffect(() => {
+    if (!hasPendingHitl) setHitlComposerExpanded(false);
+  }, [hasPendingHitl]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -233,6 +238,46 @@ export function ChatInput({
     setSlashFilter("");
   }, []);
 
+  if (hasPendingHitl && !hitlComposerExpanded) {
+    return (
+      <div className="relative" data-testid="conversation-composer">
+        <div
+          className="flex min-h-10 min-w-0 items-center gap-2 rounded-sm border border-border-subtle bg-bg-elevated px-1.5"
+          data-density="collapsed"
+          data-testid="composer-card"
+        >
+          <button
+            type="button"
+            className="flex min-h-9 min-w-0 flex-1 items-center justify-between gap-3 rounded-sm px-2 text-left text-[12px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            data-testid="hitl-queue-composer-trigger"
+            aria-expanded="false"
+            onClick={() => setHitlComposerExpanded(true)}
+          >
+            <span>Queue another instruction…</span>
+            <span className="hidden items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary sm:flex" aria-live="polite">
+              <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
+              {status.label}
+            </span>
+          </button>
+          {isRunning && (
+            <button
+              type="button"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-text-primary text-bg-base transition-colors duration-[var(--motion-hover)] hover:bg-error hover:text-bg-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted"
+              disabled={stopSession.isPending}
+              onClick={() => stopSession.mutate({ slug, rootSessionId: sessionId })}
+              title="Stop"
+              aria-label="Stop session"
+            >
+              {stopSession.isPending
+                ? <Loader2 size={14} className="animate-activity" />
+                : <Square size={11} fill="currentColor" />}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative" data-testid="conversation-composer">
       {showSlashMenu && filteredCommands.length > 0 && canCompose && !isRunning && !hasPendingHitl && (
@@ -300,6 +345,16 @@ export function ChatInput({
               <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
               {status.label}
             </span>
+            {hasPendingHitl && (
+              <button
+                type="button"
+                className="shrink-0 rounded-sm px-1.5 py-1 text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                aria-label="Collapse queued-message composer"
+                onClick={() => setHitlComposerExpanded(false)}
+              >
+                Hide
+              </button>
+            )}
           </div>
 
           <div className="flex shrink-0 items-center gap-2">

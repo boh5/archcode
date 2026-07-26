@@ -671,7 +671,8 @@ describe("SessionRoute focused view store behavior", () => {
       expect(rail?.className).toContain("px-4");
       expect(rail?.className).toContain("sm:px-5");
       expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
-      expect(container.textContent).toContain("Need input");
+      expect(container.textContent).toContain("Continue?");
+      expect(container.textContent).not.toContain("Need input");
       expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
       expect(container.querySelector('input[type="radio"]')).not.toBeNull();
       expect(container.querySelector('input[aria-label="Scope custom answer"]')).not.toBeNull();

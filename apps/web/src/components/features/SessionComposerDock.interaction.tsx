@@ -114,7 +114,7 @@ afterEach(() => {
 });
 
 describe("SessionComposerDock", () => {
-  test("keeps HITL first, then Goal, Queue, and Input with bounded independent scroll surfaces", async () => {
+  test("keeps HITL first at natural height, then Goal, Queue, and collapsed Input", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     store.getState().initializeFromSnapshot({
       rootSessionId: "session-1",
@@ -209,28 +209,29 @@ describe("SessionComposerDock", () => {
     const inputSlot = container.querySelector('[data-testid="composer-input-slot"]');
     const goal = container.querySelector('[data-testid="session-goal-summary-row"]');
     const card = container.querySelector('[data-testid="composer-card"]');
-    const textarea = card?.querySelector("textarea");
-    expect(dock?.className).toContain("max-h-[min(60dvh,640px)]");
-    expect(dock?.className).toContain("max-[799px]:max-h-[min(70dvh,620px)]");
-    expect(dock?.className).toContain("overflow-visible");
-    expect(dock?.className).not.toContain("overflow-hidden");
+    const hitlBody = container.querySelector('[data-testid="hitl-decision-body"]');
+    expect(dock?.className).not.toContain("max-h-[");
+    expect(dock?.className).not.toContain("overflow");
     expect(dock?.classList.contains("border-t")).toBe(true);
     expect(rail?.className).toContain("w-full");
     expect(rail?.className).not.toContain("max-w-[");
     expect(attention).not.toBeNull();
-    expect(attention?.className).toContain("overflow-y-auto");
+    expect(attention?.className).not.toContain("overflow");
+    expect(hitlBody?.className).not.toContain("overflow");
     expect(queue?.className).toContain("max-h-[160px]");
     expect(queue?.className).toContain("max-[799px]:max-h-[116px]");
     expect(queue?.className).toContain("overflow-y-auto");
     expect(inputSlot?.className).toContain("shrink-0");
     expect(goal?.className).toContain("shrink-0");
-    expect(card?.className).toContain("rounded-xl");
-    expect(textarea?.className).toContain("border-0");
+    expect(card?.className).toContain("rounded-sm");
+    expect(card?.getAttribute("data-density")).toBe("collapsed");
+    expect(card?.querySelector("textarea")).toBeNull();
     expect(container.textContent).toContain("Queued request");
     expect(container.textContent).toContain("Retry this exact request");
     expect(container.textContent).toContain("Steering request");
     expect(container.textContent).toContain("Sending this request");
-    expect(container.textContent).toContain("Choose a direction");
+    expect(container.textContent).toContain("Continue?");
+    expect(container.textContent).not.toContain("Choose a direction");
     const ordered = Array.from(rail?.children ?? []);
     expect(ordered.map((element) => element.getAttribute("data-testid"))).toEqual([
       "composer-attention-stack",
@@ -239,15 +240,25 @@ describe("SessionComposerDock", () => {
       "composer-input-slot",
     ]);
     expect(attention?.querySelector('[data-testid="hitl-decision-card"]')).not.toBeNull();
+    expect(attention?.querySelector('[data-testid="hitl-decision-actions"]')).not.toBeNull();
     expect(container.querySelector("progress, [role=progressbar]")).toBeNull();
-    expect(Array.from(container.querySelectorAll("button")).some((button) => /expand composer|collapse composer/i.test(button.getAttribute("aria-label") ?? button.textContent ?? ""))).toBe(false);
+    expect(container.querySelector('[data-testid="hitl-queue-composer-trigger"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="Queue message"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Queue message"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Stop session"]')).not.toBeNull();
     expect(container.textContent).toContain("Steer");
     expect(container.querySelector('button[title="Attach file"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Retry sending message"]')).not.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(0);
+
+    const composerTrigger = container.querySelector('[data-testid="hitl-queue-composer-trigger"]');
+    if (!(composerTrigger instanceof dom.window.HTMLButtonElement)) throw new Error("Missing queued-message composer trigger");
+    await act(async () => composerTrigger.click());
+    const expandedCard = container.querySelector('[data-testid="composer-card"]');
+    expect(expandedCard?.querySelector("textarea")?.className).toContain("border-0");
+    expect(container.querySelector('button[aria-label="Queue message"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Stop session"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Collapse queued-message composer"]')).not.toBeNull();
   });
 
   test("steps through multi-question Ask User and submits only from Confirm", async () => {
@@ -325,8 +336,11 @@ describe("SessionComposerDock", () => {
 
     const attention = container.querySelector('[data-testid="composer-attention-stack"]');
     const tabs = Array.from(container.querySelectorAll('[role="tab"]'));
-    expect(attention?.className).toContain("overflow-x-hidden");
+    expect(attention?.className).not.toContain("overflow");
+    expect(container.querySelector('[data-testid="hitl-decision-body"]')?.className).not.toContain("overflow");
     expect(tabs.map((tab) => tab.textContent?.trim())).toEqual(["Approach", "Areas", "Confirm"]);
+    expect(container.querySelector('[data-testid="hitl-option-list"]')?.className).toContain("flex-col");
+    expect(container.textContent).not.toContain("Choose delivery details");
     expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
     expect(container.textContent).toContain("Which approach?");
     expect(container.textContent).not.toContain("Which areas?");
@@ -388,5 +402,80 @@ describe("SessionComposerDock", () => {
     const alertText = container.querySelector('[role="alert"]')?.textContent;
     expect(alertText).toContain("Request failed with status 409");
     expect(container.querySelector('[data-testid="hitl-decision-card"]')).not.toBeNull();
+  });
+
+  test("shows one active request at a time and navigates the pending request queue", async () => {
+    const store = createWebSessionStore("session-3", "project-1");
+    store.getState().initializeFromSnapshot({
+      rootSessionId: "session-3",
+      eventCursor: -1,
+      agentName: "lead",
+      ...modelState,
+      pendingMessages: [],
+    });
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["project-1"],
+      families: [{
+        projectSlug: "project-1",
+        rootSessionId: "session-3",
+        activity: "idle",
+      }],
+      createdAt: 1,
+    });
+    const makeHitl = (hitlId: string, title: string): HitlView => ({
+      hitlId,
+      owner: { type: "session", id: "session-3" },
+      source: { type: "ask_user", toolCallId: `call-${hitlId}` },
+      status: "pending",
+      displayPayload: {
+        title,
+        questions: [{ header: "Choice", question: `${title}?`, custom: true }],
+        redacted: true,
+      },
+      allowedActions: ["answer", "cancel"],
+      createdAt: "2026-07-16T00:00:00.000Z",
+      updatedAt: "2026-07-16T00:00:00.000Z",
+    });
+    const first = makeHitl("hitl-first", "First request");
+    const second = makeHitl("hitl-second", "Second request");
+    hitlStore.getState().applySnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: ["project-1"],
+      entries: [
+        { projectSlug: "project-1", hitlId: first.hitlId, ownerSessionId: "session-3", rootSessionId: "session-3", view: first },
+        { projectSlug: "project-1", hitlId: second.hitlId, ownerSessionId: "session-3", rootSessionId: "session-3", view: second },
+      ],
+      createdAt: 1,
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } },
+    });
+    client.setQueryData(queryKeys.modelRuntime, modelRuntime);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <SettingsModalProvider><SessionComposerDock slug="project-1" sessionId="session-3" /></SettingsModalProvider>
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.querySelectorAll('[data-testid="hitl-decision-card"]')).toHaveLength(1);
+    expect(container.textContent).toContain("First request");
+    expect(container.textContent).not.toContain("Second request");
+    expect(container.querySelector('[data-testid="hitl-request-navigator"]')?.textContent).toContain("1/2");
+
+    const next = container.querySelector('button[aria-label="Next request"]');
+    if (!(next instanceof dom.window.HTMLButtonElement)) throw new Error("Missing next request control");
+    await act(async () => next.click());
+
+    expect(container.querySelectorAll('[data-testid="hitl-decision-card"]')).toHaveLength(1);
+    expect(container.textContent).toContain("Second request");
+    expect(container.textContent).not.toContain("First request");
+    expect(container.querySelector('[data-testid="hitl-request-navigator"]')?.textContent).toContain("2/2");
+    expect(container.querySelector('button[aria-label="Previous request"]')?.hasAttribute("disabled")).toBe(false);
+    expect(container.querySelector('button[aria-label="Next request"]')?.hasAttribute("disabled")).toBe(true);
   });
 });

@@ -343,7 +343,7 @@ describe("ChatInput runtime controls", () => {
     expect(stopSessionMutate).not.toHaveBeenCalled();
   });
 
-  test("pending HITL keeps ordinary Queue composition enabled", () => {
+  test("pending HITL collapses ordinary Queue composition until requested", () => {
     activity = "idle";
     hitlReady = true;
     let tree = renderChatInput();
@@ -351,12 +351,24 @@ describe("ChatInput runtime controls", () => {
     expect(textarea?.props?.disabled).toBe(false);
 
     pendingHitlCount = 1;
+    hookCursor = 0;
+    tree = renderChatInput();
+    textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    const trigger = findAll(tree, (element) => element.props?.["data-testid"] === "hitl-queue-composer-trigger")[0];
+    expect(textarea).toBeUndefined();
+    expect(trigger).toBeDefined();
+    expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-card")[0]?.props?.["data-density"]).toBe("collapsed");
+    expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(0);
+
+    (trigger?.props?.onClick as () => void)();
+    hookCursor = 0;
     tree = renderChatInput();
     textarea = findAll(tree, (element) => element.type === "textarea")[0];
     expect(textarea?.props?.disabled).toBe(false);
     expect(textarea?.props?.placeholder).toBe("Queue a message…");
-    expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
     expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(1);
+    expect(findAll(tree, (element) => element.props?.["aria-label"] === "Collapse queued-message composer")).toHaveLength(1);
   });
 
   test("idle runtime remains non-composable until the HITL snapshot initializes", () => {
