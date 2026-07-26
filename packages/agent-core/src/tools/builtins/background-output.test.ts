@@ -8,7 +8,12 @@ import { __setSessionsDirForTest } from "../../store/sessions-dir";
 import { createTestProjectContext } from "../test-project-context";
 import type { SessionStoreState, StoredMessage } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
-import { BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
+import {
+  BackgroundOutputInputSchema,
+  executeBackgroundOutput,
+  type BackgroundOutputDeadlineHandle,
+  type BackgroundOutputDeadlineScheduler,
+} from "./background-output";
 import { sourceDraftText } from "./source-page";
 import { testExecutionStart } from "../../testing/test-execution-fixtures";
 
@@ -171,6 +176,67 @@ describe("background_output source pages", () => {
     expect(sourceDraftText(result)).toContain("not a final deliverable");
   });
 
+  test("blocking waits for the child state transition and cancels its deadline", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    store.getState().append(testExecutionStart("running"));
+    const deadline = createManualDeadlineScheduler();
+
+    const pending = executeBackgroundOutput(
+      input(store.getState().sessionId, { block: true, timeout_ms: 60_000 }),
+      ctx,
+      deadline.scheduler,
+    );
+    await deadline.whenScheduled;
+    store.getState().append({ type: "execution-end", status: "completed" });
+
+    const result = await pending;
+    expect(sourceDraftText(result)).toContain("Wait status: stopped");
+    expect(deadline.scheduledDelays).toEqual([60_000]);
+    expect(deadline.cancelled).toHaveLength(1);
+  });
+
+  test("blocking timeout returns a live snapshot when its controlled deadline fires", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    store.getState().append(testExecutionStart("running"));
+    const deadline = createManualDeadlineScheduler();
+
+    const pending = executeBackgroundOutput(
+      input(store.getState().sessionId, { block: true, timeout_ms: 60_000 }),
+      ctx,
+      deadline.scheduler,
+    );
+    await deadline.whenScheduled;
+    deadline.fire();
+
+    const result = await pending;
+    expect(sourceDraftText(result)).toContain("Wait status: timed_out");
+    expect(sourceDraftText(result)).toContain("Snapshot: false (live Session)");
+    expect(deadline.cancelled).toHaveLength(1);
+  });
+
+  test("blocking abort returns immediately without consuming the child state", async () => {
+    const abort = new AbortController();
+    const ctx = { ...context(), abort: abort.signal };
+    const store = child(ctx);
+    store.getState().append(testExecutionStart("running"));
+    const deadline = createManualDeadlineScheduler();
+
+    const pending = executeBackgroundOutput(
+      input(store.getState().sessionId, { block: true, timeout_ms: 60_000 }),
+      ctx,
+      deadline.scheduler,
+    );
+    await deadline.whenScheduled;
+    abort.abort();
+
+    const result = await pending;
+    expect(sourceDraftText(result)).toContain("Wait status: aborted");
+    expect(store.getState().isRunning).toBe(true);
+    expect(deadline.cancelled).toHaveLength(1);
+  });
+
   test("waiting Session output is explicitly non-final even though the execution is not running", async () => {
     const ctx = context();
     const store = child(ctx);
@@ -220,3 +286,42 @@ describe("background_output source pages", () => {
     expect(result.details?.error?.code).toBe("TOOL_INVALID_BACKGROUND_SESSION");
   });
 });
+
+function createManualDeadlineScheduler(): {
+  scheduler: BackgroundOutputDeadlineScheduler;
+  fire: () => void;
+  whenScheduled: Promise<void>;
+  scheduledDelays: number[];
+  cancelled: BackgroundOutputDeadlineHandle[];
+} {
+  let callback: (() => void) | undefined;
+  const scheduledDelays: number[] = [];
+  const cancelled: BackgroundOutputDeadlineHandle[] = [];
+  const handle = { id: Symbol("background-output") };
+  let signalScheduled!: () => void;
+  const whenScheduled = new Promise<void>((resolve) => {
+    signalScheduled = resolve;
+  });
+  return {
+    scheduler: {
+      schedule(delayMs, nextCallback) {
+        scheduledDelays.push(delayMs);
+        callback = nextCallback;
+        signalScheduled();
+        return handle;
+      },
+      cancel(cancelledHandle) {
+        cancelled.push(cancelledHandle);
+      },
+    },
+    fire() {
+      const pending = callback;
+      callback = undefined;
+      if (pending === undefined) throw new Error("No background_output deadline is scheduled");
+      pending();
+    },
+    whenScheduled,
+    scheduledDelays,
+    cancelled,
+  };
+}

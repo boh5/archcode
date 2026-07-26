@@ -13,6 +13,7 @@ export interface GlobalEventsRoutesOptions {
   heartbeatIntervalMs?: number;
   maxQueuedEvents?: number;
   onBeforeWrite?: (event: GlobalSSEEvent) => Promise<void> | void;
+  onAfterWrite?: (event: GlobalSSEEvent) => Promise<void> | void;
   initialEvents?: () => Promise<readonly GlobalSSEEvent[]> | readonly GlobalSSEEvent[];
   streamLease?: (request: Request) => GlobalEventStreamLease | undefined;
 }
@@ -70,6 +71,7 @@ export function createGlobalEventsRoutes(
         await options?.onBeforeWrite?.(event);
         if (closed) return;
         await stream.writeSSE(toSSEMessage(event));
+        await options?.onAfterWrite?.(event);
       };
 
       const flushQueuedEvents = async (): Promise<void> => {

@@ -92,7 +92,7 @@ describe("AutomationDispatcher", () => {
 
     const first = dispatcher.dispatchInvocation(invocation.id);
     const second = dispatcher.dispatchInvocation(invocation.id);
-    await Bun.sleep(0);
+    await Promise.resolve();
     releaseDispatch();
 
     const results = await Promise.all([first, second]);

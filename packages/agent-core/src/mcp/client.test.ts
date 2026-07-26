@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { ResolvedMcpServerConfig } from "../config/mcp";
+import { silentLogger } from "../logger";
 import { REDACTION_MARKER, SecretRedactionPolicy } from "../security";
 import {
   MAX_MCP_TRANSPORT_BYTES,
   McpClient,
   createMcpBoundedFetch,
   type CallToolResultLike,
+  type McpDeadlineHandle,
+  type McpDeadlineScheduler,
   type McpClientFactories,
   type McpSdkClientLike,
   type McpTransportLike,
@@ -69,8 +72,38 @@ function makeFakeFactories(
   };
 }
 
+interface ManualMcpDeadlineScheduler extends McpDeadlineScheduler {
+  readonly cancelCount: () => number;
+  readonly pendingCount: () => number;
+  fireScheduled(): void;
+}
+
+function createManualMcpDeadlineScheduler(): ManualMcpDeadlineScheduler {
+  let nextId = 1;
+  let cancelled = 0;
+  const scheduled = new Map<number, () => void>();
+  return {
+    schedule: (_delayMs, callback) => {
+      const id = nextId++;
+      scheduled.set(id, callback);
+      return { id };
+    },
+    cancel: (handle: McpDeadlineHandle) => {
+      cancelled += 1;
+      if (typeof handle.id === "number") scheduled.delete(handle.id);
+    },
+    cancelCount: () => cancelled,
+    pendingCount: () => scheduled.size,
+    fireScheduled: () => {
+      const callbacks = [...scheduled.values()];
+      scheduled.clear();
+      for (const callback of callbacks) callback();
+    },
+  };
+}
+
 function pendingPromise<T>(): Promise<T> {
-  return new Promise<T>(() => {});
+  return new Promise<T>(() => undefined);
 }
 
 afterEach(() => {
@@ -269,119 +302,69 @@ describe("McpClient.callTool", () => {
   });
 });
 
-// ─── Timeouts And Redaction ─────────────────────────────────────────────────
+// ─── Timeouts ───────────────────────────────────────────────────────────────
 
 describe("McpClient timeouts", () => {
-  test("timeout on connect produces named MCP connection error", async () => {
-    const factories = makeFakeFactories({
-      connect: mock(() => pendingPromise<void>()),
-    });
+  test.each([
+    {
+      operation: "connect",
+      factories: () => makeFakeFactories({ connect: mock(() => pendingPromise<void>()) }),
+      invoke: (client: McpClient) => client.connect(),
+      errorName: "McpConnectionError",
+    },
+    {
+      operation: "tools/list",
+      factories: () => makeFakeFactories({ listTools: mock(() => pendingPromise<{ tools: unknown[] }>()) }),
+      invoke: (client: McpClient) => client.listTools(),
+      errorName: "McpConnectionError",
+    },
+    {
+      operation: "tools/call",
+      factories: () => makeFakeFactories({ callTool: mock(() => pendingPromise<CallToolResultLike>()) }),
+      invoke: (client: McpClient) => client.callTool("read-secret", {}),
+      errorName: "McpToolExecutionError",
+    },
+  ])("maps a manually triggered $operation deadline and cancels its timer", async ({ factories, invoke, errorName }) => {
+    const deadlineScheduler = createManualMcpDeadlineScheduler();
     const client = new McpClient(
       "context7",
-      { ...BASE_CONFIG, timeout: 1 },
+      { ...BASE_CONFIG, timeout: 30_000 },
       TEST_REDACTION_POLICY,
-      factories,
+      factories(),
+      silentLogger,
+      deadlineScheduler,
     );
 
-    await expect(client.connect()).rejects.toThrow(McpConnectionError);
-    await expect(client.connect()).rejects.toHaveProperty(
-      "name",
-      "McpConnectionError",
-    );
+    const operation = invoke(client);
+    expect(deadlineScheduler.pendingCount()).toBe(1);
+    deadlineScheduler.fireScheduled();
+
+    await expect(operation).rejects.toHaveProperty("name", errorName);
+    expect(deadlineScheduler.cancelCount()).toBe(1);
+    expect(deadlineScheduler.pendingCount()).toBe(0);
   });
 
-  test("timeout on listTools produces named MCP connection error", async () => {
-    const factories = makeFakeFactories({
-      listTools: mock(() => pendingPromise<{ tools: unknown[] }>()),
-    });
+  test("cancels the deadline when an operation settles first", async () => {
+    const deadlineScheduler = createManualMcpDeadlineScheduler();
     const client = new McpClient(
       "context7",
-      { ...BASE_CONFIG, timeout: 1 },
+      BASE_CONFIG,
       TEST_REDACTION_POLICY,
-      factories,
+      makeFakeFactories(),
+      silentLogger,
+      deadlineScheduler,
     );
 
-    await expect(client.listTools()).rejects.toThrow(McpConnectionError);
-    await expect(client.listTools()).rejects.toHaveProperty(
-      "name",
-      "McpConnectionError",
-    );
+    await client.listTools();
+
+    expect(deadlineScheduler.cancelCount()).toBe(1);
+    expect(deadlineScheduler.pendingCount()).toBe(0);
   });
+});
 
-  test("timeout on callTool produces named MCP tool execution error", async () => {
-    const factories = makeFakeFactories({
-      callTool: mock(() => pendingPromise<CallToolResultLike>()),
-    });
-    const client = new McpClient(
-      "context7",
-      { ...BASE_CONFIG, timeout: 1 },
-      TEST_REDACTION_POLICY,
-      factories,
-    );
+// ─── Redaction ──────────────────────────────────────────────────────────────
 
-    await expect(client.callTool("read-secret", {})).rejects.toThrow(
-      McpToolExecutionError,
-    );
-    await expect(client.callTool("read-secret", {})).rejects.toHaveProperty(
-      "name",
-      "McpToolExecutionError",
-    );
-  });
-
-  test("timeout helper clears timers without waiting for configured default", async () => {
-    const originalClearTimeout = globalThis.clearTimeout;
-    const clearTimeoutSpy = mock((handle?: Timer | number) =>
-      originalClearTimeout(handle),
-    );
-    globalThis.clearTimeout =
-      clearTimeoutSpy as unknown as typeof globalThis.clearTimeout;
-
-    try {
-      const factories = makeFakeFactories({
-        listTools: mock(async () => ({ tools: [] })),
-      });
-      const client = new McpClient(
-        "context7",
-        { ...BASE_CONFIG, timeout: 30_000 },
-        TEST_REDACTION_POLICY,
-        factories,
-      );
-
-      await client.listTools();
-
-      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      globalThis.clearTimeout = originalClearTimeout;
-    }
-  });
-
-  test("timeout helper clears timers after timeout rejection", async () => {
-    const originalClearTimeout = globalThis.clearTimeout;
-    const clearTimeoutSpy = mock((handle?: Timer | number) =>
-      originalClearTimeout(handle),
-    );
-    globalThis.clearTimeout =
-      clearTimeoutSpy as unknown as typeof globalThis.clearTimeout;
-
-    try {
-      const factories = makeFakeFactories({
-        connect: mock(() => pendingPromise<void>()),
-      });
-      const client = new McpClient(
-        "context7",
-        { ...BASE_CONFIG, timeout: 1 },
-        TEST_REDACTION_POLICY,
-        factories,
-      );
-
-      await expect(client.connect()).rejects.toThrow(McpConnectionError);
-
-      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      globalThis.clearTimeout = originalClearTimeout;
-    }
-  });
-
+describe("McpClient redaction", () => {
   test("headers are redacted from connection errors", async () => {
     const factories = makeFakeFactories({
       connect: mock(async () => {

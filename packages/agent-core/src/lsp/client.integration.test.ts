@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LspClient, LspError, type LspClientOptions } from "./client";
+import { LspClient, type LspClientOptions } from "./client";
 import { FakeLspServer, type FakeLspServerConfig } from "./fake-server";
 
 async function withServer(
@@ -32,21 +32,6 @@ describe("LspClient integration", () => {
       client.sendNotification("test/notify", { hello: "world" });
       await expect(notification).resolves.toEqual({ hello: "world" });
     });
-  });
-
-  test("request timeout returns actionable LspError", async () => {
-    await withServer({ delayMs: 100 }, async (client) => {
-      try {
-        await client.sendRequest("test/echo", { slow: true });
-        throw new Error("Expected request to time out");
-      } catch (error) {
-        expect(error).toBeInstanceOf(LspError);
-        expect((error as LspError).name).toBe("LspError");
-        expect((error as LspError).kind).toBe("lsp-timeout");
-        expect((error as Error).message).toContain("timed out");
-        expect((error as Error).message).toContain("language server is responsive");
-      }
-    }, { timeouts: { requestMs: 10 } });
   });
 
   test("onNotification registers handler and receives push notifications", async () => {

@@ -2,6 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Disposable } from "vscode-jsonrpc";
 import { LspClient, LspError, createLspClient, setLspClientForTest } from "./client";
 import type { LspTransport } from "./transport";
+import type {
+  LspDeadlineHandle,
+  LspDeadlineScheduler,
+} from "./deadline-scheduler";
 
 afterEach(() => {
   setLspClientForTest(undefined);
@@ -97,10 +101,12 @@ describe("LspClient", () => {
         return { uri: "file:///workspace/test.ts" };
       },
     });
+    const deadline = createManualDeadlineScheduler();
     const client = new LspClient({
       transport,
       workspaceRoot: "/workspace",
       timeouts: { contentModifiedBaseDelayMs: 1 },
+      deadlineScheduler: deadline.scheduler,
     });
 
     const result = await client.sendRequest("textDocument/definition", {});
@@ -113,6 +119,7 @@ describe("LspClient", () => {
       "textDocument/definition",
       "textDocument/definition",
     ]);
+    expect(deadline.sleepDelays).toEqual([1, 2, 4]);
   });
 
   test("contentModified final failure throws LspError with lsp-error kind", async () => {
@@ -121,10 +128,12 @@ describe("LspClient", () => {
         throw jsonRpcError(-32801, "Content modified");
       },
     });
+    const deadline = createManualDeadlineScheduler();
     const client = new LspClient({
       transport,
       workspaceRoot: "/workspace",
       timeouts: { contentModifiedBaseDelayMs: 1 },
+      deadlineScheduler: deadline.scheduler,
     });
 
     try {
@@ -138,6 +147,50 @@ describe("LspClient", () => {
       expect((error as Error).message).toContain("document content changed");
     }
     expect(transport.requestCount).toBe(4);
+    expect(deadline.sleepDelays).toEqual([1, 2, 4]);
+  });
+
+  test("request timeout uses a controlled deadline and clears its handle", async () => {
+    const transport = new RecordingTransport({
+      requestHandler: () => new Promise<never>(() => {}),
+    });
+    const deadline = createManualDeadlineScheduler();
+    const client = new LspClient({
+      transport,
+      workspaceRoot: "/workspace",
+      timeouts: { requestMs: 15_000 },
+      deadlineScheduler: deadline.scheduler,
+    });
+
+    const pending = client.sendRequest("textDocument/definition", {});
+    expect(deadline.scheduledDelays).toEqual([15_000]);
+    deadline.fireNext();
+
+    await expect(pending).rejects.toMatchObject({
+      name: "LspError",
+      kind: "lsp-timeout",
+      code: 0,
+    });
+    expect(deadline.cancelled).toHaveLength(1);
+  });
+
+  test("diagnostics timeout uses a controlled deadline and reports the URI wait", async () => {
+    const deadline = createManualDeadlineScheduler();
+    const client = new LspClient({
+      transport: new RecordingTransport(),
+      workspaceRoot: "/workspace",
+      deadlineScheduler: deadline.scheduler,
+    });
+
+    const pending = client.waitForDiagnostics("file:///workspace/test.ts", { timeoutMs: 8_000 });
+    expect(deadline.scheduledDelays).toEqual([8_000]);
+    deadline.fireNext();
+
+    await expect(pending).rejects.toMatchObject({
+      name: "LspError",
+      kind: "lsp-timeout",
+    });
+    expect(deadline.cancelled).toHaveLength(1);
   });
 
   test("setLspClientForTest mock injection works", () => {
@@ -235,4 +288,41 @@ function jsonRpcError(code: number, message: string): Error & { code: number; da
   const error = new Error(message) as Error & { code: number; data?: unknown };
   error.code = code;
   return error;
+}
+
+function createManualDeadlineScheduler(): {
+  scheduler: LspDeadlineScheduler;
+  fireNext: () => void;
+  scheduledDelays: number[];
+  sleepDelays: number[];
+  cancelled: LspDeadlineHandle[];
+} {
+  const callbacks: Array<() => void> = [];
+  const scheduledDelays: number[] = [];
+  const sleepDelays: number[] = [];
+  const cancelled: LspDeadlineHandle[] = [];
+  let nextId = 0;
+  return {
+    scheduler: {
+      schedule(delayMs, callback) {
+        scheduledDelays.push(delayMs);
+        callbacks.push(callback);
+        return { id: nextId++ };
+      },
+      cancel(handle) {
+        cancelled.push(handle);
+      },
+      async sleep(delayMs) {
+        sleepDelays.push(delayMs);
+      },
+    },
+    fireNext() {
+      const callback = callbacks.shift();
+      if (callback === undefined) throw new Error("No LSP deadline is scheduled");
+      callback();
+    },
+    scheduledDelays,
+    sleepDelays,
+    cancelled,
+  };
 }

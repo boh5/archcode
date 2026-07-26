@@ -42,7 +42,12 @@ describe("Lead architecture full-runtime flows", () => {
     const discussion = await context.todos.discussTodo(idea.id, idea.revision);
     const discussionSessionId = discussion.discussionSessionId;
     expect(discussionSessionId).toBeString();
-    await waitForIdle(fixture.runtime, fixture.workspaceRoot, discussionSessionId!);
+    await waitForFamilyIdle(
+      fixture.runtime,
+      fixture.workspaceRoot,
+      fixture.projectSlug,
+      discussionSessionId!,
+    );
 
     const discussionSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId!);
     expect(discussionSession).toMatchObject({
@@ -75,7 +80,12 @@ describe("Lead architecture full-runtime flows", () => {
     const activationSessionId = activated.activation?.sourceSessionId;
     expect(activationSessionId).toBeString();
     expect(activationSessionId).not.toBe(discussionSessionId);
-    await waitForIdle(fixture.runtime, fixture.workspaceRoot, activationSessionId!);
+    await waitForFamilyIdle(
+      fixture.runtime,
+      fixture.workspaceRoot,
+      fixture.projectSlug,
+      activationSessionId!,
+    );
 
     const activationSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, activationSessionId!);
     expect(activationSession).toMatchObject({
@@ -205,6 +215,10 @@ describe("Lead architecture full-runtime flows", () => {
     });
 
     try {
+      const pendingQuestionPromise = nextPendingSessionQuestion(
+        fixture.runtime,
+        root.sessionId,
+      );
       await fixture.runtime.acceptSessionMessage({
         slug: fixture.projectSlug,
         workspaceRoot: fixture.workspaceRoot,
@@ -218,13 +232,8 @@ describe("Lead architecture full-runtime flows", () => {
         },
       });
 
-      const projectContext = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
-      const pendingQuestion = await waitFor(async () => (
-        (await projectContext.hitl.list({ statuses: ["pending"] }))
-          .find((record) => record.owner.type === "session"
-            && record.owner.id === root.sessionId
-            && record.source.type === "ask_user")
-      ));
+      const pendingQuestion = await pendingQuestionPromise;
+      const goalCompleted = nextGoalCompletion(fixture.runtime, root.sessionId);
       await fixture.runtime.respondToHitl({
         slug: fixture.projectSlug,
         workspaceRoot: fixture.workspaceRoot,
@@ -233,11 +242,13 @@ describe("Lead architecture full-runtime flows", () => {
       });
 
       try {
-        await waitForCondition(async () => {
-          const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, root.sessionId);
-          return session.goal?.status === "complete"
-            && fixture.runtime.getSessionFamilyActivity(fixture.workspaceRoot, root.sessionId) === "idle";
-        }, 10_000);
+        await goalCompleted;
+        await waitForFamilyIdle(
+          fixture.runtime,
+          fixture.workspaceRoot,
+          fixture.projectSlug,
+          root.sessionId,
+        );
       } catch (error) {
         const current = await fixture.runtime.getSessionFile(fixture.workspaceRoot, root.sessionId);
         throw new Error(JSON.stringify({
@@ -290,7 +301,7 @@ describe("Lead architecture full-runtime flows", () => {
     } finally {
       unsubscribe();
     }
-  }, 15_000);
+  });
 });
 
 async function runtimeFixture(projectName: string): Promise<{
@@ -387,29 +398,51 @@ function mcpManager(): McpManager {
   } as unknown as McpManager;
 }
 
-async function waitForIdle(runtime: AgentRuntime, workspaceRoot: string, rootSessionId: string): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (runtime.getSessionFamilyActivity(workspaceRoot, rootSessionId) === "idle") return;
-    await Bun.sleep(5);
-  }
-  throw new Error(`Timed out waiting for Session family ${rootSessionId} to become idle`);
+function waitForFamilyIdle(
+  runtime: AgentRuntime,
+  workspaceRoot: string,
+  projectSlug: string,
+  rootSessionId: string,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => {
+      if (event.projectSlug !== projectSlug
+        || event.rootSessionId !== rootSessionId
+        || event.activity !== "idle") return;
+      unsubscribe();
+      resolve();
+    });
+    if (runtime.getSessionFamilyActivity(workspaceRoot, rootSessionId) === "idle") {
+      unsubscribe();
+      resolve();
+    }
+  });
 }
 
-async function waitFor<T>(read: () => Promise<T | undefined>, timeoutMs = 5_000): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = await read();
-    if (value !== undefined) return value;
-    await Bun.sleep(5);
-  }
-  throw new Error("Timed out waiting for full-runtime flow evidence");
+function nextPendingSessionQuestion(
+  runtime: AgentRuntime,
+  sessionId: string,
+): Promise<{ hitlId: string }> {
+  return new Promise((resolve) => {
+    const unsubscribe = runtime.subscribeHitlEvents((event) => {
+      if (event.payload.type !== "hitl.request"
+        || event.view.owner.type !== "session"
+        || event.view.owner.id !== sessionId
+        || event.view.source.type !== "ask_user") return;
+      unsubscribe();
+      resolve({ hitlId: event.view.hitlId });
+    });
+  });
 }
 
-async function waitForCondition(read: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await read()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error("Timed out waiting for full-runtime flow completion");
+function nextGoalCompletion(runtime: AgentRuntime, sessionId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const unsubscribe = runtime.subscribeSessionEvents((event) => {
+      if (event.sessionId !== sessionId
+        || event.payload.type !== "session.goal_changed"
+        || event.payload.status !== "complete") return;
+      unsubscribe();
+      resolve();
+    });
+  });
 }

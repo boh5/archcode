@@ -224,22 +224,45 @@ describe("bashTool", () => {
     expect(result.details?.process?.exitCode).toBe(7);
   });
 
-  test("timeout kills process and returns timeout error", async () => {
-    const exit = deferred<number>();
-    const kill = mock(() => exit.resolve(143));
-    setProcessRunnerForTest(() => ({
-      stdout: stringToStream(""),
-      stderr: stringToStream(""),
-      exited: exit.promise,
-      kill,
-    }) as any);
+  test("maps ProcessRunner timeout results without waiting for a real deadline", async () => {
+    const run = mock(async () => ({
+      kind: "timeout" as const,
+      argv: ["bash", "-c", "pwd"] as const,
+      cwd: testWorkspaceRoot,
+      startedAt: 100,
+      finishedAt: 125,
+      durationMs: 25,
+      timeoutMs: 60_000,
+      exitCode: 143,
+      output: {
+        stdout: "",
+        stderr: "",
+        combined: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        combinedTruncated: false,
+        stdoutBytes: 0,
+        stderrBytes: 0,
+        sinkStatus: "complete" as const,
+      },
+    }));
 
-    const result = await runBashCommand({ description: "Test timeout", command: "pwd", timeoutMs: 1 }, mockCtx(testWorkspaceRoot));
+    const result = await runBashCommand(
+      { description: "Test timeout mapping", command: "pwd", timeoutMs: 60_000 },
+      mockCtx(testWorkspaceRoot),
+      { run },
+    );
 
-    expect(kill).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
     expect(result.details?.error?.code).toBe("TOOL_BASH_TIMEOUT");
     expect(result.isError).toBe(true);
-    expect(result.details?.process?.timedOut).toBe(true);
+    expect(result.details?.process).toEqual({
+      exitCode: 143,
+      signal: null,
+      timedOut: true,
+      aborted: false,
+      durationMs: 25,
+    });
   });
 
   test("AbortSignal kills process and returns abort error", async () => {

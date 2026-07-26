@@ -192,7 +192,7 @@ describe("AutomationScheduler", () => {
       pauseSettled = true;
       return result;
     });
-    await Bun.sleep(0);
+    await Promise.resolve();
     expect(pauseSettled).toBe(false);
 
     releaseDispatch();

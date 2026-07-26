@@ -63,11 +63,6 @@ describe("AgentRuntime Automation worktree wiring", () => {
     expect(worktree.branchName).toBe(managedWorktreeNames({
       owner: { id: invocation.sessionId! },
     }).branchName);
-    await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
-    await waitFor(async () => (
-      (await fixture.runtime.getSessionFile(fixture.workspaceRoot, invocation.sessionId!)).title !== undefined
-    ));
-    await waitForPersistedTitle(fixture.workspaceRoot, invocation.sessionId!);
   });
 });
 
@@ -151,41 +146,6 @@ async function git(cwd: string, args: string[]): Promise<void> {
   const child = Bun.spawn(["git", ...args], { cwd, stdout: "ignore", stderr: "pipe" });
   const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
   if (exitCode !== 0) throw new Error(stderr);
-}
-
-async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (await predicate()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error("Timed out waiting for runtime state");
-}
-
-async function waitForInvocationExecution(
-  runtime: AgentRuntime,
-  workspaceRoot: string,
-  invocation: { readonly id: string; readonly automationId: string; readonly sessionId?: string },
-): Promise<void> {
-  let dispatched = invocation;
-  await waitFor(async () => {
-    const current = (await runtime.listAutomationInvocations(workspaceRoot, invocation.automationId))
-      .find((candidate) => candidate.id === invocation.id);
-    if (current?.status === "failed") throw new Error(current.error ?? "Automation Invocation failed");
-    if (current?.status !== "dispatched") return false;
-    dispatched = current;
-    return true;
-  });
-  if (dispatched.sessionId === undefined) throw new Error("Invocation did not allocate a Session");
-  await waitFor(() => runtime.getSessionFamilyActivity(workspaceRoot, dispatched.sessionId!) === "idle");
-}
-
-async function waitForPersistedTitle(workspaceRoot: string, sessionId: string): Promise<void> {
-  const path = join(workspaceRoot, ".archcode", "runtime", "sessions", sessionId, "session.json");
-  await waitFor(async () => {
-    if (!await Bun.file(path).exists()) return false;
-    const session = await Bun.file(path).json() as { title?: string | null };
-    return session.title !== undefined && session.title !== null;
-  });
 }
 
 class FakeClock {

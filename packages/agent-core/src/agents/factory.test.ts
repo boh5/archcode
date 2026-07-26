@@ -33,7 +33,7 @@ function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
 }
 
 afterAll(async () => {
-  await Bun.sleep(0);
+  await Promise.resolve();
   storeManager.clearAll();
   await Promise.all([...registryFixtures, outputAccessFixture].map((fixture) => fixture.dispose()));
   await testTempRoot.cleanup();

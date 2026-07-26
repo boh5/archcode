@@ -12,7 +12,17 @@ import { inferToolErrorKindFromResult } from "../../errors";
 import { createTestProjectContext } from "../../test-project-context";
 import type { ToolErrorKind } from "../../errors";
 import type { RawToolResult, ToolExecutionContext } from "../../types";
-import { AstGrepReplaceInputSchema, astGrepReplaceTool, buildAstGrepReplaceArgs } from "./replace";
+import {
+  AST_GREP_MAX_MATCHES,
+  AST_GREP_MAX_PATH_BYTES,
+  AST_GREP_MAX_UNIQUE_FILES,
+  AST_GREP_DIFF_CAPTURE_MAX_BYTES,
+  AstGrepDiffCaptureBudget,
+  AstGrepReplacementBudget,
+  AstGrepReplaceInputSchema,
+  astGrepReplaceTool,
+  buildAstGrepReplaceArgs,
+} from "./replace";
 
 function stream(data: string): ReadableStream<Uint8Array> {
   return new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(data)); controller.close(); } });
@@ -516,7 +526,7 @@ describe("ast_grep_replace tool", () => {
     }
   });
 
-  test("apply mode with no actual file changes returns no-change diff metadata", async () => {
+  test("apply mode with no actual file changes omits the empty diff presentation", async () => {
     const workspace = tempWorkspace();
     try {
       const file = join(workspace, "unchanged.ts");
@@ -531,7 +541,7 @@ describe("ast_grep_replace tool", () => {
 
       expect(run).toHaveBeenCalledTimes(3);
       expect(JSON.parse(draftText(result).trim())).toMatchObject({ replacement: "logger.info(message)" });
-      expect(diffPresentation(result)).toEqual({ kind: "diff", files: [] });
+      expect(diffPresentation(result)).toBeUndefined();
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -555,93 +565,92 @@ describe("ast_grep_replace tool", () => {
     }
   });
 
-  test("fails before mutation when preview exceeds the match cap", async () => {
-    const record = replacementJsonFor("target.ts");
-    const run = mock((cmd: readonly [string, ...string[]]) => {
-      expect(cmd).not.toContain("--update-all");
-      return spawnResult(record.repeat(10_001));
+  test("replacement budget enforces production constants with tiny deterministic fixtures", () => {
+    expect({
+      maxMatches: AST_GREP_MAX_MATCHES,
+      maxUniqueFiles: AST_GREP_MAX_UNIQUE_FILES,
+      maxPathBytes: AST_GREP_MAX_PATH_BYTES,
+    }).toEqual({
+      maxMatches: 10_000,
+      maxUniqueFiles: 1_000,
+      maxPathBytes: 4 * 1024 * 1024,
     });
-    setProcessRunnerForTest(run);
 
-    const result = await astGrepReplaceTool.execute(
-      { pattern: "x", rewrite: "y", dryRun: false },
-      ctx(),
-    );
-
-    expect(run).toHaveBeenCalledTimes(1);
-    expectToolError(result, {
-      kind: "ast-grep-error",
-      code: "TOOL_AST_GREP_ERROR",
-      messageIncludes: "exceeds 10000 matches",
+    const matches = new AstGrepReplacementBudget({
+      maxMatches: 2,
+      maxUniqueFiles: 10,
+      maxPathBytes: 100,
     });
+    matches.observe("same.ts");
+    matches.observe("same.ts");
+    expect(() => matches.observe("same.ts")).toThrow("exceeds 2 matches");
+
+    const files = new AstGrepReplacementBudget({
+      maxMatches: 10,
+      maxUniqueFiles: 2,
+      maxPathBytes: 100,
+    });
+    files.observe("a.ts");
+    files.observe("b.ts");
+    expect(() => files.observe("c.ts")).toThrow("exceeds 2 unique files");
+
+    const paths = new AstGrepReplacementBudget({
+      maxMatches: 10,
+      maxUniqueFiles: 10,
+      maxPathBytes: 5,
+    });
+    paths.observe("abc");
+    expect(() => paths.observe("def")).toThrow("paths exceed 5 bytes");
   });
 
-  test("fails before mutation when preview exceeds the unique-file cap", async () => {
-    const output = Array.from({ length: 1_001 }, (_, index) => replacementJsonFor(`file-${index}.ts`)).join("");
-    const run = mock((cmd: readonly [string, ...string[]]) => {
-      expect(cmd).not.toContain("--update-all");
-      return spawnResult(output);
-    });
-    setProcessRunnerForTest(run);
+  test("diff capture admission uses byte and file-count bounds without timing gates", async () => {
+    expect(AST_GREP_DIFF_CAPTURE_MAX_BYTES).toBe(4 * 1024 * 1024);
+    const budget = new AstGrepDiffCaptureBudget(10);
+    expect(budget.canReadBefore(5)).toBe(true);
+    expect(budget.canReadBefore(6)).toBe(false);
+    budget.record(4);
+    expect(budget.canReadAfter(6)).toBe(true);
+    budget.record(6);
+    expect(budget.canReadAfter(1)).toBe(false);
 
-    const result = await astGrepReplaceTool.execute(
-      { pattern: "x", rewrite: "y", dryRun: false },
-      ctx(),
-    );
+    const workspace = tempWorkspace();
+    try {
+      const relativePaths = Array.from({ length: 21 }, (_, index) => `file-${index}.ts`);
+      const snapshots = new Map<string, number>();
+      for (const relativePath of relativePaths) {
+        const absolutePath = join(workspace, relativePath);
+        writeFileSync(absolutePath, "console.log(message)", "utf-8");
+        snapshots.set(realpathSync.native(absolutePath), statSync(absolutePath).mtimeMs);
+      }
+      const records = relativePaths.map(replacementJsonFor).join("");
+      setProcessRunnerForTest(mock((cmd: readonly [string, ...string[]]) => {
+        if (cmd.includes("--update-all")) {
+          for (const relativePath of relativePaths) {
+            writeFileSync(join(workspace, relativePath), "logger.info(message)", "utf-8");
+          }
+        }
+        return spawnResult(records);
+      }));
 
-    expect(run).toHaveBeenCalledTimes(1);
-    expectToolError(result, {
-      kind: "ast-grep-error",
-      code: "TOOL_AST_GREP_ERROR",
-      messageIncludes: "exceeds 1000 unique files",
-    });
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        ctx({
+          cwd: workspace,
+          projectContext: createTestProjectContext(workspace),
+          store: createMockStore({ readSnapshots: snapshots }),
+        }),
+      );
+
+      const presentation = diffPresentation(result);
+      expect(presentation?.files).toHaveLength(20);
+      expect(presentation?.files.map(({ path }) => path)).not.toContain("file-20.ts");
+      expect(presentation?.truncated).toBe(true);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
-  test("fails before mutation when preview exceeds the aggregate path cap", async () => {
-    const output = Array.from({ length: 1_000 }, (_, index) => replacementJsonFor(`${"x".repeat(4_200)}-${index}`)).join("");
-    const run = mock((cmd: readonly [string, ...string[]]) => {
-      expect(cmd).not.toContain("--update-all");
-      return spawnResult(output);
-    });
-    setProcessRunnerForTest(run);
-
-    const result = await astGrepReplaceTool.execute(
-      { pattern: "x", rewrite: "y", dryRun: false },
-      ctx(),
-    );
-
-    expect(run).toHaveBeenCalledTimes(1);
-    expectToolError(result, {
-      kind: "ast-grep-error",
-      code: "TOOL_AST_GREP_ERROR",
-      messageIncludes: "paths exceed 4194304 bytes",
-    });
-  });
-
-  test("fails before mutation when one preview record exceeds 1 MiB", async () => {
-    let mutations = 0;
-    const oversized = `${JSON.stringify({ file: "target.ts", text: "x".repeat(1024 * 1024) })}\n`;
-    const run = mock((cmd: readonly [string, ...string[]]) => {
-      if (cmd.includes("--update-all")) mutations += 1;
-      return spawnResult(oversized);
-    });
-    setProcessRunnerForTest(run);
-
-    const result = await astGrepReplaceTool.execute(
-      { pattern: "x", rewrite: "y", dryRun: false },
-      ctx(),
-    );
-
-    expect(mutations).toBe(0);
-    expect(run).toHaveBeenCalledTimes(1);
-    expectToolError(result, {
-      kind: "ast-grep-error",
-      code: "TOOL_AST_GREP_ERROR",
-      messageIncludes: "record exceeds 1048576 bytes",
-    });
-  });
-
-  test("revalidates match thresholds under the mutation lock before apply", async () => {
+  test("revalidates replacement output under the mutation lock before apply", async () => {
     const workspace = tempWorkspace();
     try {
       const file = join(workspace, "locked.ts");
@@ -652,7 +661,7 @@ describe("ast_grep_replace tool", () => {
       const run = mock((cmd: readonly [string, ...string[]]) => {
         calls += 1;
         if (cmd.includes("--update-all")) mutations += 1;
-        return spawnResult(calls === 1 ? record : record.repeat(10_001));
+        return spawnResult(calls === 1 ? record : "invalid-json");
       });
       setProcessRunnerForTest(run);
 
@@ -666,7 +675,7 @@ describe("ast_grep_replace tool", () => {
       expectToolError(result, {
         kind: "ast-grep-error",
         code: "TOOL_AST_GREP_ERROR",
-        messageIncludes: "exceeds 10000 matches",
+        messageIncludes: "Failed to parse ast-grep JSON stream record",
       });
     } finally {
       rmSync(workspace, { recursive: true, force: true });

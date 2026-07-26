@@ -478,10 +478,7 @@ describe("QueryLoop Tool Output Plane", () => {
       traits: { readOnly: true, destructive: false, concurrencySafe: true },
       outputPolicy: { kind: "inline", previewDirection: "head" },
       execute: async () => {
-        await Promise.race([
-          secondStarted,
-          new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error("not parallel")), 100)),
-        ]);
+        await secondStarted;
         return createTextToolResult("first");
       },
     }));
@@ -524,6 +521,10 @@ describe("QueryLoop Tool Output Plane", () => {
   test("aborts a hung fullStream without waiting for the next chunk", async () => {
     const harness = await createHarness();
     const controller = new AbortController();
+    let signalStreamBlocked!: () => void;
+    const streamBlocked = new Promise<void>((resolve) => {
+      signalStreamBlocked = resolve;
+    });
     harness.options.abort = controller.signal;
     harness.appendUser("run");
 
@@ -535,6 +536,7 @@ describe("QueryLoop Tool Output Plane", () => {
             id: "call-hung",
             toolName: "file_write",
           } as StreamPart;
+          signalStreamBlocked();
           await new Promise<never>(() => undefined);
         })(),
         finishReason: new Promise<string>(() => undefined),
@@ -545,7 +547,7 @@ describe("QueryLoop Tool Output Plane", () => {
     });
 
     const running = runQueryLoop(harness.options);
-    await Bun.sleep(20);
+    await streamBlocked;
     controller.abort(new DOMException("stopped", "AbortError"));
 
     await expect(running).resolves.toMatchObject({ status: "aborted" });
@@ -555,6 +557,10 @@ describe("QueryLoop Tool Output Plane", () => {
   test("aborts hung finalize promises after the stream ends", async () => {
     const harness = await createHarness();
     const controller = new AbortController();
+    let signalStreamEnded!: () => void;
+    const streamEnded = new Promise<void>((resolve) => {
+      signalStreamEnded = resolve;
+    });
     harness.options.abort = controller.signal;
     harness.appendUser("run");
 
@@ -562,6 +568,7 @@ describe("QueryLoop Tool Output Plane", () => {
       streamText: mock(() => ({
         fullStream: (async function* () {
           yield { type: "text-delta", text: "partial" } as StreamPart;
+          signalStreamEnded();
         })(),
         finishReason: new Promise<string>(() => undefined),
         usage: new Promise(() => undefined),
@@ -571,7 +578,7 @@ describe("QueryLoop Tool Output Plane", () => {
     });
 
     const running = runQueryLoop(harness.options);
-    await Bun.sleep(20);
+    await streamEnded;
     controller.abort(new DOMException("stopped", "AbortError"));
 
     await expect(running).resolves.toMatchObject({ status: "aborted" });

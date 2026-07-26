@@ -8,6 +8,10 @@ import {
   StreamingToolOutputCapture,
   type CapturedArtifactDraft,
 } from "./capture";
+import {
+  TOOL_OUTPUT_ARTIFACT_HEAD_MAX_BYTES,
+  TOOL_OUTPUT_ARTIFACT_TAIL_MAX_BYTES,
+} from "./constants";
 import type { StreamingTextRedactor } from "../security";
 import type { ArtifactOwner, CreatedArtifact } from "./artifact-types";
 
@@ -242,40 +246,40 @@ describe("StreamingToolOutputCapture", () => {
     await capture.discard(completed);
   });
 
-  test("keeps default 63 MiB head and 1 MiB tail cuts on exact UTF-8 boundaries", async () => {
+  test("keeps configured head and tail cuts on exact UTF-8 boundaries", async () => {
     const tempDir = join(ROOT, "default-large-boundaries");
     await mkdir(tempDir);
-    let draft: CapturedArtifactDraft | undefined;
-    let tail = "";
     const capture = new StreamingToolOutputCapture({
       tempDir,
       input: { owner: OWNER, redactor: identityRedactor() },
+      artifactMaxBytes: 96,
+      headMaxBytes: 63,
+      tailMaxBytes: 32,
       committer: {
         async commit(value) {
-          draft = value;
-          tail = await readFile(join(value.tempDir, "tail.txt"), "utf8");
           return fakeCreated(value);
         },
       },
     });
-    const oneMiB = "h".repeat(1024 * 1024);
-    for (let index = 0; index < 62; index += 1) await capture.write(oneMiB);
-    await capture.write("h".repeat(1024 * 1024 - 1));
-    await capture.write("😀".repeat(1024 * 1024 / 4 + 2));
+    await capture.write("h".repeat(63));
+    await capture.write("😀".repeat(10));
     await capture.write("END");
     const completed = await capture.complete();
-    await capture.commit(completed);
+    const tail = await readFile(join(tempDir, "tail.txt"), "utf8");
 
-    expect((await stat(join(tempDir, "head.txt"))).size).toBe(63 * 1024 * 1024 - 1);
-    expect(Buffer.byteLength(tail)).toBeLessThanOrEqual(1024 * 1024);
+    expect(TOOL_OUTPUT_ARTIFACT_HEAD_MAX_BYTES).toBe(63 * 1024 * 1024);
+    expect(TOOL_OUTPUT_ARTIFACT_TAIL_MAX_BYTES).toBe(1024 * 1024);
+    expect((await stat(join(tempDir, "head.txt"))).size).toBe(63);
+    expect(Buffer.byteLength(tail)).toBeLessThanOrEqual(32);
     expect(tail).not.toContain("�");
     expect(tail.startsWith("😀")).toBe(true);
     expect(tail.endsWith("END")).toBe(true);
-    expect(draft?.segments[0]?.canonicalEnd).toBe(63 * 1024 * 1024 - 1);
-    expect(draft?.segments[1]?.canonicalStart).toBe(completed.canonical.bytes - Buffer.byteLength(tail));
+    expect(completed.stored.bytes).toBe(63 + Buffer.byteLength(tail));
+    expect(completed.omitted.bytes).toBe(completed.canonical.bytes - completed.stored.bytes);
     expect(completed.projection.previewBytes).toBeLessThanOrEqual(50 * 1024);
     expect(completed.projection.preview).not.toContain("�");
-  }, 30_000);
+    await capture.discard(completed);
+  });
 
   test("permanently enters discard mode when the bounded queue cannot drain", async () => {
     const tempDir = join(ROOT, "blocked-writer");

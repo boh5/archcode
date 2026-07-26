@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { GlobalSessionEventEnvelope } from "@archcode/protocol";
 
 import type { McpManager } from "./mcp";
 import { setLlmAdapterForTest } from "./llm";
@@ -17,6 +18,7 @@ import { ProjectTodoStateManager, activationExecutionId, discussionExecutionId }
 const roots: string[] = [];
 const START = Date.parse("2026-07-13T00:00:00.000Z");
 let generatedTitlePrompts: string[] = [];
+const activeRuntimes = new Set<AgentRuntime>();
 
 beforeEach(() => {
   generatedTitlePrompts = [];
@@ -37,7 +39,9 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all([...activeRuntimes].map(async (runtime) => await runtime.shutdown()));
+  activeRuntimes.clear();
   setLlmAdapterForTest(undefined);
 });
 
@@ -106,7 +110,6 @@ describe("AgentRuntime Automation wiring", () => {
       cwd: fixture.workspaceRoot,
       agentName: "lead",
     });
-    await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
   });
 
   test("routes send_message through the ordinary checked Session message entry point", async () => {
@@ -119,11 +122,15 @@ describe("AgentRuntime Automation wiring", () => {
       createdFromSessionId: fixture.sourceSessionId,
     });
 
+    const events = sessionEventProbe(fixture.runtime);
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
 
     expect(invocation.status).toBe("dispatched");
     expect(invocation.sessionId).toBe(session.sessionId);
-    await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
+    await events.waitFor((event) => event.sessionId === session.sessionId
+      && event.payload.type === "session.messages_committed"
+      && event.payload.messages.some((message) => message.clientRequestId === invocation.id));
+    events.dispose();
   });
 
   test("uses the Invocation id as the Automation message client request identity", async () => {
@@ -134,10 +141,14 @@ describe("AgentRuntime Automation wiring", () => {
       action: { kind: "start_session", message: "Report status", location: "project" },
       createdFromSessionId: fixture.sourceSessionId,
     });
+    const events = sessionEventProbe(fixture.runtime);
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
 
     expect(invocation.status).toBe("dispatched");
-    await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
+    await events.waitFor((event) => event.sessionId === invocation.sessionId
+      && event.payload.type === "session.messages_committed"
+      && event.payload.messages.some((message) => message.clientRequestId === invocation.id));
+    events.dispose();
     const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, invocation.sessionId!);
     expect(session.inputRequestReceipts).toContainEqual(expect.objectContaining({
       clientRequestId: invocation.id,
@@ -156,7 +167,6 @@ describe("AgentRuntime Automation wiring", () => {
     expect(discussionSession.executions).toContainEqual(expect.objectContaining({
       id: discussionExecutionId(idea.id),
     }));
-    await waitFor(() => fixture.runtime.getSessionFamilyActivity(fixture.workspaceRoot, discussed.discussionSessionId!) === "idle");
 
     const automationIdea = await context.todos.createTodo({ title: "Automate exact resource binding" });
     const ready = await context.todos.updateTodo(automationIdea.id, {
@@ -195,13 +205,11 @@ describe("AgentRuntime Automation wiring", () => {
       },
     });
 
+    const events = sessionEventProbe(fixture.runtime);
     await fixture.runtime.recoverProjectTodos();
-    await waitFor(async () => {
-      const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId);
-      return session.executions.some((execution) => (
-        execution.id === discussionExecutionId(todoId) && execution.status !== "running"
-      ));
-    });
+    await events.waitFor((event) => event.sessionId === discussionSessionId
+      && event.payload.type === "execution-end");
+    events.dispose();
 
     await fixture.runtime.recoverProjectTodos();
     const recovered = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId);
@@ -247,26 +255,19 @@ describe("AgentRuntime Automation wiring", () => {
     });
 
     await fixture.runtime.startAutomationScheduler(fixture.workspaceRoot);
+    const firstInvocationChanged = nextAutomationResourceChange(fixture.runtime, first.id);
     await fixture.timer.advanceTo(START + 30_000);
-    await waitFor(async () => (await fixture.runtime.listAutomationInvocations(fixture.workspaceRoot, first.id)).length === 1);
+    await firstInvocationChanged;
     expect(await fixture.runtime.listAutomationInvocations(fixture.secondWorkspaceRoot!, second.id)).toEqual([]);
     const [firstInvocation] = await fixture.runtime.listAutomationInvocations(fixture.workspaceRoot, first.id);
     if (firstInvocation === undefined) throw new Error("First scheduler did not materialize an Invocation");
-    await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, firstInvocation);
 
     await fixture.runtime.startAutomationSchedulers();
+    const secondInvocationChanged = nextAutomationResourceChange(fixture.runtime, second.id);
     await fixture.timer.advanceTo(START + 60_000);
-    await waitFor(async () => (await fixture.runtime.listAutomationInvocations(fixture.secondWorkspaceRoot!, second.id)).length === 1);
-    const invocations = [
-      ...await fixture.runtime.listAutomationInvocations(fixture.workspaceRoot, first.id),
-      ...await fixture.runtime.listAutomationInvocations(fixture.secondWorkspaceRoot!, second.id),
-    ].filter((invocation) => invocation.id !== firstInvocation.id);
-    await Promise.all(invocations.map(async (invocation) => {
-      const workspaceRoot = invocation.automationId === first.id
-        ? fixture.workspaceRoot
-        : fixture.secondWorkspaceRoot!;
-      await waitForInvocationExecution(fixture.runtime, workspaceRoot, invocation);
-    }));
+    await secondInvocationChanged;
+    expect(await fixture.runtime.listAutomationInvocations(fixture.secondWorkspaceRoot!, second.id))
+      .toHaveLength(1);
     await fixture.runtime.stopAutomationSchedulers();
   });
 
@@ -281,8 +282,7 @@ describe("AgentRuntime Automation wiring", () => {
       createdFromSessionId: fixture.sourceSessionId,
     });
     await fixture.runtime.updateAutomation(fixture.workspaceRoot, automation.id, { name: "renamed" });
-    const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
-    await waitForInvocationExecution(fixture.runtime, fixture.workspaceRoot, invocation);
+    await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
     await fixture.runtime.deleteAutomation(fixture.workspaceRoot, automation.id);
     unsubscribe?.();
 
@@ -385,6 +385,7 @@ async function runtimeFixture(options: {
     automationSchedulerClock: clock,
     automationSchedulerTimer: timer,
   });
+  activeRuntimes.add(runtime);
   const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "lead" });
   const secondSourceSession = secondWorkspaceRoot === undefined
     ? undefined
@@ -440,36 +441,44 @@ function mcpManager(): McpManager {
   } as unknown as McpManager;
 }
 
-async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (await predicate()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error("Timed out waiting for runtime state");
+function sessionEventProbe(runtime: AgentRuntime): {
+  waitFor(predicate: (event: GlobalSessionEventEnvelope) => boolean): Promise<GlobalSessionEventEnvelope>;
+  dispose(): void;
+} {
+  const events: GlobalSessionEventEnvelope[] = [];
+  const waiters = new Set<{
+    predicate: (event: GlobalSessionEventEnvelope) => boolean;
+    resolve: (event: GlobalSessionEventEnvelope) => void;
+  }>();
+  const dispose = runtime.subscribeSessionEvents((event) => {
+    events.push(event);
+    for (const waiter of waiters) {
+      if (!waiter.predicate(event)) continue;
+      waiters.delete(waiter);
+      waiter.resolve(event);
+    }
+  });
+  return {
+    waitFor(predicate) {
+      const existing = events.find(predicate);
+      if (existing !== undefined) return Promise.resolve(existing);
+      return new Promise((resolve) => {
+        waiters.add({ predicate, resolve });
+      });
+    },
+    dispose,
+  };
 }
 
-async function waitForInvocationExecution(
-  runtime: AgentRuntime,
-  workspaceRoot: string,
-  invocation: { readonly id: string; readonly automationId: string; readonly sessionId?: string },
-): Promise<void> {
-  let dispatched = invocation;
-  await waitFor(async () => {
-    const current = (await runtime.listAutomationInvocations(workspaceRoot, invocation.automationId))
-      .find((candidate) => candidate.id === invocation.id);
-    if (current?.status === "failed") throw new Error(current.error ?? "Automation Invocation failed");
-    if (current?.status !== "dispatched") return false;
-    dispatched = current;
-    return true;
+function nextAutomationResourceChange(runtime: AgentRuntime, automationId: string): Promise<void> {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    unsubscribe = runtime.subscribeResourceChanges?.((event) => {
+      if (event.resourceType !== "automation" || event.resourceId !== automationId) return;
+      unsubscribe();
+      resolve();
+    }) ?? (() => {});
   });
-  if (dispatched.sessionId === undefined) throw new Error("Invocation did not allocate a Session");
-  await waitFor(async () => {
-    const session = await runtime.getSessionFile(workspaceRoot, dispatched.sessionId!);
-    return session.inputRequestReceipts.some((receipt) => (
-      receipt.clientRequestId === invocation.id && receipt.status === "canonical"
-    ));
-  });
-  await waitFor(() => runtime.getSessionFamilyActivity(workspaceRoot, dispatched.sessionId!) === "idle");
 }
 
 class FakeClock {

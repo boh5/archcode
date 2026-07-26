@@ -6,7 +6,11 @@ import { createProcessRunner } from "../../../process/runner";
 import type { ProcessRunnerResult } from "../../../process/types";
 import { sharedMutationQueue } from "../../concurrency/mutation-queue";
 import { defineTool } from "../../define-tool";
-import { computeToolDiffs } from "../../diff";
+import {
+  computeToolDiffs,
+  createToolDiffPresentation,
+  MAX_DIFF_FILES,
+} from "../../diff";
 import { createToolErrorResult } from "../../errors";
 import { createTextToolResult } from "../../results";
 import { createPostEditDiagnosticsHook } from "../../hooks";
@@ -26,12 +30,54 @@ export const AstGrepReplaceInputSchema = z
   })
   .strict();
 
-const AST_GREP_MAX_MATCHES = 10_000;
-const AST_GREP_MAX_UNIQUE_FILES = 1_000;
-const AST_GREP_MAX_PATH_BYTES = 4 * 1024 * 1024;
+export const AST_GREP_MAX_MATCHES = 10_000;
+export const AST_GREP_MAX_UNIQUE_FILES = 1_000;
+export const AST_GREP_MAX_PATH_BYTES = 4 * 1024 * 1024;
 
 type AstGrepReplaceInput = z.infer<typeof AstGrepReplaceInputSchema>;
 type AstGrepReplacementTarget = { file: string };
+
+export interface AstGrepReplacementLimits {
+  readonly maxMatches: number;
+  readonly maxUniqueFiles: number;
+  readonly maxPathBytes: number;
+}
+
+const DEFAULT_AST_GREP_REPLACEMENT_LIMITS: AstGrepReplacementLimits = {
+  maxMatches: AST_GREP_MAX_MATCHES,
+  maxUniqueFiles: AST_GREP_MAX_UNIQUE_FILES,
+  maxPathBytes: AST_GREP_MAX_PATH_BYTES,
+};
+
+/** Owns replacement-target cardinality and path-byte admission. */
+export class AstGrepReplacementBudget {
+  readonly #targets: AstGrepReplacementTarget[] = [];
+  readonly #files = new Set<string>();
+  #pathBytes = 0;
+
+  constructor(
+    private readonly limits: AstGrepReplacementLimits = DEFAULT_AST_GREP_REPLACEMENT_LIMITS,
+  ) {}
+
+  get targets(): readonly AstGrepReplacementTarget[] {
+    return this.#targets;
+  }
+
+  observe(file: string): void {
+    if (this.#targets.length >= this.limits.maxMatches) {
+      throw new AstGrepReplaceToolError(`ast-grep replacement exceeds ${this.limits.maxMatches} matches`);
+    }
+    this.#targets.push({ file });
+    this.#pathBytes += new TextEncoder().encode(file).byteLength;
+    if (this.#pathBytes > this.limits.maxPathBytes) {
+      throw new AstGrepReplaceToolError(`ast-grep replacement paths exceed ${this.limits.maxPathBytes} bytes`);
+    }
+    this.#files.add(file);
+    if (this.#files.size > this.limits.maxUniqueFiles) {
+      throw new AstGrepReplaceToolError(`ast-grep replacement exceeds ${this.limits.maxUniqueFiles} unique files`);
+    }
+  }
+}
 
 export class AstGrepReplaceToolError extends Error {
   readonly exitCode?: number;
@@ -109,15 +155,16 @@ export const astGrepReplaceTool = defineTool({
 
           const output = applyResult.canonical;
           const diffs = await computeApplyDiffs(beforeFiles);
+          const diffPresentation = createToolDiffPresentation(diffs);
           if (ctx.outputCapture !== undefined) {
             return {
               isError: false,
               draft: { kind: "capture" },
-              ...(diffs?.files === undefined ? {} : { details: { presentations: [{ kind: "diff", files: diffs.files }] } }),
+              ...(diffPresentation === undefined ? {} : { details: { presentations: [diffPresentation] } }),
             };
           }
           return createTextToolResult(output, {
-            ...(diffs?.files === undefined ? {} : { details: { presentations: [{ kind: "diff", files: diffs.files }] } }),
+            ...(diffPresentation === undefined ? {} : { details: { presentations: [diffPresentation] } }),
           });
         });
       } else {
@@ -149,17 +196,10 @@ async function runAstGrepReplace(
   captureCanonical: boolean,
   collectMatches: boolean,
 ): Promise<{ matches: AstGrepReplacementTarget[]; canonical: string } | RawToolResult> {
-  const matches: AstGrepReplacementTarget[] = [];
-  const files = new Set<string>();
-  let pathBytes = 0;
+  const replacementBudget = new AstGrepReplacementBudget();
   const collector = collectMatches ? new AstGrepNdjsonCollector(
     (record) => {
-      if (matches.length >= AST_GREP_MAX_MATCHES) throw new AstGrepReplaceToolError(`ast-grep replacement exceeds ${AST_GREP_MAX_MATCHES} matches`);
-      matches.push({ file: record.file });
-      pathBytes += new TextEncoder().encode(record.file).byteLength;
-      if (pathBytes > AST_GREP_MAX_PATH_BYTES) throw new AstGrepReplaceToolError(`ast-grep replacement paths exceed ${AST_GREP_MAX_PATH_BYTES} bytes`);
-      files.add(record.file);
-      if (files.size > AST_GREP_MAX_UNIQUE_FILES) throw new AstGrepReplaceToolError(`ast-grep replacement exceeds ${AST_GREP_MAX_UNIQUE_FILES} unique files`);
+      replacementBudget.observe(record.file);
     },
   ) : undefined;
   const result = await runner.run({
@@ -175,7 +215,7 @@ async function runAstGrepReplace(
 
   try {
     collector?.finish();
-    return { matches, canonical: output.stdout };
+    return { matches: [...replacementBudget.targets], canonical: output.stdout };
   } catch (error) {
     return createAstGrepReplaceErrorResult({
       error: error instanceof Error ? error : new Error(String(error)),
@@ -260,34 +300,111 @@ type CapturedApplyFile = {
   before: string;
 };
 
+interface CapturedApplyFiles {
+  files: CapturedApplyFile[];
+  skippedFiles: number;
+  skippedPreviewPaths: string[];
+}
+
+export const AST_GREP_DIFF_CAPTURE_MAX_BYTES = 4 * 1024 * 1024;
+
+export class AstGrepDiffCaptureBudget {
+  #capturedBytes = 0;
+
+  constructor(readonly maxBytes: number = AST_GREP_DIFF_CAPTURE_MAX_BYTES) {}
+
+  canReadBefore(size: number): boolean {
+    return size * 2 <= this.maxBytes - this.#capturedBytes;
+  }
+
+  canReadAfter(size: number): boolean {
+    return size <= this.maxBytes - this.#capturedBytes;
+  }
+
+  record(bytes: number): void {
+    this.#capturedBytes += bytes;
+  }
+
+  get capturedBytes(): number {
+    return this.#capturedBytes;
+  }
+}
+
 async function captureApplyFileContents(
   matches: AstGrepReplacementTarget[],
   ctx: ToolExecutionContext,
-): Promise<CapturedApplyFile[]> {
-  const files = getUniqueApplyFiles(matches, ctx);
+): Promise<CapturedApplyFiles> {
+  const candidates = getUniqueApplyFiles(matches, ctx);
   const captured: CapturedApplyFile[] = [];
+  const skippedPreviewPaths: string[] = [];
+  const budget = new AstGrepDiffCaptureBudget();
 
-  for (const file of files) {
-    captured.push({ ...file, before: await Bun.file(file.resolved).text() });
+  for (const file of candidates.slice(0, MAX_DIFF_FILES)) {
+    const source = Bun.file(file.resolved);
+    if (!budget.canReadBefore(source.size)) {
+      skippedPreviewPaths.push(file.path);
+      continue;
+    }
+    const before = await source.text();
+    budget.record(Buffer.byteLength(before));
+    captured.push({ ...file, before });
   }
 
-  return captured;
+  return {
+    files: captured,
+    skippedFiles: candidates.length - captured.length,
+    skippedPreviewPaths,
+  };
 }
 
-async function computeApplyDiffs(files: CapturedApplyFile[]) {
+async function computeApplyDiffs(capture: CapturedApplyFiles) {
   try {
     const diffInputs = [];
-    for (const file of files) {
-      const after = await Bun.file(file.resolved).text();
+    let skippedFiles = capture.skippedFiles;
+    const skippedPreviewPaths = [...capture.skippedPreviewPaths];
+    const budget = new AstGrepDiffCaptureBudget();
+    for (const file of capture.files) budget.record(Buffer.byteLength(file.before));
+    for (const file of capture.files) {
+      const source = Bun.file(file.resolved);
+      if (!budget.canReadAfter(source.size)) {
+        skippedFiles += 1;
+        skippedPreviewPaths.push(file.path);
+        continue;
+      }
+      const after = await source.text();
+      budget.record(Buffer.byteLength(after));
       if (file.before === after) continue;
       diffInputs.push({ path: file.path, before: file.before, after, status: "modified" as const });
     }
 
     if (diffInputs.length === 0) {
-      return files.length > 0 ? { files: [], unsupportedReason: "no_change" as const } : undefined;
+      if (capture.files.length === 0 && skippedFiles === 0) return undefined;
+      return {
+        files: skippedPreviewPaths.map((path) => ({
+          path,
+          status: "modified" as const,
+          hunks: [],
+        })),
+        ...(capture.files.length > 0 && skippedPreviewPaths.length === 0
+          ? { unsupportedReason: "no_change" as const }
+          : {}),
+        ...(skippedFiles > 0 ? {
+          truncated: true,
+          warning: `${skippedFiles} file(s) skipped from the bounded Diff preview.`,
+        } : {}),
+      };
     }
 
-    return computeToolDiffs(diffInputs);
+    const metadata = computeToolDiffs(diffInputs, { skippedFiles });
+    const remainingFileSlots = Math.max(0, MAX_DIFF_FILES - metadata.files.length);
+    metadata.files.push(
+      ...skippedPreviewPaths.slice(0, remainingFileSlots).map((path) => ({
+        path,
+        status: "modified" as const,
+        hunks: [],
+      })),
+    );
+    return metadata;
   } catch (error) {
     return {
       files: [],

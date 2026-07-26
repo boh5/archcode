@@ -314,6 +314,7 @@ export interface ToolProcessDetails {
 export interface ToolDiffPresentation {
   kind: "diff";
   files: DiffFile[];
+  simplified?: true;
   truncated?: true;
 }
 
@@ -1224,6 +1225,7 @@ export type ToolDiffUnsupportedReason = "binary" | "too_large" | "not_text" | "n
 
 export interface ToolDiffMetadata {
   files: DiffFile[];
+  simplified?: true;
   truncated?: boolean;
   unsupportedReason?: ToolDiffUnsupportedReason;
   warning?: string;

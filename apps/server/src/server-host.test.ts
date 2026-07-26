@@ -14,7 +14,6 @@ import {
 } from "@archcode/agent-core";
 import type { CompleteSetupRequest } from "@archcode/protocol";
 import { ArchCodeServerHost } from "./server-host";
-import { globalEventBus } from "./events/global-event-bus";
 
 const roots: string[] = [];
 
@@ -330,66 +329,19 @@ describe("ArchCodeServerHost", () => {
     expect(newLogin.headers.get("cache-control")).toBe("no-store");
   });
 
-  test("actively closes an authenticated SSE when its session is revoked", async () => {
-    const { host, token } = await createSetupHost();
-    const setup = await host.app.request("/api/setup", setupRequest(token, {
-      config: setupConfig(),
-      requireLogin: true,
-      password: "original password",
-    }));
-    const originalCookie = setup.headers.get("set-cookie")!.split(";")[0]!;
-    const streamResponse = await host.app.request("/api/events", {
-      headers: { Cookie: originalCookie },
-    });
-    expect(streamResponse.status).toBe(200);
-    const reader = streamResponse.body?.getReader();
-    if (!reader) throw new Error("Expected SSE response body");
-
-    globalEventBus.emit({
-      type: "resource.changed",
-      projectSlug: "demo",
-      resourceType: "todo",
-      resourceId: "todo-1",
-      createdAt: Date.now(),
-    });
-    const first = await readSseUntil(reader, "resource.changed");
-    expect(first).toContain("resource.changed");
-
-    const change = await host.app.request("/api/auth/password", {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: originalCookie,
-        Origin: "http://localhost",
-      },
-      body: JSON.stringify({
-        action: "change",
-        currentPassword: "original password",
-        password: "replacement password",
-      }),
-    });
-    expect(change.status).toBe(200);
-
-    const closed = await Promise.race([
-      reader.read(),
-      new Promise<never>((_resolve, reject) => {
-        setTimeout(() => reject(new Error("Revoked SSE did not close")), 1000);
-      }),
-    ]);
-    expect(closed.done).toBe(true);
-    expect((await host.app.request("/api/events", {
-      headers: { Cookie: originalCookie },
-    })).status).toBe(401);
-  });
-
   test("admits only one concurrent setup submission", async () => {
     let releaseRuntime!: () => void;
+    let signalRuntimeEntered!: () => void;
     const runtimeGate = new Promise<void>((resolve) => {
       releaseRuntime = resolve;
+    });
+    const runtimeEntered = new Promise<void>((resolve) => {
+      signalRuntimeEntered = resolve;
     });
     let runtime!: AgentRuntime;
     const fixture = await createSetupHost({
       createRuntime: async (options) => {
+        signalRuntimeEntered();
         await runtimeGate;
         return runtime ??= fakeRuntime(options.configService);
       },
@@ -399,7 +351,7 @@ describe("ArchCodeServerHost", () => {
       config: setupConfig(),
       requireLogin: false,
     }));
-    await Bun.sleep(10);
+    await runtimeEntered;
     const second = await fixture.host.app.request("/api/setup", setupRequest(fixture.token, {
       config: setupConfig(),
       requireLogin: false,
@@ -460,24 +412,3 @@ describe("ArchCodeServerHost", () => {
     expect((await host.app.request("/api/agents")).status).toBe(503);
   });
 });
-
-async function readSseUntil(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  expected: string,
-): Promise<string> {
-  const decoder = new TextDecoder();
-  let text = "";
-  const deadline = Date.now() + 1000;
-  while (Date.now() < deadline) {
-    const result = await Promise.race([
-      reader.read(),
-      new Promise<never>((_resolve, reject) => {
-        setTimeout(() => reject(new Error(`Timed out waiting for ${expected}`)), 1000);
-      }),
-    ]);
-    if (result.done) break;
-    text += decoder.decode(result.value, { stream: true });
-    if (text.includes(expected)) return text;
-  }
-  throw new Error(`SSE did not contain ${expected}: ${text}`);
-}

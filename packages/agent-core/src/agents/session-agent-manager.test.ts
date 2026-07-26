@@ -259,23 +259,6 @@ describe("SessionAgentManager", () => {
     expect(first).toBe(second);
   });
 
-  test("tombstone expiry allows recreating a deleted session", async () => {
-    const storeManager = new SessionStoreManager({ logger: silentLogger });
-    const manager = createManager(25, storeManager);
-    const workspaceRoot = TEST_WORKSPACE_ROOT;
-    const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
-    await storeManager.flushSession(sessionId, workspaceRoot);
-
-    manager.dispose(workspaceRoot, sessionId);
-    expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(true);
-
-    await new Promise((resolve) => setTimeout(resolve, 35));
-
-    await expect(manager.getOrCreate(workspaceRoot, sessionId)).resolves.toBeDefined();
-    expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(false);
-  });
-
   test("clearTombstone allows recreating a deleted session", async () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const manager = createManager(undefined, storeManager);
@@ -289,6 +272,30 @@ describe("SessionAgentManager", () => {
 
     await expect(manager.getOrCreate(workspaceRoot, sessionId)).resolves.toBeDefined();
     expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(false);
+  });
+
+  test("expired tombstones allow recreating a deleted session with a controlled clock", async () => {
+    const originalDateNow = Date.now;
+    let now = 1_000;
+    Date.now = () => now;
+    try {
+      const storeManager = new SessionStoreManager({ logger: silentLogger });
+      const manager = createManager(25, storeManager);
+      const workspaceRoot = TEST_WORKSPACE_ROOT;
+      const sessionId = crypto.randomUUID();
+      storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+      await storeManager.flushSession(sessionId, workspaceRoot);
+
+      manager.dispose(workspaceRoot, sessionId);
+      expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(true);
+
+      now += 26;
+
+      await expect(manager.getOrCreate(workspaceRoot, sessionId)).resolves.toBeDefined();
+      expect(manager.isTombstoned(workspaceRoot, sessionId)).toBe(false);
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 
   test("preserves three-layer child identity across warm cache, releaseAgent, and process restart", async () => {

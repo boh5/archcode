@@ -61,6 +61,25 @@ export type BackgroundOutputInput = z.infer<typeof BackgroundOutputInputSchema>;
 type BackgroundOutputCursor = NonNullable<BackgroundOutputInput["cursor"]>;
 type WaitResult = "not_waited" | "stopped" | "timed_out" | "aborted";
 
+export interface BackgroundOutputDeadlineHandle {
+  readonly id?: unknown;
+}
+
+export interface BackgroundOutputDeadlineScheduler {
+  schedule(delayMs: number, callback: () => void): BackgroundOutputDeadlineHandle;
+  cancel(handle: BackgroundOutputDeadlineHandle): void;
+}
+
+const systemBackgroundOutputDeadlineScheduler: BackgroundOutputDeadlineScheduler = {
+  schedule: (delayMs, callback) => {
+    const id = setTimeout(callback, delayMs);
+    return { id };
+  },
+  cancel: (handle) => {
+    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
+  },
+};
+
 interface OutputUnit {
   readonly text: string;
 }
@@ -80,6 +99,7 @@ class InvalidBackgroundCursorError extends Error {
 export async function executeBackgroundOutput(
   input: BackgroundOutputInput,
   ctx: ToolExecutionContext,
+  deadlineScheduler: BackgroundOutputDeadlineScheduler = systemBackgroundOutputDeadlineScheduler,
 ): Promise<RawToolResult> {
   const parentSessionId = ctx.store.getState().sessionId;
   if (input.session_id === parentSessionId) {
@@ -116,7 +136,7 @@ export async function executeBackgroundOutput(
   }
 
   const waitResult = input.block && childStore.getState().isRunning
-    ? await waitForChildToStop(childStore, input.timeout_ms, ctx.abort)
+    ? await waitForChildToStop(childStore, input.timeout_ms, ctx.abort, deadlineScheduler)
     : "not_waited";
   const state = childStore.getState();
   try {
@@ -152,15 +172,16 @@ function waitForChildToStop(
   childStore: StoreApi<SessionStoreState>,
   timeoutMs: number,
   abortSignal: AbortSignal,
+  deadlineScheduler: BackgroundOutputDeadlineScheduler,
 ): Promise<WaitResult> {
   if (!childStore.getState().isRunning) return Promise.resolve("stopped");
   if (abortSignal.aborted) return Promise.resolve("aborted");
 
   return new Promise((resolve) => {
     let settled = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let timeout: BackgroundOutputDeadlineHandle | undefined;
     const cleanup = () => {
-      if (timeout !== undefined) clearTimeout(timeout);
+      if (timeout !== undefined) deadlineScheduler.cancel(timeout);
       unsubscribe();
       abortSignal.removeEventListener("abort", onAbort);
     };
@@ -175,7 +196,7 @@ function waitForChildToStop(
       if (!state.isRunning) settle("stopped");
     });
     abortSignal.addEventListener("abort", onAbort, { once: true });
-    timeout = setTimeout(() => settle("timed_out"), timeoutMs);
+    timeout = deadlineScheduler.schedule(timeoutMs, () => settle("timed_out"));
     if (!childStore.getState().isRunning) settle("stopped");
   });
 }

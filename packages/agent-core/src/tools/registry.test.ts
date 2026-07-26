@@ -790,7 +790,7 @@ describe("ToolRegistry current lifecycle callbacks", () => {
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
       execute: async () => { order.push("execute"); return createTextToolResult("ok"); },
     })] });
-    const ctx = context("echo", async () => { await Bun.sleep(1); order.push("attempt"); });
+    const ctx = context("echo", async () => { await Promise.resolve(); order.push("attempt"); });
     await created.registry.execute({ toolName: "echo", toolCallId: "attempt-call", input: {} }, ctx);
     expect(order).toEqual(["attempt", "execute"]);
   });

@@ -486,16 +486,7 @@ describe("SessionStoreManager", () => {
     );
   }
 
-  async function waitForFile(path: string): Promise<void> {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (await Bun.file(path).exists()) return;
-      await Bun.sleep(1);
-    }
-    throw new Error(`Timed out waiting for file: ${path}`);
-  }
-
   async function readSessionJson(path: string): Promise<Record<string, unknown>> {
-    await waitForFile(path);
     return JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
   }
 
@@ -506,21 +497,6 @@ describe("SessionStoreManager", () => {
   async function writeRawSessionFile(sessionId: string, content: string): Promise<void> {
     await mkdir(join(TMP_DIR, ".archcode", "runtime", "sessions", sessionId), { recursive: true });
     await Bun.write(canonicalSessionPath(sessionId), content);
-  }
-
-  async function waitForSessionJson(
-    path: string,
-    predicate: (json: Record<string, unknown>) => boolean,
-  ): Promise<Record<string, unknown>> {
-    let lastJson: Record<string, unknown> | undefined;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (await Bun.file(path).exists()) {
-        lastJson = await readSessionJson(path);
-        if (predicate(lastJson)) return lastJson;
-      }
-      await Bun.sleep(1);
-    }
-    throw new Error(`Timed out waiting for matching session JSON: ${path}`);
   }
 
   test("create() returns the same store for the same sessionId+workspaceRoot", () => {
@@ -552,22 +528,6 @@ describe("SessionStoreManager", () => {
     expect(store.getState().cwd).toBe(TMP_DIR);
   });
 
-  test("every durable snapshot advances the canonical updatedAt", async () => {
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const id = sessionId();
-    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
-    await manager.flushSession(id, TMP_DIR);
-    const first = await readSessionJson(canonicalSessionPath(id));
-    await Bun.sleep(2);
-
-    store.getState().setTitle("updated");
-    await manager.flushSession(id, TMP_DIR);
-    const second = await readSessionJson(canonicalSessionPath(id));
-
-    expect(second.updatedAt).toBeGreaterThan(first.updatedAt as number);
-    expect(store.getState().updatedAt).toBe(second.updatedAt as number);
-  });
-
   test("flushSession makes an execution-start record durable", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
@@ -591,7 +551,8 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { cwd: worktreeCwd, agentName: "lead" });
 
     expect(store.getState().cwd).toBe(worktreeCwd);
-    const persisted = await waitForSessionJson(canonicalSessionPath(id), (json) => json.cwd === worktreeCwd);
+    await manager.flushSession(id, TMP_DIR);
+    const persisted = await readSessionJson(canonicalSessionPath(id));
     expect(persisted.cwd).toBe(worktreeCwd);
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
@@ -665,10 +626,7 @@ describe("SessionStoreManager", () => {
       releaseFirstSave();
       await update;
 
-      const persisted = await waitForSessionJson(
-        canonicalSessionPath(id),
-        (json) => json.title === "queued before cwd transition",
-      );
+      const persisted = await readSessionJson(canonicalSessionPath(id));
       expect(persisted.cwd).toBe(worktreeCwd);
       expect(persisted.title).toBe("queued before cwd transition");
     } finally {
@@ -680,7 +638,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
-    await waitForSessionJson(canonicalSessionPath(id), (json) => json.cwd === TMP_DIR);
+    await manager.flushSession(id, TMP_DIR);
 
     await expect(manager.updateCwd(id, TMP_DIR, join(TMP_DIR, "..", "next"), "/stale/cwd"))
       .rejects.toMatchObject({ name: "InvalidSessionCwdError" });
@@ -702,10 +660,8 @@ describe("SessionStoreManager", () => {
 
     store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
 
-    const persisted = await waitForSessionJson(
-      canonicalSessionPath(id),
-      (json) => JSON.stringify(json).includes("Persisted compression summary"),
-    );
+    await manager.flushSession(id, TMP_DIR);
+    const persisted = await readSessionJson(canonicalSessionPath(id));
 
     const compression = persisted.compression as { blocksByRef?: Record<string, { tokenEstimate?: { savedTokens?: number } }> };
     expect(compression.blocksByRef?.b1?.tokenEstimate?.savedTokens).toBe(75);
@@ -785,6 +741,21 @@ describe("SessionStoreManager", () => {
     expect(store.getState().sessionId).toBe(sessionId);
     expect(store.getState().title).toBe("disk-title");
     expect(store.getState().cwd).toBe(TMP_DIR);
+  });
+
+  test("every durable snapshot advances the canonical updatedAt monotonically", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
+    await manager.flushSession(id, TMP_DIR);
+    const first = await readSessionJson(canonicalSessionPath(id));
+
+    store.getState().setTitle("updated");
+    await manager.flushSession(id, TMP_DIR);
+    const second = await readSessionJson(canonicalSessionPath(id));
+
+    expect(second.updatedAt).toBeGreaterThan(first.updatedAt as number);
+    expect(store.getState().updatedAt).toBe(second.updatedAt as number);
   });
 
   test("clean hydration and read projections do not rewrite Session persistence", async () => {
@@ -1038,10 +1009,8 @@ describe("SessionStoreManager", () => {
 
     store.getState().append({ type: "tool-child-session-link", link });
 
-    const raw = await waitForSessionJson(
-      canonicalSessionPath(parentSessionId),
-      (json) => Array.isArray(json.childSessionLinks) && json.childSessionLinks.length === 1,
-    );
+    await manager.flushSession(parentSessionId, TMP_DIR);
+    const raw = await readSessionJson(canonicalSessionPath(parentSessionId));
     expect(raw.childSessionLinks).toEqual([link]);
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
@@ -1066,7 +1035,8 @@ describe("SessionStoreManager", () => {
     });
 
     const filePath = canonicalSessionPath(id);
-    const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("attempt-1"));
+    await manager.flushSession(id, TMP_DIR);
+    const raw = await readSessionJson(filePath);
     expect(JSON.stringify(raw)).toContain("attempt-1");
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
@@ -1095,10 +1065,8 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "execution-end", status: "aborted" });
 
     const filePath = canonicalSessionPath(id);
-    const raw = await waitForSessionJson(
-      filePath,
-      (json) => JSON.stringify(json).includes("call-partial"),
-    );
+    await manager.flushSession(id, TMP_DIR);
+    const raw = await readSessionJson(filePath);
     const rawMessages = raw.messages as Array<{ parts: Array<Record<string, unknown>> }>;
     expect(rawMessages[0]?.parts[0]).toMatchObject({
       type: "tool",
@@ -1128,10 +1096,8 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "execution-end", status: "aborted" });
 
     const filePath = canonicalSessionPath(id);
-    const raw = await waitForSessionJson(
-      filePath,
-      (json) => JSON.stringify(json).includes("call-undefined"),
-    );
+    await manager.flushSession(id, TMP_DIR);
+    const raw = await readSessionJson(filePath);
     const rawMessages = raw.messages as Array<{ parts: Array<Record<string, unknown>> }>;
     const rawEvents = raw.events as Array<{ payload: Record<string, unknown> }>;
     expect(rawMessages[0]?.parts[0]?.input).toBeNull();
@@ -1245,7 +1211,7 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", result: finalizedResult("written") });
 
     const filePath = canonicalSessionPath(id);
-    await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("written"));
+    await manager.flushSession(id, TMP_DIR);
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
@@ -1271,7 +1237,8 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
 
     const filePath = canonicalSessionPath(id);
-    const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
+    await manager.flushSession(id, TMP_DIR);
+    const raw = await readSessionJson(filePath);
     expect(JSON.stringify(raw)).toContain(errorMsg);
   });
 
@@ -1286,7 +1253,7 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
 
     const filePath = canonicalSessionPath(id);
-    await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
+    await manager.flushSession(id, TMP_DIR);
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
@@ -1401,8 +1368,8 @@ describe("SessionStoreManager", () => {
       parentSessionId: rootSessionId,
       title: "child-title",
     });
+    await manager.flushSession(childSessionId, TMP_DIR);
     const childPath = canonicalSessionPath(childSessionId);
-    await waitForFile(childPath);
     const childFile = JSON.parse(await Bun.file(childPath).text()) as Record<string, unknown>;
     expect(childFile).toMatchObject({ sessionId: childSessionId, rootSessionId, parentSessionId: rootSessionId });
   });

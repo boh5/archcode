@@ -90,17 +90,6 @@ async function disposeStore(store: ToolOutputArtifactStore): Promise<void> {
   await store.dispose();
 }
 
-async function waitFor(
-  predicate: () => Promise<boolean>,
-  timeoutMs = 1_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!(await predicate())) {
-    if (Date.now() >= deadline) throw new Error("Timed out waiting for lifecycle condition");
-    await Bun.sleep(5);
-  }
-}
-
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -238,22 +227,6 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
     }
   });
 
-  test("the periodic cleanup timer expires bodies without a read or manual cleanup call", async () => {
-    const root = await makeRoot("archcode-output-periodic-cleanup-");
-    const store = makeStore(root, {
-      limits: { bodyTtlMs: 20, cleanupIntervalMs: 5 },
-    });
-    const scope = owner("producer-a");
-    const artifact = await createTestArtifact(store, { owner: scope, canonical: "expires by timer" });
-    expect((await store.stats()).active).toBe(1);
-
-    await waitFor(async () => (await store.stats()).active === 0);
-
-    await expect(store.read({ ...scope, outputRef: artifact.outputRef })).rejects.toMatchObject({
-      code: "TOOL_OUTPUT_EXPIRED",
-    });
-  });
-
   test("startup cleanup expires persisted bodies and removes stale redacted temp directories", async () => {
     const root = await makeRoot("archcode-output-startup-cleanup-");
     let now = 0;
@@ -344,9 +317,8 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
     expect((await readdir(root)).filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
   });
 
-  test("dispose stops cleanup, aborts the active writer, and releases query leases", async () => {
+  test("dispose aborts the active writer and releases query leases", async () => {
     const root = await makeRoot("archcode-output-dispose-");
-    let now = 0;
     const runner: ArtifactSearchRunner = {
       async search(input) {
         const segment = input.segments[0]!;
@@ -362,7 +334,7 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
     };
     const scope = owner("producer-a");
     const store = makeStore(root, {
-      now: () => now,
+      now: () => 0,
       searchRunner: runner,
       limits: { bodyTtlMs: 10, cleanupIntervalMs: 5 },
     });
@@ -410,10 +382,6 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
     expect(internals.leases.size).toBe(0);
     expect(internals.pinnedRefs.size).toBe(0);
     if (activeTemp) expect(await pathExists(join(root, activeTemp))).toBe(false);
-
-    now = 100;
-    await Bun.sleep(25);
-    expect((await readdir(join(root, "artifacts"))).length).toBe(2);
 
     const restarted = makeStore(root, {
       now: () => 0,

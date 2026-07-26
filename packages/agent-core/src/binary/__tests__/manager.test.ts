@@ -21,15 +21,22 @@ afterEach(() => setProcessRunnerForTest(undefined));
 
 describe("BinaryManager", () => {
   test("dedupes concurrent resolves for the same binary to one install", async () => {
+    let releaseInstall!: () => void;
+    const installGate = new Promise<void>((resolve) => {
+      releaseInstall = resolve;
+    });
     const seam = createSeam({
       install: async (params) => {
-        await sleep(10);
+        await installGate;
         return params.cachePath;
       },
     });
     const manager = new BinaryManager(seam);
 
-    const [first, second] = await Promise.all([manager.resolve("rg"), manager.resolve("rg")]);
+    const firstResult = manager.resolve("rg");
+    const secondResult = manager.resolve("rg");
+    releaseInstall();
+    const [first, second] = await Promise.all([firstResult, secondResult]);
 
     expect(first).toBe(second);
     expect(first).toEndWith("/rg");
@@ -361,8 +368,4 @@ async function expectRejects(fn: () => Promise<unknown>): Promise<Error> {
   }
 
   throw new Error("Expected promise to reject");
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -382,7 +382,12 @@ function sanitizePresentation(
   forceTruncated: boolean,
 ): ToolResultPresentation {
   return presentation.kind === "diff"
-    ? sanitizeDiffPresentation(presentation.files, Math.min(availableBytes, DIFF_PRESENTATION_MAX_BYTES), forceTruncated || presentation.truncated === true)
+    ? sanitizeDiffPresentation(
+        presentation.files,
+        Math.min(availableBytes, DIFF_PRESENTATION_MAX_BYTES),
+        presentation.simplified === true,
+        forceTruncated || presentation.truncated === true,
+      )
     : sanitizeAskPresentation(presentation.answers, Math.min(availableBytes, ASK_PRESENTATION_MAX_BYTES), forceTruncated || presentation.truncated === true);
 }
 
@@ -413,6 +418,7 @@ function sanitizeProcessDetails(
 function sanitizeDiffPresentation(
   sourceFiles: readonly DiffFile[],
   maxBytes: number,
+  simplified: boolean,
   initiallyTruncated: boolean,
 ): Extract<ToolResultPresentation, { kind: "diff" }> {
   let truncated = initiallyTruncated || sourceFiles.length > DIFF_PRESENTATION_MAX_FILES;
@@ -453,38 +459,73 @@ function sanitizeDiffPresentation(
       });
     }
     files.push(file);
-    if (lineCount >= DIFF_PRESENTATION_MAX_LINES) break;
   }
 
-  let result: Extract<ToolResultPresentation, { kind: "diff" }> = {
+  const createResult = (
+    boundedFiles: DiffFile[],
+    isTruncated: boolean,
+  ): Extract<ToolResultPresentation, { kind: "diff" }> => ({
     kind: "diff",
-    files,
-    ...(truncated ? { truncated: true } : {}),
-  };
-  while (utf8ByteLength(JSON.stringify(result)) > maxBytes && removeLastDiffUnit(files)) {
-    truncated = true;
-    result = { kind: "diff", files, truncated: true };
+    files: boundedFiles,
+    ...(simplified ? { simplified: true } : {}),
+    ...(isTruncated ? { truncated: true } : {}),
+  });
+
+  let result = createResult(files, truncated);
+  if (utf8ByteLength(JSON.stringify(result)) <= maxBytes) return result;
+
+  const shells = files.map((file): DiffFile => ({ ...file, hunks: [] }));
+  result = createResult(shells, true);
+  while (utf8ByteLength(JSON.stringify(result)) > maxBytes && shells.length > 0) {
+    shells.pop();
+    result = createResult(shells, true);
   }
   if (utf8ByteLength(JSON.stringify(result)) > maxBytes) {
-    return { kind: "diff", files: [], truncated: true };
+    return {
+      kind: "diff",
+      files: [],
+      ...(simplified ? { simplified: true } : {}),
+      truncated: true,
+    };
   }
-  return result;
+
+  const retainedFiles = files.slice(0, shells.length);
+  let lowerBound = 0;
+  let upperBound = retainedFiles.reduce(
+    (count, file) => count + file.hunks.reduce(
+      (fileCount, hunk) => fileCount + hunk.lines.length,
+      0,
+    ),
+    0,
+  );
+  while (lowerBound < upperBound) {
+    const candidateLines = Math.ceil((lowerBound + upperBound) / 2);
+    const candidate = createResult(
+      limitDiffLines(retainedFiles, candidateLines),
+      true,
+    );
+    if (utf8ByteLength(JSON.stringify(candidate)) <= maxBytes) {
+      lowerBound = candidateLines;
+    } else {
+      upperBound = candidateLines - 1;
+    }
+  }
+  return createResult(limitDiffLines(retainedFiles, lowerBound), true);
 }
 
-function removeLastDiffUnit(files: DiffFile[]): boolean {
-  const file = files.at(-1);
-  if (file === undefined) return false;
-  const hunk = file.hunks.at(-1);
-  if (hunk?.lines.length) {
-    hunk.lines.pop();
-    return true;
-  }
-  if (hunk !== undefined) {
-    file.hunks.pop();
-    return true;
-  }
-  files.pop();
-  return true;
+function limitDiffLines(files: readonly DiffFile[], maxLines: number): DiffFile[] {
+  let remaining = maxLines;
+  return files.map((file): DiffFile => {
+    const hunks: DiffFile["hunks"] = [];
+    for (const hunk of file.hunks) {
+      if (remaining === 0) break;
+      const lines = hunk.lines.slice(0, remaining);
+      if (lines.length === 0) continue;
+      hunks.push({ ...hunk, lines });
+      remaining -= lines.length;
+    }
+    return { ...file, hunks };
+  });
 }
 
 function sanitizeAskPresentation(

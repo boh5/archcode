@@ -8,15 +8,38 @@ import type { Logger } from "../logger";
 
 export interface BackgroundTaskManagerOptions {
   readonly logger: Logger;
+  readonly deadlineScheduler?: BackgroundTaskDeadlineScheduler;
 }
+
+export interface BackgroundTaskDeadlineHandle {
+  readonly id?: unknown;
+}
+
+export interface BackgroundTaskDeadlineScheduler {
+  schedule(delayMs: number, callback: () => void): BackgroundTaskDeadlineHandle;
+  cancel(handle: BackgroundTaskDeadlineHandle): void;
+}
+
+const systemBackgroundTaskDeadlineScheduler: BackgroundTaskDeadlineScheduler = {
+  schedule: (delayMs, callback) => {
+    const id = setTimeout(callback, delayMs);
+    if (typeof id === "object" && "unref" in id) id.unref();
+    return { id };
+  },
+  cancel: (handle) => {
+    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
+  },
+};
 
 export class BackgroundTaskManager {
   private readonly tasks = new Map<string, TaskEntry>();
   private readonly lastCompletedAt = new Map<string, number>();
   private readonly logger: Logger;
+  private readonly deadlineScheduler: BackgroundTaskDeadlineScheduler;
 
   constructor(options: BackgroundTaskManagerOptions) {
     this.logger = options.logger;
+    this.deadlineScheduler = options.deadlineScheduler ?? systemBackgroundTaskDeadlineScheduler;
   }
 
   /**
@@ -70,15 +93,21 @@ export class BackgroundTaskManager {
     if (this.tasks.size === 0) return;
 
     const promises = Array.from(this.tasks.values()).map((e) => e.promise);
+    let deadline: BackgroundTaskDeadlineHandle | undefined;
     const timeout = new Promise<void>((_resolve, reject) => {
-      const id = setTimeout(() => reject(new Error(`Drain timed out after ${timeoutMs}ms`)), timeoutMs);
-      // Allow the timer to be released if all tasks finish first
-      if (typeof id === "object" && "unref" in id) (id as { unref: () => void }).unref();
+      deadline = this.deadlineScheduler.schedule(
+        timeoutMs,
+        () => reject(new Error(`Drain timed out after ${timeoutMs}ms`)),
+      );
     });
 
-    await Promise.race([Promise.allSettled(promises), timeout]).catch(() => {
-      /* timeout reached — drain returns regardless */
-    });
+    try {
+      await Promise.race([Promise.allSettled(promises), timeout]).catch(() => {
+        /* timeout reached — drain returns regardless */
+      });
+    } finally {
+      if (deadline !== undefined) this.deadlineScheduler.cancel(deadline);
+    }
   }
 
   /**

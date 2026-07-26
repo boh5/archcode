@@ -1555,6 +1555,53 @@ describe("compaction and meta transcript round-trip", () => {
     expect(loaded.getState().messages).toEqual(messages);
   });
 
+  test("roundtrips a simplified diff presentation", async () => {
+    const sessionId = uniqueSessionId("simplified-diff-roundtrip");
+    const result: FinalizedToolResult = {
+      ...finalizedResult("edited"),
+      details: {
+        presentations: [{
+          kind: "diff",
+          simplified: true,
+          truncated: true,
+          files: [{
+            path: "large.ts",
+            status: "modified",
+            additions: 1_050,
+            deletions: 1_050,
+            hunks: [],
+          }],
+        }],
+      },
+    };
+    const messages: StoredMessage[] = [{
+      id: "msg-simplified-diff",
+      role: "assistant",
+      parts: [{
+        type: "tool",
+        state: "completed",
+        id: "tool-simplified-diff",
+        toolCallId: "call-simplified-diff",
+        toolName: "file_edit",
+        input: { path: "large.ts" },
+        result,
+        createdAt: 100,
+        startedAt: 101,
+        endedAt: 102,
+      }],
+      createdAt: 100,
+      completedAt: 103,
+    }];
+
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(sessionId, messages, []),
+      TMP_DIR,
+    );
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+
+    expect(loaded.getState().messages).toEqual(messages);
+  });
+
   test("roundtrips ErrorToolPart with strict process details", async () => {
     const sessionId = uniqueSessionId("tool-error-meta-roundtrip");
     const messages: StoredMessage[] = [

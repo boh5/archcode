@@ -4,7 +4,7 @@ import { CACHE_NAMESPACE } from "@archcode/protocol";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import { createProcessRunner, setProcessRunnerForTest } from "../process/runner";
-import type { ProcessRunnerResult } from "../process/types";
+import type { ProcessRunner, ProcessRunnerResult } from "../process/types";
 import { getServerDefinitionById, type LspServerDefinition } from "./server-definitions";
 
 export interface ExecCommandResult {
@@ -38,6 +38,7 @@ export class LspInstallerError extends Error {
 
 const installLocks = new Map<string, Promise<string>>();
 const resolvedBinaryCache = new Map<string, string>();
+let installerRunnerForTest: ProcessRunner | undefined;
 
 export interface LspInstallerOptions {
   logger?: Logger;
@@ -48,7 +49,15 @@ export interface LspInstallerOptions {
 const DEFAULT_NPM_INSTALL_TIMEOUT_MS = 90_000;
 
 export function setInstallerProcessRunnerForTest(fn: Parameters<typeof setProcessRunnerForTest>[0]): void {
+  installerRunnerForTest = undefined;
   setProcessRunnerForTest(fn);
+  installLocks.clear();
+  resolvedBinaryCache.clear();
+}
+
+export function setInstallerRunnerForTest(runner: ProcessRunner | undefined): void {
+  installerRunnerForTest = runner;
+  setProcessRunnerForTest(undefined);
   installLocks.clear();
   resolvedBinaryCache.clear();
 }
@@ -206,7 +215,7 @@ function getInstallBaseDir(): string {
 }
 
 async function runInstallerCommand(command: string[], options: ExecCommandOptions = {}): Promise<ExecCommandResult> {
-  const result = await createProcessRunner().run({
+  const result = await (installerRunnerForTest ?? createProcessRunner()).run({
     argv: toArgv(command),
     cwd: options.cwd,
     env: options.env ? { ...Bun.env, ...options.env } : undefined,

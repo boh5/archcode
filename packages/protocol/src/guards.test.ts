@@ -151,7 +151,21 @@ const validPayloads = [
   { type: "tool-call", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
   { type: "tool-input-resolved", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
   { type: "tool-attempt", toolCallId: "call-1", toolName: "file_write", attemptId: "attempt-1", timestamp: 1, destructive: false },
-  { type: "tool-result", toolCallId: "call-1", toolName: "file_read", result: finalizedResult },
+  {
+    type: "tool-result",
+    toolCallId: "call-1",
+    toolName: "file_edit",
+    result: {
+      ...finalizedResult,
+      details: {
+        presentations: [{
+          kind: "diff" as const,
+          files: [{ path: "large.ts", status: "modified" as const, hunks: [] }],
+          simplified: true as const,
+        }],
+      },
+    },
+  },
   { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", childProfile: "fast", childSkillNames: [], title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
   { type: "reminder", reminder: { id: "reminder-1", source: { type: "subagent_completed", sessionId: "child" }, delivery: "auto_inject", content: "done", createdAt: 1, consumedAt: null } },
@@ -278,7 +292,8 @@ describe("protocol event guards", () => {
         details: {
           presentations: [{
             kind: "diff",
-            files: [{ path: "small.ts", additions: 1.5, hunks: [] }],
+            simplified: false,
+            files: [{ path: "small.ts", additions: 1, hunks: [] }],
           }],
         },
       },

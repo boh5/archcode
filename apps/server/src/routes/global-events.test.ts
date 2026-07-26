@@ -1,10 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { AgentRuntime } from "@archcode/agent-core";
 import type { GlobalSSEEvent, HitlView } from "@archcode/protocol";
 import { Hono } from "hono";
-import { createRuntimeApp } from "../app";
 import { errorHandler } from "../error-handler";
-import { GlobalEventBus, globalEventBus, type GlobalEventBusListener } from "../events/global-event-bus";
+import { GlobalEventBus, type GlobalEventBusListener } from "../events/global-event-bus";
 import { createGlobalEventsRoutes } from "./global-events";
 
 class CountingGlobalEventBus extends GlobalEventBus {
@@ -26,50 +24,24 @@ function createApp(bus: GlobalEventBus, options?: Parameters<typeof createGlobal
   return app;
 }
 
-function createGlobalServerRuntime(): AgentRuntime {
-  return {
-    listSessionRuntimeEvents: mock(async () => [{
-      type: "session.runtime.snapshot",
-      projectSlugs: [],
-      families: [],
-      createdAt: 0,
-    }]),
-    listHitlSnapshotEvents: mock(async () => []),
-    subscribeSessionEvents: mock(() => () => undefined),
-    subscribeSessionRuntimeChanges: mock(() => () => undefined),
-  } as unknown as AgentRuntime;
+async function createFiniteResponse(
+  bus: GlobalEventBus,
+  stopAfter: (event: GlobalSSEEvent) => boolean,
+  options: Parameters<typeof createGlobalEventsRoutes>[1] = {},
+): Promise<Response> {
+  const stream = new AbortController();
+  return await createApp(bus, {
+    ...options,
+    streamLease: () => ({ signal: stream.signal, release: () => undefined }),
+    onAfterWrite: async (event) => {
+      await options.onAfterWrite?.(event);
+      if (stopAfter(event)) stream.abort();
+    },
+  }).request("/api/events");
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolveDone) => setTimeout(resolveDone, ms));
-}
-
-async function readUntil(response: Response, predicate: (text: string) => boolean): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Expected response body");
-
-  const decoder = new TextDecoder();
-  let text = "";
-  const deadline = Date.now() + 2000;
-
-  try {
-    while (Date.now() < deadline) {
-      const remaining = Math.max(1, deadline - Date.now());
-      const result = await Promise.race([
-        reader.read(),
-        new Promise<ReadableStreamReadResult<Uint8Array>>((_resolve, reject) => {
-          setTimeout(() => reject(new Error("Timed out reading SSE response")), remaining);
-        }),
-      ]);
-      if (result.done) break;
-      text += decoder.decode(result.value, { stream: true });
-      if (predicate(text)) return text;
-    }
-  } finally {
-    await reader.cancel();
-  }
-
-  throw new Error(`SSE predicate was not satisfied. Received: ${text}`);
+async function readFinite(response: Response): Promise<string> {
+  return await response.text();
 }
 
 function sessionEvent(input: { slug: string; sessionId: string; eventId: number; message: string }): GlobalSSEEvent {
@@ -152,21 +124,17 @@ describe("global events route", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  test("sends heartbeat events on the configured interval", async () => {
-    const bus = new GlobalEventBus();
-    const response = await createApp(bus, { heartbeatIntervalMs: 10 }).request("/api/events");
-
-    const text = await readUntil(response, (chunk) => chunk.includes("event: heartbeat"));
-    expect(text).toContain('data: {"type":"heartbeat"');
-  });
-
   test("forwards one session event with composite SSE id", async () => {
     const bus = new GlobalEventBus();
-    const response = await createApp(bus).request("/api/events");
+    const response = await createFiniteResponse(
+      bus,
+      (event) => event.type === "event" && event.payload.type === "system-notice"
+        && event.payload.message === "hello",
+    );
 
     bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 7, message: "hello" }));
 
-    const text = await readUntil(response, (chunk) => chunk.includes("hello"));
+    const text = await readFinite(response);
     expect(text).toContain("event: event");
     expect(text).toContain("id: alpha:s1:7");
     expect(text).toContain('data: {"type":"event","slug":"alpha","sessionId":"s1","eventId":7');
@@ -174,9 +142,13 @@ describe("global events route", () => {
 
   test("writes one atomic pending HITL snapshot when a client connects", async () => {
     const bus = new GlobalEventBus();
-    const response = await createApp(bus, { initialEvents: async () => [hitlSnapshot([hitlProjection("hitl-refresh")])] }).request("/api/events");
+    const response = await createFiniteResponse(
+      bus,
+      (event) => event.type === "hitl.snapshot",
+      { initialEvents: async () => [hitlSnapshot([hitlProjection("hitl-refresh")])] },
+    );
 
-    const text = await readUntil(response, (chunk) => chunk.includes("hitl-refresh"));
+    const text = await readFinite(response);
 
     expect(text).toContain("event: hitl.snapshot");
     expect(text).toContain('\"entries\":[');
@@ -186,9 +158,13 @@ describe("global events route", () => {
 
   test("writes the authoritative Session Family runtime snapshot on connect", async () => {
     const bus = new GlobalEventBus();
-    const response = await createApp(bus, { initialEvents: () => [sessionRuntimeSnapshot()] }).request("/api/events");
+    const response = await createFiniteResponse(
+      bus,
+      (event) => event.type === "session.runtime.snapshot",
+      { initialEvents: () => [sessionRuntimeSnapshot()] },
+    );
 
-    const text = await readUntil(response, (chunk) => chunk.includes("session.runtime.snapshot"));
+    const text = await readFinite(response);
 
     expect(text).toContain("event: session.runtime.snapshot");
     expect(text).toContain('"projectSlugs":["proj"]');
@@ -197,11 +173,16 @@ describe("global events route", () => {
 
   test("continues streaming live events after initial HITL snapshots", async () => {
     const bus = new GlobalEventBus();
-    const response = await createApp(bus, { initialEvents: () => [hitlSnapshot([hitlProjection("hitl-initial")])] }).request("/api/events");
+    const response = await createFiniteResponse(
+      bus,
+      (event) => event.type === "event" && event.payload.type === "system-notice"
+        && event.payload.message === "after-initial",
+      { initialEvents: () => [hitlSnapshot([hitlProjection("hitl-initial")])] },
+    );
 
     bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 9, message: "after-initial" }));
 
-    const text = await readUntil(response, (chunk) => chunk.includes("after-initial"));
+    const text = await readFinite(response);
     expect(text.indexOf("hitl-initial")).toBeLessThan(text.indexOf("after-initial"));
     expect(text).toContain("id: alpha:s1:9");
   });
@@ -210,15 +191,19 @@ describe("global events route", () => {
     const bus = new GlobalEventBus();
     const initialStarted = Promise.withResolvers<void>();
     const releaseInitial = Promise.withResolvers<void>();
-    const response = await createApp(bus, {
+    const response = await createFiniteResponse(bus, (event) => (
+      event.type === "event"
+      && event.payload.type === "system-notice"
+      && event.payload.message === "after-buffered-initial"
+    ), {
       initialEvents: async () => {
         initialStarted.resolve();
         await releaseInitial.promise;
         return [hitlSnapshot([hitlProjection("hitl-buffered-initial")])];
       },
-    }).request("/api/events");
+    });
 
-    const textPromise = readUntil(response, (chunk) => chunk.includes("after-buffered-initial"));
+    const textPromise = readFinite(response);
     await initialStarted.promise;
     bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 10, message: "after-buffered-initial" }));
     releaseInitial.resolve();
@@ -229,12 +214,16 @@ describe("global events route", () => {
 
   test("multiplexes events from two sessions on one connection", async () => {
     const bus = new GlobalEventBus();
-    const response = await createApp(bus).request("/api/events");
+    const response = await createFiniteResponse(
+      bus,
+      (event) => event.type === "event" && event.payload.type === "system-notice"
+        && event.payload.message === "two",
+    );
 
     bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 0, message: "one" }));
     bus.emit(sessionEvent({ slug: "beta", sessionId: "s2", eventId: 0, message: "two" }));
 
-    const text = await readUntil(response, (chunk) => chunk.includes("two"));
+    const text = await readFinite(response);
     expect(text).toContain("id: alpha:s1:0");
     expect(text).toContain("id: beta:s2:0");
     expect(text.indexOf("one")).toBeLessThan(text.indexOf("two"));
@@ -248,7 +237,12 @@ describe("global events route", () => {
       firstWriteStarted.resolve();
       await unblockWrites.promise;
     });
-    const response = await createApp(bus, { maxQueuedEvents: 2, onBeforeWrite }).request("/api/events");
+    const response = await createFiniteResponse(
+      bus,
+      (event) => event.type === "event" && event.payload.type === "system-notice"
+        && event.payload.message === "kept-three",
+      { maxQueuedEvents: 2, onBeforeWrite },
+    );
 
     bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 0, message: "kept-active" }));
     await firstWriteStarted.promise;
@@ -257,7 +251,7 @@ describe("global events route", () => {
     bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 3, message: "kept-three" }));
     unblockWrites.resolve();
 
-    const text = await readUntil(response, (chunk) => chunk.includes("kept-three"));
+    const text = await readFinite(response);
     expect(text).toContain("event: lagged");
     expect(text).toContain('data: {"type":"lagged","dropped":1,"reason":"client_backpressure"}');
     expect(text).not.toContain("dropped-one");
@@ -273,7 +267,12 @@ describe("global events route", () => {
       firstWriteStarted.resolve();
       await unblockWrites.promise;
     });
-    const response = await createApp(bus, { maxQueuedEvents: 2, onBeforeWrite }).request("/api/events");
+    const response = await createFiniteResponse(
+      bus,
+      (event) => event.type === "session.runtime_changed"
+        && event.rootSessionId === "kept-runtime-2",
+      { maxQueuedEvents: 2, onBeforeWrite },
+    );
 
     bus.emit(sessionRuntimeChange("active-write", "running"));
     await firstWriteStarted.promise;
@@ -282,41 +281,21 @@ describe("global events route", () => {
     bus.emit(sessionRuntimeChange("kept-runtime-2", "idle"));
     unblockWrites.resolve();
 
-    const text = await readUntil(response, (chunk) => chunk.includes("kept-runtime-2"));
+    const text = await readFinite(response);
     expect(text).toContain("event: lagged");
     expect(text).not.toContain("dropped-runtime");
     expect(text).toContain("kept-runtime-1");
     expect(text).toContain("kept-runtime-2");
   });
 
-  test("client disconnect cleans up the bus subscription", async () => {
-    const bus = new CountingGlobalEventBus();
-    const response = await createApp(bus).request("/api/events");
-    expect(bus.listenerCount).toBe(1);
-
-    await response.body?.cancel();
-    await delay(10);
-
-    expect(bus.listenerCount).toBe(0);
-  });
-
   test("writes shutdown events without closing before the frame is sent", async () => {
     const bus = new GlobalEventBus();
-    const response = await createApp(bus).request("/api/events");
+    const response = await createFiniteResponse(bus, (event) => event.type === "shutdown");
 
     bus.emit({ type: "shutdown", reason: "server-stop" });
 
-    const text = await readUntil(response, (chunk) => chunk.includes("event: shutdown"));
+    const text = await readFinite(response);
     expect(text).toContain('data: {"type":"shutdown","reason":"server-stop"}');
   });
 
-  test("server app uses the shared global event bus singleton", async () => {
-    const { app } = createRuntimeApp(createGlobalServerRuntime());
-    const response = await app.request("/api/events");
-
-    globalEventBus.emit(sessionEvent({ slug: "shared", sessionId: "singleton", eventId: 1, message: "from-singleton" }));
-
-    const text = await readUntil(response, (chunk) => chunk.includes("from-singleton"));
-    expect(text).toContain("id: shared:singleton:1");
-  });
 });

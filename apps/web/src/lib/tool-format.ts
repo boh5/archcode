@@ -113,8 +113,9 @@ function isDiffFile(value: unknown): boolean {
 }
 
 export function getToolDiffMetadata(meta: unknown): ToolDiffMetadata | undefined {
-  if (!isExactRecord(meta, ["files"], ["truncated", "unsupportedReason", "warning"])) return undefined;
+  if (!isExactRecord(meta, ["files"], ["simplified", "truncated", "unsupportedReason", "warning"])) return undefined;
   if (!Array.isArray(meta.files) || !meta.files.every(isDiffFile)) return undefined;
+  if (meta.simplified !== undefined && meta.simplified !== true) return undefined;
   if (meta.truncated !== undefined && typeof meta.truncated !== "boolean") return undefined;
   if (meta.warning !== undefined && typeof meta.warning !== "string") return undefined;
   if (meta.unsupportedReason !== undefined

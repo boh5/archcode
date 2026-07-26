@@ -1,6 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
 import { createInMemoryLogger, silentLogger } from "@archcode/agent-core";
-import { setupGracefulShutdown, type ShutdownSignal, type SignalProcess } from "./lifecycle";
+import {
+  setupGracefulShutdown,
+  type ShutdownDeadlineHandle,
+  type ShutdownDeadlineScheduler,
+  type ShutdownSignal,
+  type SignalProcess,
+} from "./lifecycle";
 
 class ExitError extends Error {
   readonly code: number | undefined;
@@ -31,6 +37,30 @@ function createProcess() {
 
 function makeTarget(shutdown = mock(async () => undefined)) {
   return { shutdown };
+}
+
+function createManualDeadlineScheduler(): ShutdownDeadlineScheduler & {
+  fireScheduled(): void;
+  pendingCount(): number;
+} {
+  let nextId = 1;
+  const scheduled = new Map<number, () => void>();
+  return {
+    schedule: (_delayMs, callback) => {
+      const id = nextId++;
+      scheduled.set(id, callback);
+      return { id };
+    },
+    cancel: (handle: ShutdownDeadlineHandle) => {
+      if (typeof handle.id === "number") scheduled.delete(handle.id);
+    },
+    fireScheduled: () => {
+      const callbacks = [...scheduled.values()];
+      scheduled.clear();
+      for (const callback of callbacks) callback();
+    },
+    pendingCount: () => scheduled.size,
+  };
 }
 
 describe("server lifecycle", () => {
@@ -82,29 +112,36 @@ describe("server lifecycle", () => {
     }));
   });
 
-  test("shutdown exits with code 1 when running jobs exceed timeout", async () => {
+  test("shutdown exits with code 1 when its deadline is manually triggered", async () => {
     const server = { stop: mock(() => undefined) };
     const target = makeTarget(mock(async () => {
       await new Promise(() => undefined);
     }));
     const { handlers, processRef } = createProcess();
     const { logger, entries } = createInMemoryLogger();
+    const deadlineScheduler = createManualDeadlineScheduler();
 
     const handle = setupGracefulShutdown(server, target, {
       process: processRef,
-      timeoutMs: 1,
+      timeoutMs: 10_000,
       logger,
+      deadlineScheduler,
     });
     expect(handlers.has("SIGINT")).toBe(true);
 
-    await expectExitCode(handle.shutdown("SIGINT"), 1);
+    const shutdown = handle.shutdown("SIGINT");
+    expect(deadlineScheduler.pendingCount()).toBe(1);
+    deadlineScheduler.fireScheduled();
+    await expectExitCode(shutdown, 1);
     expect(entries).toContainEqual(expect.objectContaining({
       level: "error",
       event: "server.shutdown.timeout",
-      meta: { timeoutMs: 1 },
+      meta: { timeoutMs: 10_000 },
     }));
     expect(server.stop).toHaveBeenCalled();
+    expect(deadlineScheduler.pendingCount()).toBe(0);
   });
+
 });
 
 async function expectExitCode(promise: Promise<number>, code: number): Promise<void> {

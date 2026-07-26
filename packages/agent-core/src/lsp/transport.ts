@@ -6,6 +6,11 @@ import {
 } from "vscode-jsonrpc";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
+import {
+  raceLspDeadline,
+  systemLspDeadlineScheduler,
+  type LspDeadlineScheduler,
+} from "./deadline-scheduler";
 
 export interface LspTransport {
   connect(params?: unknown): Promise<unknown>;
@@ -45,6 +50,7 @@ export interface StdioLspTransportOptions {
   logger?: Logger;
   captureStderr?: boolean;
   stderrBufferLimit?: number;
+  deadlineScheduler?: LspDeadlineScheduler;
 }
 
 export type LspTransportFactory = (options: StdioLspTransportOptions) => LspTransport;
@@ -154,6 +160,11 @@ export function adaptReader(stream: ReadableStream<Uint8Array>, options: { logge
   };
 }
 
+export function appendBoundedTextTail(current: string, appended: string, limit: number): string {
+  const combined = current + appended;
+  return combined.length <= limit ? combined : combined.slice(-limit);
+}
+
 function createFrameEmitter(): (chunk: Uint8Array, listener: (data: Uint8Array) => void) => void {
   const header = new Uint8Array(MAX_LSP_TRANSPORT_HEADER_BYTES);
   let headerLength = 0;
@@ -256,6 +267,7 @@ export function adaptWriter(sink: { write(chunk: Uint8Array): void; end(): void 
 
 export class StdioLspTransport implements LspTransport {
   private readonly timeouts: LspTransportTimeouts;
+  private readonly deadlineScheduler: LspDeadlineScheduler;
   #logger: Logger;
   private proc: BunSubprocess | undefined;
   private exitPromise: Promise<number> | undefined;
@@ -268,6 +280,7 @@ export class StdioLspTransport implements LspTransport {
 
   constructor(private readonly options: StdioLspTransportOptions) {
     this.timeouts = { ...DEFAULT_LSP_TRANSPORT_TIMEOUTS, ...options.timeouts };
+    this.deadlineScheduler = options.deadlineScheduler ?? systemLspDeadlineScheduler;
     this.#logger = (options.logger ?? silentLogger).child({ module: "lsp.transport" });
   }
 
@@ -306,6 +319,7 @@ export class StdioLspTransport implements LspTransport {
         this.connection.sendRequest("initialize", params),
         this.timeouts.initializeMs,
         "initialize",
+        this.deadlineScheduler,
       );
     } catch (error) {
       await this.dispose();
@@ -320,7 +334,7 @@ export class StdioLspTransport implements LspTransport {
 
   async sendRequest(method: string, params?: unknown): Promise<unknown> {
     const connection = this.requireConnection();
-    return withTimeout(connection.sendRequest(method, params), this.timeouts.requestMs, method);
+    return withTimeout(connection.sendRequest(method, params), this.timeouts.requestMs, method, this.deadlineScheduler);
   }
 
   sendNotification(method: string, params?: unknown): void {
@@ -340,7 +354,7 @@ export class StdioLspTransport implements LspTransport {
 
     if (connection && proc && proc.exitCode === null) {
       if (this.initialized) {
-        await ignoreErrors(withTimeout(connection.sendRequest("shutdown", null), this.timeouts.shutdownMs, "shutdown"));
+        await ignoreErrors(withTimeout(connection.sendRequest("shutdown", null), this.timeouts.shutdownMs, "shutdown", this.deadlineScheduler));
       }
 
       ignoreErrorsSync(() => connection.sendNotification("exit"));
@@ -362,10 +376,10 @@ export class StdioLspTransport implements LspTransport {
   }
 
   private async waitOrEscalate(proc: BunSubprocess): Promise<void> {
-    if (await waitForExit(proc, EXIT_WAIT_MS)) return;
+    if (await waitForExit(proc, EXIT_WAIT_MS, this.deadlineScheduler)) return;
 
     safeKill(proc, "SIGTERM", this.#logger);
-    if (await waitForExit(proc, EXIT_WAIT_MS)) return;
+    if (await waitForExit(proc, EXIT_WAIT_MS, this.deadlineScheduler)) return;
     this.#logger.warn("lsp.transport.process.kill.timeout", { context: { pid: proc.pid, signal: "SIGTERM" } });
 
     safeKill(proc, "SIGKILL", this.#logger);
@@ -383,10 +397,7 @@ export class StdioLspTransport implements LspTransport {
     const reader = stream.getReader();
     this.stderrReader = reader;
     const append = (text: string): void => {
-      this.stderrBuffer += text;
-      if (this.stderrBuffer.length > limit) {
-        this.stderrBuffer = this.stderrBuffer.slice(-limit);
-      }
+      this.stderrBuffer = appendBoundedTextTail(this.stderrBuffer, text, limit);
     };
 
     this.stderrCapture = (async () => {
@@ -427,33 +438,35 @@ function defaultInitializeParams(): unknown {
   return { processId: null, capabilities: {}, rootUri: null };
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timeout: Timer | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(`LSP ${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+  scheduler: LspDeadlineScheduler,
+): Promise<T> {
+  return raceLspDeadline(
+    promise,
+    timeoutMs,
+    () => new Error(`LSP ${label} timed out after ${timeoutMs}ms`),
+    scheduler,
+  );
 }
 
-async function waitForExit(proc: BunSubprocess, timeoutMs: number): Promise<boolean> {
-  let timeout: Timer | undefined;
+async function waitForExit(
+  proc: BunSubprocess,
+  timeoutMs: number,
+  scheduler: LspDeadlineScheduler,
+): Promise<boolean> {
   try {
-    await Promise.race([
+    await raceLspDeadline(
       proc.exited,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error("process exit wait timed out")), timeoutMs);
-      }),
-    ]);
+      timeoutMs,
+      () => new Error("process exit wait timed out"),
+      scheduler,
+    );
     return true;
   } catch {
     return false;
-  } finally {
-    if (timeout) clearTimeout(timeout);
   }
 }
 

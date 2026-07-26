@@ -16,7 +16,11 @@ import {
   markSessionForeground,
 } from "../store/session-store";
 import { hitlStore } from "../store/hitl-store";
-import { focusedSessionQueryOptions } from "../api/queries";
+import {
+  focusedSessionQueryOptions,
+  projectTodosQueryOptions,
+  sessionQueryOptions,
+} from "../api/queries";
 import { SessionRoute } from "./session";
 import { WorkbenchLayoutProvider, useWorkbenchLayout } from "../context/workbench-layout";
 import { SettingsModalProvider } from "../context/settings-modal";
@@ -116,32 +120,16 @@ function installDom(): JSDOM {
   Object.defineProperty(globalThis, "MouseEvent", { value: dom.window.MouseEvent, configurable: true });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
   Object.defineProperty(globalThis, "requestAnimationFrame", {
-    value: (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0),
+    value: (callback: FrameRequestCallback) => {
+      queueMicrotask(() => callback(0));
+      return 0;
+    },
     configurable: true,
   });
-  Object.defineProperty(globalThis, "cancelAnimationFrame", { value: clearTimeout, configurable: true });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", { value: () => {}, configurable: true });
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { value: () => {}, configurable: true });
 
   return dom;
-}
-
-async function waitFor(assertion: () => void): Promise<void> {
-  const startedAt = Date.now();
-  let lastError: unknown;
-
-  while (Date.now() - startedAt < 1500) {
-    try {
-      assertion();
-      return;
-    } catch (error) {
-      lastError = error;
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      });
-    }
-  }
-
-  throw lastError;
 }
 
 function findElementByText(container: Element, text: string): Element {
@@ -152,6 +140,7 @@ function findElementByText(container: Element, text: string): Element {
 }
 
 async function renderSessionRoute(root: Root, queryClient: QueryClient): Promise<void> {
+  await queryClient.fetchQuery(sessionQueryOptions("demo", "root-session"));
   await act(async () => {
     root.render(
       <SettingsModalProvider>
@@ -301,18 +290,16 @@ describe("SessionRoute focused view store behavior", () => {
     Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
     });
     const reactRoot = createRoot(container);
 
     try {
       await renderSessionRoute(reactRoot, queryClient);
 
-      await waitFor(() => {
-        const row = container.querySelector('[data-testid="session-goal-summary-row"]');
-        expect(row?.textContent).toContain("1,500");
-        expect(getWebSessionStore("root-session", "demo").getState().goal).toEqual(initialGoal);
-      });
+      const row = container.querySelector('[data-testid="session-goal-summary-row"]');
+      expect(row?.textContent).toContain("1,500");
+      expect(getWebSessionStore("root-session", "demo").getState().goal).toEqual(initialGoal);
 
       const updatedGoal: NonNullable<Session["goal"]> = {
         ...initialGoal,
@@ -348,11 +335,9 @@ describe("SessionRoute focused view store behavior", () => {
         });
       });
 
-      await waitFor(() => {
-        const row = container.querySelector('[data-testid="session-goal-summary-row"]');
-        expect(row?.textContent).toContain("2,750");
-        expect(row?.textContent).not.toContain("1,500");
-      });
+      const updatedRow = container.querySelector('[data-testid="session-goal-summary-row"]');
+      expect(updatedRow?.textContent).toContain("2,750");
+      expect(updatedRow?.textContent).not.toContain("1,500");
       expect(fetchMock.mock.calls.filter(([input]) => {
         const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         return new URL(url, "http://localhost").pathname === "/api/projects/demo/sessions/root-session";
@@ -415,11 +400,12 @@ describe("SessionRoute focused view store behavior", () => {
     Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
     });
     const reactRoot = createRoot(container);
 
     try {
+      await queryClient.fetchQuery(sessionQueryOptions("demo", "root-session"));
       await act(async () => {
         reactRoot.render(
           <SettingsModalProvider>
@@ -439,19 +425,17 @@ describe("SessionRoute focused view store behavior", () => {
         );
       });
 
-      await waitFor(() => expect(container.textContent).toContain("Model changed: test:old → test:model"));
+      expect(container.textContent).toContain("Model changed: test:old → test:model");
       expect(container.querySelector('[data-testid="inspector-expanded"]')?.textContent).toBe("false");
       const details = Array.from(container.querySelectorAll("button"))
         .find((button) => button.textContent === "Details");
       if (!details) throw new Error("Missing model audit Details button");
       await act(async () => details.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
 
-      await waitFor(() => {
-        expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
-          "/projects/demo/sessions/root-session?message=message-invalidated&inspector=context|PUSH",
-        );
-        expect(container.querySelector('[data-testid="inspector-expanded"]')?.textContent).toBe("true");
-      });
+      expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
+        "/projects/demo/sessions/root-session?message=message-invalidated&inspector=context|PUSH",
+      );
+      expect(container.querySelector('[data-testid="inspector-expanded"]')?.textContent).toBe("true");
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();
@@ -571,19 +555,17 @@ describe("SessionRoute focused view store behavior", () => {
     Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
     });
     const reactRoot = createRoot(container);
 
     try {
       await renderSessionRoute(reactRoot, queryClient);
 
-      await waitFor(() => {
-        expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
-        expect(container.querySelector('[data-testid="work-summary-root-execution"]')).not.toBeNull();
-        expect(container.textContent).not.toContain("Open child session");
-        expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
-      });
+      expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
+      expect(container.querySelector('[data-testid="work-summary-root-execution"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("Open child session");
+      expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
 
       await act(async () => {
         container.querySelector<HTMLButtonElement>('[data-testid="work-summary-root-execution"]')?.dispatchEvent(
@@ -591,24 +573,21 @@ describe("SessionRoute focused view store behavior", () => {
         );
       });
 
-      await waitFor(() => {
-        expect(container.textContent).toContain("Open child session");
-      });
+      expect(container.textContent).toContain("Open child session");
 
+      await queryClient.fetchQuery(sessionQueryOptions("demo", "child-session"));
       await act(async () => {
         findElementByText(container, "Open child session").dispatchEvent(
           new dom.window.MouseEvent("click", { bubbles: true }),
         );
       });
 
-      await waitFor(() => {
-        expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBe("child-session");
-        expect(container.textContent).toContain("Back to Root Session");
-        expect(container.textContent).toContain("Child Session");
-        expect(container.querySelector('button[aria-label^="Todo progress"]')).not.toBeNull();
-        expect(container.querySelector('button[aria-controls~="context-inspector"]')).not.toBeNull();
-        expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
-      });
+      expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBe("child-session");
+      expect(container.textContent).toContain("Back to Root Session");
+      expect(container.textContent).toContain("Child Session");
+      expect(container.querySelector('button[aria-label^="Todo progress"]')).not.toBeNull();
+      expect(container.querySelector('button[aria-controls~="context-inspector"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
 
       await act(async () => {
         findElementByText(container, "Back to Root Session").dispatchEvent(
@@ -616,9 +595,7 @@ describe("SessionRoute focused view store behavior", () => {
         );
       });
 
-      await waitFor(() => {
-        expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
-      });
+      expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -675,31 +652,29 @@ describe("SessionRoute focused view store behavior", () => {
     Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
     });
     const reactRoot = createRoot(container);
 
     try {
       await renderSessionRoute(reactRoot, queryClient);
 
-      await waitFor(() => {
-        const surface = container.querySelector('[data-testid="session-composer-dock"]');
-        const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
-        const attention = container.querySelector('[data-testid="composer-attention-stack"]');
-        const decision = container.querySelector('[data-testid="hitl-decision-card"]');
-        expect(decision).not.toBeNull();
-        expect(surface?.classList.contains("border-t")).toBe(true);
-        expect(surface?.classList.contains("px-5")).toBe(false);
-        expect(rail?.className).toContain("w-full");
-        expect(rail?.className).not.toContain("max-w-[");
-        expect(rail?.className).toContain("px-4");
-        expect(rail?.className).toContain("sm:px-5");
-        expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
-        expect(container.textContent).toContain("Need input");
-        expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
-        expect(container.querySelector('input[type="radio"]')).not.toBeNull();
-        expect(container.querySelector('input[aria-label="Scope custom answer"]')).not.toBeNull();
-      });
+      const surface = container.querySelector('[data-testid="session-composer-dock"]');
+      const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
+      const attention = container.querySelector('[data-testid="composer-attention-stack"]');
+      const decision = container.querySelector('[data-testid="hitl-decision-card"]');
+      expect(decision).not.toBeNull();
+      expect(surface?.classList.contains("border-t")).toBe(true);
+      expect(surface?.classList.contains("px-5")).toBe(false);
+      expect(rail?.className).toContain("w-full");
+      expect(rail?.className).not.toContain("max-w-[");
+      expect(rail?.className).toContain("px-4");
+      expect(rail?.className).toContain("sm:px-5");
+      expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
+      expect(container.textContent).toContain("Need input");
+      expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
+      expect(container.querySelector('input[type="radio"]')).not.toBeNull();
+      expect(container.querySelector('input[aria-label="Scope custom answer"]')).not.toBeNull();
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();
@@ -746,11 +721,13 @@ describe("SessionRoute focused view store behavior", () => {
     Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
     });
     const reactRoot = createRoot(container);
 
     try {
+      await queryClient.fetchQuery(sessionQueryOptions("demo", "root-session"));
+      await queryClient.fetchQuery(projectTodosQueryOptions("demo"));
       await act(async () => {
         reactRoot.render(
           <SettingsModalProvider>
@@ -768,13 +745,11 @@ describe("SessionRoute focused view store behavior", () => {
         );
       });
 
-      await waitFor(() => {
-        const link = container.querySelector('[data-testid="project-todo-backlink"]');
-        expect(link?.textContent).toBe("Add resilient offline mode");
-        expect(link?.getAttribute("href")).toBe("/projects/demo/todos?todo=todo-offline-mode");
-        expect(container.textContent).toContain("Discussion Todo · Activation source");
-        expect(link?.closest("header")).not.toBeNull();
-      });
+      const backlink = container.querySelector('[data-testid="project-todo-backlink"]');
+      expect(backlink?.textContent).toBe("Add resilient offline mode");
+      expect(backlink?.getAttribute("href")).toBe("/projects/demo/todos?todo=todo-offline-mode");
+      expect(container.textContent).toContain("Discussion Todo · Activation source");
+      expect(backlink?.closest("header")).not.toBeNull();
 
       const link = container.querySelector('[data-testid="project-todo-backlink"]');
       if (!link) throw new Error("Missing Project Todo backlink");
@@ -782,11 +757,9 @@ describe("SessionRoute focused view store behavior", () => {
         link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
       });
 
-      await waitFor(() => {
-        expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
-          "/projects/demo/todos?todo=todo-offline-mode|PUSH",
-        );
-      });
+      expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
+        "/projects/demo/todos?todo=todo-offline-mode|PUSH",
+      );
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();
@@ -794,11 +767,10 @@ describe("SessionRoute focused view store behavior", () => {
     }
   });
 
-  test("direct child URL is replaced by the canonical root URL focused on that child", async () => {
+  test("replaces a direct child URL with the canonical root URL focused on that child", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
-
     const rootSession = createSession({
       id: "root-1",
       rootSessionId: "root-1",
@@ -812,29 +784,25 @@ describe("SessionRoute focused view store behavior", () => {
       title: "Child Session",
       messages: [],
     });
-
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const path = new URL(url, "http://localhost").pathname;
-      if (path === "/api/projects") {
-        return Response.json({
-          projects: [{
-            slug: "demo",
-            name: "Demo",
-            workspaceRoot: "/workspace",
-            addedAt: "2026-01-01T00:00:00.000Z",
-          }],
-        });
-      }
+      if (path === "/api/projects") return Response.json({ projects: [] });
+      if (path === "/api/agents") return Response.json({ agents: [] });
+      if (path === "/api/projects/demo/todos") return Response.json({ todos: [] });
       if (path === "/api/projects/demo/sessions/child-1") return Response.json(childSession);
       if (path === "/api/projects/demo/sessions/root-1") return Response.json(rootSession);
       return new Response("Not found", { status: 404 });
     });
     Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
-
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
     });
+    await Promise.all([
+      queryClient.fetchQuery(sessionQueryOptions("demo", "child-1")),
+      queryClient.fetchQuery(sessionQueryOptions("demo", "root-1")),
+      queryClient.fetchQuery(projectTodosQueryOptions("demo")),
+    ]);
     const reactRoot = createRoot(container);
 
     try {
@@ -842,34 +810,26 @@ describe("SessionRoute focused view store behavior", () => {
         reactRoot.render(
           <SettingsModalProvider>
             <WorkbenchLayoutProvider>
-            <QueryClientProvider client={queryClient}>
-            <MemoryRouter initialEntries={["/projects/demo/sessions/child-1"]}>
-              <Routes>
-                <Route
-                  path="/projects/:slug/sessions/:sessionId"
-                  element={
-                    <>
-                      <SessionRoute />
-                      <LocationProbe />
-                    </>
-                  }
-                />
-              </Routes>
-            </MemoryRouter>
-            </QueryClientProvider>
+              <QueryClientProvider client={queryClient}>
+                <MemoryRouter initialEntries={["/projects/demo/sessions/child-1"]}>
+                  <Routes>
+                    <Route
+                      path="/projects/:slug/sessions/:sessionId"
+                      element={<><SessionRoute /><LocationProbe /></>}
+                    />
+                  </Routes>
+                </MemoryRouter>
+              </QueryClientProvider>
             </WorkbenchLayoutProvider>
           </SettingsModalProvider>,
         );
       });
 
-      await waitFor(() => {
-        expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
-          "/projects/demo/sessions/root-1?focus=child-1|REPLACE",
-        );
-        expect(container.textContent).toContain("Back to Root Session");
-      });
-
-        expect(container.querySelector("textarea")).not.toBeNull();
+      expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
+        "/projects/demo/sessions/root-1?focus=child-1|REPLACE",
+      );
+      expect(container.textContent).toContain("Back to Root Session");
+      expect(container.querySelector("textarea")).not.toBeNull();
       expect(container.querySelector('button[title="Stop"]')).toBeNull();
     } finally {
       await act(async () => reactRoot.unmount());

@@ -2,6 +2,10 @@ import { afterAll, describe, expect, it } from "bun:test";
 import path from "node:path";
 import { DEFAULT_FAKE_LSP_CONFIG } from "./fake-server";
 import { StdioLspTransport } from "./transport";
+import type {
+  LspDeadlineHandle,
+  LspDeadlineScheduler,
+} from "./deadline-scheduler";
 
 const transports: StdioLspTransport[] = [];
 
@@ -47,18 +51,64 @@ describe("StdioLspTransport integration", () => {
     await expect(transport.exited).resolves.toBe(0);
   });
 
-  it("captures bounded stderr for initialize failures", async () => {
+  it("fails initialization only when the controlled deadline fires", async () => {
+    const deadline = createManualDeadlineScheduler();
     const transport = new StdioLspTransport({
       command: "bun",
-      args: ["-e", "setTimeout(() => console.error('x'.repeat(100) + 'lsp stderr marker'), 100); setTimeout(() => {}, 200);"],
-      captureStderr: true,
-      stderrBufferLimit: 64,
-      timeouts: { initializeMs: 20 },
+      args: ["-e", "process.stdin.resume()"],
+      timeouts: { initializeMs: 30_000 },
+      deadlineScheduler: deadline.scheduler,
     });
     transports.push(transport);
-    await expect(transport.connect({ processId: null, capabilities: {}, rootUri: null })).rejects.toThrow("timed out");
-    expect(transport.stderrSnapshot).toContain("lsp stderr marker");
-    expect(transport.stderrSnapshot.length).toBeLessThanOrEqual(64);
-    await expect(transport.exited).resolves.toBe(0);
+
+    const connecting = transport.connect({ processId: null, capabilities: {}, rootUri: null });
+    expect(deadline.scheduledDelays).toEqual([30_000]);
+    deadline.fireNext();
+
+    for (let turn = 0; turn < 10 && deadline.scheduledDelays.length < 2; turn += 1) {
+      await Promise.resolve();
+    }
+    expect(deadline.scheduledDelays).toEqual([30_000, 2_000]);
+    deadline.fireNext();
+
+    await expect(connecting).rejects.toThrow("LSP initialize timed out after 30000ms");
+    expect(deadline.scheduledDelays).toEqual([30_000, 2_000, 2_000]);
+    expect(deadline.cancelled).toHaveLength(3);
   });
+
 });
+
+function createManualDeadlineScheduler(): {
+  scheduler: LspDeadlineScheduler;
+  fireNext: () => void;
+  scheduledDelays: number[];
+  cancelled: LspDeadlineHandle[];
+} {
+  const callbacks = new Map<number, () => void>();
+  const scheduledDelays: number[] = [];
+  const cancelled: LspDeadlineHandle[] = [];
+  let nextId = 0;
+  return {
+    scheduler: {
+      schedule(delayMs, callback) {
+        const id = nextId++;
+        scheduledDelays.push(delayMs);
+        callbacks.set(id, callback);
+        return { id };
+      },
+      cancel(handle) {
+        cancelled.push(handle);
+        if (typeof handle.id === "number") callbacks.delete(handle.id);
+      },
+      async sleep() {},
+    },
+    fireNext() {
+      const entry = callbacks.entries().next().value as [number, () => void] | undefined;
+      if (entry === undefined) throw new Error("No LSP deadline is scheduled");
+      callbacks.delete(entry[0]);
+      entry[1]();
+    },
+    scheduledDelays,
+    cancelled,
+  };
+}

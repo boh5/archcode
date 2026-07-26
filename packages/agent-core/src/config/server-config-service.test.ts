@@ -366,8 +366,8 @@ describe("ServerConfigService", () => {
     expect(snapshot.config.mcp?.servers.custom.headers).toEqual({ Authorization: { configured: true } });
   });
 
-  test("redacts and mutates every declared secret path for every adapter", async () => {
-    for (const adapter of providerAdapterCatalog.list()) {
+  for (const adapter of providerAdapterCatalog.list()) {
+    test(`redacts and mutates every declared secret path for ${adapter.npmPackage}`, async () => {
       const service = await createAdapterService(adapter);
       const snapshot = await service.getSnapshot();
       const serialized = JSON.stringify(snapshot);
@@ -413,8 +413,8 @@ describe("ServerConfigService", () => {
         const path = secretPath.endsWith(".*") ? secretPath.slice(0, -2) : secretPath;
         expect(getNested(deletedDisk.provider.local.options, path)).toBeUndefined();
       }
-    }
-  }, 30_000);
+    });
+  }
 
   test("rejects a stale revision without touching the config file", async () => {
     const service = await createService();

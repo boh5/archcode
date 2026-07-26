@@ -6,9 +6,13 @@ import { Pencil } from "lucide-react";
 import { IconAction } from "./IconAction";
 
 const originals = new Map<string, PropertyDescriptor | undefined>();
+const originalSetTimeout = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
 let dom: JSDOM;
 let root: Root;
 let container: HTMLDivElement;
+let nextTimerId = 1;
+let scheduledTimers = new Map<number, TimerHandler>();
 
 function installDom(): void {
   dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "http://localhost" });
@@ -29,6 +33,16 @@ function installDom(): void {
   }
   container = document.getElementById("root") as HTMLDivElement;
   root = createRoot(container);
+  nextTimerId = 1;
+  scheduledTimers = new Map();
+  globalThis.setTimeout = ((callback: TimerHandler) => {
+    const id = nextTimerId++;
+    scheduledTimers.set(id, callback);
+    return id;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((id?: number) => {
+    if (id !== undefined) scheduledTimers.delete(id);
+  }) as typeof clearTimeout;
 }
 
 function restoreDom(): void {
@@ -42,8 +56,21 @@ function restoreDom(): void {
 afterEach(() => {
   act(() => root?.unmount());
   dom?.window.close();
+  globalThis.setTimeout = originalSetTimeout;
+  globalThis.clearTimeout = originalClearTimeout;
+  scheduledTimers.clear();
   restoreDom();
 });
+
+async function flushTimers(): Promise<void> {
+  const callbacks = [...scheduledTimers.values()];
+  scheduledTimers.clear();
+  await act(async () => {
+    for (const callback of callbacks) {
+      if (typeof callback === "function") callback();
+    }
+  });
+}
 
 describe("IconAction", () => {
   test("keeps the original click synchronous and portals a focus tooltip", async () => {
@@ -66,15 +93,19 @@ describe("IconAction", () => {
     expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
   });
 
-  test("waits before opening a hover tooltip and closes it on leave", async () => {
+  test("opens the delayed hover tooltip only when its controlled timer fires", async () => {
     installDom();
     await act(async () => root.render(<IconAction label="Pause goal"><span>icon</span></IconAction>));
     const button = container.querySelector("button") as HTMLButtonElement;
+
     await act(async () => button.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true })));
     expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 380)));
+
+    await flushTimers();
     expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("Pause goal");
+
     await act(async () => button.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true })));
     expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
   });
+
 });

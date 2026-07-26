@@ -60,7 +60,7 @@ function installDom(initialMatches = true): JSDOM & { mutableMedia: MutableMedia
         for (let frame = 0; frame < count; frame += 1) {
           const pending = Array.from(animationFrames.values());
           animationFrames.clear();
-          for (const callback of pending) callback(performance.now());
+          for (const callback of pending) callback(frame);
         }
       },
     },

@@ -2,11 +2,18 @@ import type { Disposable } from "vscode-jsonrpc";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import type { LspTransport } from "./transport";
+import {
+  raceLspDeadline,
+  systemLspDeadlineScheduler,
+  type LspDeadlineHandle,
+  type LspDeadlineScheduler,
+} from "./deadline-scheduler";
 
 export interface LspClientOptions {
   transport: LspTransport;
   workspaceRoot: string;
   timeouts?: Partial<LspClientTimeouts>;
+  deadlineScheduler?: LspDeadlineScheduler;
   logger?: Logger;
 }
 
@@ -83,6 +90,7 @@ export class LspClient {
   private readonly transport: LspTransport;
   private readonly workspaceRoot: string;
   private readonly timeouts: LspClientTimeouts;
+  private readonly deadlineScheduler: LspDeadlineScheduler;
   #logger: Logger;
   private serverCapabilities: Record<string, unknown> | undefined;
   private diagnosticsListener: Disposable | undefined;
@@ -95,6 +103,7 @@ export class LspClient {
     this.transport = options.transport;
     this.workspaceRoot = options.workspaceRoot;
     this.timeouts = { ...DEFAULT_LSP_CLIENT_TIMEOUTS, ...options.timeouts };
+    this.deadlineScheduler = options.deadlineScheduler ?? systemLspDeadlineScheduler;
     this.#logger = (options.logger ?? silentLogger).child({ module: "lsp.client" });
   }
 
@@ -115,6 +124,7 @@ export class LspClient {
       }),
       this.timeouts.initializeMs,
       "initialize",
+      this.deadlineScheduler,
     );
 
     const capabilities = extractCapabilities(result);
@@ -126,7 +136,7 @@ export class LspClient {
 
   async shutdown(): Promise<void> {
     try {
-      await withTimeout(this.transport.sendRequest("shutdown", null), this.timeouts.shutdownMs, "shutdown");
+      await withTimeout(this.transport.sendRequest("shutdown", null), this.timeouts.shutdownMs, "shutdown", this.deadlineScheduler);
       this.transport.sendNotification("exit");
     } finally {
       await this.transport.dispose();
@@ -138,7 +148,7 @@ export class LspClient {
 
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await withTimeout(this.transport.sendRequest(method, params), this.timeouts.requestMs, method);
+        return await withTimeout(this.transport.sendRequest(method, params), this.timeouts.requestMs, method, this.deadlineScheduler);
       } catch (error) {
         const lspError = toLspError(error, method);
         if (lspError.code !== CONTENT_MODIFIED_CODE || attempt >= maxRetries) {
@@ -149,7 +159,7 @@ export class LspClient {
           throw lspError;
         }
         this.#logger.debug("lsp.client.retry.content-modified", { context: { method, attempt } });
-        await delay(this.timeouts.contentModifiedBaseDelayMs * 2 ** attempt);
+        await this.deadlineScheduler.sleep(this.timeouts.contentModifiedBaseDelayMs * 2 ** attempt);
       }
     }
   }
@@ -213,17 +223,17 @@ export class LspClient {
       return Promise.resolve(snapshot);
     }
 
-    let timeout: Timer | undefined;
+    let timeout: LspDeadlineHandle | undefined;
     return new Promise((resolve, reject) => {
       const waiter: DiagnosticsWaiter = {
         baseline,
         resolve: (next) => {
-          if (timeout) clearTimeout(timeout);
+          if (timeout) this.deadlineScheduler.cancel(timeout);
           this.removeDiagnosticsWaiter(uri, waiter);
           resolve(next);
         },
         reject: (error) => {
-          if (timeout) clearTimeout(timeout);
+          if (timeout) this.deadlineScheduler.cancel(timeout);
           this.removeDiagnosticsWaiter(uri, waiter);
           reject(error);
         },
@@ -233,13 +243,13 @@ export class LspClient {
       waiters.add(waiter);
       this.diagnosticsWaiters.set(uri, waiters);
 
-      timeout = setTimeout(() => {
+      timeout = this.deadlineScheduler.schedule(options.timeoutMs, () => {
         waiter.reject(new LspError({
           code: 0,
           kind: "lsp-timeout",
           message: `LSP diagnostics timed out after ${options.timeoutMs}ms. Check whether the language server is responsive and retry.`,
         }));
-      }, options.timeoutMs);
+      });
     });
   }
 
@@ -435,27 +445,22 @@ function messageForCode(code: number, message: string, method: string): string {
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timeout: Timer | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => {
-      reject(new LspError({
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+  scheduler: LspDeadlineScheduler,
+): Promise<T> {
+  return raceLspDeadline(
+    promise,
+    timeoutMs,
+    () => new LspError({
         code: 0,
         kind: "lsp-timeout",
         message: `LSP ${label} timed out after ${timeoutMs}ms. Check whether the language server is responsive and retry.`,
-      }));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+    }),
+    scheduler,
+  );
 }
 
 function pathToFileUri(filePath: string): string {

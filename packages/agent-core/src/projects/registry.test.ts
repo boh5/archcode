@@ -25,10 +25,6 @@ afterEach(async () => {
   await rm(tmpWorkspaceC, { recursive: true, force: true });
 });
 
-async function delay(ms = 5): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 describe("ProjectRegistry", () => {
   test("add creates new entry with slug, addedAt, and ProjectInfo shape", async () => {
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
@@ -139,23 +135,24 @@ describe("ProjectRegistry", () => {
     await expect(registry.remove(projectA.slug)).resolves.toBeUndefined();
   });
 
-  test("touch updates lastOpenedAt and returns updated info", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
-    const project = await registry.add({ workspaceRoot: tmpWorkspaceA });
-    await delay();
-
-    const updated = await registry.touch(project.slug);
-
-    expect(updated?.slug).toBe(project.slug);
-    expect(updated?.lastOpenedAt).toEqual(expect.any(String));
-    expect(Date.parse(updated?.lastOpenedAt ?? "")).toBeGreaterThanOrEqual(Date.parse(project.addedAt));
-    expect((await registry.get(project.slug))?.lastOpenedAt).toBe(updated?.lastOpenedAt);
-  });
-
   test("touch on missing slug returns undefined", async () => {
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     await expect(registry.touch("missing")).resolves.toBeUndefined();
+  });
+
+  test("touch persists a valid lastOpenedAt value", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
+    const project = await registry.add({ workspaceRoot: tmpWorkspaceA });
+
+    const updated = await registry.touch(project.slug);
+
+    expect(updated).toEqual({
+      ...project,
+      lastOpenedAt: expect.any(String),
+    });
+    expect(Number.isNaN(Date.parse(updated?.lastOpenedAt ?? ""))).toBe(false);
+    expect((await registry.get(project.slug))?.lastOpenedAt).toBe(updated?.lastOpenedAt);
   });
 
   test("updateName trims and updates only the project display name", async () => {
@@ -261,21 +258,35 @@ describe("ProjectRegistry", () => {
     expect(await registry.list()).toEqual([]);
   });
 
-  test("list sorts by lastOpenedAt fallback addedAt descending, then addedAt descending", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
+  test("list sorts persisted timestamps without relying on wall-clock delays", async () => {
+    const registryDir = join(tmpHome, ".archcode", "projects");
+    await mkdir(registryDir, { recursive: true });
+    const projects = [
+      {
+        slug: "first",
+        name: "First",
+        workspaceRoot: tmpWorkspaceA,
+        addedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        slug: "second",
+        name: "Second",
+        workspaceRoot: tmpWorkspaceB,
+        addedAt: "2026-01-02T00:00:00.000Z",
+        lastOpenedAt: "2026-01-04T00:00:00.000Z",
+      },
+      {
+        slug: "third",
+        name: "Third",
+        workspaceRoot: tmpWorkspaceC,
+        addedAt: "2026-01-03T00:00:00.000Z",
+      },
+    ];
+    await writeFile(join(registryDir, "index.json"), JSON.stringify({ projects }));
 
-    const projectA = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "A" });
-    await delay();
-    const projectB = await registry.add({ workspaceRoot: tmpWorkspaceB, name: "B" });
-    await delay();
-    const projectC = await registry.add({ workspaceRoot: tmpWorkspaceC, name: "C" });
-    await delay();
-    const touchedB = await registry.touch(projectB.slug);
-    expect(touchedB).toBeDefined();
+    const ordered = await new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger }).list();
 
-    const ordered = await registry.list();
-
-    expect(ordered.map((project) => project.slug)).toEqual([touchedB!.slug, projectC.slug, projectA.slug]);
+    expect(ordered.map((project) => project.slug)).toEqual(["second", "third", "first"]);
   });
 
   test("concurrent add serializes writes without data loss or duplicate slugs", async () => {

@@ -23,7 +23,13 @@ import { SessionFamilyActiveError, SessionFamilyIdentityUnavailableError, Sessio
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
-import { SessionExecutionManager, SessionSteerUnavailableError, type StartSessionExecutionInput } from "./session-execution-manager";
+import {
+  SessionExecutionManager,
+  SessionSteerUnavailableError,
+  type SessionExecutionDeadlineHandle,
+  type SessionExecutionDeadlineScheduler,
+  type StartSessionExecutionInput,
+} from "./session-execution-manager";
 import { SessionExecutionScopeConflictError } from "./session-execution-scope-validator";
 import { SessionWorkspaceClosingError } from "./session-workspace-control";
 import { silentLogger } from "../logger";
@@ -87,6 +93,44 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve: resolveValue };
 }
 
+interface TestDeadlineScheduler extends SessionExecutionDeadlineScheduler {
+  fireScheduled(): void;
+  whenScheduled(): Promise<void>;
+}
+
+function createTestDeadlineScheduler(): TestDeadlineScheduler {
+  let currentTime = 0;
+  let nextId = 1;
+  const scheduled = new Map<number, () => void>();
+  const scheduleWaiters = new Set<() => void>();
+
+  return {
+    now: () => currentTime,
+    sleep: async (delayMs) => {
+      currentTime += delayMs;
+    },
+    schedule: (_delayMs, callback) => {
+      const id = nextId++;
+      scheduled.set(id, callback);
+      for (const resolve of scheduleWaiters) resolve();
+      scheduleWaiters.clear();
+      return { id };
+    },
+    cancel: (handle: SessionExecutionDeadlineHandle) => {
+      if (typeof handle.id === "number") scheduled.delete(handle.id);
+    },
+    fireScheduled: () => {
+      const callbacks = [...scheduled.values()];
+      scheduled.clear();
+      for (const callback of callbacks) callback();
+    },
+    whenScheduled: async () => {
+      if (scheduled.size > 0) return;
+      await new Promise<void>((resolve) => scheduleWaiters.add(resolve));
+    },
+  };
+}
+
 async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return await promise;
   signal.throwIfAborted();
@@ -96,14 +140,6 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
       signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     }),
   ]);
-}
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 1000;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error("Timed out waiting for execution state");
-    await Bun.sleep(1);
-  }
 }
 
 function getUserMessageTexts(state: SessionStoreState): string[] {
@@ -153,9 +189,11 @@ type MockAgentResult = Partial<AgentResult> & Pick<AgentResult, "text" | "steps"
 class MockAgent implements Agent {
   readonly store;
   readonly cwd: string;
+  readonly runStarted = deferred<void>();
   readonly disposeMock = mock(() => undefined);
   readonly runBindings: ExecutionModelBinding[] = [];
   readonly runMock = mock(async (options: AgentRunOptions = {}): Promise<AgentResult> => {
+    this.runStarted.resolve(undefined);
     const signal = options.abort;
     const result = await withAbort(this.result, signal);
     this.store.getState().append({ type: "text-start" });
@@ -208,6 +246,7 @@ interface FakeManagerOptions {
   resolveSessionDepth?: ConstructorParameters<typeof SessionExecutionManager>[0]["resolveSessionDepth"];
   sessionInputService?: ConstructorParameters<typeof SessionExecutionManager>[0]["sessionInputService"];
   sessionFamilyStopTimeoutMs?: number;
+  deadlineScheduler?: TestDeadlineScheduler;
   modelRuntime?: ModelRuntime;
   /**
    * Lets the small execution harness use a real ConfiguredAgent for a child
@@ -439,6 +478,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
   const trackSession = mock(() => undefined);
   const untrackSession = mock(() => undefined);
   const modelRuntime = options.modelRuntime ?? makeModelRuntime();
+  const deadlineScheduler = options.deadlineScheduler ?? createTestDeadlineScheduler();
   const manager = new SessionExecutionManager({
     sessionAgentManager,
     modelRuntime,
@@ -455,9 +495,10 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     sessionInputService: options.sessionInputService ?? new SessionInputService(executionStoreManager),
     ...(options.deletionLifecycle === undefined ? {} : { deletionLifecycle: options.deletionLifecycle }),
     ...(options.sessionFamilyStopTimeoutMs === undefined ? {} : { sessionFamilyStopTimeoutMs: options.sessionFamilyStopTimeoutMs }),
+    deadlineScheduler,
     logger: silentLogger,
   });
-  return { manager, sessionAgentManager, trackSession, untrackSession };
+  return { manager, sessionAgentManager, trackSession, untrackSession, deadlineScheduler };
 }
 
 function inputServicePort(service: SessionInputService): NonNullable<FakeManagerOptions["sessionInputService"]> {
@@ -1060,6 +1101,7 @@ describe("SessionExecutionManager", () => {
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
     const { manager } = createManager({ [rootId]: rootAgent });
     const service = new SessionInputService(storeManager);
+    const commandStarted = deferred<void>();
     let commandSignal: AbortSignal | undefined;
     const command = manager.runSessionCommand({
       workspaceRoot,
@@ -1068,13 +1110,14 @@ describe("SessionExecutionManager", () => {
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     }, async (_binding, signal) => {
       commandSignal = signal;
+      commandStarted.resolve(undefined);
       await withAbort(new Promise<never>(() => undefined), signal);
     });
     const commandOutcome = command.then(
       () => ({ kind: "resolved" as const }),
       (error: unknown) => ({ kind: "rejected" as const, error }),
     );
-    await waitFor(() => commandSignal !== undefined);
+    await commandStarted.promise;
     await service.acceptMessage({
       sessionId: rootId,
       workspaceRoot,
@@ -1301,7 +1344,7 @@ describe("SessionExecutionManager", () => {
     expect(typeof execution.executionToken).toBe("symbol");
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("running");
     await expect(manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "again" } })).rejects.toThrow(SessionFamilyActiveError);
-    await waitFor(() => agent.runMock.mock.calls.length === 1);
+    await agent.runStarted.promise;
     expect(agent.runMock).toHaveBeenCalledWith(expect.objectContaining({ abort: execution.abortController.signal }));
     expect(getUserMessageTexts(agent.store.getState())).toEqual(["hello"]);
     const options = agent.runMock.mock.calls[0]?.[0];
@@ -2423,6 +2466,7 @@ describe("SessionExecutionManager", () => {
     storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
     const { manager } = createManager({}, { sessionFamilyStopTimeoutMs: 50 });
 
+    const commandStarted = deferred<void>();
     let commandSignal: AbortSignal | undefined;
     let commandError: unknown;
     const commandRun = manager.runSessionCommand({
@@ -2432,6 +2476,7 @@ describe("SessionExecutionManager", () => {
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
     }, async (_binding, abort) => {
       commandSignal = abort;
+      commandStarted.resolve(undefined);
       await new Promise<never>(() => undefined);
       return "never";
     }).then(
@@ -2443,7 +2488,7 @@ describe("SessionExecutionManager", () => {
       },
     );
 
-    await waitFor(() => commandSignal !== undefined);
+    await commandStarted.promise;
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("running");
 
     await expect(manager.stopSessionFamily(workspaceRoot, sessionId)).resolves.toBeUndefined();
@@ -2460,10 +2505,10 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
     const skillResolution = deferred<readonly []>();
-    let resolvingSkills = false;
+    const skillResolutionStarted = deferred<void>();
     const factory = makeFactory({
       resolveDelegatedSkillNames: mock(async () => {
-        resolvingSkills = true;
+        skillResolutionStarted.resolve(undefined);
         return await skillResolution.promise;
       }),
     });
@@ -2475,7 +2520,7 @@ describe("SessionExecutionManager", () => {
       toolName: "delegate",
       request: delegationRequest({ agent_type: "explore", title: "Delegated child", objective: "resolve slowly", skills: [], background: false }),
     });
-    await waitFor(() => resolvingSkills);
+    await skillResolutionStarted.promise;
     expect(manager.getSessionFamilyActivity(workspaceRoot, rootId)).toBe("running");
     expect(manager.listSessionFamilyActivities()).toEqual([
       { workspaceRoot, rootSessionId: rootId, activity: "running" },
@@ -2707,6 +2752,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
     const flush = deferred<void>();
+    const flushStarted = deferred<void>();
     let flushedChildSessionId: string | undefined;
     let promptsAtFlush: string[] = [];
     let childRunStarted = false;
@@ -2714,6 +2760,7 @@ describe("SessionExecutionManager", () => {
       factory: makeFactory(),
       flushSessionStore: async (sessionId) => {
         flushedChildSessionId = sessionId;
+        flushStarted.resolve(undefined);
         const childStore = storeManager.get(sessionId, workspaceRoot);
         promptsAtFlush = childStore === undefined ? [] : getUserMessageTexts(childStore.getState());
         await flush.promise;
@@ -2729,7 +2776,7 @@ describe("SessionExecutionManager", () => {
       request: delegationRequest({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
-    await waitFor(() => flushedChildSessionId !== undefined);
+    await flushStarted.promise;
 
     expect(promptsAtFlush).toEqual([]);
     expect(parentStore.getState().childSessionLinks).toEqual([]);
@@ -2752,13 +2799,17 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
     const childRun = deferred<MockAgentResult>();
+    const childCanonicalReady = deferred<void>();
     let linkWhileRunning: ToolChildSessionLink | undefined;
     let resultResolved = false;
     let childCanonicalMessage: string | undefined;
     const { manager } = createManager({}, {
       factory: makeFactory(),
       childRun: childRun.promise,
-      childCanonicalMessage: (message) => { childCanonicalMessage = message; },
+      childCanonicalMessage: (message) => {
+        childCanonicalMessage = message;
+        childCanonicalReady.resolve(undefined);
+      },
       childRunStarted: () => {
         linkWhileRunning = parentStore.getState().childSessionLinks.at(-1);
       },
@@ -2773,7 +2824,7 @@ describe("SessionExecutionManager", () => {
       parentAbort: undefined,
     });
     handle.result.then(() => { resultResolved = true; });
-    await waitFor(() => childCanonicalMessage !== undefined);
+    await childCanonicalReady.promise;
 
     expect(resultResolved).toBe(false);
     expect(linkWhileRunning).toMatchObject({
@@ -2837,7 +2888,7 @@ describe("SessionExecutionManager", () => {
 
 
 
-  test("startChildExecution marks failed and timed-out children with terminal link statuses", async () => {
+  test("startChildExecution maps failure and a triggered deadline to terminal link statuses", async () => {
     const failedParentId = crypto.randomUUID();
     const failedParentStore = storeManager.create(failedParentId, workspaceRoot, { agentName: "lead" });
     const failedRun = Promise.reject(new Error("child exploded"));
@@ -2862,7 +2913,7 @@ describe("SessionExecutionManager", () => {
       factory: makeFactory({
         getDefinition: mock((name: string) => {
           const base = makeFactory().getDefinition(name);
-          if (name === "lead") return { ...base, childPolicy: { ...base.childPolicy!, timeoutMs: 1 } };
+          if (name === "lead") return { ...base, childPolicy: { ...base.childPolicy!, timeoutMs: 60_000 } };
           return base;
         }),
       }),
@@ -2877,7 +2928,8 @@ describe("SessionExecutionManager", () => {
       request: delegationRequest({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
-    await timedHandle.result;
+    timed.deadlineScheduler.fireScheduled();
+    expect((await timedHandle.result).executionStatus).toBe("timed_out");
     expect(timedParentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "timed_out" });
   });
 
@@ -3092,7 +3144,7 @@ describe("SessionExecutionManager", () => {
     const input = manager.runSessionInputMutation({ workspaceRoot, rootSessionId: rootId }, async () => {
       inputEntered.resolve(undefined);
     });
-    await Bun.sleep(0);
+    await Promise.resolve();
     expect(manager.listPendingSessionInputMutations(workspaceRoot)).toEqual([]);
 
     releaseControl.resolve(undefined);
@@ -3107,7 +3159,7 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const store = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
     await storeManager.flushSession(rootId, workspaceRoot);
-    let runStarted = false;
+    const runEntered = deferred<void>();
     let ownerCreatedDuringAbort = false;
     const agent: Agent = {
       store,
@@ -3115,7 +3167,7 @@ describe("SessionExecutionManager", () => {
       classifyCommand: mock((_input: string) => null),
       executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
       run: mock(async (_binding: ExecutionModelBinding, options?: AgentRunOptions) => {
-        runStarted = true;
+        runEntered.resolve(undefined);
         const signal = options?.abort;
         return await new Promise<AgentResult>((_resolve, reject) => {
           signal?.addEventListener("abort", () => {
@@ -3146,7 +3198,7 @@ describe("SessionExecutionManager", () => {
       },
     });
     await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: rootId, input: { kind: "direct", text: "create owner while stopping" } });
-    await waitFor(() => runStarted);
+    await runEntered.promise;
 
     await expect(manager.deleteSession(workspaceRoot, rootId)).rejects.toMatchObject({
       name: "SessionDeleteOwnerConflictError",
@@ -3264,50 +3316,46 @@ describe("SessionExecutionManager", () => {
     expect(file.childSessionLinks.at(-1)?.status).toBe("interrupted");
   });
 
-  test("abort timeout throws SessionDeleteConflictError and preserves target files", async () => {
+  test("delete preserves files when a manually triggered abort deadline finds a stuck execution", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     await writeSessionFile({ sessionId: rootId });
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
-    const childRun = mock(async (): Promise<AgentResult> => await new Promise(() => undefined));
+    const runEntered = deferred<void>();
     const childAgent = {
       store: storeManager.create(childId, workspaceRoot, {
         rootSessionId: rootId,
-        parentSessionId: rootId, agentName: "explore"
+        parentSessionId: rootId,
+        agentName: "explore",
       }),
       cwd: workspaceRoot,
       classifyCommand: mock((_input: string) => null),
       executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
-      run: childRun,
+      run: mock(async (): Promise<AgentResult> => {
+        runEntered.resolve(undefined);
+        return await new Promise<AgentResult>(() => undefined);
+      }),
       dispose: mock(() => undefined),
     } as unknown as MockAgent;
-    const { manager, sessionAgentManager } = createManager({ [childId]: childAgent });
-    const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId: childId, input: { kind: "direct", text: "child" } });
-    await waitFor(() => childRun.mock.calls.length === 1);
-    const originalSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = ((handler: Parameters<typeof setTimeout>[0], timeout?: number, ...args: unknown[]) => {
-      if (timeout === 10000 && typeof handler === "function") {
-        queueMicrotask(() => (handler as (...values: unknown[]) => void)(...args));
-        return 0 as unknown as ReturnType<typeof setTimeout>;
-      }
-      return originalSetTimeout(handler, timeout, ...(args as []));
-    }) as typeof setTimeout;
+    const harness = createManager({ [childId]: childAgent });
+    const execution = await harness.manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childId,
+      input: { kind: "direct", text: "child" },
+    });
+    await runEntered.promise;
 
-    try {
-      let caught: unknown;
-      try {
-        await manager.deleteSession(workspaceRoot, childId);
-      } catch (error) {
-        caught = error;
-      }
-      expect(caught).toBeInstanceOf(SessionDeleteConflictError);
-      expect(caught).toMatchObject({ name: "SessionDeleteConflictError", sessionIds: [childId] });
-    } finally {
-      globalThis.setTimeout = originalSetTimeout;
-    }
+    const deleting = harness.manager.deleteSession(workspaceRoot, childId);
+    await harness.deadlineScheduler.whenScheduled();
+    harness.deadlineScheduler.fireScheduled();
 
+    await expect(deleting).rejects.toMatchObject({
+      name: "SessionDeleteConflictError",
+      sessionIds: [childId],
+    });
     expect(await Bun.file(getSessionPath(workspaceRoot, childId)).exists()).toBe(true);
-    expect(sessionAgentManager.dispose).not.toHaveBeenCalled();
+    expect(harness.sessionAgentManager.dispose).not.toHaveBeenCalled();
     expect(execution.abortController.signal.aborted).toBe(true);
   });
 
@@ -3379,11 +3427,15 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
     const childRun = deferred<MockAgentResult>();
+    const childStarted = deferred<void>();
     let childRunCount = 0;
     const { manager } = createManager({}, {
       factory: makeFactory(),
       childRun: childRun.promise,
-      childRunStarted: () => { childRunCount += 1; },
+      childRunStarted: () => {
+        childRunCount += 1;
+        childStarted.resolve(undefined);
+      },
     });
 
     const child = await manager.startChildExecution(workspaceRoot, {
@@ -3394,7 +3446,7 @@ describe("SessionExecutionManager", () => {
       request: delegationRequest({ agent_type: "explore", title: "Delegated child", objective: "keep working in the original checkout", skills: [], background: true }),
       parentAbort: undefined,
     });
-    await waitFor(() => childRunCount === 1);
+    await childStarted.promise;
 
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, parentId))
       .toThrow(SessionCwdTransitionConflictError);
@@ -3439,11 +3491,11 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
     const skillResolution = deferred<readonly []>();
-    let skillResolutionStarted = 0;
+    const skillResolutionEntered = deferred<void>();
     let childRunCount = 0;
     const factory = makeFactory({
       resolveDelegatedSkillNames: mock(async () => {
-        skillResolutionStarted += 1;
+        skillResolutionEntered.resolve(undefined);
         return await skillResolution.promise;
       }),
     });
@@ -3460,7 +3512,7 @@ describe("SessionExecutionManager", () => {
       request: delegationRequest({ agent_type: "explore", title: "Delegated child", objective: "launch while skills resolve", skills: [], background: false }),
       parentAbort: undefined,
     });
-    await waitFor(() => skillResolutionStarted === 1);
+    await skillResolutionEntered.promise;
 
     expect(() => manager.acquireSessionCwdTransition(workspaceRoot, parentId))
       .toThrow(SessionCwdTransitionConflictError);
@@ -3885,7 +3937,7 @@ describe("SessionExecutionManager", () => {
       agentName: "explore",
     }, childId);
     const rootLoad = deferred<typeof rootStore>();
-    let rootLoadStarted = false;
+    const rootLoadEntered = deferred<void>();
     const callbacks = storeCallbacks(storeManager);
     const manager = new SessionExecutionManager({
       sessionAgentManager: createFakeManager({}, { factory: makeFactory() }),
@@ -3895,7 +3947,7 @@ describe("SessionExecutionManager", () => {
       sessionInputService: new SessionInputService(storeManager),
       loadSessionStore: async (sessionId, root) => {
         if (sessionId === rootId) {
-          rootLoadStarted = true;
+          rootLoadEntered.resolve(undefined);
           return await rootLoad.promise;
         }
         return await storeManager.getOrLoad(sessionId, root);
@@ -3912,7 +3964,7 @@ describe("SessionExecutionManager", () => {
       sessionId: childId,
       input: { kind: "direct", text: "race with cwd transition" },
     });
-    await waitFor(() => rootLoadStarted);
+    await rootLoadEntered.promise;
     const releaseTransition = manager.acquireSessionCwdTransition(workspaceRoot, rootId);
     rootLoad.resolve(rootStore);
 
@@ -4258,7 +4310,7 @@ describe("SessionExecutionManager", () => {
     await first.result;
   });
 
-  test("resumeChildExecution reapplies timeout and abortCascade policy", async () => {
+  test("resumeChildExecution reapplies deadline and abortCascade policies", async () => {
     const parentId = crypto.randomUUID();
     const timedChildId = crypto.randomUUID();
     const uncascadedChildId = crypto.randomUUID();
@@ -4276,13 +4328,13 @@ describe("SessionExecutionManager", () => {
     const timedAgent = new MockAgent(timedChildId, new Promise(() => undefined), workspaceRoot);
     timedAgent.store.setState(timedStore.getState());
     const timedManager = createManager({ [timedChildId]: timedAgent }, {
-      factory: makeFactoryWithChildPolicy({ timeoutMs: 1 }),
-    }).manager;
-    const timed = await timedManager.resumeChildExecution(workspaceRoot, {
-      parentStore, parentSessionId: parentId, parentToolCallId: "timed-resume", toolName: "resume_session",
-      sessionId: timedChildId, instruction: "resume",
-    background: false,
+      factory: makeFactoryWithChildPolicy({ timeoutMs: 60_000 }),
     });
+    const timed = await timedManager.manager.resumeChildExecution(workspaceRoot, {
+      parentStore, parentSessionId: parentId, parentToolCallId: "timed-resume", toolName: "resume_session",
+      sessionId: timedChildId, instruction: "resume", background: false,
+    });
+    timedManager.deadlineScheduler.fireScheduled();
     expect((await timed.result).executionStatus).toBe("timed_out");
 
     const uncascadedRun = deferred<MockAgentResult>();

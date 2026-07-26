@@ -6,6 +6,11 @@ import { storeManager } from "../../store/store";
 import type { Reminder, SessionStoreState } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
 import { createBuiltinToolDescriptors, waitForReminderTool, WaitForReminderInputSchema } from "./index";
+import {
+  executeWaitForReminder,
+  type WaitForReminderDeadlineHandle,
+  type WaitForReminderScheduler,
+} from "./wait-for-reminder";
 import { createTestProjectContext } from "../test-project-context";
 import { expectTextDraft } from "../test-results";
 
@@ -49,6 +54,38 @@ function makeReminder(overrides: Partial<Reminder> & { sessionId: string; id: st
 
 function parseResult(output: Awaited<ReturnType<typeof waitForReminderTool.execute>>): Record<string, unknown> {
   return JSON.parse(expectTextDraft(output)) as Record<string, unknown>;
+}
+
+function createManualDeadlineScheduler(): {
+  scheduler: WaitForReminderScheduler;
+  fire: () => void;
+  scheduledDelays: number[];
+  cancelled: WaitForReminderDeadlineHandle[];
+} {
+  let callback: (() => void) | undefined;
+  const scheduledDelays: number[] = [];
+  const cancelled: WaitForReminderDeadlineHandle[] = [];
+  const handle = { id: Symbol("wait-for-reminder-deadline") };
+  return {
+    scheduler: {
+      schedule(delayMs, nextCallback) {
+        scheduledDelays.push(delayMs);
+        callback = nextCallback;
+        return handle;
+      },
+      cancel(cancelledHandle) {
+        cancelled.push(cancelledHandle);
+      },
+    },
+    fire() {
+      const pending = callback;
+      callback = undefined;
+      if (pending === undefined) throw new Error("No reminder deadline is scheduled");
+      pending();
+    },
+    scheduledDelays,
+    cancelled,
+  };
 }
 
 describe("WaitForReminderInputSchema", () => {
@@ -107,19 +144,24 @@ describe("waitForReminderTool", () => {
     expect(store.getState().reminders[0]?.consumedAt).toBeNumber();
   });
 
-  test("ignores consumed, auto-inject, and non-target reminders", async () => {
+  test("timeout ignores consumed, auto-inject, and non-target reminders", async () => {
     const store = makeStore();
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "consumed", sessionId: "child-1" }) });
     store.getState().append({ type: "reminder-consumed", reminderIds: ["consumed"] });
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "auto", sessionId: "child-1", delivery: "auto_inject" }) });
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "other", sessionId: "child-2" }) });
+    const deadline = createManualDeadlineScheduler();
 
-    const output = await waitForReminderTool.execute(
+    const pending = executeWaitForReminder(
       { session_ids: ["child-1"], condition: "any", timeout_ms: 20 },
       makeCtx(store),
+      deadline.scheduler,
     );
+    deadline.fire();
 
-    expect(parseResult(output)).toEqual({ status: "timeout", pending: ["child-1"] });
+    expect(JSON.parse(await pending)).toEqual({ status: "timeout", pending: ["child-1"] });
+    expect(deadline.scheduledDelays).toEqual([20]);
+    expect(deadline.cancelled).toHaveLength(1);
     expect(store.getState().reminders.find((reminder) => reminder.id === "other")?.consumedAt).toBeNull();
   });
 
@@ -131,9 +173,6 @@ describe("waitForReminderTool", () => {
     );
 
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "rem-1", sessionId: "child-1" }) });
-    await Bun.sleep(5);
-    expect(store.getState().reminders.find((reminder) => reminder.id === "rem-1")?.consumedAt).toBeNull();
-
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "rem-2", sessionId: "child-2" }) });
     const result = parseResult(await promise);
 
@@ -161,16 +200,19 @@ describe("waitForReminderTool", () => {
     expect(store.getState().reminders.every((reminder) => reminder.consumedAt !== null)).toBe(true);
   });
 
-  test("returns timeout with pending session IDs", async () => {
+  test("timeout reports only sessions that are still pending without consuming matches", async () => {
     const store = makeStore();
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "rem-1", sessionId: "child-1" }) });
+    const deadline = createManualDeadlineScheduler();
 
-    const output = await waitForReminderTool.execute(
+    const pending = executeWaitForReminder(
       { session_ids: ["child-1", "child-2"], condition: "all", timeout_ms: 20 },
       makeCtx(store),
+      deadline.scheduler,
     );
+    deadline.fire();
 
-    expect(parseResult(output)).toEqual({ status: "timeout", pending: ["child-2"] });
+    expect(JSON.parse(await pending)).toEqual({ status: "timeout", pending: ["child-2"] });
     expect(store.getState().reminders[0]?.consumedAt).toBeNull();
   });
 

@@ -11,8 +11,6 @@ export interface FakeLspServerConfig {
   responses?: Record<string, unknown>;
   /** Diagnostics to push as textDocument/publishDiagnostics after didOpen. */
   autoDiagnostics?: unknown[];
-  /** Delay all responses (except exit) by this many ms. */
-  delayMs?: number;
   /** If true, exit after handling the initialize request (default exit code 1). */
   crashAfterInitialize?: boolean;
   /** Exit code to use when crashAfterInitialize is true. */
@@ -83,10 +81,6 @@ interface FakeServerState {
 }
 
 async function handle(msg: any, config: FakeLspServerConfig, state: FakeServerState): Promise<void> {
-  if (config.delayMs && msg.method !== "exit") {
-    await new Promise((r) => setTimeout(r, config.delayMs));
-  }
-
   if (msg.id !== undefined && msg.id !== null) {
     switch (msg.method) {
       case "initialize": {
@@ -184,6 +178,7 @@ export class FakeLspServer {
   private readonly config: FakeLspServerConfig;
   private transport: StdioLspTransport | null = null;
   private _initializeResult: unknown | null = null;
+  private readonly notificationWaiters = new Set<NotificationWaiter>();
 
   constructor(config?: Partial<FakeLspServerConfig>) {
     this.config = { ...DEFAULT_FAKE_LSP_CONFIG, ...config };
@@ -227,25 +222,29 @@ export class FakeLspServer {
    * Register a one-shot handler for a server-pushed notification.
    * Returns a promise that resolves with the notification params.
    */
-  waitForNotification(method: string, timeoutMs = 10_000): Promise<unknown> {
+  waitForNotification(method: string): Promise<unknown> {
     if (!this.transport) {
       throw new Error("FakeLspServer is not started");
     }
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error(`Notification "${method}" timed out after ${timeoutMs}ms`)),
-        timeoutMs,
-      );
-      const disposable = this.transport!.onNotification(method, (params) => {
-        clearTimeout(timeout);
-        disposable.dispose();
+      let waiter!: NotificationWaiter;
+      const dispose = this.transport!.onNotification(method, (params) => {
+        this.notificationWaiters.delete(waiter);
+        dispose.dispose();
         resolve(params);
       });
+      waiter = { reject, dispose: () => dispose.dispose() };
+      this.notificationWaiters.add(waiter);
     });
   }
 
   /** Stop the server gracefully. */
   async stop(): Promise<void> {
+    for (const waiter of this.notificationWaiters) {
+      waiter.dispose();
+      waiter.reject(new Error("Fake LSP server stopped before the notification arrived"));
+    }
+    this.notificationWaiters.clear();
     if (this.transport) {
       try {
         await this.transport.dispose();
@@ -254,6 +253,11 @@ export class FakeLspServer {
       this.transport = null;
     }
   }
+}
+
+interface NotificationWaiter {
+  reject(error: Error): void;
+  dispose(): void;
 }
 
 // ─── Entry Point (runs when file is spawned as subprocess) ───

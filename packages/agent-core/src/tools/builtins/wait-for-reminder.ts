@@ -37,6 +37,25 @@ type WaitForReminderResult =
       status: "aborted";
     };
 
+export interface WaitForReminderDeadlineHandle {
+  readonly id?: unknown;
+}
+
+export interface WaitForReminderScheduler {
+  schedule(delayMs: number, callback: () => void): WaitForReminderDeadlineHandle;
+  cancel(handle: WaitForReminderDeadlineHandle): void;
+}
+
+const systemWaitForReminderScheduler: WaitForReminderScheduler = {
+  schedule: (delayMs, callback) => {
+    const id = setTimeout(callback, delayMs);
+    return { id };
+  },
+  cancel: (handle) => {
+    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
+  },
+};
+
 function getMatchingReminders(reminders: readonly Reminder[], sessionIds: readonly string[]): Reminder[] {
   const wanted = new Set(sessionIds);
   return reminders.filter(
@@ -111,6 +130,7 @@ function consumeReminders(input: { reminders: Reminder[] }): WaitForReminderResu
 export async function executeWaitForReminder(
   input: WaitForReminderInput,
   ctx: ToolExecutionContext,
+  scheduler: WaitForReminderScheduler = systemWaitForReminderScheduler,
 ): Promise<string> {
   if (input.session_ids.length === 0) {
     return JSON.stringify({ status: "error", message: "session_ids must not be empty" } satisfies WaitForReminderResult);
@@ -120,7 +140,7 @@ export async function executeWaitForReminder(
     return JSON.stringify({ status: "aborted" } satisfies WaitForReminderResult);
   }
 
-  const result = await waitForMatch(input, ctx);
+  const result = await waitForMatch(input, ctx, scheduler);
   if (result.status === "success" && result.consumed_ids.length > 0) {
     ctx.store.getState().append({ type: "reminder-consumed", reminderIds: result.consumed_ids });
   }
@@ -131,14 +151,15 @@ export async function executeWaitForReminder(
 function waitForMatch(
   input: WaitForReminderInput,
   ctx: ToolExecutionContext,
+  scheduler: WaitForReminderScheduler,
 ): Promise<WaitForReminderResult> {
   return new Promise((resolve) => {
     let settled = false;
     let unsubscribe: (() => void) | undefined;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let timeout: WaitForReminderDeadlineHandle | undefined;
 
     const cleanup = () => {
-      if (timeout !== undefined) clearTimeout(timeout);
+      if (timeout !== undefined) scheduler.cancel(timeout);
       unsubscribe?.();
       ctx.abort.removeEventListener("abort", onAbort);
     };
@@ -163,10 +184,10 @@ function waitForMatch(
     // Subscribe first so reminders arriving during setup cannot be missed.
     unsubscribe = ctx.store.subscribe(check);
     ctx.abort.addEventListener("abort", onAbort, { once: true });
-    timeout = setTimeout(() => {
+    timeout = scheduler.schedule(input.timeout_ms, () => {
       const matchingReminders = getMatchingReminders(ctx.store.getState().reminders, input.session_ids);
       settle({ status: "timeout", pending: pendingSessionIds(matchingReminders, input.session_ids) });
-    }, input.timeout_ms);
+    });
 
     if (ctx.abort.aborted) {
       onAbort();

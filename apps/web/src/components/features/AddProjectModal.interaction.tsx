@@ -8,8 +8,12 @@ let dom: JSDOM;
 let root: Root;
 let container: HTMLDivElement;
 
+const originalSetTimeout = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
 const addProjectMutate = mock((_variables: { path: string }) => {});
 const navigate = mock((_path: string) => {});
+let nextTimerId = 1;
+let scheduledTimers = new Map<number, TimerHandler>();
 
 function resolvedDirectory(path: string): DirectoryEntry | undefined {
   const normalized = path.length > 1 ? path.replace(/\/+$/, "") : path;
@@ -83,6 +87,19 @@ function installDom(): void {
   root = createRoot(container);
 }
 
+function installFakeTimers(): void {
+  nextTimerId = 1;
+  scheduledTimers = new Map();
+  globalThis.setTimeout = ((callback: TimerHandler) => {
+    const id = nextTimerId++;
+    scheduledTimers.set(id, callback);
+    return id;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = ((id?: number) => {
+    if (id !== undefined) scheduledTimers.delete(id);
+  }) as typeof clearTimeout;
+}
+
 function changeInput(value: string): void {
   const input = container.querySelector("input");
   if (!input) throw new Error("Missing directory input");
@@ -105,14 +122,19 @@ function addProjectButton(): HTMLButtonElement {
   return button;
 }
 
-async function waitForDebounce(): Promise<void> {
+async function flushDebounce(): Promise<void> {
+  const callbacks = [...scheduledTimers.values()];
+  scheduledTimers.clear();
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 225));
+    for (const callback of callbacks) {
+      if (typeof callback === "function") callback();
+    }
   });
 }
 
 beforeEach(() => {
   installDom();
+  installFakeTimers();
   addProjectMutate.mockClear();
   navigate.mockClear();
 });
@@ -120,6 +142,9 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   dom.window.close();
+  globalThis.setTimeout = originalSetTimeout;
+  globalThis.clearTimeout = originalClearTimeout;
+  scheduledTimers.clear();
 });
 
 describe("AddProjectModal interactions", () => {
@@ -127,18 +152,18 @@ describe("AddProjectModal interactions", () => {
     await act(async () => root.render(<AddProjectModal open onClose={() => {}} />));
 
     act(() => changeInput("/workspace/archcode"));
-    await waitForDebounce();
+    await flushDebounce();
     expect(addProjectButton().disabled).toBe(false);
     expect(container.textContent).toContain("/workspace/archcode");
 
     act(() => changeInput("/workspace/other"));
     expect(addProjectButton().disabled).toBe(true);
-    await waitForDebounce();
+    await flushDebounce();
     expect(addProjectButton().disabled).toBe(false);
 
     act(() => changeInput("/workspace"));
     expect(addProjectButton().disabled).toBe(true);
-    await waitForDebounce();
+    await flushDebounce();
     act(() => addProjectButton().click());
 
     expect(addProjectMutate).toHaveBeenCalledTimes(1);

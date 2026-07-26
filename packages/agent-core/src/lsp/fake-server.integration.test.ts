@@ -171,15 +171,22 @@ describe("FakeLspServer integration", () => {
     }
   });
 
-  test("does not push diagnostics when client omits publishDiagnostics capability", async () => {
+  test("does not push diagnostics when the client omits the capability", async () => {
     const server = new FakeLspServer({
       autoDiagnostics: [{ message: "hidden diagnostic", severity: 1 }],
       clientCapabilities: {},
     });
     try {
       const transport = await server.start();
+      let diagnosticsPushed = false;
+      const diagnostics = transport.onNotification(
+        "textDocument/publishDiagnostics",
+        () => {
+          diagnosticsPushed = true;
+        },
+      );
+      const acknowledged = server.waitForNotification("test/notify-ack");
 
-      const diagPromise = server.waitForNotification("textDocument/publishDiagnostics", 100);
       transport.sendNotification("textDocument/didOpen", {
         textDocument: {
           uri: "file:///test.ts",
@@ -188,8 +195,11 @@ describe("FakeLspServer integration", () => {
           text: "",
         },
       });
+      transport.sendNotification("test/notify", { after: "didOpen" });
+      await acknowledged;
 
-      await expect(diagPromise).rejects.toThrow("timed out");
+      expect(diagnosticsPushed).toBe(false);
+      diagnostics.dispose();
     } finally {
       await server.stop();
     }
@@ -202,12 +212,7 @@ describe("FakeLspServer integration", () => {
     });
     try {
       await server.start();
-      const exitCode = await Promise.race([
-        server.exited!,
-        new Promise<number>((_, reject) =>
-          setTimeout(() => reject(new Error("exited timed out")), 3000),
-        ),
-      ]);
+      const exitCode = await server.exited!;
       expect(exitCode).toBe(42);
     } finally {
       await server.stop();
@@ -218,12 +223,7 @@ describe("FakeLspServer integration", () => {
     const server = new FakeLspServer({ crashAfterInitialize: true });
     try {
       await server.start();
-      const exitCode = await Promise.race([
-        server.exited!,
-        new Promise<number>((_, reject) =>
-          setTimeout(() => reject(new Error("exited timed out")), 3000),
-        ),
-      ]);
+      const exitCode = await server.exited!;
       expect(exitCode).toBe(1);
     } finally {
       await server.stop();

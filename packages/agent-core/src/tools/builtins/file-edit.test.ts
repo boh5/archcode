@@ -178,6 +178,35 @@ describe("fileEditTool", () => {
     expect(await Bun.file(join(testDir, "single.txt")).text()).toBe("hello archcode\n");
   });
 
+  test("applies a large rewrite and discloses its simplified diff", async () => {
+    const lineCount = 501;
+    const before = Array.from({ length: lineCount }, (_, index) => `before ${index}`).join("\n");
+    const after = Array.from({ length: lineCount }, (_, index) => `after ${index}`).join("\n");
+    await writeWorkspaceFile("large-rewrite.txt", before);
+    const ctx = await makeReadCtx("large-rewrite.txt");
+
+    const result = await fileEditTool.execute(
+      {
+        path: "large-rewrite.txt",
+        edits: [{ oldString: before, newString: after }],
+      },
+      ctx,
+    );
+
+    expect(result.isError).toBe(false);
+    expect(result.details?.presentations).toContainEqual(expect.objectContaining({
+      kind: "diff",
+      simplified: true,
+      files: [expect.objectContaining({
+        path: "large-rewrite.txt",
+        status: "modified",
+        additions: lineCount,
+        deletions: lineCount,
+      })],
+    }));
+    expect(await Bun.file(join(testDir, "large-rewrite.txt")).text()).toBe(after);
+  });
+
   test("successfully applies multiple edits", async () => {
     await writeWorkspaceFile("multiple.txt", "alpha beta gamma\n");
     const ctx = await makeReadCtx("multiple.txt");
@@ -468,7 +497,7 @@ describe("fileEditTool", () => {
 
   test("refreshes read snapshot after successful edit", async () => {
     const filePath = await writeWorkspaceFile("snapshot.txt", "before\n");
-    const oldDate = new Date(Date.now() - 10_000);
+    const oldDate = new Date(0);
     await utimes(filePath, oldDate, oldDate);
     const store = await createReadStore(filePath);
     const beforeSnapshot = store.getState().readSnapshots.get(realpathSync.native(filePath));

@@ -198,7 +198,7 @@ describe("ProjectApprovalManager", () => {
       reason: "Externally updated approval",
     }];
     writeFileSync(PERMISSIONS_PATH, `${JSON.stringify(file, null, 2)}\n`);
-    const future = new Date(Date.now() + 5_000);
+    const future = new Date("2100-01-01T00:00:00.000Z");
     utimesSync(PERMISSIONS_PATH, future, future);
 
     await manager.reloadIfStale(WORKSPACE);

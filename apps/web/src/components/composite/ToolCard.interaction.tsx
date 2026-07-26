@@ -31,7 +31,7 @@ const artifactPart: CompletedToolPart = {
       recovery: {
         kind: "artifact",
         outputRef: "abcdefghijklmnopqrstuv",
-        expiresAt: Date.now() + 60_000,
+        expiresAt: Number.MAX_SAFE_INTEGER,
         canRead: true,
         canSearch: true,
       },
@@ -217,7 +217,7 @@ function setInputValue(input: HTMLInputElement, value: string): void {
 
 async function flush(): Promise<void> {
   await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

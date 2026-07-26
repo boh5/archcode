@@ -62,7 +62,7 @@ function baseSearch(pattern: string) {
     pattern,
     limit: 1,
     maxContentBytes: 50 * 1024,
-    deadlineAt: Date.now() + 5_000,
+    deadlineAt: Number.MAX_SAFE_INTEGER,
     signal: new AbortController().signal,
   };
 }

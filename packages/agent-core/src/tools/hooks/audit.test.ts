@@ -18,7 +18,7 @@ function finalizedResult(preview: string): FinalizedToolResult {
       canonical: { bytes: 17, lines: 1 },
       stored: { bytes: 7, lines: 1 },
       omitted: { bytes: 10, lines: 0 },
-      recovery: { kind: "artifact", outputRef: "output_ref_1234567890", expiresAt: Date.now() + 1_000, canRead: true, canSearch: true },
+      recovery: { kind: "artifact", outputRef: "output_ref_1234567890", expiresAt: Number.MAX_SAFE_INTEGER, canRead: true, canSearch: true },
     },
     details: { process: { exitCode: 7, signal: null, timedOut: false, aborted: false, durationMs: 25 } },
   };

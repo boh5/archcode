@@ -340,12 +340,21 @@ describe("WorktreeService", () => {
     const delegate = createProcessRunner();
     let activeAdds = 0;
     let maxActiveAdds = 0;
+    let signalFirstAdd!: () => void;
+    let releaseAdds!: () => void;
+    const firstAddEntered = new Promise<void>((resolveEntered) => {
+      signalFirstAdd = resolveEntered;
+    });
+    const addGate = new Promise<void>((resolveAdds) => {
+      releaseAdds = resolveAdds;
+    });
     const runner: ProcessRunner = {
       async run(input) {
         if (isGitInvocation(input, "worktree", "add")) {
           activeAdds += 1;
           maxActiveAdds = Math.max(maxActiveAdds, activeAdds);
-          await new Promise((resolveDelay) => setTimeout(resolveDelay, 30));
+          signalFirstAdd();
+          await addGate;
           try {
             return await delegate.run(input);
           } finally {
@@ -358,10 +367,11 @@ describe("WorktreeService", () => {
     const left = new WorktreeService({ canonicalRoot: repo, git: runner });
     const right = new WorktreeService({ canonicalRoot: alternateCanonical, git: runner });
 
-    await Promise.all([
-      left.create({ owner: { id: "left-session-lock" } }),
-      right.create({ owner: { id: "right-session-lock" } }),
-    ]);
+    const leftCreate = left.create({ owner: { id: "left-session-lock" } });
+    const rightCreate = right.create({ owner: { id: "right-session-lock" } });
+    await firstAddEntered;
+    releaseAdds();
+    await Promise.all([leftCreate, rightCreate]);
 
     expect(maxActiveAdds).toBe(1);
   });

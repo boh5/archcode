@@ -161,7 +161,7 @@ describe("ProjectTodoStateManager", () => {
     const bound = await manager.bindActivationResource(idea.id, sourceSessionId, resourceId);
     const rebound = await manager.bindActivationResource(idea.id, sourceSessionId, resourceId);
     expect(rebound).toEqual(bound);
-    await Bun.sleep(0);
+    await Promise.resolve();
     expect(committed).toEqual([1, 2, 3, 4, 5]);
   });
 

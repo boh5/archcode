@@ -26,7 +26,27 @@ export interface GracefulShutdownOptions {
   timeoutMs?: number;
   process?: SignalProcess;
   logger?: Logger;
+  deadlineScheduler?: ShutdownDeadlineScheduler;
 }
+
+export interface ShutdownDeadlineHandle {
+  readonly id?: unknown;
+}
+
+export interface ShutdownDeadlineScheduler {
+  schedule(delayMs: number, callback: () => void): ShutdownDeadlineHandle;
+  cancel(handle: ShutdownDeadlineHandle): void;
+}
+
+const systemShutdownDeadlineScheduler: ShutdownDeadlineScheduler = {
+  schedule(delayMs, callback) {
+    const id = setTimeout(callback, delayMs);
+    return { id };
+  },
+  cancel(handle) {
+    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
+  },
+};
 
 export interface GracefulShutdownHandle {
   dispose(): void;
@@ -49,7 +69,13 @@ export function setupGracefulShutdown(
   const shutdown = async (_signal?: ShutdownSignal): Promise<number> => {
     if (shutdownPromise) return await shutdownPromise;
 
-    shutdownPromise = runShutdown(server, target, timeoutMs, logger);
+    shutdownPromise = runShutdown(
+      server,
+      target,
+      timeoutMs,
+      logger,
+      options.deadlineScheduler ?? systemShutdownDeadlineScheduler,
+    );
     const exitCode = await shutdownPromise;
     processRef.exit(exitCode);
     return exitCode;
@@ -78,16 +104,23 @@ async function runShutdown(
   target: LifecycleTarget,
   timeoutMs: number,
   logger: Logger,
+  deadlineScheduler: ShutdownDeadlineScheduler,
 ): Promise<number> {
   logger.info("server.shutdown.started");
 
+  let timeoutHandle: ShutdownDeadlineHandle | undefined;
   const timeout = new Promise<"timeout">((resolve) => {
-    setTimeout(() => resolve("timeout"), timeoutMs);
+    timeoutHandle = deadlineScheduler.schedule(timeoutMs, () => resolve("timeout"));
   });
-  const result = await Promise.race([
-    target.shutdown().then(() => "completed" as const),
-    timeout,
-  ]);
+  let result: "completed" | "timeout";
+  try {
+    result = await Promise.race([
+      target.shutdown().then(() => "completed" as const),
+      timeout,
+    ]);
+  } finally {
+    if (timeoutHandle !== undefined) deadlineScheduler.cancel(timeoutHandle);
+  }
   const exitCode = result === "timeout" ? 1 : 0;
 
   if (result === "timeout") {

@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import {
   computeToolDiff,
   computeToolDiffs,
+  createToolDiffPresentation,
   isProbablyBinaryText,
+  MAX_DIFF_EDIT_LENGTH,
   MAX_DIFF_FILES,
   MAX_DIFF_INPUT_CHARS,
   MAX_DIFF_OUTPUT_LINES,
@@ -106,6 +108,21 @@ describe("computeToolDiff", () => {
     expect(result.files).toHaveLength(0);
   });
 
+  it("rejects oversized input before equality and binary classification", () => {
+    const oversized = `\0${"x".repeat(MAX_DIFF_INPUT_CHARS)}`;
+
+    expect(computeToolDiff({
+      path: "same-oversized.bin",
+      before: oversized,
+      after: oversized,
+    }).unsupportedReason).toBe("too_large");
+    expect(computeToolDiff({
+      path: "created-oversized.bin",
+      before: "",
+      after: oversized,
+    }).unsupportedReason).toBe("too_large");
+  });
+
   it("handles exactly-at-limit input without triggering too_large", () => {
     const big = "x".repeat(MAX_DIFF_INPUT_CHARS - 1);
     const result = computeToolDiff({ path: "big.txt", before: "", after: big });
@@ -115,41 +132,66 @@ describe("computeToolDiff", () => {
     expect(result.files).toHaveLength(1);
   });
 
-  it("returns diff_error for invalid input that crashes structuredPatch", () => {
-    // structuredPatch should handle most inputs gracefully, but if it throws
-    // we still get a diff_error result (test the fallback path)
+  it("returns a line-exact simplified diff when detailed alignment exceeds its budget", () => {
+    const lineCount = Math.floor(MAX_DIFF_EDIT_LENGTH / 2) + 1;
+    const beforeLines = Array.from({ length: lineCount }, (_, i) => `before ${i}`);
+    const afterLines = Array.from({ length: lineCount }, (_, i) => `after ${i}`);
     const result = computeToolDiff({
-      path: "test.txt",
-      before: "a",
-      after: "b",
-      status: "modified" as const,
+      path: "rewrite.txt",
+      before: beforeLines.join("\n"),
+      after: afterLines.join("\n"),
     });
-    // This should succeed normally, not error
-    expect(result.unsupportedReason).toBeUndefined();
+
+    expect(result.simplified).toBe(true);
+    expect(result.truncated).toBeUndefined();
+    const lines = result.files[0].hunks[0].lines;
+    expect(lines.filter((line) => line.type === "delete").map((line) => line.content))
+      .toEqual(beforeLines);
+    expect(lines.filter((line) => line.type === "add").map((line) => line.content))
+      .toEqual(afterLines);
   });
 
-  it("truncates output when it exceeds MAX_DIFF_OUTPUT_LINES", () => {
-    // Create content where the diff has many lines
-    const linesA: string[] = [];
-    const linesB: string[] = [];
-    for (let i = 0; i < MAX_DIFF_OUTPUT_LINES + 100; i++) {
-      linesA.push(`line ${i} A`);
-      linesB.push(`line ${i} B`); // Every line changed → huge diff
-    }
-
+  it("truncates a large created-file presentation without running modified-file alignment", () => {
+    const lines = Array.from(
+      { length: MAX_DIFF_OUTPUT_LINES + 100 },
+      (_, i) => `line ${i}`,
+    );
     const result = computeToolDiff({
       path: "big.txt",
-      before: linesA.join("\n"),
-      after: linesB.join("\n"),
+      before: "",
+      after: lines.join("\n"),
+      status: "created",
     });
 
     expect(result.truncated).toBe(true);
+    expect(result.simplified).toBeUndefined();
     expect(result.files).toHaveLength(1);
+    expect(result.files[0].additions).toBe(lines.length);
+    expect(result.files[0].deletions).toBe(0);
     const totalLines = result.files[0].hunks.reduce(
       (sum, h) => sum + h.lines.length,
       0,
     );
-    expect(totalLines).toBeLessThanOrEqual(MAX_DIFF_OUTPUT_LINES);
+    expect(totalLines).toBe(MAX_DIFF_OUTPUT_LINES);
+  });
+
+  it("shows both sides of a truncated simplified rewrite", () => {
+    const lineCount = MAX_DIFF_OUTPUT_LINES + 100;
+    const result = computeToolDiff({
+      path: "large-rewrite.txt",
+      before: Array.from({ length: lineCount }, (_, i) => `before ${i}`).join("\n"),
+      after: Array.from({ length: lineCount }, (_, i) => `after ${i}`).join("\n"),
+    });
+
+    expect(result.simplified).toBe(true);
+    expect(result.truncated).toBe(true);
+    const lines = result.files[0].hunks.flatMap((hunk) => hunk.lines);
+    expect(lines.filter((line) => line.type === "delete")).toHaveLength(
+      MAX_DIFF_OUTPUT_LINES / 2,
+    );
+    expect(lines.filter((line) => line.type === "add")).toHaveLength(
+      MAX_DIFF_OUTPUT_LINES / 2,
+    );
   });
 
   it("counts additions and deletions correctly", () => {
@@ -232,11 +274,35 @@ describe("computeToolDiffs", () => {
     expect(result.warning).toContain(String(MAX_DIFF_FILES));
   });
 
-  it("merges warnings from individual files", () => {
-    // Trigger an error by... well, we can't easily trigger diff_error
-    // So let's just verify merging works with normal results
-    const result = computeToolDiffs([{ path: "a.txt", before: "", after: "hi" }]);
-    expect(result.warning).toBeUndefined(); // No warnings for normal case
+  it("accounts for files skipped before content capture", () => {
+    const result = computeToolDiffs(
+      [{ path: "captured.txt", before: "", after: "captured" }],
+      { skippedFiles: 3 },
+    );
+
+    expect(result.files.map((file) => file.path)).toEqual(["captured.txt"]);
+    expect(result.truncated).toBe(true);
+    expect(result.warning).toContain("3 file(s) skipped");
+  });
+
+  it("shares one visible-line budget and preserves later changed file names", () => {
+    const first = Array.from({ length: 1_500 }, (_, i) => `first ${i}`).join("\n");
+    const second = Array.from({ length: 1_000 }, (_, i) => `second ${i}`).join("\n");
+    const result = computeToolDiffs([
+      { path: "first.txt", before: "", after: first },
+      { path: "second.txt", before: "", after: second },
+      { path: "third.txt", before: "", after: "third" },
+    ]);
+
+    expect(result.files.map((file) => file.path))
+      .toEqual(["first.txt", "second.txt", "third.txt"]);
+    expect(result.truncated).toBe(true);
+    expect(result.files[2].hunks).toEqual([]);
+    const totalLines = result.files.reduce(
+      (sum, file) => sum + file.hunks.reduce((fileSum, hunk) => fileSum + hunk.lines.length, 0),
+      0,
+    );
+    expect(totalLines).toBe(MAX_DIFF_OUTPUT_LINES);
   });
 
   it("propagates single unsupported reason when all files fail the same way", () => {
@@ -250,6 +316,27 @@ describe("computeToolDiffs", () => {
     // Both are binary, so unsupportedReason should be "binary"
     expect(result.unsupportedReason).toBe("binary");
     expect(result.files).toHaveLength(0);
+  });
+});
+
+describe("createToolDiffPresentation", () => {
+  it("preserves simplified and truncated disclosure flags", () => {
+    const presentation = createToolDiffPresentation({
+      files: [{ path: "large.txt", status: "modified", hunks: [] }],
+      simplified: true,
+      truncated: true,
+    });
+
+    expect(presentation).toEqual({
+      kind: "diff",
+      files: [{ path: "large.txt", status: "modified", hunks: [] }],
+      simplified: true,
+      truncated: true,
+    });
+  });
+
+  it("omits an empty presentation", () => {
+    expect(createToolDiffPresentation({ files: [], unsupportedReason: "binary" })).toBeUndefined();
   });
 });
 

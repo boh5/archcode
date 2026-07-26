@@ -85,6 +85,7 @@ const ToolResultPresentationSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("diff"),
     files: z.array(ToolDiffFileSchema).max(20),
+    simplified: z.literal(true).optional(),
     truncated: z.literal(true).optional(),
   }).refine(
     (presentation) => presentation.files.reduce(

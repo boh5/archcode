@@ -73,8 +73,11 @@ beforeEach(async () => {
     KeyboardEvent: dom.window.KeyboardEvent,
     MutationObserver: dom.window.MutationObserver,
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
-    requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(callback, 0),
-    cancelAnimationFrame: (id: number) => clearTimeout(id),
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      queueMicrotask(() => callback(0));
+      return 0;
+    },
+    cancelAnimationFrame: () => {},
     IS_REACT_ACT_ENVIRONMENT: true,
   })) {
     Object.defineProperty(globalThis, name, { configurable: true, value });
@@ -174,7 +177,7 @@ describe("SessionGoalSummaryRow", () => {
     change(budget, "6500");
     await act(async () => {
       button("Save").click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
     });
 
     const requests = fetchMock.mock.calls.map(([path, init]) => ({ path: String(path), init: init as RequestInit | undefined }));
@@ -196,7 +199,7 @@ describe("SessionGoalSummaryRow", () => {
     await act(async () => removeLimit.click());
     await act(async () => {
       button("Save").click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
     });
     const removalRequest = fetchMock.mock.calls
       .filter(([path, init]) => String(path).endsWith("/goal/budget") && (init as RequestInit | undefined)?.method === "POST")

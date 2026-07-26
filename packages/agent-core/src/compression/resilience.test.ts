@@ -93,9 +93,14 @@ function sessionFileFixture(overrides: Record<string, unknown> = {}) {
 describe("compression resilience", () => {
   test("single-flight manual compact prevents duplicate concurrent hard compacts", async () => {
     let releaseSummary!: (summary: string) => void;
+    let markSummaryStarted!: () => void;
+    const summaryStarted = new Promise<void>((resolve) => {
+      markSummaryStarted = resolve;
+    });
     const streamText = mock(() => ({
       text: new Promise<string>((resolve) => {
         releaseSummary = resolve;
+        markSummaryStarted();
       }),
       fullStream: (async function* () {})(),
       finishReason: Promise.resolve("stop"),
@@ -108,7 +113,7 @@ describe("compression resilience", () => {
     const command = createCompactCommand();
 
     const first = command.handler(commandContext(store));
-    await waitUntil(() => releaseSummary !== undefined);
+    await summaryStarted;
     const second = await command.handler(commandContext(store));
 
     releaseSummary("## Current Objective\nContinue the current task");
@@ -136,11 +141,3 @@ describe("compression resilience", () => {
     expect(String(parsed.error)).toContain("compression");
   });
 });
-
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (predicate()) return;
-    await Promise.resolve();
-  }
-  throw new Error("condition was not met before timeout");
-}

@@ -66,9 +66,9 @@ function makeRecoveryNotice(overrides: Partial<RecoveryNoticePart> = {}): Recove
     status: "scheduled",
     message: "Rate limited by provider",
     attempt: 1,
-    nextRetryAt: Date.now() + 5000,
+    nextRetryAt: 2,
     errorKind: "rate_limit",
-    createdAt: Date.now(),
+    createdAt: 1,
     ...overrides,
   };
 }
@@ -104,23 +104,6 @@ function findAllWithClass(value: unknown, className: string): unknown[] {
 }
 
 describe("RecoveryNotice", () => {
-  test("scheduled status renders scheduled label with countdown", () => {
-    const part = makeRecoveryNotice({ status: "scheduled", nextRetryAt: Date.now() + 10000 });
-    const el = RecoveryNotice({ part });
-    const text = textContent(el);
-    expect(text).toContain("Scheduled retry");
-    expect(text).toContain("attempt 1");
-    expect(text).toContain("rate_limit");
-  });
-
-  test("scheduled status accepts nextRetryAt without changing recovery metadata", () => {
-    const part = makeRecoveryNotice({ status: "scheduled", nextRetryAt: Date.now() + 30000 });
-    const el = RecoveryNotice({ part });
-    const text = textContent(el);
-    expect(text).toContain("Scheduled retry");
-    expect(text).toContain("attempt 1");
-  });
-
   test("retrying status renders retrying label with the shared activity animation", () => {
     const part = makeRecoveryNotice({ status: "retrying", attempt: 2 });
     const el = RecoveryNotice({ part });

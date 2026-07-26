@@ -483,8 +483,9 @@ function isToolResultPresentation(value: unknown): boolean {
   if (presentation === undefined || typeof presentation.kind !== "string") return false;
   switch (presentation.kind) {
     case "diff":
-      return exact(presentation, ["kind", "files"], ["truncated"])
+      return exact(presentation, ["kind", "files"], ["simplified", "truncated"])
         && isBoundedDiffPresentationFiles(presentation.files)
+        && (presentation.simplified === undefined || presentation.simplified === true)
         && (presentation.truncated === undefined || presentation.truncated === true);
     case "ask_user":
       return exact(presentation, ["kind", "answers"], ["truncated"])

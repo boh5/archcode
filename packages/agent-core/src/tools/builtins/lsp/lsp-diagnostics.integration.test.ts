@@ -270,7 +270,7 @@ describe("lspDiagnosticsTool integration", () => {
     } finally {
       await server.stop();
     }
-  }, 60_000);
+  });
 });
 
 async function installFakeServerPool(server: FakeLspServer): Promise<RecordingPool> {

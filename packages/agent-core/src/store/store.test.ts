@@ -138,33 +138,9 @@ function structuredSummarySnapshot(): CompressionBlockSnapshot["summary"] {
   };
 }
 
-function sessionFilePath(sessionId: string): string {
-  return join(TMP_DIR, sessionId, "session.json");
-}
-
-async function readPersistedSession(sessionId: string): Promise<Record<string, unknown>> {
-  const path = sessionFilePath(sessionId);
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (await Bun.file(path).exists()) {
-      return JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-
-  throw new Error(`Session file was not persisted for ${sessionId}`);
-}
-
-async function waitForPersistedSession(
-  sessionId: string,
-  predicate: (session: Record<string, unknown>) => boolean,
-): Promise<Record<string, unknown>> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const session = await readPersistedSession(sessionId);
-    if (predicate(session)) return session;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-
-  throw new Error(`Session file did not reach expected state for ${sessionId}`);
+async function readFlushedSession(sessionId: string): Promise<Record<string, unknown>> {
+  await storeManager.flushSession(sessionId, TMP_DIR);
+  return JSON.parse(await Bun.file(join(TMP_DIR, sessionId, "session.json")).text()) as Record<string, unknown>;
 }
 
 function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
@@ -258,7 +234,7 @@ describe("SessionStoreManager", () => {
     const sessionId = uniqueSessionId("persist-create");
     createSessionStore(sessionId, TMP_DIR);
 
-    const persisted = await readPersistedSession(sessionId);
+    const persisted = await readFlushedSession(sessionId);
     expect(persisted.sessionId).toBe(sessionId);
     expect(persisted.messages).toEqual([]);
     expect(persisted.stats).toEqual(createEmptySessionStats());
@@ -279,10 +255,7 @@ describe("SessionStoreManager", () => {
     state.append({ type: "text-end" });
     state.append({ type: "execution-end", status: "completed" });
 
-    const persisted = await waitForPersistedSession(sessionId, (session) => {
-      const messages = session.messages;
-      return Array.isArray(messages) && JSON.stringify(messages).includes("hello");
-    });
+    const persisted = await readFlushedSession(sessionId);
     expect(persisted.messages).toEqual(store.getState().messages);
   });
 
@@ -291,9 +264,7 @@ describe("SessionStoreManager", () => {
     const sessionId = uniqueSessionId("persist-root-id");
     createSessionStore(sessionId, TMP_DIR);
 
-    const persisted = await waitForPersistedSession(sessionId, (session) => {
-      return session.rootSessionId === sessionId;
-    });
+    const persisted = await readFlushedSession(sessionId);
     expect(persisted.rootSessionId).toBe(sessionId);
     expect(persisted.parentSessionId).toBeUndefined();
   });
@@ -304,10 +275,7 @@ describe("SessionStoreManager", () => {
     const store = createSessionStore(sessionId, TMP_DIR);
     appendUserMessage(store, "hello before execution-end");
 
-    const persisted = await waitForPersistedSession(sessionId, (session) => {
-      const messages = session.messages;
-      return Array.isArray(messages) && messages.length === 1;
-    });
+    const persisted = await readFlushedSession(sessionId);
     expect(persisted.messages).toEqual(store.getState().messages);
   });
 
@@ -322,10 +290,7 @@ describe("SessionStoreManager", () => {
     state.append({ type: "text-delta", text: "final answer" });
     state.append({ type: "execution-end", status: "completed" });
 
-    const persisted = await waitForPersistedSession(sessionId, (session) => {
-      const messages = session.messages;
-      return Array.isArray(messages) && JSON.stringify(messages).includes("final answer");
-    });
+    const persisted = await readFlushedSession(sessionId);
     expect(persisted.messages).toEqual(store.getState().messages);
     expect(persisted.stats).toEqual(store.getState().stats);
     expect(persisted.executions).toEqual(store.getState().executions);
@@ -338,8 +303,7 @@ describe("SessionStoreManager", () => {
     const store = createSessionStore(sessionId, TMP_DIR);
     store.getState().setTitle("Persisted Title");
 
-    await waitForPersistedSession(sessionId, (session) => session.title === "Persisted Title");
-
+    await storeManager.flushSession(sessionId, TMP_DIR);
     const manager = new SessionStoreManager({ logger: silentLogger });
     const loaded = await manager.getOrLoad(sessionId, "ignored-by-test-override");
     expect(loaded.getState().title).toBe("Persisted Title");

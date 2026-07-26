@@ -3,7 +3,7 @@ import { z } from "zod";
 import { atomicWrite } from "../../utils/safe-file";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
-import { computeToolDiff } from "../diff";
+import { computeToolDiff, createToolDiffPresentation } from "../diff";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
 import { createFileExistsPermission, createProtectedPathPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
@@ -61,10 +61,11 @@ export const fileWriteTool = defineTool({
           after: input.content,
           status: "created",
         });
+        const diffPresentation = createToolDiffPresentation(diff);
         return createTextToolResult(`File written to ${input.path}`, {
-          details: diff.files.length === 0
+          details: diffPresentation === undefined
             ? undefined
-            : { presentations: [{ kind: "diff", files: diff.files, ...(diff.truncated ? { truncated: true } : {}) }] },
+            : { presentations: [diffPresentation] },
         });
       });
     } catch (error) {

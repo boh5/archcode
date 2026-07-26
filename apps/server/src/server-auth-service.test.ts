@@ -4,6 +4,8 @@ import {
   AuthRateLimitError,
   InvalidAuthCredentialsError,
   ServerAuthService,
+  type AuthSessionTimer,
+  type AuthSessionTimerHandle,
 } from "./server-auth-service";
 
 function createService(options: {
@@ -12,6 +14,7 @@ function createService(options: {
   maxLoginFailures?: number;
   maxSessions?: number;
   sessionTtlMs?: number;
+  sessionTimer?: AuthSessionTimer;
 } = {}) {
   const updateAuthPasswordHash = mock(async (_hash: string | undefined) => undefined);
   return {
@@ -20,6 +23,30 @@ function createService(options: {
       configWriter: { updateAuthPasswordHash },
     }),
     updateAuthPasswordHash,
+  };
+}
+
+function createManualSessionTimer(): AuthSessionTimer & {
+  fireScheduled(): void;
+  pendingCount(): number;
+} {
+  let nextId = 1;
+  const scheduled = new Map<number, () => void>();
+  return {
+    schedule: (_delayMs, callback) => {
+      const id = nextId++;
+      scheduled.set(id, callback);
+      return { id };
+    },
+    cancel: (handle: AuthSessionTimerHandle) => {
+      if (typeof handle.id === "number") scheduled.delete(handle.id);
+    },
+    fireScheduled: () => {
+      const callbacks = [...scheduled.values()];
+      scheduled.clear();
+      for (const callback of callbacks) callback();
+    },
+    pendingCount: () => scheduled.size,
   };
 }
 
@@ -57,9 +84,14 @@ describe("ServerAuthService", () => {
     expect(service.authenticate(session.token)).toBe(false);
   });
 
-  test("actively aborts bound streams on logout and absolute expiry", async () => {
+  test("actively aborts bound streams on logout and a triggered absolute expiry", async () => {
     let now = 1_000;
-    const { service } = createService({ now: () => now, sessionTtlMs: 40 });
+    const sessionTimer = createManualSessionTimer();
+    const { service } = createService({
+      now: () => now,
+      sessionTtlMs: 40,
+      sessionTimer,
+    });
     const hash = await service.hashPassword("correct horse battery");
     service.activateCredential(hash);
 
@@ -72,8 +104,9 @@ describe("ServerAuthService", () => {
     const expiring = service.issueSession();
     const expiryStream = service.openSessionStream(expiring.token);
     expect(expiryStream?.signal.aborted).toBe(false);
+    expect(sessionTimer.pendingCount()).toBe(1);
     now = expiring.expiresAt;
-    await Bun.sleep(50);
+    sessionTimer.fireScheduled();
     expect(expiryStream?.signal.aborted).toBe(true);
     expect(service.authenticate(expiring.token)).toBe(false);
   });
@@ -113,6 +146,7 @@ describe("ServerAuthService", () => {
     let activeVerifications = 0;
     let maximumConcurrentVerifications = 0;
     const releases: Array<() => void> = [];
+    const entries: Array<() => void> = [];
     const service = new ServerAuthService({
       passwordHash: "test-hash",
       maxLoginFailures: 2,
@@ -123,23 +157,26 @@ describe("ServerAuthService", () => {
           maximumConcurrentVerifications,
           activeVerifications,
         );
+        entries.shift()?.();
         await new Promise<void>((resolve) => releases.push(resolve));
         activeVerifications -= 1;
         return false;
       },
     });
 
+    const firstEntered = new Promise<void>((resolve) => entries.push(resolve));
     const resultsPromise = Promise.allSettled([
       service.login("bad password 1"),
       service.login("bad password 2"),
       service.login("bad password 3"),
       service.login("bad password 4"),
     ]);
-    await Bun.sleep(0);
+    await firstEntered;
     expect(activeVerifications).toBe(1);
 
+    const secondEntered = new Promise<void>((resolve) => entries.push(resolve));
     releases.shift()?.();
-    await Bun.sleep(0);
+    await secondEntered;
     expect(activeVerifications).toBe(1);
     releases.shift()?.();
 

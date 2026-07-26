@@ -421,7 +421,7 @@ describe("createRuntime MCP background loading", () => {
     expect(fresh.size).toBe(1);
   });
 
-  test("createRuntime does NOT await MCP — slow-connecting mock server does not delay runtime return", async () => {
+  test("createRuntime returns before pending MCP discovery settles", async () => {
     const configService = await writeConfig(makeConfig({ servers: {} }));
     let releaseConnect!: () => void;
     const connectGate = new Promise<void>((resolve) => {

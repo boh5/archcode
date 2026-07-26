@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { HitlView } from "@archcode/protocol";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -58,6 +58,7 @@ const activeGoal: SessionGoalView = {
 };
 
 beforeEach(() => {
+  notifyManager.setScheduler((callback) => callback());
   dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
   for (const [name, value] of Object.entries({
     window: dom.window,
@@ -76,8 +77,11 @@ beforeEach(() => {
     MouseEvent: dom.window.MouseEvent,
     MutationObserver: dom.window.MutationObserver,
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
-    requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(callback, 0),
-    cancelAnimationFrame: (id: number) => clearTimeout(id),
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      queueMicrotask(() => callback(0));
+      return 0;
+    },
+    cancelAnimationFrame: () => {},
     IS_REACT_ACT_ENVIRONMENT: true,
   })) {
     Object.defineProperty(globalThis, name, { configurable: true, value });
@@ -101,6 +105,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  notifyManager.setScheduler((callback) => queueMicrotask(callback));
   act(() => root.unmount());
   __resetWebSessionStoresForTest();
   sessionRuntimeStore.getState().reset();
@@ -195,7 +200,6 @@ describe("SessionComposerDock", () => {
           <SettingsModalProvider><SessionComposerDock slug="project-1" sessionId="session-1" /></SettingsModalProvider>
         </QueryClientProvider>,
       );
-      await Promise.resolve();
     });
 
     const dock = container.querySelector('[data-testid="session-composer-dock"]');
@@ -348,14 +352,28 @@ describe("SessionComposerDock", () => {
     expect(container.textContent).toContain("Direct");
     expect(container.textContent).toContain("UI");
 
-    fetchMock.mockImplementationOnce(async () => Response.json({ message: "This request was already resolved" }, { status: 409 }));
+    const conflictResponse = Promise.withResolvers<Response>();
+    fetchMock.mockImplementationOnce(async () => await conflictResponse.promise);
+    const mutationRejected = new Promise<void>((resolve) => {
+      const unsubscribe = client.getMutationCache().subscribe((event) => {
+        if (event.type !== "updated" || event.mutation.state.status !== "error") return;
+        unsubscribe();
+        resolve();
+      });
+    });
     const confirm = container.querySelector('[data-testid="hitl-approve-button"]');
     if (!(confirm instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Confirm Answers button");
     expect(confirm.textContent).toContain("Confirm Answers");
     expect(confirm.disabled).toBe(false);
     await act(async () => {
       confirm.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      conflictResponse.resolve(
+        Response.json({ message: "This request was already resolved" }, { status: 409 }),
+      );
+      await mutationRejected;
+    });
+    await act(async () => {
+      await Promise.resolve();
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -367,7 +385,8 @@ describe("SessionComposerDock", () => {
       type: "question_answer",
       answers: ["Direct", "UI"],
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Request failed with status 409");
+    const alertText = container.querySelector('[role="alert"]')?.textContent;
+    expect(alertText).toContain("Request failed with status 409");
     expect(container.querySelector('[data-testid="hitl-decision-card"]')).not.toBeNull();
   });
 });

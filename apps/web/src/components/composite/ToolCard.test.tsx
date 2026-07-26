@@ -163,7 +163,12 @@ describe("ToolCard strict result consumer", () => {
           output: { ...baseOutput, preview: "raw preview must not supply answers" },
           details: {
             presentations: [
-              { kind: "diff", files: [{ path: "src/a.ts", status: "modified", additions: 2, deletions: 1, hunks: [] }] },
+              {
+                kind: "diff",
+                files: [{ path: "src/a.ts", status: "modified", additions: 2, deletions: 1, hunks: [] }],
+                simplified: true,
+                truncated: true,
+              },
               { kind: "ask_user", answers: [{ question: "Proceed?", answers: ["Yes"] }] },
             ],
           },
@@ -182,6 +187,8 @@ describe("ToolCard strict result consumer", () => {
     });
     const text = textContent(element);
     expect(text).toContain("1 file · +2 −1");
+    expect(text).toContain("showing a simplified, truncated diff");
+    expect(findByTestId(element, "tool-diff-disclosure")).toBeDefined();
     expect(text).toContain("Proceed?");
     expect(text).toContain("Yes");
     expect(text).not.toContain("questions:");

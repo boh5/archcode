@@ -57,15 +57,15 @@ afterEach(() => {
 test("real temporal surfaces cross thresholds and release their shared second scheduler", async () => {
   const now = { value: 159_000 };
   const container = installDom(now);
-  const scheduled = new Map<unknown, number>();
-  globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
-    const handle = originalSetTimeout(callback, delay, ...args);
-    scheduled.set(handle, delay ?? 0);
-    return handle;
-  }) as typeof setTimeout;
+  let nextTimerId = 1;
+  const scheduled = new Map<number, { callback: TimerHandler; delay: number }>();
+  globalThis.setTimeout = ((callback: TimerHandler, delay?: number) => {
+    const handle = nextTimerId++;
+    scheduled.set(handle, { callback, delay: delay ?? 0 });
+    return handle as unknown as ReturnType<typeof setTimeout>;
+  }) as unknown as typeof setTimeout;
   globalThis.clearTimeout = ((handle?: Parameters<typeof originalClearTimeout>[0]) => {
-    if (handle !== undefined) scheduled.delete(handle);
-    return originalClearTimeout(handle);
+    if (typeof handle === "number") scheduled.delete(handle);
   }) as typeof clearTimeout;
 
   const compactedAt = 100_000;
@@ -123,30 +123,30 @@ test("real temporal surfaces cross thresholds and release their shared second sc
   expect([...container.querySelectorAll("time")].map((element) => element.textContent))
     .toEqual(["59s ago", "59s ago"]);
   expect(container.textContent).toContain("retry in 2s");
-  expect([...scheduled.values()].filter((delay) => delay <= 1_000)).toHaveLength(1);
+  expect([...scheduled.values()].filter(({ delay }) => delay <= 1_000)).toHaveLength(1);
 
   now.value = 160_000;
   await act(async () => window.dispatchEvent(new dom!.window.Event("focus")));
   expect([...container.querySelectorAll("time")].map((element) => element.textContent))
     .toEqual(["1m ago", "1m ago"]);
   expect(container.textContent).toContain("retry in 1s");
-  expect([...scheduled.values()].filter((delay) => delay <= 1_000)).toHaveLength(1);
+  expect([...scheduled.values()].filter(({ delay }) => delay <= 1_000)).toHaveLength(1);
 
   await act(async () => root!.render(
     <Surfaces recovery={{ ...scheduledRecovery, status: "retrying" }} />,
   ));
   expect(container.textContent).toContain("Retrying");
   expect(container.textContent).not.toContain("retry in");
-  expect([...scheduled.values()].filter((delay) => delay <= 1_000)).toHaveLength(0);
+  expect([...scheduled.values()].filter(({ delay }) => delay <= 1_000)).toHaveLength(0);
 
   await act(async () => root!.render(<Surfaces recovery={scheduledRecovery} />));
   expect(container.textContent).toContain("retry in 1s");
-  expect([...scheduled.values()].filter((delay) => delay <= 1_000)).toHaveLength(1);
+  expect([...scheduled.values()].filter(({ delay }) => delay <= 1_000)).toHaveLength(1);
 
   now.value = 161_000;
   await act(async () => window.dispatchEvent(new dom!.window.Event("focus")));
   expect(container.textContent).not.toContain("retry in");
-  expect([...scheduled.values()].filter((delay) => delay <= 1_000)).toHaveLength(0);
+  expect([...scheduled.values()].filter(({ delay }) => delay <= 1_000)).toHaveLength(0);
 
   await act(async () => root!.unmount());
   root = undefined;

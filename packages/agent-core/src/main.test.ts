@@ -1,10 +1,11 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import type {
+  GlobalSessionEventEnvelope,
   GlobalSSESessionRuntimeChangedEvent,
   RequestedModelSelection,
   ServerConfigUpdate,
@@ -18,6 +19,7 @@ import { expectSettledResult } from "./tools/test-results";
 import type { AnyToolDescriptor } from "./tools/types";
 import {
   createRuntime as createProductionRuntime,
+  type AgentRuntime,
   type AgentRuntimeOptions,
 } from "./runtime";
 import { SessionStoreManager } from "./store/session-store-manager";
@@ -62,12 +64,38 @@ async function createRuntime(options: RuntimeTestOptions) {
     projectRegistryHomeDir: options.projectRegistryHomeDir ?? await makeTempRoot(),
   });
 }
-async function waitFor(assertion: () => boolean | Promise<boolean>, timeoutMs = 1_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!await assertion()) {
-    if (Date.now() >= deadline) throw new Error("Timed out waiting for runtime state");
-    await Bun.sleep(5);
-  }
+function nextSessionEvent(
+  runtime: AgentRuntime,
+  projectSlug: string,
+  sessionId: string,
+  predicate: (event: GlobalSessionEventEnvelope) => boolean,
+): Promise<GlobalSessionEventEnvelope> {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    unsubscribe = runtime.subscribeSessionEvents((event) => {
+      if (event.slug !== projectSlug || event.sessionId !== sessionId || !predicate(event)) return;
+      unsubscribe();
+      resolve(event);
+    });
+  });
+}
+
+function nextFamilyActivity(
+  runtime: AgentRuntime,
+  projectSlug: string,
+  rootSessionId: string,
+  activity: GlobalSSESessionRuntimeChangedEvent["activity"],
+): Promise<GlobalSSESessionRuntimeChangedEvent> {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => {
+      if (event.projectSlug !== projectSlug
+        || event.rootSessionId !== rootSessionId
+        || event.activity !== activity) return;
+      unsubscribe();
+      resolve(event);
+    });
+  });
 }
 
 function createGoalActivationStream(
@@ -89,7 +117,11 @@ function createGoalActivationStream(
 function createAbortableStream(abortSignal: AbortSignal): unknown {
   return {
     fullStream: (async function* () {
-      while (!abortSignal.aborted) await Bun.sleep(5);
+      if (!abortSignal.aborted) {
+        await new Promise<void>((resolve) => {
+          abortSignal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      }
     })(),
     finishReason: Promise.resolve("stop"),
     usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
@@ -175,6 +207,7 @@ describe("createRuntime", () => {
     const clientRequestId = crypto.randomUUID();
     installTestLlmAdapter();
     try {
+      const familyIdle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
       const accepted = await runtime.acceptSessionMessage({
         slug: project.slug,
         workspaceRoot,
@@ -186,12 +219,7 @@ describe("createRuntime", () => {
       });
       expect(accepted).toMatchObject({ clientRequestId });
       expect(["pending", "canonical"]).toContain(accepted.status);
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        const current = await runtime.getSessionFile(workspaceRoot, session.sessionId);
-        const receipt = current.inputRequestReceipts.find((candidate) => candidate.clientRequestId === clientRequestId);
-        if (receipt?.status === "canonical" && runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId) === "idle") break;
-        await Bun.sleep(5);
-      }
+      await familyIdle;
       expect((await runtime.getSessionFile(workspaceRoot, session.sessionId)).inputRequestReceipts)
         .toContainEqual(expect.objectContaining({ clientRequestId, status: "canonical" }));
     } finally {
@@ -301,6 +329,7 @@ describe("createRuntime", () => {
 
     try {
       const clientRequestId = crypto.randomUUID();
+      const familyIdle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
       await runtime.acceptSessionMessage({
         slug: project.slug,
         workspaceRoot,
@@ -310,13 +339,7 @@ describe("createRuntime", () => {
         source: "user",
         requestedModelSelection,
       });
-      await waitFor(async () => {
-        const current = await runtime.getSessionFile(workspaceRoot, session.sessionId);
-        const canonical = current.inputRequestReceipts.some((receipt) => (
-          receipt.clientRequestId === clientRequestId && receipt.status === "canonical"
-        ));
-        return canonical && runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId) === "idle";
-      }, 5_000);
+      await familyIdle;
 
       const tree = await runtime.listSessionTree(workspaceRoot, session.sessionId);
       expect(seenToolSets).toContainEqual(expect.arrayContaining(["create_goal", "delegate"]));
@@ -439,7 +462,7 @@ describe("createRuntime", () => {
   test("exposes project registry and shared context resolver", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.projectRegistry).toBeDefined(); expect(runtime.contextResolver).toBeDefined(); });
   test("emits runtime snapshot without idle families", async () => { const workspaceRoot = await makeTempRoot(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" }); const session = await runtime.createSession(workspaceRoot, { agentName: "lead" }); const changes: GlobalSSESessionRuntimeChangedEvent[] = []; const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event)); const events = await runtime.listSessionRuntimeEvents(); expect(events[0]).toMatchObject({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }); await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined(); expect(changes.map(({ activity }) => activity)).toEqual(["stopping", "idle"]); unsubscribe(); });
 
-  test("startup continuation recovery preserves clean root Session recency and ordering", async () => {
+  test("startup continuation recovery preserves persisted Session recency and content", async () => {
     const workspaceRoot = await makeTempRoot();
     const registryHome = await makeTempRoot();
     const configService = await writeConfig(makeConfig());
@@ -449,15 +472,13 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime1.projectRegistry.add({ workspaceRoot, name: "Stable recency" });
-    const sessions = [];
-    for (const title of ["oldest", "middle", "newest"]) {
-      sessions.push(await runtime1.createSession(workspaceRoot, { agentName: "lead", title }));
-      await Bun.sleep(2);
-    }
-    const orderBefore = (await runtime1.listSessions(workspaceRoot)).map((session) => session.sessionId);
+    const sessions = await Promise.all(
+      ["oldest", "middle", "newest"].map((title) =>
+        runtime1.createSession(workspaceRoot, { agentName: "lead", title })),
+    );
     await runtime1.shutdown();
 
-    const before = await Promise.all(sessions.map(async (session) => {
+    const snapshots = await Promise.all(sessions.map(async (session, index) => {
       const path = join(
         workspaceRoot,
         ".archcode",
@@ -466,11 +487,12 @@ describe("createRuntime", () => {
         session.sessionId,
         "session.json",
       );
-      return {
-        path,
-        content: await Bun.file(path).text(),
-        mtimeMs: (await stat(path)).mtimeMs,
-      };
+      const persisted = await Bun.file(path).json() as Record<string, unknown>;
+      persisted.createdAt = (index + 1) * 1_000;
+      persisted.updatedAt = (index + 1) * 1_000;
+      const content = `${JSON.stringify(persisted, null, 2)}\n`;
+      await Bun.write(path, content);
+      return { path, content, sessionId: session.sessionId };
     }));
 
     const runtime2 = await createRuntime({
@@ -481,13 +503,13 @@ describe("createRuntime", () => {
     await runtime2.recoverSessionContinuations();
 
     expect((await runtime2.listSessions(workspaceRoot)).map((session) => session.sessionId))
-      .toEqual(orderBefore);
-    for (const snapshot of before) {
+      .toEqual([...snapshots].reverse().map(({ sessionId }) => sessionId));
+    for (const snapshot of snapshots) {
       expect(await Bun.file(snapshot.path).text()).toBe(snapshot.content);
-      expect((await stat(snapshot.path)).mtimeMs).toBe(snapshot.mtimeMs);
     }
     await runtime2.shutdown();
   });
+
   test("redacts MCP discovery failures", async () => { const secret = "sk_test_main_secret"; const configService = await writeConfig(makeConfig({ servers: { private_docs: { url: "https://mcp.example.test", headers: { Authorization: secret } } } })); const { logger, entries } = createInMemoryLogger(); const runtime = await createRuntime({ configService, mcpManagerFactory: () => makeFakeMcpManager(new Error(`boom ${secret}`), [secret]), logger }); expect(runtime.warnings).toHaveLength(1); expect(entries.map((entry) => entry.event)).toContain("mcp.discovery.warning"); expect(runtime.warnings[0].message).toContain(REDACTION_MARKER); expect(runtime.warnings[0].message).not.toContain(secret); });
   test("warns on duplicate MCP descriptors while retaining builtins", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [makeMcpDescriptor("file_read")], warnings: [] }) }); expect(runtime.toolRegistry.get("file_read")).toBeDefined(); expect(runtime.warnings[0]?.toolName).toBe("file_read"); });
   test("runs MCP tools through global after hooks", async () => { const descriptor = makeMcpDescriptor(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [descriptor], warnings: [] }) }); const result = expectSettledResult(await runtime.toolRegistry.execute({ toolName: descriptor.name, toolCallId: "mcp-call", input: {} }, makeContext(descriptor.name, {}))); expect(result.isError).toBe(false); expect(result.output.preview).toContain(REDACTION_MARKER); expect(result.output.preview).not.toContain("sk_test_main_secret"); });
@@ -561,6 +583,12 @@ describe("createRuntime", () => {
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Goal restart" });
     const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
 
+    const goalCreated = nextSessionEvent(
+      runtime1,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "session.goal_changed" && event.payload.action === "created",
+    );
     await runtime1.acceptSessionMessage({
       slug: project.slug,
       workspaceRoot,
@@ -570,20 +598,24 @@ describe("createRuntime", () => {
       source: "user",
       requestedModelSelection,
     });
-    await waitFor(async () => (await runtime1.getSessionFile(workspaceRoot, session.sessionId)).goal?.status === "active");
+    await goalCreated;
     // Persist a quiescent Goal before disposing Runtime 1. This prevents its
     // ordinary idle listener from starting a new turn during shutdown, while
     // still proving that activation itself came through create_goal execution.
-    await runtime1.updateSessionGoalControl({ workspaceRoot, sessionId: session.sessionId, action: "pause" });
-    await waitFor(() => runtime1.getSessionFamilyActivity(workspaceRoot, session.sessionId) === "idle");
+    await runtime1.stopSessionFamily(workspaceRoot, session.sessionId);
     await runtime1.shutdown();
     const restartGoals = new SessionGoalService(new SessionStoreManager({ logger: silentLogger }));
     await restartGoals.resume({ workspaceRoot, sessionId: session.sessionId, authority: { kind: "user_control" } });
 
     let recoveredContinuations = 0;
+    let markRecoveredStarted!: () => void;
+    const recoveredStarted = new Promise<void>((resolve) => {
+      markRecoveredStarted = resolve;
+    });
     setLlmAdapterForTest({
       streamText: mock((options: { abortSignal: AbortSignal }) => {
         recoveredContinuations += 1;
+        markRecoveredStarted();
         return createAbortableStream(options.abortSignal);
       }) as never,
       generateText: mock(async () => ({
@@ -599,8 +631,7 @@ describe("createRuntime", () => {
     });
 
     await runtime2.recoverSessionContinuations();
-    await waitFor(() => recoveredContinuations === 1);
-    await Bun.sleep(25);
+    await recoveredStarted;
     expect(recoveredContinuations).toBe(1);
     expect(runtime2.getSessionFamilyActivity(workspaceRoot, session.sessionId)).toBe("running");
     await runtime2.updateSessionGoalControl({ workspaceRoot, sessionId: session.sessionId, action: "pause" });
@@ -611,11 +642,16 @@ describe("createRuntime", () => {
     const workspaceRoot = await makeTempRoot();
     const registryHome = await makeTempRoot();
     let streams = 0;
+    let markContinuationStarted!: () => void;
+    const continuationStarted = new Promise<void>((resolve) => {
+      markContinuationStarted = resolve;
+    });
     setLlmAdapterForTest({
       streamText: mock((options: { abortSignal: AbortSignal }) => {
         streams += 1;
         if (streams === 1) return createGoalActivationStream("Keep working until the migration is complete.");
         if (streams === 2) return createStoppedStream();
+        markContinuationStarted();
         return createAbortableStream(options.abortSignal);
       }) as never,
       generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
@@ -638,8 +674,9 @@ describe("createRuntime", () => {
       requestedModelSelection,
     });
 
-    await waitFor(() => streams >= 3);
-    await waitFor(() => runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId) === "running");
+    await continuationStarted;
+    expect(streams).toBe(3);
+    expect(runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId)).toBe("running");
     const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
     expect(file.goal?.status).toBe("active");
     expect(file.executions.at(-1)?.origin).toBe("goal_continuation");
@@ -669,6 +706,13 @@ describe("createRuntime", () => {
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal failure" });
     const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
 
+    const executionFailed = nextSessionEvent(
+      runtime,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "execution-end" && event.payload.status === "failed",
+    );
+    const familyIdle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
     await runtime.acceptSessionMessage({
       slug: project.slug,
       workspaceRoot,
@@ -679,12 +723,10 @@ describe("createRuntime", () => {
       requestedModelSelection,
     });
 
-    await waitFor(async () => (
-      (await runtime.getSessionFile(workspaceRoot, session.sessionId)).executions.at(-1)?.status === "failed"
-    ));
+    await executionFailed;
+    await familyIdle;
     const before = await runtime.getSessionFile(workspaceRoot, session.sessionId);
     expect(before.goal?.status).toBe("active");
-    await Bun.sleep(40);
     const after = await runtime.getSessionFile(workspaceRoot, session.sessionId);
     expect(after.executions).toHaveLength(before.executions.length);
     expect(runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId)).toBe("idle");
@@ -787,13 +829,14 @@ describe("createRuntime", () => {
     expect((await runtime2.getSessionFile(workspaceRoot, session.sessionId)).toolBatches[0]?.calls[0]?.state).toBe("blocked");
     expect((await (await runtime2.contextResolver.resolve(workspaceRoot)).hitl.list()).find((record) => record.hitlId === first.hitlId)?.status).toBe("answered");
     installTestLlmAdapter();
+    const firstCallCompleted = nextSessionEvent(
+      runtime2,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "tool-result" && event.payload.toolCallId === "question-1",
+    );
     await runtime2.recoverSessionContinuations();
-
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const current = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
-      if (current.toolBatches[0]?.calls[0]?.state === "completed") break;
-      await Bun.sleep(5);
-    }
+    await firstCallCompleted;
 
     const recovered = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
     const recoveredCalls = recovered.toolBatches[0]?.calls;

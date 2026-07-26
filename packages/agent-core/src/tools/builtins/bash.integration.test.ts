@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { access, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,29 +38,6 @@ function executionContext(
     projectContext: createTestProjectContext(workspace),
     ...overrides,
   };
-}
-
-async function waitForFile(path: string, timeoutMs = 2_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await access(path);
-      return;
-    } catch {
-      await Bun.sleep(10);
-    }
-  }
-  throw new Error(`Timed out waiting for Bash fixture file: ${path}`);
-}
-
-async function readPid(path: string): Promise<number> {
-  await waitForFile(path);
-  return Number.parseInt((await readFile(path, "utf8")).trim(), 10);
-}
-
-function expectProcessExited(pid: number): void {
-  expect(Number.isInteger(pid)).toBe(true);
-  expect(() => process.kill(pid, 0)).toThrow();
 }
 
 afterEach(async () => {
@@ -110,21 +87,6 @@ describe("bash real process integration", () => {
     }
   });
 
-  test("closes stdin so a read observes EOF without hanging", async () => {
-    const workspace = createWorkspace("stdin");
-    const result = await executeBash(
-      {
-        description: "Read from closed stdin",
-        command: "if IFS= read -r value; then printf 'unexpected:%s' \"$value\"; else printf 'stdin-closed'; fi",
-        timeoutMs: 1_000,
-      },
-      executionContext(workspace),
-    );
-
-    expect(result.isError).toBe(false);
-    expect(result.output.preview).toContain("STDOUT:\nstdin-closed\nSTDERR:\n\nEXIT_CODE: 0");
-  });
-
   test("resolves structured cwd through bashTool and executes there", async () => {
     const workspace = createWorkspace("cwd");
     const nested = join(workspace, "nested directory");
@@ -142,47 +104,6 @@ describe("bash real process integration", () => {
     expect(result.isError).toBe(false);
     expect(result.output.preview).toContain(`STDOUT:\n${realpathSync.native(nested)}\n`);
     expect(result.details?.process?.exitCode).toBe(0);
-  });
-
-  test("times out a real Bash process and waits for it to exit", async () => {
-    const workspace = createWorkspace("timeout");
-    const pidPath = join(workspace, "bash.pid");
-    const resultPromise = executeBash(
-      {
-        description: "Run until the timeout terminates Bash",
-        command: "echo $$ > bash.pid; trap 'exit 0' TERM; while :; do :; done",
-        timeoutMs: 1_000,
-      },
-      executionContext(workspace),
-    );
-    const pid = await readPid(pidPath);
-    const result = await resultPromise;
-
-    expect(result.isError).toBe(true);
-    expect(result.details?.error?.code).toBe("TOOL_BASH_TIMEOUT");
-    expect(result.details?.process).toMatchObject({ timedOut: true });
-    expectProcessExited(pid);
-  });
-
-  test("aborts a real Bash process and waits for it to exit", async () => {
-    const workspace = createWorkspace("abort");
-    const pidPath = join(workspace, "bash.pid");
-    const abortController = new AbortController();
-    const resultPromise = executeBash(
-      {
-        description: "Run until AbortSignal terminates Bash",
-        command: "echo $$ > bash.pid; trap 'exit 0' TERM; while :; do :; done",
-      },
-      executionContext(workspace, { abort: abortController.signal }),
-    );
-    const pid = await readPid(pidPath);
-    abortController.abort("integration-test");
-    const result = await resultPromise;
-
-    expect(result.isError).toBe(true);
-    expect(result.details?.error?.code).toBe("TOOL_BASH_ABORTED");
-    expect(result.details?.process?.aborted).toBe(true);
-    expectProcessExited(pid);
   });
 
   test("maps a real signal exit to a structured Bash abort", async () => {

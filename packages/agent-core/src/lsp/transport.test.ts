@@ -5,6 +5,7 @@ import {
   MAX_LSP_TRANSPORT_FRAME_BYTES,
   adaptReader,
   adaptWriter,
+  appendBoundedTextTail,
   setLspTransportForTest,
   type LspTransport,
 } from "./transport";
@@ -41,9 +42,14 @@ describe("RAL adapters", () => {
 
     const reader = new ReadableStreamMessageReader(adaptReader(stream));
     const received: unknown[] = [];
-    reader.listen((message) => received.push(message));
+    const receivedBoth = new Promise<void>((resolve) => {
+      reader.listen((message) => {
+        received.push(message);
+        if (received.length === 2) resolve();
+      });
+    });
 
-    await waitFor(() => received.length === 2);
+    await receivedBoth;
     expect(received).toEqual([
       { jsonrpc: "2.0", method: "test/first", params: { value: 1 } },
       { jsonrpc: "2.0", method: "test/second", params: { value: 2 } },
@@ -63,9 +69,14 @@ describe("RAL adapters", () => {
 
     const reader = new ReadableStreamMessageReader(adaptReader(stream));
     const received: unknown[] = [];
-    reader.listen((message) => received.push(message));
+    const receivedFrame = new Promise<void>((resolve) => {
+      reader.listen((message) => {
+        received.push(message);
+        resolve();
+      });
+    });
 
-    await waitFor(() => received.length === 1);
+    await receivedFrame;
     expect(received).toEqual([{ jsonrpc: "2.0", method: "test/split", params: { value: true } }]);
   });
 
@@ -82,9 +93,14 @@ describe("RAL adapters", () => {
     });
     const readable = adaptReader(stream);
     const lengths: number[] = [];
-    readable.onData((frame) => lengths.push(frame.byteLength));
+    const receivedBoth = new Promise<void>((resolve) => {
+      readable.onData((frame) => {
+        lengths.push(frame.byteLength);
+        if (lengths.length === 2) resolve();
+      });
+    });
 
-    await waitFor(() => lengths.length === 2);
+    await receivedBoth;
     expect(lengths).toEqual([first.byteLength, second.byteLength]);
   });
 
@@ -155,15 +171,6 @@ function concatBytes(...chunks: Uint8Array[]): Uint8Array {
   return result;
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 1_000;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("Timed out waiting for condition");
-}
-
 describe("StdioLspTransport", () => {
   it("exposes default timeout configuration", () => {
     expect(DEFAULT_LSP_TRANSPORT_TIMEOUTS).toEqual({
@@ -184,6 +191,11 @@ describe("StdioLspTransport", () => {
 
     setLspTransportForTest(() => new FakeTransport());
     setLspTransportForTest(undefined);
+  });
+
+  it("retains only the configured stderr tail without a timed process", () => {
+    expect(appendBoundedTextTail("012345", "6789marker", 8)).toBe("89marker");
+    expect(appendBoundedTextTail("", "short", 8)).toBe("short");
   });
 
 });

@@ -1,366 +1,422 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import { runtimeFamilyKey, sessionRuntimeStore } from "../store/session-runtime-store";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import type { ProjectTodo, SessionSummary } from "../api/types";
+import {
+  automationsQueryOptions,
+  projectTodosQueryOptions,
+  sessionsQueryOptions,
+} from "../api/queries";
+import { sessionRuntimeStore } from "../store/session-runtime-store";
 
 type ProjectTodosModule = typeof import("./project-todos");
 
-const todos = [
-  { id: "idea", title: "Idea", body: "Shape this", status: "idea", revision: 1, createdAt: 1, updatedAt: 1 },
-  { id: "ready", title: "Ready", body: "Ready body", status: "ready", revision: 1, createdAt: 1, updatedAt: 1 },
-  { id: "active", title: "Active", body: "Active body", status: "ready", revision: 1, createdAt: 1, updatedAt: 1, activation: { kind: "session", sourceSessionId: "source", resourceId: "linked", todoRevision: 1, snapshot: { title: "Active", body: "Active body" } } },
-  { id: "done", title: "Done", body: "Done body", status: "done", revision: 1, createdAt: 1, updatedAt: 1 },
-  { id: "rejected", title: "Rejected", body: "Rejected body", status: "rejected", rejectionReason: "No", revision: 1, createdAt: 1, updatedAt: 1 },
-  { id: "archived", title: "Archived", body: "Archived body", status: "done", revision: 1, archivedAt: 2, createdAt: 1, updatedAt: 2 },
-  { id: "discussed", title: "Discussed", body: "Continue this", status: "idea", discussionSessionId: "discussion", revision: 1, createdAt: 1, updatedAt: 1 },
-] as const;
+const todos = {
+  idea: todo({ id: "idea", title: "Idea", status: "idea" }),
+  ready: todo({ id: "ready", title: "Ready", status: "ready" }),
+  active: todo({
+    id: "active",
+    title: "Active",
+    status: "ready",
+    activation: {
+      kind: "session",
+      sourceSessionId: "source",
+      resourceId: "linked",
+      todoRevision: 1,
+      snapshot: { title: "Active", body: "Body" },
+    },
+  }),
+  done: todo({ id: "done", title: "Done", status: "done" }),
+  rejected: todo({
+    id: "rejected",
+    title: "Rejected",
+    status: "rejected",
+    rejectionReason: "Not aligned",
+  }),
+  archived: todo({
+    id: "archived",
+    title: "Archived",
+    status: "done",
+    archivedAt: 2,
+  }),
+};
 
-const DOM_GLOBAL_NAMES = [
-  "window",
-  "document",
-  "navigator",
-  "Node",
-  "NodeFilter",
-  "Element",
-  "HTMLElement",
-  "HTMLInputElement",
-  "HTMLTextAreaElement",
-  "Event",
-  "CustomEvent",
-  "MouseEvent",
-  "MutationObserver",
-  "getComputedStyle",
-  "IS_REACT_ACT_ENVIRONMENT",
-  "requestAnimationFrame",
-  "cancelAnimationFrame",
-  "fetch",
-] as const;
-type DomGlobalName = (typeof DOM_GLOBAL_NAMES)[number];
-
-let originalGlobals: Map<DomGlobalName, PropertyDescriptor | undefined>;
+let dom: JSDOM;
 let root: Root;
 let container: HTMLDivElement;
-let observedRequests: Array<{ path: string; method: string; body?: unknown }>;
-let ProjectTodosRoute: ProjectTodosModule["ProjectTodosRoute"];
+let client: QueryClient;
+let nextMutation: ReturnType<typeof Promise.withResolvers<ObservedRequest>> | undefined;
 let deriveProjectTodoGroups: ProjectTodosModule["deriveProjectTodoGroups"];
+let ProjectTodosRoute: ProjectTodosModule["ProjectTodosRoute"];
+let renderSequence = 0;
 
-function installDom() {
-  originalGlobals = new Map(DOM_GLOBAL_NAMES.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { url: "http://localhost/projects/demo/todos" });
+interface ObservedRequest {
+  path: string;
+  method: string;
+  body?: unknown;
+}
+
+function todo(
+  input: Pick<ProjectTodo, "id" | "title" | "status">
+    & Partial<ProjectTodo>,
+): ProjectTodo {
+  return {
+    body: "Body",
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    ...input,
+  };
+}
+
+beforeEach(async () => {
+  notifyManager.setScheduler((callback) => callback());
+  dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/projects/demo/todos",
+  });
   Object.defineProperties(dom.window.HTMLElement.prototype, {
-    attachEvent: { configurable: true, value: () => {} },
-    detachEvent: { configurable: true, value: () => {} },
+    attachEvent: { configurable: true, value: () => undefined },
+    detachEvent: { configurable: true, value: () => undefined },
   });
-  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-  Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
-  Object.defineProperty(globalThis, "Node", { value: dom.window.Node, configurable: true });
-  Object.defineProperty(globalThis, "NodeFilter", { value: dom.window.NodeFilter, configurable: true });
-  Object.defineProperty(globalThis, "Element", { value: dom.window.Element, configurable: true });
-  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
-  Object.defineProperty(globalThis, "HTMLInputElement", { value: dom.window.HTMLInputElement, configurable: true });
-  Object.defineProperty(globalThis, "HTMLTextAreaElement", { value: dom.window.HTMLTextAreaElement, configurable: true });
-  Object.defineProperty(globalThis, "Event", { value: dom.window.Event, configurable: true });
-  Object.defineProperty(globalThis, "CustomEvent", { value: dom.window.CustomEvent, configurable: true });
-  Object.defineProperty(globalThis, "MouseEvent", { value: dom.window.MouseEvent, configurable: true });
-  Object.defineProperty(globalThis, "MutationObserver", { value: dom.window.MutationObserver, configurable: true });
-  Object.defineProperty(globalThis, "getComputedStyle", { value: dom.window.getComputedStyle.bind(dom.window), configurable: true });
-  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
-  Object.defineProperty(globalThis, "requestAnimationFrame", { value: (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0), configurable: true });
-  Object.defineProperty(globalThis, "cancelAnimationFrame", { value: clearTimeout, configurable: true });
-  Object.defineProperty(globalThis, "fetch", {
-    value: async (input: RequestInfo | URL, init?: RequestInit) => {
-      const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-      observedRequests.push({ path: String(input), method: init?.method ?? "GET", ...(body === undefined ? {} : { body }) });
-      return responseFor(String(input), init?.method ?? "GET");
+  for (const [name, value] of Object.entries({
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    Node: dom.window.Node,
+    NodeFilter: dom.window.NodeFilter,
+    Element: dom.window.Element,
+    HTMLElement: dom.window.HTMLElement,
+    HTMLInputElement: dom.window.HTMLInputElement,
+    HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
+    Event: dom.window.Event,
+    CustomEvent: dom.window.CustomEvent,
+    MouseEvent: dom.window.MouseEvent,
+    MutationObserver: dom.window.MutationObserver,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      queueMicrotask(() => callback(0));
+      return 0;
     },
+    cancelAnimationFrame: () => undefined,
+  })) {
+    Object.defineProperty(globalThis, name, { configurable: true, value });
+  }
+  Object.defineProperty(globalThis, "fetch", {
     configurable: true,
+    value: mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const path = String(input);
+      if (method === "GET") {
+        if (path === "/api/projects/demo/todos") {
+          return Response.json({ todos: Object.values(todos) });
+        }
+        if (path === "/api/projects/demo/sessions") {
+          return Response.json({ sessions: [] });
+        }
+        if (path === "/api/projects/demo/automations") {
+          return Response.json({ automations: [] });
+        }
+      }
+      const request: ObservedRequest = {
+        path,
+        method,
+        ...(typeof init?.body === "string" ? { body: JSON.parse(init.body) } : {}),
+      };
+      if (request.method !== "GET") nextMutation?.resolve(request);
+      const todoId = request.path.split("/")[5] as keyof typeof todos | undefined;
+      return Response.json({
+        todo: todoId === undefined ? todos.idea : todos[todoId] ?? todos.idea,
+        sessionId: "created-session",
+      });
+    }),
   });
-  container = dom.window.document.querySelector("#root") as HTMLDivElement;
+  container = document.querySelector("#root") as HTMLDivElement;
   root = createRoot(container);
-}
+  client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Infinity },
+      mutations: { retry: false },
+    },
+  });
+  sessionRuntimeStore.getState().reset();
+  renderSequence = 0;
+  ({ deriveProjectTodoGroups, ProjectTodosRoute } = await import("./project-todos"));
+});
 
-function restoreDom() {
-  for (const [name, descriptor] of originalGlobals) {
-    if (descriptor) Object.defineProperty(globalThis, name, descriptor);
-    else Reflect.deleteProperty(globalThis, name);
-  }
-}
+afterEach(async () => {
+  notifyManager.setScheduler((callback) => queueMicrotask(callback));
+  await act(async () => root.unmount());
+  client.clear();
+  sessionRuntimeStore.getState().reset();
+  dom.window.close();
+  nextMutation = undefined;
+});
 
-function responseFor(path: string, method = "GET") {
-  if (path === "/api/projects/demo/todos") return json({ todos });
-  if (path === "/api/projects/demo/sessions") return json({ sessions: [{ sessionId: "source" }, { sessionId: "linked" }] });
-  if (path === "/api/projects/demo/automations") return json({ automations: [] });
-  if (method !== "GET" && path.startsWith("/api/projects/demo/todos/")) {
-    const id = path.split("/")[5] ?? "idea";
-    return json({ todo: todos.find((todo) => todo.id === id) ?? todos[0], sessionId: "created-session" });
-  }
-  return json({ error: { message: `Unexpected request ${path}` } }, 500);
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-}
-
-async function render(entry = "/projects/demo/todos", readyText = "Ideas") {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+async function renderTodo(
+  value: ProjectTodo,
+  sessions: SessionSummary[] = [],
+): Promise<void> {
+  client.setQueryData(projectTodosQueryOptions("demo").queryKey, Object.values(todos));
+  client.setQueryData(sessionsQueryOptions("demo").queryKey, sessions);
+  client.setQueryData(automationsQueryOptions("demo").queryKey, []);
   await act(async () => {
     root.render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[entry]}>
-          <Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /><Route path="*" element={<div>navigated</div>} /></Routes>
+      <QueryClientProvider client={client}>
+        <MemoryRouter
+          key={`${value.id}:${renderSequence++}`}
+          initialEntries={[`/projects/demo/todos?todo=${encodeURIComponent(value.id)}`]}
+        >
+          <Routes>
+            <Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} />
+          </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
     );
   });
-  await waitFor(() => expect(container.textContent).toContain(readyText));
+  await act(async () => {
+    await Promise.resolve();
+  });
 }
 
-async function waitFor(assertion: () => void) {
-  const deadline = Date.now() + 1_500;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      assertion();
-      return;
-    } catch (error) {
-      lastError = error;
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-    }
-  }
-  throw lastError;
-}
-
-async function expand(id: string): Promise<HTMLElement> {
-  const trigger = container.querySelector(`[data-testid="todo-open-${id}"]`) as HTMLButtonElement;
-  await act(async () => trigger.click());
-  await waitFor(() => expect(document.querySelector('[data-testid="todo-detail-drawer"]')).not.toBeNull());
-  return document.querySelector('[data-testid="todo-detail-drawer"]') as HTMLElement;
-}
-
-function actionLabels(drawer: HTMLElement): string[] {
-  return Array.from(drawer.querySelectorAll("button"))
+function labels(): string[] {
+  return Array.from(document.querySelectorAll('[data-testid="todo-detail-drawer"] button'))
     .map((button) => button.textContent?.trim() ?? "")
     .filter(Boolean);
 }
 
-async function clickAction(drawer: HTMLElement, label: string): Promise<void> {
-  const button = Array.from(drawer.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === label);
-  if (!button) throw new Error(`Missing ${label} action`);
-  observedRequests = [];
-  await act(async () => {
-    button.click();
-    await Promise.resolve();
+function button(label: string): HTMLButtonElement {
+  const match = Array.from(document.querySelectorAll<HTMLButtonElement>(
+    '[data-testid="todo-detail-drawer"] button',
+  ))
+    .find((candidate) => candidate.textContent?.trim() === label);
+  if (!match) throw new Error(`Missing ${label} button`);
+  return match;
+}
+
+async function clickAndCapture(label: string): Promise<ObservedRequest> {
+  nextMutation = Promise.withResolvers<ObservedRequest>();
+  const mutationSettled = new Promise<void>((resolve) => {
+    const unsubscribe = client.getMutationCache().subscribe((event) => {
+      if (event.type !== "updated"
+        || (event.mutation.state.status !== "success"
+          && event.mutation.state.status !== "error")) return;
+      unsubscribe();
+      resolve();
+    });
   });
-  await waitFor(() => expect(observedRequests.some((request) => request.method !== "GET")).toBe(true));
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+  let request!: ObservedRequest;
+  await act(async () => {
+    button(label).click();
+    request = await nextMutation!.promise;
+    await mutationSettled;
+  });
+  nextMutation = undefined;
+  return request;
 }
 
-async function renderFresh(entry = "/projects/demo/todos", readyText = "Ideas"): Promise<void> {
-  await act(async () => root.unmount());
-  root = createRoot(container);
-  observedRequests = [];
-  await render(entry, readyText);
-}
-
-function changeValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+function changeValue(
+  element: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+): void {
   act(() => {
     const previous = element.value;
     const prototype = element instanceof window.HTMLTextAreaElement
       ? window.HTMLTextAreaElement.prototype
       : window.HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(element, value);
-    (element as unknown as { _valueTracker?: { setValue(value: string): void } })._valueTracker?.setValue(previous);
+    (element as unknown as { _valueTracker?: { setValue(value: string): void } })
+      ._valueTracker?.setValue(previous);
     const propsKey = Object.keys(element).find((key) => key.startsWith("__reactProps$"));
     const props = propsKey
-      ? (element as unknown as Record<string, { onChange?: (event: { target: typeof element }) => void }>)[propsKey]
+      ? (element as unknown as Record<
+          string,
+          { onChange?: (event: { target: typeof element }) => void }
+        >)[propsKey]
       : undefined;
     props?.onChange?.({ target: element });
   });
 }
 
-describe("ProjectTodosRoute presentation contracts", () => {
-  beforeEach(async () => {
-    installDom();
-    ({ ProjectTodosRoute, deriveProjectTodoGroups } = await import("./project-todos"));
-    observedRequests = [];
-    sessionRuntimeStore.getState().reset();
-  });
-
-  afterEach(async () => {
-    await act(async () => {
-      root.unmount();
-      await new Promise((resolve) => setTimeout(resolve, 20));
+describe("Project Todo deterministic contracts", () => {
+  test("groups every workflow state without rendering or timers", () => {
+    expect(deriveProjectTodoGroups(Object.values(todos))).toMatchObject({
+      idea: [todos.idea],
+      ready: [todos.ready, todos.rejected],
+      in_progress: [todos.active],
+      done: [todos.done, todos.archived],
     });
-    restoreDom();
-    sessionRuntimeStore.getState().reset();
   });
 
-  test("groups workflow states in a flat responsive grid", async () => {
-    expect(deriveProjectTodoGroups(todos)).toMatchObject({
-      idea: [todos[0], todos[6]], ready: [todos[1], todos[4]], in_progress: [todos[2]], done: [todos[3], todos[5]],
-    });
-    await render();
-    const board = container.querySelector("main > div");
-    expect(board?.className).toContain("grid-cols-1");
-    expect(board?.className).toContain("min-[621px]:grid-cols-2");
-    expect(board?.className).toContain("min-[1181px]:grid-cols-4");
-    expect(Array.from(container.querySelectorAll("section[aria-label]")).map((lane) => lane.getAttribute("aria-label"))).toEqual(["Ideas", "Ready", "In Progress", "Done"]);
-  });
+  test("opens an archived Todo from the URL in the archived view", async () => {
+    await renderTodo(todos.archived);
 
-  test("uses archived presentation priority and URL-driven archived view", async () => {
-    await render("/projects/demo/todos?todo=archived", "Archived Todos");
-    await waitFor(() => expect(container.querySelector('[data-testid="todo-archived"]')?.textContent).toContain("Archived"));
-    expect(container.querySelector('[data-testid="todo-archived"] button')?.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector('[data-testid="todo-detail-drawer"]')).not.toBeNull();
     expect(container.textContent).toContain("Archived Todos");
+    expect(container.querySelector('[data-testid="todo-archived"] button')?.getAttribute("aria-expanded"))
+      .toBe("true");
+    expect(document.querySelector('[data-testid="todo-detail-drawer"]')).not.toBeNull();
   });
 
-  test("shows linked Session activity only in the association, while card In Progress remains static", async () => {
+  test("keeps card status static while linked Session activity stays in its association", async () => {
     sessionRuntimeStore.getState().applySnapshot({
       type: "session.runtime.snapshot",
       projectSlugs: ["demo"],
-      families: [{ projectSlug: "demo", rootSessionId: "source", activity: "idle" }, { projectSlug: "demo", rootSessionId: "linked", activity: "running" }],
+      families: [
+        { projectSlug: "demo", rootSessionId: "source", activity: "idle" },
+        { projectSlug: "demo", rootSessionId: "linked", activity: "running" },
+      ],
       createdAt: 1,
     });
-    await render();
+    await renderTodo(todos.active, [
+      { sessionId: "source" } as SessionSummary,
+      { sessionId: "linked" } as SessionSummary,
+    ]);
+
     const card = container.querySelector('[data-testid="todo-active"]') as HTMLElement;
     expect(card.textContent).toContain("In Progress");
     expect(card.querySelector("button [data-motion=loop]")).toBeNull();
-    expect(card.querySelector('[aria-label="Activation session"] [data-testid="activity-arc"], [data-testid="activity-arc"]')).not.toBeNull();
+    expect(card.querySelector('[data-testid="activity-arc"]')).not.toBeNull();
   });
 
   test("uses a resizable four-row body editor", async () => {
-    await render();
-    const drawer = await expand("idea");
-    await act(async () => Array.from(drawer.querySelectorAll("button")).find((button) => button.textContent === "Edit")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
-    const textarea = drawer.querySelector('textarea[aria-label="Todo body"]') as HTMLTextAreaElement;
+    await renderTodo(todos.idea);
+    await act(async () => button("Edit").click());
+
+    const textarea = document.querySelector(
+      'textarea[aria-label="Todo body"]',
+    ) as HTMLTextAreaElement;
     expect(textarea.rows).toBe(4);
     expect(textarea.className).toContain("resize-y");
   });
 
-  test("exposes the lifecycle action matrix", async () => {
-    await render();
-    expect(actionLabels(await expand("idea"))).toEqual(["Edit", "Discuss", "Mark Ready", "Reject", "Archive"]);
-    expect(actionLabels(await expand("ready"))).toEqual(["Edit", "Discuss", "Start Session", "Create Automation", "Move to Idea", "Reject", "Mark Done", "Archive"]);
-    expect(actionLabels(await expand("active"))).toEqual(["Edit", "Discuss", "Return to Ready", "Mark Done"]);
-    expect(actionLabels(await expand("done"))).toEqual(["Edit", "Reopen", "Archive"]);
-
-    await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Rejected")?.click());
-    expect(actionLabels(await expand("rejected"))).toEqual(["Edit", "Discuss", "Restore to Idea", "Archive"]);
-    await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Archived")?.click());
-    expect(actionLabels(await expand("archived"))).toEqual(["Edit", "Restore"]);
-  });
-
-  test("routes status, activation, and lifecycle actions to their mutation endpoints", async () => {
-    await render();
-
-    const idea = await expand("idea");
-    await clickAction(idea, "Mark Ready");
-    expect(observedRequests).toContainEqual({
-      path: "/api/projects/demo/todos/idea",
-      method: "PATCH",
-      body: { expectedRevision: 1, patch: { status: "ready" } },
-    });
-
-    const ready = await expand("ready");
-    await clickAction(ready, "Create Automation");
-    expect(observedRequests).toContainEqual({
-      path: "/api/projects/demo/todos/ready/activate",
-      method: "POST",
-      body: { kind: "automation", expectedRevision: 1 },
-    });
-  });
-
-  test("routes discussion and terminal lifecycle actions to their handlers", async () => {
-    await render();
-
-    const active = await expand("active");
-    await clickAction(active, "Return to Ready");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/active/return-to-ready", method: "POST", body: { expectedRevision: 1 } });
-
-    const done = await expand("done");
-    await clickAction(done, "Reopen");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/done", method: "PATCH", body: { expectedRevision: 1, patch: { status: "ready" } } });
-
-    await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Archived")?.click());
-    const archived = await expand("archived");
-    await clickAction(archived, "Restore");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/archived/restore", method: "POST", body: { expectedRevision: 1 } });
-  });
-
-  test("routes Discuss, Continue, Session activation, and lifecycle actions", async () => {
-    await render();
-
-    await clickAction(await expand("idea"), "Discuss");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/idea/discuss", method: "POST", body: { expectedRevision: 1 } });
-
-    await renderFresh();
-    await clickAction(await expand("discussed"), "Continue Discussion");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/discussed/discuss", method: "POST", body: { expectedRevision: 1 } });
-
-    await renderFresh();
-    await clickAction(await expand("ready"), "Start Session");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/ready/activate", method: "POST", body: { kind: "session", expectedRevision: 1 } });
-
-    await renderFresh();
-    await clickAction(await expand("ready"), "Move to Idea");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/ready", method: "PATCH", body: { expectedRevision: 1, patch: { status: "idea" } } });
-
-    await renderFresh();
-    await clickAction(await expand("ready"), "Mark Done");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/ready", method: "PATCH", body: { expectedRevision: 1, patch: { status: "done" } } });
-
-    await renderFresh();
-    await clickAction(await expand("idea"), "Archive");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/idea/archive", method: "POST", body: { expectedRevision: 1 } });
-
-    await renderFresh("/projects/demo/todos?todo=rejected", "Rejected Todos");
-    await clickAction(document.querySelector('[data-testid="todo-detail-drawer"]') as HTMLElement, "Restore to Idea");
-    expect(observedRequests).toContainEqual({ path: "/api/projects/demo/todos/rejected", method: "PATCH", body: { expectedRevision: 1, patch: { status: "idea" } } });
-  });
-
-  test("submits Reject and Edit-save payloads", async () => {
-    await render();
-    const idea = await expand("idea");
-    await act(async () => Array.from(idea.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Reject")?.click());
-    const rejectionReason = idea.querySelector('textarea[aria-label="Rejection reason"]') as HTMLTextAreaElement;
-    changeValue(rejectionReason, "Not aligned");
-    await clickAction(idea, "Reject Todo");
-    expect(observedRequests).toContainEqual({
-      path: "/api/projects/demo/todos/idea",
-      method: "PATCH",
-      body: { expectedRevision: 1, patch: { status: "rejected", rejectionReason: "Not aligned" } },
-    });
-
-    await renderFresh();
-    const editing = await expand("idea");
-    await act(async () => Array.from(editing.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Edit")?.click());
-    changeValue(editing.querySelector('input[aria-label="Todo title"]') as HTMLInputElement, "Edited title");
-    changeValue(editing.querySelector('textarea[aria-label="Todo body"]') as HTMLTextAreaElement, "Edited body");
-    await clickAction(editing, "Save");
-    expect(observedRequests).toContainEqual({
-      path: "/api/projects/demo/todos/idea",
-      method: "PATCH",
-      body: { expectedRevision: 1, patch: { title: "Edited title", body: "Edited body" } },
-    });
-  });
-
-  test("positions the 320px and 390px Todo drawer above the project rail", async () => {
+  test("keeps the Todo drawer above the project rail at narrow widths", async () => {
     const todoSource = await Bun.file(new URL("./project-todos.tsx", import.meta.url)).text();
     const layoutSource = await Bun.file(new URL("./root-layout.tsx", import.meta.url)).text();
 
     expect(layoutSource).toContain('className="relative z-[55] w-11');
     expect(todoSource).toContain('className="fixed inset-0 z-[60]');
     expect(todoSource).toContain('right-0 z-[61] flex w-[min(430px,calc(100%-18px))]');
+  });
 
-    for (const viewportWidth of [320, 390]) {
-      const drawerWidth = Math.min(430, viewportWidth - 18);
-      expect(viewportWidth - drawerWidth).toBe(18);
-      expect(drawerWidth).toBeGreaterThan(viewportWidth - 44);
-    }
+  test("exposes the lifecycle action matrix", async () => {
+    await renderTodo(todos.idea);
+    expect(labels()).toEqual(["Edit", "Discuss", "Mark Ready", "Reject", "Archive"]);
+
+    await renderTodo(todos.ready);
+    expect(labels()).toEqual([
+      "Edit",
+      "Discuss",
+      "Start Session",
+      "Create Automation",
+      "Move to Idea",
+      "Reject",
+      "Mark Done",
+      "Archive",
+    ]);
+
+    await renderTodo(todos.active);
+    expect(labels()).toEqual(["Edit", "Discuss", "Return to Ready", "Mark Done"]);
+
+    await renderTodo(todos.done);
+    expect(labels()).toEqual(["Edit", "Reopen", "Archive"]);
+
+    await renderTodo(todos.rejected);
+    expect(labels()).toEqual(["Edit", "Discuss", "Restore to Idea", "Archive"]);
+
+    await renderTodo(todos.archived);
+    expect(labels()).toEqual(["Edit", "Restore"]);
+  });
+
+  test("routes status, discussion, activation, archive, restore, and return actions", async () => {
+    await renderTodo(todos.idea);
+    expect(await clickAndCapture("Mark Ready")).toEqual({
+      path: "/api/projects/demo/todos/idea",
+      method: "PATCH",
+      body: { expectedRevision: 1, patch: { status: "ready" } },
+    });
+    expect(await clickAndCapture("Discuss")).toEqual({
+      path: "/api/projects/demo/todos/idea/discuss",
+      method: "POST",
+      body: { expectedRevision: 1 },
+    });
+    await renderTodo(todos.idea);
+    expect(await clickAndCapture("Archive")).toEqual({
+      path: "/api/projects/demo/todos/idea/archive",
+      method: "POST",
+      body: { expectedRevision: 1 },
+    });
+
+    await renderTodo(todos.ready);
+    expect(await clickAndCapture("Start Session")).toEqual({
+      path: "/api/projects/demo/todos/ready/activate",
+      method: "POST",
+      body: { kind: "session", expectedRevision: 1 },
+    });
+    await renderTodo(todos.ready);
+    expect(await clickAndCapture("Create Automation")).toEqual({
+      path: "/api/projects/demo/todos/ready/activate",
+      method: "POST",
+      body: { kind: "automation", expectedRevision: 1 },
+    });
+
+    await renderTodo(todos.active);
+    expect(await clickAndCapture("Return to Ready")).toEqual({
+      path: "/api/projects/demo/todos/active/return-to-ready",
+      method: "POST",
+      body: { expectedRevision: 1 },
+    });
+
+    await renderTodo(todos.done);
+    expect(await clickAndCapture("Reopen")).toEqual({
+      path: "/api/projects/demo/todos/done",
+      method: "PATCH",
+      body: { expectedRevision: 1, patch: { status: "ready" } },
+    });
+
+    await renderTodo(todos.archived);
+    expect(await clickAndCapture("Restore")).toEqual({
+      path: "/api/projects/demo/todos/archived/restore",
+      method: "POST",
+      body: { expectedRevision: 1 },
+    });
+  });
+
+  test("submits deterministic Edit and Reject payloads", async () => {
+    await renderTodo(todos.idea);
+    await act(async () => button("Edit").click());
+    changeValue(
+      document.querySelector('input[aria-label="Todo title"]') as HTMLInputElement,
+      "Edited title",
+    );
+    changeValue(
+      document.querySelector('textarea[aria-label="Todo body"]') as HTMLTextAreaElement,
+      "Edited body",
+    );
+    expect(await clickAndCapture("Save")).toEqual({
+      path: "/api/projects/demo/todos/idea",
+      method: "PATCH",
+      body: {
+        expectedRevision: 1,
+        patch: { title: "Edited title", body: "Edited body" },
+      },
+    });
+
+    await renderTodo(todos.idea);
+    await act(async () => button("Reject").click());
+    changeValue(
+      document.querySelector('textarea[aria-label="Rejection reason"]') as HTMLTextAreaElement,
+      "Not aligned",
+    );
+    expect(await clickAndCapture("Reject Todo")).toEqual({
+      path: "/api/projects/demo/todos/idea",
+      method: "PATCH",
+      body: {
+        expectedRevision: 1,
+        patch: { status: "rejected", rejectionReason: "Not aligned" },
+      },
+    });
   });
 });

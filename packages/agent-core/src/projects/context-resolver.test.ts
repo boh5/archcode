@@ -101,7 +101,6 @@ describe("ProjectContextResolver", () => {
     const workspaceA = await makeWorkspace("concurrent-a");
     const workspaceB = await makeWorkspace("concurrent-b");
     const loadMock = mock(async (manager: ProjectApprovalManager, workspaceRoot: string) => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
       await ProjectApprovalManager.prototype.load.call(manager, workspaceRoot);
     });
     class CountingProjectApprovalManager extends ProjectApprovalManager {

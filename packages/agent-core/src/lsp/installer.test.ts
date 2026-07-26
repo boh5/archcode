@@ -5,6 +5,7 @@ import {
   LspInstallerError,
   resolveServerBinary,
   setInstallerProcessRunnerForTest,
+  setInstallerRunnerForTest,
   type ExecCommand,
 } from "./installer";
 
@@ -19,10 +20,12 @@ beforeEach(async () => {
   await mkdir(tmpDir, { recursive: true });
   Bun.env.XDG_CACHE_HOME = tmpDir;
   setInstallerProcessRunnerForTest(undefined);
+  setInstallerRunnerForTest(undefined);
 });
 
 afterAll(async () => {
   setInstallerProcessRunnerForTest(undefined);
+  setInstallerRunnerForTest(undefined);
   delete Bun.env.XDG_CACHE_HOME;
   await rm(tmpDir, { recursive: true, force: true });
 });
@@ -87,12 +90,16 @@ describe("resolveServerBinary", () => {
   it("deduplicates concurrent installs for the same server", async () => {
     const calls: CallRecord[] = [];
     let installCount = 0;
+    let releaseInstall!: () => void;
+    const installGate = new Promise<void>((resolve) => {
+      releaseInstall = resolve;
+    });
     setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
       calls.push({ command });
       if (command[0] === "which") return { stdout: "", stderr: "", exitCode: 1 };
       if (command[0] === "npm") {
         installCount += 1;
-        await sleep(10);
+        await installGate;
         const prefix = command[4]!;
         await writeInstalledBinary(prefix, "typescript-language-server");
         return { stdout: "installed", stderr: "", exitCode: 0 };
@@ -100,10 +107,10 @@ describe("resolveServerBinary", () => {
       return { stdout: "", stderr: "unexpected", exitCode: 1 };
     }));
 
-    const [first, second] = await Promise.all([
-      resolveServerBinary("typescript"),
-      resolveServerBinary("typescript"),
-    ]);
+    const firstResult = resolveServerBinary("typescript");
+    const secondResult = resolveServerBinary("typescript");
+    releaseInstall();
+    const [first, second] = await Promise.all([firstResult, secondResult]);
 
     expect(first).toBe(second);
     expect(installCount).toBe(1);
@@ -133,50 +140,43 @@ describe("resolveServerBinary", () => {
     expect(await Bun.file(serverRoot).exists()).toBe(false);
   });
 
-  it("times out npm install and cleans temporary install root", async () => {
-    setInstallerProcessRunnerForTest((argv) => {
-      const stdout = new ControlledReadableStream();
-      const stderr = new ControlledReadableStream();
-      let timeoutKill: (() => void) | undefined;
-      const exited = argv[0] === "which"
-        ? Promise.resolve().then(() => {
-          stdout.close();
-          stderr.close();
-          return 1;
-        })
-        : new Promise<number>((resolve) => {
-          const exit = () => {
-            stdout.close();
-            stderr.close();
-            resolve(1);
-          };
-          timeoutKill = exit;
-          setTimeout(exit, 20);
-        });
-
-      return {
-        stdout: stdout.stream,
-        stderr: stderr.stream,
-        exited,
-        exitCode: null,
-        signalCode: null,
-        kill: () => {
-          timeoutKill?.();
+  it("maps a ProcessRunner timeout and cleans the temporary install root", async () => {
+    const run = async (input: { argv: readonly [string, ...string[]] }) => {
+      const base = {
+        argv: input.argv,
+        startedAt: 100,
+        finishedAt: 125,
+        durationMs: 25,
+        output: {
+          stdout: "",
+          stderr: "",
+          combined: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          combinedTruncated: false,
+          stdoutBytes: 0,
+          stderrBytes: 0,
+          sinkStatus: "unused" as const,
         },
       };
-    });
+      if (input.argv[0] === "which") {
+        return { ...base, kind: "nonzero" as const, exitCode: 1 };
+      }
+      return {
+        ...base,
+        kind: "timeout" as const,
+        timeoutMs: 90_000,
+        exitCode: 143,
+      };
+    };
+    setInstallerRunnerForTest({ run });
 
-    try {
-      await resolveServerBinary("typescript", { timeoutMs: 5 });
-      throw new Error("Expected resolveServerBinary to time out");
-    } catch (error) {
-      expect(error).toMatchObject({
-        name: "LspInstallerError",
-        serverId: "typescript",
-        command: "npm install -g typescript-language-server",
-      });
-      expect((error as Error).message).toContain("Timed out after 5ms");
-    }
+    await expect(resolveServerBinary("typescript")).rejects.toMatchObject({
+      name: "LspInstallerError",
+      serverId: "typescript",
+      command: "npm install -g typescript-language-server",
+      message: expect.stringContaining("Timed out after 90000ms"),
+    });
 
     const serverRoot = join(tmpDir, "archcode", "lsp-servers", "typescript");
     expect(await Bun.file(serverRoot).exists()).toBe(false);
@@ -301,8 +301,4 @@ async function writeText(stream: WritableStream<Uint8Array>, text: string): Prom
     await writer.close();
     writer.releaseLock();
   }
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -219,6 +219,36 @@ export interface SessionRuntimeChange {
 
 export type SessionRuntimeChangeListener = (change: SessionRuntimeChange) => void;
 
+export interface SessionExecutionDeadlineHandle {
+  readonly id?: unknown;
+}
+
+/**
+ * Owns only execution lifecycle deadlines. Business timestamps remain
+ * authoritative wall-clock values; tests can advance cancellation deadlines
+ * without waiting for the host machine.
+ */
+export interface SessionExecutionDeadlineScheduler {
+  now(): number;
+  sleep(delayMs: number): Promise<void>;
+  schedule(delayMs: number, callback: () => void): SessionExecutionDeadlineHandle;
+  cancel(handle: SessionExecutionDeadlineHandle): void;
+}
+
+const systemExecutionDeadlineScheduler: SessionExecutionDeadlineScheduler = {
+  now: () => Date.now(),
+  sleep: async (delayMs) => {
+    await Bun.sleep(delayMs);
+  },
+  schedule: (delayMs, callback) => {
+    const id = setTimeout(callback, delayMs);
+    return { id };
+  },
+  cancel: (handle) => {
+    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
+  },
+};
+
 interface SessionExecutionManagerConfig {
   readonly sessionAgentManager: SessionAgentManager;
   readonly modelRuntime: ModelRuntime;
@@ -261,6 +291,7 @@ interface SessionExecutionManagerConfig {
   readonly executionClaimCoordinator?: SessionExecutionClaimCoordinator;
   readonly deletionLifecycle?: SessionDeletionLifecycle;
   readonly sessionFamilyStopTimeoutMs?: number;
+  readonly deadlineScheduler?: SessionExecutionDeadlineScheduler;
   readonly onFreshUserInput?: (input: {
     readonly workspaceRoot: string;
     readonly rootSessionId: string;
@@ -338,10 +369,12 @@ export class SessionExecutionManager {
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
   readonly #publishedRuntime = new Map<string, Pick<SessionRuntimeChange, "activity" | "steerTargetExecutionId">>();
   readonly #config: SessionExecutionManagerConfig;
+  readonly #deadlineScheduler: SessionExecutionDeadlineScheduler;
   readonly #logger: Logger;
 
   constructor(config: SessionExecutionManagerConfig) {
     this.#config = config;
+    this.#deadlineScheduler = config.deadlineScheduler ?? systemExecutionDeadlineScheduler;
     this.#logger = config.logger;
   }
 
@@ -1284,7 +1317,10 @@ export class SessionExecutionManager {
     if (execution === undefined) throw new Error(`Child Session "${childSessionId}" did not claim execution`);
 
     const timeout = childPolicy.timeoutMs > 0
-      ? setTimeout(() => execution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
+      ? this.#deadlineScheduler.schedule(
+        childPolicy.timeoutMs,
+        () => execution.abortController.abort(new Error("Sub-agent timed out")),
+      )
       : undefined;
     const removeParentAbort = childPolicy.abortCascade
       ? wireAbortCascade(request.parentAbort, execution.abortController)
@@ -1293,7 +1329,7 @@ export class SessionExecutionManager {
     const result = execution.promise
       .then(() => toChildExecutionOutcome(childStore, execution.executionId))
       .finally(() => {
-        if (timeout !== undefined) clearTimeout(timeout);
+        if (timeout !== undefined) this.#deadlineScheduler.cancel(timeout);
         removeParentAbort();
         this.#releaseExecutionChildSlot(execution);
         const current = this.#active.get(scopedKey(workspaceRoot, childSessionId));
@@ -1507,7 +1543,10 @@ export class SessionExecutionManager {
     const claimedExecution = execution;
 
     const timeout = childPolicy.timeoutMs > 0
-      ? setTimeout(() => claimedExecution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
+      ? this.#deadlineScheduler.schedule(
+        childPolicy.timeoutMs,
+        () => claimedExecution.abortController.abort(new Error("Sub-agent timed out")),
+      )
       : undefined;
     const removeParentAbort = childPolicy.abortCascade
       ? wireAbortCascade(request.parentAbort, claimedExecution.abortController)
@@ -1516,7 +1555,7 @@ export class SessionExecutionManager {
     const result = claimedExecution.promise
       .then(() => toChildExecutionOutcome(childStore, claimedExecution.executionId))
       .finally(() => {
-        if (timeout !== undefined) clearTimeout(timeout);
+        if (timeout !== undefined) this.#deadlineScheduler.cancel(timeout);
         removeParentAbort();
         this.#releaseExecutionChildSlot(claimedExecution);
         const current = this.#active.get(scopedKey(workspaceRoot, request.sessionId));
@@ -1895,7 +1934,8 @@ export class SessionExecutionManager {
     rootSessionId: string,
     exemptSessionId: string | undefined,
   ): Promise<void> {
-    const deadline = Date.now() + (this.#config.sessionFamilyStopTimeoutMs ?? ABORT_AND_WAIT_TIMEOUT_MS);
+    const deadline = this.#deadlineScheduler.now()
+      + (this.#config.sessionFamilyStopTimeoutMs ?? ABORT_AND_WAIT_TIMEOUT_MS);
     const key = scopedKey(workspaceRoot, rootSessionId);
     const deferredAncestorIds = this.#ancestorSessionIds(workspaceRoot, exemptSessionId);
 
@@ -1916,7 +1956,7 @@ export class SessionExecutionManager {
 
       if (executions.length === 0 && pendingChildSessionIds.length === 0 && command === undefined) return;
 
-      const remainingMs = deadline - Date.now();
+      const remainingMs = deadline - this.#deadlineScheduler.now();
       if (remainingMs <= 0) {
         this.#forceTerminalizeStuckFamily({
           workspaceRoot,
@@ -1933,11 +1973,11 @@ export class SessionExecutionManager {
         ...(command === undefined ? [] : [command.completion]),
       ];
       if (pendingPromises.length === 0) {
-        await Bun.sleep(Math.min(5, remainingMs));
+        await this.#deadlineScheduler.sleep(Math.min(5, remainingMs));
       } else {
         await Promise.race([
           Promise.allSettled(pendingPromises).then(() => undefined),
-          Bun.sleep(Math.min(5, remainingMs)),
+          this.#deadlineScheduler.sleep(Math.min(5, remainingMs)),
         ]);
       }
     }
@@ -2142,7 +2182,7 @@ export class SessionExecutionManager {
 
     const settled = await Promise.all(executions.map(async (execution) => {
         try {
-          await waitForExecutionToStop(execution);
+          await waitForExecutionToStop(execution, this.#deadlineScheduler);
           return undefined;
         } catch {
           return execution.sessionId;
@@ -2151,7 +2191,7 @@ export class SessionExecutionManager {
 
     const stuckCommands = await Promise.all(commands.map(async (command) => {
       try {
-        await waitForCommandToStop(command);
+        await waitForCommandToStop(command, this.#deadlineScheduler);
         return undefined;
       } catch {
         return command.rootSessionId;
@@ -3158,11 +3198,22 @@ function toChildExecutionOutcome(
   };
 }
 
-async function waitForExecutionToStop(execution: ActiveSessionExecution | PendingSessionExecution): Promise<void> {
+async function waitForExecutionToStop(
+  execution: ActiveSessionExecution | PendingSessionExecution,
+  deadlineScheduler: SessionExecutionDeadlineScheduler,
+): Promise<void> {
+  let timeoutHandle: SessionExecutionDeadlineHandle | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    setTimeout(() => reject(new Error(`Timed out waiting for session "${execution.sessionId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
+    timeoutHandle = deadlineScheduler.schedule(
+      ABORT_AND_WAIT_TIMEOUT_MS,
+      () => reject(new Error(`Timed out waiting for session "${execution.sessionId}" to abort`)),
+    );
   });
-  await Promise.race([execution.promise ?? Promise.resolve(), timeout]);
+  try {
+    await Promise.race([execution.promise ?? Promise.resolve(), timeout]);
+  } finally {
+    if (timeoutHandle !== undefined) deadlineScheduler.cancel(timeoutHandle);
+  }
 }
 
 function inputCommandForStop(
@@ -3172,11 +3223,22 @@ function inputCommandForStop(
   return command?.rootSessionId === exemptSessionId ? undefined : command;
 }
 
-async function waitForCommandToStop(command: ActiveSessionCommand): Promise<void> {
+async function waitForCommandToStop(
+  command: ActiveSessionCommand,
+  deadlineScheduler: SessionExecutionDeadlineScheduler,
+): Promise<void> {
+  let timeoutHandle: SessionExecutionDeadlineHandle | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    setTimeout(() => reject(new Error(`Timed out waiting for session command "${command.clientRequestId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
+    timeoutHandle = deadlineScheduler.schedule(
+      ABORT_AND_WAIT_TIMEOUT_MS,
+      () => reject(new Error(`Timed out waiting for session command "${command.clientRequestId}" to abort`)),
+    );
   });
-  await Promise.race([Promise.allSettled([command.completion]).then(() => undefined), timeout]);
+  try {
+    await Promise.race([Promise.allSettled([command.completion]).then(() => undefined), timeout]);
+  } finally {
+    if (timeoutHandle !== undefined) deadlineScheduler.cancel(timeoutHandle);
+  }
 }
 
 async function raceAbort<T>(promise: Promise<T>, abort: AbortSignal): Promise<T> {

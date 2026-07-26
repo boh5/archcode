@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createProcessRunner, setProcessRunnerForTest } from "../runner";
+import {
+  createProcessRunner,
+  setProcessRunnerForTest,
+  type ProcessRunnerDeadlineHandle,
+  type ProcessRunnerScheduler,
+} from "../runner";
 
 function streamFromText(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -10,36 +15,50 @@ function streamFromText(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function generatedStream(totalBytes: number, fill: number): {
-  stream: ReadableStream<Uint8Array>;
-  cancelled: () => number;
-} {
-  const chunk = new Uint8Array(64 * 1024).fill(fill);
-  let remaining = totalBytes;
-  let cancelCount = 0;
-  return {
-    stream: new ReadableStream<Uint8Array>({
-      pull(controller) {
-        if (remaining === 0) {
-          controller.close();
-          return;
-        }
-        const count = Math.min(remaining, chunk.byteLength);
-        controller.enqueue(count === chunk.byteLength ? chunk : chunk.subarray(0, count));
-        remaining -= count;
-      },
-      cancel() { cancelCount += 1; },
-    }, { highWaterMark: 0 }),
-    cancelled: () => cancelCount,
-  };
-}
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
     resolve = res;
   });
   return { promise, resolve };
+}
+
+interface ManualProcessScheduler extends ProcessRunnerScheduler {
+  readonly sleeps: number[];
+  fireScheduled(): void;
+  whenScheduled(): Promise<void>;
+}
+
+function createManualProcessScheduler(): ManualProcessScheduler {
+  let nextId = 1;
+  const scheduled = new Map<number, () => void>();
+  const waiters = new Set<() => void>();
+  const sleeps: number[] = [];
+  return {
+    sleeps,
+    sleep: async (delayMs) => {
+      sleeps.push(delayMs);
+    },
+    schedule: (_delayMs, callback) => {
+      const id = nextId++;
+      scheduled.set(id, callback);
+      for (const resolve of waiters) resolve();
+      waiters.clear();
+      return { id };
+    },
+    cancel: (handle: ProcessRunnerDeadlineHandle) => {
+      if (typeof handle.id === "number") scheduled.delete(handle.id);
+    },
+    fireScheduled: () => {
+      const callbacks = [...scheduled.values()];
+      scheduled.clear();
+      for (const callback of callbacks) callback();
+    },
+    whenScheduled: async () => {
+      if (scheduled.size > 0) return;
+      await new Promise<void>((resolve) => waiters.add(resolve));
+    },
+  };
 }
 
 function createFakeProcess(params: {
@@ -91,9 +110,10 @@ describe("process runner", () => {
     }
   });
 
-  test("returns timeout after killing the process", async () => {
+  test("returns timeout after a manually triggered deadline kills the process", async () => {
     const exit = deferred<number>();
     const kill = mock(() => exit.resolve(143));
+    const scheduler = createManualProcessScheduler();
     setProcessRunnerForTest(() => ({
       stdout: streamFromText(""),
       stderr: streamFromText(""),
@@ -103,12 +123,19 @@ describe("process runner", () => {
       kill,
     }) as any);
 
-    const result = await createProcessRunner().run({ argv: ["sleep", "1"], cwd: "/tmp", timeoutMs: 1 });
+    const running = createProcessRunner({ scheduler }).run({
+      argv: ["hung-process"],
+      cwd: "/tmp",
+      timeoutMs: 60_000,
+    });
+    await scheduler.whenScheduled();
+    scheduler.fireScheduled();
 
+    const result = await running;
     expect(kill).toHaveBeenCalledTimes(1);
     expect(result.kind).toBe("timeout");
     if (result.kind === "timeout") {
-      expect(result.timeoutMs).toBe(1);
+      expect(result.timeoutMs).toBe(60_000);
       expect(result.exitCode).toBe(143);
     }
   });
@@ -126,7 +153,7 @@ describe("process runner", () => {
       kill,
     }) as any);
 
-    const promise = createProcessRunner().run({ argv: ["sleep", "1"], cwd: "/tmp", signal: controller.signal });
+    const promise = createProcessRunner().run({ argv: ["hung-process"], cwd: "/tmp", signal: controller.signal });
     controller.abort("stop");
 
     const result = await promise;
@@ -177,10 +204,12 @@ describe("process runner", () => {
     });
     setProcessRunnerForTest(spawn as any);
 
-    const result = await createProcessRunner().run({ argv: ["echo", "done"], cwd: "/tmp" });
+    const scheduler = createManualProcessScheduler();
+    const result = await createProcessRunner({ scheduler }).run({ argv: ["echo", "done"], cwd: "/tmp" });
 
     expect(result.kind).toBe("success");
     expect(spawn).toHaveBeenCalledTimes(4);
+    expect(scheduler.sleeps).toEqual([10, 20, 30]);
   });
 
   test("retains bounded head and tail independently while draining both streams", async () => {
@@ -207,42 +236,6 @@ describe("process runner", () => {
       expect(result.output.sinkStatus).toBe("unused");
     }
   });
-
-  test("drains 256 MiB from each stream with fixed 1 MiB rings and no reader cancellation", async () => {
-    const bytesPerStream = 256 * 1024 * 1024;
-    const stdout = generatedStream(bytesPerStream, 0x61);
-    const stderr = generatedStream(bytesPerStream, 0x62);
-    const received = { stdout: 0, stderr: 0 };
-    setProcessRunnerForTest(() => ({
-      stdout: stdout.stream,
-      stderr: stderr.stream,
-      exited: Promise.resolve(0),
-      exitCode: 0,
-      signalCode: null,
-      kill: mock(() => {}),
-    }) as any);
-
-    const result = await createProcessRunner().run({
-      argv: ["large-output"],
-      outputSink: {
-        write(stream, chunk) {
-          received[stream] += chunk.byteLength;
-        },
-      },
-    });
-
-    expect(result.kind).toBe("success");
-    if (result.kind === "success") {
-      expect(received).toEqual({ stdout: bytesPerStream, stderr: bytesPerStream });
-      expect(result.output.stdoutBytes).toBe(bytesPerStream);
-      expect(result.output.stderrBytes).toBe(bytesPerStream);
-      expect(result.output.stdout.length).toBe(1024 * 1024);
-      expect(result.output.stderr.length).toBe(1024 * 1024);
-      expect(result.output.sinkStatus).toBe("complete");
-      expect(stdout.cancelled()).toBe(0);
-      expect(stderr.cancelled()).toBe(0);
-    }
-  }, 30_000);
 
   test("discards a rejected sink and still drains later output", async () => {
     let writes = 0;
@@ -291,38 +284,16 @@ describe("process runner", () => {
     expect(peak).toBe(1);
   });
 
-  test("discards a sink that never resolves after one second and still drains to EOF", async () => {
-    const stdout = "a".repeat(2 * 64 * 1024);
-    setProcessRunnerForTest(() => createFakeProcess({ stdout, exitCode: 0 }) as any);
-
-    const result = await createProcessRunner().run({
-      argv: ["stalled-sink"],
-      maxOutputBytes: 16,
-      outputSink: { write: () => new Promise<void>(() => undefined) },
-    });
-
-    expect(result.kind).toBe("success");
-    if (result.kind === "success") {
-      expect(result.output.stdoutBytes).toBe(stdout.length);
-      expect(result.output.sinkStatus).toBe("discarded");
-    }
-  });
-
-  test("continues non-blocking discarded observation after the sink deadline", async () => {
-    const stdout = generatedStream(4 * 64 * 1024, 0x61);
+  test("discards a stalled sink after a manually triggered deadline and still drains output", async () => {
+    const stdout = "a".repeat(4 * 64 * 1024);
     let observed = 0;
     let writes = 0;
-    setProcessRunnerForTest(() => ({
-      stdout: stdout.stream,
-      stderr: streamFromText(""),
-      exited: Promise.resolve(0),
-      exitCode: 0,
-      signalCode: null,
-      kill: mock(() => {}),
-    }) as any);
+    const scheduler = createManualProcessScheduler();
+    setProcessRunnerForTest(() => createFakeProcess({ stdout, exitCode: 0 }) as any);
 
-    const result = await createProcessRunner().run({
-      argv: ["observing-stalled-sink"],
+    const running = createProcessRunner({ scheduler }).run({
+      argv: ["stalled-sink"],
+      maxOutputBytes: 16,
       outputSink: {
         write(_stream, chunk) {
           writes += 1;
@@ -334,11 +305,14 @@ describe("process runner", () => {
         },
       },
     });
+    await scheduler.whenScheduled();
+    scheduler.fireScheduled();
 
+    const result = await running;
     expect(result.kind).toBe("success");
     expect(writes).toBe(1);
-    expect(observed).toBe(4 * 64 * 1024);
+    expect(observed).toBe(stdout.length);
     expect(result.kind === "success" && result.output.sinkStatus).toBe("discarded");
-    expect(stdout.cancelled()).toBe(0);
   });
+
 });

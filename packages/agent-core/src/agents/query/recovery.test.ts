@@ -212,7 +212,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await Bun.sleep(0);
+  await Promise.resolve();
   sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
   storeManager.clearAll();
 });

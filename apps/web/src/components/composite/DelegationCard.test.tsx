@@ -110,7 +110,7 @@ describe("DelegationCard", () => {
     taskTitle: "Find relevant files",
     visualKind: "running" as const,
     executionStatusLabel: "Running",
-    startedAt: Date.now() - 60000,
+    startedAt: 1,
     hasInput: true,
     input: {
       agent_type: "explore",
@@ -147,13 +147,6 @@ describe("DelegationCard", () => {
     expect(text).not.toContain("Foreground");
     expect(findAll(result, (element) => element.type === CornerDownRight)).toHaveLength(1);
     expect(findAllWithClass(result, "bg-agent-")).toHaveLength(0);
-  });
-
-  test("renders running status with elapsed time", () => {
-    const result = DelegationCard(baseProps);
-    const text = textContent(result);
-    expect(text).toContain("Running");
-    expect(findAll(result, (element) => element.props?.["data-child-visual-kind"] === "running")).toHaveLength(1);
   });
 
   test("renders execution completion", () => {

@@ -56,6 +56,26 @@ export interface McpClientFactories {
   ): McpTransportLike;
 }
 
+export interface McpDeadlineHandle {
+  readonly id?: unknown;
+}
+
+/** Owns MCP operation deadlines independently from the SDK transport. */
+export interface McpDeadlineScheduler {
+  schedule(delayMs: number, callback: () => void): McpDeadlineHandle;
+  cancel(handle: McpDeadlineHandle): void;
+}
+
+const systemMcpDeadlineScheduler: McpDeadlineScheduler = {
+  schedule: (delayMs, callback) => {
+    const id = setTimeout(callback, delayMs);
+    return { id };
+  },
+  cancel: (handle) => {
+    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
+  },
+};
+
 // ─── Production Factories ────────────────────────────────────────────────────
 
 export function createDefaultMcpClientFactories(): McpClientFactories {
@@ -186,6 +206,7 @@ export class McpClient {
     private readonly redactionPolicy: SecretRedactionPolicy,
     factories: McpClientFactories = createDefaultMcpClientFactories(),
     logger: Logger = silentLogger,
+    private readonly deadlineScheduler: McpDeadlineScheduler = systemMcpDeadlineScheduler,
   ) {
     this.#logger = logger.child({ module: "mcp.client" });
     this.sdkClient = factories.createClient();
@@ -261,21 +282,21 @@ export class McpClient {
   }
 
   private withTimeout<T>(promise: Promise<T>, operation: string): Promise<T> {
-    let timeoutHandle: Timer | undefined;
+    let timeoutHandle: McpDeadlineHandle | undefined;
 
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
-      timeoutHandle = setTimeout(() => {
+      timeoutHandle = this.deadlineScheduler.schedule(this.config.timeout, () => {
         reject(
           new Error(
             `MCP ${operation} timed out after ${this.config.timeout}ms`,
           ),
         );
-      }, this.config.timeout);
+      });
     });
 
     return Promise.race([promise, timeoutPromise]).finally(() => {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
+      if (timeoutHandle !== undefined) {
+        this.deadlineScheduler.cancel(timeoutHandle);
       }
     });
   }

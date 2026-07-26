@@ -50,7 +50,11 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
   const shellCommand = isShell && hasInput ? getShellCommand(part.input) : undefined;
   const summaryPrimary = shellCommand ?? summary.primary;
   const diffSummary = diffPresentation
-    ? summarizeToolDiffMetadata({ files: diffPresentation.files, truncated: diffPresentation.truncated })
+    ? summarizeToolDiffMetadata({
+        files: diffPresentation.files,
+        simplified: diffPresentation.simplified,
+        truncated: diffPresentation.truncated,
+      })
     : undefined;
   const hasDetails = diffPresentation !== undefined
     || askPresentation !== undefined
@@ -134,6 +138,18 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
 
           {diffPresentation && diffPresentation.files.length > 0 && (
             <div className="ml-[18px] overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
+              {(diffPresentation.simplified || diffPresentation.truncated) && (
+                <div
+                  className="border-b border-border-subtle px-3 py-2 text-[11px] text-warning"
+                  data-testid="tool-diff-disclosure"
+                >
+                  {diffPresentation.simplified && diffPresentation.truncated
+                    ? "Large change — showing a simplified, truncated diff."
+                    : diffPresentation.simplified
+                      ? "Large change — showing a simplified diff."
+                      : "Large change — diff output was truncated."}
+                </div>
+              )}
               <DiffView files={diffPresentation.files} defaultExpanded />
             </div>
           )}

@@ -6,7 +6,7 @@ import { createToolErrorResult } from "../errors";
 import { createBashPermission } from "../permission";
 import { PathValidator } from "../security";
 import { createProcessRunner } from "../../process/runner";
-import type { ProcessOutputSink, ProcessOutputStream, ProcessRunnerResult } from "../../process/types";
+import type { ProcessOutputSink, ProcessOutputStream, ProcessRunner, ProcessRunnerResult } from "../../process/types";
 
 export const BashInputSchema = z
   .object({
@@ -51,6 +51,7 @@ function resolveCwd(executionCwd: string, cwd?: string): string {
 export async function runBashCommand(
   input: BashInput,
   ctx: ToolExecutionContext,
+  processRunner: ProcessRunner = createProcessRunner(),
 ): Promise<RawToolResult> {
   const cwd = resolveCwd(ctx.cwd, input.cwd);
   const env = buildBashEnv();
@@ -63,7 +64,7 @@ export async function runBashCommand(
     });
   }
   const adapter = new BashCanonicalOutputSink(capture.write.bind(capture));
-  const result = await createProcessRunner().run({
+  const result = await processRunner.run({
     argv: ["bash", "-c", input.command],
     cwd,
     env,

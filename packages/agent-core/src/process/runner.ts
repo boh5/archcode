@@ -48,6 +48,30 @@ type SpawnCommand = (
 
 let spawnForTest: SpawnCommand | undefined;
 
+export interface ProcessRunnerDeadlineHandle {
+  readonly id?: unknown;
+}
+
+/** Owns subprocess backoff and deadline mechanics independently from process I/O. */
+export interface ProcessRunnerScheduler {
+  sleep(delayMs: number): Promise<void>;
+  schedule(delayMs: number, callback: () => void): ProcessRunnerDeadlineHandle;
+  cancel(handle: ProcessRunnerDeadlineHandle): void;
+}
+
+const systemProcessRunnerScheduler: ProcessRunnerScheduler = {
+  sleep: async (delayMs) => {
+    await Bun.sleep(delayMs);
+  },
+  schedule: (delayMs, callback) => {
+    const id = setTimeout(callback, delayMs);
+    return { id };
+  },
+  cancel: (handle) => {
+    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
+  },
+};
+
 export function setProcessRunnerSpawnForTest(fn: SpawnCommand | undefined): void {
   spawnForTest = fn;
 }
@@ -56,17 +80,19 @@ export function setProcessRunnerForTest(fn: SpawnCommand | undefined): void {
   spawnForTest = fn;
 }
 
-export function createProcessRunner(): ProcessRunner {
-  return new BunProcessRunner();
+export function createProcessRunner(options: { readonly scheduler?: ProcessRunnerScheduler } = {}): ProcessRunner {
+  return new BunProcessRunner(options.scheduler ?? systemProcessRunnerScheduler);
 }
 
 class BunProcessRunner implements ProcessRunner {
+  constructor(private readonly scheduler: ProcessRunnerScheduler) {}
+
   async run(input: ProcessRunnerInput): Promise<ProcessRunnerResult> {
     const startedAt = Date.now();
     let proc: SpawnResult;
 
     try {
-      proc = await spawnWithEagainRetry(input);
+      proc = await spawnWithEagainRetry(input, this.scheduler);
     } catch (error) {
       _logger.error("process.spawn.failed", {
         module: "process.runner",
@@ -80,7 +106,7 @@ class BunProcessRunner implements ProcessRunner {
       };
     }
 
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let timeout: ProcessRunnerDeadlineHandle | undefined;
     let timedOut = false;
     let aborted = input.signal?.aborted ?? false;
     const abortReason = () => formatAbortReason(input.signal?.reason);
@@ -91,10 +117,10 @@ class BunProcessRunner implements ProcessRunner {
     };
 
     if (input.timeoutMs !== undefined) {
-      timeout = setTimeout(() => {
+      timeout = this.scheduler.schedule(input.timeoutMs, () => {
         timedOut = true;
         safeKill(proc);
-      }, input.timeoutMs);
+      });
     }
 
     if (input.signal) {
@@ -107,7 +133,7 @@ class BunProcessRunner implements ProcessRunner {
 
     try {
       const retainedBytes = normalizeRetainedBytes(input.maxOutputBytes);
-      const sink = new SinkController(input.outputSink);
+      const sink = new SinkController(input.outputSink, this.scheduler);
       const [stdout, stderr, exitCode] = await Promise.all([
         drainOutput(proc.stdout, "stdout", retainedBytes, sink),
         drainOutput(proc.stderr, "stderr", retainedBytes, sink),
@@ -153,19 +179,22 @@ class BunProcessRunner implements ProcessRunner {
 
       return { ...base, kind: "nonzero", exitCode };
     } finally {
-      if (timeout) clearTimeout(timeout);
+      if (timeout) this.scheduler.cancel(timeout);
       input.signal?.removeEventListener("abort", killForAbort);
     }
   }
 }
 
-async function spawnWithEagainRetry(input: ProcessRunnerInput): Promise<SpawnResult> {
+async function spawnWithEagainRetry(
+  input: ProcessRunnerInput,
+  scheduler: ProcessRunnerScheduler,
+): Promise<SpawnResult> {
   for (let attempt = 0; attempt <= MAX_EAGAIN_RETRIES; attempt++) {
     try {
       return spawnProcess(input);
     } catch (error) {
       if (!isEagainError(error) || attempt === MAX_EAGAIN_RETRIES) throw error;
-      await sleep(EAGAIN_RETRY_BASE_DELAY_MS * (attempt + 1));
+      await scheduler.sleep(EAGAIN_RETRY_BASE_DELAY_MS * (attempt + 1));
     }
   }
 
@@ -348,7 +377,10 @@ class SinkController {
   /** stdout/stderr drain concurrently; serialize the shared sink so bounded capture capacity cannot race. */
   #writeTail: Promise<void> = Promise.resolve();
 
-  constructor(sink: ProcessOutputSink | undefined) {
+  constructor(
+    sink: ProcessOutputSink | undefined,
+    private readonly scheduler: ProcessRunnerScheduler,
+  ) {
     this.#sink = sink;
   }
 
@@ -370,7 +402,11 @@ class SinkController {
     const write = this.#writeTail.then(async () => {
       if (this.#discarded) return;
       try {
-        await withDeadline(Promise.resolve(this.#sink!.write(stream, chunk)), PROCESS_SINK_WRITE_TIMEOUT_MS);
+        await withDeadline(
+          Promise.resolve(this.#sink!.write(stream, chunk)),
+          PROCESS_SINK_WRITE_TIMEOUT_MS,
+          this.scheduler,
+        );
       } catch {
         this.#discarded = true;
       }
@@ -380,17 +416,24 @@ class SinkController {
   }
 }
 
-async function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
+async function withDeadline<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  scheduler: ProcessRunnerScheduler,
+): Promise<T> {
+  let timeout: ProcessRunnerDeadlineHandle | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => reject(new Error("Process output sink write timed out")), timeoutMs);
+        timeout = scheduler.schedule(
+          timeoutMs,
+          () => reject(new Error("Process output sink write timed out")),
+        );
       }),
     ]);
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+    if (timeout !== undefined) scheduler.cancel(timeout);
   }
 }
 
@@ -421,8 +464,4 @@ function safeKill(proc: SpawnResult): void {
   } catch {
     // Process may already have exited.
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

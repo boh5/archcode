@@ -3,7 +3,7 @@ import { z } from "zod";
 import { atomicWrite } from "../../utils/safe-file";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
-import { computeToolDiff } from "../diff";
+import { computeToolDiff, createToolDiffPresentation } from "../diff";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
 import { createEditErrorRecoveryHook, createPostEditDiagnosticsHook, refreshReadSnapshot } from "../hooks";
@@ -378,10 +378,11 @@ export const fileEditTool = defineTool({
           after: modified,
           status: "modified",
         });
+        const diffPresentation = createToolDiffPresentation(diff);
         return createTextToolResult(`Successfully applied ${matches.length} edit(s) to ${input.path}`, {
-          details: diff.files.length === 0
+          details: diffPresentation === undefined
             ? undefined
-            : { presentations: [{ kind: "diff", files: diff.files, ...(diff.truncated ? { truncated: true } : {}) }] },
+            : { presentations: [diffPresentation] },
         });
       });
 

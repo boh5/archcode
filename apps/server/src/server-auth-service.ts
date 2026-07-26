@@ -23,7 +23,27 @@ export interface ServerAuthServiceOptions {
   maxSessions?: number;
   passwordHasher?: (password: string) => Promise<string>;
   passwordVerifier?: (password: string, hash: string) => Promise<boolean>;
+  sessionTimer?: AuthSessionTimer;
 }
+
+export interface AuthSessionTimerHandle {
+  readonly id?: unknown;
+}
+
+export interface AuthSessionTimer {
+  schedule(delayMs: number, callback: () => void): AuthSessionTimerHandle;
+  cancel(handle: AuthSessionTimerHandle): void;
+}
+
+const systemAuthSessionTimer: AuthSessionTimer = {
+  schedule(delayMs, callback) {
+    const id = setTimeout(callback, delayMs);
+    return { id };
+  },
+  cancel(handle) {
+    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
+  },
+};
 
 export interface AuthSession {
   readonly token: string;
@@ -37,7 +57,7 @@ export interface AuthSessionStreamLease {
 
 interface AuthSessionRecord {
   readonly expiresAt: number;
-  readonly streams: Set<AbortController>;
+  readonly streams: Map<AbortController, AuthSessionTimerHandle>;
 }
 
 export class InvalidAuthCredentialsError extends Error {
@@ -86,6 +106,7 @@ export class ServerAuthService {
   private readonly maxSessions: number;
   private readonly passwordHasher: (password: string) => Promise<string>;
   private readonly passwordVerifier: (password: string, hash: string) => Promise<boolean>;
+  private readonly sessionTimer: AuthSessionTimer;
 
   constructor(options: ServerAuthServiceOptions) {
     this.passwordHash = options.passwordHash;
@@ -97,6 +118,7 @@ export class ServerAuthService {
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
     this.passwordHasher = options.passwordHasher ?? hashPassword;
     this.passwordVerifier = options.passwordVerifier ?? verifyPassword;
+    this.sessionTimer = options.sessionTimer ?? systemAuthSessionTimer;
   }
 
   get authRequired(): boolean {
@@ -156,7 +178,7 @@ export class ServerAuthService {
     }
     const token = randomBytes(32).toString("base64url");
     const expiresAt = this.now() + this.sessionTtlMs;
-    this.sessions.set(token, { expiresAt, streams: new Set() });
+    this.sessions.set(token, { expiresAt, streams: new Map() });
     return { token, expiresAt };
   }
 
@@ -183,18 +205,18 @@ export class ServerAuthService {
     if (session === undefined) return undefined;
 
     const controller = new AbortController();
-    session.streams.add(controller);
     const expiresIn = Math.max(0, session.expiresAt - this.now());
-    const expiryTimer = setTimeout(() => {
+    const expiryTimer = this.sessionTimer.schedule(expiresIn, () => {
       this.revokeSession(token);
-    }, expiresIn);
+    });
+    session.streams.set(controller, expiryTimer);
     let released = false;
     return {
       signal: controller.signal,
       release: () => {
         if (released) return;
         released = true;
-        clearTimeout(expiryTimer);
+        this.sessionTimer.cancel(expiryTimer);
         session.streams.delete(controller);
       },
     };
@@ -245,7 +267,10 @@ export class ServerAuthService {
     const session = this.sessions.get(token);
     if (session === undefined) return;
     this.sessions.delete(token);
-    for (const controller of session.streams) controller.abort();
+    for (const [controller, expiryTimer] of session.streams) {
+      this.sessionTimer.cancel(expiryTimer);
+      controller.abort();
+    }
     session.streams.clear();
   }
 

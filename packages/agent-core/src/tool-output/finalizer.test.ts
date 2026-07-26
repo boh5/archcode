@@ -81,7 +81,9 @@ describe("ToolOutputFinalizer bounds", () => {
       raw: {
         isError: false,
         draft: { kind: "text", text: "ok" },
-        details: { presentations: [{ kind: "diff", files }, { kind: "ask_user", answers }] },
+        details: {
+          presentations: [{ kind: "diff", files, simplified: true }, { kind: "ask_user", answers }],
+        },
       },
       context: context(),
       attempted: false,
@@ -91,11 +93,103 @@ describe("ToolOutputFinalizer bounds", () => {
     const ask = result.details?.presentations?.[1];
     expect(diff?.kind).toBe("diff");
     expect(diff && "truncated" in diff).toBe(true);
+    expect(diff?.kind === "diff" ? diff.simplified : undefined).toBe(true);
     expect(diff?.kind === "diff" ? diff.files.length : 0).toBeLessThanOrEqual(20);
     expect(ask?.kind).toBe("ask_user");
     expect(ask && "truncated" in ask).toBe(true);
     expect(ask?.kind === "ask_user" ? ask.answers.length : 0).toBeLessThanOrEqual(3);
     expect(Buffer.byteLength(JSON.stringify(result.details), "utf8")).toBeLessThanOrEqual(256 * 1024);
+  });
+
+  test("preserves file shells when the diff line budget is exhausted", async () => {
+    const files = [
+      {
+        path: "first.ts",
+        status: "modified" as const,
+        hunks: [{
+          header: "@@ -1,2000 +1,2000 @@",
+          oldStart: 1,
+          oldLines: 2_000,
+          newStart: 1,
+          newLines: 2_000,
+          lines: Array.from(
+            { length: 2_000 },
+            (_, index) => ({ type: "add" as const, content: `line ${index}` }),
+          ),
+        }],
+      },
+      { path: "second.ts", status: "modified" as const, hunks: [] },
+      { path: "third.ts", status: "created" as const, hunks: [] },
+    ];
+    const result = await finalizer.finalize({
+      descriptor: descriptor({ kind: "inline", previewDirection: "head" }),
+      raw: {
+        isError: false,
+        draft: { kind: "text", text: "ok" },
+        details: {
+          presentations: [{ kind: "diff", files, truncated: true }],
+        },
+      },
+      context: context(),
+      attempted: false,
+    });
+
+    const diff = result.details?.presentations?.[0];
+    expect(diff?.kind).toBe("diff");
+    expect(diff?.kind === "diff" ? diff.files.map((file) => file.path) : [])
+      .toEqual(["first.ts", "second.ts", "third.ts"]);
+    expect(diff?.kind === "diff"
+      ? diff.files.reduce(
+          (count, file) => count + file.hunks.reduce(
+            (fileCount, hunk) => fileCount + hunk.lines.length,
+            0,
+          ),
+          0,
+        )
+      : 0).toBe(2_000);
+  });
+
+  test("preserves file shells when the diff byte budget is exhausted", async () => {
+    const files = [
+      {
+        path: "first.ts",
+        status: "modified" as const,
+        hunks: [{
+          header: "@@ -1,128 +1,128 @@",
+          oldStart: 1,
+          oldLines: 128,
+          newStart: 1,
+          newLines: 128,
+          lines: Array.from(
+            { length: 128 },
+            (_, index) => ({ type: "add" as const, content: `${index} ${"x ".repeat(2_048)}` }),
+          ),
+        }],
+      },
+      { path: "second.ts", status: "modified" as const, hunks: [] },
+      { path: "third.ts", status: "created" as const, hunks: [] },
+    ];
+    const result = await finalizer.finalize({
+      descriptor: descriptor({ kind: "inline", previewDirection: "head" }),
+      raw: {
+        isError: false,
+        draft: { kind: "text", text: "ok" },
+        details: {
+          presentations: [{ kind: "diff", files }],
+        },
+      },
+      context: context(),
+      attempted: false,
+    });
+
+    const diff = result.details?.presentations?.[0];
+    expect(diff?.kind).toBe("diff");
+    expect(diff?.kind === "diff" ? diff.files.map((file) => file.path) : [])
+      .toEqual(["first.ts", "second.ts", "third.ts"]);
+    expect(diff?.kind === "diff" ? diff.files[0]?.hunks[0]?.lines.length : 0)
+      .toBeLessThan(128);
+    expect(Buffer.byteLength(JSON.stringify(result.details), "utf8"))
+      .toBeLessThanOrEqual(256 * 1024);
   });
 
   test("rejects source recovery that exceeds depth even when descriptor schema accepts it", async () => {

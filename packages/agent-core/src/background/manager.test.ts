@@ -1,10 +1,18 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { BackgroundTaskManager } from "./manager";
+import {
+  BackgroundTaskManager,
+  type BackgroundTaskDeadlineHandle,
+  type BackgroundTaskDeadlineScheduler,
+} from "./manager";
 import { silentLogger } from "../logger";
 import { createMockLogger } from "../logger.test-helper";
 
-function tick(ms: number = 0): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 describe("BackgroundTaskManager", () => {
@@ -27,20 +35,23 @@ describe("BackgroundTaskManager", () => {
 
     test("task executes asynchronously and completes", async () => {
       let completed = false;
+      const gate = deferred();
       manager.dispatch("async", async () => {
-        await tick(5);
+        await gate.promise;
         completed = true;
       });
       expect(completed).toBe(false);
-      await tick(15);
+      gate.resolve();
+      await manager.drain();
       expect(completed).toBe(true);
     });
 
     test("same-name dispatch returns false when deduplicated", async () => {
       let executionCount = 0;
+      const gate = deferred();
       const fn = async () => {
         executionCount++;
-        await tick(20);
+        await gate.promise;
       };
 
       const first = manager.dispatch("dedup", fn);
@@ -49,7 +60,8 @@ describe("BackgroundTaskManager", () => {
       expect(first).toBe(true);
       expect(second).toBe(false);
 
-      await tick(40);
+      gate.resolve();
+      await manager.drain();
       expect(executionCount).toBe(1);
     });
 
@@ -61,23 +73,25 @@ describe("BackgroundTaskManager", () => {
 
       const first = manager.dispatch("reuse", fn);
       expect(first).toBe(true);
-      await tick(10);
+      await manager.drain();
       expect(executionCount).toBe(1);
 
       const second = manager.dispatch("reuse", fn);
       expect(second).toBe(true);
-      await tick(10);
+      await manager.drain();
       expect(executionCount).toBe(2);
     });
 
-    test("records last completed timestamp after task settles", async () => {
-      const before = Date.now();
-      manager.dispatch("completed-at", async () => {});
-      await tick(10);
-
-      const completedAt = manager.getLastCompletedAt("completed-at");
-      expect(completedAt).toBeNumber();
-      expect(completedAt!).toBeGreaterThanOrEqual(before);
+    test("records the completion timestamp from the current clock", async () => {
+      const originalDateNow = Date.now;
+      Date.now = () => 12_345;
+      try {
+        manager.dispatch("completed-at", async () => {});
+        await manager.drain();
+        expect(manager.getLastCompletedAt("completed-at")).toBe(12_345);
+      } finally {
+        Date.now = originalDateNow;
+      }
     });
   });
 
@@ -89,7 +103,7 @@ describe("BackgroundTaskManager", () => {
 
     test("returns false after task completes", async () => {
       manager.dispatch("fast", () => Promise.resolve());
-      await tick(10);
+      await manager.drain();
       expect(manager.isRunning("fast")).toBe(false);
     });
 
@@ -101,12 +115,14 @@ describe("BackgroundTaskManager", () => {
   describe("drain", () => {
     test("waits for all in-flight tasks to complete", async () => {
       let done = false;
+      const gate = deferred();
       manager.dispatch("slowpoke", async () => {
-        await tick(10);
+        await gate.promise;
         done = true;
       });
 
       expect(done).toBe(false);
+      gate.resolve();
       await manager.drain();
       expect(done).toBe(true);
     });
@@ -115,11 +131,21 @@ describe("BackgroundTaskManager", () => {
       await expect(manager.drain()).resolves.toBeUndefined();
     });
 
-    test("times out and returns even if tasks are still running", async () => {
-      // Never-resolving task
+    test("returns when its controlled deadline fires and cancels the timer", async () => {
+      const deadline = createManualDeadlineScheduler();
+      manager = new BackgroundTaskManager({
+        logger: silentLogger,
+        deadlineScheduler: deadline.scheduler,
+      });
       manager.dispatch("eternal", () => new Promise<void>(() => {}));
-      await manager.drain(50);
+
+      const draining = manager.drain(60_000);
+      expect(deadline.scheduledDelays).toEqual([60_000]);
+      deadline.fire();
+
+      await expect(draining).resolves.toBeUndefined();
       expect(manager.isRunning("eternal")).toBe(true);
+      expect(deadline.cancelled).toHaveLength(1);
     });
 
     test("drain timeout default is 60s", async () => {
@@ -145,7 +171,7 @@ describe("BackgroundTaskManager", () => {
       manager.dispatch("slow", () => new Promise<void>(() => {}));
       manager.cancelAll();
       // drain should return quickly (nothing to wait for)
-      await expect(manager.drain(10)).resolves.toBeUndefined();
+      await expect(manager.drain()).resolves.toBeUndefined();
     });
   });
 
@@ -159,7 +185,7 @@ describe("BackgroundTaskManager", () => {
         throw error;
       });
 
-      await tick(10);
+      await manager.drain();
       expect(logger.warn).toHaveBeenCalledWith("background.task.failed", {
         error,
         meta: { backgroundTaskName: "failing" },
@@ -177,14 +203,46 @@ describe("BackgroundTaskManager", () => {
       manager.dispatch("failing", async () => {
         throw new Error("boom");
       });
-      await tick(10);
+      await manager.drain();
 
       let recovered = false;
       manager.dispatch("recovery", async () => {
         recovered = true;
       });
-      await tick(10);
+      await manager.drain();
       expect(recovered).toBe(true);
     });
   });
 });
+
+function createManualDeadlineScheduler(): {
+  scheduler: BackgroundTaskDeadlineScheduler;
+  fire: () => void;
+  scheduledDelays: number[];
+  cancelled: BackgroundTaskDeadlineHandle[];
+} {
+  let callback: (() => void) | undefined;
+  const scheduledDelays: number[] = [];
+  const cancelled: BackgroundTaskDeadlineHandle[] = [];
+  const handle = { id: Symbol("background-drain") };
+  return {
+    scheduler: {
+      schedule(delayMs, nextCallback) {
+        scheduledDelays.push(delayMs);
+        callback = nextCallback;
+        return handle;
+      },
+      cancel(cancelledHandle) {
+        cancelled.push(cancelledHandle);
+      },
+    },
+    fire() {
+      const pending = callback;
+      callback = undefined;
+      if (pending === undefined) throw new Error("No background drain deadline is scheduled");
+      pending();
+    },
+    scheduledDelays,
+    cancelled,
+  };
+}

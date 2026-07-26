@@ -22,7 +22,7 @@ afterEach(() => {
 
 describe("LspClientPool", () => {
   test("10 concurrent acquires for same server share one initialize", async () => {
-    const seam = installMockClientSeam({ initializeDelayMs: 5 });
+    const seam = installMockClientSeam({ yieldInitialize: true });
     const pool = new LspClientPool({ idleTimeoutMs: 1_000 });
     const key = poolKey("/workspace", "typescript");
 
@@ -177,7 +177,7 @@ describe("LspClientPool", () => {
   });
 
   test("failed concurrent acquire uses try/finally cleanup to prevent ref leaks", async () => {
-    installMockClientSeam({ initializeError: new Error("initialize failed"), initializeDelayMs: 5 });
+    installMockClientSeam({ initializeError: new Error("initialize failed"), yieldInitialize: true });
     const pool = new LspClientPool();
     const key = poolKey("/workspace", "typescript");
 
@@ -261,7 +261,7 @@ interface CallRecord {
   command: string[];
 }
 
-function installMockClientSeam(options: { initializeDelayMs?: number; initializeError?: Error } = {}) {
+function installMockClientSeam(options: { yieldInitialize?: boolean; initializeError?: Error } = {}) {
   const transports: MockTransport[] = [];
   const transportOptions: StdioLspTransportOptions[] = [];
   const clients: MockClient[] = [];
@@ -330,7 +330,7 @@ class MockClient {
   constructor(private readonly options: {
     transport: LspTransport;
     workspaceRoot: string;
-    initializeDelayMs?: number;
+    yieldInitialize?: boolean;
     initializeError?: Error;
   }) {}
 
@@ -338,8 +338,8 @@ class MockClient {
     this.initializeCount += 1;
     this.initializeOptions = options;
     await this.options.transport.connect({ rootUri: workspaceRoot });
-    if (this.options.initializeDelayMs) {
-      await new Promise((resolve) => setTimeout(resolve, this.options.initializeDelayMs));
+    if (this.options.yieldInitialize) {
+      await Promise.resolve();
     }
     if (this.options.initializeError) throw this.options.initializeError;
     return {};

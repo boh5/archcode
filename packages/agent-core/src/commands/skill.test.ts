@@ -8,7 +8,7 @@ const testTempRoot = createTestTempRoot("skill-command");
 const TEST_WORKSPACE_ROOT = testTempRoot.path;
 
 afterAll(async () => {
-  await Bun.sleep(0);
+  await Promise.resolve();
   storeManager.clearAll();
   await testTempRoot.cleanup();
 });

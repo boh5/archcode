@@ -138,16 +138,19 @@ describe("getToolDiffMetadata", () => {
   test("returns metadata with optional fields", () => {
     const meta: ToolDiffMetadata = {
       files: [],
+      simplified: true,
       truncated: true,
       warning: "Large diff",
     };
     const result = getToolDiffMetadata(meta);
+    expect(result!.simplified).toBe(true);
     expect(result!.truncated).toBe(true);
     expect(result!.warning).toBe("Large diff");
   });
 
   test("rejects unknown top-level and recursive keys", () => {
     expect(getToolDiffMetadata({ files: [], extra: true })).toBeUndefined();
+    expect(getToolDiffMetadata({ files: [], simplified: false })).toBeUndefined();
     expect(getToolDiffMetadata({ files: [{ path: "a.ts", hunks: [], extra: true }] })).toBeUndefined();
     expect(getToolDiffMetadata({
       files: [{
