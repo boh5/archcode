@@ -9,7 +9,6 @@ import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } 
 import type { SkillService } from "../../skills";
 import type { QueryLoopHooks } from "./loop-hooks";
 import type { Logger } from "../../logger";
-import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../../tools/types";
 import type { SessionGoalService } from "../../session-goal";
 
 export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
@@ -26,7 +25,6 @@ export interface QueryLoopOptions {
   cwd: string;
   projectContext: ProjectContext;
   sessionGoalService?: SessionGoalService;
-  consumeFreshUserInput?: (input: ConsumeFreshUserInputRequest) => Promise<FreshUserInputGrant> | FreshUserInputGrant;
   toolOutputAccess: ToolOutputAccessService;
   abort?: AbortSignal;
   systemPrompt?: string;

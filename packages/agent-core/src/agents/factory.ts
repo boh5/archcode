@@ -20,7 +20,6 @@ import type { Agent } from "./types";
 import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
-import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../tools/types";
 
 export type { ChildExecutionHandle, ChildExecutionRequest } from "./factory-types";
 
@@ -35,7 +34,6 @@ export interface AgentFactoryConfig {
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver: ProjectContextResolver;
   readonly sessionGoalService?: SessionGoalService;
-  readonly consumeFreshUserInput?: (input: ConsumeFreshUserInputRequest) => Promise<FreshUserInputGrant> | FreshUserInputGrant;
   readonly versionControlDetector?: VersionControlDetector;
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
@@ -192,7 +190,6 @@ function createConfiguredAgent(
     memoryConfig: config.memoryConfig,
     projectContextResolver: config.projectContextResolver,
     ...(config.sessionGoalService === undefined ? {} : { sessionGoalService: config.sessionGoalService }),
-    ...(config.consumeFreshUserInput === undefined ? {} : { consumeFreshUserInput: config.consumeFreshUserInput }),
     resolveVersionControl: config.versionControlDetector ?? detectVersionControl,
     logger: config.logger,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),

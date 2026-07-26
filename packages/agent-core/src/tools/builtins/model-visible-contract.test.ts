@@ -258,8 +258,8 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "create_goal",
     competitorEvidenceIds: ["CX-LOCAL:create_goal"],
     runtimeSourceIds: ["tools/builtins/session-goal.ts", "session-goal/service.ts"],
-    descriptionPatterns: [/persistent Goal/i, /root Lead Session/i, /fresh user input/i, /verifiable endpoint/i, /ask_user/i, /Ordinary requests.*rejected/i, /Discussion Sessions cannot create Goals/i],
-    schema: [{ path: ["properties", "objective"], descriptionPatterns: [/exact complete objective/i, /explicitly requested|confirmed/i] }],
+    descriptionPatterns: [/persistent Goal/i, /root Lead Session/i, /Discussion Sessions cannot create Goals/i],
+    schema: [{ path: ["properties", "objective"], descriptionPatterns: [/complete persistent objective/i] }],
   },
   {
     tool: "get_goal",

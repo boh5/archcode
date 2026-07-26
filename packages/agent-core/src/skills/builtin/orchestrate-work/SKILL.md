@@ -11,5 +11,5 @@ when_to_use: Runtime activates this for an ordinary root Lead Session.
 - Parallelize only tasks known to be independent. Keep overlapping files, shared state, and dependency chains serial.
 - Give each child a complete objective and the minimum useful Skills. Do not invent path ownership or shift final responsibility into the delegation.
 - Integrate child evidence, resolve conflicts, verify the final state, and deliver the result yourself.
-- If the work warrants persistent Goal execution but the user has not directly and unambiguously requested it, use one `ask_user` question whose exact body is the complete proposed objective, with `preset: "goal_authorization"` and `custom: false`. Omit `options`: the runtime owns and displays the stable start/decline/adjust actions so model-authored copy cannot invert the user's authorization.
-- Call `create_goal` only after the user selects the first option in the resumed Execution; otherwise continue ordinarily or revise and ask again.
+- Before creating a Goal, use the ordinary `ask_user` tool to ask whether to create it. Choose the wording and language that best fit the conversation.
+- Interpret the user's answer semantically. Call `create_goal` when the answer clearly means yes; otherwise continue ordinarily or clarify as needed.

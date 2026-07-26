@@ -82,9 +82,9 @@ protocol/server/web -> 严格 DTO、API 与可观察界面
 
 ### Wave 5 — Goal 授权与 Analyst Final Review
 
-1. 将 `create_goal` 硬切为严格 `{ objective }` 输入。用户直接明确要求持续执行时，objective 必须精确匹配完整 fresh user input；旧空输入不兼容。
-2. 增加 Lead 建议路径：`ask_user` 使用一个问题，将完整 objective 作为正文，并设置 `preset: "goal_authorization"`、`custom: false` 且不传 `options`；Runtime 生成固定的“开启 Goal / 不启动 / 调整目标”动作，模型不能通过调换显示文案伪造授权。`create_goal({ objective })` 只核对当前 Session、当前 Execution 中这次被暂停并恢复的 `ask_user` 正文与 objective 精确一致，且返回答案等于 Runtime 拥有的开启动作。复用现有 question/HITL 记录，不新增 GoalProposal、授权 token、授权状态或跨 Execution 消费协议；没有当前有效确认时重新询问。
-3. Discussion Session、既无合法 fresh direct request 又无当前有效 `ask_user` 确认、目标不匹配或已有未完成 Goal 时，`create_goal` 确定性拒绝。
+1. 将 `create_goal` 硬切为严格 `{ objective }` 输入；旧空输入不兼容。
+2. Lead 每次创建 Goal 前都使用普通 `ask_user` 自行组织问题，并按自然语言语义判断用户是否同意；明确同意后调用 `create_goal`。
+3. Discussion Session 和已有未完成 Goal 时，`create_goal` 确定性拒绝；是否已经获得用户同意由 Lead 负责。
 4. 保留现有 Goal continuation：active 且 runnable 的 Goal family 在 child 完成、HITL 恢复或进程重启后继续驱动同一个 root Lead，直到 complete、真实 blocked、paused 或 budget-limited；不新增 Goal workflow engine。
 5. 删除 Reviewer 完成门禁，改为 direct child Analyst；当 active Goal 委派 `analyst + deep + [goal-review]` 时，运行时自动绑定当前 Goal instance/generation，模型不能提供或伪造该绑定。
 6. `update_goal(complete)` 只接受在最后一次 ArchCode 已知成果写入之后创建并绑定当前 Goal instance/generation 的 fresh review Analyst；其 completed 输出首个非空行必须严格为 `VERDICT: APPROVED`。只有尚无 completed 审查输出、最新 Execution 因中断或重启未完成时可以 resume；任一 completed 的 `CHANGES_REQUESTED`、空输出或格式错误、后续 ArchCode 已知成果写入、Goal generation 变化、active Build/child 或来源不匹配都会终结本轮审查并要求新建 Analyst。review Analyst 的只读 Explore/Librarian 委派不使审查失效。
@@ -143,10 +143,10 @@ protocol/server/web -> 严格 DTO、API 与可观察界面
 - Discussion 保留原 Shaper 的读取/搜索、Git、LSP、Web、Memory、`ask_user`、guarded Bash，以及 Explore/Librarian 委派和 direct-child resume；结构化 source write、Analyst/Build 委派、create/update Goal、Automation/工作资源创建在工具投影与执行入口拒绝，已知修改性 Bash 继续走现有权限策略。
 - Todo 标记 Ready 后创建全新的普通 Lead Session；该 Session 具有普通 Lead 能力且不继承 Discussion 限制。
 
-### AC-06 — Goal 授权不可伪造，且不依赖 Plan
+### AC-06 — Goal 创建由 Lead 判断，且不依赖 Plan
 
-- `create_goal` 只接受严格 `{ objective }`；直接明确的用户持久执行请求能以完整原文创建 Goal，旧空输入、普通请求、模型自拟 objective 或过期 fresh input 不能创建。
-- Lead 建议 Goal 时，`ask_user` 的单个问题正文是完整 objective，三个选项依次表达开启、不启动、调整且禁止 custom；label 可本地化。`create_goal.objective` 只接受当前 Session、当前 resumed Execution 中对应正文完全一致且答案等于该调用第一个选项 label 的结果。其他答案、objective 不一致、其他 Session/Execution 或历史回答均拒绝；HITL 自身负责中断和重启恢复，不新增可消费授权对象。
+- `create_goal` 只接受严格 `{ objective }`；旧空输入不能创建。
+- Lead 建议 Goal 时使用普通 `ask_user`，自行选择问法并按语义判断用户回答。Runtime 不校验问题模板、选项顺序、回答字符串或 Session/Execution 关联。
 - Discussion Lead 永远不能创建 Goal。
 - 有/无 Plan 均能创建并运行 Goal；Plan 文件不会自动创建 Goal，Goal schema 不保存 Plan 引用。
 - active runnable Goal 在 child 完成、HITL 回答和进程重启后继续同一个 root Lead；paused、budget-limited、complete 和真实 blocked 不被错误续跑。
@@ -162,7 +162,7 @@ protocol/server/web -> 严格 DTO、API 与可观察界面
 ### AC-08 — 用户面、硬切审计与全仓验证
 
 - Config UI 只编辑 Profiles；root Lead Session 可选择并清除模型 override；Session/UI 只显示新 Agent 名称，child Profile/Skills/状态/HITL 来源可检查；不存在 Primary Agent 切换和 Visual 假入口。
-- 自动化集成覆盖三条真实流程：普通 Lead -> 多 child 协作；Todo Discussion -> Ready -> 新 Lead；ask_user 授权 Goal -> Build -> `CHANGES_REQUESTED` -> fix -> fresh `APPROVED` -> complete。
+- 自动化集成覆盖三条真实流程：普通 Lead -> 多 child 协作；Todo Discussion -> Ready -> 新 Lead；普通 `ask_user` 确认后创建 Goal -> Build -> `CHANGES_REQUESTED` -> fix -> fresh `APPROVED` -> complete。
 - 真实浏览器验收至少覆盖 Profile 配置保存、root Lead 模型 override 选择/清除、Todo“进入讨论”、Ready 后进入新 Lead，以及 Session 中 child Agent/Profile/Skills/状态可见；刷新后结果一致且 console 无新增错误。
 - 对生产源码的固定搜索确认旧 Agent ID、per-Agent config、owned-scope/lease、Reviewer/Shaper/Plan runtime 和 Visual registration 为零；测试只可为 strict rejection 引用旧输入，历史文档不计。
 - `bun run typecheck`、`bun run test`、`bun run build`、`git diff --check` 全部退出码为 0。

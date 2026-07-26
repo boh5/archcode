@@ -4,7 +4,7 @@
 
 ## Objective
 
-将 Goal 从独立产品资源彻底重构为普通根 Engineer Session 上的可选持久执行协议：Engineer 从自然语言识别持续完成意图并即时激活，Runtime 在每轮结束后自动续跑，只有独立 Reviewer 对当前目标和当前工作结果验收通过后才能完成。删除 Goal 创建仪式、Goal Lead、独立 Goal 状态机与 UI，不保留旧路径、fallback、双写或 Goal 数据兼容。
+将 Goal 从独立产品资源彻底重构为普通根 Lead Session 上的可选持久执行协议：Lead 判断工作适合 Goal 时先通过普通 `ask_user` 询问用户，明确同意后创建；Runtime 在每轮结束后自动续跑，只有独立 Reviewer 对当前目标和当前工作结果验收通过后才能完成。删除 Goal Lead、独立 Goal 状态机与 UI，不保留旧路径、fallback、双写或 Goal 数据兼容。
 
 ## Locked Architecture
 
@@ -21,17 +21,16 @@ User conversation
 
 - Goal 是根 Engineer Session 的字段，不再有独立 Goal ID、目录、Route、详情页、Goal Lead Session、Worktree 或 HITL owner。
 - 每个根 Session 同时最多一个当前 Goal；新 Goal 只能替换 `complete` 的旧 Goal。开始、修改、审核、完成和清除写入 Session timeline，另建 Goal history/revision 资源不在本轮范围。
-- Goal 的唯一用户契约是一段 trim 后 1–4,000 字符的 `objective`，其中应同时包含 outcome、constraints 和 verification；不保留独立 `acceptanceCriteria`、来源账本或修订历史。创建时 Runtime 直接以触发本次 model boundary 的 fresh 用户原话作为 objective，模型不能重写；自然语言编辑只有机械追加 amendment 或以 fresh 用户原话完整 replace 两种语义。Engineer 可提出细分 criteria，但 Review Gate 必须始终保留覆盖完整 objective 的 Runtime criterion，细分结果不能删除或改写原文要求。
+- Goal 的唯一用户契约是一段 trim 后 1–4,000 字符的 `objective`，其中应同时包含 outcome、constraints 和 verification；不保留独立 `acceptanceCriteria`、来源账本或修订历史。Lead 在确认用户意图后提交完整 objective。Lead 可提出细分 criteria，但 Review Gate 必须始终保留覆盖完整 objective 的 Runtime criterion，细分结果不能删除或改写 objective。
 - `SessionGoal` 严格包含：内部 `instanceId`、从 1 开始且编辑时递增的 `generation`、`objective`、`status`、可选正整数 token budget、整棵 Session family 的累计用量/Execution 时间、Evaluator 计数与最近理由、no-progress 计数、当前 review claim/receipt/next-action、时间戳。未设置 token budget 表示没有 token hard cap；状态只有 `active | paused | blocked | budget_limited | complete`；HITL 和 reviewing 是派生运行态，clear 表示字段不存在。
 - Goal 激活不创建或切换 Worktree；它继承当前 Session 的 `cwd`。并行写任务通过不同根 Session/Worktree 隔离，不由 Goal 再拥有一套 Worktree。
 - `SessionGoalService` 是状态变更唯一 owner；Tool、HTTP、Evaluator、Reviewer 和恢复逻辑都调用它，不直接写 Session JSON。Session store/SSE 继续是持久化与可见事件边界。
 
 ## Conversational Control Contract
 
-- 只有根 Engineer 在当前 model boundary 收到尚未消费的 direct、queue 或 steer 用户消息时可以创建 Goal 或修改 objective。Runtime 为这些 canonical message IDs 铸造一次性 `fresh-user-input` capability，并在 ToolExecutionContext 中消费；模型不能填写 provenance，旧 continuation、重复 Tool call 或只含 automation input 的边界没有该能力。
-- 同时满足“执行型请求、预计需要多轮或委派、具有可验证终点、用户语义明确要求推进到结果”时，Engineer 直接激活并告知用户，不再加载 Skill 或二次确认。
-- 简单一次性修改、问答、状态查询、诊断或只要求一次调研汇报的请求不自动激活；缺少可验证终点时先在普通对话中澄清。不得仅因 Prompt 很长或任务看起来复杂就激活。
-- `create_goal`、`get_goal`、`update_goal` 是唯一模型工具。`create_goal` 不接收模型生成的 objective，只可带用户明确要求的 token budget；`update_goal.edit` 必须选择 `amend | replace`，前者把 fresh 原话机械追加到单一 objective 并声明后文只覆盖直接冲突，后者以 fresh 原话完整替换。所有用户控制动作（edit/pause/resume/clear/budget）必须消费上述 fresh-user-input capability；Agent 自主动作只允许提交 `complete` claim 或在同一阻塞原因连续三轮成立后提交 `blocked`。Edit 只允许 non-terminal Goal；complete 后的新工作创建新 `instanceId`。
+- 只有非 Discussion 的 root Lead 可以调用 Goal 模型工具。每次创建 Goal 前，Lead 都使用普通 `ask_user` 询问用户，并按会话语义判断回答是否同意。
+- 简单一次性修改、问答、状态查询、诊断或只要求一次调研汇报的请求不应建议 Goal；缺少可验证终点时先在普通对话中澄清。不得仅因 Prompt 很长或任务看起来复杂就建议 Goal。
+- `create_goal`、`get_goal`、`update_goal` 是唯一模型工具。`create_goal` 接收严格 `{ objective }`；用户控制的 edit/pause/resume/clear/budget 走 HTTP/UI 控制面。Agent 自主动作只允许提交 `complete` claim 或在同一阻塞原因连续三轮成立后提交 `blocked`。Edit 只允许 non-terminal Goal；complete 后的新工作创建新 `instanceId`。
 - `complete` 只是申请验收，不能写 `status=complete`；只有 Review Gate 可以完成。Goal 模式不扩大 sandbox、权限或 HITL policy。
 - UI 与 HTTP 是独立用户控制面，直接调用同一个 `SessionGoalService` 实现 Edit/Pause/Resume/Clear，不伪装成 Engineer Tool 权限。Pause 只阻止下一轮；Stop 在 active Goal 中同时 abort 当前 Execution 并持久化 Pause，避免立即自动重启。Clear 取消/失效当前 review claim、停止未来续跑但保留 Session、消息和工作区修改。
 
@@ -94,11 +93,11 @@ User conversation
 - 状态、generation、usage、review claim/receipt 和时间字段符合 Locked Architecture；旧 Goal 文件、Goal Lead Session 和旧 Goal schema 不迁移、不读取、不补默认值。
 - 普通既有 Session 结构不因删除 Goal 资源而引入无关迁移；旧 Goal 专属数据严格失败或由明确清理步骤删除，不存在兼容 parser。
 
-### AC-02：自然语言激活与控制确定
+### AC-02：对话确认与控制确定
 
-- 自动激活正向测试至少覆盖“持续做到测试通过”和“完成完整迁移”；负向测试至少覆盖简单修改、问答、诊断、一次调研汇报和仅复杂但无持续意图；模糊终点会澄清且不创建。
-- 激活/编辑只能消费根 Engineer 当前 model boundary 的一次性 fresh-user-input capability；direct、queue、steer 均有正向测试，stale continuation、重复消费、automation input、子 Agent 和 Reviewer 均被拒绝。HTTP/UI 控制面另有独立授权测试，不依赖 Engineer Execution origin。
-- 创建无需 Skill/二次确认且立即可见；Edit generation +1 并使旧 Evaluator/Review 失效。Pause、Resume、Clear、Stop+Pause 和 terminal Goal 后新建的语义均有正负测试。
+- 创建路径覆盖普通 `ask_user` 回答后由 Lead 决定调用 `create_goal`；Runtime 不判断问法或回答内容。
+- 创建只允许非 Discussion 的 root Lead 调用 `create_goal`；HTTP/UI 控制面有独立授权测试。
+- 创建后 Goal 立即可见；Edit generation +1 并使旧 Evaluator/Review 失效。Pause、Resume、Clear、Stop+Pause 和 terminal Goal 后新建的语义均有正负测试。
 
 ### AC-03：自动续跑、恢复和停止边界正确
 
@@ -109,7 +108,7 @@ User conversation
 ### AC-04：独立 Reviewer 是不可绕过的完成门禁
 
 - Engineer 和 Evaluator 均不能写 complete；complete claim/candidate 必须通过 `startRuntimeReviewChild()` 启动全新 Reviewer child，且所有 Build/写入 child 已终态。普通 delegate 与 goal_review provenance、重复 claim 幂等、非 Reviewer/失效 claim 拒绝均有测试。
-- Review Gate 的 immutable contract 必含完整原始 objective Runtime criterion；测试必须证明模型无法在创建时遗漏或弱化 fresh 用户原话，amend 机械保留非冲突旧要求，而 replace 能明确删除旧约束。Reviewer 检查实际 Diff/文件和可重复验证，使用 canonical ChildResult 逐项映射全部 criteria/evidence。
+- Review Gate 的 immutable contract 必含完整 objective Runtime criterion。Reviewer 检查实际 Diff/文件和可重复验证，使用 canonical ChildResult 逐项映射全部 criteria/evidence。
 - Goal Review projection 不含 file write/edit、Todo 或 Goal transition；guarded Bash 修改受审源码时 fingerprint 改变，本次审核必须失败。普通 Reviewer 工具和 ordinary review 行为不变。
 - accepted/rejected 判定、generation/input/source-mutation/contract/fingerprint 失效、direct/queue/steer 用户消息打断均有测试；receipt/timeline/control writes 不增加 sourceMutationEpoch，源码写入必须增加或改变 fingerprint。
 - Reviewer interrupted/crash 后必须保留同一 immutable claim、废弃旧 child/attempt、原子增加 attempt 并只启动一个全新 Reviewer child Execution；旧/迟到/重复 receipt 均拒绝。只有当前 attempt 的有效 accepted receipt 能原子完成 Goal。
@@ -131,7 +130,7 @@ User conversation
 
 - Goal list/detail/Inspector、Sidebar tab、独立 API/queries/mutations 和 URL 全部删除；不存在 redirect、隐藏页面、deprecated alias 或兼容响应。
 - composer progress row、Session list badge 和 Project Dashboard projection 正确展示五种状态、用量、最近理由和控制动作；空 Goal Session 不显示 Goal UI。
-- 桌面与 390px 浏览器验收覆盖：对话自动激活、自然语言编辑、Queue/Steer、Pause/Resume、Stop、Clear、HITL、预算限制、Review 循环、完成和 reload/server restart，console 0 error。
+- 桌面与 390px 浏览器验收覆盖：普通 `ask_user` 确认后创建、自然语言编辑、Queue/Steer、Pause/Resume、Stop、Clear、HITL、预算限制、Review 循环、完成和 reload/server restart，console 0 error。
 
 ### AC-08：彻底删除、文档和全量验证完成
 

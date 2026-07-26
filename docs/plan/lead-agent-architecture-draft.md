@@ -343,7 +343,7 @@ Plan 不构成用户审批门或执行阶段：
 - 写入 Plan 不要求用户执行 `/start-work`、切换模式或批准 Plan 才能继续；
 - 用户明确要求“只给方案”时，Lead 写完 Plan 后停止；
 - Plan 暴露出真正的产品取舍、不可逆决定或缺失约束时，Lead 使用 `ask_user` 询问那个具体问题，而不是请求笼统的 Plan approval；
-- Lead 建议持久执行时，另行通过 `ask_user` 请求 Goal 授权；
+- Lead 创建 Goal 前，通过普通 `ask_user` 询问用户是否同意；
 - 其他情况下，Lead 可以写完 Plan 后继续普通执行。
 
 Plan 可以被用户查看和讨论，但不能因为存在文件就变成隐形的 `Discover → Plan approval → Execute` 状态机。
@@ -395,14 +395,11 @@ Plan 的路径可以作为普通文本出现在 Goal objective 或对话中，�
 
 ### 9.2 Goal 激活
 
-Goal 必须由用户明确授权，授权可以来自：
-
-- 用户初始请求已经明确要求“持续执行、不要停、直到完成”；
-- Lead 判断工作适合 Goal，通过 `ask_user` 展示完整 Goal objective，并由用户选择开启、不启动或调整目标。
+Goal 创建前，Lead 必须通过普通 `ask_user` 询问用户是否创建。
 
 Lead 可以自主判断是否建议 Goal，但不能自行扩大普通请求的持久执行授权。一旦 Goal 激活，正常 continuation、子任务协调和 review/fix 不需要每一步重新确认；只有 HITL、方向变化、真实阻塞或新增权限需要回到用户。
 
-`ask_user` 的问题正文必须展示用户将要授权的完整 objective，不能只问“是否开启 Goal”。用户确认的是这段明确目标，而不是把“好”“可以”本身当作 objective；Goal 只能使用用户直接明确提出或刚刚通过 `ask_user` 确认的完整目标。不新增 GoalProposal 或另一套授权生命周期。用户初始请求已经明确授权持久执行时，不重复询问。
+Lead 自行选择 `ask_user` 的问法、语言和选项，并按自然语言语义判断用户是否同意。用户明确同意后，Lead 调用 `create_goal`。
 
 ### 9.3 Goal 完成门禁
 
@@ -471,7 +468,7 @@ User discussion
 User discussion
   -> evidence and design collaboration
   -> optional Plan file
-  -> explicit Goal authorization
+  -> ask_user confirmation
   -> Lead continuation
   -> direct work + bounded Build delegations
   -> tests / real verification
@@ -484,7 +481,8 @@ User discussion
 
 ```text
 User: keep fixing until the full test suite is green
-  -> Goal authorization already present
+  -> Lead asks with ordinary ask_user
+  -> Lead interprets the answer
   -> Lead executes and delegates as needed
   -> independent deep Analyst + goal-review verifies
   -> complete
@@ -583,7 +581,7 @@ ArchCode 的差异化不是拥有更多角色，而是：
 4. **Skill 重构**：把 orchestration、planning、复杂分析、普通审查、Goal 审查和 Todo shaping 等流程从 Role Prompt 移到高内聚 Skills；不按能力标签机械拆文件，不锁死 Skill catalog；`review-work` 归 Lead，具体审查方法归 Analyst。
 5. **Todo Discussion**：用受限 Lead + `shape-todo` 替代 Shaper，保留原入口、bound Todo 权限和既有调查验证能力。
 6. **Lead 命名 hard cut**：配置、Session schema、API、UI 和 Prompt 一次切换到 `lead`，不迁移旧持久化数据。
-7. **Goal 授权体验**：使用 `ask_user` 展示完整 objective；确认后创建 Goal，不新增 GoalProposal 对象。
+7. **Goal 确认体验**：Lead 使用普通 `ask_user` 自行询问；按语义判断用户同意后创建 Goal。
 8. **Build 委派简化**：移除现有 owned scope 与 lease 设计，由 Lead 通过任务拆分和串行依赖避免已知写入冲突。
 9. **Visual 占位**：第一阶段不实现 Visual Agent、visual Profile、附件传递或视觉 QA；以后作为独立能力立项。
 10. **单一用户入口**：UI 保留子 Agent 可观察性和 HITL 来源，但普通输入、纠正和停止始终进入 Lead。
@@ -599,7 +597,7 @@ ArchCode 的差异化不是拥有更多角色，而是：
 3. Lead Session override 的 API/UI 表达和 provider options 替换规则。
 4. DelegationRequest 的必填 `profile` 字段和 resume 不变量；运行时不替 Lead 猜测缺失 Profile。
 5. Analyst 的最终工具集合必须保留原 Plan/Reviewer 的调查与验证能力，同时不给予结构化源码写入能力。
-6. `ask_user` 使用现有确认结果授权 Goal，不增加持久授权对象或独立消费协议。
+6. `ask_user` 返回普通回答，由 Lead 决定是否创建 Goal。
 7. `.archcode/plans/` 只要求安全的直接子级 `.md` 文件名和普通文件覆盖语义，不规定 slug 正则，不得演化成 Plan registry。
 8. Todo Discussion 受限 Lead 的 runtime capability overlay 如何表达，且不能仅依赖 Prompt。
 9. 子 Agent 进度、结果和 HITL 来源在 UI 中如何可观察，同时不提供 Primary Agent 切换或把调度责任交给用户。
@@ -617,9 +615,9 @@ ArchCode 的差异化不是拥有更多角色，而是：
 - Lead 可以直接实现或外包 Build，不依赖 owned scope、路径锁或文件所有权状态；
 - 运行时允许多个 Build 同时执行，由 Lead 判断哪些实现任务可以安全并行、哪些必须串行；
 - 最终 Plan 文件由 Lead 写入，但复杂规划可以利用隔离的研究和分析；
-- Plan 不形成审批门；除非用户要求 plan-only、存在具体用户决策或需要 Goal 授权，否则 Lead 可以继续普通执行；
+- Plan 不形成审批门；除非用户要求 plan-only、存在具体用户决策或准备创建 Goal，否则 Lead 可以继续普通执行；
 - Plan 和 Goal 可以独立存在，不新增两者之间的结构化依赖；
-- Goal 仍需用户明确授权；Lead 建议 Goal 时通过 `ask_user` 展示完整 objective；
+- Goal 仍需用户明确同意；Lead 创建 Goal 前通过普通 `ask_user` 询问；
 - Goal 只有在最后一次 ArchCode 已知写入之后创建的 fresh 独立 deep Analyst 按 `goal-review` 完成审查且运行时认可该审查来源后才能完成；无成果修改的中断可以 resume，修复后不得 resume 旧审查 Session 取得批准；
 - Todo Discussion 入口、bound Todo 更新权限、现有调查验证能力和 Ready 后新 Session 流程保持成立；
 - 用户只向 Lead 输入和纠正工作，仍可以检查子 Agent 活动、结果、证据和 HITL 来源；
@@ -634,4 +632,4 @@ ArchCode 应继续发展多 Agent，但不应继续发展“多角色系统”�
 
 Agent 是昂贵的运行时边界，Skill 是便宜的行为组合，Profile 是模型资源路由，Goal 是持久执行协议。把四者拆开后，ArchCode 可以用一个 Analyst Agent 加多种 Skills 吸收 Oracle、Metis、Momus 和最终审查能力，获得 OMO 的 ULW 协作效率，而不继承它的 Persona 链和重复状态；也能保留自身最有价值的常驻服务、持久 Session、Todo Discussion、HITL、恢复和独立 Goal review gate。
 
-下一阶段的重点不是再设计更多 Agent，而是把 Lead 的所有权、Profile 路由、Skill 工作法和 Goal 授权合同做扎实。
+下一阶段的重点不是再设计更多 Agent，而是把 Lead 的所有权、Profile 路由、Skill 工作法和 Goal 创建体验做扎实。

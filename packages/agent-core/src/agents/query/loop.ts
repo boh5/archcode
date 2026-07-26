@@ -320,7 +320,6 @@ export async function runQueryLoop(
     allowedTools: new Set(allowedTools),
     projectContext: options.projectContext,
     ...(options.sessionGoalService === undefined ? {} : { sessionGoalService: options.sessionGoalService }),
-    ...(options.consumeFreshUserInput === undefined ? {} : { consumeFreshUserInput: options.consumeFreshUserInput }),
     cwd: executionCwd,
     agentSkills: options.agentSkills,
     skillService: options.skillService,

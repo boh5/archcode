@@ -21,7 +21,7 @@
 
 - `SessionGoal` 与 `SessionGoalService` 已落地到 Session strict store；创建、编辑、暂停、恢复、清除、预算、Evaluator 与 Review 转移均由该 Service 单一持有。
 - 正式 Agent 收敛为 7 个；`goal_lead`、Goal Create Skill、旧 `goal_create/goal_manage` 和 Goal 专属 Prompt/Tool 路径已删除。
-- 新 `create_goal/get_goal/update_goal` 使用 Runtime 颁发的一次性 fresh-user-input capability；Engineer `complete` 仅产生 Review 请求，不能直接改为 complete。
+- 新 `create_goal/get_goal/update_goal` 收敛 Goal 模型操作；Lead 负责判断创建意图，`complete` 受独立 review 门禁约束。
 - Server/Web 已删除 Goal list/detail/Inspector/route/API，改为 Session Goal 投影、Dashboard 聚合和 Composer progress row。
 - 首次 typecheck 表明 protocol/web/server 已通过；剩余失败集中在 ExecutionManager 的旧 `goal_claim/stop_session_family` 分支与对应旧测试，正由 runtime coordinator 和 test cleanup 两个边界收口。
 
@@ -57,7 +57,7 @@
 - Review Gate 的 evidence 判定改为只接受 transcript 中可定位且与当前 claim 一致的实际 Tool evidence；拒绝模型伪造 ref，并把可重复 verification 收窄到 Bash/LSP/git diff 结果。
 - 新增 review-scoped source monitor 与统一 `ReviewableSourceSet`：Git 覆盖 tracked 与非忽略 untracked，非 Git fail-closed 覆盖源码；write-restore、瞬时 create/delete、watch allocation/error/ambiguous event 均使 claim 失效，ignored cache 不误伤。monitor 在 claim 终态释放，不是常驻 workspace watcher。
 - Coordinator 修复所有 continuation/Evaluator/Reviewer/remediation 的持久化失败恢复：有界退避，三次失败 blocked；HITL orphan、Runtime restart、review attempt replacement 和 remediation execution rebind 都只产生一个合法后继 Execution。
-- Goal objective 收敛为严格单字符串：`create_goal` 无模型 objective 参数，直接消费 fresh 用户原话；edit 必选 `amend | replace`，前者机械追加且仅后文直接冲突覆盖，后者完整替换；超过 4,000 字符直接失败，不截断、不建来源账本。
+- Goal objective 收敛为严格单字符串；超过 4,000 字符直接失败，不截断、不建来源账本。
 - `session.goal_changed` 通过 protocol reducer、Session SSE 与 Web invalidation 传播 canonical snapshot；预算调低立即进入 `budget_limited`，调高/移除恢复 active。budget-limited 不可再 Pause；blocked Resume 重置连续 failure/no-progress 审计窗口。
 - Worktree API、命名和测试 fixture 完成 Session-only 硬切：删除 owner type union，分支只使用 `archcode/session/*`；Web HITL scope 只允许 `project | session`，删除最后一个 Goal owner 表面。
 - `SessionExecutionManager` 新增短生命周期 root-family control section，让 Review completion 与 direct/queued 用户输入共享一个线性化点；输入先到会使旧 Review 失效，Review 先取得控制权时后续输入等待其原子转移完成。最后一个 input mutation 释放后主动触发 Goal reconcile，避免形成静默 idle。新增 deferred 交错测试证明只启动一个用户后继 Execution。
@@ -87,19 +87,17 @@
 ### 2026-07-19 — Real Browser QA And Runtime Fix Loop
 
 - 更正此前“内置浏览器无法访问本地地址”的判断：源码 Hono `:4096` 根路径本就不提供开发 Web 页面；通过 Vite `:5173` 访问后，内置 Browser 能正常操作真实 UI。该问题是验收入口判断错误，不是 Browser 外部阻塞。
-- 桌面浏览器完成自然语言自动激活、direct/Queue/Steer 修改、Pause/Resume、Stop、预算受限与移除限制、server restart 后 reload；390px 视口确认 Goal progress row 与控制按钮无明显溢出，浏览器 console error 为 0。
+- 桌面浏览器完成对话确认后创建 Goal、direct/Queue/Steer 修改、Pause/Resume、Stop、预算受限与移除限制、server restart 后 reload；390px 视口确认 Goal progress row 与控制按钮无明显溢出，浏览器 console error 为 0。
 - 真实 Agent 修复临时项目 `math.ts`、运行 `bun test`、委派普通 Reviewer 并提交 `update_goal complete`。Runtime 创建了全新的 Goal Reviewer child，证明 Engineer 的完成声明没有绕过 Review Gate。
 - 浏览器触发并证明 `Reviewer rejected -> Engineer remediation`：首次 Runtime Reviewer 因审核期间源码变化拒绝完成，Goal 保持 active；用户解除 blocked 后，Engineer 实际重跑 `bun test` 并创建新的 Runtime Reviewer attempt。
 - 发现 Stop 与延迟 usage 结算竞态：Stop 先写 `paused` 会掩盖随后发生的预算耗尽。修复后 `budget_limited` 具有展示优先级，同时保留 latent pause/blocked 意图；提高或移除预算后回到原控制态，不会越权自动续跑。两种结算顺序均有回归测试。
 - 发现 delegated child 的 terminal `submit_child_result` 已结束 Execution、但 Tool Batch 未归档，Runtime 会把同一 batch 复活为第三个 Execution。修复位于唯一 Tool Batch owner：终止结果、后续 skipped calls 与 `archivedAt` 原子持久化，QueryLoop 直接退出，不增加上层 special case。
-- HITL 真实用户故事通过：新根 Session 通过自然语言激活 Goal，读取 `.env` 触发 session-owned Permission 卡；UI 显示等待状态，`Allow once` 后原 `file_read` 继续，随后进入 Reviewer。HITL 未建立 Goal owner 或专属通道。
-- 第二次 Runtime Reviewer 的内容明确报告独立审核通过，但 Runtime 仍将其记录为 rejected；另发现用户未明确要求预算时模型仍能给 `create_goal` 设置 token budget。两条均违反锁定契约，已分别交由独立子 Agent 在 Review Gate 与 fresh-input capability owner 内修复，并要求聚焦回归测试。
+- HITL 真实用户故事通过：新根 Session 在用户确认后创建 Goal，读取 `.env` 触发 session-owned Permission 卡；UI 显示等待状态，`Allow once` 后原 `file_read` 继续，随后进入 Reviewer。HITL 未建立 Goal owner 或专属通道。
+- 第二次 Runtime Reviewer 的内容明确报告独立审核通过，但 Runtime 仍将其记录为 rejected；另发现用户未明确要求预算时模型仍能给 `create_goal` 设置 token budget。两条均违反锁定契约，已分别修复并完成聚焦回归测试。
 - Reviewer 判决链根因不是 claim/fingerprint fence：Reviewer 使用了 `tool:functions.bash` 等工具名别名而非真实 `tool:<toolCallId>`，Gate 因证据不可定位而正确拒绝。真实缺陷是 terminal submit 后才校验，Reviewer 无法纠正，且 rejection reason 错用模型自称 passed 的摘要。修复后 terminal boundary 先用统一 proof collector 预检并返回当前 Session 的真实可用 refs，允许一次 structured correction；Gate 保留 fail-closed 二次校验并记录机器拒绝原因。
 - 重启源码 Runtime 后，真实浏览器完成完整闭环：旧 Reviewer rejected；Engineer 按理由重读源码、重跑 `bun test`、重新提交 completion claim；全新 Reviewer 使用真实 refs 后 accepted；Runtime 原子写入 `Goal complete`。随后点击 Clear，progress row 与 Session badge 立即消失，Session transcript 和 workspace 修改保留。
-- 首版预算授权修复能拒绝模型自设预算，但真实模型不断改用 2000、MAX_SAFE_INTEGER、1 重试；由于校验前已消费 fresh capability，Goal 最终无法创建。该结果证明“保留 model-controlled budget 数字再校验”仍是错误接口，已退回修复循环：授权失败必须零副作用，并优先从模型 schema 删除预算数值、由 fresh 原话确定性派生，类型层消灭预算幻觉。
 - 最新完整浏览器流程后 `dev.logs(level=error)` 返回空数组。
 - 全局配置仍有硬切前的 `agents.goal_lead`。已先备份为 `/Users/bo/.archcode/config.json.pre-session-goal-hard-cut`，再只删除该废弃字段，使真实编译后二进制能够按七 Agent strict schema 启动；未改动 provider、模型或其他设置。
-- 预算接口完成第二次硬切：`create_goal` 模型输入严格为 `{}`，`update_goal.set_budget` 只包含 action；预算值或 removal 只从 immutable fresh 用户原话确定性派生。fresh capability 在同一个 ExecutionManager 临界区内 validate-then-consume，失败零副作用，并发/重复仍只允许一次成功。真实浏览器复验中无预算请求首次 `create_goal {}` 成功，Session API 明确 `hasTokenBudget=false`。
 - 最终 390x844 Browser screenshot 中 progress row、objective、Edit/Resume/Clear 和 composer 全部可见，无水平溢出或控制遮挡；恢复桌面 viewport 后 console error 仍为 0。
 
 ### 2026-07-19 — Final Full Validation And Compiled Product

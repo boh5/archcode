@@ -52,7 +52,6 @@ import type { GoalReviewBinding, Reminder, SessionStoreState } from "../store/ty
 import type { AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
 import type { Logger } from "../logger";
-import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../tools/types";
 import { nextSessionTimestamp, SessionInputConflictError, type ResolvedSessionInputSnapshot, type SessionInputService } from "../session-input/service";
 import { resolveDurableSessionModelOverride } from "../session-input/model-selection-service";
 import type { ExecutionModelBinding, ModelRuntime, ModelRuntimeSnapshot } from "../models";
@@ -292,10 +291,6 @@ interface SessionExecutionManagerConfig {
   readonly deletionLifecycle?: SessionDeletionLifecycle;
   readonly sessionFamilyStopTimeoutMs?: number;
   readonly deadlineScheduler?: SessionExecutionDeadlineScheduler;
-  readonly onFreshUserInput?: (input: {
-    readonly workspaceRoot: string;
-    readonly rootSessionId: string;
-  }) => Promise<void>;
   /** Wakes an idle-family owner after its last durable input mutation settles. */
   readonly onSessionInputMutationReleased?: (input: {
     readonly workspaceRoot: string;
@@ -367,11 +362,6 @@ export class DelegationExecutionAdmissionError extends Error {
 
 export class SessionExecutionManager {
   readonly #active = new Map<string, PendingSessionExecution>();
-  readonly #freshUserInputs = new Map<string, {
-    executionId: string;
-    consumed: boolean;
-    readonly text: string;
-  }>();
   readonly #activeCommands = new Map<string, ActiveSessionCommand>();
   readonly #childSlots = new Map<string, number>();
   readonly #cwdTransitions = new Map<string, SessionCwdTransitionLeaseState>();
@@ -1018,22 +1008,6 @@ export class SessionExecutionManager {
   getExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined {
     const execution = this.#active.get(scopedKey(workspaceRoot, sessionId));
     return execution?.promise ? execution as ActiveSessionExecution : undefined;
-  }
-
-  consumeFreshUserInput(input: ConsumeFreshUserInputRequest): FreshUserInputGrant {
-    if (input.sessionId !== input.rootSessionId) {
-      throw new Error("Fresh user input is available only to a root Session");
-    }
-    const key = scopedKey(input.workspaceRoot, input.sessionId);
-    const execution = this.#active.get(key);
-    const grant = this.#freshUserInputs.get(key);
-    if (execution === undefined || grant === undefined || grant.executionId !== execution.executionId || grant.consumed) {
-      throw new Error("Goal creation requires unconsumed fresh user input from the current Execution");
-    }
-    const result = { text: grant.text };
-    input.validate?.(result);
-    grant.consumed = true;
-    return result;
   }
 
   getSteerTargetExecutionId(workspaceRoot: string, rootSessionId: string): string | undefined {
@@ -1716,18 +1690,6 @@ export class SessionExecutionManager {
 
       execution.ready = true;
       execution.steerGateOpen = store.getState().rootSessionId === store.getState().sessionId;
-      const freshUserText = freshUserInputText(input, execution);
-      if (freshUserText !== undefined) {
-        this.#freshUserInputs.set(key, {
-          executionId: execution.executionId,
-          consumed: false,
-          text: freshUserText,
-        });
-        await this.#config.onFreshUserInput?.({
-          workspaceRoot: input.workspaceRoot,
-          rootSessionId: execution.rootSessionId,
-        });
-      }
       execution.resolveStarted();
       this.#publishSessionRuntimeChange(input.workspaceRoot, execution.rootSessionId);
 
@@ -1847,17 +1809,6 @@ export class SessionExecutionManager {
     });
     execution.steerOperations.add(operation);
     await operation;
-    const freshUserInputText = userInputTextFromSnapshots(messages);
-    if (freshUserInputText !== undefined) {
-      this.#freshUserInputs.set(
-        scopedKey(execution.workspaceRoot, execution.sessionId),
-        { executionId: execution.executionId, consumed: false, text: freshUserInputText },
-      );
-      await this.#config.onFreshUserInput?.({
-        workspaceRoot: execution.workspaceRoot,
-        rootSessionId: execution.rootSessionId,
-      });
-    }
   }
 
   #closeSteerGate(execution: PendingSessionExecution): void {
@@ -1902,9 +1853,6 @@ export class SessionExecutionManager {
     const isCurrentExecution = current?.executionToken === execution.executionToken;
     if (isCurrentExecution) {
       this.#active.delete(key);
-      if (this.#freshUserInputs.get(key)?.executionId === execution.executionId) {
-        this.#freshUserInputs.delete(key);
-      }
       if (execution.ready) {
         this.#publishSessionRuntimeChange(execution.workspaceRoot, execution.rootSessionId);
       }
@@ -2110,9 +2058,6 @@ export class SessionExecutionManager {
     this.#releaseExecutionChildSlot(execution);
 
     this.#active.delete(key);
-    if (this.#freshUserInputs.get(key)?.executionId === execution.executionId) {
-      this.#freshUserInputs.delete(key);
-    }
   }
 
   #attachChildSlotOwnership(
@@ -3042,22 +2987,6 @@ function sessionExecutionOrigin(origin: SessionExecutionOrigin | undefined): Ses
     || origin === "goal_continuation"
   ) return origin;
   return "user_message";
-}
-
-function freshUserInputText(input: StartSessionExecutionInput, execution: PendingSessionExecution): string | undefined {
-  if (execution.origin !== "user_message") return undefined;
-  if (input.input.kind === "direct") return input.input.source !== "automation" ? input.input.text : undefined;
-  if (input.input.kind === "queue") {
-    return execution.queueSnapshots === undefined ? undefined : userInputTextFromSnapshots(execution.queueSnapshots);
-  }
-  return undefined;
-}
-
-function userInputTextFromSnapshots(snapshots: readonly ResolvedSessionInputSnapshot[]): string | undefined {
-  const userTexts = snapshots
-    .filter((snapshot) => snapshot.pending.source === "user")
-    .map((snapshot) => snapshot.pending.content);
-  return userTexts.length === 0 ? undefined : userTexts.join("\n\n");
 }
 
 function subtractUsage(current: NormalizedUsage, initial: NormalizedUsage): NormalizedUsage {

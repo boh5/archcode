@@ -228,7 +228,7 @@ describe("SessionGoalService", () => {
     expect(replacement.generation).toBe(1);
   });
 
-  test("materializes pending notices once in durable append order without fresh user provenance", async () => {
+  test("materializes pending notices once in durable append order without client input fields", async () => {
     const sessionId = await rootSession();
     const created = await service.create({
       workspaceRoot: TMP_DIR,
@@ -277,7 +277,7 @@ describe("SessionGoalService", () => {
       expect(SessionFileSchema.safeParse({
         ...after,
         messages: after.messages.map((candidate) => candidate.id === message.id
-          ? { ...candidate, clientRequestId: "forged-fresh-input" }
+          ? { ...candidate, clientRequestId: "forged-client-input" }
           : candidate),
       }).success).toBe(false);
     }

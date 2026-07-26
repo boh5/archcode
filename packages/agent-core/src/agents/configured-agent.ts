@@ -22,7 +22,6 @@ import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
 import type { ToolRegistry } from "../tools/index";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
-import type { ConsumeFreshUserInputRequest, FreshUserInputGrant } from "../tools/types";
 import type { SessionGoalService } from "../session-goal";
 import { TOOL_PROJECT_TODO_UPDATE, TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
@@ -74,7 +73,6 @@ export interface ConfiguredAgentOptions {
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver: ProjectContextResolver;
   readonly sessionGoalService?: SessionGoalService;
-  readonly consumeFreshUserInput?: (input: ConsumeFreshUserInputRequest) => Promise<FreshUserInputGrant> | FreshUserInputGrant;
   readonly resolveVersionControl: VersionControlDetector;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
@@ -144,7 +142,6 @@ export class ConfiguredAgent implements Agent {
   readonly cwd: string;
   private readonly projectContextResolver: ProjectContextResolver;
   private readonly sessionGoalService: SessionGoalService | undefined;
-  private readonly consumeFreshUserInput: ((input: ConsumeFreshUserInputRequest) => Promise<FreshUserInputGrant> | FreshUserInputGrant) | undefined;
   private readonly resolveVersionControl: VersionControlDetector;
   private readonly depth: number;
   private readonly memoryRoots: MemoryRoots;
@@ -183,7 +180,6 @@ export class ConfiguredAgent implements Agent {
     this.cwd = options.cwd;
     this.projectContextResolver = options.projectContextResolver;
     this.sessionGoalService = options.sessionGoalService;
-    this.consumeFreshUserInput = options.consumeFreshUserInput;
     this.resolveVersionControl = options.resolveVersionControl;
     this.depth = options.depth ?? 0;
     this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager({
@@ -382,7 +378,6 @@ export class ConfiguredAgent implements Agent {
             storeManager: this.storeManager,
             projectContext,
             ...(this.sessionGoalService === undefined ? {} : { sessionGoalService: this.sessionGoalService }),
-            ...(this.consumeFreshUserInput === undefined ? {} : { consumeFreshUserInput: this.consumeFreshUserInput }),
             cwd: this.cwd,
             toolOutputAccess: this.toolOutputAccess,
             abort,

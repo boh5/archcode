@@ -100,7 +100,7 @@ describe("Lead architecture full-runtime flows", () => {
       .toBe(true);
   });
 
-  test("ask_user Goal authorization drives Build, remediation, fresh review, and completion", async () => {
+  test("ordinary ask_user confirmation can precede Goal execution", async () => {
     const objective = "Complete the migration and make every relevant test green.";
     const analystSessionIds: string[] = [];
     let rootCalls = 0;
@@ -114,12 +114,7 @@ describe("Lead architecture full-runtime flows", () => {
           switch (rootCalls) {
             case 1:
               return toolStream("authorize-goal", "ask_user", {
-              questions: [{
-                header: "Goal",
-                question: objective,
-                custom: false,
-                preset: "goal_authorization",
-              }],
+                questions: [{ header: "Goal", question: "要开始这个长期任务吗？" }],
               });
             case 2:
               return toolStream("create-goal", "create_goal", { objective });
@@ -238,7 +233,7 @@ describe("Lead architecture full-runtime flows", () => {
         slug: fixture.projectSlug,
         workspaceRoot: fixture.workspaceRoot,
         hitlId: pendingQuestion.hitlId,
-        response: { type: "question_answer", answers: ["Start Goal (Recommended)"] },
+        response: { type: "question_answer", answers: ["好"] },
       });
 
       try {

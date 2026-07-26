@@ -17,11 +17,10 @@ import type {
   AnyToolDescriptor,
   ToolExecutionContext,
 } from "../types";
-import { GOAL_AUTHORIZATION_OPTIONS } from "./ask-user";
 
 export const CreateGoalInputSchema = z.strictObject({
   objective: z.string().trim().min(1).max(SESSION_GOAL_OBJECTIVE_MAX_LENGTH)
-    .describe("The exact complete objective explicitly requested by the user or confirmed through the current ask_user Goal authorization."),
+    .describe("The complete persistent objective the user requested or confirmed."),
 });
 
 export const GetGoalInputSchema = z.strictObject({});
@@ -49,7 +48,7 @@ type UpdateGoalInput = z.infer<typeof UpdateGoalInputSchema>;
 
 export const createGoalTool: AnyToolDescriptor = defineTool({
   name: TOOL_CREATE_GOAL,
-  description: "Create a persistent Goal on the current root Lead Session. objective must exactly equal either the current fresh user input that unambiguously requests persistent execution to a verifiable endpoint, or the complete objective just authorized by the runtime-owned goal_authorization preset of the latest ask_user call in this resumed Execution. Ordinary requests are rejected, as are negated, ambiguous, stale, and model-invented requests. Discussion Sessions cannot create Goals.",
+  description: "Create a persistent Goal on the current root Lead Session. Before calling this tool, ask the user with the ordinary ask_user tool and interpret the answer normally. Call only when the Lead determines that the user agreed. Discussion Sessions cannot create Goals.",
   inputSchema: CreateGoalInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   outputPolicy: { kind: "inline", previewDirection: "head" },
@@ -57,7 +56,7 @@ export const createGoalTool: AnyToolDescriptor = defineTool({
     try {
       const state = await assertRootLead(ctx, TOOL_CREATE_GOAL);
       const service = requireSessionGoalService(ctx);
-      const objective = await authorizeGoalObjective(ctx, state, input.objective);
+      const objective = canonicalGoalObjective(input.objective);
       const tokenBudget = resolveCreateTokenBudget(objective);
       const goal = await service.create({
         workspaceRoot: ctx.projectContext.project.workspaceRoot,
@@ -257,115 +256,16 @@ async function loadFamilyStates(ctx: ToolExecutionContext, rootState: SessionSto
   return states;
 }
 
-async function authorizeGoalObjective(
-  ctx: ToolExecutionContext,
-  state: ReturnType<ToolExecutionContext["store"]["getState"]>,
-  requestedObjective: string,
-): Promise<string> {
-  const objective = canonicalFreshObjective(requestedObjective);
-  if (ctx.consumeFreshUserInput !== undefined) {
-    try {
-      await ctx.consumeFreshUserInput({
-        workspaceRoot: ctx.projectContext.project.workspaceRoot,
-        sessionId: state.sessionId,
-        rootSessionId: state.rootSessionId,
-        toolCallId: ctx.toolCallId,
-        validate: ({ text }) => {
-          if (canonicalFreshObjective(text) !== objective) throw new Error("create_goal objective must exactly match the fresh user input");
-          if (!hasExplicitPersistentGoalIntent(text)) throw new Error("Fresh user input does not explicitly authorize persistent Goal execution to a verifiable endpoint");
-          validateCreateTokenBudget(text);
-        },
-      });
-      return objective;
-    } catch (error) {
-      if (hasCurrentAskUserGoalAuthorization(state, objective)) return objective;
-      throw error;
-    }
-  }
-  if (hasCurrentAskUserGoalAuthorization(state, objective)) return objective;
-  throw new Error(`${ctx.toolName} requires a current fresh user request or ask_user Goal authorization`);
-}
-
-function hasExplicitPersistentGoalIntent(text: string): boolean {
-  const normalized = text.normalize("NFKC").toLowerCase();
-  const negatedPersistence = /\b(?:do\s+not|don't|dont|never|no\s+longer)\s+(?:(?:want|need)\s+(?:(?:you|the\s+agent|archcode)\s+)?to\s+)?(?:keep\s+(?:working|going)|continue|persist)\b|\bnot\s+(?:to\s+)?(?:keep\s+(?:working|going)|continue|persist)\b|(?:不要|别|无需|不用|不必)(?:(?:让你|让\s*(?:agent|archcode)|再)\s*)?(?:持续|继续|一直)/u.test(normalized);
-  const negatedGoal = /\b(?:(?:do\s+not|don't|dont|never)\s+(?:start|create|enable|open)|without|no)\s+(?:a\s+)?goal\b|(?:不要|别|无需|不用|不必)(?:开启|启动|创建|使用)\s*goal/u.test(normalized);
-  const ambiguousPersistence = /\b(?:maybe|perhaps|possibly|might|unsure|not\s+sure|whether|should\s+we|could\s+we|do\s+we\s+want)\b|也许|可能|不确定|是否|要不要/u.test(normalized);
-  const interrogative = /[?？]\s*$/u.test(normalized)
-    || /^(?:can|could|would|will|should|may|might|do|does|did|is|are|am|was|were|have|has|had)\b/u.test(normalized.trim())
-    || /^(?:你|您)?(?:能|能够|可以|可否|能否|会不会|愿不愿意)/u.test(normalized.trim());
-  if (negatedPersistence || negatedGoal || ambiguousPersistence || interrogative) return false;
-  const persistence = /\b(?:keep\s+(?:working|going)|continue|do\s+not\s+stop|don't\s+stop|persist)\b|持续|继续|不要停|别停|一直/.test(normalized);
-  const endpoint = /\b(?:until|through\s+completion|complete|completed|done|finish|finished|pass|passing|green|verifiable)\b|直到|完成|做完|全绿|通过|可验证/.test(normalized);
-  return persistence && endpoint;
-}
-
-function hasCurrentAskUserGoalAuthorization(state: SessionStoreState, objective: string): boolean {
-  const executionId = state.currentExecutionId;
-  if (executionId === undefined) return false;
-  const execution = state.executions.find((candidate) => candidate.id === executionId);
-  if (execution?.origin !== "tool_batch" || execution.status !== "running") return false;
-  const sourceBatch = [...state.toolBatches].reverse().find((batch) => {
-    const continuationStartedAt = parseTimestamp(batch.continuationStartedAt);
-    const continuationCompletedAt = parseTimestamp(batch.continuationCompletedAt);
-    return continuationStartedAt !== undefined
-      && continuationCompletedAt !== undefined
-      && continuationStartedAt >= execution.startedAt
-      && continuationCompletedAt >= continuationStartedAt
-      && batch.calls.some((call) => call.toolName === "ask_user");
-  });
-  if (sourceBatch === undefined) return false;
-  const sourceBatchIndex = state.toolBatches.indexOf(sourceBatch);
-  if (sourceBatchIndex < 0 || state.toolBatches.slice(sourceBatchIndex + 1).some((batch) => (
-    batch.calls.some((candidate) => candidate.toolName === "create_goal"
-      && candidate.state === "completed"
-      && candidate.result?.isError === false)
-  ))) return false;
-  const call = [...sourceBatch.calls].reverse().find((candidate) => candidate.toolName === "ask_user");
-  if (call?.state !== "completed") return false;
-  const input = call.input as {
-    questions?: Array<{
-      question?: unknown;
-      options?: Array<{ label?: unknown; description?: unknown }>;
-      multiple?: unknown;
-      custom?: unknown;
-      preset?: unknown;
-    }>;
-  };
-  const question = input.questions?.[0];
-  const options = question?.options;
-  const response = call.blocker?.response;
-  return input.questions?.length === 1
-    && question?.question === objective
-    && question.custom === false
-    && question.multiple !== true
-    && question.preset === "goal_authorization"
-    && (options === undefined || options.length === 0)
-    && response?.type === "question_answer"
-    && response.answers.length === 1
-    && response.answers[0] === GOAL_AUTHORIZATION_OPTIONS[0].label;
-}
-
-function parseTimestamp(value: string | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : undefined;
-}
-
-function canonicalFreshObjective(text: string): string {
+function canonicalGoalObjective(text: string): string {
   const objective = text.trim();
-  if (objective.length === 0 || objective.length > 4_000) {
-    throw new Error("Cannot create the Session Goal: fresh user input must be 1 to 4000 characters and is never truncated.");
+  if (objective.length === 0 || objective.length > SESSION_GOAL_OBJECTIVE_MAX_LENGTH) {
+    throw new Error(`Cannot create the Session Goal: objective must be 1 to ${SESSION_GOAL_OBJECTIVE_MAX_LENGTH} characters.`);
   }
   return objective;
 }
 
-function validateCreateTokenBudget(freshUserText: string): void {
-  resolveCreateTokenBudget(freshUserText);
-}
-
-function resolveCreateTokenBudget(freshUserText: string): number | undefined {
-  const text = freshUserText.normalize("NFKC").toLowerCase();
+function resolveCreateTokenBudget(objective: string): number | undefined {
+  const text = objective.normalize("NFKC").toLowerCase();
   const mentionsTokens = /\b(?:token|tokens)\b|令牌/.test(text);
   const mentionsBudget = /\b(?:budget|cap|limit)\b|预算|上限|限制/.test(text);
   if (!mentionsTokens || !mentionsBudget) return undefined;
@@ -375,7 +275,7 @@ function resolveCreateTokenBudget(freshUserText: string): number | undefined {
     throw new Error("An explicit token budget request must state exactly one positive numeric budget");
   }
   if (explicitBudgets.size > 1 || hasBudgetRemovalIntent(text)) {
-    throw new Error("The fresh user input contains an ambiguous token budget; state exactly one budget or remove it");
+    throw new Error("The Goal objective contains an ambiguous token budget; state exactly one budget or remove it");
   }
   return explicitBudgets.values().next().value;
 }

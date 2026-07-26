@@ -84,7 +84,7 @@ interface GoalNoticePart {
 - Protocol 增加共享 `SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH = 4_000`；Session Goal schema、Agent block Tool input 和 Notice schema 共同使用该上限。此项是当前 canonical Goal 合同的收紧，不做截断或兼容分支。
 - `edited` 必须有 `previousGeneration`，且新 generation 精确加一；`cleared` 使用 `goal: null`，但保留被清除 Goal 的 identity 和 generation。
 - Notice ID 从 Reminder identity 确定；重试不得生成第二个消息 ID。
-- 消息使用内部 `role: "user"`，但没有 `clientRequestId`、`modelAudit` 或 fresh-user-input provenance，不能授权 Goal 操作、工具执行或任何用户专属能力。
+- 消息使用内部 `role: "user"`，但没有 `clientRequestId` 或 `modelAudit`，不代表新的用户输入。
 - Model projection 确定性渲染 `<goal-notice>`；objective/blockedReason 必须安全编码，不能伪造闭合标签。
 - Web 必须显式识别并隐藏该 part，不显示成用户气泡，也不新增 timeline UI。
 
@@ -199,7 +199,7 @@ Goal history exists:
 
 ### AC-05：权限、UI 和 current-contract invariant
 
-- GoalNotice 没有 fresh-user-input provenance，不能授权 Goal mutation、工具或用户专属操作，不进入用户消息统计、title/memory 用户语义。
+- GoalNotice 不代表新的用户输入，不进入用户消息统计、title/memory 用户语义。
 - Web live/reload 不显示用户气泡；现有 Goal row、Sidebar/Dashboard 和 SSE 继续显示 canonical Goal。
 - create/mutate/materialize/load 的正向测试证明 never-goal 无链、当前 Goal/clear 均有 latest proof、consumed Reminder 与内部消息一一对应且顺序一致。
 - 构造 pending+message、consumed-without-message、message-without-reminder、非 Root Lead notice、空 Goal 但 latest proof 非 clear 等半状态，strict validation 返回 actionable error；生产代码不存在修复、迁移、回填、清空或 `get_goal` fallback。

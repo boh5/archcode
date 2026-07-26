@@ -718,7 +718,6 @@ export async function createRuntime(
       memoryConfig: config.memory,
       projectContextResolver: contextResolver,
       sessionGoalService,
-      consumeFreshUserInput: (input) => executionManager.consumeFreshUserInput(input),
       resolveMcpStatuses: () => activeMcpManager.getStatus(),
       storeManager: sessionStoreManager,
       createToolOutputAccess: (workspaceRoot, rootSessionId) => createScopeBoundToolOutputAccess(

@@ -43,23 +43,6 @@ export interface ToolAttemptMetadata {
   destructive: boolean;
 }
 
-export interface ConsumeFreshUserInputRequest {
-  readonly workspaceRoot: string;
-  readonly sessionId: string;
-  readonly rootSessionId: string;
-  readonly toolCallId: string;
-  /** Runs synchronously inside the one-use consumption critical section. */
-  readonly validate?: (grant: FreshUserInputGrant) => void;
-}
-
-/**
- * A single-use capability minted by the execution runtime for one actual user
- * input. The text is immutable provenance, not model-supplied Goal content.
- */
-export interface FreshUserInputGrant {
-  readonly text: string;
-}
-
 export interface ToolExecutionContext {
   store: StoreApi<SessionStoreState>;
   storeManager: SessionStoreManager;
@@ -82,8 +65,6 @@ export interface ToolExecutionContext {
   projectContext: ProjectContext;
   /** Runtime-wide Session Goal owner. Tools never mutate Session state directly. */
   sessionGoalService?: SessionGoalService;
-  /** Runtime-owned one-use capability minted from current direct/queue/steer input. */
-  consumeFreshUserInput?: (input: ConsumeFreshUserInputRequest) => MaybePromise<FreshUserInputGrant>;
   /** Current Session execution directory. This may be a worktree and is independent of the canonical project context. */
   readonly cwd: string;
   /** Registry-owned capture for artifact-policy tools. Descriptors may only write; Registry owns finalize/abort. */
