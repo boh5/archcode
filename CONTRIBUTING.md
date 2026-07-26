@@ -139,6 +139,20 @@ Important areas:
 - CONTRIBUTING is for contributors: development setup, architecture, testing, and PR guidance.
 - Planning docs and design notes belong under `docs/`.
 
+## Prompt live evaluation
+
+Prompt live evaluation is explicit and opt-in. Copy
+`packages/agent-core/src/prompt/live-eval-manifest.example.json`, list only the
+configured `provider:model` IDs to run, then execute:
+
+```sh
+ARCHCODE_PROMPT_LIVE_EVAL=1 bun run prompt:live-eval -- --manifest ./prompt-live-eval.json
+```
+
+The command compiles the real Prompt V2 for each explicitly listed model and
+writes machine-readable results to the manifest's `resultPath`. It never
+guesses or automatically selects models.
+
 ## Reporting security issues
 
 Do not open public issues for secrets, authentication bypasses, or vulnerabilities that expose private workspaces. Contact the maintainer privately until a security policy is published.

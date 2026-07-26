@@ -8,6 +8,49 @@ password. Its Argon2id hash is stored under internal `auth.passwordHash`, but
 that field is deliberately absent from Config API snapshots and edits. Set,
 change, or remove the password only through **Settings → Security**.
 
+## Minimal example
+
+The browser Setup is the recommended first-run path. For advanced or automated
+provisioning, this example connects one OpenAI-compatible endpoint and assigns
+the same model to all three required Profiles:
+
+```json
+{
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local model",
+      "options": {
+        "baseURL": "http://localhost:8090/v1",
+        "apiKey": "replace-me"
+      },
+      "models": {
+        "your-model-id": {
+          "name": "Your model",
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          },
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          }
+        }
+      }
+    }
+  },
+  "profiles": {
+    "principal": { "model": "local:your-model-id" },
+    "deep": { "model": "local:your-model-id" },
+    "fast": { "model": "local:your-model-id" }
+  }
+}
+```
+
+Provider IDs and model IDs combine as `provider:modelId`, such as
+`local:your-model-id`. A versioned starting file is also available at
+[`config.example.json`](../config.example.json).
+
 ## Supported packages
 
 The catalog contains exactly these official AI SDK language Provider packages:
