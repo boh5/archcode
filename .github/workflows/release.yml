@@ -262,7 +262,68 @@ jobs:
           chmod 755 release-assets/install.sh
           bun run scripts/release.ts bundle release-assets
 
-      - name: Upload complete release bundle
+      - name: Upload unsigned release payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-payload
+          path: release-assets/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  attest:
+    name: Attest release payload
+    if: needs.preflight.outputs.publish == 'true'
+    needs:
+      - preflight
+      - bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.13
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download release payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-payload
+          path: release-assets
+
+      - name: Attest release payload
+        id: attest
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: release-assets/*
+
+      - name: Attach offline verification bundle
+        shell: bash
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          install -m 644 \
+            "$BUNDLE_PATH" \
+            release-assets/release-attestation.sigstore.json
+
+      - name: Verify with the embedded updater trust policy
+        run: bun run scripts/verify-release-attestation.ts release-assets
+
+      - name: Upload signed release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-bundle
@@ -276,7 +337,7 @@ jobs:
     if: needs.preflight.outputs.publish == 'true'
     needs:
       - preflight
-      - bundle
+      - attest
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -334,8 +395,13 @@ jobs:
               mkdir -p "$published_dir"
               gh release download "$TAG" --dir "$published_dir"
               bun run scripts/release.ts compare release-assets "$published_dir"
+              bun run scripts/verify-release-attestation.ts "$published_dir"
               for published_asset in "$published_dir"/*; do
+                if [[ "$(basename "$published_asset")" == "release-attestation.sigstore.json" ]]; then
+                  continue
+                fi
                 gh attestation verify "$published_asset" \
+                  --bundle "$published_dir/release-attestation.sigstore.json" \
                   --repo "$GITHUB_REPOSITORY" \
                   --signer-workflow \
                     "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
@@ -374,33 +440,19 @@ jobs:
           mkdir -p "$verified_dir"
           gh release download "$TAG" --dir "$verified_dir"
           bun run scripts/release.ts compare release-assets "$verified_dir"
+          bun run scripts/verify-release-attestation.ts "$verified_dir"
+          for verified_asset in "$verified_dir"/*; do
+            if [[ "$(basename "$verified_asset")" == "release-attestation.sigstore.json" ]]; then
+              continue
+            fi
+            gh attestation verify "$verified_asset" \
+              --bundle "$verified_dir/release-attestation.sigstore.json" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow \
+                "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "$GITHUB_REF"
+          done
           echo "already_published=false" >> "$GITHUB_OUTPUT"
-
-  attest:
-    name: Attest release bundle
-    if: needs.preflight.outputs.publish == 'true' && needs.prepare_release.outputs.already_published != 'true'
-    needs:
-      - preflight
-      - bundle
-      - prepare_release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      attestations: write
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Download release bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: release-bundle
-          path: release-assets
-
-      - name: Attest release assets
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
-        with:
-          subject-path: release-assets/*
 
   publish_release:
     name: Publish GitHub Release
@@ -408,14 +460,33 @@ jobs:
     needs:
       - preflight
       - prepare_release
-      - attest
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
     permissions:
+      attestations: read
       contents: write
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.13
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download expected release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-bundle
+          path: expected-release-assets
+
       - name: Publish verified draft
         shell: bash
         env:
@@ -425,10 +496,31 @@ jobs:
           TAG: ${{ needs.preflight.outputs.tag }}
         run: |
           set -euo pipefail
-          if [[ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" != "true" ]]; then
-            echo "Release $TAG is no longer a draft" >&2
-            exit 1
-          fi
+
+          draft_dir="$RUNNER_TEMP/publish-candidate-assets"
+          mkdir -p "$draft_dir"
+          gh release download "$TAG" --dir "$draft_dir"
+          bun run scripts/release.ts compare expected-release-assets "$draft_dir"
+          bun run scripts/verify-release-attestation.ts "$draft_dir"
+          for draft_asset in "$draft_dir"/*; do
+            if [[ "$(basename "$draft_asset")" == "release-attestation.sigstore.json" ]]; then
+              continue
+            fi
+            gh attestation verify "$draft_asset" \
+              --bundle "$draft_dir/release-attestation.sigstore.json" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow \
+                "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "$GITHUB_REF"
+          done
+
+          bun run scripts/release.ts notes "$RUNNER_TEMP/release-notes.md"
+          gh release view "$TAG" \
+            --json body,isDraft,isPrerelease,name,tagName \
+            > "$RUNNER_TEMP/release-before-publish.json"
+          bun run scripts/release.ts publish-ready \
+            "$RUNNER_TEMP/release-before-publish.json" \
+            "$RUNNER_TEMP/release-notes.md"
 
           if [[ "$EXPECTED_PRERELEASE" == "true" ]]; then
             gh release edit "$TAG" --draft=false --prerelease=true

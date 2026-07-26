@@ -24,6 +24,7 @@ Options:
 
 The executable is installed as <prefix>/bin/archcode. The installer never uses
 sudo, edits shell configuration, changes ~/.archcode, or creates a service.
+It also writes a same-directory install receipt required for direct updates.
 EOF
 }
 
@@ -128,13 +129,10 @@ fi
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
 command -v awk >/dev/null 2>&1 || fail "awk is required"
-command -v install >/dev/null 2>&1 || fail "install is required"
 
 temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/archcode-install.XXXXXX") ||
   fail "unable to create a temporary directory"
-staged_path=
 cleanup() {
-  [ -z "$staged_path" ] || rm -f "$staged_path"
   rm -rf "$temporary_dir"
 }
 trap cleanup EXIT
@@ -196,13 +194,9 @@ reported_version=$("$extracted_binary" --version 2>/dev/null) ||
   fail "downloaded executable reported an unexpected version: $reported_version"
 
 mkdir -p "$destination_dir"
-staged_path=$(mktemp "$destination_dir/.archcode.install.XXXXXX") ||
-  fail "unable to create a staging file in $destination_dir"
-install -m 755 "$extracted_binary" "$staged_path" ||
-  fail "unable to stage the ArchCode executable"
-mv -f "$staged_path" "$destination" ||
-  fail "unable to atomically install ArchCode at $destination"
-staged_path=
+"$extracted_binary" __install-managed \
+  --install-path "$destination" ||
+  fail "unable to commit the managed ArchCode installation"
 
 printf 'Installed ArchCode v%s at %s\n' "$version" "$destination"
 case ":${PATH:-}:" in

@@ -9,6 +9,7 @@ const packageJsonPath = join(rootDir, "package.json");
 const changelogPath = join(rootDir, "CHANGELOG.md");
 const installerTemplatePath = join(rootDir, "scripts", "install.sh");
 const installerVersionPlaceholder = "__ARCHCODE_VERSION__";
+const releaseAttestationAssetName = "release-attestation.sigstore.json";
 const workspacePackageJsonPaths = [
   "apps/server/package.json",
   "apps/web/package.json",
@@ -59,6 +60,13 @@ export function releaseArchiveAssetNameForTarget(targetTriple: string, version: 
 }
 
 export function releaseAssetNamesForVersion(version: string): string[] {
+  return [
+    ...releasePayloadAssetNamesForVersion(version),
+    releaseAttestationAssetName,
+  ];
+}
+
+export function releasePayloadAssetNamesForVersion(version: string): string[] {
   return [
     ...releaseTargets.map((target) => releaseArchiveAssetName(target, version)),
     "install.sh",
@@ -140,9 +148,40 @@ export function classifyExistingRelease(
   return "published";
 }
 
+export function assertReleaseReadyToPublish(
+  metadata: ExistingReleaseMetadata,
+  expected: {
+    notes: string;
+    tag: string;
+    title: string;
+  },
+): void {
+  if (!metadata.isDraft) {
+    throw new Error(`Release ${expected.tag} is no longer a draft`);
+  }
+  if (metadata.tagName !== expected.tag) {
+    throw new Error(
+      `Release tag mismatch: expected ${expected.tag}, received ${metadata.tagName}`,
+    );
+  }
+  if (metadata.name !== expected.title) {
+    throw new Error(`Draft release title does not match ${expected.title}`);
+  }
+  if (normalizeReleaseText(metadata.body) !== normalizeReleaseText(expected.notes)) {
+    throw new Error("Draft release notes do not match CHANGELOG.md");
+  }
+}
+
 export async function readReleaseVersion(): Promise<string> {
   const packageJson = await Bun.file(packageJsonPath).json() as { version?: unknown };
   return parseReleaseVersion(packageJson.version);
+}
+
+export async function readMinimumDirectUpdateFrom(): Promise<string> {
+  const packageJson = await Bun.file(packageJsonPath).json() as {
+    release?: { minimumDirectUpdateFrom?: unknown };
+  };
+  return parseReleaseVersion(packageJson.release?.minimumDirectUpdateFrom);
 }
 
 export function extractReleaseNotes(changelog: string, version: string): string {
@@ -255,12 +294,27 @@ export async function verifyReleaseAssetDirectory(
   }
 }
 
+export async function verifyReleasePayloadDirectory(
+  assetDir: string,
+  version?: string,
+): Promise<void> {
+  const resolvedVersion = version ?? await readReleaseVersion();
+  const actual = await listReleaseAssetNames(assetDir);
+  const expected = releasePayloadAssetNamesForVersion(resolvedVersion)
+    .sort((a, b) => a.localeCompare(b));
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      `Release payload set mismatch. Expected ${expected.join(", ")}; received ${actual.join(", ") || "(none)"}`,
+    );
+  }
+}
+
 export async function compareReleaseAssetDirectories(
   expectedDir: string,
   actualDir: string,
 ): Promise<void> {
   const version = await readReleaseVersion();
-  const assetNames = releaseAssetNamesForVersion(version);
+  const assetNames = releasePayloadAssetNamesForVersion(version);
   await Promise.all([
     verifyReleaseAssetDirectory(expectedDir, version),
     verifyReleaseAssetDirectory(actualDir, version),
@@ -284,7 +338,10 @@ export async function compareReleaseAssetDirectories(
 }
 
 async function runPreflight(tag: string | undefined): Promise<void> {
-  const version = await readReleaseVersion();
+  const [version, minimumDirectUpdateFrom] = await Promise.all([
+    readReleaseVersion(),
+    readMinimumDirectUpdateFrom(),
+  ]);
   const workspacePackages = await Promise.all(
     workspacePackageJsonPaths.map(
       (path) => Bun.file(join(rootDir, path)).json() as Promise<{
@@ -298,6 +355,11 @@ async function runPreflight(tag: string | undefined): Promise<void> {
 
   if (tag && tag !== `v${version}`) {
     throw new Error(`Tag ${tag} does not match package version v${version}`);
+  }
+  if (parse(minimumDirectUpdateFrom)!.compare(parse(version)!) > 0) {
+    throw new Error(
+      `release.minimumDirectUpdateFrom ${minimumDirectUpdateFrom} cannot be newer than ${version}`,
+    );
   }
 
   console.log(`Release metadata is consistent for v${version}`);
@@ -342,8 +404,27 @@ async function readExistingReleaseState(
   });
 }
 
-export async function writeBundleMetadata(assetDir: string): Promise<void> {
+async function verifyPublishReady(
+  metadataPath: string,
+  notesPath: string,
+): Promise<void> {
   const version = await readReleaseVersion();
+  assertReleaseReadyToPublish(
+    parseExistingReleaseMetadata(await Bun.file(metadataPath).json()),
+    {
+      notes: await Bun.file(notesPath).text(),
+      tag: `v${version}`,
+      title: `ArchCode v${version}`,
+    },
+  );
+  console.log(`Release v${version} is ready to publish`);
+}
+
+export async function writeBundleMetadata(assetDir: string): Promise<void> {
+  const [version, minimumDirectUpdateFrom] = await Promise.all([
+    readReleaseVersion(),
+    readMinimumDirectUpdateFrom(),
+  ]);
   const assets = [];
 
   for (const target of releaseTargets) {
@@ -384,13 +465,14 @@ export async function writeBundleMetadata(assetDir: string): Promise<void> {
     .join("\n");
   await Bun.write(join(assetDir, "SHA256SUMS"), `${checksumText}\n`);
   await Bun.write(join(assetDir, "release-manifest.json"), `${JSON.stringify({
-    schemaVersion: 2,
+    schemaVersion: 3,
     name: "archcode",
     version,
     tag: `v${version}`,
+    minimumDirectUpdateFrom,
     assets: checksumAssets,
   }, null, 2)}\n`);
-  await verifyReleaseAssetDirectory(assetDir, version);
+  await verifyReleasePayloadDirectory(assetDir, version);
 }
 
 function requireArgument(value: string | undefined, usage: string): string {
@@ -462,6 +544,18 @@ async function run(): Promise<void> {
         ),
       ));
       return;
+    case "publish-ready":
+      await verifyPublishReady(
+        requireArgument(
+          args[0],
+          "bun run scripts/release.ts publish-ready <metadata-path> <notes-path>",
+        ),
+        requireArgument(
+          args[1],
+          "bun run scripts/release.ts publish-ready <metadata-path> <notes-path>",
+        ),
+      );
+      return;
     case "bundle":
       await writeBundleMetadata(requireArgument(args[0], "bun run scripts/release.ts bundle <asset-dir>"));
       return;
@@ -474,7 +568,7 @@ async function run(): Promise<void> {
     default:
       throw new Error(
         `Unknown command ${JSON.stringify(command)}. ` +
-        "Expected version, preflight, prerelease, asset, assets, installer, notes, state, bundle, or compare.",
+        "Expected version, preflight, prerelease, asset, assets, installer, notes, state, publish-ready, bundle, or compare.",
       );
   }
 }

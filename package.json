@@ -9,6 +9,9 @@
   "bin": {
     "archcode": "./apps/server/src/main.ts"
   },
+  "release": {
+    "minimumDirectUpdateFrom": "0.0.3"
+  },
   "scripts": {
     "web:build": "bun run --cwd apps/web build",
     "dev": "turbo run dev",
@@ -34,5 +37,8 @@
     "turbo": "^2.9.14",
     "typescript": "^6.0.3",
     "vite": "^6.3.0"
+  },
+  "patchedDependencies": {
+    "@sigstore/core@3.2.1": "patches/@sigstore%2Fcore@3.2.1.patch"
   }
 }

@@ -3,6 +3,7 @@ import {
   isGlobalSSEHitlRealtimeEvent,
   isGlobalSSEHitlSnapshotEvent,
   isGlobalSSEResourceChangedEvent,
+  isGlobalSSEUpdateChangedEvent,
   isSessionEventPayload,
   isStreamEvent,
   isTerminalChildSessionStatus,
@@ -480,5 +481,56 @@ describe("protocol event guards", () => {
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "goal", resourceId: "goal-1" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, reason: "created" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ type: "resource.changed" })).toBe(false);
+  });
+
+  test("accepts only coherent update status change events", () => {
+    const updateEvent = {
+      type: "update.changed",
+      createdAt: 10,
+      status: {
+        currentVersion: "1.0.0",
+        phase: "downloading",
+        managed: true,
+        restartSupported: true,
+        updateAvailable: true,
+        restartRequired: false,
+        latest: {
+          version: "1.1.0",
+          releaseUrl: "https://github.com/boh5/archcode/releases/tag/v1.1.0",
+        },
+        lastCheckedAt: 9,
+        progress: {
+          phase: "downloading",
+          downloadedBytes: 25,
+          totalBytes: 100,
+        },
+      },
+    };
+
+    expect(isGlobalSSEUpdateChangedEvent(updateEvent)).toBe(true);
+    expect(isGlobalSSEUpdateChangedEvent({
+      ...updateEvent,
+      status: {
+        ...updateEvent.status,
+        progress: { ...updateEvent.status.progress, phase: "installing" },
+      },
+    })).toBe(false);
+    expect(isGlobalSSEUpdateChangedEvent({
+      ...updateEvent,
+      status: {
+        ...updateEvent.status,
+        progress: { ...updateEvent.status.progress, downloadedBytes: 101 },
+      },
+    })).toBe(false);
+    expect(isGlobalSSEUpdateChangedEvent({
+      ...updateEvent,
+      status: { ...updateEvent.status, unexpected: true },
+    })).toBe(false);
+    for (const field of ["latest", "progress", "error"] as const) {
+      expect(isGlobalSSEUpdateChangedEvent({
+        ...updateEvent,
+        status: { ...updateEvent.status, [field]: null },
+      })).toBe(false);
+    }
   });
 });

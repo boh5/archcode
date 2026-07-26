@@ -135,7 +135,7 @@ const MCP_STATUS_META: Record<McpServerStatus["state"] | "unreported", { label: 
 };
 
 export function SettingsNavigation({ activeSection, onSelect }: { activeSection: SettingsSection; onSelect: (section: SettingsSection) => void }) {
-  const entries: Array<[SettingsSection, string]> = [["models", "Models"], ["profiles", "Profiles"], ["security", "Security"], ["mcp", "MCP"], ["memory", "Memory"], ["github", "GitHub"]];
+  const entries: Array<[SettingsSection, string]> = [["models", "Models"], ["profiles", "Profiles"], ["security", "Security"], ["mcp", "MCP"], ["memory", "Memory"], ["github", "GitHub"], ["updates", "About & Updates"]];
   return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-1 px-3 py-3 sm:flex sm:flex-col sm:px-3">
     <p className="col-span-3 px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">Server</p>
     {entries.map(([id, label]) => <button key={id} type="button" onClick={() => onSelect(id)} aria-current={id === activeSection ? "page" : undefined} className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12px] font-medium transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-brand" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}>{label}</button>)}

@@ -12,7 +12,7 @@ export interface LifecycleServer {
 }
 
 export interface LifecycleTarget {
-  shutdown(): Promise<void>;
+  shutdown(reason: string): Promise<void>;
 }
 
 export interface SignalProcess {
@@ -50,7 +50,12 @@ const systemShutdownDeadlineScheduler: ShutdownDeadlineScheduler = {
 
 export interface GracefulShutdownHandle {
   dispose(): void;
-  shutdown(signal?: ShutdownSignal): Promise<number>;
+  shutdown(request?: ShutdownRequest): Promise<number>;
+}
+
+export interface ShutdownRequest {
+  reason: string;
+  exitCode: number;
 }
 
 export function setupGracefulShutdown(
@@ -66,7 +71,12 @@ export function setupGracefulShutdown(
   });
   let shutdownPromise: Promise<number> | undefined;
 
-  const shutdown = async (_signal?: ShutdownSignal): Promise<number> => {
+  const shutdown = async (
+    request: ShutdownRequest = {
+      reason: "server_shutdown",
+      exitCode: 0,
+    },
+  ): Promise<number> => {
     if (shutdownPromise) return await shutdownPromise;
 
     shutdownPromise = runShutdown(
@@ -75,14 +85,15 @@ export function setupGracefulShutdown(
       timeoutMs,
       logger,
       options.deadlineScheduler ?? systemShutdownDeadlineScheduler,
+      request,
     );
     const exitCode = await shutdownPromise;
     processRef.exit(exitCode);
     return exitCode;
   };
 
-  const onSignal = (signal: ShutdownSignal) => {
-    void shutdown(signal);
+  const onSignal = (_signal: ShutdownSignal) => {
+    void shutdown();
   };
   const sigintHandler = () => onSignal("SIGINT");
   const sigtermHandler = () => onSignal("SIGTERM");
@@ -105,6 +116,7 @@ async function runShutdown(
   timeoutMs: number,
   logger: Logger,
   deadlineScheduler: ShutdownDeadlineScheduler,
+  request: ShutdownRequest,
 ): Promise<number> {
   logger.info("server.shutdown.started");
 
@@ -112,16 +124,24 @@ async function runShutdown(
   const timeout = new Promise<"timeout">((resolve) => {
     timeoutHandle = deadlineScheduler.schedule(timeoutMs, () => resolve("timeout"));
   });
-  let result: "completed" | "timeout";
+  let result: "completed" | "timeout" | "failed";
   try {
-    result = await Promise.race([
-      target.shutdown().then(() => "completed" as const),
-      timeout,
-    ]);
+    try {
+      result = await Promise.race([
+        target.shutdown(request.reason).then(() => "completed" as const),
+        timeout,
+      ]);
+    } catch (error) {
+      result = "failed";
+      logger.error("server.shutdown.failed", {
+        message: "Graceful shutdown failed",
+        error,
+      });
+    }
   } finally {
     if (timeoutHandle !== undefined) deadlineScheduler.cancel(timeoutHandle);
   }
-  const exitCode = result === "timeout" ? 1 : 0;
+  const exitCode = result === "completed" ? request.exitCode : 1;
 
   if (result === "timeout") {
     logger.error("server.shutdown.timeout", {

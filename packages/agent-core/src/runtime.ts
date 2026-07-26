@@ -384,6 +384,14 @@ export interface AgentRuntime {
   recoverProjectTodos(): Promise<void>;
   reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void>;
   stopAutomationSchedulers(): Promise<void>;
+  /**
+   * Closes new Runtime work only when no execution or control mutation is
+   * active. Successful admission is permanent because process restart follows.
+   */
+  prepareForRestart(): {
+    readonly ready: boolean;
+    readonly activeFamilyCount?: number;
+  };
   disposeToolOutputs(): Promise<void>;
   /** Closes every Runtime-owned resource through its safe internal boundaries. */
   shutdown(): Promise<void>;
@@ -1389,6 +1397,9 @@ export async function createRuntime(
           },
         },
         resolveProject: (projectSlug) => projectRegistry.get(projectSlug),
+        runRuntimeMutation: (workspaceRoot, operation) => (
+          executionManager.runRuntimeMutation(workspaceRoot, operation)
+        ),
       });
       const dispatcher = new AutomationDispatcher({ stateManager, gateway, now, onChange, coordinator });
       const scheduler = new AutomationScheduler({
@@ -1865,9 +1876,16 @@ export async function createRuntime(
       subscribeMcpStatusChanges: (listener) => activeMcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => activeMcpManager.getStatus(),
       createSession: async (workspaceRoot, createOptions) => {
-        executionManager.assertWorkspaceOpen(workspaceRoot);
         assertRuntimeSessionAgentScope(createOptions);
-        return projectSessionModels(await sessionStoreManager.createSessionFile(workspaceRoot, createOptions));
+        return await executionManager.runRuntimeMutation(
+          workspaceRoot,
+          async () => projectSessionModels(
+            await sessionStoreManager.createSessionFile(
+              workspaceRoot,
+              createOptions,
+            ),
+          ),
+        );
       },
       getSessionFile: async (workspaceRoot, sessionId) => {
         await sessionStoreManager.flushSession(sessionId, workspaceRoot);
@@ -1998,6 +2016,7 @@ export async function createRuntime(
       recoverProjectTodos,
       reconcileRegisteredProject,
       stopAutomationSchedulers,
+      prepareForRestart: () => executionManager.closeAdmissionIfIdle(),
       disposeToolOutputs: () => toolOutputArtifactStore.dispose(),
       shutdown,
       notifyRuntimeShutdown,

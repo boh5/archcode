@@ -58,6 +58,40 @@ never replaced or treated as first run.
 
 ---
 
+## Process Update Boundary
+
+Direct update is a process-level Server capability, not an Agent tool or
+project resource:
+
+```text
+GitHub tagged Release
+  -> signed v3 manifest + offline Sigstore bundle
+  -> Server UpdateService verification/download/install
+  -> Host write gate + UpdateService + Runtime idle admission close
+  -> graceful exit 75
+  -> stable launcher re-executes the replaced binary
+```
+
+`apps/server/src/updater/` owns Release trust, the installer receipt, update
+lock, atomic replacement, persisted check metadata, and the update state
+machine. `@archcode/protocol` carries only the browser-safe status and global
+SSE event. The Web UI renders that projection and requests transitions; it
+never chooses an asset, verifies trust, writes an executable, or decides that
+the Runtime is idle.
+
+The Host first closes all new mutating HTTP requests, then closes automatic or
+manual updater work, then asks `SessionExecutionManager` to close Runtime
+execution and internal Automation mutation admission. Any busy layer reopens
+the earlier layers and returns a conflict. The stable packaged parent launcher interprets only
+exit code `75` as a re-exec request. Every other child exit remains terminal.
+
+The official installer and direct updater share the same OS lock and managed
+install transaction. The installer bootstraps a same-directory receipt bound
+to the executable digest. There is no legacy unmanaged update
+path and no unsigned or checksum-only trust fallback.
+
+---
+
 ## Dependency Direction
 
 ```
@@ -232,4 +266,6 @@ The following situations **require an architecture decision** (documented update
 | `packages/agent-core/src/__arch__/architecture.test.ts` | Enforced boundary rules |
 | `apps/server/src/serve-web.ts` | Embedded web asset handler |
 | `apps/server/src/main.ts` | Shared source entry and production startup function |
+| `apps/server/src/updater/` | Signed Release verification and managed executable replacement |
+| `apps/server/src/launcher.ts` | Stable packaged parent and update re-exec contract |
 | `scripts/build.ts` | Production binary builder |

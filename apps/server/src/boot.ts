@@ -6,11 +6,14 @@ import { ENV_OPEN_BROWSER, PRODUCT_DISPLAY_NAME } from "@archcode/protocol";
 import { setupGracefulShutdown } from "./lifecycle";
 import { startServer } from "./listen";
 import type { ArchCodeServerHost } from "./server-host";
+import type { ServerRestartController } from "./restart-controller";
+import { UPDATE_RESTART_EXIT_CODE } from "./updater";
 
 export interface BootServerOptions {
   port?: number;
   version?: string;
   logger?: Logger;
+  restartController?: ServerRestartController;
 }
 
 export async function bootServer(
@@ -24,8 +27,14 @@ export async function bootServer(
   const { url, server } = await startServer(host.app, {
     port: options.port,
   });
-  setupGracefulShutdown(server, host, {
+  const lifecycle = setupGracefulShutdown(server, host, {
     logger: logger.child({ module: "server.lifecycle" }),
+  });
+  options.restartController?.bind(async () => {
+    await lifecycle.shutdown({
+      reason: "update_restart",
+      exitCode: UPDATE_RESTART_EXIT_CODE,
+    });
   });
 
   const versionLabel = options.version ? ` v${options.version}` : "";

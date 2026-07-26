@@ -9,6 +9,7 @@ import type {
   SessionNextModelSelection,
   SessionModelSelection,
 } from "./model-runtime";
+import type { GlobalSSEUpdateChangedEvent } from "./update";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -899,7 +900,8 @@ export type GlobalSSEEvent =
   | GlobalSSESessionRuntimeChangedEvent
   | GlobalSSEHitlSnapshotEvent
   | GlobalSSEHitlRealtimeEvent
-  | GlobalSSEResourceChangedEvent;
+  | GlobalSSEResourceChangedEvent
+  | GlobalSSEUpdateChangedEvent;
 
 export interface ShutdownEvent {
   type: "shutdown";

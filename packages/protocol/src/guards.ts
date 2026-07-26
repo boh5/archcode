@@ -7,6 +7,7 @@ import type {
   StreamEvent,
   ToolChildSessionLinkStatus,
 } from "./types";
+import type { GlobalSSEUpdateChangedEvent, UpdateStatus } from "./update";
 import { COMPRESSION_SUMMARY_SECTION_NAMES } from "./compression";
 import {
   SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH,
@@ -350,6 +351,101 @@ export function isGlobalSSEResourceChangedEvent(value: unknown): value is Global
     && oneOf(event.resourceType, ["automation", "todo"])
     && isString(event.resourceId)
     && isFiniteNumber(event.createdAt);
+}
+
+export function isGlobalSSEUpdateChangedEvent(value: unknown): value is GlobalSSEUpdateChangedEvent {
+  const event = record(value);
+  return event !== undefined
+    && exact(event, ["type", "status", "createdAt"])
+    && event.type === "update.changed"
+    && isUpdateStatus(event.status)
+    && isFiniteNumber(event.createdAt);
+}
+
+function isUpdateStatus(value: unknown): value is UpdateStatus {
+  const status = record(value);
+  if (
+    status === undefined
+    || !exact(
+      status,
+      [
+        "currentVersion",
+        "phase",
+        "managed",
+        "restartSupported",
+        "updateAvailable",
+        "restartRequired",
+      ],
+      ["latest", "lastCheckedAt", "progress", "error"],
+    )
+    || !isString(status.currentVersion)
+    || !oneOf(status.phase, [
+      "idle",
+      "checking",
+      "downloading",
+      "verifying",
+      "installing",
+      "restart_pending",
+      "error",
+    ])
+    || typeof status.managed !== "boolean"
+    || typeof status.restartSupported !== "boolean"
+    || typeof status.updateAvailable !== "boolean"
+    || typeof status.restartRequired !== "boolean"
+    || (
+      status.lastCheckedAt !== undefined
+      && !isNonNegativeSafeInteger(status.lastCheckedAt)
+    )
+  ) return false;
+
+  const latest = status.latest === undefined ? undefined : record(status.latest);
+  if (
+    (status.latest !== undefined && latest === undefined)
+    || (
+      latest !== undefined
+      && (
+      !exact(latest, ["version", "releaseUrl"])
+      || !isString(latest.version)
+      || !isString(latest.releaseUrl)
+      )
+    )
+  ) return false;
+
+  const progress = status.progress === undefined ? undefined : record(status.progress);
+  if (
+    (status.progress !== undefined && progress === undefined)
+    || (
+      progress !== undefined
+      && (
+      !exact(progress, ["phase"], ["downloadedBytes", "totalBytes"])
+      || !oneOf(progress.phase, ["downloading", "verifying", "installing"])
+      || progress.phase !== status.phase
+      || (
+        progress.downloadedBytes !== undefined
+        && !isNonNegativeSafeInteger(progress.downloadedBytes)
+      )
+      || (
+        progress.totalBytes !== undefined
+        && !isPositiveSafeInteger(progress.totalBytes)
+      )
+      || (
+        isNonNegativeSafeInteger(progress.downloadedBytes)
+        && isPositiveSafeInteger(progress.totalBytes)
+        && progress.downloadedBytes > progress.totalBytes
+      )
+      )
+    )
+  ) return false;
+
+  const error = status.error === undefined ? undefined : record(status.error);
+  return status.error === undefined
+    || (
+      error !== undefined
+      &&
+      exact(error, ["code", "message"])
+      && isString(error.code)
+      && isString(error.message)
+    );
 }
 
 export function isTerminalChildSessionStatus(

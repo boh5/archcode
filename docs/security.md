@@ -79,3 +79,32 @@ available after restart.
 
 ArchCode does not currently provide a browser-closed Web Push service. Open the
 workbench to view pending questions and approvals.
+
+## Direct-update trust
+
+Direct update is available only to a packaged executable whose same-directory
+installer receipt matches the exact binary digest, install path, platform, and
+architecture. Source runs and manually copied binaries fail closed as
+unmanaged installations.
+
+The updater does not trust `SHA256SUMS` by itself. It verifies the Release's
+offline Sigstore bundle against an embedded TUF-verified Sigstore public-good
+root and pins all of the following:
+
+- GitHub Actions as the certificate issuer;
+- `boh5/archcode` as the source repository;
+- `.github/workflows/release.yml` as the exact signing workflow;
+- the exact Release tag ref;
+- the signed manifest and every declared asset digest.
+
+After provenance verification, ArchCode bounds the metadata and download
+sizes, requires the exact supported platform asset matrix, rejects unsafe asset
+names and archive shapes, verifies the extracted executable's digest and
+reported version, then atomically replaces the managed binary. Update HTTP
+routes use the same password Session and same-origin mutation protection as
+other Runtime APIs.
+
+The embedded trusted-root snapshot deliberately has no network or
+checksum-only fallback. A future Sigstore root/key rotation can therefore make
+an old ArchCode version refuse a valid new Release; the safe recovery is to
+reinstall a current Release manually.

@@ -11,6 +11,16 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Add strict `ARCHCODE_LOG_LEVEL` and `ARCHCODE_ACCESS_LOG` controls while
   preserving HTTP access status semantics in the shared structured logger.
+- Add installer-managed direct updates in **Settings → About & Updates** and
+  through `archcode update`, with live progress and idle-only restart.
+- Publish an offline Sigstore attestation bundle and verify the exact official
+  release workflow, tag, manifest, archive, and embedded binary before install.
+
+### Changed
+
+- Make the Release installer write a binary-bound management receipt required
+  for direct updates. Existing installations must run the installer once to
+  enter the managed update path.
 
 ## [0.0.3] - 2026-07-24
 

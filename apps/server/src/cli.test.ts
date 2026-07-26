@@ -68,11 +68,37 @@ describe("resolveCliInvocation", () => {
     });
   });
 
+  test("parses direct update commands", () => {
+    expect(resolveCliInvocation(["update"], "1.2.3")).toEqual({
+      kind: "update",
+      checkOnly: false,
+    });
+    expect(resolveCliInvocation(["update", "--check"], "1.2.3")).toEqual({
+      kind: "update",
+      checkOnly: true,
+    });
+  });
+
+  test("parses the managed installer handshake without exposing it in help", () => {
+    expect(resolveCliInvocation([
+      "__install-managed",
+      "--install-path",
+      "/opt/bin/archcode",
+    ], "1.2.3")).toEqual({
+      kind: "install_managed",
+      installPath: "/opt/bin/archcode",
+    });
+    const help = resolveCliInvocation(["--help"], "1.2.3");
+    expect(help.kind === "print" ? help.output : "").not.toContain(
+      "__install-managed",
+    );
+  });
+
   test("rejects unsupported arguments", () => {
     expect(resolveCliInvocation(["--unknown"], "1.2.3")).toEqual({
       kind: "print",
       exitCode: 1,
-      output: expect.stringContaining("Unknown option: --unknown"),
+      output: expect.stringContaining("Unknown command or option: --unknown"),
       stream: "stderr",
     });
   });

@@ -13,6 +13,7 @@ The installer:
 - downloads the matching versioned archive;
 - verifies it against `SHA256SUMS`;
 - checks the extracted binary version;
+- writes a binary-bound install receipt for direct updates;
 - installs `archcode` to `~/.local/bin` without `sudo`.
 
 It does not edit `~/.archcode`, modify your shell, create a background service,
@@ -43,11 +44,41 @@ curl -fsSL https://github.com/boh5/archcode/releases/latest/download/install.sh 
 Use `--dry-run` to inspect the resolved platform, asset, and destination
 without downloading or changing files.
 
+## Direct updates
+
+Copies created by the Release installer can check and install updates from
+**Settings → About & Updates**. The equivalent commands are:
+
+```sh
+archcode update --check
+archcode update
+```
+
+ArchCode fetches the latest Release manifest and its offline Sigstore
+attestation bundle, verifies that they were produced by the exact official
+tagged Release workflow, verifies the selected archive and embedded binary,
+then replaces the executable atomically. The previous executable and receipt
+remain together in the atomic `archcode.previous.tar` backup.
+
+The Web UI offers **Restart now** only after installation. Restart is accepted
+only while every Session family and control operation is idle; ArchCode never
+stops active Agent work to apply an update. A stable launcher then starts the
+new executable. A service supervisor may observe the launcher as one
+long-running process.
+
+Manual copies and source-mode development do not have an installer receipt and
+cannot self-update. Installations made before direct updates were introduced
+must run the current Release installer once. There is no checksum-only or
+unsigned fallback in the direct-update path when provenance verification
+fails. Direct updates use the system `tar` command plus `/usr/bin/lockf` on
+macOS or util-linux `flock` on Linux.
+
 ## Manual verification and installation
 
 Every Release contains versioned archives, `SHA256SUMS`, and a
-`release-manifest.json` with archive and embedded-binary digests. For example,
-to install the Apple silicon archive manually:
+`release-manifest.json` with archive and embedded-binary digests, plus
+`release-attestation.sigstore.json` for offline provenance verification.
+For example, to install the Apple silicon archive manually:
 
 ```sh
 version=0.0.3
@@ -101,8 +132,12 @@ If you used the default prefix, remove the installed binary:
 rm "$HOME/.local/bin/archcode"
 ```
 
-This does not remove `~/.archcode` or project-local `.archcode/runtime` state.
-Review those directories separately before deleting data.
+Installer-managed updates may also leave `archcode.previous.tar`,
+`.archcode-install-receipt.json`, `.archcode-update.lock`, and an interrupted
+transaction journal/pending binary in the same directory. Review and remove
+those executable-management files separately after ArchCode is stopped. This does not remove
+`~/.archcode` or project-local `.archcode/runtime` state; review those
+directories separately before deleting data.
 
 For network access and long-running process guidance, continue with
 [local and remote deployment](deployment.md).

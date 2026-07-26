@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  assertReleaseReadyToPublish,
   assertWorkspacePackageVersions,
   classifyExistingRelease,
   compareReleaseAssetDirectories,
@@ -52,6 +53,11 @@ async function writeTestArchive(
     await Bun.write(binaryPath, [
       "#!/bin/sh",
       `if [ "$1" = "--version" ]; then printf 'archcode ${version}\\n'; exit 0; fi`,
+      "if [ \"$1\" = \"__install-managed\" ]; then",
+      "  cp \"$0\" \"$3\" && chmod 755 \"$3\"",
+      "  printf '{\"schemaVersion\":1,\"name\":\"archcode\",\"managedBy\":\"archcode-installer\",\"installPath\":\"%s\",\"version\":\"" + version + "\",\"platform\":\"macOS\",\"architecture\":\"arm64\",\"binarySha256\":\"" + "0".repeat(64) + "\",\"installedAt\":1}\\n' \"$3\" > \"$(dirname \"$3\")/.archcode-install-receipt.json\"",
+      "  exit 0",
+      "fi",
       "exit 1",
       "",
     ].join("\n"));
@@ -189,6 +195,30 @@ describe("release metadata", () => {
     })).toThrow();
   });
 
+  test("requires exact draft metadata immediately before publication", () => {
+    const expected = {
+      notes: "## [1.2.3]\n\n- Fixed.\n",
+      tag: "v1.2.3",
+      title: "ArchCode v1.2.3",
+    };
+    const draft = {
+      body: "## [1.2.3]\r\n\r\n- Fixed.",
+      isDraft: true,
+      isPrerelease: false,
+      name: "ArchCode v1.2.3",
+      tagName: "v1.2.3",
+    };
+    expect(() => assertReleaseReadyToPublish(draft, expected)).not.toThrow();
+    expect(() => assertReleaseReadyToPublish({
+      ...draft,
+      body: "tampered",
+    }, expected)).toThrow("notes");
+    expect(() => assertReleaseReadyToPublish({
+      ...draft,
+      isDraft: false,
+    }, expected)).toThrow("no longer a draft");
+  });
+
   test.each([
     "v1.2.3",
     "01.2.3",
@@ -246,9 +276,11 @@ describe("release metadata", () => {
 
       const manifest = await Bun.file(join(assetDir, "release-manifest.json")).json() as {
         schemaVersion: number;
+        minimumDirectUpdateFrom: string;
         assets: Array<Record<string, unknown>>;
       };
-      expect(manifest.schemaVersion).toBe(2);
+      expect(manifest.schemaVersion).toBe(3);
+      expect(manifest.minimumDirectUpdateFrom).toBe("0.0.3");
       expect(manifest.assets).toHaveLength(5);
       expect(manifest.assets[0]).toMatchObject({
         archiveFormat: "tar.gz",
@@ -306,6 +338,10 @@ describe("release metadata", () => {
         stdout: "archcode 0.0.3\n",
       });
       expect((await stat(installedPath)).mode & 0o777).toBe(0o755);
+      const receipt = await Bun.file(
+        join(prefix, "bin", ".archcode-install-receipt.json"),
+      ).json() as { installPath: string };
+      expect(receipt.installPath).toBe(installedPath);
 
       await Bun.write(installedPath, "previous installation\n");
       await Bun.write(checksumsPath, `${"0".repeat(64)}  ${assetName}\n`);

@@ -2,6 +2,11 @@ import { CLI_BINARY_NAME, ENV_PORT, PRODUCT_DISPLAY_NAME } from "@archcode/proto
 
 export type CliInvocation =
   | { kind: "start"; port: number }
+  | { kind: "update"; checkOnly: boolean }
+  | {
+    kind: "install_managed";
+    installPath: string;
+  }
   | { kind: "print"; exitCode: 0 | 1; output: string; stream: "stdout" | "stderr" };
 
 function formatHelp(version: string): string {
@@ -9,6 +14,11 @@ function formatHelp(version: string): string {
     `${PRODUCT_DISPLAY_NAME} ${version}`,
     "",
     `Usage: ${CLI_BINARY_NAME} [options]`,
+    `       ${CLI_BINARY_NAME} update [--check]`,
+    "",
+    "Commands:",
+    "  update            Install the latest verified release",
+    "  update --check    Check for a verified release without installing it",
     "",
     "Options:",
     "  -p, --port <port>  Listen on this port (default: ARCHCODE_PORT or 4096)",
@@ -80,6 +90,30 @@ export function resolveCliInvocation(
     };
   }
 
+  if (args[0] === "update") {
+    if (args.length === 1) return { kind: "update", checkOnly: false };
+    if (args.length === 2 && args[1] === "--check") {
+      return { kind: "update", checkOnly: true };
+    }
+    return {
+      kind: "print",
+      exitCode: 1,
+      output: `Invalid update arguments: ${args.slice(1).join(" ")}\n\n${formatHelp(version)}`,
+      stream: "stderr",
+    };
+  }
+
+  if (
+    args.length === 3
+    && args[0] === "__install-managed"
+    && args[1] === "--install-path"
+  ) {
+    return {
+      kind: "install_managed",
+      installPath: args[2],
+    };
+  }
+
   const rawPort = args.length === 1 && args[0]?.startsWith("--port=")
     ? args[0].slice("--port=".length)
     : args.length === 2 && (args[0] === "--port" || args[0] === "-p")
@@ -96,7 +130,7 @@ export function resolveCliInvocation(
   return {
     kind: "print",
     exitCode: 1,
-    output: `Unknown option: ${args.join(" ")}\n\n${formatHelp(version)}`,
+    output: `Unknown command or option: ${args.join(" ")}\n\n${formatHelp(version)}`,
     stream: "stderr",
   };
 }

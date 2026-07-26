@@ -12,6 +12,7 @@ import type {
   GlobalSSESessionRuntimeChangedEvent,
   GlobalSSESessionRuntimeSnapshotEvent,
   GlobalSSEShutdownEvent,
+  GlobalSSEUpdateChangedEvent,
   HitlView,
   McpServerStatus,
   SessionGoal,
@@ -462,6 +463,32 @@ describe("handleSSEEvent", () => {
 
     expect(mockFindWebSessionStore).toHaveBeenCalledWith("session-1", "my-project");
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
+  });
+
+  test("accepts update events and invalidates only the process-level update query", () => {
+    const event: GlobalSSEUpdateChangedEvent = {
+      type: "update.changed",
+      createdAt: 1,
+      status: {
+        currentVersion: "1.0.0",
+        phase: "installing",
+        managed: true,
+        restartSupported: true,
+        updateAvailable: true,
+        restartRequired: false,
+        progress: { phase: "installing" },
+      },
+    };
+
+    expect(parseSSEEvent(event.type, JSON.stringify(event))).toEqual(event);
+    handleSSEEvent({ event: event.type, data: JSON.stringify(event) }, deps);
+
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.update,
+      exact: true,
+    });
+    expect(mockFindWebSessionStore).not.toHaveBeenCalled();
   });
 
   test("keeps Session Goal projections live and invalidates all Goal consumers", () => {

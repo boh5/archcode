@@ -82,7 +82,7 @@ describe("SettingsDialog", () => {
     const labels = findAll(tree, (element) => element.type === "button").map(textContent);
 
     expect(textContent(tree)).toContain("Server");
-    expect(labels).toEqual(["Models", "Profiles", "Security", "MCP", "Memory", "GitHub"]);
+    expect(labels).toEqual(["Models", "Profiles", "Security", "MCP", "Memory", "GitHub", "About & Updates"]);
   });
 
   test("keeps providers and models in one continuous Models surface", () => {

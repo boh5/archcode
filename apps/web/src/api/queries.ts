@@ -17,6 +17,7 @@ import type {
 export const queryKeys = {
   agents: ["agents"] as const,
   modelRuntime: ["config", "model-runtime"] as const,
+  update: ["update"] as const,
   projects: ["projects"] as const,
   dashboardProjection: (scope: DashboardScope) => scope.kind === "global"
     ? ["dashboard", "global"] as const

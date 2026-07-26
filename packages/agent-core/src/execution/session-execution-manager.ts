@@ -218,6 +218,13 @@ export interface SessionRuntimeChange {
 
 export type SessionRuntimeChangeListener = (change: SessionRuntimeChange) => void;
 
+export type RuntimeMaintenanceAdmission =
+  | { readonly ready: true }
+  | {
+    readonly ready: false;
+    readonly activeFamilyCount: number;
+  };
+
 export interface SessionExecutionDeadlineHandle {
   readonly id?: unknown;
 }
@@ -372,6 +379,7 @@ export class SessionExecutionManager {
   readonly #pendingCheckedStarts = new Map<symbol, PendingCheckedStart>();
   readonly #pendingSessionInputMutations = new Map<string, PendingSessionInputMutationFamilyState>();
   readonly #familyControls = new Map<string, SessionFamilyControlState>();
+  readonly #runtimeMutations = new Set<symbol>();
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
   readonly #publishedRuntime = new Map<string, Pick<SessionRuntimeChange, "activity" | "steerTargetExecutionId">>();
   readonly #config: SessionExecutionManagerConfig;
@@ -752,6 +760,7 @@ export class SessionExecutionManager {
   }
 
   acquireSessionFamilyStop(input: AcquireSessionFamilyStopInput): SessionFamilyStopLease {
+    this.#assertWorkspaceOpen(input.workspaceRoot);
     const key = scopedKey(input.workspaceRoot, input.rootSessionId);
     if (this.#familyStops.has(key)) {
       throw new SessionFamilyStopInProgressError(input.exemptSessionId ?? input.rootSessionId, input.rootSessionId);
@@ -820,6 +829,7 @@ export class SessionExecutionManager {
 
   /** Linearization gate used by project removal before it inspects live families. */
   acquireWorkspaceClose(workspaceRoot: string): SessionWorkspaceCloseLease {
+    this.#assertWorkspaceOpen(workspaceRoot);
     if (this.#workspaceClosures.has(workspaceRoot)) {
       throw new SessionWorkspaceClosingError(workspaceRoot);
     }
@@ -918,6 +928,52 @@ export class SessionExecutionManager {
       ...executions.map((execution) => execution.promise),
       ...commands.map((command) => command.completion),
     ]);
+  }
+
+  async runRuntimeMutation<T>(
+    workspaceRoot: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    this.#assertWorkspaceOpen(workspaceRoot);
+    const token = Symbol("runtime-mutation");
+    this.#runtimeMutations.add(token);
+    try {
+      return await operation();
+    } finally {
+      this.#runtimeMutations.delete(token);
+    }
+  }
+
+  /**
+   * Atomically closes every new execution and control-plane admission only
+   * when the Runtime is idle. A busy Runtime remains fully open.
+   */
+  closeAdmissionIfIdle(): RuntimeMaintenanceAdmission {
+    if (!this.#acceptingExecutions) {
+      throw new SessionExecutionManagerShuttingDownError();
+    }
+    this.#acceptingExecutions = false;
+    const activeFamilyCount = this.listSessionFamilyActivities().length;
+    const hasUnpublishedWork = this.#active.size > 0
+      || this.#activeCommands.size > 0
+      || this.#childSlots.size > 0
+      || this.#cwdTransitions.size > 0
+      || this.#pendingChildLaunches.size > 0
+      || this.#deletions.size > 0
+      || this.#familyStops.size > 0
+      || this.#workspaceClosures.size > 0
+      || this.#pendingCheckedStarts.size > 0
+      || this.#pendingSessionInputMutations.size > 0
+      || this.#familyControls.size > 0
+      || this.#runtimeMutations.size > 0;
+    if (hasUnpublishedWork) {
+      this.#acceptingExecutions = true;
+      return {
+        ready: false,
+        activeFamilyCount: Math.max(1, activeFamilyCount),
+      };
+    }
+    return { ready: true };
   }
 
   /**
@@ -1129,6 +1185,7 @@ export class SessionExecutionManager {
     sessionId: string,
     blockRootExecution: boolean,
   ): () => void {
+    this.#assertWorkspaceOpen(workspaceRoot);
     const key = scopedKey(workspaceRoot, sessionId);
     if (this.#familyStops.has(key)) {
       throw new SessionFamilyStopInProgressError(sessionId, sessionId);
@@ -2389,6 +2446,7 @@ export class SessionExecutionManager {
   }
 
   #acquireSessionDeletion(workspaceRoot: string, rootSessionId: string, sessionId: string): () => void {
+    this.#assertWorkspaceOpen(workspaceRoot);
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#familyStops.has(key)) {
       throw new SessionFamilyStopInProgressError(sessionId, rootSessionId);

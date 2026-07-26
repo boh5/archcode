@@ -12,8 +12,13 @@ import {
   type AgentRuntimeOptions,
   type Logger,
 } from "@archcode/agent-core";
-import type { CompleteSetupRequest } from "@archcode/protocol";
-import { ArchCodeServerHost } from "./server-host";
+import type { CompleteSetupRequest, UpdateStatus } from "@archcode/protocol";
+import {
+  ArchCodeServerHost,
+  type ServerHostOptions,
+} from "./server-host";
+import { ServerRestartController } from "./restart-controller";
+import { UpdateService } from "./updater";
 
 const roots: string[] = [];
 
@@ -67,6 +72,7 @@ function fakeRuntime(configService: ServerConfigService): AgentRuntime {
     recoverSessionContinuations: mock(async () => undefined),
     recoverProjectTodos: mock(async () => undefined),
     startAutomationSchedulers: mock(async () => undefined),
+    prepareForRestart: mock(() => ({ ready: true })),
     shutdown: mock(async () => undefined),
     notifyRuntimeShutdown: mock(() => undefined),
     listAgentDescriptors: mock(() => [{ name: "lead", displayName: "Lead" }]),
@@ -82,16 +88,33 @@ function fakeRuntime(configService: ServerConfigService): AgentRuntime {
   } as unknown as AgentRuntime;
 }
 
+function hostInfrastructure(home: string, logger: Logger = silentLogger) {
+  return {
+    restartController: new ServerRestartController(),
+    updateService: new UpdateService({
+      currentVersion: "1.2.3",
+      executablePath: process.execPath,
+      restartSupported: false,
+      autoCheckEnabled: false,
+      homeDir: home,
+      logger,
+    }),
+  };
+}
+
 async function createSetupHost(overrides: {
   createRuntime?: (options: AgentRuntimeOptions) => Promise<AgentRuntime>;
   embeddedWebAssets?: ReadonlyMap<string, string>;
   logger?: Logger;
   accessLog?: boolean;
+  updateService?: ServerHostOptions["updateService"];
+  restartController?: ServerRestartController;
 } = {}) {
   const home = await createHome();
   const configService = new ServerConfigService({ homeDir: home });
   const runtime = fakeRuntime(configService);
   const createRuntime = mock(overrides.createRuntime ?? (async () => runtime));
+  const infrastructure = hostInfrastructure(home, overrides.logger ?? silentLogger);
   const host = await ArchCodeServerHost.create({
     configService,
     createRuntime,
@@ -100,6 +123,13 @@ async function createSetupHost(overrides: {
     dev: false,
     embeddedWebAssets: overrides.embeddedWebAssets,
     version: "1.2.3",
+    ...infrastructure,
+    ...(overrides.updateService === undefined
+      ? {}
+      : { updateService: overrides.updateService }),
+    ...(overrides.restartController === undefined
+      ? {}
+      : { restartController: overrides.restartController }),
   });
   const setupUrl = host.setupInstructions("http://localhost:4096")[0]!;
   const token = new URL(setupUrl.slice(setupUrl.indexOf("http"))).hash.slice("#token=".length);
@@ -199,6 +229,65 @@ describe("ArchCodeServerHost", () => {
     })).status).toBe(404);
   });
 
+  test("restart waits for an entered write and then closes all later writes", async () => {
+    const status: UpdateStatus = {
+      currentVersion: "1.0.0",
+      phase: "restart_pending",
+      managed: true,
+      restartSupported: true,
+      updateAvailable: false,
+      restartRequired: true,
+    };
+    let enterInstall!: () => void;
+    const installEntered = new Promise<void>((resolve) => {
+      enterInstall = resolve;
+    });
+    let releaseInstall!: () => void;
+    const installReleased = new Promise<void>((resolve) => {
+      releaseInstall = resolve;
+    });
+    const restartController = new ServerRestartController({
+      schedule: () => undefined,
+    });
+    restartController.bind(async () => undefined);
+    const { host, token } = await createSetupHost({
+      restartController,
+      updateService: {
+        getStatus: async () => status,
+        check: async () => status,
+        install: async () => {
+          enterInstall();
+          await installReleased;
+          return status;
+        },
+        stop: async () => undefined,
+        closeAdmissionIfIdle: () => true,
+        reopenAdmission: () => undefined,
+      },
+    });
+    await host.app.request("/api/setup", setupRequest(token, {
+      config: setupConfig(),
+      requireLogin: false,
+    }));
+
+    const installing = host.app.request("/api/update/install", {
+      method: "POST",
+    });
+    await installEntered;
+    expect((await host.app.request("/api/update/restart", {
+      method: "POST",
+    })).status).toBe(409);
+
+    releaseInstall();
+    expect((await installing).status).toBe(200);
+    expect((await host.app.request("/api/update/restart", {
+      method: "POST",
+    })).status).toBe(202);
+    expect((await host.app.request("/api/update/check", {
+      method: "POST",
+    })).status).toBe(409);
+  });
+
   test("rejects client-supplied authentication state without consuming Setup", async () => {
     const { host, token, configService } = await createSetupHost();
     const config = setupConfig() as CompleteSetupRequest["config"] & {
@@ -234,9 +323,26 @@ describe("ArchCodeServerHost", () => {
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Strict");
     expect((await host.app.request("/api/agents")).status).toBe(401);
+    expect((await host.app.request("/api/update")).status).toBe(401);
     expect((await host.app.request("/api/agents", {
       headers: { Cookie: cookie.split(";")[0]! },
     })).status).toBe(200);
+    const updateStatus = await host.app.request("/api/update", {
+      headers: { Cookie: cookie.split(";")[0]! },
+    });
+    expect(updateStatus.status).toBe(200);
+    expect(updateStatus.headers.get("cache-control")).toBe("no-store");
+    expect((await host.app.request("/api/update/restart", {
+      method: "POST",
+      headers: { Cookie: cookie.split(";")[0]! },
+    })).status).toBe(403);
+    expect((await host.app.request("/api/update/restart", {
+      method: "POST",
+      headers: {
+        Cookie: cookie.split(";")[0]!,
+        Origin: "http://localhost",
+      },
+    })).status).toBe(422);
   });
 
   test("supports cookie login, same-origin logout and password rotation", async () => {
@@ -373,6 +479,7 @@ describe("ArchCodeServerHost", () => {
       configService,
       createRuntime,
       logger: silentLogger,
+      ...hostInfrastructure(home),
     });
     const bootstrap = await host.app.request("/api/bootstrap");
 
@@ -402,6 +509,7 @@ describe("ArchCodeServerHost", () => {
       configService,
       createRuntime: mock(async () => runtime),
       logger: silentLogger,
+      ...hostInfrastructure(home),
     });
 
     expect(await (await host.app.request("/api/bootstrap")).json()).toEqual({

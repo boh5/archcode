@@ -38,6 +38,9 @@ import {
   type EmbeddedWebAssets,
 } from "./serve-web";
 import { globalEventBus } from "./events/global-event-bus";
+import { createUpdateRoutes } from "./routes/update";
+import type { ServerRestartController } from "./restart-controller";
+import type { UpdateService } from "./updater";
 
 export type AgentRuntimeFactory = (
   options: AgentRuntimeOptions,
@@ -51,6 +54,16 @@ export interface ServerHostOptions {
   readonly dev?: boolean;
   readonly embeddedWebAssets?: EmbeddedWebAssets;
   readonly version?: string;
+  readonly updateService: Pick<
+    UpdateService,
+    | "getStatus"
+    | "check"
+    | "install"
+    | "stop"
+    | "closeAdmissionIfIdle"
+    | "reopenAdmission"
+  >;
+  readonly restartController: ServerRestartController;
 }
 
 type HostState =
@@ -71,6 +84,8 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
   private state: HostState;
   private runtime: AgentRuntime | undefined;
   private runtimeApp: Hono | undefined;
+  private mutationAdmissionOpen = true;
+  private activeMutations = 0;
 
   private constructor(options: ServerHostOptions, state: HostState) {
     this.options = options;
@@ -198,13 +213,15 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
     ];
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(reason: string = "server_shutdown"): Promise<void> {
+    this.mutationAdmissionOpen = false;
+    await this.options.updateService.stop();
     const runtime = this.runtime;
     this.runtime = undefined;
     this.runtimeApp = undefined;
     if (runtime === undefined) return;
-    globalEventBus.emit({ type: "shutdown", reason: "server_shutdown" });
-    runtime.notifyRuntimeShutdown("server_shutdown");
+    globalEventBus.emit({ type: "shutdown", reason });
+    runtime.notifyRuntimeShutdown(reason);
     await runtime.shutdown();
   }
 
@@ -220,6 +237,18 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       c.header("X-Content-Type-Options", "nosniff");
       c.header("Referrer-Policy", "no-referrer");
     });
+    app.use("/api/*", async (c, next) => {
+      if (isSafeMethod(c.req.method) || c.req.path === "/api/update/restart") {
+        await next();
+        return;
+      }
+      const release = this.acquireMutationAdmission();
+      try {
+        await next();
+      } finally {
+        release();
+      }
+    });
     if (this.options.dev) {
       app.use("*", cors({
         origin: "http://localhost:5173",
@@ -230,6 +259,8 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
     app.use("/api/setup", noStore);
     app.use("/api/setup/*", noStore);
     app.use("/api/auth/*", noStore);
+    app.use("/api/update", noStore);
+    app.use("/api/update/*", noStore);
 
     app.get("/api/health", (c) => c.json({
       ok: true,
@@ -253,6 +284,33 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
     });
     app.route("/api/auth", createAuthRoutes(this.auth, {
       dev: this.options.dev,
+    }));
+
+    const updateAccess: MiddlewareHandler = async (c, next) => {
+      if (this.state.mode !== "ready" || this.runtime === undefined) {
+        throw new ServerError(
+          "SERVER_NOT_READY",
+          "ArchCode Runtime is not available",
+          503,
+        );
+      }
+      if (
+        this.auth.authRequired
+        && !this.auth.authenticate(readSessionToken(c))
+      ) {
+        throw new UnauthorizedError("Authentication required");
+      }
+      if (this.auth.authRequired && !isSafeMethod(c.req.method)) {
+        assertMutationOrigin(c.req.raw, { dev: this.options.dev });
+      }
+      await next();
+    };
+    app.use("/api/update", updateAccess);
+    app.use("/api/update/*", updateAccess);
+    app.route("/api/update", createUpdateRoutes({
+      updateService: this.options.updateService,
+      restartController: this.options.restartController,
+      prepareForRestart: () => this.prepareForRestart(),
     }));
 
     app.all("/api/*", async (c) => {
@@ -293,6 +351,59 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       );
     }
     return this.state;
+  }
+
+  private acquireMutationAdmission(): () => void {
+    if (!this.mutationAdmissionOpen) {
+      throw new ServerError(
+        "UPDATE_RUNTIME_BUSY",
+        "ArchCode is restarting and no longer accepts changes",
+        409,
+      );
+    }
+    this.activeMutations += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.activeMutations -= 1;
+    };
+  }
+
+  private prepareForRestart(): {
+    ready: boolean;
+    activeFamilyCount?: number;
+  } {
+    this.mutationAdmissionOpen = false;
+    if (this.activeMutations > 0) {
+      this.mutationAdmissionOpen = true;
+      return { ready: false, activeFamilyCount: this.activeMutations };
+    }
+    if (!this.options.updateService.closeAdmissionIfIdle()) {
+      this.mutationAdmissionOpen = true;
+      return { ready: false, activeFamilyCount: 1 };
+    }
+
+    try {
+      const runtime = this.runtime;
+      if (runtime === undefined) {
+        throw new ServerError(
+          "SERVER_NOT_READY",
+          "ArchCode Runtime is not available",
+          503,
+        );
+      }
+      const admission = runtime.prepareForRestart();
+      if (!admission.ready) {
+        this.options.updateService.reopenAdmission();
+        this.mutationAdmissionOpen = true;
+      }
+      return admission;
+    } catch (error) {
+      this.options.updateService.reopenAdmission();
+      this.mutationAdmissionOpen = true;
+      throw error;
+    }
   }
 
   private async activateRuntime(activation: ServerConfigActivation): Promise<void> {

@@ -42,7 +42,8 @@ For any non-local deployment:
 ArchCode can continue an active Execution after a browser disconnects as long
 as its process and machine remain running. In the current release, restarting
 the server interrupts an active Execution; persisted Session history remains
-available after restart.
+available after restart. Direct-update restart is consequently accepted only
+when all Runtime Session families and control operations are idle.
 
 ## Reverse proxy requirement
 

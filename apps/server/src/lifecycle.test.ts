@@ -102,7 +102,7 @@ describe("server lifecycle", () => {
       logger,
     });
     expect(handlers.has("SIGTERM")).toBe(true);
-    await expectExitCode(handle.shutdown("SIGTERM"), 0);
+    await expectExitCode(handle.shutdown(), 0);
 
     expect(target.shutdown).toHaveBeenCalled();
     expect(order).toEqual(["host-shutdown", "stop", "exit:0"]);
@@ -129,7 +129,7 @@ describe("server lifecycle", () => {
     });
     expect(handlers.has("SIGINT")).toBe(true);
 
-    const shutdown = handle.shutdown("SIGINT");
+    const shutdown = handle.shutdown();
     expect(deadlineScheduler.pendingCount()).toBe(1);
     deadlineScheduler.fireScheduled();
     await expectExitCode(shutdown, 1);
@@ -140,6 +140,42 @@ describe("server lifecycle", () => {
     }));
     expect(server.stop).toHaveBeenCalled();
     expect(deadlineScheduler.pendingCount()).toBe(0);
+  });
+
+  test("uses the requested restart reason and exit code after graceful shutdown", async () => {
+    const target = makeTarget();
+    const server = { stop: mock(() => undefined) };
+    const { processRef } = createProcess();
+    const handle = setupGracefulShutdown(server, target, {
+      process: processRef,
+      logger: silentLogger,
+    });
+
+    await expectExitCode(handle.shutdown({
+      reason: "update_restart",
+      exitCode: 75,
+    }), 75);
+    expect(target.shutdown).toHaveBeenCalledWith("update_restart");
+  });
+
+  test("stops and exits 1 when graceful shutdown fails", async () => {
+    const target = makeTarget(mock(async () => {
+      throw new Error("drain failed");
+    }));
+    const server = { stop: mock(() => undefined) };
+    const { processRef } = createProcess();
+    const { logger, entries } = createInMemoryLogger();
+    const handle = setupGracefulShutdown(server, target, {
+      process: processRef,
+      logger,
+    });
+
+    await expectExitCode(handle.shutdown(), 1);
+    expect(server.stop).toHaveBeenCalledTimes(1);
+    expect(entries).toContainEqual(expect.objectContaining({
+      level: "error",
+      event: "server.shutdown.failed",
+    }));
   });
 
 });

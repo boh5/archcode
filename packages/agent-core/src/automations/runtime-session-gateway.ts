@@ -32,6 +32,10 @@ export interface RuntimeSessionDispatchGatewayOptions {
   >;
   readonly sessionRuntime: AutomationSessionRuntime;
   readonly resolveProject: (projectSlug: string) => Promise<Pick<ProjectInfo, "slug" | "workspaceRoot"> | undefined>;
+  readonly runRuntimeMutation: <T>(
+    workspaceRoot: string,
+    operation: () => Promise<T>,
+  ) => Promise<T>;
   readonly worktreeServiceFactory?: (workspaceRoot: string) => Pick<
     WorktreeService,
     "create" | "findManaged" | "validate" | "validateManagedClaim"
@@ -53,6 +57,7 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
   readonly #sessions: RuntimeSessionDispatchGatewayOptions["sessionStoreManager"];
   readonly #runtime: AutomationSessionRuntime;
   readonly #resolveProject: RuntimeSessionDispatchGatewayOptions["resolveProject"];
+  readonly #runRuntimeMutation: RuntimeSessionDispatchGatewayOptions["runRuntimeMutation"];
   readonly #worktreeServiceFactory: NonNullable<RuntimeSessionDispatchGatewayOptions["worktreeServiceFactory"]>;
   readonly #dispatches = new Map<string, Promise<void>>();
 
@@ -60,6 +65,7 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
     this.#sessions = options.sessionStoreManager;
     this.#runtime = options.sessionRuntime;
     this.#resolveProject = options.resolveProject;
+    this.#runRuntimeMutation = options.runRuntimeMutation;
     this.#worktreeServiceFactory = options.worktreeServiceFactory
       ?? ((workspaceRoot) => new WorktreeService({ canonicalRoot: workspaceRoot }));
   }
@@ -68,7 +74,10 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
     const key = `${input.workspaceRoot}\0${input.clientRequestId}`;
     const existing = this.#dispatches.get(key);
     if (existing !== undefined) return await existing;
-    const pending = this.#dispatch(input).finally(() => {
+    const pending = this.#runRuntimeMutation(
+      input.workspaceRoot,
+      () => this.#dispatch(input),
+    ).finally(() => {
       if (this.#dispatches.get(key) === pending) this.#dispatches.delete(key);
     });
     this.#dispatches.set(key, pending);

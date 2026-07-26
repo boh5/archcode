@@ -26,8 +26,10 @@ curl -fsSL https://github.com/boh5/archcode/releases/latest/download/install.sh 
 ```
 
 The installer downloads the correct macOS or Linux binary, verifies its
-checksum, and installs it without `sudo`. If `~/.local/bin` is not on `PATH`,
-follow the exact instruction printed by the installer.
+checksum, and installs it without `sudo`. Installer-managed copies can later
+update from **Settings → About & Updates** or `archcode update`. If
+`~/.local/bin` is not on `PATH`, follow the exact instruction printed by the
+installer.
 
 ### 2. Start
 
@@ -118,6 +120,7 @@ give coding Agents a self-hosted runtime and a persistent Web workbench.
 - Diffs, tool evidence, test output, and review summaries
 - Project memory, context compaction, and model Profiles
 - Git worktree execution when explicitly requested
+- Signed direct updates with an idle-only graceful restart
 
 ## Know before you self-host
 

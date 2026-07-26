@@ -12,6 +12,7 @@ import {
   isGlobalSSEHitlRealtimeEvent,
   isGlobalSSEHitlSnapshotEvent,
   isGlobalSSEResourceChangedEvent,
+  isGlobalSSEUpdateChangedEvent,
   isSessionEventPayload,
 } from "@archcode/protocol";
 import type {
@@ -311,6 +312,8 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
       case "session.runtime.snapshot":
       case "session.runtime_changed":
         return parsed;
+      case "update.changed":
+        return isGlobalSSEUpdateChangedEvent(parsed) ? parsed : null;
       case "hitl.snapshot":
         return isGlobalSSEHitlSnapshotEvent(parsed) ? parsed : null;
       case "hitl.event":
@@ -482,6 +485,10 @@ export function handleSSEEvent(
       sessionRuntimeStore.getState().applyChange(parsed as GlobalSSESessionRuntimeChangedEvent);
       break;
     }
+    case "update.changed": {
+      deps.invalidateQueries({ queryKey: queryKeys.update, exact: true });
+      break;
+    }
   }
 }
 
@@ -633,6 +640,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         refreshSessionSnapshots();
         refreshDashboardProjections();
         void queryClient.invalidateQueries({ queryKey: queryKeys.modelRuntime });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.update });
         void refreshProjectTodoQueriesAfterSSEOpen(queryClient);
         setConnectionState("open");
       },

@@ -2357,6 +2357,87 @@ describe("SessionExecutionManager", () => {
     expect(manager.getSessionFamilyActivity(workspaceRoot, secondSessionId)).toBe("idle");
   });
 
+  test("closes all new Runtime admission when restart maintenance claims an idle manager", async () => {
+    const sessionId = crypto.randomUUID();
+    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const agent = new MockAgent(
+      sessionId,
+      Promise.resolve({ text: "must not run", steps: 1 }),
+    );
+    const { manager } = createManager({ [sessionId]: agent });
+
+    expect(manager.closeAdmissionIfIdle()).toEqual({ ready: true });
+
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "must stay closed" },
+    })).rejects.toBeInstanceOf(SessionExecutionManagerShuttingDownError);
+    expect(agent.runMock).not.toHaveBeenCalled();
+    expect(() => manager.acquireSessionFamilyStop({
+      workspaceRoot,
+      rootSessionId: sessionId,
+    })).toThrow(SessionExecutionManagerShuttingDownError);
+    expect(() => manager.acquireWorkspaceClose(workspaceRoot))
+      .toThrow(SessionExecutionManagerShuttingDownError);
+    expect(() => manager.acquireSessionCwdTransition(workspaceRoot, sessionId))
+      .toThrow(SessionExecutionManagerShuttingDownError);
+    await expect(manager.deleteSession(workspaceRoot, sessionId))
+      .rejects.toBeInstanceOf(SessionExecutionManagerShuttingDownError);
+    await expect(manager.runRuntimeMutation(
+      workspaceRoot,
+      async () => undefined,
+    )).rejects.toBeInstanceOf(SessionExecutionManagerShuttingDownError);
+  });
+
+  test("keeps restart admission open while an internal Runtime mutation drains", async () => {
+    const release = deferred<void>();
+    const { manager } = createManager({});
+    const mutation = manager.runRuntimeMutation(
+      workspaceRoot,
+      () => release.promise,
+    );
+
+    expect(manager.closeAdmissionIfIdle()).toEqual({
+      ready: false,
+      activeFamilyCount: 1,
+    });
+    release.resolve(undefined);
+    await mutation;
+    await manager.runRuntimeMutation(workspaceRoot, async () => undefined);
+  });
+
+  test("leaves Runtime admission open when restart maintenance finds active work", async () => {
+    const sessionId = crypto.randomUUID();
+    const firstRun = deferred<MockAgentResult>();
+    const agent = new MockAgent(sessionId, firstRun.promise);
+    const { manager } = createManager({ [sessionId]: agent });
+    const first = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "finish before restart" },
+    });
+    await first.started;
+
+    expect(manager.closeAdmissionIfIdle()).toEqual({
+      ready: false,
+      activeFamilyCount: 1,
+    });
+
+    firstRun.resolve({ text: "finished", steps: 1 });
+    await first.promise;
+    const next = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "admission remains open" },
+    });
+    await next.promise;
+    expect(agent.runMock).toHaveBeenCalledTimes(2);
+  });
+
   test("shutdown closes admission and drains a pending checked start before cancelling active executions", async () => {
     const activeSessionId = crypto.randomUUID();
     const pendingSessionId = crypto.randomUUID();

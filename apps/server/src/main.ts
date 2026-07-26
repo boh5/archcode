@@ -18,6 +18,17 @@ import { resolveCliInvocation } from "./cli";
 import { resolveLoggingConfig } from "./logging-config";
 import { readSourceProductVersion } from "./product-version";
 import { ArchCodeServerHost } from "./server-host";
+import { globalEventBus } from "./events/global-event-bus";
+import {
+  isCompiledRuntime,
+  isLauncherChild,
+  runServerLauncher,
+} from "./launcher";
+import { ServerRestartController } from "./restart-controller";
+import {
+  installManagedCandidate,
+  UpdateService,
+} from "./updater";
 
 export { createRuntime, type AgentRuntime, type AgentRuntimeOptions } from "@archcode/agent-core";
 
@@ -33,7 +44,23 @@ async function main(
   accessLog: boolean,
 ) {
   const configService = new ServerConfigService();
-  const compiled = import.meta.url.startsWith("file:///$bunfs/");
+  const compiled = isCompiledRuntime();
+  const restartController = new ServerRestartController();
+  const updateService = new UpdateService({
+    currentVersion: options.version ?? "development",
+    executablePath: process.execPath,
+    restartSupported: compiled && isLauncherChild(),
+    autoCheckEnabled: compiled,
+    logger: logger.child({ module: "server.update" }),
+    onStatusChange: (status) => {
+      globalEventBus.emit({
+        type: "update.changed",
+        status,
+        createdAt: Date.now(),
+      });
+    },
+  });
+  await updateService.start();
   const host = await ArchCodeServerHost.create({
     configService,
     createRuntime,
@@ -42,11 +69,14 @@ async function main(
     dev: !compiled,
     embeddedWebAssets: options.embeddedWebAssets,
     version: options.version,
+    updateService,
+    restartController,
   });
   await bootServer(host, {
     port: options.port,
     version: options.version,
     logger,
+    restartController,
   });
 }
 
@@ -109,11 +139,98 @@ export function runArchCodeCli(options: RunArchCodeCliOptions): void {
     return;
   }
 
+  if (invocation.kind === "install_managed") {
+    void commitInstallerCandidate({
+      installPath: invocation.installPath,
+      version: options.version,
+    });
+    return;
+  }
+
+  if (invocation.kind === "update") {
+    void runUpdateCommand({
+      checkOnly: invocation.checkOnly,
+      version: options.version,
+    });
+    return;
+  }
+
+  if (isCompiledRuntime() && !isLauncherChild()) {
+    void runServerLauncher(options.args)
+      .then((exitCode) => process.exit(exitCode))
+      .catch((error) => logFatal(createConsoleLogger({
+        level: "error",
+        module: "launcher",
+      }), error));
+    return;
+  }
+
   startArchCode({
     embeddedWebAssets: options.embeddedWebAssets,
     port: invocation.port,
     version: options.version,
   });
+}
+
+async function commitInstallerCandidate(input: {
+  installPath: string;
+  version: string;
+}): Promise<void> {
+  try {
+    if (!isCompiledRuntime()) {
+      throw new Error("Managed installation requires a packaged ArchCode executable");
+    }
+    await installManagedCandidate({
+      candidatePath: process.execPath,
+      installPath: input.installPath,
+      version: input.version,
+    });
+  } catch (error) {
+    process.stderr.write(
+      `archcode installer: ${error instanceof Error ? error.message : "unable to write install receipt"}\n`,
+    );
+    process.exitCode = 1;
+  }
+}
+
+async function runUpdateCommand(input: {
+  checkOnly: boolean;
+  version: string;
+}): Promise<void> {
+  const logger = createConsoleLogger({
+    level: "error",
+    module: "update",
+  });
+  const updateService = new UpdateService({
+    currentVersion: input.version,
+    executablePath: process.execPath,
+    restartSupported: false,
+    autoCheckEnabled: false,
+    logger,
+  });
+  try {
+    const status = input.checkOnly
+      ? await updateService.check()
+      : await updateService.install();
+    if (input.checkOnly) {
+      process.stdout.write(status.updateAvailable && status.latest
+        ? `ArchCode v${status.latest.version} is available.\n`
+        : `ArchCode v${status.currentVersion} is current.\n`);
+    } else if (status.restartRequired && status.latest) {
+      process.stdout.write(
+        `Installed ArchCode v${status.latest.version}. Restart the running server to use it.\n`,
+      );
+    } else {
+      process.stdout.write(`ArchCode v${status.currentVersion} is current.\n`);
+    }
+  } catch (error) {
+    process.stderr.write(
+      `archcode update: ${error instanceof Error ? error.message : "update failed"}\n`,
+    );
+    process.exitCode = 1;
+  } finally {
+    await updateService.stop();
+  }
 }
 
 export function startProductionArchCode(

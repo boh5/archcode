@@ -13,3 +13,4 @@ export * from "./compression";
 export * from "./dashboard";
 export * from "./bootstrap";
 export * from "./auth";
+export * from "./update";

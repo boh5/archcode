@@ -37,6 +37,7 @@ import type {
   FinalizedToolResult,
   ServerConfigUpdate,
 } from "./types";
+import type { GlobalSSEUpdateChangedEvent } from "./update";
 
 function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
   return {
@@ -258,6 +259,28 @@ describe("global SSE wire protocol types", () => {
     expect(serializeRoundTrip(changed)).toEqual(changed);
   });
 
+  test("round-trips the complete direct-update projection", () => {
+    const changed: GlobalSSEUpdateChangedEvent = {
+      type: "update.changed",
+      createdAt: 12,
+      status: {
+        currentVersion: "1.0.0",
+        phase: "restart_pending",
+        managed: true,
+        restartSupported: true,
+        updateAvailable: false,
+        restartRequired: true,
+        latest: {
+          version: "1.1.0",
+          releaseUrl: "https://github.com/boh5/archcode/releases/tag/v1.1.0",
+        },
+        lastCheckedAt: 11,
+      },
+    };
+
+    expect(serializeRoundTrip(changed)).toEqual(changed);
+  });
+
   test("accepts all global SSE event subtypes in the union", () => {
     const events: GlobalSSEEvent[] = [
       {
@@ -302,6 +325,18 @@ describe("global SSE wire protocol types", () => {
         payload: { type: "hitl.request" },
         view: {} as HitlView,
       },
+      {
+        type: "update.changed",
+        createdAt: 5,
+        status: {
+          currentVersion: "1.0.0",
+          phase: "idle",
+          managed: false,
+          restartSupported: false,
+          updateAvailable: false,
+          restartRequired: false,
+        },
+      },
     ];
 
     expect(events.map((event) => event.type)).toEqual([
@@ -314,6 +349,7 @@ describe("global SSE wire protocol types", () => {
       "session.runtime_changed",
       "hitl.snapshot",
       "hitl.event",
+      "update.changed",
     ]);
   });
 

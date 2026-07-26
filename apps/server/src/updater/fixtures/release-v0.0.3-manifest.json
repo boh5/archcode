@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 2,
+  "name": "archcode",
+  "version": "0.0.3",
+  "tag": "v0.0.3",
+  "assets": [
+    {
+      "name": "archcode-macos-arm64-v0.0.3.tar.gz",
+      "kind": "archive",
+      "platform": "macOS",
+      "architecture": "arm64",
+      "archiveFormat": "tar.gz",
+      "size": 33987693,
+      "sha256": "69c9e413d329f3effde3f383b85340fba4f83733f53b7f5cb8fab26e425baa8d",
+      "binary": {
+        "name": "archcode",
+        "sha256": "8c5f4ef1144ede9dafce9266214f93c3f439dc5c2da51438fe7dff0b22d31192",
+        "size": 99891874
+      }
+    },
+    {
+      "name": "archcode-macos-x64-v0.0.3.tar.gz",
+      "kind": "archive",
+      "platform": "macOS",
+      "architecture": "x64",
+      "archiveFormat": "tar.gz",
+      "size": 36180471,
+      "sha256": "a27db69255d0ee8d56eb59b594bed8e76bd9da82756a7bb3abb04bb9b6fb61df",
+      "binary": {
+        "name": "archcode",
+        "sha256": "059a5a27eda3f3c6c390719cbb4a7668f4831df979a5b17484c4ea0fa79b1193",
+        "size": 104989184
+      }
+    },
+    {
+      "name": "archcode-linux-arm64-v0.0.3.tar.gz",
+      "kind": "archive",
+      "platform": "Linux",
+      "architecture": "arm64",
+      "archiveFormat": "tar.gz",
+      "size": 45157422,
+      "sha256": "d8438451952425caec8b888524e961efccf43681e007cb343643f6c28c829742",
+      "binary": {
+        "name": "archcode",
+        "sha256": "6c50a0d180d4d1103090b7b0174aae703b8ad38ea4c13c64a80adafab2ad54df",
+        "size": 127863104
+      }
+    },
+    {
+      "name": "archcode-linux-x64-v0.0.3.tar.gz",
+      "kind": "archive",
+      "platform": "Linux",
+      "architecture": "x64",
+      "archiveFormat": "tar.gz",
+      "size": 47742100,
+      "sha256": "b1c254fde64175f79176b91b5aabbf9f8f2995702f16438ade76553312df8149",
+      "binary": {
+        "name": "archcode",
+        "sha256": "3a7d6bec3febed4a84818547839c5badc60e49777c8eedd8d71aed8c488bea2b",
+        "size": 134035776
+      }
+    },
+    {
+      "name": "install.sh",
+      "kind": "installer",
+      "size": 6820,
+      "sha256": "c37aad2371f14d058d689037f85a1460fbe18e191b0f4376a94b8d3c9e309b3d"
+    }
+  ]
+}

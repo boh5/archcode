@@ -66,6 +66,9 @@ describe("RuntimeSessionDispatchGateway", () => {
         },
       },
       resolveProject: async () => ({ slug: "project-a", workspaceRoot }),
+      runRuntimeMutation: async (_workspaceRoot, operation) => (
+        await operation()
+      ),
     });
 
     const clientRequestId = crypto.randomUUID();
