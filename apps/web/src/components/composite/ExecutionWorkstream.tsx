@@ -274,6 +274,8 @@ export function PartRenderer({
       return <CompactionBlock part={part} />;
     case "recovery-notice":
       return <RecoveryNotice part={part} />;
+    case "goal-notice":
+      return null;
   }
 }
 

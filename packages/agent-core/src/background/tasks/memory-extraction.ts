@@ -108,7 +108,10 @@ export function createMemoryExtractionTask(
       const messages = state.messages.slice(fromIndex);
 
       const filteredMessages = filterMessagesForExtraction(messages);
-      const userMessages = messages.filter((m) => m.role === "user");
+      const userMessages = filteredMessages.filter((message) =>
+        message.role === "user"
+        && message.parts.some((part) => part.type === "text")
+      );
       if (userMessages.length < effectiveMinMessages) return;
 
       const totalContentLength = filteredMessages.reduce((sum, m) => {

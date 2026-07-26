@@ -395,6 +395,8 @@ function renderPartUnits(part: StoredPart, input: BackgroundOutputInput): Output
       return [{ text: "### System notice" }, { text: part.notice }];
     case "recovery-notice":
       return [{ text: "### Recovery notice" }, { text: part.message }];
+    case "goal-notice":
+      return [];
   }
 }
 

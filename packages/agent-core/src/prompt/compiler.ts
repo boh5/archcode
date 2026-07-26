@@ -31,9 +31,6 @@ export class PromptContractCompiler {
       Promise.resolve(section("Runtime Envelope", "runtime/snapshot", renderRuntime(contract))),
       Promise.resolve(section("Role Contract", `agent-definition/${contract.role.name}@2`, renderRole(contract))),
       Promise.resolve(section("Collaboration Contract", "prompt/collaboration@2", renderCollaboration(contract))),
-      ...(contract.role.name === "lead" && contract.runtime.goal !== "none"
-        ? [Promise.resolve(section("Session Goal", "session-goal/runtime-overlay", renderSessionGoal(contract)))]
-        : []),
       Promise.resolve(section("Skills", "skill-service/execution-snapshot", renderSkills(contract))),
       Promise.resolve(section("Tool Visibility", "tool-registry/execution-snapshot", renderTools(contract))),
       Promise.resolve(section("Current Context", "runtime/current-call-snapshot", renderCurrentContext(contract))),
@@ -104,7 +101,6 @@ function display(value: string | number | readonly string[] | undefined): string
 
 function renderRuntime(contract: PromptContractV2): string {
   const { runtime, role } = contract;
-  const goal = runtime.goal === "none" ? "none" : `${runtime.goal.instanceId} (${runtime.goal.status}, generation=${runtime.goal.generation})`;
   const todo = runtime.todo === "none" ? "none" : `${runtime.todo.id} (${runtime.todo.mode})`;
   const mcp = Object.keys(runtime.mcp).length === 0 ? "none" : Object.entries(runtime.mcp).map(([name, status]) => `${name}=${status}`).join(", ");
   return `## Runtime Envelope
@@ -117,7 +113,6 @@ function renderRuntime(contract: PromptContractV2): string {
 - Depth: ${runtime.depth}
 - Allowed delegate targets: ${display(runtime.allowedDelegateTargets)}
 - Completion authority: ${display(role.completionAuthority)}
-- Goal: ${goal}
 - Todo: ${todo}
 - Remaining delegation depth: ${runtime.remainingDepth}
 - Max concurrent children: ${runtime.maxConcurrentChildren}
@@ -164,17 +159,6 @@ function renderCollaboration(contract: PromptContractV2): string {
 - Finish with a normal assistant response that clearly reports the outcome, verification, and unresolved issues.`;
   }
   return "## Collaboration Contract\n\n- Work within this role directly; delegation is not visible in this execution.";
-}
-
-function renderSessionGoal(contract: PromptContractV2): string {
-  const goal = contract.runtime.goal;
-  if (goal === "none") throw new Error("Session Goal overlay requires a Session Goal");
-  return `## Session Goal
-
-- Instance: ${goal.instanceId}
-- Generation: ${goal.generation}
-- Status: ${goal.status}
-- Objective: ${goal.objective}`;
 }
 
 function renderSkills(contract: PromptContractV2): string {

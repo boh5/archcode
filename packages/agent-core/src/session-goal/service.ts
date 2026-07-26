@@ -1,13 +1,26 @@
 import {
   addUsage,
   createEmptySessionStats,
+  type GoalNoticePart,
   type NormalizedUsage,
+  type Reminder,
   type SessionGoal,
   type SessionGoalChangedEvent,
+  type SessionGoalNoticeAction,
+  type SessionMessage,
 } from "@archcode/protocol";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
-import { SessionGoalObjectiveSchema, SessionGoalSchema } from "./schema";
+import {
+  goalSnapshot,
+  sessionGoalNoticeInvariantError,
+} from "./invariant";
+import {
+  GoalNoticePartSchema,
+  SessionGoalBlockedReasonSchema,
+  SessionGoalObjectiveSchema,
+  SessionGoalSchema,
+} from "./schema";
 
 export type SessionGoalAuthority =
   | { readonly kind: "user_control" }
@@ -28,7 +41,8 @@ export class SessionGoalServiceError extends Error {
       | "GOAL_TERMINAL"
       | "GENERATION_CONFLICT"
       | "INVALID_TRANSITION"
-      | "AUTHORITY_DENIED",
+      | "AUTHORITY_DENIED"
+      | "CONTRACT_VIOLATION",
     message: string,
   ) {
     super(message);
@@ -37,6 +51,8 @@ export class SessionGoalServiceError extends Error {
 }
 
 export class SessionGoalService {
+  readonly #operationTails = new Map<string, Promise<void>>();
+
   constructor(private readonly sessions: SessionStoreManager) {}
 
   async get(target: SessionGoalTarget): Promise<SessionGoal | undefined> {
@@ -65,7 +81,7 @@ export class SessionGoalService {
         activatedAt: now,
         updatedAt: now,
       });
-      return change(goal, "created", now);
+      return semanticChange(goal, "created", "created", input.authority.kind, now);
     });
   }
 
@@ -84,7 +100,14 @@ export class SessionGoalService {
         objective,
         updatedAt: now,
       });
-      return change(goal, "edited", now);
+      return semanticChange(
+        goal,
+        "edited",
+        "edited",
+        input.authority.kind,
+        now,
+        current.generation,
+      );
     });
   }
 
@@ -95,23 +118,23 @@ export class SessionGoalService {
       if (current.status === "paused") return unchanged(current);
       if (current.status === "budget_limited") {
         if (current.pausedAt !== undefined) return unchanged(current);
-        return change(checkedGoal({
+        return semanticChange(checkedGoal({
           ...current,
           pausedAt: now,
           blockedReason: undefined,
           updatedAt: now,
-        }), "paused", now);
+        }), "paused", "paused", input.authority.kind, now);
       }
       if (current.status !== "active") {
         throw new SessionGoalServiceError("INVALID_TRANSITION", `Cannot pause Goal from ${current.status}`);
       }
-      return change(checkedGoal({
+      return semanticChange(checkedGoal({
         ...current,
         status: "paused",
         pausedAt: now,
         blockedReason: undefined,
         updatedAt: now,
-      }), "paused", now);
+      }), "paused", "paused", input.authority.kind, now);
     });
   }
 
@@ -125,27 +148,38 @@ export class SessionGoalService {
       if (current.tokenBudget !== undefined && current.usage.tokens.totalTokens >= current.tokenBudget) {
         throw new SessionGoalServiceError("INVALID_TRANSITION", "Increase the token budget before resuming");
       }
-      return change(checkedGoal({
+      return semanticChange(checkedGoal({
         ...current,
         status: "active",
         pausedAt: undefined,
         blockedReason: undefined,
         updatedAt: now,
-      }), "resumed", now);
+      }), "resumed", "resumed", input.authority.kind, now);
     });
   }
 
   async clear(input: SessionGoalTarget & { readonly authority: SessionGoalAuthority }): Promise<void> {
     requireAuthority(input.authority, "user_control");
-    await this.sessions.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
-      assertRootLead(state);
-      const goal = requiredGoal(state);
-      const occurredAt = Date.now();
-      return {
-        result: undefined,
-        patch: { goal: undefined },
-        events: [eventFor(goal, "cleared", occurredAt)],
-      };
+    await this.#serial(input, async () => {
+      await this.sessions.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
+        assertRootLead(state);
+        assertGoalContract(state);
+        const goal = requiredGoal(state);
+        const occurredAt = Date.now();
+        const reminder = goalReminder({
+          goal,
+          action: "cleared",
+          authority: input.authority.kind,
+          now: occurredAt,
+        });
+        return {
+          result: undefined,
+          events: [
+            eventFor(goal, "cleared", occurredAt),
+            { type: "reminder", reminder },
+          ],
+        };
+      });
     });
   }
 
@@ -167,12 +201,13 @@ export class SessionGoalService {
               ? "blocked" as const
               : "active" as const
           : current.status;
-      return change(checkedGoal({
+      if (current.tokenBudget === tokenBudget && current.status === status) return unchanged(current);
+      return semanticChange(checkedGoal({
         ...current,
         tokenBudget,
         status,
         updatedAt: now,
-      }), "budget_updated", now);
+      }), "budget_updated", "budget_updated", input.authority.kind, now);
     });
   }
 
@@ -202,7 +237,9 @@ export class SessionGoalService {
         // a review created during an Execution is not invalidated by settlement.
         updatedAt: status === current.status ? current.updatedAt : now,
       });
-      return change(goal, "usage_recorded", now);
+      return status === current.status
+        ? persistedChange(goal, "usage_recorded", now)
+        : semanticChange(goal, "usage_recorded", "budget_limited", input.authority.kind, now);
     });
   }
 
@@ -213,13 +250,13 @@ export class SessionGoalService {
     requireAuthority(input.authority, "agent");
     return await this.mutate(input, (state, now) => {
       const current = requireActiveGoal(state);
-      const reason = requiredText(input.reason, "reason");
-      return change(checkedGoal({
+      const reason = SessionGoalBlockedReasonSchema.parse(input.reason);
+      return semanticChange(checkedGoal({
         ...current,
         status: "blocked",
         blockedReason: reason,
         updatedAt: now,
-      }), "blocked", now, reason);
+      }), "blocked", "blocked", input.authority.kind, now, undefined, reason);
     });
   }
 
@@ -233,12 +270,48 @@ export class SessionGoalService {
     return await this.mutate(input, (state, now) => {
       const current = activeGoalAtIdentity(state, input.expectedInstanceId, input.expectedGeneration);
       const reason = requiredText(input.reason, "reason");
-      return change(checkedGoal({
+      return semanticChange(checkedGoal({
         ...current,
         status: "complete",
         completedAt: now,
         updatedAt: now,
-      }), "completed", now, reason);
+      }), "completed", "completed", input.authority.kind, now, undefined, reason);
+    });
+  }
+
+  async materializeModelContextNotices(target: SessionGoalTarget): Promise<void> {
+    await this.#serial(target, async () => {
+      await this.sessions.commitDurableSessionMutation(target.sessionId, target.workspaceRoot, (state) => {
+        assertRootLead(state);
+        assertGoalContract(state);
+        const highWater = state.reminders.length;
+        const pending = state.reminders.slice(0, highWater).filter(isPendingGoalReminder);
+        if (pending.length === 0) return { result: undefined };
+
+        const consumedAt = Date.now();
+        const messages = [...state.messages];
+        const messageIds = new Set(messages.map((message) => message.id));
+        for (const reminder of pending) {
+          const notice = reminder.source.notice;
+          if (messageIds.has(notice.id)) {
+            throw contractViolation(`Pending Goal notice id ${notice.id} already exists as a Session message`);
+          }
+          messages.push(messageFor(notice));
+          messageIds.add(notice.id);
+        }
+
+        const pendingIds = new Set(pending.map((reminder) => reminder.id));
+        const reminders = state.reminders.map((reminder, index) =>
+          index < highWater && pendingIds.has(reminder.id) && reminder.consumedAt === null
+            ? { ...reminder, consumedAt }
+            : reminder
+        );
+        assertGoalContract({ ...state, messages, reminders });
+        return {
+          result: undefined,
+          patch: { messages, reminders },
+        };
+      });
     });
   }
 
@@ -246,25 +319,154 @@ export class SessionGoalService {
     target: SessionGoalTarget,
     operation: (state: Readonly<SessionStoreState>, now: number) => MutationResult,
   ): Promise<SessionGoal> {
-    return await this.sessions.commitDurableSessionMutation(target.sessionId, target.workspaceRoot, (state) => {
-      assertRootLead(state);
-      const outcome = operation(state, Date.now());
-      return { result: outcome.goal, patch: { goal: outcome.goal }, events: outcome.events };
+    return await this.#serial(target, async () => {
+      return await this.sessions.commitDurableSessionMutation(target.sessionId, target.workspaceRoot, (state) => {
+        assertRootLead(state);
+        assertGoalContract(state);
+        const outcome = operation(state, Date.now());
+        if (outcome.event === undefined) return { result: outcome.goal };
+
+        const events: Array<SessionGoalChangedEvent | { type: "reminder"; reminder: Reminder }> = [
+          eventFor(outcome.goal, outcome.event.action, outcome.event.occurredAt, outcome.event.reason),
+        ];
+        if (outcome.notice !== undefined) {
+          const reminder = goalReminder({
+            goal: outcome.goal,
+            action: outcome.notice.action,
+            authority: outcome.notice.authority,
+            now: outcome.event.occurredAt,
+            previousGeneration: outcome.notice.previousGeneration,
+          });
+          events.push({ type: "reminder", reminder });
+          assertGoalContract({
+            ...state,
+            goal: outcome.goal,
+            reminders: [...state.reminders, reminder],
+          });
+        } else {
+          assertGoalContract({
+            ...state,
+            goal: outcome.goal,
+          });
+        }
+        return { result: outcome.goal, events };
+      });
     });
+  }
+
+  async #serial<T>(target: SessionGoalTarget, operation: () => Promise<T>): Promise<T> {
+    const key = `${target.workspaceRoot}\0${target.sessionId}`;
+    const prior = this.#operationTails.get(key) ?? Promise.resolve();
+    const result = prior.then(operation);
+    const tail = result.then(() => undefined, () => undefined);
+    this.#operationTails.set(key, tail);
+    try {
+      return await result;
+    } finally {
+      if (this.#operationTails.get(key) === tail) this.#operationTails.delete(key);
+    }
   }
 }
 
 interface MutationResult {
   readonly goal: SessionGoal;
-  readonly events?: readonly SessionGoalChangedEvent[];
+  readonly event?: {
+    readonly action: SessionGoalChangedEvent["action"];
+    readonly occurredAt: number;
+    readonly reason?: string;
+  };
+  readonly notice?: {
+    readonly action: SessionGoalNoticeAction;
+    readonly authority: SessionGoalAuthority["kind"];
+    readonly previousGeneration?: number;
+  };
 }
 
-function change(goal: SessionGoal, action: SessionGoalChangedEvent["action"], now: number, reason?: string): MutationResult {
-  return { goal, events: [eventFor(goal, action, now, reason)] };
+function semanticChange(
+  goal: SessionGoal,
+  eventAction: SessionGoalChangedEvent["action"],
+  noticeAction: SessionGoalNoticeAction,
+  authority: SessionGoalAuthority["kind"],
+  now: number,
+  previousGeneration?: number,
+  reason?: string,
+): MutationResult {
+  return {
+    goal,
+    event: { action: eventAction, occurredAt: now, ...(reason === undefined ? {} : { reason }) },
+    notice: {
+      action: noticeAction,
+      authority,
+      ...(previousGeneration === undefined ? {} : { previousGeneration }),
+    },
+  };
+}
+
+function persistedChange(
+  goal: SessionGoal,
+  action: SessionGoalChangedEvent["action"],
+  now: number,
+  reason?: string,
+): MutationResult {
+  return {
+    goal,
+    event: { action, occurredAt: now, ...(reason === undefined ? {} : { reason }) },
+  };
 }
 
 function unchanged(goal: SessionGoal): MutationResult {
   return { goal };
+}
+
+function goalReminder(input: {
+  readonly goal: SessionGoal;
+  readonly action: SessionGoalNoticeAction;
+  readonly authority: SessionGoalAuthority["kind"];
+  readonly now: number;
+  readonly previousGeneration?: number;
+}): Reminder {
+  const id = crypto.randomUUID();
+  const notice = GoalNoticePartSchema.parse({
+    type: "goal-notice",
+    id,
+    action: input.action,
+    authority: input.authority,
+    instanceId: input.goal.instanceId,
+    ...(input.previousGeneration === undefined ? {} : {
+      previousGeneration: input.previousGeneration,
+    }),
+    generation: input.goal.generation,
+    goal: input.action === "cleared" ? null : goalSnapshot(input.goal),
+    createdAt: input.now,
+  });
+  return {
+    id,
+    source: { type: "session_goal_changed", notice },
+    delivery: "model_context",
+    content: `Session Goal ${input.action}`,
+    createdAt: input.now,
+    consumedAt: null,
+  };
+}
+
+function isPendingGoalReminder(
+  reminder: Reminder,
+): reminder is Reminder & {
+  source: Extract<Reminder["source"], { type: "session_goal_changed" }>;
+} {
+  return reminder.delivery === "model_context"
+    && reminder.consumedAt === null
+    && reminder.source.type === "session_goal_changed";
+}
+
+function messageFor(notice: GoalNoticePart): SessionMessage {
+  return {
+    id: notice.id,
+    role: "user",
+    parts: [notice],
+    createdAt: notice.createdAt,
+    completedAt: notice.createdAt,
+  };
 }
 
 function eventFor(goal: SessionGoal, action: SessionGoalChangedEvent["action"], occurredAt: number, reason?: string): SessionGoalChangedEvent {
@@ -288,6 +490,15 @@ function assertRootLead(state: Readonly<SessionStoreState>): void {
   if (state.parentSessionId !== undefined || state.rootSessionId !== state.sessionId || state.agentName !== "lead") {
     throw new SessionGoalServiceError("NOT_ROOT_LEAD", "Session Goals belong only to root Lead Sessions");
   }
+}
+
+function assertGoalContract(state: Readonly<SessionStoreState>): void {
+  const error = sessionGoalNoticeInvariantError(state);
+  if (error !== undefined) throw contractViolation(error);
+}
+
+function contractViolation(message: string): SessionGoalServiceError {
+  return new SessionGoalServiceError("CONTRACT_VIOLATION", message);
 }
 
 function requiredGoal(state: Readonly<SessionStoreState>): SessionGoal {

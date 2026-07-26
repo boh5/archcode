@@ -1168,7 +1168,7 @@ describe("reduceStreamEvent", () => {
     ]);
   });
 
-  test("records execution errors on matching or synthetic steps", () => {
+  test("records execution errors on matching or synthetic steps without fabricating a pre-Step failure", () => {
     const matching = applyEvents(createProjection({ currentExecutionId: "run-error" }), [
       { type: "step-start", step: 1 },
       { type: "execution-error", step: 1, error: "bad execution" },
@@ -1182,6 +1182,11 @@ describe("reduceStreamEvent", () => {
     expect(step.step).toBe(4);
     expect(step.executionId).toBe("run-error");
     expect(step.error).toBe("missing step");
+
+    const preparation = applyEvents(createProjection({ currentExecutionId: "run-error" }), [
+      { type: "execution-error", error: "context preparation failed" },
+    ]);
+    expect(preparation.steps).toEqual([]);
   });
 
   test("tool-input-resolved updates running tool part input with defaults", () => {

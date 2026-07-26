@@ -8,7 +8,11 @@ import type {
   ToolChildSessionLinkStatus,
 } from "./types";
 import { COMPRESSION_SUMMARY_SECTION_NAMES } from "./compression";
-import type { SessionGoalChangedEvent } from "./session-goal";
+import {
+  SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH,
+  SESSION_GOAL_OBJECTIVE_MAX_LENGTH,
+  type SessionGoalChangedEvent,
+} from "./session-goal";
 
 const TERMINAL_CHILD_SESSION_STATUSES = new Set<ToolChildSessionLinkStatus>([
   "completed", "failed", "timed_out", "cancelled", "interrupted",
@@ -590,14 +594,22 @@ function isBoundedJsonValue(
 
 function isReminder(value: unknown): boolean {
   const reminder = record(value);
-  return reminder !== undefined
+  if (!(reminder !== undefined
     && exact(reminder, ["id", "source", "delivery", "content", "createdAt", "consumedAt"], ["sessionId", "terminalState", "payload", "targetSessionId"])
     && isString(reminder.id) && isReminderSource(reminder.source)
-    && oneOf(reminder.delivery, ["auto_inject", "on_demand"])
+    && oneOf(reminder.delivery, ["auto_inject", "on_demand", "model_context"])
     && optionalString(reminder.sessionId) && optionalString(reminder.terminalState)
     && isString(reminder.content) && isFiniteNumber(reminder.createdAt)
     && (reminder.consumedAt === null || isFiniteNumber(reminder.consumedAt))
-    && optionalString(reminder.targetSessionId);
+    && optionalString(reminder.targetSessionId))) return false;
+  const source = record(reminder.source);
+  const isGoal = source?.type === "session_goal_changed";
+  if ((reminder.delivery === "model_context") !== isGoal) return false;
+  if (isGoal) {
+    const notice = record(source.notice);
+    if (notice?.id !== reminder.id) return false;
+  }
+  return true;
 }
 
 function isReminderSource(value: unknown): boolean {
@@ -609,7 +621,91 @@ function isReminderSource(value: unknown): boolean {
   if (oneOf(source.type, ["subagent_completed", "subagent_failed", "subagent_timed_out", "subagent_cancelled"])) {
     return exact(source, ["type", "sessionId"]) && isString(source.sessionId);
   }
+  if (source.type === "session_goal_changed") {
+    return exact(source, ["type", "notice"]) && isGoalNoticePart(source.notice);
+  }
   return false;
+}
+
+function isGoalNoticePart(value: unknown): boolean {
+  const notice = record(value);
+  if (notice === undefined) return false;
+  const hasPreviousGeneration = notice.previousGeneration !== undefined;
+  if (!exact(
+    notice,
+    ["type", "id", "action", "authority", "instanceId", "generation", "goal", "createdAt"],
+    ["previousGeneration"],
+  )) return false;
+  if (notice.type !== "goal-notice"
+    || !isUuid(notice.id)
+    || !oneOf(notice.action, [
+      "created",
+      "edited",
+      "paused",
+      "resumed",
+      "cleared",
+      "budget_updated",
+      "budget_limited",
+      "blocked",
+      "completed",
+    ])
+    || !oneOf(notice.authority, ["user_control", "agent", "runtime"])
+    || !isUuid(notice.instanceId)
+    || !isPositiveSafeInteger(notice.generation)
+    || !isNonNegativeSafeInteger(notice.createdAt)
+    || (hasPreviousGeneration && !isPositiveSafeInteger(notice.previousGeneration))) {
+    return false;
+  }
+  if ((notice.action === "edited") !== hasPreviousGeneration) return false;
+  if (notice.action === "edited" && notice.generation !== (notice.previousGeneration as number) + 1) return false;
+  if (notice.action === "created" && notice.generation !== 1) return false;
+  if ((notice.action === "cleared") !== (notice.goal === null)) return false;
+  const expectedAuthority = notice.action === "budget_limited"
+    ? "runtime"
+    : notice.action === "blocked" || notice.action === "completed"
+      ? "agent"
+      : "user_control";
+  if (notice.authority !== expectedAuthority) return false;
+  if (notice.goal !== null) {
+    const goal = record(notice.goal);
+    const allowedStatuses: readonly unknown[] = notice.action === "created" || notice.action === "resumed"
+      ? ["active"]
+      : notice.action === "paused"
+        ? ["paused", "budget_limited"]
+        : notice.action === "budget_limited"
+          ? ["budget_limited"]
+          : notice.action === "blocked"
+            ? ["blocked"]
+            : notice.action === "completed"
+              ? ["complete"]
+              : ["active", "paused", "blocked", "budget_limited", "complete"];
+    if (!allowedStatuses.includes(goal?.status)) return false;
+  }
+  return notice.goal === null || isGoalNoticeSnapshot(notice.goal);
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string"
+    && /^(?:00000000-0000-0000-0000-000000000000|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/iu.test(value);
+}
+
+function isGoalNoticeSnapshot(value: unknown): boolean {
+  const goal = record(value);
+  if (goal === undefined
+    || !exact(goal, ["objective", "status"], ["tokenBudget", "blockedReason"])
+    || !isString(goal.objective)
+    || goal.objective.trim().length === 0
+    || goal.objective.length > SESSION_GOAL_OBJECTIVE_MAX_LENGTH
+    || !oneOf(goal.status, ["active", "paused", "blocked", "budget_limited", "complete"])
+    || (goal.tokenBudget !== undefined && !isPositiveSafeInteger(goal.tokenBudget))
+    || !optionalString(goal.blockedReason)
+    || (typeof goal.blockedReason === "string"
+      && (goal.blockedReason.trim().length === 0
+        || goal.blockedReason.length > SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH))) {
+    return false;
+  }
+  if (goal.status === "blocked" && goal.blockedReason === undefined) return false;
+  return goal.blockedReason === undefined || goal.status === "blocked" || goal.status === "budget_limited";
 }
 
 function isLlmRecoveryEvent(event: UnknownRecord, requiresErrorKind: boolean, failed: boolean): boolean {

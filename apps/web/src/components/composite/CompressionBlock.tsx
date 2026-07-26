@@ -20,6 +20,7 @@ import type {
   OriginalRangePart,
 } from "../../api/compression";
 import { RelativeTime } from "../primitives/TemporalText";
+import { isWebVisibleSessionPart } from "../../lib/execution-workstream";
 
 const STRATEGY_LABEL: Record<CompressionStrategy, string> = {
   "dynamic-range": "Dynamic Range",
@@ -233,6 +234,8 @@ function OriginalRangeEntry({
   childSessionLinks: ToolChildSessionLink[];
 }) {
   const { ref, message } = entry;
+  const visibleParts = message.parts.filter(isWebVisibleSessionPart);
+  if (visibleParts.length === 0) return null;
   return (
     <div className="border border-border-subtle rounded-md overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 bg-bg-overlay border-b border-border-subtle">
@@ -240,7 +243,7 @@ function OriginalRangeEntry({
         <span className="text-[11px] text-text-tertiary">{message.role}</span>
       </div>
       <div className="px-3 py-2 flex flex-col gap-2">
-        {message.parts.map((part) => (
+        {visibleParts.map((part) => (
           <OriginalRangePartView
             key={part.id}
             part={part}
@@ -313,7 +316,7 @@ function OriginalRangePartView({
           <span>{part.message}</span>
         </div>
       );
-    default:
+    case "goal-notice":
       return null;
   }
 }

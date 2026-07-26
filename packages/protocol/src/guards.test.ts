@@ -168,7 +168,29 @@ const validPayloads = [
   },
   { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", childProfile: "fast", childSkillNames: [], title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
-  { type: "reminder", reminder: { id: "reminder-1", source: { type: "subagent_completed", sessionId: "child" }, delivery: "auto_inject", content: "done", createdAt: 1, consumedAt: null } },
+  {
+    type: "reminder",
+    reminder: {
+      id: "6f424736-b35d-43e3-9b39-4e7512121f01",
+      source: {
+        type: "session_goal_changed",
+        notice: {
+          type: "goal-notice",
+          id: "6f424736-b35d-43e3-9b39-4e7512121f01",
+          action: "created",
+          authority: "user_control",
+          instanceId: "39719088-a050-4631-ab35-d98315970ac7",
+          generation: 1,
+          goal: { objective: "Finish it", status: "active" },
+          createdAt: 1,
+        },
+      },
+      delivery: "model_context",
+      content: "Session Goal created",
+      createdAt: 1,
+      consumedAt: null,
+    },
+  },
   { type: "reminder-consumed", reminderIds: ["reminder-1"] },
   { type: "step-start", step: 1 },
   { type: "step-end", step: 1, finishReason: "stop", usage: {} },
@@ -237,6 +259,53 @@ describe("protocol event guards", () => {
   test("rejects malformed Session event payloads without throwing", () => {
     expect(validPayloads.filter((event) => !isSessionEventPayload(event)).map((event) => event.type)).toEqual([]);
     expect(validPayloads.every(isSessionEventPayload)).toBe(true);
+    const goalReminderEvent = validPayloads.find((event) =>
+      event.type === "reminder" && event.reminder.source.type === "session_goal_changed"
+    );
+    expect(goalReminderEvent).toBeDefined();
+    if (goalReminderEvent?.type === "reminder"
+      && goalReminderEvent.reminder.source.type === "session_goal_changed") {
+      expect(isSessionEventPayload({
+        ...goalReminderEvent,
+        reminder: {
+          ...goalReminderEvent.reminder,
+          source: {
+            ...goalReminderEvent.reminder.source,
+            notice: {
+              ...goalReminderEvent.reminder.source.notice,
+              generation: 2,
+            },
+          },
+        },
+      })).toBe(false);
+      expect(isSessionEventPayload({
+        ...goalReminderEvent,
+        reminder: {
+          ...goalReminderEvent.reminder,
+          id: "not-a-uuid",
+          source: {
+            ...goalReminderEvent.reminder.source,
+            notice: {
+              ...goalReminderEvent.reminder.source.notice,
+              id: "not-a-uuid",
+            },
+          },
+        },
+      })).toBe(false);
+      expect(isSessionEventPayload({
+        ...goalReminderEvent,
+        reminder: {
+          ...goalReminderEvent.reminder,
+          source: {
+            ...goalReminderEvent.reminder.source,
+            notice: {
+              ...goalReminderEvent.reminder.source.notice,
+              instanceId: "not-a-uuid",
+            },
+          },
+        },
+      })).toBe(false);
+    }
     for (const event of validPayloads) {
       expect(isSessionEventPayload({ ...event, unexpectedField: true })).toBe(false);
     }

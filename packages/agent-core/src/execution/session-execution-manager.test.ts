@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createEmptySessionStats, isTerminalChildSessionStatus, type DelegationRequest } from "@archcode/protocol";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { StoreApi } from "zustand";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
 import type { AgentName } from "../agents/names";
 import { ConfiguredAgent } from "../agents/configured-agent";
@@ -25,6 +26,7 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
 import {
   SessionExecutionManager,
+  SessionExecutionManagerShuttingDownError,
   SessionSteerUnavailableError,
   type SessionExecutionDeadlineHandle,
   type SessionExecutionDeadlineScheduler,
@@ -240,6 +242,7 @@ interface FakeManagerOptions {
   executionScopeValidator?: ConstructorParameters<typeof SessionExecutionManager>[0]["executionScopeValidator"];
   deletionLifecycle?: ConstructorParameters<typeof SessionExecutionManager>[0]["deletionLifecycle"];
   flushSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["flushSessionStore"];
+  loadSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["loadSessionStore"];
   createSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["createSessionStore"];
   listSessionFamilyToolBatchHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyToolBatchHitlIds"];
   isDiscussionSession?: ConstructorParameters<typeof SessionExecutionManager>[0]["isDiscussionSession"];
@@ -486,6 +489,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     ...storeCallbacks(executionStoreManager),
     ...(options.resolveSessionDepth === undefined ? {} : { resolveSessionDepth: options.resolveSessionDepth }),
     ...(options.createSessionStore === undefined ? {} : { createSessionStore: options.createSessionStore }),
+    ...(options.loadSessionStore === undefined ? {} : { loadSessionStore: options.loadSessionStore }),
     flushSessionStore: options.flushSessionStore ?? (async () => undefined),
     listSessionFamilyToolBatchHitlIds: options.listSessionFamilyToolBatchHitlIds ?? (async () => []),
     isDiscussionSession: options.isDiscussionSession ?? (async () => false),
@@ -2570,6 +2574,61 @@ describe("SessionExecutionManager", () => {
     expect(second.abortController.signal.aborted).toBe(true);
     expect(manager.getSessionFamilyActivity(workspaceRoot, firstSessionId)).toBe("idle");
     expect(manager.getSessionFamilyActivity(workspaceRoot, secondSessionId)).toBe("idle");
+  });
+
+  test("shutdown closes admission and drains a pending checked start before cancelling active executions", async () => {
+    const activeSessionId = crypto.randomUUID();
+    const pendingSessionId = crypto.randomUUID();
+    const activeAgent = new MockAgent(activeSessionId, new Promise(() => undefined));
+    const pendingAgent = new MockAgent(pendingSessionId, Promise.resolve({ text: "must not run", steps: 1 }));
+    const loadStarted = deferred<void>();
+    const releaseLoad = deferred<StoreApi<SessionStoreState>>();
+    const { manager } = createManager({
+      [activeSessionId]: activeAgent,
+      [pendingSessionId]: pendingAgent,
+    }, {
+      loadSessionStore: async (sessionId, root) => {
+        if (sessionId !== pendingSessionId) return await storeManager.getOrLoad(sessionId, root);
+        loadStarted.resolve(undefined);
+        return await releaseLoad.promise;
+      },
+    });
+    const active = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: activeSessionId,
+      input: { kind: "direct", text: "run until shutdown" },
+    });
+    await activeAgent.runStarted.promise;
+    const pendingStart = manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: pendingSessionId,
+      input: { kind: "direct", text: "must not start" },
+    });
+    void pendingStart.catch(() => undefined);
+    await loadStarted.promise;
+
+    let shutdownSettled = false;
+    const shutdown = manager.shutdown().then(() => {
+      shutdownSettled = true;
+    });
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+    expect(active.abortController.signal.aborted).toBe(false);
+
+    releaseLoad.resolve(pendingAgent.store);
+    await expect(pendingStart).rejects.toBeInstanceOf(SessionExecutionManagerShuttingDownError);
+    await shutdown;
+
+    expect(active.abortController.signal.aborted).toBe(true);
+    expect(pendingAgent.runMock).not.toHaveBeenCalled();
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: pendingSessionId,
+      input: { kind: "direct", text: "still closed" },
+    })).rejects.toBeInstanceOf(SessionExecutionManagerShuttingDownError);
   });
 
   test("startChildExecution validates through factory and runs a child session", async () => {

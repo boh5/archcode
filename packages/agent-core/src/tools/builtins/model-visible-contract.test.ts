@@ -265,7 +265,16 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "get_goal",
     competitorEvidenceIds: ["CX-LOCAL:get_goal"],
     runtimeSourceIds: ["tools/builtins/session-goal.ts", "session-goal/service.ts"],
-    descriptionPatterns: [/current Session Goal/i, /objective, status, usage, and optional budget/i, /read-only/i],
+    descriptionPatterns: [
+      /accounting only.*current Session Goal/i,
+      /normalized token usage/i,
+      /accumulated execution time/i,
+      /execution count/i,
+      /optional token budget/i,
+      /never returns the objective, status, or blocked reason/i,
+      /latest GoalNotice/i,
+      /read-only/i,
+    ],
   },
   {
     tool: "update_goal",

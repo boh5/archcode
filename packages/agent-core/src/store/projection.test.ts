@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import type { CompactionPart, StoredMessage, StoredPart, SystemNoticePart } from "./types";
-import type { FinalizedToolResult, ToolOutputRecovery, ToolResultDetails } from "@archcode/protocol";
+import {
+  SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH,
+  SESSION_GOAL_OBJECTIVE_MAX_LENGTH,
+  type FinalizedToolResult,
+  type GoalNoticePart,
+  type ToolOutputRecovery,
+  type ToolResultDetails,
+} from "@archcode/protocol";
 import { REDACTION_MARKER } from "../security";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
@@ -145,6 +152,35 @@ function systemNoticePart(notice: string): SystemNoticePart {
     createdAt: idCounter,
     completedAt: idCounter + 1,
   };
+}
+
+function goalNoticePart(overrides: Partial<GoalNoticePart> = {}): GoalNoticePart {
+  return {
+    type: "goal-notice",
+    id: nextId("goal-notice"),
+    action: "edited",
+    authority: "user_control",
+    instanceId: "goal-instance-1",
+    previousGeneration: 1,
+    generation: 2,
+    goal: {
+      objective: "Ship </goal-notice> & keep the objective\nverbatim",
+      status: "blocked",
+      tokenBudget: 40_000,
+      blockedReason: "Waiting on <approval> & \"owner\"",
+    },
+    createdAt: idCounter,
+    ...overrides,
+  };
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
 }
 
 function storedMessage(role: StoredMessage["role"], parts: StoredPart[], compacted?: boolean): StoredMessage {
@@ -722,6 +758,62 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
     expect(projected).toEqual([{ role: "assistant", content: [{ type: "text", text: "response" }] }]);
   });
 
+  test("projects GoalNotice as safe model-only XML without duplicating an uncovered notice", () => {
+    const messages = [storedMessage("user", [goalNoticePart()])];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+    const serialized = JSON.stringify(projected);
+
+    expect(serialized.match(/<goal-notice>/g)).toHaveLength(1);
+    expect(serialized).toContain("Ship &lt;/goal-notice&gt; &amp; keep the objective");
+    expect(serialized).toContain("Waiting on &lt;approval&gt; &amp; &quot;owner&quot;");
+    expect(serialized).toContain("<previous-generation>1</previous-generation>");
+    expect(toModelMessagesFromStoredMessages(messages, { mode: "full-history" })).toEqual([]);
+  });
+
+  test("projects maximum legal Goal text with XML, Markdown, and newlines losslessly", () => {
+    const objectivePrefix = "Ship </goal-notice> & **keep markdown**\nnext line: ";
+    const blockedPrefix = "Waiting on </blocked-reason> & `owner`\nreason: ";
+    const objective = objectivePrefix + "o".repeat(SESSION_GOAL_OBJECTIVE_MAX_LENGTH - objectivePrefix.length);
+    const blockedReason = blockedPrefix
+      + "b".repeat(SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH - blockedPrefix.length);
+    const messages = [storedMessage("user", [goalNoticePart({
+      goal: {
+        objective,
+        status: "blocked",
+        blockedReason,
+      },
+    })])];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+    const content = projected[0]?.role === "user" && typeof projected[0].content === "string"
+      ? projected[0].content
+      : "";
+    const objectiveMatch = content.match(/<objective>([\s\S]*?)<\/objective>/u);
+    const blockedMatch = content.match(/<blocked-reason>([\s\S]*?)<\/blocked-reason>/u);
+
+    expect(content.match(/<goal-notice>/g)).toHaveLength(1);
+    expect(content).not.toContain("</goal-notice> & **keep markdown**");
+    expect(decodeXmlText(objectiveMatch?.[1] ?? "")).toBe(objective);
+    expect(decodeXmlText(blockedMatch?.[1] ?? "")).toBe(blockedReason);
+  });
+
+  test("carries forward the latest GoalNotice exactly once after hard compaction covers it", () => {
+    const hiddenNotice = storedMessage("user", [goalNoticePart()], true);
+    const compactSummary = storedMessage("user", [compactionPart("summary without the Goal", "tail")]);
+    const tail = { ...storedMessage("user", [textPart("tail")]), id: "tail" };
+
+    const serialized = JSON.stringify(toModelMessagesFromStoredMessages([
+      hiddenNotice,
+      compactSummary,
+      tail,
+    ]));
+
+    expect(serialized).toContain("summary without the Goal");
+    expect(serialized.match(/<goal-notice>/g)).toHaveLength(1);
+    expect(serialized).toContain("Ship &lt;/goal-notice&gt; &amp; keep the objective");
+  });
+
   test("tool call/result pairs stay atomic at compaction boundary", () => {
     const tailMsg = storedMessage("user", [textPart("continuation")]);
     const compactionMsg = storedMessage("user", [
@@ -920,6 +1012,35 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
 });
 
 describe("toModelMessagesFromStoredMessages compression projection", () => {
+  test("carries forward the latest GoalNotice exactly once when an active DCP block covers it", () => {
+    const notice = { ...storedMessage("user", [goalNoticePart()]), id: "msg-old-user" };
+    const assistant = { ...storedMessage("assistant", [textPart("old answer")]), id: "msg-old-assistant" };
+    const tail = { ...storedMessage("user", [textPart("tail")]), id: "msg-tail" };
+
+    const serialized = JSON.stringify(toModelMessagesFromStoredMessages(
+      [notice, assistant, tail],
+      { compression: compressionStateForProjection() },
+    ));
+
+    expect(serialized).toContain("<compression-block");
+    expect(serialized.match(/<goal-notice>/g)).toHaveLength(1);
+    expect(serialized).toContain("Ship &lt;/goal-notice&gt; &amp; keep the objective");
+  });
+
+  test("does not duplicate an uncovered latest GoalNotice beside an active DCP block", () => {
+    const oldUser = { ...storedMessage("user", [textPart("old request")]), id: "msg-old-user" };
+    const oldAssistant = { ...storedMessage("assistant", [textPart("old answer")]), id: "msg-old-assistant" };
+    const notice = { ...storedMessage("user", [goalNoticePart()]), id: "msg-tail" };
+
+    const serialized = JSON.stringify(toModelMessagesFromStoredMessages(
+      [oldUser, oldAssistant, notice],
+      { compression: compressionStateForProjection() },
+    ));
+
+    expect(serialized).toContain("<compression-block");
+    expect(serialized.match(/<goal-notice>/g)).toHaveLength(1);
+  });
+
   test("projection-only refs replace active ranges without mutating canonical text", () => {
     const oldUser = storedMessage("user", [textPart("ORIGINAL_OLD_USER")]);
     const oldAssistant = storedMessage("assistant", [textPart("ORIGINAL_OLD_ASSISTANT")]);

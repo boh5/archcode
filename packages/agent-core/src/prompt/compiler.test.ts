@@ -10,13 +10,6 @@ import { PromptContractCompiler, createFailedPromptTrace } from "./compiler";
 import { IllegalPromptExecutionModeError, PromptContractLintError, lintRoleContract } from "./lint";
 import type { PromptContractV2, RuntimePromptEnvelope } from "./types";
 
-const ACTIVE_GOAL = {
-  instanceId: "goal-instance-1",
-  generation: 2,
-  objective: "Migrate authentication and make every authentication test pass.",
-  status: "active",
-} as const;
-
 function runtime(overrides: Partial<RuntimePromptEnvelope> = {}): RuntimePromptEnvelope {
   return {
     agentName: "lead",
@@ -26,7 +19,6 @@ function runtime(overrides: Partial<RuntimePromptEnvelope> = {}): RuntimePromptE
     parentAgentName: "none",
     depth: 0,
     allowedDelegateTargets: ["analyst", "build", "explore", "librarian"],
-    goal: "none",
     todo: "none",
     remainingDepth: 3,
     maxConcurrentChildren: 4,
@@ -47,7 +39,6 @@ function child(
     parentSessionId: "session-1",
     parentAgentName,
     depth: 1,
-    goal: "none",
     allowedDelegateTargets: [],
     ...overrides,
   });
@@ -83,11 +74,13 @@ function contract(overrides: Partial<PromptContractV2> = {}): PromptContractV2 {
 }
 
 describe("PromptContractCompiler", () => {
-  test("keeps an ordinary Lead prompt free of Goal orchestration", async () => {
+  test("keeps Runtime and Current Context free of Session Goal state", async () => {
     const result = await new PromptContractCompiler().compile(contract());
 
-    expect(result.prompt).toContain("Goal: none");
     expect(result.prompt).not.toContain("## Session Goal");
+    expect(result.prompt).not.toContain("Goal:");
+    expect(result.prompt).not.toContain("goalInstanceId");
+    expect(result.prompt).not.toContain("goalObjective");
     expect(result.trace.sections.map(({ name }) => name)).toEqual([
       "Shared Kernel",
       "Runtime Envelope",
@@ -100,37 +93,6 @@ describe("PromptContractCompiler", () => {
       "Project Instructions",
       "Environment",
     ]);
-  });
-
-  test("adds a factual Goal overlay without copying run-goal execution method", async () => {
-    const result = await new PromptContractCompiler().compile(contract({
-      runtime: runtime({ goal: ACTIVE_GOAL }),
-      allowedTools: ["file_read", "delegate", "create_goal", "get_goal", "update_goal"],
-    }));
-
-    expect(result.prompt).toContain("## Session Goal");
-    expect(result.prompt).toContain(`Instance: ${ACTIVE_GOAL.instanceId}`);
-    expect(result.prompt).toContain(`Generation: ${ACTIVE_GOAL.generation}`);
-    expect(result.prompt).toContain(`Status: ${ACTIVE_GOAL.status}`);
-    expect(result.prompt).toContain(`Objective: ${ACTIVE_GOAL.objective}`);
-    expect(result.prompt).not.toContain("fresh direct deep Analyst");
-    expect(result.prompt).not.toContain("goal-review");
-    expect(result.prompt).not.toContain("Do not self-review");
-    expect(result.trace.sections.filter(({ name }) => name === "Session Goal")).toHaveLength(1);
-  });
-
-  test("keeps every non-active Goal overlay free of continuation and review instructions", async () => {
-    for (const status of ["paused", "blocked", "budget_limited", "complete"] as const) {
-      const result = await new PromptContractCompiler().compile(contract({
-        runtime: runtime({ goal: { ...ACTIVE_GOAL, status } }),
-        allowedTools: ["file_read", "delegate", "create_goal", "get_goal", "update_goal"],
-      }));
-      expect(result.prompt, status).toContain(`Status: ${status}`);
-      expect(result.prompt, status).not.toContain("Keep working across Executions");
-      expect(result.prompt, status).not.toContain("fresh direct deep Analyst");
-      expect(result.prompt, status).not.toContain("goal-review");
-      expect(result.prompt, status).not.toContain("VERDICT: APPROVED");
-    }
   });
 
   test("keeps ordinary Analyst review output Skill-driven", async () => {
@@ -169,7 +131,6 @@ describe("PromptContractCompiler", () => {
   test("compiles every formal Agent in a legal mode", async () => {
     const cases: Array<Pick<PromptContractV2, "role" | "allowedTools"> & { runtime: RuntimePromptEnvelope }> = [
       { role: leadRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime() },
-      { role: leadRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime({ goal: ACTIVE_GOAL }) },
       { role: analystRoleContract, allowedTools: ["file_read", "delegate"], runtime: child("analyst", "lead", { allowedDelegateTargets: ["explore", "librarian"] }) },
       { role: buildRoleContract, allowedTools: ["file_read", "file_edit", "delegate"], runtime: child("build", "lead", { allowedDelegateTargets: ["explore"] }) },
       { role: exploreRoleContract, allowedTools: ["file_read"], runtime: child("explore", "lead") },

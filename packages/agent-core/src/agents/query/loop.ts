@@ -34,6 +34,7 @@ interface ModelAttemptOptions {
   store: StoreApi<SessionStoreState>;
   binding: QueryLoopOptions["binding"];
   systemPrompt: QueryLoopOptions["systemPrompt"];
+  resolveSystemPrompt?: QueryLoopOptions["resolveSystemPrompt"];
   toolRegistry: ToolRegistry;
   allowedTools: readonly string[];
   abort: AbortSignal;
@@ -41,9 +42,11 @@ interface ModelAttemptOptions {
   sessionId: string;
   agentName: string;
   projectContext: QueryLoopOptions["projectContext"];
+  storeManager: QueryLoopOptions["storeManager"];
   beforeModelBuild: HookList<BeforeModelBuildContext>;
   beforeModelCall: HookList<BeforeModelCallContext>;
   consumeSteers?: () => Promise<void>;
+  prepareModelContext?: () => Promise<void>;
   settleUnfinalizedToolParts: () => Promise<void>;
 }
 
@@ -126,12 +129,20 @@ class ProviderOutputSecretError extends Error {
   }
 }
 
+class ModelAttemptPreparationError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "ModelAttemptPreparationError";
+  }
+}
+
 async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttemptResult> {
   const {
     step,
     store,
     binding,
-    systemPrompt,
+    systemPrompt: staticSystemPrompt,
+    resolveSystemPrompt,
     toolRegistry,
     allowedTools,
     abort,
@@ -139,28 +150,41 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     sessionId,
     agentName,
     projectContext,
+    storeManager,
     beforeModelBuild,
     beforeModelCall,
     consumeSteers,
+    prepareModelContext,
     settleUnfinalizedToolParts,
   } = options;
   const redactProviderSecrets: SensitiveTextRedactor = (text) => binding.modelInfo.redactSensitiveText(text);
 
-  store.getState().append({ type: "step-start", step });
-
   let messages: ModelMessage[];
   let tools: ToolSet | undefined;
+  let systemPrompt = staticSystemPrompt;
+  let stepStarted = false;
 
   try {
     await consumeSteers?.();
+    await prepareModelContext?.();
+    systemPrompt = resolveSystemPrompt === undefined
+      ? staticSystemPrompt
+      : await resolveSystemPrompt();
     await runHooks("beforeModelBuild", beforeModelBuild, { store, binding, logger, abort, systemPrompt }, logger, { sessionId, agentName });
+    await prepareModelContext?.();
     messages = store.getState().toModelMessages();
     await runHooks("beforeModelCall", beforeModelCall, { store, binding, logger, abort, messages, projectContext }, logger, { sessionId, agentName });
     const resolved = toolRegistry.resolveForAgent(allowedTools);
     tools = resolved.descriptors.length > 0 ? resolved.toAITools() : undefined;
+    store.getState().append({ type: "step-start", step });
+    stepStarted = true;
+    await storeManager.flushSession(sessionId, projectContext.project.workspaceRoot);
   } catch (err) {
-    store.getState().append({ type: "step-end", step, finishReason: "error" });
-    throw err;
+    if (stepStarted) {
+      store.getState().append({ type: "step-end", step, finishReason: "error" });
+      throw err;
+    }
+    throw new ModelAttemptPreparationError(err);
   }
 
   let result: AnyStreamTextResult | undefined;
@@ -259,7 +283,6 @@ export async function runQueryLoop(
     binding,
     toolRegistry,
     allowedTools,
-    systemPrompt,
     maxSteps = DEFAULT_MAX_STEPS,
     store,
     currentDepth,
@@ -380,14 +403,12 @@ export async function runQueryLoop(
         }
       }
 
-      const systemPrompt = options.resolveSystemPrompt === undefined
-        ? options.systemPrompt
-        : await options.resolveSystemPrompt();
       const attempt = await runModelAttempt({
         step: steps,
         store,
         binding,
-        systemPrompt,
+        systemPrompt: options.systemPrompt,
+        resolveSystemPrompt: options.resolveSystemPrompt,
         toolRegistry,
         allowedTools,
         abort,
@@ -395,9 +416,11 @@ export async function runQueryLoop(
         sessionId,
         agentName,
         projectContext: options.projectContext,
+        storeManager: options.storeManager,
         beforeModelBuild,
         beforeModelCall,
         consumeSteers: options.consumeSteers,
+        prepareModelContext: options.prepareModelContext,
         settleUnfinalizedToolParts: async () => {
           await settleUnfinalizedToolPartsForRecovery(store, toolRegistry, createContext, steps);
           await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
@@ -585,6 +608,7 @@ export async function runQueryLoop(
       ...(runEndError === undefined ? {} : { error: runEndError }),
     };
   } catch (err) {
+    const preparationFailed = err instanceof ModelAttemptPreparationError;
     const safeError = sanitizeProviderError(err, (text) => binding.modelInfo.redactSensitiveText(text));
     failed = true;
     runEndStatus = abort.aborted ? "aborted" : "failed";
@@ -593,11 +617,16 @@ export async function runQueryLoop(
       error: safeError,
       context: { step: steps, sessionId, agentName },
     });
-    store.getState().append({
-      type: "execution-error",
-      step: steps,
-      error: safeError.message,
-    });
+    store.getState().append(preparationFailed
+      ? {
+          type: "execution-error",
+          error: safeError.message,
+        }
+      : {
+          type: "execution-error",
+          step: steps,
+          error: safeError.message,
+        });
     // Model-call failures are finalized inside runModelAttempt. Reaching this
     // catch without an active recovery means an outer loop/tool failure, which
     // must not be mislabeled as an LLM failure in the transcript.

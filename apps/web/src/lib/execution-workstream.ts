@@ -235,6 +235,21 @@ function isCanonicalUserMessage(message: SessionMessage): boolean {
   return message.role === "user" && message.parts.some((part) => part.type === "text");
 }
 
+/** Internal model-context records are never part of the human conversation UI. */
+export function isWebVisibleSessionPart(part: SessionPart): boolean {
+  switch (part.type) {
+    case "goal-notice":
+      return false;
+    case "text":
+    case "reasoning":
+    case "tool":
+    case "compaction":
+    case "system-notice":
+    case "recovery-notice":
+      return true;
+  }
+}
+
 function isTrustedFinalTextPart(part: SessionPart): part is TextPart {
   return part.type === "text"
     && part.completedAt !== undefined
@@ -368,7 +383,12 @@ export function buildExecutionWorkstream(
   const diagnostics: ExecutionWorkstreamDiagnostic[] = [];
   const sortableItems: SortableItem[] = [];
 
-  input.messages.forEach((message, sourceIndex) => {
+  input.messages.forEach((sourceMessage, sourceIndex) => {
+    const visibleParts = sourceMessage.parts.filter(isWebVisibleSessionPart);
+    if (visibleParts.length === 0) return;
+    const message = visibleParts.length === sourceMessage.parts.length
+      ? sourceMessage
+      : { ...sourceMessage, parts: visibleParts };
     const executionId = message.executionId;
     if (executionId !== undefined && executionId.length > 0) {
       if (duplicateIds.has(executionId)) {

@@ -324,6 +324,22 @@ interface ExistingChildActivationAdmission {
   readonly childPolicy: AgentChildPolicy;
 }
 
+interface PendingCheckedStart {
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+  readonly completion: Promise<void>;
+  readonly resolveCompletion: () => void;
+}
+
+export class SessionExecutionManagerShuttingDownError extends Error {
+  readonly code = "SESSION_EXECUTION_MANAGER_SHUTTING_DOWN";
+
+  constructor() {
+    super("Session execution manager is shutting down");
+    this.name = "SessionExecutionManagerShuttingDownError";
+  }
+}
+
 export class SessionSteerUnavailableError extends Error {
   readonly code = "SESSION_STEER_UNAVAILABLE";
 
@@ -363,7 +379,7 @@ export class SessionExecutionManager {
   readonly #deletions = new Map<string, SessionDeletionLeaseState>();
   readonly #familyStops = new Map<string, SessionFamilyStopLeaseState>();
   readonly #workspaceClosures = new Map<string, symbol>();
-  readonly #pendingCheckedStarts = new Map<symbol, { workspaceRoot: string; sessionId: string }>();
+  readonly #pendingCheckedStarts = new Map<symbol, PendingCheckedStart>();
   readonly #pendingSessionInputMutations = new Map<string, PendingSessionInputMutationFamilyState>();
   readonly #familyControls = new Map<string, SessionFamilyControlState>();
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
@@ -371,6 +387,8 @@ export class SessionExecutionManager {
   readonly #config: SessionExecutionManagerConfig;
   readonly #deadlineScheduler: SessionExecutionDeadlineScheduler;
   readonly #logger: Logger;
+  #acceptingExecutions = true;
+  #shutdownPromise: Promise<void> | undefined;
 
   constructor(config: SessionExecutionManagerConfig) {
     this.#config = config;
@@ -626,9 +644,15 @@ export class SessionExecutionManager {
   async #startCheckedExecution(input: InternalStartSessionExecutionInput): Promise<ActiveSessionExecution> {
     this.#assertWorkspaceOpen(input.workspaceRoot);
     const pendingToken = Symbol(`checked-session-start:${input.sessionId}`);
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
     this.#pendingCheckedStarts.set(pendingToken, {
       workspaceRoot: input.workspaceRoot,
       sessionId: input.sessionId,
+      completion,
+      resolveCompletion,
     });
     try {
       const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
@@ -707,7 +731,9 @@ export class SessionExecutionManager {
 
       return await validateAndStart();
     } finally {
+      const pending = this.#pendingCheckedStarts.get(pendingToken);
       this.#pendingCheckedStarts.delete(pendingToken);
+      pending?.resolveCompletion();
     }
   }
 
@@ -902,6 +928,24 @@ export class SessionExecutionManager {
       ...executions.map((execution) => execution.promise),
       ...commands.map((command) => command.completion),
     ]);
+  }
+
+  /**
+   * Permanently closes Runtime-owned execution admission, drains checked starts
+   * that entered before the close, then cancels every execution they claimed.
+   */
+  shutdown(): Promise<void> {
+    if (this.#shutdownPromise !== undefined) return this.#shutdownPromise;
+    this.#acceptingExecutions = false;
+    this.#shutdownPromise = (async () => {
+      while (this.#pendingCheckedStarts.size > 0) {
+        await Promise.allSettled(
+          [...this.#pendingCheckedStarts.values()].map((pending) => pending.completion),
+        );
+      }
+      await this.abortAll();
+    })();
+    return this.#shutdownPromise;
   }
 
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity {
@@ -2391,6 +2435,9 @@ export class SessionExecutionManager {
   }
 
   #assertWorkspaceOpen(workspaceRoot: string): void {
+    if (!this.#acceptingExecutions) {
+      throw new SessionExecutionManagerShuttingDownError();
+    }
     if (this.#workspaceClosures.has(workspaceRoot)) {
       throw new SessionWorkspaceClosingError(workspaceRoot);
     }

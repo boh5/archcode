@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { StoredMessage, StoredPart } from "./types";
-import type { FinalizedToolResult } from "@archcode/protocol";
+import type { FinalizedToolResult, GoalNoticePart } from "@archcode/protocol";
 import { redactValue } from "../security";
 import { TOOL_OUTPUT_PREVIEW_MAX_BYTES, TOOL_OUTPUT_PREVIEW_MAX_LINES } from "../tool-output/constants";
 import { projectCanonicalText } from "../tool-output/projection";
@@ -49,6 +49,8 @@ export function projectModelMessagesFromStoredMessages(
     ? createCompressionProjection(messages, options.compression)
     : undefined;
   const modelMessages: ModelMessage[] = [];
+  const latestGoalNotice = mode === "model" ? findLatestGoalNotice(messages) : undefined;
+  let latestGoalNoticeProjected = false;
 
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]!;
@@ -75,6 +77,13 @@ export function projectModelMessagesFromStoredMessages(
         if (mode === "full-history" && part.type === "system-notice") {
           continue;
         }
+        if (part.type === "goal-notice") {
+          if (mode === "model") {
+            content += renderGoalNotice(part);
+            if (part.id === latestGoalNotice?.id) latestGoalNoticeProjected = true;
+          }
+          continue;
+        }
         if (part.type === "compaction") {
           content += `<compact-summary>\n${part.summary}\n</compact-summary>`;
           continue;
@@ -96,7 +105,7 @@ export function projectModelMessagesFromStoredMessages(
       const toolContent: Extract<ModelMessage, { role: "tool" }>["content"] = [];
 
       for (const part of message.parts) {
-        if (part.type === "system-notice" || part.type === "recovery-notice") continue;
+        if (part.type === "system-notice" || part.type === "recovery-notice" || part.type === "goal-notice") continue;
 
         if (part.type === "text") {
           if (isDiscardedFromContext(part)) {
@@ -181,7 +190,7 @@ export function projectModelMessagesFromStoredMessages(
         continue;
       }
 
-      if (part.type === "compaction" || part.type === "system-notice" || part.type === "recovery-notice") {
+      if (part.type === "compaction" || part.type === "system-notice" || part.type === "recovery-notice" || part.type === "goal-notice") {
         continue;
       }
 
@@ -231,10 +240,74 @@ export function projectModelMessagesFromStoredMessages(
     }
   }
 
+  if (latestGoalNotice !== undefined && !latestGoalNoticeProjected) {
+    modelMessages.push({
+      role: "user",
+      content: renderGoalNotice(latestGoalNotice),
+    });
+  }
+
   return {
     messages: modelMessages,
     ...(compressionProjection === undefined ? {} : { refMap: compressionProjection.refMap }),
   };
+}
+
+function findLatestGoalNotice(messages: readonly StoredMessage[]): GoalNoticePart | undefined {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex]!;
+    for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = message.parts[partIndex]!;
+      if (part.type === "goal-notice") {
+        return part;
+      }
+    }
+  }
+  return undefined;
+}
+
+function renderGoalNotice(notice: GoalNoticePart): string {
+  const lines = [
+    "<goal-notice>",
+    `<id>${escapeXml(notice.id)}</id>`,
+    `<action>${notice.action}</action>`,
+    `<authority>${notice.authority}</authority>`,
+    `<instance-id>${escapeXml(notice.instanceId)}</instance-id>`,
+    ...(notice.previousGeneration === undefined
+      ? []
+      : [`<previous-generation>${notice.previousGeneration}</previous-generation>`]),
+    `<generation>${notice.generation}</generation>`,
+    `<created-at>${notice.createdAt}</created-at>`,
+  ];
+
+  if (notice.goal === null) {
+    lines.push("<goal cleared=\"true\" />");
+  } else {
+    lines.push(
+      "<goal>",
+      `<objective>${escapeXml(notice.goal.objective)}</objective>`,
+      `<status>${notice.goal.status}</status>`,
+      ...(notice.goal.tokenBudget === undefined
+        ? []
+        : [`<token-budget>${notice.goal.tokenBudget}</token-budget>`]),
+      ...(notice.goal.blockedReason === undefined
+        ? []
+        : [`<blocked-reason>${escapeXml(notice.goal.blockedReason)}</blocked-reason>`]),
+      "</goal>",
+    );
+  }
+
+  lines.push("</goal-notice>");
+  return lines.join("\n");
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&apos;");
 }
 
 interface CompressionProjection {

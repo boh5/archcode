@@ -1,6 +1,7 @@
 import type { NormalizedUsage } from "./types";
 
 export const SESSION_GOAL_OBJECTIVE_MAX_LENGTH = 4_000;
+export const SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH = 4_000;
 
 export const SESSION_GOAL_STATUSES = [
   "active",
@@ -11,6 +12,40 @@ export const SESSION_GOAL_STATUSES = [
 ] as const;
 
 export type SessionGoalStatus = typeof SESSION_GOAL_STATUSES[number];
+
+export const SESSION_GOAL_NOTICE_ACTIONS = [
+  "created",
+  "edited",
+  "paused",
+  "resumed",
+  "cleared",
+  "budget_updated",
+  "budget_limited",
+  "blocked",
+  "completed",
+] as const;
+
+export type SessionGoalNoticeAction = typeof SESSION_GOAL_NOTICE_ACTIONS[number];
+
+export interface SessionGoalNoticeSnapshot {
+  objective: string;
+  status: SessionGoalStatus;
+  tokenBudget?: number;
+  blockedReason?: string;
+}
+
+/** Canonical model-context record for one semantic Goal transition. */
+export interface GoalNoticePart {
+  type: "goal-notice";
+  id: string;
+  action: SessionGoalNoticeAction;
+  authority: "user_control" | "agent" | "runtime";
+  instanceId: string;
+  previousGeneration?: number;
+  generation: number;
+  goal: SessionGoalNoticeSnapshot | null;
+  createdAt: number;
+}
 
 export interface SessionGoalUsage {
   tokens: NormalizedUsage;

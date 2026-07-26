@@ -4,7 +4,8 @@ description: Drive an authorized Goal through execution, recovery, review, remed
 when_to_use: Runtime activates this for a root Lead Session with an active Goal.
 ---
 
-- Keep the exact Goal objective and current runtime status authoritative across continuations.
+- Read the exact Goal objective, status, and blocked reason from the latest `goal-notice` in model-visible Session history. That notice is the authoritative work instruction across continuations.
+- Use `get_goal` only when current usage, execution, or budget accounting is needed. Never use it to recover a missing objective, status, or blocked reason; a missing current `goal-notice` is an invalid Goal context and must stop execution.
 - Continue direct work and bounded delegation until the objective is verifiably complete, a real HITL decision is needed, or progress is genuinely blocked.
 - Do not broaden authority, create a parallel workflow engine, or treat a Plan as required Goal state.
 - After the last ArchCode-known result write and all implementation children finish, create a fresh direct deep Analyst with `goal-review`.

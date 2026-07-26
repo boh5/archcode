@@ -36,6 +36,8 @@ export interface QueryLoopOptions {
   store: StoreApi<SessionStoreState>;
   /** Moves this Execution's accepted steer snapshots into the canonical transcript. */
   consumeSteers?: () => Promise<void>;
+  /** Materializes pending model-context domain notices at a fail-closed model boundary. */
+  prepareModelContext?: () => Promise<void>;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;

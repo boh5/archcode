@@ -28,7 +28,6 @@ export interface RoleContract {
   readonly delegateTargets: readonly AgentName[];
 }
 
-export type GoalPromptStatus = "active" | "paused" | "blocked" | "budget_limited" | "complete";
 export type TodoPromptMode = "none" | "bound";
 export type McpPromptStatus = "pending" | "ready" | "ready-zero" | "partial-warning" | "failed";
 
@@ -40,12 +39,6 @@ export interface RuntimePromptEnvelope {
   readonly parentAgentName: AgentName | "none";
   readonly depth: number;
   readonly allowedDelegateTargets: readonly AgentName[];
-  readonly goal: {
-    readonly instanceId: string;
-    readonly generation: number;
-    readonly objective: string;
-    readonly status: GoalPromptStatus;
-  } | "none";
   readonly todo: { readonly id: string; readonly mode: "bound" } | "none";
   readonly remainingDepth: number;
   readonly maxConcurrentChildren: number;

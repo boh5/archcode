@@ -24,7 +24,8 @@ import type { ProfileName } from "../config";
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
 import { atomicWrite } from "../utils/safe-file";
 import { DelegationRequestSchema } from "../delegation/schema";
-import { SessionGoalSchema } from "../session-goal/schema";
+import { sessionGoalNoticeInvariantError } from "../session-goal/invariant";
+import { GoalNoticePartSchema, SessionGoalSchema } from "../session-goal/schema";
 
 const AgentNameSchema = z.enum(AGENT_NAMES);
 const ToolLifecycleIdSchema = z.string().min(1).refine(
@@ -293,12 +294,16 @@ const ReminderSourceSchema = z.discriminatedUnion("type", [
     type: z.literal("subagent_cancelled"),
     sessionId: z.string(),
   }),
+  z.strictObject({
+    type: z.literal("session_goal_changed"),
+    notice: GoalNoticePartSchema,
+  }),
 ]);
 
 const ReminderSchema = z.strictObject({
   id: z.string(),
   source: ReminderSourceSchema,
-  delivery: z.enum(["auto_inject", "on_demand"]),
+  delivery: z.enum(["auto_inject", "on_demand", "model_context"]),
   sessionId: z.string().optional(),
   terminalState: z.string().optional(),
   content: z.string(),
@@ -306,6 +311,21 @@ const ReminderSchema = z.strictObject({
   createdAt: z.number(),
   consumedAt: z.number().nullable(),
   targetSessionId: z.string().optional(),
+}).superRefine((reminder, ctx) => {
+  if ((reminder.delivery === "model_context") !== (reminder.source.type === "session_goal_changed")) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["delivery"],
+      message: "model_context delivery is reserved for Session Goal change notices",
+    });
+  }
+  if (reminder.source.type === "session_goal_changed" && reminder.id !== reminder.source.notice.id) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["id"],
+      message: "Goal reminder and notice ids must match",
+    });
+  }
 });
 
 const ToolChildSessionLinkSchema = z.strictObject({
@@ -456,6 +476,7 @@ const StoredPartSchema = z.discriminatedUnion("type", [
   CompactionPartSchema,
   SystemNoticePartSchema,
   RecoveryNoticePartSchema,
+  GoalNoticePartSchema,
 ]);
 
 const StoredMessageSchema = z.strictObject({
@@ -474,6 +495,23 @@ const StoredMessageSchema = z.strictObject({
   }
   if (message.role === "user" && message.clientRequestId !== undefined && message.modelAudit === undefined) {
     ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Canonical user input must carry modelAudit" });
+  }
+  const goalNotices = message.parts.filter((part) => part.type === "goal-notice");
+  if (goalNotices.length > 0) {
+    const notice = goalNotices[0]!;
+    if (message.role !== "user"
+      || message.parts.length !== 1
+      || message.id !== notice.id
+      || message.createdAt !== notice.createdAt
+      || message.completedAt !== notice.createdAt
+      || message.clientRequestId !== undefined
+      || message.modelAudit !== undefined
+      || message.executionId !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Goal notice must be one provenance-free internal user message",
+      });
+    }
   }
 });
 
@@ -768,6 +806,10 @@ export const SessionFileSchema = z.strictObject({
       || session.rootSessionId !== session.sessionId
       || session.agentName !== "lead")) {
     ctx.addIssue({ code: "custom", path: ["goal"], message: "Only root Lead Sessions may own a Goal" });
+  }
+  const goalNoticeError = sessionGoalNoticeInvariantError(session);
+  if (goalNoticeError !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["goal"], message: goalNoticeError });
   }
   const canonicalById = new Map(session.messages.map((message) => [message.id, message]));
   const pendingById = new Map(session.pendingMessages.map((message) => [message.id, message]));

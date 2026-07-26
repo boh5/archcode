@@ -220,6 +220,7 @@ function createAgent(options: {
   skillService?: SkillService;
   projectContextResolver?: ProjectContextResolver;
   versionControl?: VersionControl;
+  sessionGoalService?: SessionGoalService;
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const projectRoot = options.projectRoot ?? tmpRoot;
@@ -237,6 +238,7 @@ function createAgent(options: {
     store,
     storeManager,
     projectContextResolver: options.projectContextResolver ?? createTestProjectContextResolver(storeManager),
+    ...(options.sessionGoalService === undefined ? {} : { sessionGoalService: options.sessionGoalService }),
     resolveVersionControl: async () => options.versionControl ?? "git",
     projectRoot,
     cwd,
@@ -418,25 +420,89 @@ describe("ConfiguredAgent", () => {
     expect(btm.drainCalls).toBe(0);
   });
 
-  test("injects the active Session Goal overlay only from the root Lead state", async () => {
+  test("delivers the active Session Goal through messages without copying its state into the system Prompt", async () => {
     const streamFn = setupMockStreamText("continue goal");
     const sessionId = crypto.randomUUID();
     const store = createStore(sessionId, tmpRoot, { agentName: "lead" });
-    await new SessionGoalService(storeManager).create({
+    const sessionGoalService = new SessionGoalService(storeManager);
+    const objective = "SENTINEL_OBJECTIVE_FINISH_AUTH_MIGRATION";
+    await sessionGoalService.create({
       workspaceRoot: tmpRoot,
       sessionId,
-      objective: "Finish the authentication migration and make every authentication test pass.",
+      objective,
       authority: { kind: "user_control" },
     });
 
-    await runAgent(createAgent({ definition: leadAgentDefinition, store }), "continue");
+    await runAgent(createAgent({ definition: leadAgentDefinition, store, sessionGoalService }), "continue");
 
-    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
-    expect(system).toContain("## Session Goal");
-    expect(system).toContain("Finish the authentication migration and make every authentication test pass.");
-    expect(system).toContain("create a fresh direct deep Analyst");
-    expect(system).toContain("VERDICT: APPROVED");
-    expect(system).toContain("review_session_id");
+    const call = streamFn.mock.calls[0]![0] as { system: string; messages: unknown[] };
+    expect(call.system).not.toContain("## Session Goal");
+    expect(call.system).not.toContain(objective);
+    expect(JSON.stringify(call.messages)).toContain(objective);
+    expect(JSON.stringify(call.messages)).toContain("<goal-notice>");
+    expect(call.system).toContain("create a fresh direct deep Analyst");
+    expect(call.system).toContain("VERDICT: APPROVED");
+    expect(call.system).toContain("review_session_id");
+  });
+
+  test("keeps Prompt and trace stable while an in-loop Goal edit appears only as the next notice", async () => {
+    const originalObjective = "SENTINEL_ORIGINAL_GOAL_OBJECTIVE";
+    const editedObjective = "SENTINEL_EDITED_GOAL_OBJECTIVE";
+    const sessionId = crypto.randomUUID();
+    const store = createStore(sessionId, tmpRoot, { agentName: "lead" });
+    const sessionGoalService = new SessionGoalService(storeManager);
+    const created = await sessionGoalService.create({
+      workspaceRoot: tmpRoot,
+      sessionId,
+      objective: originalObjective,
+      authority: { kind: "user_control" },
+    });
+    const toolRegistry = makeToolRegistry();
+    toolRegistry.register({
+      name: "edit_goal_fixture",
+      description: "Edit the current Goal for a model-boundary test.",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => {
+        await sessionGoalService.edit({
+          workspaceRoot: tmpRoot,
+          sessionId,
+          authority: { kind: "user_control" },
+          expectedGeneration: created.generation,
+          objective: editedObjective,
+        });
+        return createTextToolResult("Goal edited");
+      },
+    });
+    const streamFn = setupToolCallStreamText("edit_goal_fixture");
+
+    await runAgent(createAgent({
+      definition: leadAgentDefinition,
+      store,
+      sessionGoalService,
+      toolRegistry,
+    }), "continue across the edit", { extraTools: ["edit_goal_fixture"] });
+
+    expect(streamFn).toHaveBeenCalledTimes(2);
+    const first = streamFn.mock.calls[0]![0] as { system: string; messages: unknown[] };
+    const second = streamFn.mock.calls[1]![0] as { system: string; messages: unknown[] };
+    const firstMessages = JSON.stringify(first.messages);
+    const secondMessages = JSON.stringify(second.messages);
+    expect(second.system).toBe(first.system);
+    expect(first.system).not.toContain(originalObjective);
+    expect(first.system).not.toContain(editedObjective);
+    expect(firstMessages).toContain(originalObjective);
+    expect(firstMessages).not.toContain(editedObjective);
+    expect(secondMessages).toContain(originalObjective);
+    expect(secondMessages).toContain(editedObjective);
+    expect(secondMessages).toContain("<action>edited</action>");
+
+    const traces = store.getState().promptTraces ?? [];
+    expect(traces).toHaveLength(2);
+    expect(traces[1]?.hash).toBe(traces[0]?.hash);
+    expect(JSON.stringify(traces)).not.toContain(originalObjective);
+    expect(JSON.stringify(traces)).not.toContain(editedObjective);
   });
 
   test("projects Todo Discussion maxDepth 2 into the Prompt from the authoritative binding", async () => {

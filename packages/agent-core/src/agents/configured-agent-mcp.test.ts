@@ -13,15 +13,10 @@ describe("mapMcpServerStatusForPrompt", () => {
   });
 });
 
-test("buildLifecycleCurrentContext snapshots available Goal and Todo intent without manager dependencies", () => {
+test("buildLifecycleCurrentContext snapshots Todo intent without Session Goal state", () => {
   expect(buildLifecycleCurrentContext(
-    { instanceId: "goal-1", generation: 3, status: "active", objective: "Ship Prompt V2 and pass AC-01 through AC-08" },
     { id: "todo-1", title: "Prompt architecture", body: "Keep compiler pure" },
   )).toEqual([
-    "goalInstanceId=goal-1",
-    "goalStatus=active",
-    "goalGeneration=3",
-    'goalObjective="Ship Prompt V2 and pass AC-01 through AC-08"',
     "todoId=todo-1",
     'todoTitle="Prompt architecture"',
     'todoBody="Keep compiler pure"',

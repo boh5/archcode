@@ -247,7 +247,7 @@ describe("createTitleGenerationTask", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  test("skips command notices and titles the first textual user message", async () => {
+  test("skips internal notices and titles the first textual user message", async () => {
     const now = Date.now();
     const store = createStore();
     store.setState({
@@ -261,6 +261,22 @@ describe("createTitleGenerationTask", () => {
             notice: "No safe range to compact",
             createdAt: now,
             completedAt: now,
+          }],
+          createdAt: now,
+          completedAt: now,
+        },
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [{
+            type: "goal-notice",
+            id: crypto.randomUUID(),
+            action: "created",
+            authority: "user_control",
+            instanceId: "goal-1",
+            generation: 1,
+            goal: { objective: "GOAL_OBJECTIVE_MUST_NOT_TITLE", status: "active" },
+            createdAt: now,
           }],
           createdAt: now,
           completedAt: now,
@@ -286,6 +302,9 @@ describe("createTitleGenerationTask", () => {
     expect(store.getState().title).toBe("Short test title");
     expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: expect.stringContaining("Verify session persistence") }),
+    );
+    expect(mockGenerateText).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: expect.not.stringContaining("GOAL_OBJECTIVE_MUST_NOT_TITLE") }),
     );
   });
 

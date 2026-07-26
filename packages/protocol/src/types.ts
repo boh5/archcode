@@ -1,6 +1,6 @@
 import type { DelegationRequest } from "./delegation";
 import type { CompressionSummarySnapshot } from "./compression";
-import type { SessionGoal, SessionGoalChangedEvent } from "./session-goal";
+import type { GoalNoticePart, SessionGoal, SessionGoalChangedEvent } from "./session-goal";
 import type {
   ExecutionModelBindingSummary,
   GlobalSSEModelRuntimeChangedEvent,
@@ -149,12 +149,16 @@ export type ReminderSource =
   | {
       type: "subagent_cancelled";
       sessionId: string;
+    }
+  | {
+      type: "session_goal_changed";
+      notice: GoalNoticePart;
     };
 
 export interface Reminder {
   id: string;
   source: ReminderSource;
-  delivery: "auto_inject" | "on_demand";
+  delivery: "auto_inject" | "on_demand" | "model_context";
   sessionId?: string;
   terminalState?: string;
   content: string;
@@ -1030,7 +1034,14 @@ export interface RecoveryNoticePart {
   completedAt?: number;
 }
 
-export type SessionPart = TextPart | ReasoningPart | ToolPart | CompactionPart | SystemNoticePart | RecoveryNoticePart;
+export type SessionPart =
+  | TextPart
+  | ReasoningPart
+  | ToolPart
+  | CompactionPart
+  | SystemNoticePart
+  | RecoveryNoticePart
+  | GoalNoticePart;
 
 export interface SessionMessage {
   id: string;

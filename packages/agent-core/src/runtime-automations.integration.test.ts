@@ -45,7 +45,7 @@ afterAll(async () => {
 });
 
 describe("AgentRuntime Automation worktree wiring", () => {
-  test("creates worktree Sessions through the shared WorktreeService", async () => {
+  test("creates worktree Sessions and drains their pending start before shutdown returns", async () => {
     const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "isolated check",
@@ -63,6 +63,11 @@ describe("AgentRuntime Automation worktree wiring", () => {
     expect(worktree.branchName).toBe(managedWorktreeNames({
       owner: { id: invocation.sessionId! },
     }).branchName);
+
+    fixture.runtime.notifyRuntimeShutdown("test cleanup");
+    await fixture.runtime.shutdown();
+    activeRuntime = undefined;
+    await testTempRoot.cleanup();
   });
 });
 

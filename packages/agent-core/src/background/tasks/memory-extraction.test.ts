@@ -198,6 +198,43 @@ describe("createMemoryExtractionTask", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
+  test("does not count Goal notices as user memory semantics", async () => {
+    const roots = makeMemoryRoots("skip-goal-notices");
+    await setupDirs(roots);
+    const now = Date.now();
+    const internalNotices = Array.from({ length: 4 }, (_, index) => ({
+      id: `internal-${index}`,
+      role: "user" as const,
+      parts: [{
+        type: "goal-notice" as const,
+        id: `notice-${index}`,
+        action: "edited" as const,
+        authority: "user_control" as const,
+        instanceId: "goal-1",
+        previousGeneration: index + 1,
+        generation: index + 2,
+        goal: {
+          objective: "Internal Goal objective",
+          status: "active" as const,
+        },
+        createdAt: now + index,
+      }],
+      createdAt: now + index,
+      completedAt: now + index,
+    }));
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    store.setState({
+      messages: [
+        ...internalNotices,
+        makeUserMessage("A".repeat(1_500), now + internalNotices.length),
+      ],
+    });
+
+    await createMemoryExtractionTask(store, roots).run(makeTaskContext(store));
+
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
   test("skips extraction when total content length below MIN_CONTENT_LENGTH_FOR_EXTRACTION", async () => {
     const roots = makeMemoryRoots("skip-short-content");
     await setupDirs(roots);

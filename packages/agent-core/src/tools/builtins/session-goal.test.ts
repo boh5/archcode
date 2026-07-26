@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH } from "@archcode/protocol";
 import { mkdir } from "node:fs/promises";
 
 import { SessionGoalService } from "../../session-goal";
@@ -9,7 +10,13 @@ import { testExecutionRecord } from "../../testing/test-execution-fixtures";
 import { createTestProjectContext } from "../test-project-context";
 import type { ToolExecutionContext } from "../types";
 import { GOAL_AUTHORIZATION_OPTIONS } from "./ask-user";
-import { CreateGoalInputSchema, UpdateGoalInputSchema, createGoalTool, updateGoalTool } from "./session-goal";
+import {
+  CreateGoalInputSchema,
+  UpdateGoalInputSchema,
+  createGoalTool,
+  getGoalTool,
+  updateGoalTool,
+} from "./session-goal";
 
 const tempRoot = createTestTempRoot("session-goal-tools");
 
@@ -304,6 +311,86 @@ describe("Session Goal model tools", () => {
     expect(CreateGoalInputSchema.safeParse({ objective: "Keep working until done." }).success).toBe(true);
     expect(CreateGoalInputSchema.safeParse({}).success).toBe(false);
     expect(CreateGoalInputSchema.safeParse({ objective: "Goal", token_budget: 20_000 }).success).toBe(false);
+  });
+
+  test("create_goal returns only a receipt and blocked reason uses the shared bound", async () => {
+    const objective = "Keep working until the receipt contract is verified.";
+    const ctx = context({ consumeFreshUserInput: () => ({ text: objective }) });
+    const result = await createGoalTool.execute({ objective }, ctx);
+    expect(result.isError).toBe(false);
+    const receipt = JSON.parse(text(result)) as Record<string, unknown>;
+    expect(receipt).toEqual({
+      status: "created",
+      instanceId: expect.any(String),
+      generation: 1,
+    });
+    expect(JSON.stringify(receipt)).not.toContain(objective);
+
+    expect(UpdateGoalInputSchema.safeParse({
+      status: "blocked",
+      reason: "x".repeat(SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH),
+    }).success).toBe(true);
+    expect(UpdateGoalInputSchema.safeParse({
+      status: "blocked",
+      reason: "x".repeat(SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH + 1),
+    }).success).toBe(false);
+  });
+
+  test("get_goal returns accounting only and never duplicates GoalNotice semantics", async () => {
+    const ctx = context();
+    const target = {
+      workspaceRoot: tempRoot.path,
+      sessionId: ctx.store.getState().sessionId,
+    };
+    await ctx.sessionGoalService!.create({
+      ...target,
+      authority: { kind: "user_control" },
+      objective: "Semantic objective must stay in GoalNotice.",
+      tokenBudget: 100,
+    });
+    await ctx.sessionGoalService!.recordUsage({
+      ...target,
+      authority: { kind: "runtime" },
+      usage: {
+        inputTokens: 7,
+        outputTokens: 3,
+        totalTokens: 10,
+        reasoningTokens: 2,
+        cachedInputTokens: 1,
+      },
+      executionTimeMs: 25,
+    });
+    await ctx.sessionGoalService!.block({
+      ...target,
+      authority: { kind: "agent" },
+      reason: "Semantic blocker must stay in GoalNotice.",
+    });
+
+    const result = await getGoalTool.execute({}, ctx);
+    expect(result.isError).toBe(false);
+    const accounting = JSON.parse(text(result)) as Record<string, unknown>;
+    expect(accounting).toEqual({
+      tokenBudget: 100,
+      usage: {
+        tokens: {
+          inputTokens: 7,
+          outputTokens: 3,
+          totalTokens: 10,
+          reasoningTokens: 2,
+          cachedInputTokens: 1,
+        },
+        executionTimeMs: 25,
+        executionCount: 1,
+      },
+    });
+    const serialized = JSON.stringify(accounting);
+    expect(serialized).not.toContain("Semantic objective");
+    expect(serialized).not.toContain("Semantic blocker");
+    expect(accounting.objective).toBeUndefined();
+    expect(accounting.status).toBeUndefined();
+    expect(accounting.blockedReason).toBeUndefined();
+    expect(accounting.instanceId).toBeUndefined();
+    expect(accounting.generation).toBeUndefined();
   });
 
   test("creates only from an exact fresh explicit persistent user objective", async () => {

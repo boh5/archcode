@@ -1776,9 +1776,10 @@ export async function createRuntime(
       if (shutdownPromise !== undefined) return shutdownPromise;
 
       shutdownPromise = (async () => {
+        await stopAutomationSchedulers();
+        shutdownReconciliation();
+        await executionManager.shutdown();
         await Promise.all([
-          stopAutomationSchedulers(),
-          abortAllSessionExecutions(),
           toolOutputArtifactStore.dispose(),
           closeMcpManager(activeMcpManager, warnings, runtimeLogger),
         ]);

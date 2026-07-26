@@ -538,12 +538,14 @@ export function reduceStreamEvent(
     }
 
     case "execution-error": {
+      // Preparation can fail before a model Step exists. Keep the durable error
+      // event without fabricating a Step that never started.
+      if (event.step === undefined) return {};
+
       const matchingStep =
-        event.step !== undefined
-          ? state.steps.find(
-              (step) => step.step === event.step && step.executionId === state.currentExecutionId,
-            )
-          : undefined;
+        state.steps.find(
+          (step) => step.step === event.step && step.executionId === state.currentExecutionId,
+        );
 
       if (matchingStep) {
         return {
@@ -558,7 +560,7 @@ export function reduceStreamEvent(
           ...state.steps,
           {
             id: ctx.generateId(),
-            step: event.step ?? state.steps.length,
+            step: event.step,
             executionId: state.currentExecutionId,
             startedAt: timestamp,
             error: event.error,

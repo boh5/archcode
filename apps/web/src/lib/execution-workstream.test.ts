@@ -315,6 +315,44 @@ describe("buildExecutionWorkstream", () => {
     expect(projected.workMessages).toEqual([{ message: internalNotice, parts: internalNotice.parts }]);
   });
 
+  test("removes Goal notices from user bubbles, Work, activity, and diagnostics", () => {
+    const standalone = message("goal-standalone", "user", [{
+      type: "goal-notice",
+      id: "goal-notice-standalone",
+      action: "created",
+      authority: "user_control",
+      instanceId: "goal-1",
+      generation: 1,
+      goal: { objective: "Keep this internal", status: "active" },
+      createdAt: 1,
+    }]);
+    const mixed = message("goal-mixed", "user", [
+      {
+        type: "goal-notice",
+        id: "goal-notice-mixed",
+        action: "edited",
+        authority: "user_control",
+        instanceId: "goal-1",
+        previousGeneration: 1,
+        generation: 2,
+        goal: { objective: "Still internal", status: "active" },
+        createdAt: 2,
+      },
+      text("visible-user-text", "Visible canonical input", 3),
+    ], "execution");
+
+    const result = buildExecutionWorkstream(input({
+      executions: [execution("execution", 1)],
+      messages: [standalone, mixed],
+    }));
+
+    expect(result.items).toHaveLength(1);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.executions[0]?.userMessages).toHaveLength(1);
+    expect(result.executions[0]?.userMessages[0]?.parts).toEqual([mixed.parts[1]]);
+    expect(result.executions[0]?.workMessages).toEqual([]);
+  });
+
   test("does not fabricate a final response when a Tool ends a completed Execution", () => {
     const earlierText = message("earlier", "assistant", [
       text("earlier-text", "Progress, not a final answer", 2),

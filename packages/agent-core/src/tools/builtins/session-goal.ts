@@ -1,4 +1,6 @@
 import {
+  SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH,
+  SESSION_GOAL_OBJECTIVE_MAX_LENGTH,
   TOOL_CREATE_GOAL,
   TOOL_GET_GOAL,
   TOOL_UPDATE_GOAL,
@@ -18,7 +20,7 @@ import type {
 import { GOAL_AUTHORIZATION_OPTIONS } from "./ask-user";
 
 export const CreateGoalInputSchema = z.strictObject({
-  objective: z.string().trim().min(1).max(4_000)
+  objective: z.string().trim().min(1).max(SESSION_GOAL_OBJECTIVE_MAX_LENGTH)
     .describe("The exact complete objective explicitly requested by the user or confirmed through the current ask_user Goal authorization."),
 });
 
@@ -33,7 +35,8 @@ const CompleteGoalInputSchema = z.strictObject({
 const BlockGoalInputSchema = z.strictObject({
   status: z.literal("blocked")
     .describe("Mark blocked only when a genuine blocker prevents meaningful progress."),
-  reason: z.string().trim().min(1).describe("The genuine blocker preventing meaningful progress."),
+  reason: z.string().trim().min(1).max(SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH)
+    .describe("The genuine blocker preventing meaningful progress."),
 });
 
 export const UpdateGoalInputSchema = z.discriminatedUnion("status", [
@@ -63,7 +66,11 @@ export const createGoalTool: AnyToolDescriptor = defineTool({
         ...(tokenBudget === undefined ? {} : { tokenBudget }),
         authority: { kind: "user_control" },
       });
-      return createTextToolResult(JSON.stringify(goal, null, 2));
+      return createTextToolResult(JSON.stringify({
+        status: "created",
+        instanceId: goal.instanceId,
+        generation: goal.generation,
+      }));
     } catch (error) {
       return sessionGoalToolError(error);
     }
@@ -72,7 +79,7 @@ export const createGoalTool: AnyToolDescriptor = defineTool({
 
 export const getGoalTool: AnyToolDescriptor = defineTool({
   name: TOOL_GET_GOAL,
-  description: "Read the current Session Goal, including its objective, status, usage, and optional budget. This is read-only; absence means this Session has no Goal.",
+  description: "Read accounting only for the current Session Goal: normalized token usage, accumulated execution time, execution count, and optional token budget. This is read-only and never returns the objective, status, or blocked reason; use the latest GoalNotice for semantic Goal state. Absence means this Session has no Goal.",
   inputSchema: GetGoalInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   outputPolicy: { kind: "inline", previewDirection: "head" },
@@ -83,7 +90,10 @@ export const getGoalTool: AnyToolDescriptor = defineTool({
         workspaceRoot: ctx.projectContext.project.workspaceRoot,
         sessionId: state.sessionId,
       });
-      return createTextToolResult(JSON.stringify(goal ?? null, null, 2));
+      return createTextToolResult(JSON.stringify(goal === undefined ? null : {
+        ...(goal.tokenBudget === undefined ? {} : { tokenBudget: goal.tokenBudget }),
+        usage: goal.usage,
+      }, null, 2));
     } catch (error) {
       return sessionGoalToolError(error);
     }

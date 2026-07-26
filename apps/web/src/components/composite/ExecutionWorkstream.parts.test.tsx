@@ -216,6 +216,24 @@ describe("PartRenderer", () => {
     expect(text).toContain("Recovery failed");
     expect(text).toContain("context_overflow");
   });
+
+  test("explicitly hides model-only Goal notices", () => {
+    const el = PartRenderer({
+      part: {
+        type: "goal-notice",
+        id: "goal-notice-1",
+        action: "created",
+        authority: "user_control",
+        instanceId: "goal-1",
+        generation: 1,
+        goal: { objective: "Never render this", status: "active" },
+        createdAt: Date.now(),
+      },
+      ...defaultProps,
+    });
+
+    expect(el).toBeNull();
+  });
 });
 
 describe("MsgUser", () => {
@@ -474,14 +492,14 @@ describe("CompressionBlock", () => {
       childBlockRefs: [],
       range: {
         startMessageId: "msg-1",
-        endMessageId: "msg-2",
+        endMessageId: "msg-3",
         startRef: "m0001",
-        endRef: "m0002",
+        endRef: "m0003",
         startIndex: 0,
-        endIndex: 1,
+        endIndex: 2,
       },
-      coveredRefs: ["m0001", "m0002"],
-      coveredMessageIds: ["msg-1", "msg-2"],
+      coveredRefs: ["m0001", "m0002", "m0003"],
+      coveredMessageIds: ["msg-1", "msg-2", "msg-3"],
       messages: [
         {
           ref: "m0001",
@@ -528,6 +546,25 @@ describe("CompressionBlock", () => {
             completedAt: 4,
           },
         },
+        {
+          ref: "m0003",
+          message: {
+            id: "msg-3",
+            role: "user",
+            parts: [{
+              type: "goal-notice",
+              id: "goal-notice-original",
+              action: "created",
+              authority: "user_control",
+              instanceId: "goal-1",
+              generation: 1,
+              goal: { objective: "HIDDEN_GOAL_ORIGINAL_RANGE", status: "active" },
+              createdAt: 5,
+            }],
+            createdAt: 5,
+            completedAt: 5,
+          },
+        },
       ],
     };
     fetchCompressionOriginalRangeMock.mockImplementation(async () => successBody);
@@ -547,6 +584,7 @@ describe("CompressionBlock", () => {
     expect(fetchCompressionOriginalRangeMock).toHaveBeenCalledTimes(1);
 
     const el2 = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
+    expect(textContent(el2)).not.toContain("HIDDEN_GOAL_ORIGINAL_RANGE");
     const toolDetailsButton = findAll(el2, (element) => (
       element.type === "button"
       && element.props?.["aria-expanded"] === false

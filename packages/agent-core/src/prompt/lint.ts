@@ -69,7 +69,6 @@ export class IllegalPromptExecutionModeError extends Error {
 export function assertLegalExecutionMode(runtime: RuntimePromptEnvelope): void {
   const isRoot = runtime.parentSessionId === "none";
   const hasParentAgent = runtime.parentAgentName !== "none";
-  const hasGoal = runtime.goal !== "none";
   const reject = (reason: string): never => { throw new IllegalPromptExecutionModeError(runtime.agentName, reason); };
 
   if (isRoot === hasParentAgent) reject("parent Session and parent Agent identities must either both be present or both be none");
@@ -78,21 +77,20 @@ export function assertLegalExecutionMode(runtime: RuntimePromptEnvelope): void {
   switch (runtime.agentName) {
     case "lead": {
       if (!isRoot) reject("Lead requires a root Session");
-      if (runtime.todo !== "none" && hasGoal) reject("a Discussion Lead cannot own a Goal");
       break;
     }
     case "analyst":
     case "build": {
-      if (isRoot || hasGoal || runtime.parentAgentName !== "lead") reject(`${runtime.agentName} requires a Lead parent and a DelegationRequest`);
+      if (isRoot || runtime.parentAgentName !== "lead") reject(`${runtime.agentName} requires a Lead parent and a DelegationRequest`);
       break;
     }
     case "explore": {
-      const legalParent = !hasGoal && ["lead", "analyst", "build"].includes(runtime.parentAgentName);
+      const legalParent = ["lead", "analyst", "build"].includes(runtime.parentAgentName);
       if (isRoot || !legalParent) reject("Explore requires a legal parent role");
       break;
     }
     case "librarian": {
-      const legalParent = !hasGoal && ["lead", "analyst"].includes(runtime.parentAgentName);
+      const legalParent = ["lead", "analyst"].includes(runtime.parentAgentName);
       if (isRoot || !legalParent) reject("Librarian requires a legal parent role");
       break;
     }

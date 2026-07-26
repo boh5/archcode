@@ -24,6 +24,7 @@ import type { ToolExecutionContext } from "../../tools/types";
 import { runQueryLoop } from "./loop";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { createTestModelInfo } from "../../testing/test-execution-fixtures";
+import { SessionGoalService } from "../../session-goal";
 
 const ROOT = join("/tmp", "archcode-query-loop", crypto.randomUUID());
 const skillService = new SkillService({ builtinSkills: {} });
@@ -342,6 +343,9 @@ describe("QueryLoop Tool Output Plane", () => {
       order.push("steer");
       harness.appendUser("steered");
     };
+    harness.options.prepareModelContext = async () => {
+      order.push("prepare");
+    };
     harness.options.hooks = {
       beforeModelBuild: [async () => { order.push("build"); }],
       beforeModelCall: [async ({ messages }) => {
@@ -355,8 +359,138 @@ describe("QueryLoop Tool Output Plane", () => {
 
     await runQueryLoop(harness.options);
 
-    expect(order).toEqual(["steer", "build", "call", "step-end", "loop-end"]);
+    expect(order).toEqual(["steer", "prepare", "build", "prepare", "call", "step-end", "loop-end"]);
     expect(projected).toContain("steered");
+  });
+
+  test("phase two materializes a Goal edit completed inside beforeModelBuild before projection", async () => {
+    const harness = await createHarness();
+    harness.appendUser("continue");
+    const goalService = new SessionGoalService(harness.storeManager);
+    const created = await goalService.create({
+      workspaceRoot: harness.workspaceRoot,
+      sessionId: harness.sessionId,
+      authority: { kind: "user_control" },
+      objective: "Objective before compact.",
+    });
+    harness.options.prepareModelContext = async () => {
+      await goalService.materializeModelContextNotices({
+        workspaceRoot: harness.workspaceRoot,
+        sessionId: harness.sessionId,
+      });
+    };
+    let edited = false;
+    let projected = "";
+    harness.options.hooks = {
+      beforeModelBuild: [async () => {
+        if (edited) return;
+        edited = true;
+        await goalService.edit({
+          workspaceRoot: harness.workspaceRoot,
+          sessionId: harness.sessionId,
+          authority: { kind: "user_control" },
+          expectedGeneration: created.generation,
+          objective: "Objective edited while compact was blocked.",
+        });
+      }],
+      beforeModelCall: [async ({ messages }) => {
+        projected = JSON.stringify(messages);
+      }],
+    };
+    installRounds([{ finishReason: "stop", text: "done" }]);
+
+    await runQueryLoop(harness.options);
+
+    expect(projected).toContain("Objective edited while compact was blocked.");
+    expect(projected).toContain("<action>edited</action>");
+  });
+
+  test("a Goal edit inside a parallel tool batch waits for the next boundary and follows every complete tool pair", async () => {
+    const harness = await createHarness();
+    harness.appendUser("continue");
+    const goalService = new SessionGoalService(harness.storeManager);
+    const created = await goalService.create({
+      workspaceRoot: harness.workspaceRoot,
+      sessionId: harness.sessionId,
+      authority: { kind: "user_control" },
+      objective: "Objective before high-water.",
+    });
+    registerInline(harness, "edit_goal_fixture", async () => {
+      await goalService.edit({
+        workspaceRoot: harness.workspaceRoot,
+        sessionId: harness.sessionId,
+        authority: { kind: "user_control" },
+        expectedGeneration: created.generation,
+        objective: "Objective after phase-two high-water.",
+      });
+      return createTextToolResult("Goal edited");
+    });
+    registerInline(harness, "echo", async () => createTextToolResult("parallel tool complete"));
+    harness.options.prepareModelContext = async () => {
+      await goalService.materializeModelContextNotices({
+        workspaceRoot: harness.workspaceRoot,
+        sessionId: harness.sessionId,
+      });
+    };
+    const calls: Array<{ messages: unknown[] }> = [];
+    installRounds([
+      {
+        finishReason: "tool-calls",
+        toolCalls: [
+          { toolCallId: "call-edit", toolName: "edit_goal_fixture", input: {} },
+          { toolCallId: "call-echo", toolName: "echo", input: {} },
+        ],
+        chunks: [
+          { type: "tool-call", toolCallId: "call-edit", toolName: "edit_goal_fixture", input: {} } as StreamPart,
+          { type: "tool-call", toolCallId: "call-echo", toolName: "echo", input: {} } as StreamPart,
+        ],
+      },
+      { finishReason: "stop", text: "done" },
+    ], (options) => {
+      calls.push(options as { messages: unknown[] });
+    });
+
+    await runQueryLoop(harness.options);
+
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls[0]!.messages)).not.toContain("Objective after phase-two high-water.");
+    const secondMessages = calls[1]!.messages as Array<{ role?: string; content?: unknown }>;
+    const serialized = JSON.stringify(secondMessages);
+    expect(serialized.split("Objective after phase-two high-water.")).toHaveLength(2);
+    expect(serialized.split("<action>edited</action>")).toHaveLength(2);
+    const toolResultIndex = secondMessages.findIndex((message) =>
+      message.role === "tool"
+      && JSON.stringify(message.content).includes("call-edit")
+      && JSON.stringify(message.content).includes("call-echo")
+    );
+    const editedNoticeIndex = secondMessages.findIndex((message) =>
+      typeof message.content === "string"
+      && message.content.includes("Objective after phase-two high-water.")
+    );
+    expect(toolResultIndex).toBeGreaterThanOrEqual(0);
+    expect(editedNoticeIndex).toBeGreaterThan(toolResultIndex);
+  });
+
+  test("fails closed before model execution and leaves no Step when context preparation fails", async () => {
+    const harness = await createHarness();
+    harness.appendUser("prepare");
+    let modelCalls = 0;
+    harness.options.prepareModelContext = async () => {
+      throw new Error("goal notice persistence failed");
+    };
+    installRounds([{ finishReason: "stop", text: "must not run" }], () => {
+      modelCalls += 1;
+    });
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({
+      status: "failed",
+      error: "goal notice persistence failed",
+    });
+    expect(modelCalls).toBe(0);
+    expect(harness.store.getState().steps).toHaveLength(0);
+    expect(streamEvents(harness)).toContain("execution-error");
+    expect(streamEvents(harness)).not.toContain("step-start");
+    expect(streamEvents(harness)).not.toContain("step-end");
   });
 
   test("projects streamed text and reasoning in their original order", async () => {

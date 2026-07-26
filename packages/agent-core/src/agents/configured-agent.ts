@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { USER_DATA_DIR_NAME, type McpServerStatus, type ProjectTodo, type PromptTraceSnapshot, type SessionGoal } from "@archcode/protocol";
+import { USER_DATA_DIR_NAME, type McpServerStatus, type ProjectTodo, type PromptTraceSnapshot } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
@@ -15,7 +15,7 @@ import type { ProjectContext } from "../projects/types";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { AgentsMdLoadError, PromptContractCompiler, createFailedPromptTrace, loadAgentsMd } from "../prompt/index";
-import type { CompiledPromptContract, GoalPromptStatus, PromptContractV2, PromptEnv, PromptMemorySnapshot, PromptSource, RuntimePromptEnvelope } from "../prompt/index";
+import type { CompiledPromptContract, PromptContractV2, PromptEnv, PromptMemorySnapshot, PromptSource, RuntimePromptEnvelope } from "../prompt/index";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
@@ -124,14 +124,9 @@ function durablePromptTrace(trace: CompiledPromptContract["trace"]): PromptTrace
 }
 
 export function buildLifecycleCurrentContext(
-  goal: Pick<SessionGoal, "instanceId" | "generation" | "status" | "objective"> | undefined,
   todo: Pick<ProjectTodo, "id" | "title" | "body"> | undefined,
 ): string[] {
   return [
-    `goalInstanceId=${goal?.instanceId ?? "none"}`,
-    `goalStatus=${goal?.status ?? "none"}`,
-    `goalGeneration=${goal?.generation ?? "none"}`,
-    `goalObjective=${goal === undefined ? "none" : JSON.stringify(goal.objective)}`,
     `todoId=${todo?.id ?? "none"}`,
     `todoTitle=${todo === undefined ? "none" : JSON.stringify(todo.title)}`,
     `todoBody=${todo === undefined ? "none" : JSON.stringify(todo.body)}`,
@@ -365,6 +360,16 @@ export class ConfiguredAgent implements Agent {
         }
       };
       const hooks = this.buildHooks(btm);
+      const prepareModelContext = this.sessionGoalService !== undefined
+        && state.sessionId === state.rootSessionId
+        && this.definition.name === "lead"
+        ? async (): Promise<void> => {
+            await this.sessionGoalService!.materializeModelContextNotices({
+              workspaceRoot: this.projectRoot,
+              sessionId: state.sessionId,
+            });
+          }
+        : undefined;
       while (true) {
         const result = await runQueryLoop(
           {
@@ -384,6 +389,7 @@ export class ConfiguredAgent implements Agent {
             resolveSystemPrompt,
             store: this.store,
             consumeSteers,
+            ...(prepareModelContext === undefined ? {} : { prepareModelContext }),
             startChildExecution: this.startChildExecution,
             cancelChildSession: this.cancelChildSession,
             resumeChildSession: this.resumeChildSession,
@@ -457,9 +463,6 @@ export class ConfiguredAgent implements Agent {
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
-    const goal = state.sessionId === state.rootSessionId && this.definition.name === "lead"
-      ? state.goal
-      : undefined;
     const todo = this.definition.name === "lead"
       ? await input.projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
       : undefined;
@@ -489,14 +492,6 @@ export class ConfiguredAgent implements Agent {
       parentAgentName,
       depth: this.depth,
       allowedDelegateTargets,
-      goal: goal === undefined
-        ? "none"
-        : {
-            instanceId: goal.instanceId,
-            generation: goal.generation,
-            objective: goal.objective,
-            status: goal.status satisfies GoalPromptStatus,
-          },
       todo: todo === undefined ? "none" : { id: todo.id, mode: "bound" },
       remainingDepth: Math.max(0, effectiveMaxDepth - this.depth),
       maxConcurrentChildren: this.definition.childPolicy?.maxConcurrent ?? 0,
@@ -515,7 +510,7 @@ export class ConfiguredAgent implements Agent {
       },
       agentsMd: this.agentsMd,
       memory: input.memory,
-      currentContext: buildLifecycleCurrentContext(goal, todo),
+      currentContext: buildLifecycleCurrentContext(todo),
       delegationRequest: state.delegationRequest ?? "none",
       env: input.env,
     };

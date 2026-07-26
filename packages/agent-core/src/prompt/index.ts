@@ -2,7 +2,6 @@ export type {
   CapabilityRef,
   CompiledPromptContract,
   CompletionAuthority,
-  GoalPromptStatus,
   McpPromptStatus,
   PromptContractV2,
   PromptEnv,
