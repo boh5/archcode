@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
 import type { RecoveryNoticePart } from "@archcode/protocol";
 import { StatusGlyph } from "../primitives/StatusGlyph";
+import { useCountdown } from "../primitives/TemporalText";
 import { useStatusTransition } from "../primitives/useStatusTransition";
 import {
   STATUS_SUBTLE_CLASS,
@@ -26,40 +26,6 @@ function recoveryVisual(status: RecoveryNoticePart["status"]): {
   return { kind: "failed", tone: "error" };
 }
 
-// ─── Countdown hook ───
-
-function useCountdown(nextRetryAt: number | undefined): string | null {
-  const [remaining, setRemaining] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (nextRetryAt === undefined) {
-      setRemaining(null);
-      return;
-    }
-
-    const compute = (): string | null => {
-      const diff = nextRetryAt - Date.now();
-      if (diff <= 0) return null;
-      const seconds = Math.ceil(diff / 1000);
-      if (seconds < 60) return `${seconds}s`;
-      const minutes = Math.floor(seconds / 60);
-      const secs = seconds % 60;
-      return `${minutes}m ${secs}s`;
-    };
-
-    setRemaining(compute());
-    const interval = setInterval(() => {
-      const next = compute();
-      setRemaining(next);
-      if (next === null) clearInterval(interval);
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [nextRetryAt]);
-
-  return remaining;
-}
-
 // ─── RecoveryNotice ───
 
 export interface RecoveryNoticeProps {
@@ -69,7 +35,7 @@ export interface RecoveryNoticeProps {
 export function RecoveryNotice({ part }: RecoveryNoticeProps) {
   const visual = recoveryVisual(part.status);
   const statusTransition = useStatusTransition(part.id, visual.kind);
-  const countdown = useCountdown(part.status === "scheduled" ? part.nextRetryAt : undefined);
+  const countdown = useCountdown(part.nextRetryAt, part.status === "scheduled");
 
   return (
     <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">

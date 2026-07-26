@@ -86,6 +86,10 @@ mock.module("react", () => ({
   useLayoutEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
   useRef: <T,>(initial: T) => ({ current: initial }),
   useMemo: <T,>(factory: () => T) => factory(),
+  useSyncExternalStore: <T,>(
+    _subscribe: (listener: () => void) => () => void,
+    getSnapshot: () => T,
+  ): T => getSnapshot(),
 }));
 
 mock.module("react/jsx-dev-runtime", () => ({

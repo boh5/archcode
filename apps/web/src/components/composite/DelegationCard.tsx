@@ -1,9 +1,9 @@
 import { getWebSessionStore } from "../../store/session-store";
-import { formatElapsed } from "../../lib/time-format";
 import { CornerDownRight } from "lucide-react";
 import type { DelegationCardViewModel } from "../../lib/delegation-card-model";
 import { STATUS_TONE_CLASS, statusVisual } from "../../lib/status-visuals";
 import { StatusGlyph } from "../primitives/StatusGlyph";
+import { useElapsedTime } from "../primitives/TemporalText";
 import { useStatusTransition } from "../primitives/useStatusTransition";
 import { ToolInputDetails } from "./ToolInputDetails";
 
@@ -21,6 +21,10 @@ export function DelegationCard({
   canNavigate = true,
 }: DelegationCardViewModel) {
   const statusTransition = useStatusTransition(sessionId, visualKind);
+  const elapsed = useElapsedTime({
+    startedAt: startedAt ?? 0,
+    active: visualKind === "running" && startedAt !== undefined,
+  });
   const handleViewConversation = () => {
     if (!canNavigate) return;
     const store = getWebSessionStore(focusStoreSessionId, projectSlug);
@@ -45,7 +49,7 @@ export function DelegationCard({
         {taskTitle && <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary" title={taskTitle}>{taskTitle}</span>}
         {!taskTitle && <span className="flex-1" />}
         {visualKind === "running" && startedAt !== undefined && (
-          <span className="text-[11px] text-text-tertiary">{formatElapsed(startedAt)}</span>
+          <span className="text-[11px] text-text-tertiary">{elapsed}</span>
         )}
         {canNavigate ? (
           <button

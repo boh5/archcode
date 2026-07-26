@@ -13,7 +13,6 @@ import type { SessionFamilyActivity } from "@archcode/protocol";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
-import { formatRelativeTime, formatShortRelativeTime } from "../../lib/time-format";
 import { useWorkbenchLayout } from "../../context/workbench-layout";
 import {
   runtimeFamilyKey,
@@ -30,6 +29,10 @@ import { GoalStatusMark } from "./GoalStatusMark";
 import { presentSessionGoalStatus } from "../../lib/session-goal-presentation";
 import { automationVisualKind } from "../../lib/automation-status-presentation";
 import { sessionFamilyVisual } from "../../lib/session-family-presentation";
+import {
+  RelativeTimeValue,
+  useRelativeTimePresentation,
+} from "../primitives/TemporalText";
 
 // Helpers
 
@@ -152,6 +155,7 @@ function SessionItem({
   const goalLabel = session.goal ? presentSessionGoalStatus(session.goal.status).label : undefined;
   const stateLabel = sessionStateLabel(activity, attention);
   const visibleAttentionLabel = attention ? attentionLabel(attention) : undefined;
+  const relativeUpdatedAt = useRelativeTimePresentation(updatedAt);
   const accessibleName = [
     session.title || "Untitled",
     stateLabel,
@@ -161,7 +165,7 @@ function SessionItem({
         : `${attention.label} waiting${attention.count > 1 ? `, ${attention.count} requests` : ""}`
       : undefined,
     goalLabel ? `Goal ${goalLabel}` : undefined,
-    formatRelativeTime(updatedAt),
+    relativeUpdatedAt.full,
   ].filter((part): part is string => part !== undefined).join(" · ");
 
   return (
@@ -169,7 +173,6 @@ function SessionItem({
       type="button"
       aria-current={isActive ? "page" : undefined}
       aria-label={accessibleName}
-      title={accessibleName}
       className={`relative flex h-8 min-h-8 w-full items-center gap-2 px-4 text-left transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
         isActive ? "bg-selection-field" : "hover:bg-bg-hover"
       }`}
@@ -201,9 +204,7 @@ function SessionItem({
             <span>{visibleAttentionLabel}</span>
           </span>
         )}
-        <time dateTime={new Date(updatedAt).toISOString()} title={formatRelativeTime(updatedAt)}>
-          {formatShortRelativeTime(updatedAt)}
-        </time>
+        <RelativeTimeValue timestamp={updatedAt} text={relativeUpdatedAt.short} />
       </span>
     </button>
   );

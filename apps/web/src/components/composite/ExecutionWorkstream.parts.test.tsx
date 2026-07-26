@@ -11,8 +11,11 @@ import {
   type TextPart,
   type ReasoningPart,
 } from "@archcode/protocol";
-import { MsgUser, PartRenderer } from "./ExecutionWorkstream";
-import { CompressionBlock } from "./CompressionBlock";
+import {
+  MsgUser as MsgUserComponent,
+  PartRenderer as PartRendererComponent,
+} from "./ExecutionWorkstream";
+import { CompressionBlock as CompressionBlockComponent } from "./CompressionBlock";
 import type { CompressionOriginalRangeSuccess } from "../../api/compression";
 
 const Fragment = Symbol.for("react.fragment");
@@ -28,19 +31,35 @@ function compressionSummary(currentObjective: string): CompressionSummarySnapsho
   };
 }
 
-const stateSlots: unknown[] = [];
-let stateSlotIndex = 0;
+const DEFAULT_COMPONENT_INSTANCE = Symbol("default-component-instance");
+const stateSlotsByComponent = new Map<unknown, Map<unknown, unknown[]>>();
+let activeStateSlots: unknown[] = [];
+let activeStateSlotIndex = 0;
 
 function resetStateSlots(): void {
-  stateSlots.length = 0;
-  stateSlotIndex = 0;
+  stateSlotsByComponent.clear();
+  activeStateSlots = [];
+  activeStateSlotIndex = 0;
 }
 
 const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?: unknown) => {
   const resolvedProps = props ?? {};
   if (typeof type === "function") {
-    stateSlotIndex = 0;
-    return type(resolvedProps);
+    const previousSlots = activeStateSlots;
+    const previousIndex = activeStateSlotIndex;
+    const instances = stateSlotsByComponent.get(type) ?? new Map<unknown, unknown[]>();
+    stateSlotsByComponent.set(type, instances);
+    const instanceKey = key ?? DEFAULT_COMPONENT_INSTANCE;
+    const componentSlots = instances.get(instanceKey) ?? [];
+    instances.set(instanceKey, componentSlots);
+    activeStateSlots = componentSlots;
+    activeStateSlotIndex = 0;
+    try {
+      return type(resolvedProps);
+    } finally {
+      activeStateSlots = previousSlots;
+      activeStateSlotIndex = previousIndex;
+    }
   }
   return { type, props: resolvedProps, key };
 });
@@ -48,15 +67,16 @@ const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?:
 mock.module("react", () => ({
   default: {},
   useState: <T,>(initialOrInitializer: T | (() => T)): [T, (value: T | ((previous: T) => T)) => void] => {
-    const slot = stateSlotIndex++;
+    const slots = activeStateSlots;
+    const slot = activeStateSlotIndex++;
     const initial = typeof initialOrInitializer === "function"
       ? (initialOrInitializer as () => T)()
       : initialOrInitializer;
-    if (slot >= stateSlots.length) stateSlots.push(initial);
-    const currentValue = stateSlots[slot] as T;
+    if (slot >= slots.length) slots.push(initial);
+    const currentValue = slots[slot] as T;
     const setter = (value: T | ((previous: T) => T)): void => {
-      stateSlots[slot] = typeof value === "function"
-        ? (value as (previous: T) => T)(stateSlots[slot] as T)
+      slots[slot] = typeof value === "function"
+        ? (value as (previous: T) => T)(slots[slot] as T)
         : value;
     };
     return [currentValue, setter];
@@ -66,6 +86,10 @@ mock.module("react", () => ({
   useLayoutEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
   useRef: <T,>(initial: T) => ({ current: initial }),
   useMemo: <T,>(factory: () => T) => factory(),
+  useSyncExternalStore: <T,>(
+    _subscribe: (listener: () => void) => () => void,
+    getSnapshot: () => T,
+  ): T => getSnapshot(),
 }));
 
 mock.module("react/jsx-dev-runtime", () => ({
@@ -74,6 +98,13 @@ mock.module("react/jsx-dev-runtime", () => ({
   jsx: jsxDEV,
   jsxs: jsxDEV,
 }));
+
+const MsgUser = (props: Parameters<typeof MsgUserComponent>[0]) =>
+  jsxDEV(MsgUserComponent, props as unknown as Record<string, unknown>);
+const PartRenderer = (props: Parameters<typeof PartRendererComponent>[0]) =>
+  jsxDEV(PartRendererComponent, props as unknown as Record<string, unknown>);
+const CompressionBlock = (props: Parameters<typeof CompressionBlockComponent>[0]) =>
+  jsxDEV(CompressionBlockComponent, props as unknown as Record<string, unknown>);
 
 mock.module("../primitives/MarkdownContent", () => ({
   MarkdownContent: ({ children }: { children: string }) => children,
@@ -263,6 +294,19 @@ describe("CompressionBlock", () => {
     expect(text).toContain("m0004");
     expect(text).toContain("children");
     expect(text).toContain("b2");
+  });
+
+  test("renders the commit time as semantic relative time with an absolute tooltip", () => {
+    resetStateSlots();
+    const committedAt = 1_753_000_000_000;
+    const part = makeCompressionBlockPart({ committedAt });
+    const el = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
+    const times = findAll(el, (element) => element.type === "time");
+
+    expect(times).toHaveLength(1);
+    expect(times[0]?.props?.dateTime).toBe(new Date(committedAt).toISOString());
+    expect(times[0]?.props?.title).toBe(new Date(committedAt).toLocaleString());
+    expect(times[0]?.props?.["aria-label"]).toContain(String(times[0]?.props?.children));
   });
 
   test("renders dynamic-range strategy with correct label", () => {
@@ -503,7 +547,15 @@ describe("CompressionBlock", () => {
     expect(fetchCompressionOriginalRangeMock).toHaveBeenCalledTimes(1);
 
     const el2 = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
-    const expandedText = textContent(el2);
+    const toolDetailsButton = findAll(el2, (element) => (
+      element.type === "button"
+      && element.props?.["aria-expanded"] === false
+      && textContent(element).includes("bash")
+    ))[0];
+    expect(toolDetailsButton).toBeDefined();
+    (toolDetailsButton!.props!.onClick as () => void)();
+    const el3 = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
+    const expandedText = textContent(el3);
 
     expect(expandedText).toContain("original hello");
     expect(expandedText).toContain("bash");
@@ -612,7 +664,22 @@ describe("CompressionBlock", () => {
     await (ctaButtons[0]!.props!.onClick as () => Promise<void>)();
 
     const el2 = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
-    const text = textContent(el2);
+    const toolDetailsButton = findAll(el2, (element) => (
+      element.type === "button"
+      && element.props?.["aria-expanded"] === false
+      && textContent(element).includes("file_read")
+    ))[0];
+    expect(toolDetailsButton).toBeDefined();
+    (toolDetailsButton!.props!.onClick as () => void)();
+    const el3 = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
+    const outputButton = findAll(el3, (element) => (
+      element.type === "button"
+      && element.props?.["data-testid"] === "tool-output-open"
+    ))[0];
+    expect(outputButton).toBeDefined();
+    (outputButton!.props!.onClick as () => void)();
+    const el4 = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
+    const text = textContent(el4);
 
     expect(text).toContain("abcdefghijklmnopqrstuv");
   });

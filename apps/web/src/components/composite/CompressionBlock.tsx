@@ -19,7 +19,7 @@ import type {
   CompressionOriginalRangeSuccess,
   OriginalRangePart,
 } from "../../api/compression";
-import { formatRelativeTime } from "../../lib/time-format";
+import { RelativeTime } from "../primitives/TemporalText";
 
 const STRATEGY_LABEL: Record<CompressionStrategy, string> = {
   "dynamic-range": "Dynamic Range",
@@ -110,7 +110,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
           {STATUS_LABEL[part.status]}
         </span>
         <span className="text-[11px] text-text-tertiary">
-          {formatRelativeTime(part.committedAt)}
+          <RelativeTime timestamp={part.committedAt} />
         </span>
       </div>
 

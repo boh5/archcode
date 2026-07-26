@@ -279,11 +279,13 @@ export class SessionStoreManager {
         get().append({ type: "session.cwd_changed", previousCwd, cwd: nextCwd });
       },
       setTitle: (title: string | null) => {
+        if (get().title === title) return;
         set({ title });
         persist();
       },
       setParentSessionId: (parentSessionId: string | undefined) => {
         const current = get().parentSessionId;
+        if (current === parentSessionId) return;
         if (current !== undefined) return; // Identity is immutable after creation
         set({ parentSessionId });
         persist();
@@ -337,22 +339,35 @@ export class SessionStoreManager {
     const key = this.key(sessionId, workspaceRoot);
     const priorFailure = this.#persistFailures.get(key);
     if (priorFailure !== undefined) throw priorFailure;
+    const observedPersistenceBarrier = this.#pendingPersists.get(key);
 
-    let outcome: DurableSessionMutation<T> | undefined;
-    const startNextEventId = store.getState().nextEventId;
+    const currentState = store.getState();
+    const outcome = mutate(currentState);
+    const changedPatch = outcome.patch === undefined
+      ? undefined
+      : Object.fromEntries(
+        Object.entries(outcome.patch).filter(([field, value]) =>
+          !Object.is(currentState[field as keyof SessionStoreState], value)
+        ),
+      ) as Partial<SessionStoreState>;
+    const hasChangedPatch = changedPatch !== undefined && Object.keys(changedPatch).length > 0;
+    const durableEvents = (outcome.events ?? []).map(toDurableSessionEvent);
+    if (!hasChangedPatch && durableEvents.length === 0) {
+      await observedPersistenceBarrier;
+      return outcome.result;
+    }
+
+    const startNextEventId = currentState.nextEventId;
     let targetNextEventId = startNextEventId;
     store.setState((state) => {
-      outcome = mutate(state);
-      let nextState = { ...state, ...(outcome.patch ?? {}) };
-      for (const rawEvent of outcome.events ?? []) {
-        const event = toDurableSessionEvent(rawEvent);
+      let nextState = hasChangedPatch ? { ...state, ...changedPatch } : state;
+      for (const event of durableEvents) {
         nextState = appendEventToState(nextState, event, false);
       }
       targetNextEventId = nextState.nextEventId;
       return nextState;
     }, true);
 
-    if (outcome === undefined) throw new Error("Durable Session mutation did not produce an outcome");
     const hasEvents = targetNextEventId > startNextEventId;
     if (hasEvents) this.#trackPublicationBarrier(key, startNextEventId, targetNextEventId);
 
@@ -376,14 +391,13 @@ export class SessionStoreManager {
     workspaceRoot: string,
     update: (batches: readonly SessionToolBatch[]) => SessionToolBatch[],
   ): Promise<SessionToolBatch[]> {
-    const store = await this.getOrLoad(sessionId, workspaceRoot);
-    let updated: SessionToolBatch[] = [];
-    store.setState((state) => {
-      updated = update(state.toolBatches);
-      return { toolBatches: updated, updatedAt: Date.now() };
+    return await this.commitDurableSessionMutation(sessionId, workspaceRoot, (state) => {
+      const updated = update(state.toolBatches);
+      return {
+        result: updated,
+        patch: { toolBatches: updated },
+      };
     });
-    await this.#enqueuePersist(this.key(sessionId, workspaceRoot), sessionId, workspaceRoot, store.getState());
-    return updated;
   }
 
   /** Lists roots and descendants for project startup repair services. */
@@ -483,11 +497,8 @@ export class SessionStoreManager {
   }
 
   async getSessionFile(workspaceRoot: string, sessionId: string): Promise<HydratedSessionFile> {
-    const existing = this.get(sessionId, workspaceRoot);
-    if (existing) return sessionFileInternals.toSessionFile(existing.getState());
-
-    const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
-    return reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId));
+    const store = await this.getOrLoad(sessionId, workspaceRoot);
+    return sessionFileInternals.toSessionFile(store.getState());
   }
 
   async resolveCompressionOriginalRange(
@@ -728,8 +739,9 @@ export class SessionStoreManager {
     sessionId: string,
     workspaceRoot: string,
     state: SessionStoreState,
+    now = Date.now(),
   ): Promise<void> {
-    const updatedAt = Math.max(Date.now(), state.updatedAt + 1);
+    const updatedAt = Math.max(now, state.updatedAt + 1);
     const persistState = { ...state, updatedAt };
     this.#registry.get(key)?.setState({ updatedAt });
     const previousFailure = this.#persistFailures.get(key);
@@ -866,9 +878,7 @@ export class SessionStoreManager {
    * This intentionally ignores child-link and tool-batch display metadata.
    */
   async resolveSessionDepth(workspaceRoot: string, sessionId: string): Promise<number> {
-    let current = reconcileInterruptedSessionFile(
-      await sessionFileInternals.readSessionFile(sessionId, workspaceRoot),
-    );
+    let current = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot);
     const rootSessionId = current.rootSessionId;
     const seen = new Set<string>();
     let depth = 0;
@@ -907,9 +917,7 @@ export class SessionStoreManager {
       }
 
       try {
-        current = reconcileInterruptedSessionFile(
-          await sessionFileInternals.readSessionFile(parentSessionId, workspaceRoot),
-        );
+        current = await sessionFileInternals.readSessionFile(parentSessionId, workspaceRoot);
       } catch (error) {
         if (!(error instanceof SessionFileNotFoundError) && !isMissingFileError(error)) throw error;
         throw new SessionTreeIntegrityError(
@@ -925,7 +933,7 @@ export class SessionStoreManager {
   }
 
   async buildSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse> {
-    const rootFile = reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId));
+    const rootFile = await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId);
     const rootFilePath = getSessionPath(workspaceRoot, rootSessionId);
     if (rootFile.sessionId !== rootSessionId) {
       throw new SessionTreeIntegrityError(
@@ -1052,7 +1060,12 @@ export class SessionStoreManager {
     workspaceRoot: string,
   ): Promise<StoreApi<SessionStoreState>> {
     const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
-    const parsed = reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId));
+    const now = Date.now();
+    const repair = reconcileInterruptedSessionFile(
+      await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId),
+      now,
+    );
+    const parsed = repair.file;
 
     // Re-check registry after I/O: a concurrent create() may have registered
     // a store for this key while we were reading from disk. If so, return it
@@ -1115,6 +1128,14 @@ export class SessionStoreManager {
         publishableNextEventId: nextEventIdFromEvents(parsed.events ?? []),
       });
       this.#registerRootSessionId(parsed.sessionId, workspaceRoot, parsed.rootSessionId);
+      if (repair.changed) {
+        try {
+          await this.#enqueuePersist(key, sessionId, workspaceRoot, store.getState(), now);
+        } catch (error) {
+          this.delete(sessionId, workspaceRoot);
+          throw error;
+        }
+      }
 
       return store;
     } finally {
@@ -1174,7 +1195,7 @@ export class SessionStoreManager {
 
   async #isRootSessionOnDisk(sessionId: string, workspaceRoot: string): Promise<boolean> {
     try {
-      const file = reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, sessionId));
+      const file = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, sessionId);
       return file.rootSessionId === sessionId;
     } catch (error) {
       if (isMissingFileError(error)) return false;
@@ -1308,7 +1329,7 @@ async function readSessionFileForTree(
   }
 
   const parsed = SessionFileSchema.safeParse(raw);
-  if (parsed.success) return reconcileInterruptedSessionFile(parsed.data);
+  if (parsed.success) return parsed.data;
 
   throw new SessionTreeIntegrityError(
     "invalid_schema",
@@ -1355,8 +1376,15 @@ const TERMINAL_EXECUTION_STATUSES = new Set<HydratedSessionFile["executions"][nu
 
 const ACTIVE_CHILD_LINK_STATUSES = new Set(["linked", "running", "cancelling"]);
 
-function reconcileInterruptedSessionFile(file: HydratedSessionFile): HydratedSessionFile {
-  const now = Date.now();
+interface InterruptedSessionRepair {
+  readonly file: HydratedSessionFile;
+  readonly changed: boolean;
+}
+
+function reconcileInterruptedSessionFile(
+  file: HydratedSessionFile,
+  now: number,
+): InterruptedSessionRepair {
   let changed = false;
   const executions = file.executions.map((execution) => {
     if (TERMINAL_EXECUTION_STATUSES.has(execution.status)) return execution;
@@ -1408,7 +1436,10 @@ function reconcileInterruptedSessionFile(file: HydratedSessionFile): HydratedSes
       error: "Command outcome is unknown because execution was interrupted by restart",
     };
   });
-  return changed ? { ...file, executions, childSessionLinks, messages, inputRequestReceipts } : file;
+  return {
+    file: changed ? { ...file, executions, childSessionLinks, messages, inputRequestReceipts } : file,
+    changed,
+  };
 }
 
 function findParentCycle(

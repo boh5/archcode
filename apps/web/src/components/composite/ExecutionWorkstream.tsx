@@ -35,11 +35,11 @@ import {
 } from "../../lib/execution-workstream";
 import { buildDelegationCardViewModel } from "../../lib/delegation-card-model";
 import { buildToolRunTimeline } from "../../lib/tool-runs";
-import { formatRelativeTime } from "../../lib/time-format";
 import { presentExecutionStatus } from "../../lib/execution-status-presentation";
 import { getToolSummary } from "../../lib/tool-format";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ConversationRail } from "../primitives/ConversationRail";
+import { RelativeTime, useElapsedTime } from "../primitives/TemporalText";
 import { CompressionBlock } from "./CompressionBlock";
 import { DelegationCard } from "./DelegationCard";
 import { ReasoningBlock } from "./ReasoningBlock";
@@ -184,7 +184,7 @@ export function MsgUser({
             Details
           </button>
         )}
-        <time dateTime={new Date(message.createdAt).toISOString()}>{formatRelativeTime(message.createdAt)}</time>
+        <RelativeTime timestamp={message.createdAt} />
       </div>
     </div>
   );
@@ -207,7 +207,7 @@ function CompactionBlock({ part }: { part: Extract<SessionPart, { type: "compact
       <div className="flex items-center gap-2 border-b border-border-subtle bg-transparent px-3 py-2">
         <Info size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
         <span className="text-[11px] font-medium text-text-tertiary">Hard context compaction</span>
-        <span className="ml-auto text-[11px] text-text-tertiary">{formatRelativeTime(part.compactedAt)}</span>
+        <RelativeTime timestamp={part.compactedAt} className="ml-auto text-[11px] text-text-tertiary" />
       </div>
       <div className="whitespace-pre-wrap px-3 py-2 text-[12px] leading-4 text-text-secondary">
         {part.summary}
@@ -349,26 +349,6 @@ function SessionMessageView({
   );
 }
 
-function formatDuration(record: SessionExecutionRecord): string {
-  const durationMs = record.durationMs
-    ?? (record.endedAt !== undefined ? Math.max(0, record.endedAt - record.startedAt) : Math.max(0, Date.now() - record.startedAt));
-  const seconds = Math.floor(durationMs / 1_000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function useExecutionDuration(record: SessionExecutionRecord): string {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (record.status !== "running") return;
-    const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
-    return () => window.clearInterval(timer);
-  }, [record.status, record.startedAt]);
-  return formatDuration(record);
-}
-
 function currentExecutionActivity(execution: ExecutionWorkstreamExecution): string | undefined {
   const parts = execution.workMessages.flatMap((slice) => slice.parts);
   let latestActiveTool: Extract<SessionPart, { type: "tool" }> | undefined;
@@ -440,7 +420,12 @@ function WorkDisclosure({
     [execution.workMessages],
   );
   const status = presentExecutionStatus(execution.record.status, checkpoint);
-  const duration = useExecutionDuration(execution.record);
+  const duration = useElapsedTime({
+    startedAt: execution.record.startedAt,
+    active: execution.record.status === "running",
+    durationMs: execution.record.durationMs,
+    endedAt: execution.record.endedAt,
+  });
   const currentActivity = execution.record.status === "running"
     ? currentExecutionActivity(execution)
     : undefined;

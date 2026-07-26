@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { silentLogger } from "../logger";
+import { sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { SessionInputConflictError, SessionInputService } from "./service";
 
@@ -15,6 +16,75 @@ const BINDING = {
   resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
 const MODEL_AUDIT = { requested: REQUESTED_MODEL_SELECTION, actual: BINDING.selection };
+
+function controlNextSessionSave(failure?: Error) {
+  const originalSave = sessionFileInternals.saveSessionTranscript;
+  let releaseSave!: () => void;
+  const saveReleased = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  let markSaveStarted!: () => void;
+  const saveStarted = new Promise<void>((resolve) => {
+    markSaveStarted = resolve;
+  });
+  let saveCount = 0;
+  const persistedUpdatedAts: number[] = [];
+  sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+    saveCount += 1;
+    persistedUpdatedAts.push(state.updatedAt);
+    markSaveStarted();
+    await saveReleased;
+    if (failure !== undefined) throw failure;
+    await originalSave(state, workspaceRoot);
+  };
+  return {
+    saveStarted,
+    persistedUpdatedAts,
+    get saveCount() {
+      return saveCount;
+    },
+    release() {
+      releaseSave();
+    },
+    restore() {
+      releaseSave();
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    },
+  };
+}
+
+async function observeConcurrentReplay<T>(
+  manager: SessionStoreManager,
+  invoke: () => Promise<T>,
+  failure?: Error,
+): Promise<PromiseSettledResult<T>[]> {
+  const beforeUpdatedAt = manager.get(ROOT_SESSION_ID, WORKSPACE)!.getState().updatedAt;
+  const controlledSave = controlNextSessionSave(failure);
+  try {
+    const first = invoke();
+    await controlledSave.saveStarted;
+    const advancedUpdatedAt = manager.get(ROOT_SESSION_ID, WORKSPACE)!.getState().updatedAt;
+    let replaySettled = false;
+    const replay = invoke().finally(() => {
+      replaySettled = true;
+    });
+    await Promise.resolve();
+
+    expect(replaySettled).toBe(false);
+    expect(advancedUpdatedAt).toBeGreaterThan(beforeUpdatedAt);
+    controlledSave.release();
+    const results = await Promise.allSettled([first, replay]);
+
+    expect(controlledSave.saveCount).toBe(1);
+    expect(controlledSave.persistedUpdatedAts).toEqual([advancedUpdatedAt]);
+    expect(manager.get(ROOT_SESSION_ID, WORKSPACE)!.getState().updatedAt).toBe(advancedUpdatedAt);
+    expect(manager.get(ROOT_SESSION_ID, WORKSPACE)!.getState().inputRequestReceipts)
+      .toHaveLength(1);
+    return results;
+  } finally {
+    controlledSave.restore();
+  }
+}
 
 describe("SessionInputService", () => {
   let manager: SessionStoreManager;
@@ -62,6 +132,38 @@ describe("SessionInputService", () => {
       .toEqual(["B", "C"]);
   });
 
+  test("concurrent acceptMessage replay waits for and shares the first durable acceptance", async () => {
+    const input = {
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "durable concurrent message",
+      clientRequestId: "concurrent-message",
+      source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    };
+    const results = await observeConcurrentReplay(manager, () => service.acceptMessage(input));
+
+    expect(results[0]?.status).toBe("fulfilled");
+    expect(results[1]).toEqual(results[0]);
+  });
+
+  test("concurrent acceptMessage replay shares an observed first-save failure", async () => {
+    const input = {
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "failing concurrent message",
+      clientRequestId: "failing-message",
+      source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    };
+    const failure = new Error("simulated message persistence failure");
+    expect(await observeConcurrentReplay(manager, () => service.acceptMessage(input), failure))
+      .toEqual([
+        { status: "rejected", reason: failure },
+        { status: "rejected", reason: failure },
+      ]);
+  });
+
   test("claims command requests before side effects and replays the durable result", async () => {
     const input = {
       sessionId: ROOT_SESSION_ID,
@@ -91,6 +193,78 @@ describe("SessionInputService", () => {
         clientRequestId: "command-request",
         status: "completed",
       })]);
+  });
+
+  test("concurrent claimCommand replay waits for the first durable ownership receipt", async () => {
+    const input = {
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "/compact",
+      clientRequestId: "concurrent-command",
+      source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    };
+    expect(await observeConcurrentReplay(manager, () => service.claimCommand(input))).toEqual([
+      { status: "fulfilled", value: { kind: "claimed" } },
+      {
+        status: "fulfilled",
+        value: {
+          kind: "command",
+          clientRequestId: "concurrent-command",
+          status: "executing",
+        },
+      },
+    ]);
+    expect(await service.getCommandReplay(input)).toEqual({
+      kind: "command",
+      clientRequestId: "concurrent-command",
+      status: "executing",
+    });
+  });
+
+  test("concurrent claimCommand replay shares an observed first-save failure", async () => {
+    const input = {
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "/compact",
+      clientRequestId: "failing-command",
+      source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    };
+    const failure = new Error("simulated command persistence failure");
+    expect(await observeConcurrentReplay(manager, () => service.claimCommand(input), failure))
+      .toEqual([
+        { status: "rejected", reason: failure },
+        { status: "rejected", reason: failure },
+      ]);
+  });
+
+  test("repeating the same Queue dispatch barrier is a durable no-op", async () => {
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let saveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      saveCount += 1;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      await service.recordQueueDispatchBarrier({
+        sessionId: ROOT_SESSION_ID,
+        workspaceRoot: WORKSPACE,
+        timestamp: 1234,
+      });
+      const afterFirst = manager.get(ROOT_SESSION_ID, WORKSPACE)!.getState().updatedAt;
+      await service.recordQueueDispatchBarrier({
+        sessionId: ROOT_SESSION_ID,
+        workspaceRoot: WORKSPACE,
+        timestamp: 1234,
+      });
+
+      expect(saveCount).toBe(1);
+      expect(manager.get(ROOT_SESSION_ID, WORKSPACE)!.getState().updatedAt).toBe(afterFirst);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
   });
 
   test("converts a command continuation into one pending message receipt atomically", async () => {

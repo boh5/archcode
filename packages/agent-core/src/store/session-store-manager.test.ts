@@ -8,6 +8,7 @@ import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegri
 import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
+import { SessionInputService } from "../session-input/service";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
 const TEST_REQUESTED_MODEL_SELECTION = { mode: "profile_default" as const, selection: { model: "test:model" } };
@@ -236,6 +237,144 @@ describe("SessionStoreManager", () => {
     } finally {
       sessionFileInternals.saveSessionTranscript = originalSave;
       for (const release of releases) release?.();
+    }
+  });
+
+  test("durable no-ops preserve state identity and do not enqueue persistence", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, id);
+    const store = manager.get(id, TMP_DIR)!;
+    const originalState = store.getState();
+    const originalUpdatedAt = originalState.updatedAt;
+    let subscriberCalls = 0;
+    const unsubscribe = store.subscribe(() => {
+      subscriberCalls += 1;
+    });
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let saveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      saveCount += 1;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      expect(await manager.commitDurableSessionMutation(id, TMP_DIR, () => ({ result: "replay" })))
+        .toBe("replay");
+      await manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: undefined,
+        patch: {},
+      }));
+      await manager.commitDurableSessionMutation(id, TMP_DIR, (state) => ({
+        result: undefined,
+        patch: {
+          title: state.title,
+          queueDispatchBarrierAt: state.queueDispatchBarrierAt,
+        },
+      }));
+      store.getState().setTitle(null);
+      store.getState().setParentSessionId(undefined);
+      expect(await manager.updateToolBatches(id, TMP_DIR, () => originalState.toolBatches))
+        .toBe(originalState.toolBatches);
+      await manager.flushSession(id, TMP_DIR);
+
+      expect(store.getState()).toBe(originalState);
+      expect(store.getState().updatedAt).toBe(originalUpdatedAt);
+      expect(subscriberCalls).toBe(0);
+      expect(saveCount).toBe(0);
+    } finally {
+      unsubscribe();
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("a result-only replay awaits the persistence barrier it observed", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, id);
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let releaseSave!: () => void;
+    const saveReleased = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    let markSaveStarted!: () => void;
+    const saveStarted = new Promise<void>((resolve) => {
+      markSaveStarted = resolve;
+    });
+    let saveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      saveCount += 1;
+      markSaveStarted();
+      await saveReleased;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const first = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: "first",
+        patch: { title: "durable" },
+      }));
+      await saveStarted;
+      let replaySettled = false;
+      const replay = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: "first",
+      })).finally(() => {
+        replaySettled = true;
+      });
+      await Promise.resolve();
+
+      expect(replaySettled).toBe(false);
+      releaseSave();
+      expect(await Promise.all([first, replay])).toEqual(["first", "first"]);
+      expect(saveCount).toBe(1);
+    } finally {
+      releaseSave();
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("a result-only replay propagates failure from its observed persistence barrier", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, id);
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const failure = new Error("simulated durable commit failure");
+    let releaseSave!: () => void;
+    const saveReleased = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    let markSaveStarted!: () => void;
+    const saveStarted = new Promise<void>((resolve) => {
+      markSaveStarted = resolve;
+    });
+    sessionFileInternals.saveSessionTranscript = async () => {
+      markSaveStarted();
+      await saveReleased;
+      throw failure;
+    };
+
+    try {
+      const first = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: "first",
+        patch: { title: "not-durable" },
+      }));
+      await saveStarted;
+      const replay = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: "first",
+      }));
+      releaseSave();
+
+      const results = await Promise.allSettled([first, replay]);
+      expect(results).toEqual([
+        { status: "rejected", reason: failure },
+        { status: "rejected", reason: failure },
+      ]);
+    } finally {
+      releaseSave();
+      sessionFileInternals.saveSessionTranscript = originalSave;
     }
   });
 
@@ -648,6 +787,232 @@ describe("SessionStoreManager", () => {
     expect(store.getState().cwd).toBe(TMP_DIR);
   });
 
+  test("clean hydration and read projections do not rewrite Session persistence", async () => {
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(persistedSession(id, {
+      title: "stable",
+      updatedAt: 1234,
+    }), TMP_DIR);
+    const path = canonicalSessionPath(id);
+    const before = await Bun.file(path).text();
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let saveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      saveCount += 1;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      expect((await manager.getSessionFile(TMP_DIR, id)).updatedAt).toBe(1234);
+      expect(await manager.resolveSessionDepth(TMP_DIR, id)).toBe(0);
+      expect((await manager.buildSessionTree(TMP_DIR, id)).root.session.updatedAt).toBe(1234);
+      expect(saveCount).toBe(0);
+
+      const loaded = await manager.getOrLoad(id, TMP_DIR);
+      expect(loaded.getState().updatedAt).toBe(1234);
+      expect(saveCount).toBe(0);
+      expect(await Bun.file(path).text()).toBe(before);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("public current-state read durably repairs once and a second hydration is idempotent", async () => {
+    const id = sessionId();
+    const activeLink: ToolChildSessionLink = {
+      parentSessionId: id,
+      parentToolCallId: "delegate-call",
+      toolName: "delegate",
+      childSessionId: sessionId(),
+      childAgentName: "explore",
+      childProfile: "fast",
+      childSkillNames: [],
+      title: "Interrupted child",
+      depth: 1,
+      background: true,
+      status: "running",
+      createdAt: 900,
+      startedAt: 950,
+    };
+    await sessionFileInternals.saveSessionTranscript(persistedSession(id, {
+      messages: [{
+        id: "assistant-repair",
+        role: "assistant",
+        parts: [
+          { type: "text", id: "text-repair", text: "partial", createdAt: 1001 },
+          { type: "reasoning", id: "reasoning-repair", text: "partial reasoning", createdAt: 1002 },
+        ],
+        createdAt: 1001,
+        executionId: "run-repair",
+      }],
+      executions: [{
+        id: "run-repair",
+        startedAt: 1000,
+        status: "running",
+        binding: TEST_BINDING,
+        origin: "user_message",
+      }],
+      childSessionLinks: [activeLink],
+      inputRequestReceipts: [{
+        kind: "command",
+        clientRequestId: "command-repair",
+        requestFingerprint: "command",
+        status: "executing",
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+      }],
+    }), TMP_DIR);
+    const path = canonicalSessionPath(id);
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let saveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      saveCount += 1;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      const current = await manager.getSessionFile(TMP_DIR, id);
+      expect(saveCount).toBe(1);
+
+      const repairedAt = current.executions[0]!.endedAt!;
+      expect(repairedAt).toBeNumber();
+      expect(current.executions[0]).toMatchObject({
+        status: "interrupted",
+        endedAt: repairedAt,
+        durationMs: repairedAt - 1000,
+        error: "Execution interrupted by restart",
+      });
+      expect(current.childSessionLinks[0]).toMatchObject({
+        status: "interrupted",
+        endedAt: repairedAt,
+        error: "Child execution interrupted by restart",
+      });
+      expect(current.messages[0]).toMatchObject({
+        completedAt: repairedAt,
+        parts: [
+          { completedAt: repairedAt, meta: { interrupted: true, discardedFromContext: true } },
+          { completedAt: repairedAt, meta: { interrupted: true, discardedFromContext: true } },
+        ],
+      });
+      expect(current.inputRequestReceipts[0]).toMatchObject({
+        status: "indeterminate",
+        error: expect.stringContaining("unknown"),
+      });
+      expect(current.updatedAt).toBe(repairedAt);
+
+      const onceRepaired = await Bun.file(path).text();
+      const restarted = new SessionStoreManager({ logger: silentLogger });
+      const reloaded = await restarted.getSessionFile(TMP_DIR, id);
+      expect(reloaded.updatedAt).toBe(current.updatedAt);
+      expect(saveCount).toBe(1);
+      expect(await Bun.file(path).text()).toBe(onceRepaired);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("authoritative hydration durably repairs an interrupted child Session once", async () => {
+    const rootId = sessionId();
+    const childId = sessionId();
+    await sessionFileInternals.saveSessionTranscript(persistedSession(rootId), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedSession(childId, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      executions: [{
+        id: "child-run",
+        startedAt: 1000,
+        status: "running",
+        binding: TEST_BINDING,
+        origin: "tool_call",
+      }],
+    }), TMP_DIR);
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let saveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      saveCount += 1;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      const loaded = await manager.getOrLoad(childId, TMP_DIR);
+      expect(loaded.getState().executions[0]?.status).toBe("interrupted");
+      expect(saveCount).toBe(1);
+
+      const restarted = new SessionStoreManager({ logger: silentLogger });
+      expect((await restarted.getOrLoad(childId, TMP_DIR)).getState().executions[0]?.status)
+        .toBe("interrupted");
+      expect(saveCount).toBe(1);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("restart repair and orphaned Steer rollback persist as two serial domain writes", async () => {
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(persistedSession(id, {
+      pendingMessages: [{
+        id: "steer-message",
+        clientRequestId: "steer-request",
+        content: "continue",
+        source: "user",
+        state: "steering",
+        revision: 1,
+        acceptedAt: 1000,
+        updatedAt: 1001,
+        targetExecutionId: "run-repair",
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+      }],
+      inputRequestReceipts: [{
+        kind: "message",
+        clientRequestId: "steer-request",
+        messageId: "steer-message",
+        requestFingerprint: "steer",
+        status: "pending",
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+      }],
+      executions: [{
+        id: "run-repair",
+        startedAt: 1000,
+        status: "running",
+        binding: TEST_BINDING,
+        origin: "user_message",
+      }],
+    }), TMP_DIR);
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const snapshots: PersistedSessionState[] = [];
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      snapshots.push(state);
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      const service = new SessionInputService(manager);
+      const recovered = await service.recoverOrphanedSteers(id, TMP_DIR);
+
+      expect(recovered).toEqual([
+        expect.objectContaining({ id: "steer-message", state: "queued", revision: 2 }),
+      ]);
+      expect(snapshots).toHaveLength(2);
+      expect(snapshots[0]!.executions[0]?.status).toBe("interrupted");
+      expect(snapshots[0]!.pendingMessages[0]?.state).toBe("steering");
+      expect(snapshots[1]!.executions[0]?.status).toBe("interrupted");
+      expect(snapshots[1]!.pendingMessages[0]).toMatchObject({
+        state: "queued",
+        revision: 2,
+      });
+      expect(snapshots[1]!.updatedAt).toBeGreaterThan(snapshots[0]!.updatedAt);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
   test("persists background child session completion link events", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const parentSessionId = sessionId();
@@ -852,7 +1217,7 @@ describe("SessionStoreManager", () => {
     }), TMP_DIR);
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
-    expect((await restarted.getSessionFile(TMP_DIR, id)).inputRequestReceipts).toEqual([
+    expect((await restarted.getOrLoad(id, TMP_DIR)).getState().inputRequestReceipts).toEqual([
       expect.objectContaining({
         kind: "command",
         clientRequestId: "interrupted-command",

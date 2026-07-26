@@ -2,8 +2,8 @@ import { Bell, ExternalLink, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
 import { hitlAttentionPath, scopedHitlIdentity, type ScopedHitlView } from "../../store/hitl-store";
-import { formatRelativeTime } from "../../lib/time-format";
 import { StatusGlyph } from "../primitives/StatusGlyph";
+import { RelativeTime } from "../primitives/TemporalText";
 
 export function hitlAttentionLink(entry: ScopedHitlView): string {
   return hitlAttentionPath(entry);
@@ -59,7 +59,7 @@ export function HitlAttentionList({
                   <span className="block break-words text-xs font-medium text-text-primary">{entry.view.displayPayload.title}</span>
                   <span className="mt-1 block text-[11px] text-text-tertiary">
                     {inspection ? "Manual inspection required" : entry.view.source.type === "ask_user" ? "Question waiting" : "Permission waiting"}
-                    {showProject ? ` · ${entry.projectSlug}` : ""} · {formatRelativeTime(Date.parse(entry.view.createdAt))}
+                    {showProject ? ` · ${entry.projectSlug}` : ""} · <RelativeTime timestamp={Date.parse(entry.view.createdAt)} />
                   </span>
                 </span>
                 <span className="mt-1 inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-brand">Open <ExternalLink size={11} /></span>

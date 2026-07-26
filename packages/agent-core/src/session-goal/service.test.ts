@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { silentLogger } from "../logger";
+import { sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { SessionGoalSchema } from "./schema";
 import { SessionGoalService, SessionGoalServiceError } from "./service";
@@ -158,7 +159,21 @@ describe("SessionGoalService", () => {
     const paused = await service.pause({ workspaceRoot: TMP_DIR, sessionId, authority: user });
     expect(paused.status).toBe("paused");
     expect(paused.pausedAt).toBeNumber();
-    expect((await service.pause({ workspaceRoot: TMP_DIR, sessionId, authority: user })).pausedAt).toBe(paused.pausedAt);
+    const sessionUpdatedAt = manager.get(sessionId, TMP_DIR)!.getState().updatedAt;
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let unchangedSaveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      unchangedSaveCount += 1;
+      await originalSave(state, workspaceRoot);
+    };
+    try {
+      expect((await service.pause({ workspaceRoot: TMP_DIR, sessionId, authority: user })).pausedAt)
+        .toBe(paused.pausedAt);
+      expect(unchangedSaveCount).toBe(0);
+      expect(manager.get(sessionId, TMP_DIR)!.getState().updatedAt).toBe(sessionUpdatedAt);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
     expect((await service.resume({ workspaceRoot: TMP_DIR, sessionId, authority: user })).status).toBe("active");
 
     await service.recordUsage({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(10), executionTimeMs: 5 });

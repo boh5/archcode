@@ -7,8 +7,8 @@ import type {
   DashboardAutomationRow,
   DashboardSessionRow,
 } from "../lib/dashboard-projection";
-import { formatRelativeTime } from "../lib/time-format";
 import { StatusGlyph } from "../components/primitives/StatusGlyph";
+import { RelativeTime } from "../components/primitives/TemporalText";
 import { GoalStatusMark } from "../components/features/GoalStatusMark";
 import { presentSessionGoalStatus } from "../lib/session-goal-presentation";
 import { automationVisualKind } from "../lib/automation-status-presentation";
@@ -151,7 +151,7 @@ function AttentionRow({ item, showProject }: { item: DashboardAttentionItem; sho
           <span className={`text-[13px] font-medium ${inspection ? "text-error" : "text-text-primary"}`}>{title}</span>
           {showProject ? <ProjectLabel name={item.projectName} /> : null}
         </div>
-        <p className="mt-1 truncate text-[11px] text-text-tertiary">{detail} · {formatRelativeTime(item.attentionSinceMs)}</p>
+        <p className="mt-1 truncate text-[11px] text-text-tertiary">{detail} · <RelativeTime timestamp={item.attentionSinceMs} /></p>
       </div>
       <OpenLink to={destination} />
     </div>
@@ -176,7 +176,7 @@ function SessionRow({ item, showProject }: { item: DashboardSessionRow; showProj
           {item.goal ? <GoalStatus goal={item.goal} /> : null}
           <span className="text-[11px] text-text-tertiary">{label}</span>
         </div>
-        <p className="mt-1 text-[11px] text-text-tertiary">Updated {formatRelativeTime(item.updatedAt)}</p>
+        <p className="mt-1 text-[11px] text-text-tertiary">Updated <RelativeTime timestamp={item.updatedAt} /></p>
       </div>
       <OpenLink to={sessionLink(item.projectSlug, item.rootSessionId)} />
     </div>

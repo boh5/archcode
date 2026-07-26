@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -438,6 +438,56 @@ describe("createRuntime", () => {
   test("starts with no MCP config", async () => { let resolved: ResolvedMcpConfig | undefined; const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: (config) => { resolved = config; return makeFakeMcpManager({ descriptors: [], warnings: [] }); } }); expect(resolved).toEqual({ servers: {} }); expect(runtime.warnings).toEqual([]); });
   test("exposes project registry and shared context resolver", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.projectRegistry).toBeDefined(); expect(runtime.contextResolver).toBeDefined(); });
   test("emits runtime snapshot without idle families", async () => { const workspaceRoot = await makeTempRoot(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" }); const session = await runtime.createSession(workspaceRoot, { agentName: "lead" }); const changes: GlobalSSESessionRuntimeChangedEvent[] = []; const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event)); const events = await runtime.listSessionRuntimeEvents(); expect(events[0]).toMatchObject({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }); await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined(); expect(changes.map(({ activity }) => activity)).toEqual(["stopping", "idle"]); unsubscribe(); });
+
+  test("startup continuation recovery preserves clean root Session recency and ordering", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    const configService = await writeConfig(makeConfig());
+    const runtime1 = await createRuntime({
+      configService,
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await runtime1.projectRegistry.add({ workspaceRoot, name: "Stable recency" });
+    const sessions = [];
+    for (const title of ["oldest", "middle", "newest"]) {
+      sessions.push(await runtime1.createSession(workspaceRoot, { agentName: "lead", title }));
+      await Bun.sleep(2);
+    }
+    const orderBefore = (await runtime1.listSessions(workspaceRoot)).map((session) => session.sessionId);
+    await runtime1.shutdown();
+
+    const before = await Promise.all(sessions.map(async (session) => {
+      const path = join(
+        workspaceRoot,
+        ".archcode",
+        "runtime",
+        "sessions",
+        session.sessionId,
+        "session.json",
+      );
+      return {
+        path,
+        content: await Bun.file(path).text(),
+        mtimeMs: (await stat(path)).mtimeMs,
+      };
+    }));
+
+    const runtime2 = await createRuntime({
+      configService,
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await runtime2.recoverSessionContinuations();
+
+    expect((await runtime2.listSessions(workspaceRoot)).map((session) => session.sessionId))
+      .toEqual(orderBefore);
+    for (const snapshot of before) {
+      expect(await Bun.file(snapshot.path).text()).toBe(snapshot.content);
+      expect((await stat(snapshot.path)).mtimeMs).toBe(snapshot.mtimeMs);
+    }
+    await runtime2.shutdown();
+  });
   test("redacts MCP discovery failures", async () => { const secret = "sk_test_main_secret"; const configService = await writeConfig(makeConfig({ servers: { private_docs: { url: "https://mcp.example.test", headers: { Authorization: secret } } } })); const { logger, entries } = createInMemoryLogger(); const runtime = await createRuntime({ configService, mcpManagerFactory: () => makeFakeMcpManager(new Error(`boom ${secret}`), [secret]), logger }); expect(runtime.warnings).toHaveLength(1); expect(entries.map((entry) => entry.event)).toContain("mcp.discovery.warning"); expect(runtime.warnings[0].message).toContain(REDACTION_MARKER); expect(runtime.warnings[0].message).not.toContain(secret); });
   test("warns on duplicate MCP descriptors while retaining builtins", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [makeMcpDescriptor("file_read")], warnings: [] }) }); expect(runtime.toolRegistry.get("file_read")).toBeDefined(); expect(runtime.warnings[0]?.toolName).toBe("file_read"); });
   test("runs MCP tools through global after hooks", async () => { const descriptor = makeMcpDescriptor(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [descriptor], warnings: [] }) }); const result = expectSettledResult(await runtime.toolRegistry.execute({ toolName: descriptor.name, toolCallId: "mcp-call", input: {} }, makeContext(descriptor.name, {}))); expect(result.isError).toBe(false); expect(result.output.preview).toContain(REDACTION_MARKER); expect(result.output.preview).not.toContain("sk_test_main_secret"); });

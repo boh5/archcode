@@ -251,7 +251,13 @@ describe("Sidebar Session list", () => {
     expect(permission.getAttribute("aria-label")).toContain("Needs attention");
     expect(permission.getAttribute("aria-label")).toContain("Permission waiting");
     expect(running.textContent).not.toContain("running ·");
-    expect(permission.querySelectorAll("time")).toHaveLength(1);
+    const relativeTime = permission.querySelector("time") as HTMLTimeElement;
+    expect(relativeTime).not.toBeNull();
+    expect(relativeTime.dateTime).toBe(new Date(sessions[0]!.updatedAt).toISOString());
+    expect(relativeTime.title).not.toBe("");
+    expect(relativeTime.getAttribute("aria-label")).toContain(relativeTime.textContent);
+    expect(permission.getAttribute("aria-label")).toContain(relativeTime.textContent);
+    expect(permission.getAttribute("title")).toBeNull();
     expect(permission.className).toContain("h-8");
     expect(permission.className).toContain("[@media(pointer:coarse)]:min-h-11");
 
