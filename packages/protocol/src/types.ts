@@ -1201,6 +1201,12 @@ export interface Session {
   childSessionLinks: ToolChildSessionLink[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
+  /** Live reducer ownership returned by the Session detail endpoint; never persisted. */
+  executionCount?: number;
+  isRunning?: boolean;
+  isStreamingModel?: boolean;
+  currentExecutionId?: string;
+  currentAssistantMessageId?: string;
   executionInputCheckpoints: SessionExecutionInputCheckpoint[];
   events?: SessionEventEnvelope[];
   parentSessionId?: string;

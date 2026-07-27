@@ -603,6 +603,240 @@ describe("initializeFromSnapshot", () => {
     expect(store.getState().stats.tools.calls).toBe(3);
   });
 
+  test("restores live reducer ownership before applying post-snapshot tool events", () => {
+    const store = createWebSessionStore("session-1", "demo");
+    const executionId = "running-execution";
+    store.getState().initializeFromSnapshot({
+      messages: [],
+      steps: [{
+        id: "running-step",
+        step: 0,
+        executionId,
+        startedAt: 1,
+      }],
+      executions: [{
+        id: executionId,
+        startedAt: 1,
+        status: "running",
+        binding,
+        origin: "user_message",
+      }],
+      executionCount: 1,
+      isRunning: true,
+      isStreamingModel: true,
+      currentExecutionId: executionId,
+      activeModelBinding: binding,
+      eventCursor: 10,
+    });
+
+    expect(store.getState()).toMatchObject({
+      currentExecutionId: executionId,
+      executionCount: 1,
+      isRunning: true,
+      isStreamingModel: true,
+    });
+
+    store.getState().applyRemoteEnvelope(event(11, {
+      type: "tool-input-start",
+      toolCallId: "live-tool",
+      toolName: "glob",
+    }));
+
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]).toMatchObject({
+      role: "assistant",
+      executionId,
+      parts: [{
+        type: "tool",
+        state: "pending",
+        toolCallId: "live-tool",
+      }],
+    });
+  });
+
+  test("restores the incomplete Assistant focus without duplicating its message", () => {
+    const store = createWebSessionStore("session-1", "demo");
+    const executionId = "running-execution";
+    const assistant: SessionMessage = {
+      id: "assistant-message",
+      role: "assistant",
+      executionId,
+      createdAt: 1,
+      parts: [{
+        type: "tool",
+        id: "tool-part",
+        state: "pending",
+        toolCallId: "live-tool",
+        toolName: "glob",
+        createdAt: 1,
+      }],
+    };
+    store.getState().initializeFromSnapshot({
+      messages: [assistant],
+      steps: [],
+      executions: [{
+        id: executionId,
+        startedAt: 1,
+        status: "running",
+        binding,
+        origin: "user_message",
+      }],
+      executionCount: 1,
+      isRunning: true,
+      isStreamingModel: false,
+      currentExecutionId: executionId,
+      currentAssistantMessageId: assistant.id,
+      eventCursor: 10,
+    });
+
+    expect(store.getState().currentAssistantMessageId).toBe(assistant.id);
+
+    store.getState().applyRemoteEnvelope(event(11, {
+      type: "tool-call",
+      toolCallId: "live-tool",
+      toolName: "glob",
+      input: { pattern: "**/*.ts" },
+    }));
+
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]?.parts[0]).toMatchObject({
+      type: "tool",
+      state: "running",
+      input: { pattern: "**/*.ts" },
+    });
+  });
+
+  test("keeps a completed text part focused for a following tool event", () => {
+    const store = createWebSessionStore("session-1", "demo");
+    const executionId = "running-execution";
+    const assistant: SessionMessage = {
+      id: "assistant-message",
+      role: "assistant",
+      executionId,
+      createdAt: 1,
+      parts: [{
+        type: "text",
+        id: "text-part",
+        text: "Checking the workspace.",
+        createdAt: 1,
+        completedAt: 2,
+      }],
+    };
+    store.getState().initializeFromSnapshot({
+      messages: [assistant],
+      steps: [{
+        id: "running-step",
+        step: 0,
+        executionId,
+        startedAt: 1,
+      }],
+      executions: [{
+        id: executionId,
+        startedAt: 1,
+        status: "running",
+        binding,
+        origin: "user_message",
+      }],
+      executionCount: 1,
+      isRunning: true,
+      isStreamingModel: true,
+      currentExecutionId: executionId,
+      currentAssistantMessageId: assistant.id,
+      eventCursor: 10,
+    });
+
+    store.getState().applyRemoteEnvelope(event(11, {
+      type: "tool-input-start",
+      toolCallId: "live-tool",
+      toolName: "glob",
+    }));
+
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]).toMatchObject({
+      id: assistant.id,
+      executionId,
+      parts: [
+        { type: "text", text: "Checking the workspace." },
+        { type: "tool", state: "pending", toolCallId: "live-tool" },
+      ],
+    });
+  });
+
+  test("reconciles a missed first-message commit from an authoritative snapshot", () => {
+    const store = createWebSessionStore("session-1", "demo");
+    const executionId = "first-execution";
+    store.getState().addLocalSendingMessage({
+      clientRequestId: "first-request",
+      content: "Start the first task",
+      requestedModelSelection,
+      createdAt: 1,
+    });
+    store.getState().applyRemoteEnvelope(event(0, {
+      type: "session.message_accepted",
+      message: {
+        id: "first-message",
+        clientRequestId: "first-request",
+        content: "Start the first task",
+        source: "user",
+        state: "queued",
+        revision: 0,
+        acceptedAt: 1,
+        updatedAt: 1,
+        requestedModelSelection,
+      },
+    }));
+
+    expect(store.getState().pendingMessages).toHaveLength(1);
+
+    store.getState().initializeFromSnapshot({
+      messages: [{
+        id: "first-message",
+        clientRequestId: "first-request",
+        role: "user",
+        executionId,
+        createdAt: 1,
+        completedAt: 2,
+        modelAudit: {
+          requested: requestedModelSelection,
+          actual: requestedModelSelection.selection,
+        },
+        parts: [{
+          type: "text",
+          id: "first-message:text",
+          text: "Start the first task",
+          createdAt: 1,
+          completedAt: 2,
+        }],
+      }],
+      pendingMessages: [],
+      steps: [],
+      executions: [{
+        id: executionId,
+        startedAt: 2,
+        status: "running",
+        binding,
+        origin: "user_message",
+      }],
+      executionCount: 1,
+      isRunning: true,
+      isStreamingModel: false,
+      currentExecutionId: executionId,
+      eventCursor: 2,
+    });
+
+    expect(store.getState()).toMatchObject({
+      currentExecutionId: executionId,
+      isRunning: true,
+      localSendingMessages: [],
+      pendingMessages: [],
+    });
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]).toMatchObject({
+      id: "first-message",
+      executionId,
+    });
+  });
+
   test("always updates scalar metadata fields even with stale snapshot", () => {
     const store = createWebSessionStore("stale-metadata", "demo");
 

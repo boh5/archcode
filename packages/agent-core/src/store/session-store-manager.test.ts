@@ -422,6 +422,37 @@ describe("SessionStoreManager", () => {
     expect((await manager.getSessionFile(TMP_DIR, id)).sessionId).toBe(id);
   });
 
+  test("returns durable fields and live reducer ownership from one Session snapshot", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
+    store.getState().append(executionStart("execution-1"));
+    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "Inspecting." });
+    store.getState().append({ type: "text-end" });
+    const currentAssistantMessageId = store.getState().currentAssistantMessageId;
+
+    const snapshot = await manager.getSessionReadSnapshot(TMP_DIR, id);
+
+    expect(snapshot.liveState).toEqual({
+      executionCount: 1,
+      isRunning: true,
+      isStreamingModel: true,
+      currentExecutionId: "execution-1",
+      currentAssistantMessageId,
+    });
+    expect(snapshot.file.messages).toContainEqual(expect.objectContaining({
+      id: currentAssistantMessageId,
+      executionId: "execution-1",
+      parts: [expect.objectContaining({
+        type: "text",
+        text: "Inspecting.",
+        completedAt: expect.any(Number),
+      })],
+    }));
+  });
+
   test("ensureSessionFile verifies an existing stable identity without overwriting it", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();

@@ -79,6 +79,11 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
     agentName?: string | null;
     stats?: SessionStats;
     executions?: SessionExecutionRecord[];
+    executionCount?: number;
+    isRunning?: boolean;
+    isStreamingModel?: boolean;
+    currentExecutionId?: string;
+    currentAssistantMessageId?: string;
     executionInputCheckpoints?: SessionExecutionInputCheckpoint[];
     eventCursor?: number;
     events?: SessionEventEnvelope[];
@@ -108,6 +113,36 @@ function scopedWebKey(slug: string, sessionId: string): string {
 
 function webKey(sessionId: string, slug?: string): string {
   return slug === undefined ? sessionId : scopedWebKey(slug, sessionId);
+}
+
+function runtimeStateFromSnapshot(input: {
+  executions: readonly SessionExecutionRecord[];
+  steps: readonly SessionStep[];
+  executionCount?: number;
+  isRunning?: boolean;
+  isStreamingModel?: boolean;
+  currentExecutionId?: string;
+  currentAssistantMessageId?: string;
+}): Pick<
+  WebSessionStoreState,
+  "currentAssistantMessageId" | "currentExecutionId" | "executionCount" | "isRunning" | "isStreamingModel"
+> {
+  const runningExecution = [...input.executions]
+    .reverse()
+    .find((execution) => execution.status === "running");
+  const currentExecutionId = input.currentExecutionId ?? runningExecution?.id;
+  return {
+    currentExecutionId,
+    currentAssistantMessageId: input.currentAssistantMessageId,
+    executionCount: input.executionCount ?? input.executions.length,
+    isRunning: input.isRunning ?? (currentExecutionId !== undefined),
+    isStreamingModel: input.isStreamingModel ?? (
+      currentExecutionId !== undefined
+      && input.steps.some(
+        (step) => step.executionId === currentExecutionId && step.completedAt === undefined,
+      )
+    ),
+  };
 }
 
 function touchRegistryEntry(key: string): void {
@@ -377,6 +412,15 @@ export function createWebSessionStore(
         }
         if (data.executions !== undefined && !stale) {
           updates.executions = data.executions;
+          Object.assign(updates, runtimeStateFromSnapshot({
+            executions: data.executions,
+            steps: data.steps ?? state.steps,
+            executionCount: data.executionCount,
+            isRunning: data.isRunning,
+            isStreamingModel: data.isStreamingModel,
+            currentExecutionId: data.currentExecutionId,
+            currentAssistantMessageId: data.currentAssistantMessageId,
+          }));
         }
         if (data.executionInputCheckpoints !== undefined && !stale) {
           updates.executionInputCheckpoints = data.executionInputCheckpoints;

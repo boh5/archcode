@@ -736,6 +736,9 @@ describe("handleSSEEvent", () => {
     };
     handleSSEEvent({ event: running.type, data: JSON.stringify(running) }, deps);
     expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe("running");
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.session("proj", "root-1"),
+    });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.sessions("proj") });
 
     const idle: GlobalSSESessionRuntimeChangedEvent = { ...running, activity: "idle", createdAt: 3 };

@@ -484,6 +484,12 @@ export function handleSSEEvent(
     case "session.runtime_changed": {
       const change = parsed as GlobalSSESessionRuntimeChangedEvent;
       sessionRuntimeStore.getState().applyChange(change);
+      // Running activity is published after queue input has been committed.
+      // Every transition is also a recovery boundary for a newly opened source
+      // window that missed the Session event sequence.
+      deps.invalidateQueries({
+        queryKey: queryKeys.session(change.projectSlug, change.rootSessionId),
+      });
       deps.invalidateQueries({ queryKey: queryKeys.sessions(change.projectSlug) });
       break;
     }

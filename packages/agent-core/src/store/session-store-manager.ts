@@ -44,6 +44,14 @@ export interface SessionStoreManagerOptions {
   readonly logger: Logger;
 }
 
+export interface SessionReadSnapshot {
+  readonly file: HydratedSessionFile;
+  readonly liveState: Pick<
+    SessionStoreState,
+    "executionCount" | "isRunning" | "isStreamingModel" | "currentExecutionId" | "currentAssistantMessageId"
+  >;
+}
+
 export interface DurableSessionMutation<T> {
   readonly result: T;
   readonly patch?: Partial<SessionStoreState>;
@@ -507,8 +515,24 @@ export class SessionStoreManager {
   }
 
   async getSessionFile(workspaceRoot: string, sessionId: string): Promise<HydratedSessionFile> {
-    const store = await this.getOrLoad(sessionId, workspaceRoot);
-    return sessionFileInternals.toSessionFile(store.getState());
+    return (await this.getSessionReadSnapshot(workspaceRoot, sessionId)).file;
+  }
+
+  async getSessionReadSnapshot(
+    workspaceRoot: string,
+    sessionId: string,
+  ): Promise<SessionReadSnapshot> {
+    const state = (await this.getOrLoad(sessionId, workspaceRoot)).getState();
+    return {
+      file: sessionFileInternals.toSessionFile(state),
+      liveState: {
+        executionCount: state.executionCount,
+        isRunning: state.isRunning,
+        isStreamingModel: state.isStreamingModel,
+        currentExecutionId: state.currentExecutionId,
+        currentAssistantMessageId: state.currentAssistantMessageId,
+      },
+    };
   }
 
   async resolveCompressionOriginalRange(

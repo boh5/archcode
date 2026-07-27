@@ -66,6 +66,7 @@ import type {
   SessionExecutionInputCheckpoint,
   CompressionStateSnapshot,
   SessionGoal,
+  SessionProjection,
   SessionTreeResponse,
   ProjectTodoSessionSource,
 } from "@archcode/protocol";
@@ -398,7 +399,10 @@ export interface AgentRuntime {
   notifyRuntimeShutdown(reason: string): void;
 }
 
-export type RuntimeSessionFile = Omit<SessionFile, "compression"> & {
+export type RuntimeSessionFile = Omit<SessionFile, "compression"> & Pick<
+  SessionProjection,
+  "executionCount" | "isRunning" | "isStreamingModel" | "currentExecutionId" | "currentAssistantMessageId"
+> & {
   readonly compression: CompressionStateSnapshot;
   readonly executionInputCheckpoints: SessionExecutionInputCheckpoint[];
   readonly profile: import("./config").ProfileName;
@@ -423,7 +427,13 @@ export async function createRuntime(
   const modelRuntime = configService.modelRuntime;
   const modelSelectionResolver = new ModelSelectionResolver();
 
-  const projectSessionModels = (file: SessionFile): RuntimeSessionFile => {
+  const projectSessionModels = (
+    file: SessionFile,
+    liveState?: Pick<
+      SessionProjection,
+      "executionCount" | "isRunning" | "isStreamingModel" | "currentExecutionId" | "currentAssistantMessageId"
+    >,
+  ): RuntimeSessionFile => {
     const snapshot = modelRuntime.current;
     const profile = resolveSessionProfile(file);
     const durableOverride = resolveDurableSessionModelOverride(file);
@@ -442,10 +452,19 @@ export async function createRuntime(
       .reverse()
       .find((execution) => execution.status === "running")
       ?.binding;
+    const currentExecutionId = liveState?.currentExecutionId
+      ?? [...file.executions].reverse().find((execution) => execution.status === "running")?.id;
     return {
       ...file,
       compression: projectSessionCompression(file.compression),
       executionInputCheckpoints: projectSessionExecutionInputCheckpoints(file.executions, file.toolBatches),
+      executionCount: liveState?.executionCount ?? file.executions.length,
+      isRunning: liveState?.isRunning ?? (currentExecutionId !== undefined),
+      isStreamingModel: liveState?.isStreamingModel ?? false,
+      ...(currentExecutionId === undefined ? {} : { currentExecutionId }),
+      ...(liveState?.currentAssistantMessageId === undefined ? {} : {
+        currentAssistantMessageId: liveState.currentAssistantMessageId,
+      }),
       profile,
       nextModelSelection: { requested, resolved },
       ...(activeModelBinding === undefined ? {} : { activeModelBinding }),
@@ -536,6 +555,13 @@ export async function createRuntime(
       if (project !== undefined) projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
     };
     const sessionStoreManager = new SessionStoreManager({ logger: runtimeLogger.child({ module: "sessions.store" }) });
+    const readProjectedSessionModels = async (
+      workspaceRoot: string,
+      sessionId: string,
+    ): Promise<RuntimeSessionFile> => {
+      const snapshot = await sessionStoreManager.getSessionReadSnapshot(workspaceRoot, sessionId);
+      return projectSessionModels(snapshot.file, snapshot.liveState);
+    };
     const sessionGoalService = new SessionGoalService(sessionStoreManager);
     const sessionInputService = new SessionInputService(sessionStoreManager);
     const sessionEventBridge = new SessionEventBridge({
@@ -656,10 +682,10 @@ export async function createRuntime(
             return { sessionId: session.sessionId };
           },
           acceptMessage: async (input) => {
-            const session = projectSessionModels(await sessionStoreManager.getSessionFile(
+            const session = await readProjectedSessionModels(
               input.workspaceRoot,
               input.sessionId,
-            ));
+            );
             await acceptSessionMessage({
               slug: project.slug,
               workspaceRoot: input.workspaceRoot,
@@ -1337,10 +1363,10 @@ export async function createRuntime(
         sessionStoreManager,
         sessionRuntime: {
           acceptSessionMessage: async (input) => {
-            const session = projectSessionModels(await sessionStoreManager.getSessionFile(
+            const session = await readProjectedSessionModels(
               input.workspaceRoot,
               input.sessionId,
-            ));
+            );
             const accepted = await acceptSessionMessage({
               ...input,
               requestedModelSelection: session.nextModelSelection.requested,
@@ -1814,17 +1840,18 @@ export async function createRuntime(
         assertRuntimeSessionAgentScope(createOptions);
         return await executionManager.runRuntimeMutation(
           workspaceRoot,
-          async () => projectSessionModels(
-            await sessionStoreManager.createSessionFile(
+          async () => {
+            const file = await sessionStoreManager.createSessionFile(
               workspaceRoot,
               createOptions,
-            ),
-          ),
+            );
+            return await readProjectedSessionModels(workspaceRoot, file.sessionId);
+          },
         );
       },
       getSessionFile: async (workspaceRoot, sessionId) => {
         await sessionStoreManager.flushSession(sessionId, workspaceRoot);
-        return projectSessionModels(await sessionStoreManager.getSessionFile(workspaceRoot, sessionId));
+        return await readProjectedSessionModels(workspaceRoot, sessionId);
       },
       updateSessionGoalControl: async (input) => {
         const target = { workspaceRoot: input.workspaceRoot, sessionId: input.sessionId, authority: { kind: "user_control" as const } };
@@ -1857,10 +1884,10 @@ export async function createRuntime(
             }));
           }
         }
-        return projectSessionModels(await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId));
+        return await readProjectedSessionModels(input.workspaceRoot, input.sessionId);
       },
       getSessionModelState: async (workspaceRoot, sessionId) => {
-        const projected = projectSessionModels(await sessionStoreManager.getSessionFile(workspaceRoot, sessionId));
+        const projected = await readProjectedSessionModels(workspaceRoot, sessionId);
         return {
           modelSelection: projected.modelSelection,
           nextModelSelection: projected.nextModelSelection,
@@ -1874,7 +1901,7 @@ export async function createRuntime(
           throw new SessionModelSelectionInvalidError(input.requestedModelSelection);
         }
         await sessionModelSelectionService.patch(input);
-        const projected = projectSessionModels(await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId));
+        const projected = await readProjectedSessionModels(input.workspaceRoot, input.sessionId);
         if (projected.agentName !== file.agentName) {
           throw new Error(`Session "${input.sessionId}" Agent identity changed during model selection update`);
         }

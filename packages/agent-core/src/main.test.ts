@@ -196,6 +196,11 @@ describe("createRuntime", () => {
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Queued input" });
     const session = await runtime.createSession(workspaceRoot, { agentName: "lead", title: "Queued input" });
+    expect(session).toMatchObject({
+      executionCount: 0,
+      isRunning: false,
+      isStreamingModel: false,
+    });
     expect(session.nextModelSelection).toMatchObject({
       requested: requestedModelSelection,
       resolved: {
