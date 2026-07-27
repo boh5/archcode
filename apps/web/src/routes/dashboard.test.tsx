@@ -71,6 +71,7 @@ mock.module("lucide-react", () => ({
   Gauge: "Gauge",
   Loader2: "Loader2",
   LoaderCircle: "LoaderCircle",
+  LayoutDashboard: "LayoutDashboard",
   MessageCircleQuestion: "MessageCircleQuestion",
   Play: "Play",
   Target: "Target",
@@ -83,7 +84,7 @@ describe("Dashboard empty sections", () => {
   test("always renders all four sections with a dedicated placeholder", () => {
     const dashboard = Dashboard({ scope: { kind: "global" } });
     const pageContainer = findAll(dashboard, (element) => (
-      element.type === "div" && String(element.props?.className).includes("max-w-[1100px]")
+      element.type === "div" && String(element.props?.className).includes("max-w-[1180px]")
     ));
     const sections = findAll(dashboard, (element) => (
       typeof element.type === "function" && element.type.name === "DashboardSection"

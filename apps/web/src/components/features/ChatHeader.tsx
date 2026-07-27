@@ -40,10 +40,10 @@ export function ChatHeader({ slug, sessionId, source, onToggleInspector, inspect
   const executionKind = execution ? executionVisualKind(execution.status, executionCheckpoint) : undefined;
 
   return (
-    <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border-default bg-bg-surface px-4 py-2 sm:px-5">
+    <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border-default bg-bg-surface px-4 py-2.5 sm:px-6">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <h1 className="min-w-0 truncate text-[18px] font-semibold leading-6 tracking-[-0.02em] text-text-primary">{title ?? "Untitled"}</h1>
+          <h1 className="min-w-0 truncate text-[20px] font-semibold leading-7 tracking-[-0.025em] text-text-primary">{title ?? "Untitled"}</h1>
           {executionStatus && (
             <span
               data-testid="session-execution-status"
@@ -59,7 +59,7 @@ export function ChatHeader({ slug, sessionId, source, onToggleInspector, inspect
           )}
         </div>
 
-        <div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden text-[11px] text-text-tertiary">
+        <div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden text-[12px] text-text-tertiary">
           {cwd !== null && (
             <span
               className="min-w-0 max-w-[420px] truncate font-mono [flex:0_10_auto] max-[760px]:hidden"

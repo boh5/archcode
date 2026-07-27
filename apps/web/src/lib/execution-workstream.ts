@@ -1,5 +1,6 @@
 import {
   TOOL_DELEGATE,
+  normalizeUsage,
   renderCompressionSummarySnapshot,
   type AgentDescriptor,
   type CompressionBlockPart,
@@ -61,6 +62,8 @@ export interface ExecutionWorkstreamExecution {
   /** Absent unless the completed Execution has an authoritative terminal model step. */
   finalResponse?: ExecutionWorkstreamFinalResponse;
   stepCount: number;
+  /** Sum of provider-reported reasoning usage for this Execution. */
+  reasoningTokens: number;
   toolCount: number;
   childCount: number;
   /** Only links resolved through delegate Tool parts in this Execution. */
@@ -146,6 +149,7 @@ function sameExecutionProjection(
     && left.sortTime === right.sortTime
     && left.record === right.record
     && left.stepCount === right.stepCount
+    && left.reasoningTokens === right.reasoningTokens
     && left.toolCount === right.toolCount
     && left.childCount === right.childCount
     && sameReferences(left.userMessages, right.userMessages)
@@ -462,6 +466,10 @@ export function buildExecutionWorkstream(
       workMessages,
       ...(finalResponse === undefined ? {} : { finalResponse }),
       stepCount: steps.length,
+      reasoningTokens: steps.reduce(
+        (total, step) => total + Math.max(0, normalizeUsage(step.usage).reasoningTokens),
+        0,
+      ),
       toolCount: countTools(messages),
       childCount: childSessionLinks.length,
       childSessionLinks,

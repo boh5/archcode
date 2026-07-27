@@ -293,6 +293,20 @@ describe("buildExecutionWorkstream", () => {
     expect(projected.workMessages[1]?.parts[0]).toBe(finalParts[0]);
   });
 
+  test("aggregates provider-reported reasoning usage per Execution", () => {
+    const result = buildExecutionWorkstream(input({
+      executions: [execution("execution", 1)],
+      steps: [
+        step("execution", 0, "tool-calls", { usage: { reasoningTokens: 101 } }),
+        step("execution", 1, "stop", {
+          usage: { completion_tokens_details: { reasoning_tokens: 516 } },
+        }),
+      ],
+    }));
+
+    expect(result.executions[0]?.reasoningTokens).toBe(617);
+  });
+
   test("keeps historical user text outside Work without requiring modelAudit", () => {
     const historicalUser = message("historical-user", "user", [
       text("historical-text", "Old canonical input", 1),

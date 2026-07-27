@@ -661,6 +661,7 @@ describe("SessionRoute focused view store behavior", () => {
 
       const surface = container.querySelector('[data-testid="session-composer-dock"]');
       const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
+      const threadColumn = container.querySelector('[data-testid="composer-thread-column"]');
       const attention = container.querySelector('[data-testid="composer-attention-stack"]');
       const decision = container.querySelector('[data-testid="hitl-decision-card"]');
       expect(decision).not.toBeNull();
@@ -670,6 +671,8 @@ describe("SessionRoute focused view store behavior", () => {
       expect(rail?.className).not.toContain("max-w-[");
       expect(rail?.className).toContain("px-4");
       expect(rail?.className).toContain("sm:px-5");
+      expect(threadColumn?.className).toContain("mx-auto");
+      expect(threadColumn?.className).toContain("max-w-[800px]");
       expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
       expect(container.textContent).toContain("Continue?");
       expect(container.textContent).not.toContain("Need input");

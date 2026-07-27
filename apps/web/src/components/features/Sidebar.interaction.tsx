@@ -258,7 +258,7 @@ describe("Sidebar Session list", () => {
     expect(relativeTime.getAttribute("aria-label")).toContain(relativeTime.textContent);
     expect(permission.getAttribute("aria-label")).toContain(relativeTime.textContent);
     expect(permission.getAttribute("title")).toBeNull();
-    expect(permission.className).toContain("h-8");
+    expect(permission.className).toContain("h-9");
     expect(permission.className).toContain("[@media(pointer:coarse)]:min-h-11");
 
     await act(async () => permission.click());

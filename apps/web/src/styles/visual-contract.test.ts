@@ -19,10 +19,10 @@ describe("visual contract", () => {
     expect(globals).toContain("--spacing: 4px;");
     expect(globals).toContain("--text-xs: 12px;");
     expect(globals).toContain("--text-xs--line-height: 16px;");
-    expect(globals).toContain("--text-sm: 13px;");
-    expect(globals).toContain("--text-sm--line-height: 20px;");
-    expect(globals).toContain("--text-base: 14px;");
-    expect(globals).toContain("--text-base--line-height: 21px;");
+    expect(globals).toContain("--text-sm: 14px;");
+    expect(globals).toContain("--text-sm--line-height: 21px;");
+    expect(globals).toContain("--text-base: 15px;");
+    expect(globals).toContain("--text-base--line-height: 22px;");
   });
 
   test("enforces the current motion, radius, contrast, and status presentation rules", async () => {
@@ -49,7 +49,8 @@ describe("visual contract", () => {
     const violations: string[] = [];
     const roundedLgAllowlist = new Map<string, number>([
       ["routes/root-layout.tsx", 1],
-      ["routes/project-todos.tsx", 1],
+      ["routes/dashboard.tsx", 1],
+      ["routes/project-todos.tsx", 2],
       ["components/ui/ContextMenu.tsx", 1],
       ["components/ui/DropdownMenu.tsx", 1],
       ["components/features/ChatInput.tsx", 1],
@@ -64,7 +65,10 @@ describe("visual contract", () => {
       ["components/composite/ExecutionWorkstream.tsx", 1],
     ]);
     const roundedXlAllowlist = new Map<string, number>([["components/features/ChatInput.tsx", 1]]);
-    const shadowSmAllowlist = new Map<string, number>([["components/features/ChatInput.tsx", 1]]);
+    const shadowSmAllowlist = new Map<string, number>([
+      ["components/features/ChatInput.tsx", 1],
+      ["routes/project-todos.tsx", 2],
+    ]);
     for (const { path, source } of sources) {
       for (const [name, rule] of globalRules) {
         if (rule.test(source)) violations.push(`${path}: ${name}`);
@@ -75,7 +79,7 @@ describe("visual contract", () => {
         }
       }
       for (const match of source.matchAll(/\btext-\[(\d+(?:\.\d+)?)px\]/g)) {
-        if (![8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 22, 30].includes(Number(match[1]))) violations.push(`${path}: out-of-scale type size ${match[0]}`);
+        if (![8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 26, 30].includes(Number(match[1]))) violations.push(`${path}: out-of-scale type size ${match[0]}`);
       }
       const roundedLgCount = [...source.matchAll(/\brounded-lg\b/g)].length;
       if (roundedLgCount !== (roundedLgAllowlist.get(path) ?? 0)) {

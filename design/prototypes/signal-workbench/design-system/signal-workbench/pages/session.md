@@ -23,7 +23,7 @@ away.
 - Preserve desktop resize, collapse, persisted-width, and focus-mode behavior
   for project navigation and Context Inspector.
 - At `≤1180px`, Context Inspector becomes a right overlay.
-- At `≤760px`, project navigation also becomes an overlay; the 44px project rail
+- At `≤760px`, project navigation also becomes an overlay; the 48px project rail
   remains visible.
 
 ## Content Order

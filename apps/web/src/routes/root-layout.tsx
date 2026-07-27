@@ -112,7 +112,7 @@ function WorkbenchShell() {
       )}
 
       {showNavigation && layout.isMobile && (
-        <div className="relative z-[55] w-11 shrink-0 border-r border-border-default bg-rail">
+        <div className="relative z-[55] w-12 shrink-0 border-r border-border-default bg-rail">
           <ProjectBar
             onAddProject={openAddProjectModal}
             onSettings={openSettingsModal}
@@ -319,7 +319,7 @@ function Drawer({
           className={`fixed inset-y-0 z-50 bg-bg-surface shadow-lg outline-none min-[761px]:hidden ${
             side === "left"
               ? offsetForProjectRail
-                ? "left-11 w-[min(calc(92vw-44px),340px)]"
+                ? "left-12 w-[min(calc(92vw-48px),340px)]"
                 : "left-0 w-[min(92vw,360px)]"
               : "right-0 w-[min(92vw,360px)]"
           }`}

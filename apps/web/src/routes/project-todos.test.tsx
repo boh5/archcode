@@ -296,7 +296,7 @@ describe("Project Todo deterministic contracts", () => {
     const todoSource = await Bun.file(new URL("./project-todos.tsx", import.meta.url)).text();
     const layoutSource = await Bun.file(new URL("./root-layout.tsx", import.meta.url)).text();
 
-    expect(layoutSource).toContain('className="relative z-[55] w-11');
+    expect(layoutSource).toContain('className="relative z-[55] w-12');
     expect(todoSource).toContain('className="fixed inset-0 z-[60]');
     expect(todoSource).toContain('right-0 z-[61] flex w-[min(430px,calc(100%-18px))]');
   });

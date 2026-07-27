@@ -43,8 +43,8 @@
   --markdown-text: var(--text-primary);
   width: 100%;
   max-width: none;
-  font-size: 16px;
-  line-height: 1.68;
+  font-size: 15px;
+  line-height: 1.66;
 }
 
 .markdown-content--response

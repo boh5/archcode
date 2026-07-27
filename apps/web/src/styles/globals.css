@@ -6,76 +6,76 @@
 :root {
   color-scheme: light;
 
-  --bg-base: #f7f7f7;
-  --bg-surface: #fbfbfb;
+  --bg-base: #f2f3f0;
+  --bg-surface: #f8f8f6;
   --bg-elevated: #ffffff;
   --bg-overlay: #ffffff;
-  --bg-muted: #f1f1f1;
-  --bg-hover: #ebebeb;
-  --bg-active: #e3e3e3;
+  --bg-muted: #eceeea;
+  --bg-hover: #e6e8e4;
+  --bg-active: #dde0da;
 
-  --border-subtle: #e5e5e5;
-  --border-default: #d6d6d6;
-  --border-strong: #aaaaaa;
+  --border-subtle: #e1e3df;
+  --border-default: #cdd1ca;
+  --border-strong: #9fa69d;
   --control-border: var(--border-default);
 
-  --text-primary: #202020;
-  --text-secondary: #505050;
-  --text-tertiary: #606060;
-  --text-muted: #686868;
+  --text-primary: #171917;
+  --text-secondary: #424742;
+  --text-tertiary: #626a62;
+  --text-muted: #747c74;
 
-  --brand: #5053c5;
-  --brand-hover: #4447ad;
-  --brand-field: #eff0fb;
+  --brand: #6157d5;
+  --brand-hover: #5148c1;
+  --brand-field: #eeecfb;
   --brand-ink: #ffffff;
-  --signal: #7d991c;
-  --signal-field: #eff4d8;
-  --signal-foreground: #4f6110;
-  --signal-ink: #202807;
-  --success: #347553;
-  --success-field: #eaf4ed;
-  --warning: #8a5f16;
-  --warning-field: #f8efe0;
+  --signal: #758b22;
+  --signal-field: #eef3d8;
+  --signal-foreground: #506015;
+  --signal-ink: #151b00;
+  --success: #2f7752;
+  --success-field: #e8f2eb;
+  --warning: #8a5e13;
+  --warning-field: #f7eddd;
   --error: #b14840;
-  --error-field: #f8e9e7;
-  --neutral: #606060;
-  --neutral-field: #f1f1f1;
-  --selection-field: #eff0ed;
-  --running-field: #f5f7ed;
-  --attention-field: #fbf7ef;
+  --error-field: #f8e8e6;
+  --neutral: #626a62;
+  --neutral-field: #eceeea;
+  --selection-field: #eeedf8;
+  --running-field: #f1f4e7;
+  --attention-field: #f8f2e8;
 
   /* Informational UI remains indigo. Lime is reserved for live work only. */
-  --info: #5053c5;
-  --brand-subtle: #eff0fb;
-  --info-muted: #eff0fb;
-  --success-muted: #eaf4ed;
-  --warning-muted: #f8efe0;
-  --error-muted: #f8e9e7;
-  --neutral-muted: #f1f1f1;
-  --success-muted-opaque: #eaf4ed;
-  --error-muted-opaque: #f8e9e7;
+  --info: #6157d5;
+  --brand-subtle: #eeecfb;
+  --info-muted: #eeecfb;
+  --success-muted: #e8f2eb;
+  --warning-muted: #f7eddd;
+  --error-muted: #f8e8e6;
+  --neutral-muted: #eceeea;
+  --success-muted-opaque: #e8f2eb;
+  --error-muted-opaque: #f8e8e6;
 
-  --rail: #222222;
-  --rail-ink: #f3f4ee;
-  --rail-muted: #92978c;
+  --rail: #191c19;
+  --rail-ink: #f4f5f1;
+  --rail-muted: #939a91;
   --terminal-bg: #252620;
   --terminal-text: #d7d6cd;
   --terminal-muted: #aaa99f;
   --terminal-success: #b6d84b;
   --terminal-error: #ed8178;
   --terminal-border: rgb(255 255 255 / 10%);
-  --focus: 0 0 0 3px rgb(80 83 197 / 22%);
+  --focus: 0 0 0 3px rgb(97 87 213 / 23%);
 
-  --elevation-sm: 0 8px 20px rgb(25 28 22 / 8%);
-  --elevation-md: 0 18px 48px rgb(25 28 22 / 16%);
-  --elevation-lg: 0 18px 48px rgb(25 28 22 / 16%);
+  --elevation-sm: 0 10px 30px rgb(26 31 25 / 9%);
+  --elevation-md: 0 22px 56px rgb(25 28 22 / 18%);
+  --elevation-lg: 0 22px 56px rgb(25 28 22 / 18%);
 
   --shape-control: 4px;
   --shape-card: 6px;
   --shape-popover: 8px;
   --shape-dialog: 12px;
 
-  --font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
   --font-stack-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   --motion-hover: 140ms;
@@ -96,68 +96,68 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg-base: #181818;
-  --bg-surface: #202020;
-  --bg-elevated: #272727;
-  --bg-overlay: #272727;
-  --bg-muted: #2d2d2d;
-  --bg-hover: #343434;
-  --bg-active: #3b3b3b;
+  --bg-base: #101210;
+  --bg-surface: #151815;
+  --bg-elevated: #1c201c;
+  --bg-overlay: #1c201c;
+  --bg-muted: #232723;
+  --bg-hover: #292e29;
+  --bg-active: #303630;
 
-  --border-subtle: #303030;
-  --border-default: #424242;
-  --border-strong: #666666;
+  --border-subtle: #262b26;
+  --border-default: #363c36;
+  --border-strong: #596159;
   --control-border: var(--border-default);
 
-  --text-primary: #f1f1f1;
-  --text-secondary: #bcbcbc;
-  --text-tertiary: #989898;
-  --text-muted: #888888;
+  --text-primary: #f3f5f0;
+  --text-secondary: #c9cec6;
+  --text-tertiary: #9ca49a;
+  --text-muted: #868f84;
 
-  --brand: #9699ff;
-  --brand-hover: #afb1ff;
-  --brand-field: #2d2f4a;
+  --brand: #a49bff;
+  --brand-hover: #b9b2ff;
+  --brand-field: #2b2845;
   --brand-ink: #17181f;
-  --signal: #c0df62;
-  --signal-field: #2d361e;
-  --signal-foreground: #d7eb88;
+  --signal: #c1dd64;
+  --signal-field: #29331b;
+  --signal-foreground: #d9ec8c;
   --signal-ink: #202807;
-  --success: #7dbd94;
-  --success-field: #213329;
-  --warning: #d8b66c;
-  --warning-field: #332a1b;
-  --error: #ed8178;
-  --error-field: #3a2421;
-  --neutral: #989898;
-  --neutral-field: #2d2d2d;
-  --selection-field: #292c27;
-  --running-field: #25291d;
-  --attention-field: #29261f;
+  --success: #82c49a;
+  --success-field: #203329;
+  --warning: #deb96e;
+  --warning-field: #352b1b;
+  --error: #f08b82;
+  --error-field: #3b2421;
+  --neutral: #9ca49a;
+  --neutral-field: #232723;
+  --selection-field: #26243a;
+  --running-field: #22291b;
+  --attention-field: #2c271e;
 
-  --info: #9699ff;
-  --brand-subtle: #2d2f4a;
-  --info-muted: #2d2f4a;
-  --success-muted: #213329;
-  --warning-muted: #332a1b;
-  --error-muted: #3a2421;
-  --neutral-muted: #2d2d2d;
-  --success-muted-opaque: #213329;
-  --error-muted-opaque: #3a2421;
+  --info: #a49bff;
+  --brand-subtle: #2b2845;
+  --info-muted: #2b2845;
+  --success-muted: #203329;
+  --warning-muted: #352b1b;
+  --error-muted: #3b2421;
+  --neutral-muted: #232723;
+  --success-muted-opaque: #203329;
+  --error-muted-opaque: #3b2421;
 
-  --rail: #111111;
-  --rail-ink: #f1f1f1;
-  --rail-muted: #8d8d8d;
+  --rail: #0c0e0c;
+  --rail-ink: #f2f4ef;
+  --rail-muted: #858c83;
   --terminal-bg: #0f100e;
   --terminal-text: #dad9d1;
   --terminal-muted: #aaa99f;
   --terminal-success: #b6d84b;
   --terminal-error: #ed8178;
   --terminal-border: rgb(255 255 255 / 10%);
-  --focus: 0 0 0 3px rgb(150 153 255 / 25%);
+  --focus: 0 0 0 3px rgb(164 155 255 / 26%);
 
-  --elevation-sm: 0 8px 20px rgb(0 0 0 / 28%);
-  --elevation-md: 0 18px 48px rgb(0 0 0 / 46%);
-  --elevation-lg: 0 18px 48px rgb(0 0 0 / 46%);
+  --elevation-sm: 0 14px 34px rgb(0 0 0 / 32%);
+  --elevation-md: 0 22px 56px rgb(0 0 0 / 52%);
+  --elevation-lg: 0 22px 56px rgb(0 0 0 / 52%);
 }
 
 @theme inline {
@@ -239,22 +239,22 @@
   --font-mono: var(--font-stack-mono);
 }
 
-/* Override Tailwind's rem defaults: the workbench keeps a 14px UI root while
+/* Override Tailwind's rem defaults: the workbench keeps a 15px UI root while
    geometry and named type remain fixed to the locked design-system scale. */
 @theme {
   --spacing: 4px;
   --text-xs: 12px;
   --text-xs--line-height: 16px;
-  --text-sm: 13px;
-  --text-sm--line-height: 20px;
-  --text-base: 14px;
-  --text-base--line-height: 21px;
+  --text-sm: 14px;
+  --text-sm--line-height: 21px;
+  --text-base: 15px;
+  --text-base--line-height: 22px;
 }
 
 @layer base {
   html {
-    font-size: 14px;
-    line-height: 21px;
+    font-size: 15px;
+    line-height: 22px;
     font-family: var(--font-stack-sans);
     color: var(--text-primary);
     background-color: var(--bg-base);

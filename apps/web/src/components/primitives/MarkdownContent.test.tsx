@@ -63,7 +63,7 @@ describe("MarkdownContent", () => {
     expect(html).toContain("markdown-content markdown-content--compact space-y-0");
   });
 
-  test("uses a primary 16px response variant for final Agent output", () => {
+  test("uses a quiet response variant for final Agent output", () => {
     const html = renderToStaticMarkup(
       <MarkdownContent variant="response">{"Final response"}</MarkdownContent>,
     );
@@ -100,9 +100,11 @@ describe("MarkdownContent", () => {
     expect(componentCss).toContain(".markdown-content--response");
     expect(componentCss).toContain("max-width: none");
     expect(componentCss).toContain("max-width: 72ch");
+    expect(componentCss).toContain("font-size: 15px");
+    expect(componentCss).toContain("line-height: 1.66");
+    expect(componentCss).not.toContain(".markdown-content--response > p:first-child");
     expect(componentCss).toContain("    p,");
     expect(componentCss).toContain("    blockquote");
-    expect(componentCss).toContain("font-size: 16px");
     expect(componentCss).toContain("> :not(:first-child)");
     expect(componentCss).toContain('[data-streamdown="code-block"]');
     expect(componentCss).toContain('[data-streamdown="code-block-body"]');

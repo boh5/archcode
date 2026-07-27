@@ -173,7 +173,7 @@ function SessionItem({
       type="button"
       aria-current={isActive ? "page" : undefined}
       aria-label={accessibleName}
-      className={`relative flex h-8 min-h-8 w-full items-center gap-2 px-4 text-left transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
+      className={`relative flex h-9 min-h-9 w-full items-center gap-2 px-4 text-left transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
         isActive ? "bg-selection-field" : "hover:bg-bg-hover"
       }`}
       data-testid={`sidebar-session-${session.sessionId}`}

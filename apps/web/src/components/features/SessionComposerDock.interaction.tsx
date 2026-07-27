@@ -203,7 +203,11 @@ describe("SessionComposerDock", () => {
     });
 
     const dock = container.querySelector('[data-testid="session-composer-dock"]');
+    const scrollbarAlignment = container.querySelector<HTMLElement>(
+      '[data-testid="composer-scrollbar-alignment"]',
+    );
     const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
+    const threadColumn = container.querySelector('[data-testid="composer-thread-column"]');
     const attention = container.querySelector('[data-testid="composer-attention-stack"]');
     const queue = container.querySelector('[data-testid="composer-queue-list"]');
     const inputSlot = container.querySelector('[data-testid="composer-input-slot"]');
@@ -212,9 +216,13 @@ describe("SessionComposerDock", () => {
     const hitlBody = container.querySelector('[data-testid="hitl-decision-body"]');
     expect(dock?.className).not.toContain("max-h-[");
     expect(dock?.className).not.toContain("overflow");
+    expect((dock as HTMLElement | null)?.style.scrollbarGutter).toBe("");
+    expect(scrollbarAlignment?.style.paddingInline).toBe("var(--session-scrollbar-gutter, 0px)");
     expect(dock?.classList.contains("border-t")).toBe(true);
     expect(rail?.className).toContain("w-full");
     expect(rail?.className).not.toContain("max-w-[");
+    expect(threadColumn?.className).toContain("max-w-[800px]");
+    expect(threadColumn?.className).toContain("mx-auto");
     expect(attention).not.toBeNull();
     expect(attention?.className).not.toContain("overflow");
     expect(hitlBody?.className).not.toContain("overflow");
@@ -232,7 +240,7 @@ describe("SessionComposerDock", () => {
     expect(container.textContent).toContain("Sending this request");
     expect(container.textContent).toContain("Continue?");
     expect(container.textContent).not.toContain("Choose a direction");
-    const ordered = Array.from(rail?.children ?? []);
+    const ordered = Array.from(threadColumn?.children ?? []);
     expect(ordered.map((element) => element.getAttribute("data-testid"))).toEqual([
       "composer-attention-stack",
       "session-goal-summary-row",

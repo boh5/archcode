@@ -6,7 +6,6 @@ import {
   Ban,
   Check,
   ExternalLink,
-  Lightbulb,
   MessageCircle,
   Plus,
   RotateCcw,
@@ -167,25 +166,21 @@ export function ProjectTodosRoute() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg-base">
-      <header className="flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-4 border-b border-border-default bg-bg-surface px-4 py-3 min-[621px]:px-5">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-1 h-5 w-2 shrink-0 bg-brand" aria-hidden="true" />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Lightbulb size={16} className="text-brand" aria-hidden="true" />
-              <h1 className="text-[18px] font-semibold leading-6 text-text-primary">Todos</h1>
-              {(todos?.length ?? 0) > 0 && (
-                <span className="text-[11px] font-medium tabular-nums text-text-tertiary">
-                  {todos?.length} total
-                </span>
-              )}
-            </div>
-            <p className="mt-0.5 text-[12px] leading-5 text-text-tertiary">
-              Capture intent, discuss it with Lead, then hand it to execution.
-            </p>
+      <header className="flex min-h-[68px] shrink-0 flex-wrap items-center justify-between gap-4 border-b border-border-default bg-bg-surface px-4 py-3 min-[621px]:px-6">
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2.5">
+            <h1 className="text-[20px] font-semibold leading-7 tracking-[-0.02em] text-text-primary">Todos</h1>
+            {(todos?.length ?? 0) > 0 && (
+              <span className="text-[11px] font-medium tabular-nums text-text-tertiary">
+                {todos?.length} total
+              </span>
+            )}
           </div>
+          <p className="mt-0.5 text-[12px] leading-5 text-text-tertiary">
+            Shape intent before handing it to execution.
+          </p>
         </div>
-        <div className="flex items-center gap-5 border-b border-border-subtle" role="group" aria-label="Todo views">
+        <div className="flex items-center rounded-lg border border-border-default bg-bg-muted p-0.5" role="group" aria-label="Todo views">
           <ViewButton active={view === "board"} onClick={() => selectView("board")} label="Board" />
           <ViewButton active={view === "rejected"} onClick={() => selectView("rejected")} label="Rejected" />
           <ViewButton active={view === "archived"} onClick={() => selectView("archived")} label="Archived" />
@@ -193,8 +188,8 @@ export function ProjectTodosRoute() {
       </header>
 
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="shrink-0 px-4 pt-4 min-[621px]:px-5">
-          <div className="mx-auto flex max-w-[1500px] flex-col gap-2 rounded-lg border border-border-control bg-bg-elevated p-2 transition-[border-color,box-shadow] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-subtle min-[621px]:flex-row min-[621px]:items-center">
+        <div className="shrink-0 px-4 pt-4 min-[621px]:px-6">
+          <div className="mx-auto flex min-h-[58px] max-w-[1500px] flex-col gap-2 rounded-lg border border-border-control bg-bg-elevated p-2.5 shadow-sm transition-[border-color,box-shadow] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-subtle min-[621px]:flex-row min-[621px]:items-center">
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <Plus size={15} className="shrink-0 text-text-tertiary" aria-hidden="true" />
               <input
@@ -207,8 +202,8 @@ export function ProjectTodosRoute() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter") handleCreate();
                 }}
-                placeholder="What do you want to remember or explore later?"
-                className="min-w-0 flex-1 bg-transparent px-2 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none"
+                placeholder="Capture a Todo…"
+                className="min-w-0 flex-1 bg-transparent px-2 py-2 text-[16px] leading-6 text-text-primary placeholder:text-text-muted focus:outline-none min-[621px]:text-[14px]"
               />
             </div>
             <button
@@ -216,7 +211,7 @@ export function ProjectTodosRoute() {
               aria-label="New Todo"
               onClick={handleCreate}
               disabled={createTodo.isPending}
-              className="inline-flex h-8 w-full shrink-0 items-center justify-center gap-2 rounded-sm border border-brand bg-brand px-3 text-[12px] font-medium text-bg-base transition-colors hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 min-[621px]:w-auto"
+              className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-sm border border-brand bg-brand px-4 text-[12px] font-medium text-bg-base transition-colors hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 min-[621px]:w-auto"
             >
               <Plus size={13} aria-hidden="true" /> New Todo
             </button>
@@ -226,10 +221,10 @@ export function ProjectTodosRoute() {
           )}
         </div>
 
-        <main className="min-h-0 flex-1 overflow-auto px-4 pb-6 pt-4 min-[621px]:px-5">
+        <main className="min-h-0 flex-1 overflow-auto px-4 pb-7 pt-4 min-[621px]:px-6">
           {view === "board" ? (
             <div
-              className="mx-auto grid max-w-[1500px] grid-cols-1 items-start gap-3 min-[621px]:grid-cols-2 min-[1181px]:grid-cols-4"
+              className="mx-auto grid max-w-[1500px] grid-cols-1 items-start gap-4 min-[621px]:grid-cols-2 min-[1181px]:grid-cols-4"
               data-testid="todo-board"
             >
               {(Object.keys(PROJECT_TODO_LANE_PRESENTATIONS) as ProjectTodoLane[]).map((lane) => (
@@ -291,19 +286,28 @@ function TodoGroup({
 }) {
   const presentation = PROJECT_TODO_LANE_PRESENTATIONS[lane];
   const { Icon } = presentation;
+  const laneAccent = {
+    idea: "border-t-border-strong",
+    ready: "border-t-brand",
+    in_progress: "border-t-signal",
+    done: "border-t-success",
+  }[lane];
   return (
-    <section className="min-w-0" aria-label={presentation.title}>
-      <div className="flex min-h-12 items-center justify-between gap-2 border-b border-border-subtle pb-2">
+    <section
+      className={`min-w-0 border-t-2 bg-bg-surface p-3.5 min-[621px]:min-h-[520px] ${laneAccent}`}
+      aria-label={presentation.title}
+    >
+      <div className="flex min-h-12 items-center justify-between gap-2 border-b border-border-subtle pb-3">
         <div className="flex min-w-0 items-center gap-2">
           <Icon size={14} className={STATUS_TONE_CLASS[presentation.tone]} aria-hidden="true" />
           <div className="min-w-0">
-            <h2 className="truncate text-[12px] font-semibold leading-4 text-text-primary">{presentation.title}</h2>
-            <p className="truncate text-[11px] leading-4 text-text-tertiary">{presentation.hint}</p>
+            <h2 className="truncate text-[14px] font-semibold leading-5 text-text-primary">{presentation.title}</h2>
+            <p className="truncate text-[12px] leading-4 text-text-tertiary">{presentation.hint}</p>
           </div>
         </div>
-        <span className="shrink-0 text-[10px] font-semibold tabular-nums text-text-tertiary">{todos.length}</span>
+        <span className="min-w-6 shrink-0 border border-border-default bg-bg-muted px-1.5 py-0.5 text-center text-[11px] font-semibold tabular-nums text-text-tertiary">{todos.length}</span>
       </div>
-      <div className="flex flex-col gap-2 pt-2">
+      <div className="flex flex-col gap-2.5 pt-3">
         {todos.length === 0 ? (
           <div className="flex min-h-24 flex-col items-center justify-center px-3 text-center">
             <Icon size={16} className={`mb-1 ${STATUS_TONE_CLASS[presentation.tone]}`} aria-hidden="true" />
@@ -343,7 +347,7 @@ function TodoBoardCard({
 
   return (
     <article
-      className={`relative min-h-32 overflow-hidden rounded-md border bg-bg-surface transition-[border-color,box-shadow] ${
+      className={`relative min-h-32 overflow-hidden rounded-md border bg-bg-elevated transition-[border-color,box-shadow] ${
         selected
           ? "border-brand before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-brand"
           : "border-border-default hover:border-border-strong"
@@ -362,7 +366,7 @@ function TodoBoardCard({
           <TodoVisualGlyph Icon={presentation.Icon} tone={presentation.tone} label={presentation.label} />
           {presentation.label}
         </span>
-        <span className="mt-2 block text-[13px] font-semibold leading-5 text-text-primary">{todo.title}</span>
+        <span className="mt-2 block text-[14px] font-semibold leading-5 text-text-primary">{todo.title}</span>
         {todo.body && (
           <span className="mt-1 line-clamp-2 text-[12px] leading-5 text-text-tertiary">{todo.body}</span>
         )}
@@ -997,10 +1001,10 @@ function ViewButton({ active, onClick, label }: { active: boolean; onClick: () =
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`relative -mb-px px-0.5 py-2 text-[12px] font-medium transition-colors after:absolute after:inset-x-0 after:-bottom-px after:h-0.5 ${
+      className={`min-h-8 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors ${
         active
-          ? "text-text-primary after:bg-brand"
-          : "text-text-tertiary after:bg-transparent hover:text-text-primary"
+          ? "bg-bg-elevated text-text-primary shadow-sm"
+          : "text-text-tertiary hover:bg-bg-hover hover:text-text-primary"
       }`}
     >
       {label}

@@ -1,7 +1,7 @@
-export const SIDEBAR_DEFAULT_WIDTH = 248;
+export const SIDEBAR_DEFAULT_WIDTH = 264;
 export const SIDEBAR_MIN_WIDTH = 210;
 export const SIDEBAR_MAX_WIDTH = 340;
-export const INSPECTOR_DEFAULT_WIDTH = 330;
+export const INSPECTOR_DEFAULT_WIDTH = 312;
 export const INSPECTOR_MIN_WIDTH = 280;
 export const INSPECTOR_MAX_WIDTH = 460;
 export const WORKBENCH_PREFERENCES_KEY = "archcode.workbench.layout";

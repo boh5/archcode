@@ -18,10 +18,13 @@ It is a decision and resumption surface, not an analytics report.
 
 - Context Inspector is absent on this page.
 - Keep the project rail and project navigation.
-- Main content width is at most 1100px.
-- Use 30px top, 32px horizontal, and 60px bottom padding on desktop.
-- Sections stack vertically with 26px rhythm.
-- At `≤760px`, use 16px horizontal padding and reflow row metadata below the
+- Main content width is at most 1180px.
+- Use 46px top, 40px horizontal, and 72px bottom padding on desktop.
+- Pair Needs attention with Running now in one priority row. Pair Continue
+  working with a narrower Upcoming region below it. These are compositional
+  surface bands, not a KPI or Bento-card grid.
+- Keep 20px gaps between paired regions and 34px between major rows.
+- At `≤760px`, use 18px horizontal padding and reflow row metadata below the
   main copy.
 
 ## Section Order
@@ -36,7 +39,8 @@ Do not lead with metrics, charts, usage totals, or a greeting hero.
 
 ## Rows
 
-- Use full-width rows separated by thin rules, not a grid of KPI cards.
+- Use full-width rows separated by thin rules inside each region, not a grid of
+  KPI cards.
 - Row structure:
   `status orbit → title/explanation → time/state + Open`.
 - Needs-attention rows use amber field plus a 3px amber inset rule.

@@ -38,16 +38,17 @@ import { buildToolRunTimeline } from "../../lib/tool-runs";
 import { presentExecutionStatus } from "../../lib/execution-status-presentation";
 import { getToolSummary } from "../../lib/tool-format";
 import { MarkdownContent } from "../primitives/MarkdownContent";
-import { ConversationRail } from "../primitives/ConversationRail";
+import { ConversationRail, SessionThreadColumn } from "../primitives/ConversationRail";
 import { RelativeTime, useElapsedTime } from "../primitives/TemporalText";
 import { CompressionBlock } from "./CompressionBlock";
 import { DelegationCard } from "./DelegationCard";
-import { ReasoningBlock } from "./ReasoningBlock";
+import { ReasoningBlock, ReasoningUsageSummary } from "./ReasoningBlock";
 import { RecoveryNotice } from "./RecoveryNotice";
 import { ToolCard } from "./ToolCard";
 import { ToolRunCard } from "./ToolRunCard";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 100;
+const SESSION_SCROLLBAR_GUTTER_PROPERTY = "--session-scrollbar-gutter";
 
 interface WorkstreamUiSnapshot {
   expandedIds: Set<string>;
@@ -147,12 +148,18 @@ export function MsgUser({
   const modelChanged = message.modelAudit?.reason === "config_invalidated";
 
   return (
-    <div className="flex min-w-0 flex-col gap-2" data-message-kind="canonical-user">
+    <div
+      className="flex w-full min-w-0 flex-col gap-2"
+      data-message-kind="canonical-user"
+    >
       {parts.map((part) => {
         if (part.type === "text") {
           return (
-            <div key={part.id} className="flex justify-end">
-              <div className="max-w-[660px] whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-bg-muted px-4 py-3.5 text-[15px] leading-[1.66] text-text-primary">
+            <div key={part.id} className="flex w-full justify-end" data-user-message-row="">
+              <div
+                className="min-w-0 max-w-[660px] whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-border-subtle bg-bg-muted px-4 py-3.5 text-[15px] leading-[1.66] text-text-primary"
+                data-user-message-surface=""
+              >
                 {part.text}
               </div>
             </div>
@@ -421,6 +428,12 @@ function WorkDisclosure({
     () => buildToolRunTimeline(execution.workMessages),
     [execution.workMessages],
   );
+  const hasReasoningText = useMemo(
+    () => execution.workMessages.some(({ parts }) =>
+      parts.some((part) => part.type === "reasoning" && part.text.trim().length > 0)
+    ),
+    [execution.workMessages],
+  );
   const status = presentExecutionStatus(execution.record.status, checkpoint);
   const duration = useElapsedTime({
     startedAt: execution.record.startedAt,
@@ -456,7 +469,7 @@ function WorkDisclosure({
 
   return (
     <section
-      className="min-w-0"
+      className="w-full min-w-0"
       data-testid={`work-disclosure-${execution.id}`}
       data-work-expanded={expanded ? "true" : "false"}
       data-product-status={status.productStatus}
@@ -465,7 +478,7 @@ function WorkDisclosure({
       <button
         ref={buttonRef}
         type="button"
-        className="work-summary-control flex min-h-8 max-w-full items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="work-summary-control relative flex min-h-8 max-w-full items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={(event) => onToggle(event.currentTarget)}
         aria-expanded={expanded}
         aria-controls={`work-body-${execution.id}`}
@@ -474,15 +487,15 @@ function WorkDisclosure({
       >
         <ChevronDown
           size={13}
-          className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "" : "-rotate-90"}`}
+          className={`absolute -left-4 top-1/2 shrink-0 -translate-y-1/2 text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "" : "-rotate-90"}`}
           aria-hidden="true"
         />
+        <strong className="shrink-0 text-[13px] font-semibold leading-5 text-inherit">
+          <span className="tabular-nums">{primaryLabel}</span>
+        </strong>
         {execution.record.status === "running" && (
           <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-signal" aria-hidden="true" />
         )}
-        <strong className="shrink-0 text-[12px] font-semibold leading-4 text-inherit">
-          <span className="tabular-nums">{primaryLabel}</span>
-        </strong>
         {currentActivity && (
           <span className="min-w-0 truncate text-[12px] leading-4 text-text-tertiary">
             <span aria-hidden="true" className="mr-2 text-border-strong">—</span>
@@ -493,9 +506,12 @@ function WorkDisclosure({
       {expanded && (
         <div
           id={`work-body-${execution.id}`}
-          className="flex w-full min-w-0 flex-col gap-2.5 pb-1 pl-5 pt-2"
+          className="ml-1 flex w-[calc(100%-4px)] min-w-0 flex-col gap-3 border-l border-border-subtle pb-2 pl-5 pt-2"
           data-testid={`work-body-${execution.id}`}
         >
+          {execution.reasoningTokens > 0 && !hasReasoningText && (
+            <ReasoningUsageSummary tokens={execution.reasoningTokens} />
+          )}
           {timeline.map((entry) => entry.kind === "tool-run"
             ? (
               <div
@@ -728,6 +744,28 @@ export function ExecutionWorkstream({
   const pendingAutoCollapseRef = useRef(false);
 
   useLayoutEffect(() => {
+    const element = scrollerRef.current;
+    const sessionCanvas = element?.parentElement;
+    if (!element || !sessionCanvas) return;
+
+    const syncScrollbarGutter = () => {
+      const symmetricGutter = Math.max(0, (element.offsetWidth - element.clientWidth) / 2);
+      sessionCanvas.style.setProperty(SESSION_SCROLLBAR_GUTTER_PROPERTY, `${symmetricGutter}px`);
+    };
+    syncScrollbarGutter();
+
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? undefined
+      : new ResizeObserver(syncScrollbarGutter);
+    resizeObserver?.observe(element);
+
+    return () => {
+      resizeObserver?.disconnect();
+      sessionCanvas.style.removeProperty(SESSION_SCROLLBAR_GUTTER_PROPERTY);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
     const snapshot = uiSnapshotRef.current;
     const next = new Set(expandedIdsRef.current);
     let changed = false;
@@ -889,74 +927,79 @@ export function ExecutionWorkstream({
       ref={scrollerRef}
       onScroll={handleScroll}
       className="conversation-scroller min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden bg-bg-base"
-      style={{ overflowAnchor: "none", scrollbarGutter: "stable" }}
+      style={{ overflowAnchor: "none", scrollbarGutter: "stable both-edges" }}
       data-testid="execution-workstream-scroller"
     >
       <ConversationRail
-        className={`conversation-surface flex min-h-full flex-col py-8 max-[639px]:py-5 ${isEmpty ? "items-center justify-center" : "gap-5"}`}
+        className="conversation-surface flex min-h-full py-9 max-[639px]:py-6"
         data-testid="execution-workstream-rail"
       >
-        {isEmpty ? (
-          <div className="text-sm text-text-tertiary">No executions yet</div>
-        ) : (
-          <>
-            {projection.diagnostics.map((diagnostic, index) => (
-              <DiagnosticBlock
-                key={`${diagnostic.code}-${"executionId" in diagnostic ? diagnostic.executionId : diagnostic.message.id}-${index}`}
-                diagnostic={diagnostic}
-                projectSlug={slug}
-                focusStoreSessionId={focusStoreSessionId}
-                onInspectModelAudit={onInspectModelAudit}
-              />
-            ))}
-            {projection.items.map((item) => {
-              if (item.kind === "execution") {
-                const checkpoint = checkpointByExecutionId.get(item.id);
-                const continuationExecutionNumber = checkpoint?.continuationExecutionId === undefined
-                  ? undefined
-                  : executionNumberById.get(checkpoint.continuationExecutionId);
+        <SessionThreadColumn
+          className={`flex min-h-full flex-1 flex-col ${isEmpty ? "items-center justify-center" : "gap-6"}`}
+          data-testid="execution-thread-column"
+        >
+          {isEmpty ? (
+            <div className="text-sm text-text-tertiary">No executions yet</div>
+          ) : (
+            <>
+              {projection.diagnostics.map((diagnostic, index) => (
+                <DiagnosticBlock
+                  key={`${diagnostic.code}-${"executionId" in diagnostic ? diagnostic.executionId : diagnostic.message.id}-${index}`}
+                  diagnostic={diagnostic}
+                  projectSlug={slug}
+                  focusStoreSessionId={focusStoreSessionId}
+                  onInspectModelAudit={onInspectModelAudit}
+                />
+              ))}
+              {projection.items.map((item) => {
+                if (item.kind === "execution") {
+                  const checkpoint = checkpointByExecutionId.get(item.id);
+                  const continuationExecutionNumber = checkpoint?.continuationExecutionId === undefined
+                    ? undefined
+                    : executionNumberById.get(checkpoint.continuationExecutionId);
+                  return (
+                    <ExecutionTurn
+                      key={`execution-${item.id}`}
+                      execution={item}
+                      expanded={expandedIds.has(item.id)}
+                      projectSlug={slug}
+                      focusStoreSessionId={focusStoreSessionId}
+                      checkpoint={checkpoint}
+                      continuationExecutionNumber={continuationExecutionNumber}
+                      onToggle={toggleExecution}
+                      onButtonRef={registerWorkButton}
+                      onInspectModelAudit={onInspectModelAudit}
+                    />
+                  );
+                }
+                if (item.kind === "compression") {
+                  return (
+                    <CompressionBlock
+                      key={`compression-${item.block.blockRef}-${item.id}`}
+                      part={item.block}
+                      projectSlug={slug}
+                      sessionId={sessionId}
+                      focusStoreSessionId={focusStoreSessionId}
+                      snapshot={item.snapshot}
+                      childSessionLinks={childSessionLinks}
+                    />
+                  );
+                }
                 return (
-                  <ExecutionTurn
-                    key={`execution-${item.id}`}
-                    execution={item}
-                    expanded={expandedIds.has(item.id)}
-                    projectSlug={slug}
-                    focusStoreSessionId={focusStoreSessionId}
-                    checkpoint={checkpoint}
-                    continuationExecutionNumber={continuationExecutionNumber}
-                    onToggle={toggleExecution}
-                    onButtonRef={registerWorkButton}
-                    onInspectModelAudit={onInspectModelAudit}
-                  />
+                  <section key={`activity-${item.id}`} className="border-l-2 border-warning px-3 py-2">
+                    <SessionMessageView
+                      message={item.message}
+                      projectSlug={slug}
+                      focusStoreSessionId={focusStoreSessionId}
+                      childSessionLinks={[]}
+                      onInspectModelAudit={onInspectModelAudit}
+                    />
+                  </section>
                 );
-              }
-              if (item.kind === "compression") {
-                return (
-                  <CompressionBlock
-                    key={`compression-${item.block.blockRef}-${item.id}`}
-                    part={item.block}
-                    projectSlug={slug}
-                    sessionId={sessionId}
-                    focusStoreSessionId={focusStoreSessionId}
-                    snapshot={item.snapshot}
-                    childSessionLinks={childSessionLinks}
-                  />
-                );
-              }
-              return (
-                <section key={`activity-${item.id}`} className="border-l-2 border-warning px-3 py-2">
-                  <SessionMessageView
-                    message={item.message}
-                    projectSlug={slug}
-                    focusStoreSessionId={focusStoreSessionId}
-                    childSessionLinks={[]}
-                    onInspectModelAudit={onInspectModelAudit}
-                  />
-                </section>
-              );
-            })}
-          </>
-        )}
+              })}
+            </>
+          )}
+        </SessionThreadColumn>
       </ConversationRail>
     </div>
   );

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { selectSessionFamilyHitl, useAttentionVisibleScopedHitl, useHitlProjectInitialized } from "../../store/hitl-store";
 import { useSessionFamilyActivity } from "../../store/session-runtime-store";
 import { useSessionStore } from "../../store/session-store";
-import { ConversationRail } from "../primitives/ConversationRail";
+import { ConversationRail, SessionThreadColumn } from "../primitives/ConversationRail";
 import { ChatInput } from "./ChatInput";
 import { HitlDecisionCard } from "./HitlCard";
 import { SessionGoalSummaryRow } from "./SessionGoalSummaryRow";
@@ -60,42 +60,49 @@ export function SessionComposerDock({
       className="relative z-[4] shrink-0 border-t border-border-default bg-bg-surface"
       data-testid="session-composer-dock"
     >
-      <ConversationRail className="flex flex-col pb-2 pt-2" data-testid="conversation-composer-rail">
-        {activeHitl && (
-          <div
-            className="min-w-0 pb-2"
-            data-testid="composer-attention-stack"
-          >
-            <div className="min-w-0" aria-label="Requests needing attention">
-              <HitlDecisionCard
-                key={`${activeHitl.projectSlug}:${activeHitl.ownerSessionId}:${activeHitl.view.hitlId}`}
-                entry={activeHitl}
-                requestPosition={activeHitlIndex + 1}
-                requestCount={familyHitl.length}
-                onPreviousRequest={() => {
-                  const previous = familyHitl[activeHitlIndex - 1];
-                  if (previous) setActiveHitlId(previous.view.hitlId);
-                }}
-                onNextRequest={() => {
-                  const next = familyHitl[activeHitlIndex + 1];
-                  if (next) setActiveHitlId(next.view.hitlId);
-                }}
+      <div
+        style={{ paddingInline: "var(--session-scrollbar-gutter, 0px)" }}
+        data-testid="composer-scrollbar-alignment"
+      >
+        <ConversationRail className="pb-3 pt-3" data-testid="conversation-composer-rail">
+          <SessionThreadColumn className="flex flex-col" data-testid="composer-thread-column">
+            {activeHitl && (
+              <div
+                className="min-w-0 pb-2"
+                data-testid="composer-attention-stack"
+              >
+                <div className="min-w-0" aria-label="Requests needing attention">
+                  <HitlDecisionCard
+                    key={`${activeHitl.projectSlug}:${activeHitl.ownerSessionId}:${activeHitl.view.hitlId}`}
+                    entry={activeHitl}
+                    requestPosition={activeHitlIndex + 1}
+                    requestCount={familyHitl.length}
+                    onPreviousRequest={() => {
+                      const previous = familyHitl[activeHitlIndex - 1];
+                      if (previous) setActiveHitlId(previous.view.hitlId);
+                    }}
+                    onNextRequest={() => {
+                      const next = familyHitl[activeHitlIndex + 1];
+                      if (next) setActiveHitlId(next.view.hitlId);
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+            <SessionGoalSummaryRow slug={slug} sessionId={sessionId} goal={goal} />
+            <ComposerQueueList slug={slug} sessionId={sessionId} />
+            <div className="shrink-0 pt-1.5" data-testid="composer-input-slot">
+              <ChatInput
+                slug={slug}
+                sessionId={sessionId}
+                activity={activity}
+                hitlReady={hitlReady}
+                hasPendingHitl={hasPendingHitl}
               />
             </div>
-          </div>
-        )}
-        <SessionGoalSummaryRow slug={slug} sessionId={sessionId} goal={goal} />
-        <ComposerQueueList slug={slug} sessionId={sessionId} />
-        <div className="shrink-0 pt-1.5" data-testid="composer-input-slot">
-          <ChatInput
-            slug={slug}
-            sessionId={sessionId}
-            activity={activity}
-            hitlReady={hitlReady}
-            hasPendingHitl={hasPendingHitl}
-          />
-        </div>
-      </ConversationRail>
+          </SessionThreadColumn>
+        </ConversationRail>
+      </div>
     </div>
   );
 }

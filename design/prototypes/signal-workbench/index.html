@@ -8,7 +8,7 @@
       content="ArchCode Indigo Ink and Signal Lime visual direction prototype"
     />
     <title>ArchCode — Signal Workbench Design Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=readability-hierarchy-4" />
+    <link rel="stylesheet" href="./styles.css?v=quiet-precision-1" />
   </head>
   <body>
     <!--
@@ -505,80 +505,86 @@
               <section class="dashboard-intro">
                 <span class="page-mark" data-icon="dashboard"></span>
                 <div>
+                  <span class="page-overline">Project overview</span>
                   <h1>Dashboard</h1>
                   <p>What needs you, what is moving, and where to continue.</p>
                 </div>
               </section>
 
-              <section class="dashboard-section attention-section">
-                <header class="dashboard-section-head">
-                  <span class="status-orbit warning"></span>
-                  <h2>Needs attention</h2>
-                  <span class="section-count">1</span>
-                </header>
-                <button class="dashboard-row attention-row" data-action="打开 Coverage set">
-                  <span class="status-orbit warning"></span>
-                  <span class="dashboard-row-copy">
-                    <strong>Coverage set</strong>
-                    <small>Which UI states and viewports must the manual Visual QA checklist cover?</small>
-                  </span>
-                  <span class="dashboard-row-meta"><small>Discussion · 13h ago</small><span>Open</span></span>
-                </button>
-              </section>
-
-              <section class="dashboard-section running-section">
-                <header class="dashboard-section-head">
-                  <span class="status-orbit live"></span>
-                  <h2>Running now</h2>
-                  <span class="section-count live-count">1</span>
-                </header>
-                <button class="dashboard-row running-row" data-action="打开 Runtime authority migration">
-                  <span class="status-orbit live"></span>
-                  <span class="dashboard-row-copy">
-                    <strong>Runtime authority migration</strong>
-                    <small>Lead is validating runtime path hygiene after 12 file changes.</small>
-                  </span>
-                  <span class="dashboard-row-meta"><small class="live-word">RUNNING · 14:32</small><span>Open</span></span>
-                </button>
-              </section>
-
-              <section class="dashboard-section">
-                <header class="dashboard-section-head">
-                  <span class="status-orbit brand"></span>
-                  <h2>Continue working</h2>
-                  <span class="section-count">3</span>
-                </header>
-                <div class="dashboard-list">
-                  <button class="dashboard-row" data-thread-jump="output">
-                    <span class="status-orbit quiet"></span>
-                    <span class="dashboard-row-copy"><strong>Tool output boundary</strong><small>Review active · waiting for a decision</small></span>
-                    <span class="dashboard-row-meta"><small>12m ago</small><span>Open</span></span>
+              <div class="dashboard-priority-grid">
+                <section class="dashboard-section attention-section">
+                  <header class="dashboard-section-head">
+                    <span class="status-orbit warning"></span>
+                    <h2>Needs attention</h2>
+                    <span class="section-count">1</span>
+                  </header>
+                  <button class="dashboard-row attention-row" data-action="打开 Coverage set">
+                    <span class="status-orbit warning"></span>
+                    <span class="dashboard-row-copy">
+                      <strong>Coverage set</strong>
+                      <small>Which UI states and viewports must the manual Visual QA checklist cover?</small>
+                    </span>
+                    <span class="dashboard-row-meta"><small>Discussion · 13h ago</small><span>Open</span></span>
                   </button>
-                  <button class="dashboard-row" data-thread-jump="model">
-                    <span class="status-orbit quiet"></span>
-                    <span class="dashboard-row-copy"><strong>Model runtime snapshots</strong><small>Idle · last execution completed</small></span>
-                    <span class="dashboard-row-meta"><small>Tuesday</small><span>Open</span></span>
-                  </button>
-                  <button class="dashboard-row" data-thread-jump="hitl">
-                    <span class="status-orbit quiet"></span>
-                    <span class="dashboard-row-copy"><strong>HITL queue cleanup</strong><small>Idle · no pending requests</small></span>
-                    <span class="dashboard-row-meta"><small>Monday</small><span>Open</span></span>
-                  </button>
-                </div>
-              </section>
+                </section>
 
-              <section class="dashboard-section">
-                <header class="dashboard-section-head">
-                  <span class="status-orbit brand"></span>
-                  <h2>Upcoming</h2>
-                  <span class="section-count">1</span>
-                </header>
-                <button class="dashboard-row" data-action="打开 Nightly regression review">
-                  <span class="status-orbit quiet"></span>
-                  <span class="dashboard-row-copy"><strong>Nightly regression review</strong><small>Automation · active</small></span>
-                  <span class="dashboard-row-meta"><small>Tomorrow · 02:00</small><span>Open</span></span>
-                </button>
-              </section>
+                <section class="dashboard-section running-section">
+                  <header class="dashboard-section-head">
+                    <span class="status-orbit live"></span>
+                    <h2>Running now</h2>
+                    <span class="section-count live-count">1</span>
+                  </header>
+                  <button class="dashboard-row running-row" data-action="打开 Runtime authority migration">
+                    <span class="status-orbit live"></span>
+                    <span class="dashboard-row-copy">
+                      <strong>Runtime authority migration</strong>
+                      <small>Lead is validating runtime path hygiene after 12 file changes.</small>
+                    </span>
+                    <span class="dashboard-row-meta"><small class="live-word">RUNNING · 14:32</small><span>Open</span></span>
+                  </button>
+                </section>
+              </div>
+
+              <div class="dashboard-secondary-grid">
+                <section class="dashboard-section continue-section">
+                  <header class="dashboard-section-head">
+                    <span class="status-orbit brand"></span>
+                    <h2>Continue working</h2>
+                    <span class="section-count">3</span>
+                  </header>
+                  <div class="dashboard-list">
+                    <button class="dashboard-row" data-thread-jump="output">
+                      <span class="status-orbit quiet"></span>
+                      <span class="dashboard-row-copy"><strong>Tool output boundary</strong><small>Review active · waiting for a decision</small></span>
+                      <span class="dashboard-row-meta"><small>12m ago</small><span>Open</span></span>
+                    </button>
+                    <button class="dashboard-row" data-thread-jump="model">
+                      <span class="status-orbit quiet"></span>
+                      <span class="dashboard-row-copy"><strong>Model runtime snapshots</strong><small>Idle · last execution completed</small></span>
+                      <span class="dashboard-row-meta"><small>Tuesday</small><span>Open</span></span>
+                    </button>
+                    <button class="dashboard-row" data-thread-jump="hitl">
+                      <span class="status-orbit quiet"></span>
+                      <span class="dashboard-row-copy"><strong>HITL queue cleanup</strong><small>Idle · no pending requests</small></span>
+                      <span class="dashboard-row-meta"><small>Monday</small><span>Open</span></span>
+                    </button>
+                  </div>
+                </section>
+
+                <section class="dashboard-section upcoming-section">
+                  <header class="dashboard-section-head">
+                    <span class="status-orbit brand"></span>
+                    <h2>Upcoming</h2>
+                    <span class="section-count">1</span>
+                  </header>
+                  <button class="dashboard-row" data-action="打开 Nightly regression review">
+                    <span class="status-orbit quiet"></span>
+                    <span class="dashboard-row-copy"><strong>Nightly regression review</strong><small>Automation · active</small></span>
+                    <span class="dashboard-row-meta"><small>Tomorrow · 02:00</small><span>Open</span></span>
+                  </button>
+                  <p class="upcoming-note">Scheduled work stays quiet until it becomes actionable.</p>
+                </section>
+              </div>
             </div>
           </div>
         </section>
@@ -603,7 +609,7 @@
               <form class="todo-capture" id="todo-capture">
                 <span data-icon="plus"></span>
                 <label class="sr-only" for="new-todo-title">New Todo title</label>
-                <input id="new-todo-title" type="text" placeholder="Capture something to shape later…" />
+                <input id="new-todo-title" type="text" placeholder="Capture a Todo…" />
                 <button class="primary-button" type="submit">New Todo</button>
               </form>
 
@@ -835,6 +841,6 @@
 
     <div class="scrim" data-close-overlays></div>
     <div class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=readability-hierarchy-4"></script>
+    <script src="./app.js?v=quiet-precision-1"></script>
   </body>
 </html>

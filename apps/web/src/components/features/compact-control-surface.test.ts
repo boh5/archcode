@@ -44,7 +44,7 @@ describe("compact icon control contract", () => {
     const header = await source("components/features/ChatHeader.tsx");
     const sidebar = await source("components/features/Sidebar.tsx");
 
-    expect(header).toContain("text-[11px] text-text-tertiary");
+    expect(header).toContain("text-[12px] text-text-tertiary");
     expect(sidebar.match(/text-\[11px\] text-text-tertiary/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -58,10 +58,31 @@ describe("compact icon control contract", () => {
   test("Work stays flat while Delegation retains its nested surface", async () => {
     const workstream = await source("components/composite/ExecutionWorkstream.tsx");
     const delegation = await source("components/composite/DelegationCard.tsx");
-    expect(workstream).toContain("work-summary-control flex min-h-8");
+    expect(workstream).toContain("work-summary-control relative flex min-h-8");
     expect(workstream).toContain("hover:bg-bg-hover");
     expect(delegation).toContain("rounded-md border border-border-subtle bg-bg-elevated");
     expect(delegation).toContain("border-b border-border-subtle bg-transparent");
+  });
+
+  test("the transcript and Composer share one visible thread column", async () => {
+    const workstream = await source("components/composite/ExecutionWorkstream.tsx");
+    const composer = await source("components/features/SessionComposerDock.tsx");
+    const rail = await source("components/primitives/ConversationRail.tsx");
+    const markdown = await source("components/primitives/MarkdownContent.css");
+
+    expect(rail).toContain("export function SessionThreadColumn");
+    expect(rail).toContain("mx-auto w-full max-w-[800px] min-w-0");
+    expect(workstream).toContain('data-testid="execution-thread-column"');
+    expect(composer).toContain('data-testid="composer-thread-column"');
+    expect(workstream).not.toContain("CONVERSATION_TURN_LANE_CLASS");
+    expect(workstream).toContain("absolute -left-4 top-1/2");
+    expect(workstream).toContain('scrollbarGutter: "stable both-edges"');
+    expect(workstream).toContain('const SESSION_SCROLLBAR_GUTTER_PROPERTY = "--session-scrollbar-gutter"');
+    expect(composer).not.toContain("overflow-x-hidden");
+    expect(composer).not.toContain("scrollbarGutter");
+    expect(composer).toContain('paddingInline: "var(--session-scrollbar-gutter, 0px)"');
+    expect(markdown).toContain("max-width: 72ch;");
+    expect(markdown).not.toContain("margin-inline: auto;");
   });
 
   test("HITL overlays and Tooltips use their exclusive ownership tokens", async () => {

@@ -1,18 +1,31 @@
 import type { HTMLAttributes } from "react";
 
 export type ConversationRailProps = HTMLAttributes<HTMLDivElement>;
+export type SessionThreadColumnProps = HTMLAttributes<HTMLDivElement>;
 
 /**
- * The single horizontal alignment boundary for the Session conversation.
- * It follows the available Session canvas and owns only safe horizontal gutters.
- * Individual prose surfaces may constrain line length without constraining
- * Work, tools, code, tables, Diffs, or the Composer.
+ * Owns the responsive safe-area gutters shared by the Session transcript and
+ * Composer dock.
  */
 export function ConversationRail({ className = "", ...props }: ConversationRailProps) {
   return (
     <div
       className={`box-border w-full min-w-0 px-4 sm:px-5 xl:px-6 ${className}`}
       data-conversation-rail=""
+      {...props}
+    />
+  );
+}
+
+/**
+ * The visible Session thread boundary. Conversation surfaces and Composer
+ * controls share this width; prose children may still use a shorter measure.
+ */
+export function SessionThreadColumn({ className = "", ...props }: SessionThreadColumnProps) {
+  return (
+    <div
+      className={`mx-auto w-full max-w-[800px] min-w-0 ${className}`}
+      data-session-thread-column=""
       {...props}
     />
   );

@@ -327,7 +327,7 @@ export function ChatInput({
                     : "Send a message…"
           }
           rows={1}
-          className="block min-h-[48px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-2 pt-3 font-sans text-[16px] leading-6 text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary sm:text-[13px] sm:leading-5"
+          className="block min-h-[56px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-2 pt-3.5 font-sans text-[16px] leading-6 text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary sm:text-[15px] sm:leading-6"
         />
 
         <div className="flex min-h-[38px] items-center justify-between gap-3 px-3 pb-2">

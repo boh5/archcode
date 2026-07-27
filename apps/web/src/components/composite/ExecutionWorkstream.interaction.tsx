@@ -614,11 +614,27 @@ describe("ExecutionWorkstream", () => {
         { type: "text", id: "final-text", text: "Animation review complete.", createdAt: 6, completedAt: 7 },
       ],
     };
-    initializeSession([
-      message("user", "user", "execution", "Optimize animations", 1),
-      toolsMessage,
-      finalMessage,
-    ], [execution("execution", 1)]);
+    initializeSession(
+      [
+        message("user", "user", "execution", "Optimize animations", 1),
+        toolsMessage,
+        finalMessage,
+      ],
+      [execution("execution", 1)],
+      "session-1",
+      "project-1",
+      [],
+      [],
+      [{
+        id: "reasoning-step",
+        step: 0,
+        executionId: "execution",
+        startedAt: 1,
+        completedAt: 7,
+        finishReason: "stop",
+        usage: { reasoningTokens: 321 },
+      }],
+    );
 
     await renderWorkstream();
     await clickWork("execution");
@@ -637,6 +653,42 @@ describe("ExecutionWorkstream", () => {
     expect(reasoning?.textContent).toContain(leakedReasoning);
     expect(toolRun?.textContent).not.toContain(leakedReasoning);
     expect(finalResponse("execution")?.textContent).toContain("Animation review complete.");
+    expect(workBody("execution")?.querySelector('[data-testid="reasoning-usage-summary"]')).toBeNull();
+  });
+
+  test("shows reasoning usage when the model reports tokens without reasoning text", async () => {
+    initializeSession(
+      [
+        message("user", "user", "execution", "Inspect the project", 1),
+        message("final", "assistant", "execution", "Inspection complete.", 3),
+      ],
+      [execution("execution", 1)],
+      "session-1",
+      "project-1",
+      [],
+      [],
+      [{
+        id: "hidden-reasoning-step",
+        step: 0,
+        executionId: "execution",
+        startedAt: 1,
+        completedAt: 3,
+        finishReason: "stop",
+        usage: { reasoningTokens: 1_021 },
+      }],
+    );
+
+    await renderWorkstream();
+    await clickWork("execution");
+
+    const summary = workBody("execution")?.querySelector<HTMLElement>(
+      '[data-testid="reasoning-usage-summary"]',
+    );
+    expect(summary?.textContent).toContain("Reasoning");
+    expect(summary?.textContent).toContain(`${(1_021).toLocaleString()} tokens`);
+    expect(summary?.textContent).not.toContain("Text not provided by model");
+    expect(summary?.getAttribute("role")).toBe("note");
+    expect(workBody("execution")?.querySelector('[data-testid="reasoning-block"]')).toBeNull();
   });
 
   test("keeps running Work in authoritative message and part order with user-right and plain agent presentation", async () => {
@@ -667,11 +719,15 @@ describe("ExecutionWorkstream", () => {
     expect(bodyText.indexOf("Agent part two")).toBeLessThan(bodyText.indexOf("Agent part three"));
 
     const user = container.querySelector<HTMLElement>('[data-message-kind="canonical-user"]');
-    const userBubble = user?.querySelector<HTMLElement>(".justify-end > div");
-    expect(userBubble?.className).toContain("max-w-[660px]");
-    expect(userBubble?.className).toContain("rounded-lg");
-    expect(userBubble?.className).toContain("bg-bg-muted");
-    expect(userBubble?.className).not.toContain("shadow-");
+    const userRow = user?.querySelector<HTMLElement>("[data-user-message-row]");
+    const userSurface = user?.querySelector<HTMLElement>("[data-user-message-surface]");
+    expect(userRow?.className).toContain("justify-end");
+    expect(userRow?.className).toContain("w-full");
+    expect(userSurface?.className).toContain("max-w-[660px]");
+    expect(userSurface?.className).not.toContain("w-full");
+    expect(userSurface?.className).toContain("rounded-lg");
+    expect(userSurface?.className).toContain("bg-bg-muted");
+    expect(userSurface?.className).not.toContain("shadow-");
 
     const agent = container.querySelector<HTMLElement>('[data-message-kind="agent"]');
     expect(agent).not.toBeNull();
@@ -741,7 +797,7 @@ describe("ExecutionWorkstream", () => {
 
     const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
     if (!scroller) throw new Error("Missing workstream scroller");
-    expect(scroller.style.scrollbarGutter).toBe("stable");
+    expect(scroller.style.scrollbarGutter).toBe("stable both-edges");
     let scrollHeight = 1_000;
     Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => scrollHeight });
     Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });

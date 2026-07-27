@@ -68,7 +68,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
       <button
         type="button"
         aria-label="Open dashboard"
-        className="mb-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-rail-ink/8 text-rail-ink transition-colors duration-[var(--motion-hover)] hover:bg-rail-ink/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="mb-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-rail-ink/8 text-rail-ink transition-colors duration-[var(--motion-hover)] hover:bg-rail-ink/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={() => navigate("/")}
       >
         <img src="/logo.svg" alt="ArchCode" width={20} height={20} />
@@ -89,7 +89,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
               aria-label={`Open ${project.name}`}
               aria-current={isActive ? "page" : undefined}
               aria-describedby={`project-tooltip-${project.slug}`}
-              className={`group relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold transition-[background-color,color] duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+              className={`group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold transition-[background-color,color] duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
                 isActive
                   ? "bg-rail-ink/10 text-rail-ink"
                   : "text-rail-muted hover:bg-rail-ink/8 hover:text-rail-ink"
@@ -116,7 +116,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
       <button
         type="button"
         aria-label="Open project"
-        className="group relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={handleAddProject}
       >
         <Plus size={16} aria-hidden="true" />

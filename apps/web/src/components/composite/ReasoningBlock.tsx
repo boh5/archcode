@@ -3,6 +3,23 @@ import { ChevronRight, Sparkles } from "lucide-react";
 import type { ReasoningPart } from "@archcode/protocol";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 
+export function ReasoningUsageSummary({ tokens }: { readonly tokens: number }) {
+  const formattedTokens = Math.floor(tokens).toLocaleString();
+
+  return (
+    <div
+      role="note"
+      aria-label={`Reasoning used ${formattedTokens} tokens. Reasoning text was not provided by the model.`}
+      className="flex min-h-8 max-w-full items-center gap-2 py-1 text-[12px] leading-4 text-text-tertiary"
+      data-testid="reasoning-usage-summary"
+    >
+      <Sparkles size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
+      <span className="font-medium text-text-secondary">Reasoning</span>
+      <span className="tabular-nums">{formattedTokens} tokens</span>
+    </div>
+  );
+}
+
 export function ReasoningBlock({ part }: { readonly part: ReasoningPart }) {
   const [expanded, setExpanded] = useState(false);
   const streaming = !part.completedAt;

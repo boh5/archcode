@@ -1,7 +1,7 @@
 # Signal Workbench Design System
 
 > Persisted from the approved interactive prototype, last synchronized on
-> 2026-07-25.
+> 2026-07-27.
 >
 > When designing or implementing a page, read this file first and then read
 > `pages/[page-name].md`. A page file overrides this Master only where it says
@@ -70,89 +70,89 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 
 | Token | Value | Role |
 |---|---|---|
-| `--canvas` | `#f7f7f7` | Neutral workspace background |
-| `--surface` | `#fbfbfb` | Navigation, headers, large work surfaces |
+| `--canvas` | `#f2f3f0` | Warm-neutral workspace background |
+| `--surface` | `#f8f8f6` | Navigation, headers, large work surfaces |
 | `--surface-raised` | `#ffffff` | Inputs, ToolCards, compact controls |
-| `--surface-muted` | `#f1f1f1` | User messages and secondary fields |
-| `--surface-hover` | `#ebebeb` | Hover state |
-| `--surface-active` | `#e3e3e3` | Pressed neutral state |
-| `--border-soft` | `#e5e5e5` | Internal separators |
-| `--border` | `#d6d6d6` | Default boundary |
-| `--border-strong` | `#aaaaaa` | Structural boundary |
-| `--ink` | `#202020` | Primary text |
-| `--ink-secondary` | `#505050` | Body and explanation text |
-| `--ink-tertiary` | `#606060` | Secondary metadata |
-| `--ink-muted` | `#686868` | De-emphasized metadata |
-| `--brand` | `#5053c5` | Selection, primary action, active navigation |
-| `--brand-hover` | `#4447ad` | Primary action hover |
-| `--brand-field` | `#eff0fb` | Explicit brand-tinted field |
+| `--surface-muted` | `#eceeea` | User messages and secondary fields |
+| `--surface-hover` | `#e6e8e4` | Hover state |
+| `--surface-active` | `#dde0da` | Pressed neutral state |
+| `--border-soft` | `#e1e3df` | Internal separators |
+| `--border` | `#cdd1ca` | Default boundary |
+| `--border-strong` | `#9fa69d` | Structural boundary |
+| `--ink` | `#171917` | Primary text |
+| `--ink-secondary` | `#424742` | Body and explanation text |
+| `--ink-tertiary` | `#626a62` | Secondary metadata |
+| `--ink-muted` | `#747c74` | De-emphasized metadata |
+| `--brand` | `#6157d5` | Selection, primary action, active navigation |
+| `--brand-hover` | `#5148c1` | Primary action hover |
+| `--brand-field` | `#eeecfb` | Explicit brand-tinted field |
 | `--brand-ink` | `#ffffff` | Text on brand |
-| `--signal` | `#7d991c` | Running/live indicator |
+| `--signal` | `#758b22` | Running/live indicator |
 | `--signal-ink` | `#202807` | Text on signal |
-| `--signal-foreground` | `#4f6110` | Live text on neutral surfaces |
-| `--signal-field` | `#eff4d8` | Explicit running status field |
-| `--success` | `#347553` | Completed/success |
-| `--success-field` | `#eaf4ed` | Completed field |
-| `--warning` | `#8a5f16` | Attention/decision required |
-| `--warning-field` | `#f8efe0` | Explicit attention status field |
-| `--danger` | `#b14840` | Error/destructive/diff removal |
-| `--danger-field` | `#f8e9e7` | Error/removal field |
-| `--selection-field` | `#eff0ed` | Quiet selected row |
-| `--running-field` | `#f5f7ed` | Quiet running row |
-| `--attention-field` | `#fbf7ef` | Quiet attention band |
-| `--rail` | `#222222` | Project rail |
-| `--rail-ink` | `#f3f4ee` | Active rail content |
-| `--rail-muted` | `#92978c` | Inactive rail content |
+| `--signal-foreground` | `#506015` | Live text on neutral surfaces |
+| `--signal-field` | `#eef3d8` | Explicit running status field |
+| `--success` | `#2f7752` | Completed/success |
+| `--success-field` | `#e8f2eb` | Completed field |
+| `--warning` | `#8a5e13` | Attention/decision required |
+| `--warning-field` | `#f7eddd` | Explicit attention status field |
+| `--danger` | `#b34d45` | Error/destructive/diff removal |
+| `--danger-field` | `#f8e8e6` | Error/removal field |
+| `--selection-field` | `#eeedf8` | Quiet selected row |
+| `--running-field` | `#f1f4e7` | Quiet running row |
+| `--attention-field` | `#f8f2e8` | Quiet attention band |
+| `--rail` | `#191c19` | Project rail |
+| `--rail-ink` | `#f4f5f1` | Active rail content |
+| `--rail-muted` | `#939a91` | Inactive rail content |
 | `--terminal-bg` | `#252620` | Bash output surface |
 | `--terminal-text` | `#d7d6cd` | Bash output foreground |
 | `--terminal-muted` | `#aaa99f` | Bash process metadata |
 | `--terminal-success` | `#b6d84b` | Successful Bash exit |
 | `--terminal-error` | `#ed8178` | Failed Bash exit |
-| `--focus` | `0 0 0 3px rgb(80 83 197 / 22%)` | Focus ring |
+| `--focus` | `0 0 0 3px rgb(97 87 213 / 23%)` | Focus ring |
 
 ### Dark Theme
 
 | Token | Value | Role |
 |---|---|---|
-| `--canvas` | `#181818` | Workspace background |
-| `--surface` | `#202020` | Navigation, headers, large work surfaces |
-| `--surface-raised` | `#272727` | Inputs, ToolCards, controls |
-| `--surface-muted` | `#2d2d2d` | Secondary fields |
-| `--surface-hover` | `#343434` | Hover state |
-| `--surface-active` | `#3b3b3b` | Pressed neutral state |
-| `--border-soft` | `#303030` | Internal separators |
-| `--border` | `#424242` | Default boundary |
-| `--border-strong` | `#666666` | Structural boundary |
-| `--ink` | `#f1f1f1` | Primary text |
-| `--ink-secondary` | `#bcbcbc` | Body text |
-| `--ink-tertiary` | `#989898` | Secondary metadata |
-| `--ink-muted` | `#888888` | De-emphasized metadata |
-| `--brand` | `#9699ff` | Selection and primary action |
-| `--brand-hover` | `#afb1ff` | Primary action hover |
-| `--brand-field` | `#2d2f4a` | Explicit brand-tinted field |
+| `--canvas` | `#101210` | Graphite workspace background |
+| `--surface` | `#151815` | Navigation, headers, large work surfaces |
+| `--surface-raised` | `#1c201c` | Inputs, ToolCards, controls |
+| `--surface-muted` | `#232723` | Secondary fields |
+| `--surface-hover` | `#292e29` | Hover state |
+| `--surface-active` | `#303630` | Pressed neutral state |
+| `--border-soft` | `#262b26` | Internal separators |
+| `--border` | `#363c36` | Default boundary |
+| `--border-strong` | `#596159` | Structural boundary |
+| `--ink` | `#f3f5f0` | Primary text |
+| `--ink-secondary` | `#c9cec6` | Body text |
+| `--ink-tertiary` | `#9ca49a` | Secondary metadata |
+| `--ink-muted` | `#868f84` | De-emphasized metadata |
+| `--brand` | `#a49bff` | Selection and primary action |
+| `--brand-hover` | `#b9b2ff` | Primary action hover |
+| `--brand-field` | `#2b2845` | Explicit brand-tinted field |
 | `--brand-ink` | `#17181f` | Text on brand |
-| `--signal` | `#c0df62` | Running/live indicator |
+| `--signal` | `#c1dd64` | Running/live indicator |
 | `--signal-ink` | `#202807` | Text on signal |
-| `--signal-foreground` | `#d7eb88` | Live text on neutral surfaces |
-| `--signal-field` | `#2d361e` | Explicit running status field |
-| `--success` | `#7dbd94` | Completed/success |
-| `--success-field` | `#213329` | Completed field |
-| `--warning` | `#d8b66c` | Attention/decision required |
-| `--warning-field` | `#332a1b` | Explicit attention status field |
-| `--danger` | `#ed8178` | Error/destructive/diff removal |
-| `--danger-field` | `#3a2421` | Error/removal field |
-| `--selection-field` | `#292c27` | Quiet selected row |
-| `--running-field` | `#25291d` | Quiet running row |
-| `--attention-field` | `#29261f` | Quiet attention band |
-| `--rail` | `#111111` | Project rail |
-| `--rail-ink` | `#f1f1f1` | Active rail content |
-| `--rail-muted` | `#8d8d8d` | Inactive rail content |
+| `--signal-foreground` | `#d9ec8c` | Live text on neutral surfaces |
+| `--signal-field` | `#29331b` | Explicit running status field |
+| `--success` | `#82c49a` | Completed/success |
+| `--success-field` | `#203329` | Completed field |
+| `--warning` | `#deb96e` | Attention/decision required |
+| `--warning-field` | `#352b1b` | Explicit attention status field |
+| `--danger` | `#f08b82` | Error/destructive/diff removal |
+| `--danger-field` | `#3b2421` | Error/removal field |
+| `--selection-field` | `#26243a` | Quiet selected row |
+| `--running-field` | `#22291b` | Quiet running row |
+| `--attention-field` | `#2c271e` | Quiet attention band |
+| `--rail` | `#0c0e0c` | Project rail |
+| `--rail-ink` | `#f2f4ef` | Active rail content |
+| `--rail-muted` | `#858c83` | Inactive rail content |
 | `--terminal-bg` | `#0f100e` | Bash output surface |
 | `--terminal-text` | `#dad9d1` | Bash output foreground |
 | `--terminal-muted` | `#aaa99f` | Bash process metadata |
 | `--terminal-success` | `#b6d84b` | Successful Bash exit |
 | `--terminal-error` | `#ed8178` | Failed Bash exit |
-| `--focus` | `0 0 0 3px rgb(150 153 255 / 25%)` | Focus ring |
+| `--focus` | `0 0 0 3px rgb(164 155 255 / 26%)` | Focus ring |
 
 ### Color Discipline
 
@@ -171,7 +171,7 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 No network font dependency is required.
 
 ```css
---font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+--font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
 --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 ```
 
@@ -179,13 +179,14 @@ Type scale:
 
 | Role | Size | Weight | Notes |
 |---|---:|---:|---|
-| Dense metadata | 10–11px | 500–700 | Counts, elapsed time, compact state |
-| Compact label | 11–12px | 600–700 | Buttons, row labels, section labels |
-| Operational title | 12–13px | 600–650 | Navigation, tool targets, rows |
+| Dense metadata | 11–12px | 500–700 | Counts, elapsed time, compact state |
+| Compact label | 12px | 600–700 | Buttons, row labels, section labels |
+| Operational title | 13–14px | 600–680 | Navigation, tool targets, rows |
 | Commentary | 13–14px | 400–500 | Process explanation inside Work |
 | User message | 15px | 400–500 | User intent |
 | Final response | 16px | 400–600 | Agent outcome and supporting detail |
-| Page title | 18px | 700 | Dashboard and flat Todo views |
+| Session title | 20px | 700 | Active work identity |
+| Page title | 24–26px | 700–720 | Dashboard and flat Todo views |
 
 Rules:
 
@@ -221,8 +222,8 @@ Elevation:
 - Ordinary rows and cards have no drop shadow.
 - The compact Composer input surface uses one soft shadow inside its bottom dock.
 - Inspectors, drawers, and off-canvas navigation use
-  `0 18px 48px rgb(25 28 22 / 16%)` in light mode and
-  `0 18px 48px rgb(0 0 0 / 46%)` in dark mode.
+  `0 22px 56px rgb(25 28 22 / 18%)` in light mode and
+  `0 22px 56px rgb(0 0 0 / 52%)` in dark mode.
 - Do not raise cards on hover; use border, fill, or a 2–3px inset rule.
 
 Layer scale:
@@ -242,18 +243,18 @@ Layer scale:
 Desktop shell defaults:
 
 ```text
-52px project rail | 248px project navigation | flexible work canvas | 330px inspector
+52px project rail | 264px project navigation | flexible work canvas | 312px inspector
 ```
 
 - Project navigation is resizable from 210–340px.
 - Context Inspector is resizable from 280–460px.
 - User-adjusted widths persist across visits. Collapse and focus mode never
   discard the last expanded width.
-- Header height: 56px; page headers may use 58px.
+- Header height: 64px; the narrow Session header becomes 60px.
 - Conversation structure follows the flexible work canvas with safe horizontal
   gutters; prose inside Agent responses uses a 65–72ch reading measure and user
   messages remain capped at 660px.
-- Dashboard content max: 1100px.
+- Dashboard content max: 1180px.
 - Todos content max: 1500px.
 - Main regions scroll independently only where the product structure requires it.
 
@@ -263,7 +264,7 @@ Responsive behavior:
 |---|---|
 | `>1180px` | Four-region Session shell; inspector and sidebar may collapse |
 | `761–1180px` | 52px rail + 228px sidebar + canvas; inspector becomes a right overlay |
-| `≤760px` | 44px rail + canvas; project sidebar and inspector become overlays |
+| `≤760px` | 48px rail + canvas; project sidebar and inspector become overlays |
 | `≤620px` | Todo Board becomes one column; flat rows reflow actions below copy |
 
 Narrow-screen rules:

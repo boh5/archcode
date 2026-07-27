@@ -1,4 +1,4 @@
-import { Activity, CircleDot, Loader2, Target } from "lucide-react";
+import { Activity, CircleDot, LayoutDashboard, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { DashboardScope, SessionGoal } from "@archcode/protocol";
 import { useDashboardProjection } from "../hooks/use-dashboard-projection";
@@ -23,16 +23,16 @@ export function Dashboard({ scope = HOME_SCOPE }: { scope?: DashboardScope }) {
 
   return (
     <main className="h-full overflow-y-auto bg-bg-base" data-testid={`dashboard-${scope.kind}`}>
-      <div className="mx-auto flex max-w-[1100px] flex-col gap-8 px-4 pb-15 pt-8 min-[761px]:px-8">
-        <header className="flex items-start gap-3">
-          <span className="mt-0.5 flex h-5 w-2 shrink-0 items-center justify-center bg-brand" aria-hidden="true" />
+      <div className="mx-auto flex max-w-[1180px] flex-col gap-[34px] px-4 pb-18 pt-8 min-[761px]:px-10 min-[761px]:pt-11.5">
+        <header className="flex items-center gap-4">
+          <span className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-lg border border-brand/20 bg-brand-subtle text-brand" aria-hidden="true">
+            <LayoutDashboard size={21} strokeWidth={1.8} />
+          </span>
           <div>
-            <div className="flex items-center gap-2">
-              <Target size={17} className="text-brand" aria-hidden="true" />
-              <h1 className="text-[18px] font-semibold leading-6 text-text-primary">Dashboard</h1>
-            </div>
-            <p className="mt-1 text-[13px] leading-5 text-text-tertiary">
-              See what needs attention, what is running, and where to continue.
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.09em] text-brand">Project overview</p>
+            <h1 className="text-[26px] font-semibold leading-[30px] tracking-[-0.035em] text-text-primary">Dashboard</h1>
+            <p className="mt-1.5 text-[14px] leading-[21px] text-text-secondary">
+              What needs you, what is moving, and where to continue.
             </p>
           </div>
         </header>
@@ -55,42 +55,48 @@ export function Dashboard({ scope = HOME_SCOPE }: { scope?: DashboardScope }) {
           </div>
         ) : null}
 
-        <DashboardSection
-          id="needs-attention"
-          icon={<StatusGlyph kind="needs_you" label="Needs attention" size={16} />}
-          title="Needs attention"
-          count={sections.attention.length}
-          emptyMessage="Nothing needs your attention."
-        >
-          {sections.attention.map((item) => <AttentionRow key={item.identity} item={item} showProject={isGlobal} />)}
-        </DashboardSection>
+        <div className="grid min-w-0 grid-cols-1 gap-5 min-[1001px]:grid-cols-2">
+          <DashboardSection
+            id="needs-attention"
+            icon={<StatusGlyph kind="needs_you" label="Needs attention" size={16} />}
+            title="Needs attention"
+            count={sections.attention.length}
+            emptyMessage="Nothing needs your attention."
+            emphasis="attention"
+          >
+            {sections.attention.map((item) => <AttentionRow key={item.identity} item={item} showProject={isGlobal} />)}
+          </DashboardSection>
 
-        <DashboardSection
-          icon={<Activity size={16} className="text-signal-foreground" aria-hidden="true" />}
-          title="Running now"
-          count={sections.running.length}
-          emptyMessage="No sessions are running."
-        >
-          {sections.running.map((item) => <SessionRow key={item.identity} item={item} showProject={isGlobal} />)}
-        </DashboardSection>
+          <DashboardSection
+            icon={<Activity size={16} className="text-signal-foreground" aria-hidden="true" />}
+            title="Running now"
+            count={sections.running.length}
+            emptyMessage="No sessions are running."
+            emphasis="running"
+          >
+            {sections.running.map((item) => <SessionRow key={item.identity} item={item} showProject={isGlobal} />)}
+          </DashboardSection>
+        </div>
 
-        <DashboardSection
-          icon={<CircleDot size={16} className="text-brand" aria-hidden="true" />}
-          title="Continue working"
-          count={sections.continueWorking.length}
-          emptyMessage="No recent sessions to continue."
-        >
-          {sections.continueWorking.map((item) => <SessionRow key={item.identity} item={item} showProject={isGlobal} />)}
-        </DashboardSection>
+        <div className="grid min-w-0 grid-cols-1 gap-5 min-[1001px]:grid-cols-[minmax(0,1.45fr)_minmax(300px,0.75fr)]">
+          <DashboardSection
+            icon={<CircleDot size={16} className="text-brand" aria-hidden="true" />}
+            title="Continue working"
+            count={sections.continueWorking.length}
+            emptyMessage="No recent sessions to continue."
+          >
+            {sections.continueWorking.map((item) => <SessionRow key={item.identity} item={item} showProject={isGlobal} />)}
+          </DashboardSection>
 
-        <DashboardSection
-          icon={<StatusGlyph kind="enabled" label="Upcoming automations" size={16} />}
-          title="Upcoming"
-          count={sections.upcoming.length}
-          emptyMessage="No scheduled automations."
-        >
-          {sections.upcoming.map((item) => <AutomationRow key={item.identity} item={item} showProject={isGlobal} />)}
-        </DashboardSection>
+          <DashboardSection
+            icon={<StatusGlyph kind="enabled" label="Upcoming automations" size={16} />}
+            title="Upcoming"
+            count={sections.upcoming.length}
+            emptyMessage="No scheduled automations."
+          >
+            {sections.upcoming.map((item) => <AutomationRow key={item.identity} item={item} showProject={isGlobal} />)}
+          </DashboardSection>
+        </div>
       </div>
     </main>
   );
@@ -110,6 +116,7 @@ function DashboardSection({
   title,
   count,
   emptyMessage,
+  emphasis = "default",
   children,
 }: {
   id?: string;
@@ -117,18 +124,28 @@ function DashboardSection({
   title: string;
   count: number;
   emptyMessage: string;
+  emphasis?: "default" | "attention" | "running";
   children: React.ReactNode;
 }) {
+  const emphasisClass = emphasis === "attention"
+    ? "border-t-[3px] border-t-warning"
+    : emphasis === "running"
+      ? "border-t-[3px] border-t-signal"
+      : "border-t border-t-border-default";
   return (
-    <section id={id} data-testid={`dashboard-section-${title.toLowerCase().replaceAll(" ", "-")}`} className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
+    <section
+      id={id}
+      data-testid={`dashboard-section-${title.toLowerCase().replaceAll(" ", "-")}`}
+      className={`min-w-0 bg-bg-surface px-[18px] pb-2 pt-4 ${emphasisClass}`}
+    >
+      <div className="flex min-h-8 items-center gap-2 pb-3">
         {icon}
         <h2 className="text-[14px] font-semibold leading-5 text-text-primary">{title}</h2>
-        <span className="text-[10px] font-semibold leading-[14px] tabular-nums text-text-tertiary">{count}</span>
+        <span className="min-w-5 rounded-full bg-bg-muted px-1.5 py-0.5 text-center text-[11px] font-semibold leading-[14px] tabular-nums text-text-tertiary">{count}</span>
       </div>
-      <div className="divide-y divide-border-subtle border-y border-border-subtle">
+      <div className="divide-y divide-border-subtle border-t border-border-subtle">
         {count === 0 ? (
-          <div className="flex min-h-16 items-center px-3 text-[12px] text-text-tertiary">
+          <div className="flex min-h-[76px] items-center px-3 text-[12px] text-text-tertiary">
             {emptyMessage}
           </div>
         ) : children}
@@ -144,14 +161,14 @@ function AttentionRow({ item, showProject }: { item: DashboardAttentionItem; sho
   const detail = attentionDetail(item);
 
   return (
-    <div className={`relative flex min-h-16 items-center gap-3 px-4 py-3 before:absolute before:inset-y-0 before:left-0 before:w-[3px] ${inspection ? "bg-error-muted before:bg-error" : "bg-warning-muted before:bg-warning"}`}>
+    <div className={`relative flex min-h-24 items-center gap-3 px-4 py-4 before:absolute before:inset-y-0 before:left-0 before:w-[3px] ${inspection ? "bg-error-muted before:bg-error" : "bg-warning-muted before:bg-warning"}`}>
       <StatusGlyph kind={inspection || item.kind === "automation_failure" || item.kind === "session_failure" ? "failed" : item.kind === "goal" && item.goal.status === "budget_limited" ? "budget_limited" : item.kind === "goal" ? "blocked" : "needs_you"} size={15} label={title} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`text-[13px] font-medium ${inspection ? "text-error" : "text-text-primary"}`}>{title}</span>
+          <span className={`text-[14px] font-semibold ${inspection ? "text-error" : "text-text-primary"}`}>{title}</span>
           {showProject ? <ProjectLabel name={item.projectName} /> : null}
         </div>
-        <p className="mt-1 truncate text-[11px] text-text-tertiary">{detail} · <RelativeTime timestamp={item.attentionSinceMs} /></p>
+        <p className="mt-1.5 truncate text-[12px] leading-[18px] text-text-tertiary">{detail} · <RelativeTime timestamp={item.attentionSinceMs} /></p>
       </div>
       <OpenLink to={destination} />
     </div>
@@ -165,18 +182,18 @@ function SessionRow({ item, showProject }: { item: DashboardSessionRow; showProj
   const staticActivity = visual.kind === "running";
   const tone = visual.tone ?? statusVisual(visual.kind).tone;
   return (
-    <div className={`relative flex min-h-16 items-center gap-3 px-4 py-3 ${running ? "bg-signal-field before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-signal" : "bg-bg-base"}`}>
+    <div className={`relative flex items-center gap-3 px-4 py-3 ${running ? "min-h-24 bg-signal-field before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-signal" : "min-h-[76px] bg-bg-surface"}`}>
       {staticActivity
         ? <Activity size={15} className={STATUS_TONE_CLASS[tone]} aria-hidden="true" />
         : <StatusGlyph kind={visual.kind} tone={visual.tone} label={label} size={15} />}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[13px] font-medium text-text-primary">{item.title ?? "Untitled session"}</span>
+          <span className="truncate text-[14px] font-semibold text-text-primary">{item.title ?? "Untitled session"}</span>
           {showProject ? <ProjectLabel name={item.projectName} /> : null}
           {item.goal ? <GoalStatus goal={item.goal} /> : null}
-          <span className="text-[11px] text-text-tertiary">{label}</span>
+          <span className="text-[12px] text-text-tertiary">{label}</span>
         </div>
-        <p className="mt-1 text-[11px] text-text-tertiary">Updated <RelativeTime timestamp={item.updatedAt} /></p>
+        <p className="mt-1.5 text-[12px] text-text-tertiary">Updated <RelativeTime timestamp={item.updatedAt} /></p>
       </div>
       <OpenLink to={sessionLink(item.projectSlug, item.rootSessionId)} />
     </div>
@@ -185,14 +202,14 @@ function SessionRow({ item, showProject }: { item: DashboardSessionRow; showProj
 
 function AutomationRow({ item, showProject }: { item: DashboardAutomationRow; showProject: boolean }) {
   return (
-    <div className="flex min-h-16 items-center gap-3 bg-bg-base px-4 py-3">
+    <div className="flex min-h-24 items-center gap-3 bg-bg-surface px-4 py-3">
       <StatusGlyph kind={automationVisualKind(item.status)} label={`Automation ${item.status}`} size={15} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[13px] font-medium text-text-primary">{item.name}</span>
+          <span className="truncate text-[14px] font-semibold text-text-primary">{item.name}</span>
           {showProject ? <ProjectLabel name={item.projectName} /> : null}
         </div>
-        <p className="mt-1 text-[11px] text-text-tertiary">Next run {new Date(item.nextFireAt).toLocaleString()}</p>
+        <p className="mt-1.5 text-[12px] text-text-tertiary">Next run {new Date(item.nextFireAt).toLocaleString()}</p>
       </div>
       <OpenLink to={`/projects/${encodeURIComponent(item.projectSlug)}/automations/${encodeURIComponent(item.automationId)}`} />
     </div>
