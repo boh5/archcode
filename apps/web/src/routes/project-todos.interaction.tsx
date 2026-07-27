@@ -173,6 +173,8 @@ describe("Project Todos drag interactions", () => {
 
     await key(handle, " ");
     expect(patches).toEqual([]);
+    expect(document.querySelector('[data-testid="todo-board"]')?.className).toContain("cursor-grabbing");
+    expect(handle.className).toContain("cursor-grabbing");
     expect(announcementText()).toContain("Moving Idea to Ideas, position 2 of 2.");
 
     await key(handle, "ArrowDown");
@@ -182,6 +184,7 @@ describe("Project Todos drag interactions", () => {
     await key(handle, " ");
     await settle();
     expect(patches).toEqual([{ expectedRevision: 3, beforeTodoId: null }]);
+    expect(document.querySelector('[data-testid="todo-board"]')?.className).not.toContain("cursor-grabbing");
     expect(announcementText()).toContain("Dropped Idea in Ideas, position 2 of 2.");
   });
 

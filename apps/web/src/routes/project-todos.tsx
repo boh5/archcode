@@ -215,7 +215,7 @@ export function ProjectTodosRoute() {
       <main className="min-h-0 flex-1 overflow-auto px-4 py-4 min-[621px]:px-6">
         {view === "board" ? (
           <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel} accessibility={{ announcements }}>
-            <div className="mx-auto grid max-w-[1500px] grid-cols-1 gap-3 min-[700px]:grid-cols-2 min-[1100px]:grid-cols-4" data-testid="todo-board">
+            <div className={`mx-auto grid max-w-[1500px] grid-cols-1 gap-3 min-[700px]:grid-cols-2 min-[1100px]:grid-cols-4 ${draggedId ? "cursor-grabbing [&_*]:cursor-grabbing" : ""}`} data-testid="todo-board">
               {LANES.map((lane) => <TodoLane key={lane} lane={lane} order={boardOrder[lane]} todoById={todoById} selectedId={selectedId} onSelect={selectTodo} />)}
             </div>
             <DragOverlay dropAnimation={null}>{draggedId ? <DragPreview todo={todoById.get(draggedId)} /> : null}</DragOverlay>
@@ -239,17 +239,17 @@ function TodoLane({ lane, order, todoById, selectedId, onSelect }: { lane: Proje
 }
 
 function SortableTodoCard({ todo, selected, onSelect }: { todo: ProjectTodo; selected: boolean; onSelect: () => void }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: todo.id, data: { type: "todo", todo } });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: todo.id, data: { type: "todo", todo } });
   const presentation = presentProjectTodoCard({ status: todo.status, ...(todo.archivedAt === undefined ? {} : { archivedAt: todo.archivedAt }) });
   const { Icon } = presentation;
-  return <article ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`rounded-md border bg-bg-elevated ${selected ? "border-brand" : "border-border-default"} ${isDragging ? "opacity-35" : ""}`} data-testid={`todo-${todo.id}`}>
-    <div className="flex items-start gap-1 p-2.5"><button type="button" className="mt-0.5 shrink-0 touch-none rounded-sm p-1 text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" aria-label={`Drag ${todo.title}`} {...attributes} {...listeners}><GripVertical size={14} /></button><button type="button" data-testid={`todo-open-${todo.id}`} className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" onClick={onSelect} aria-haspopup="dialog" aria-expanded={selected}><span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}><Icon size={12} />{presentation.label}</span><span className="mt-2 block text-[14px] font-semibold leading-5 text-text-primary">{todo.title}</span>{todo.body ? <span className="mt-1 line-clamp-2 block text-[12px] leading-5 text-text-tertiary">{todo.body}</span> : null}</button></div>
+  return <article ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`overflow-hidden rounded-md border bg-bg-elevated ${selected ? "border-brand" : "border-border-default"} ${isDragging ? "opacity-35" : ""}`} data-testid={`todo-${todo.id}`}>
+    <div className="flex min-h-11 items-stretch"><button ref={setActivatorNodeRef} type="button" className={`flex min-h-11 w-11 shrink-0 touch-none items-center justify-center border-r border-border-subtle text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${isDragging ? "cursor-grabbing bg-brand-subtle text-brand" : "cursor-grab active:cursor-grabbing"}`} aria-label={`Drag ${todo.title}`} {...attributes} {...listeners}><GripVertical size={16} /></button><button type="button" data-testid={`todo-open-${todo.id}`} className="min-w-0 flex-1 cursor-pointer p-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand" onClick={onSelect} aria-haspopup="dialog" aria-expanded={selected}><span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}><Icon size={12} />{presentation.label}</span><span className="mt-2 block text-[14px] font-semibold leading-5 text-text-primary">{todo.title}</span>{todo.body ? <span className="mt-1 line-clamp-2 block text-[12px] leading-5 text-text-tertiary">{todo.body}</span> : null}</button></div>
   </article>;
 }
 
 function DragPreview({ todo }: { todo?: ProjectTodo }) {
   if (!todo) return null;
-  return <div className="w-64 rounded-md border border-brand bg-bg-elevated p-3 shadow-lg"><p className="text-[13px] font-semibold text-text-primary">{todo.title}</p></div>;
+  return <div className="w-64 cursor-grabbing rounded-md border border-brand bg-bg-elevated p-3 shadow-lg"><p className="text-[13px] font-semibold text-text-primary">{todo.title}</p></div>;
 }
 
 function TodoFlatList({ view, todos, selectedId, onSelect }: { view: Exclude<View, "board">; todos: ProjectTodo[]; selectedId: string | null; onSelect: (id: string) => void }) {

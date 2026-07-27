@@ -91,7 +91,12 @@ describe("Project Todos board", () => {
     expect(document.querySelector('[data-testid="todo-lane-ready"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="todo-lane-in_progress"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="todo-lane-done"]')).not.toBeNull();
-    expect(document.querySelector('[aria-label="Drag Ready"]')).not.toBeNull();
+    const handle = document.querySelector('[aria-label="Drag Ready"]') as HTMLButtonElement;
+    expect(handle).not.toBeNull();
+    expect(handle.className).toContain("min-h-11");
+    expect(handle.className).toContain("w-11");
+    expect(handle.className).toContain("cursor-grab");
+    expect(document.querySelector('[data-testid="todo-open-ready"]')?.className).toContain("cursor-pointer");
   });
 
 });
