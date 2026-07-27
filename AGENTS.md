@@ -1,6 +1,6 @@
 ## Project
 
-ArchCode — **Not just a coding agent. An always-on workbench for AI engineering.** ArchCode is a self-hosted workbench for long-running AI coding work: users deploy it on a local machine or remote server, add projects, shape Todos, and let Agents plan, build, review, and wait for approval around the clock. A Goal is an optional persistent protocol on a root Lead Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with five Agent identities (Lead, Analyst, Build, Explore, Librarian), three model Profiles (`principal`, `deep`, `fast`), workflow Skills, HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
+ArchCode is an open-source, self-hosted AI coding workbench. Users run it on a local machine or remote server, capture features, bugs, refactors, experiments, and other ideas as Project Todos, shape Ideas through dedicated Discussions, and start Ready work as durable Sessions or Automations. A Goal is an optional persistent protocol on a root Lead Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with five Agent identities (Lead, Analyst, Build, Explore, Librarian), three model Profiles (`principal`, `deep`, `fast`), workflow Skills, HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Monorepo Structure
 

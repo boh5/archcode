@@ -1,13 +1,16 @@
 # Workbench concepts
 
-ArchCode organizes coding Agent work around projects and persistent Sessions.
-You can start with an ordinary Session and adopt the other concepts only when
-they solve a real need.
+ArchCode organizes AI coding work around Projects, Project Todos, and persistent
+Sessions. Capture and shape an idea as a Todo, start the work in a Session, and
+keep its execution history and human decisions together. You can also start
+with an ordinary Session and adopt the other concepts only when they solve a
+real need.
 
 ## Project
 
 A Project registers an existing absolute workspace directory on the machine
-running ArchCode. It owns Sessions, Todos, Automations, approvals, and
+running ArchCode. It keeps that workspace's ideas, active work, history, and
+control surfaces together through Sessions, Todos, Automations, approvals, and
 project-scoped memory.
 
 ## Session
@@ -25,9 +28,13 @@ return to the same Session later.
 
 ## Todo
 
-Project Todos are optional. Capture an Idea, discuss and shape it, then mark it
-Ready or Rejected. A Ready Todo can start a fresh ordinary Lead Session or an
-Automation. You can also start a Session directly without creating a Todo.
+Project Todos are optional, project-owned entries for anything you may want to
+build, fix, investigate, or improve. A new Todo starts as an Idea. You can open
+a dedicated Discussion to clarify and shape it, then mark it Ready or Rejected.
+
+A Ready Todo can start a fresh ordinary Lead Session or an Automation. The
+resulting work stays linked to the Todo, which can be marked Done or returned to
+Ready. You can also start a Session directly without creating a Todo.
 
 ## Goal
 
@@ -63,7 +70,9 @@ specialized responsibility is useful.
 
 Profiles choose model resources. ArchCode requires `principal`, `deep`, and
 `fast` Profiles so different kinds of work can use intentional model budgets.
-Profiles do not change Agent tools or authority.
+Root Lead defaults to `principal`; Analyst uses `deep`; Explore and Librarian
+use `fast`; Build can use `deep` or `fast`. Profiles do not change Agent tools
+or authority.
 
 Skills provide task-specific working methods. They guide behavior without
 granting additional tools or permissions.
