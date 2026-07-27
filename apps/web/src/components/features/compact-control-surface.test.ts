@@ -58,8 +58,9 @@ describe("compact icon control contract", () => {
   test("Work stays flat while Delegation retains its nested surface", async () => {
     const workstream = await source("components/composite/ExecutionWorkstream.tsx");
     const delegation = await source("components/composite/DelegationCard.tsx");
-    expect(workstream).toContain("work-summary-control relative flex min-h-8");
-    expect(workstream).toContain("hover:bg-bg-hover");
+    expect(workstream).toContain("work-summary-control group relative flex min-h-8");
+    expect(workstream).toContain('data-testid={`work-divider-${execution.id}`}');
+    expect(workstream).not.toContain("work-summary-control relative flex min-h-8");
     expect(delegation).toContain("rounded-md border border-border-subtle bg-bg-elevated");
     expect(delegation).toContain("border-b border-border-subtle bg-transparent");
   });
@@ -72,6 +73,9 @@ describe("compact icon control contract", () => {
 
     expect(rail).toContain("export function SessionThreadColumn");
     expect(rail).toContain("mx-auto w-full max-w-[800px] min-w-0");
+    expect(rail).toContain('WORK_ACTIVITY_LANE_CLASS = "w-full max-w-[720px] min-w-0"');
+    expect(rail).toContain('WORK_ACTIVITY_CHILD_LANE_CLASS = "w-full max-w-[696px] min-w-0"');
+    expect(rail).toContain('WORK_ACTIVITY_NESTED_LANE_CLASS = "w-full max-w-[676px] min-w-0"');
     expect(workstream).toContain('data-testid="execution-thread-column"');
     expect(composer).toContain('data-testid="composer-thread-column"');
     expect(workstream).not.toContain("CONVERSATION_TURN_LANE_CLASS");

@@ -12,6 +12,10 @@ import {
 } from "../../lib/tool-format";
 import { getToolCategory } from "@archcode/protocol";
 import { DiffView } from "../diff/DiffView";
+import {
+  WORK_ACTIVITY_CHILD_LANE_CLASS,
+  WORK_ACTIVITY_NESTED_LANE_CLASS,
+} from "../primitives/ConversationRail";
 import { ToolOutputViewer } from "./ToolOutputViewer";
 
 const STATUS_LABEL: Record<ToolPart["state"], string> = {
@@ -26,9 +30,11 @@ export interface ToolCardProps {
   readonly projectSlug: string;
   /** The current root/focus Session id used by the artifact authorization boundary. */
   readonly sessionId: string;
+  /** Adds a compact divider when this summary participates in a grouped Tool Run. */
+  readonly grouped?: boolean;
 }
 
-export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
+export function ToolCard({ part, projectSlug, sessionId, grouped = false }: ToolCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const settled = part.state === "completed" || part.state === "error" ? part.result : undefined;
@@ -72,7 +78,13 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
         ? "text-warning"
         : "text-text-tertiary";
   const detailsId = `${part.id}-details`;
-  const summaryClass = "tool-card-summary-control grid min-h-9 w-full select-none grid-cols-[12px_minmax(0,160px)_minmax(0,1fr)_auto] items-center gap-2 rounded-md border-0 bg-transparent py-1 pl-0 pr-1.5 text-left max-[560px]:grid-cols-[12px_minmax(0,112px)_minmax(0,1fr)_auto]";
+  const summaryBorderClass = grouped
+    ? "border-x-0 border-t-0 border-b border-border-subtle"
+    : "border-0";
+  const summaryLaneClass = grouped
+    ? WORK_ACTIVITY_NESTED_LANE_CLASS
+    : WORK_ACTIVITY_CHILD_LANE_CLASS;
+  const summaryClass = `tool-card-summary-control grid min-h-9 select-none grid-cols-[12px_minmax(0,160px)_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-transparent py-1 pl-0 pr-1.5 text-left max-[560px]:grid-cols-[12px_minmax(0,112px)_minmax(0,1fr)_auto] ${summaryBorderClass} ${summaryLaneClass}`;
   const summaryContent = (
     <>
       {hasDetails
@@ -129,7 +141,7 @@ export function ToolCard({ part, projectSlug, sessionId }: ToolCardProps) {
       )}
 
       {expanded && hasDetails && (
-        <div id={detailsId}>
+        <div id={detailsId} className="w-full min-w-0" data-tool-detail-surface="">
           {isUnknownResult && (
             <div className="ml-[18px] w-[calc(100%-18px)] border-l-2 border-warning px-3 py-2 text-[12px] text-warning">
               Result unknown — execution was interrupted before completion

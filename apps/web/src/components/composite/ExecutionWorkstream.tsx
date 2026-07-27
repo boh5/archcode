@@ -38,7 +38,12 @@ import { buildToolRunTimeline } from "../../lib/tool-runs";
 import { presentExecutionStatus } from "../../lib/execution-status-presentation";
 import { getToolSummary } from "../../lib/tool-format";
 import { MarkdownContent } from "../primitives/MarkdownContent";
-import { ConversationRail, SessionThreadColumn } from "../primitives/ConversationRail";
+import {
+  ConversationRail,
+  SessionThreadColumn,
+  WORK_ACTIVITY_CHILD_LANE_CLASS,
+  WORK_ACTIVITY_LANE_CLASS,
+} from "../primitives/ConversationRail";
 import { RelativeTime, useElapsedTime } from "../primitives/TemporalText";
 import { CompressionBlock } from "./CompressionBlock";
 import { DelegationCard } from "./DelegationCard";
@@ -478,7 +483,7 @@ function WorkDisclosure({
       <button
         ref={buttonRef}
         type="button"
-        className="work-summary-control relative flex min-h-8 max-w-full items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className={`work-summary-control group relative flex min-h-8 cursor-pointer items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${WORK_ACTIVITY_LANE_CLASS}`}
         onClick={(event) => onToggle(event.currentTarget)}
         aria-expanded={expanded}
         aria-controls={`work-body-${execution.id}`}
@@ -502,6 +507,11 @@ function WorkDisclosure({
             {currentActivity}
           </span>
         )}
+        <span
+          className="h-px min-w-6 flex-1 bg-border-subtle transition-colors duration-[var(--motion-hover)] group-hover:bg-border-default"
+          data-testid={`work-divider-${execution.id}`}
+          aria-hidden="true"
+        />
       </button>
       {expanded && (
         <div
@@ -541,7 +551,7 @@ function WorkDisclosure({
             ))}
           {status.productStatus === "stopped" && status.detail && (
             <div
-              className="rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[11px] text-text-secondary"
+              className={`rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[11px] text-text-secondary ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
               data-testid={`execution-stop-detail-${execution.id}`}
             >
               <span className="font-medium">Stop reason · {status.detail}</span>

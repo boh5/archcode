@@ -386,6 +386,8 @@ describe("ExecutionWorkstream", () => {
 
     const summary = workSummary("old");
     expect(summary.textContent).toContain("Worked for");
+    expect(summary.className).toContain("max-w-[720px]");
+    expect(summary.querySelector('[data-testid="work-divider-old"]')).not.toBeNull();
     expect(summary.getAttribute("aria-expanded")).toBe("false");
     expect(summary.getAttribute("aria-controls")).toBe("work-body-old");
     expect(workBody("old")).toBeNull();
@@ -394,6 +396,7 @@ describe("ExecutionWorkstream", () => {
     await clickWork("old");
     expect(workSummary("old").getAttribute("aria-expanded")).toBe("true");
     expect(workBody("old")?.id).toBe("work-body-old");
+    expect(workBody("old")?.className).not.toContain("max-w-[720px]");
     expect(workBody("old")?.textContent).toContain("Old work marker");
     expect(workBody("old")?.textContent).not.toContain("Old body marker");
     expect(finalResponse("old")?.textContent).toContain("Old final marker");
@@ -576,7 +579,9 @@ describe("ExecutionWorkstream", () => {
 
     const firstRunToggle = runs?.[0]?.querySelector("button");
     if (!(firstRunToggle instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Tool Run toggle");
+    expect(firstRunToggle.className).toContain("max-w-[696px]");
     await act(async () => firstRunToggle.click());
+    expect(runs?.[0]?.querySelector('[data-testid="tool-run-list"]')?.className).not.toContain("max-w-[720px]");
     const expandedTools = runs?.[0]?.querySelectorAll<HTMLElement>('[data-testid="tool-run-child"]');
     expect(expandedTools).toHaveLength(5);
     expect(Array.from(expandedTools ?? [], (tool) => tool.textContent)).toEqual([

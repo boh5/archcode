@@ -126,6 +126,7 @@ describe("DelegationCard", () => {
   test("renders every recorded delegation key without display aliases", () => {
     const result = DelegationCard(baseProps);
     const text = textContent(result);
+    expect(result.props?.className).toContain("max-w-[696px]");
     expect(text).toContain("delegate");
     expect(text).toContain("agent_type");
     expect(text).toContain("explore");

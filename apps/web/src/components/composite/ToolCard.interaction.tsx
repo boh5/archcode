@@ -99,6 +99,12 @@ describe("ToolCard output viewer", () => {
   test("reveals a mutation diff hunk with the first ToolCard expansion", async () => {
     await renderExpandedCard();
 
+    const summary = requiredButton(":scope > div > button");
+    expect(summary.className).toContain("max-w-[696px]");
+    const detailSurface = container.querySelector<HTMLElement>("[data-tool-detail-surface]");
+    expect(detailSurface).not.toBeNull();
+    expect(detailSurface?.className).toContain("w-full");
+    expect(detailSurface?.className).not.toContain("max-w-[720px]");
     expect(container.textContent).toContain("@@ -1 +1 @@");
     expect(container.textContent).toContain("const value = 'old';");
     expect(container.textContent).toContain("const value = 'new';");

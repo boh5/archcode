@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { ConversationRail, SessionThreadColumn } from "./ConversationRail";
+import {
+  ConversationRail,
+  SessionThreadColumn,
+  WORK_ACTIVITY_CHILD_LANE_CLASS,
+  WORK_ACTIVITY_LANE_CLASS,
+  WORK_ACTIVITY_NESTED_LANE_CLASS,
+} from "./ConversationRail";
 
 describe("ConversationRail", () => {
   test("fills the available canvas while owning only safe horizontal gutters", () => {
@@ -36,5 +42,16 @@ describe("SessionThreadColumn", () => {
   test("keeps consumer layout classes", () => {
     const column = SessionThreadColumn({ className: "flex flex-col" });
     expect(column.props.className).toContain("flex flex-col");
+  });
+});
+
+describe("WORK_ACTIVITY_LANE_CLASS", () => {
+  test("tapers nested activity on the 4px grid so indented rows share one right edge", () => {
+    expect(WORK_ACTIVITY_LANE_CLASS).toContain("w-full");
+    expect(WORK_ACTIVITY_LANE_CLASS).toContain("max-w-[720px]");
+    expect(WORK_ACTIVITY_LANE_CLASS).toContain("min-w-0");
+    expect(WORK_ACTIVITY_LANE_CLASS).not.toContain("mx-auto");
+    expect(WORK_ACTIVITY_CHILD_LANE_CLASS).toContain("max-w-[696px]");
+    expect(WORK_ACTIVITY_NESTED_LANE_CLASS).toContain("max-w-[676px]");
   });
 });

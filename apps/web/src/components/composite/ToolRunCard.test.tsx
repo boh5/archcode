@@ -320,9 +320,12 @@ describe("ToolRunCard", () => {
 
     expect(buttons).toHaveLength(1);
     expect(buttons[0]?.props?.["aria-expanded"]).toBe(true);
-    const listText = textContent(findByTestId(element, "tool-run-list"));
+    expect(buttons[0]?.props?.className).toContain("max-w-[696px]");
+    const list = findByTestId(element, "tool-run-list");
+    const listText = textContent(list);
     expect(listText.indexOf("a.ts")).toBeLessThan(listText.indexOf("b.ts"));
-    expect(findByTestId(element, "tool-run-list")?.props?.role).toBe("list");
+    expect(list?.props?.role).toBe("list");
+    expect(list?.props?.className).not.toContain("max-w-[720px]");
   });
 
   test("keeps per-call error state and artifact recovery inside an expanded run", () => {

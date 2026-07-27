@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-react";
 import type { ToolPart } from "@archcode/protocol";
 import type { ToolRunItem } from "../../lib/tool-runs";
 import { getToolSummary } from "../../lib/tool-format";
+import { WORK_ACTIVITY_CHILD_LANE_CLASS } from "../primitives/ConversationRail";
 import { ToolRunItemRow } from "./ToolRunItemRow";
 
 function isSettled(part: ToolPart): part is Extract<ToolPart, { state: "completed" | "error" }> {
@@ -75,7 +76,7 @@ export function ToolRunCard({
     <div className="w-full min-w-0 shrink-0" data-testid="tool-run-card">
       <button
         type="button"
-        className="tool-run-summary-control grid min-h-8 w-full select-none grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border-0 bg-transparent py-1 pl-0 pr-1.5 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className={`tool-run-summary-control grid min-h-8 cursor-pointer select-none grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border-0 bg-transparent py-1 pl-0 pr-1.5 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
         aria-controls={bodyId}
@@ -121,7 +122,7 @@ export function ToolRunCard({
       {expanded && (
         <div
           id={bodyId}
-          className="ml-[6px] flex flex-col border-l border-border-subtle pb-1 pl-[14px] pt-1"
+          className="ml-[6px] flex min-w-0 flex-col border-l border-border-subtle pb-1 pl-[14px] pt-1"
           data-testid="tool-run-list"
           role="list"
         >

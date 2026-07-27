@@ -5,6 +5,7 @@ import { STATUS_TONE_CLASS, statusVisual } from "../../lib/status-visuals";
 import { StatusGlyph } from "../primitives/StatusGlyph";
 import { useElapsedTime } from "../primitives/TemporalText";
 import { useStatusTransition } from "../primitives/useStatusTransition";
+import { WORK_ACTIVITY_CHILD_LANE_CLASS } from "../primitives/ConversationRail";
 import { ToolInputDetails } from "./ToolInputDetails";
 
 export function DelegationCard({
@@ -32,7 +33,7 @@ export function DelegationCard({
   };
 
   return (
-    <div className="my-2 min-h-0 shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated" data-tool-name="delegate">
+    <div className={`my-2 min-h-0 shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated ${WORK_ACTIVITY_CHILD_LANE_CLASS}`} data-tool-name="delegate">
       <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-transparent px-3 py-2">
         <CornerDownRight size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
         <span className="font-mono text-[12px] font-medium text-text-primary">delegate</span>

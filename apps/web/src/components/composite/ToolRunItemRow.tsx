@@ -1,6 +1,7 @@
 import type { ToolPart } from "@archcode/protocol";
 import type { ToolRunItem } from "../../lib/tool-runs";
 import { getToolSummary } from "../../lib/tool-format";
+import { WORK_ACTIVITY_NESTED_LANE_CLASS } from "../primitives/ConversationRail";
 import { ToolCard } from "./ToolCard";
 
 function isSettled(part: ToolPart): part is Extract<ToolPart, { state: "completed" | "error" }> {
@@ -35,11 +36,16 @@ export function ToolRunItemRow({
     return (
       <div
         aria-label={label}
-        className="min-w-0 border-b border-border-subtle last:border-b-0"
+        className="min-w-0"
         data-testid="tool-run-child"
         role="listitem"
       >
-        <ToolCard part={part} projectSlug={projectSlug} sessionId={sessionId} />
+        <ToolCard
+          part={part}
+          projectSlug={projectSlug}
+          sessionId={sessionId}
+          grouped
+        />
       </div>
     );
   }
@@ -47,7 +53,7 @@ export function ToolRunItemRow({
   return (
     <div
       aria-label={label}
-      className="grid min-h-9 min-w-0 grid-cols-[minmax(0,160px)_minmax(0,1fr)_auto] items-center gap-3 border-b border-border-subtle px-2 py-1.5 last:border-b-0 max-[560px]:grid-cols-[minmax(0,112px)_minmax(0,1fr)_auto]"
+      className={`grid min-h-9 grid-cols-[minmax(0,160px)_minmax(0,1fr)_auto] items-center gap-3 border-b border-border-subtle px-2 py-1.5 last:border-b-0 max-[560px]:grid-cols-[minmax(0,112px)_minmax(0,1fr)_auto] ${WORK_ACTIVITY_NESTED_LANE_CLASS}`}
       data-testid="tool-run-child"
       role="listitem"
       title={label}

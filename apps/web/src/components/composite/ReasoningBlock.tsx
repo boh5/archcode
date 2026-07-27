@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import type { ReasoningPart } from "@archcode/protocol";
+import { WORK_ACTIVITY_CHILD_LANE_CLASS } from "../primitives/ConversationRail";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 
 export function ReasoningUsageSummary({ tokens }: { readonly tokens: number }) {
@@ -10,7 +11,7 @@ export function ReasoningUsageSummary({ tokens }: { readonly tokens: number }) {
     <div
       role="note"
       aria-label={`Reasoning used ${formattedTokens} tokens. Reasoning text was not provided by the model.`}
-      className="flex min-h-8 max-w-full items-center gap-2 py-1 text-[12px] leading-4 text-text-tertiary"
+      className={`flex min-h-8 items-center gap-2 py-1 text-[12px] leading-4 text-text-tertiary ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
       data-testid="reasoning-usage-summary"
     >
       <Sparkles size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
@@ -26,10 +27,10 @@ export function ReasoningBlock({ part }: { readonly part: ReasoningPart }) {
   const bodyId = `reasoning-body-${part.id}`;
 
   return (
-    <section className="min-w-0 shrink-0" data-testid="reasoning-block">
+    <section className="w-full min-w-0 shrink-0" data-testid="reasoning-block">
       <button
         type="button"
-        className="reasoning-summary-control flex min-h-8 max-w-full cursor-pointer select-none items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-[12px] text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className={`reasoning-summary-control flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-[12px] text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
         aria-controls={bodyId}
