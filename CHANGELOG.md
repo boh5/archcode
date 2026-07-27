@@ -7,6 +7,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-07-27
+
+### Changed
+
+- Publish a follow-up signed release for validating installer-managed direct
+  updates from v0.0.4.
+
 ## [0.0.4] - 2026-07-27
 
 ### Added
