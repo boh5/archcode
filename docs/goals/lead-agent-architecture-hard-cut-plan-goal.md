@@ -46,8 +46,8 @@ protocol/server/web -> 严格 DTO、API 与可观察界面
 - `SessionExecutionManager` 继续是唯一 live Execution 主链，不新增 Orchestration、Plan、Review 或 ULW workflow engine。
 - AgentDefinition 只定义稳定权限；Profile 不改变权限；Skill 不授予工具。
 - Discussion 权限由 Todo binding 这一运行时事实派生，不新增 Session mode/state。
-- Goal review provenance 是 child Session 的执行来源证据，不演化为 Review 状态机。
-- 本计划中的“ArchCode 已知成果写入”只指 review 创建后由 Lead/Build 成功完成的 `file_write|file_edit|ast_grep_replace`，以及其现有 Bash 分析已识别为 workspace 修改的命令；这些事实从现有 Execution/tool 记录读取，不新增 watcher、写入版本或 Review 状态。Analyst 的只读验证和研究子委派不属于成果写入。
+- Goal final review 是 Lead 通过 `goal-review` Skill 执行的工作方法；Runtime 不保存 Review provenance、不解析 Analyst 报告，也不演化为 Review 状态机。
+- Runtime 只保留 active Goal、active child 和 instance/generation 一致性检查；是否已经充分 Review、报告是否通过以及 Review 后是否发生写入由 Lead 负责。
 
 ## Implementation Plan
 
@@ -86,9 +86,9 @@ protocol/server/web -> 严格 DTO、API 与可观察界面
 2. Lead 每次创建 Goal 前都使用普通 `ask_user` 自行组织问题，并按自然语言语义判断用户是否同意；明确同意后调用 `create_goal`。
 3. Discussion Session 和已有未完成 Goal 时，`create_goal` 确定性拒绝；是否已经获得用户同意由 Lead 负责。
 4. 保留现有 Goal continuation：active 且 runnable 的 Goal family 在 child 完成、HITL 恢复或进程重启后继续驱动同一个 root Lead，直到 complete、真实 blocked、paused 或 budget-limited；不新增 Goal workflow engine。
-5. 删除 Reviewer 完成门禁，改为 direct child Analyst；当 active Goal 委派 `analyst + deep + [goal-review]` 时，运行时自动绑定当前 Goal instance/generation，模型不能提供或伪造该绑定。
-6. `update_goal(complete)` 只接受在最后一次 ArchCode 已知成果写入之后创建并绑定当前 Goal instance/generation 的 fresh review Analyst；其 completed 输出首个非空行必须严格为 `VERDICT: APPROVED`。只有尚无 completed 审查输出、最新 Execution 因中断或重启未完成时可以 resume；任一 completed 的 `CHANGES_REQUESTED`、空输出或格式错误、后续 ArchCode 已知成果写入、Goal generation 变化、active Build/child 或来源不匹配都会终结本轮审查并要求新建 Analyst。review Analyst 的只读 Explore/Librarian 委派不使审查失效。
-7. 不新增 reviewGeneration、Review state、filesystem watcher、Plan link 或自动 remediation；Lead 通过 `review-work` / `run-goal` 驱动 fix -> fresh review。第一阶段的“成果未再修改”只覆盖 ArchCode 运行时已知写入，不声称检测外部编辑器或其他进程的文件修改。
+5. 删除 Reviewer 完成门禁，改为 Lead 创建 fresh direct `analyst + deep + [goal-review]`；Analyst 返回普通证据报告，Lead 语义判断是否需要修复或完成。
+6. `update_goal(complete)` 收敛为严格 `{ status: "complete", reason }`。Runtime 不接收 Review Session ID、不解析 verdict、不持久化 binding/provenance，也不扫描 Review 后的成果写入；只拒绝 non-active Goal、active child 和 instance/generation race。
+7. 不新增 reviewGeneration、Review state、receipt、filesystem watcher、Plan link 或自动 remediation；Lead 通过 `review-work` / `run-goal` 驱动 fix -> fresh review。
 
 ### Wave 6 — Surfaces、删除旧链与整体收口
 
@@ -151,22 +151,21 @@ protocol/server/web -> 严格 DTO、API 与可观察界面
 - 有/无 Plan 均能创建并运行 Goal；Plan 文件不会自动创建 Goal，Goal schema 不保存 Plan 引用。
 - active runnable Goal 在 child 完成、HITL 回答和进程重启后继续同一个 root Lead；paused、budget-limited、complete 和真实 blocked 不被错误续跑。
 
-### AC-07 — Goal final review 新鲜且无法绕过
+### AC-07 — Goal final review 由 Lead 负责
 
-- 只有当前 root Lead 的 direct `analyst + deep + [goal-review]` child 可作为完成凭证；普通 Analyst、旧 Reviewer、其他 Profile/Skill、间接 child、其他 root 和伪造 Goal binding 均拒绝。
-- review Analyst 尚无 completed 输出且最新 Execution 未完成时，可以因中断或重启 resume；一旦产生 completed 输出，本次审查尝试即终结。空输出、格式错误和 `CHANGES_REQUESTED` 均不能完成 Goal，也不能 resume 后改写为批准。
-- 首个非空行严格为 `VERDICT: APPROVED`，Goal generation 未变化，review 创建后没有 ArchCode 已知成果写入，且 family 无 active Build/child 时，同一次 `update_goal` 才能完成 Goal；review Analyst 委派并完成只读 Explore/Librarian 合法，不会使审查失效。
-- 任一 ArchCode 已知成果写入、Goal 编辑或非批准 completed review 后都必须创建新的 Analyst Session；不使用 filesystem watcher，也不把外部文件修改宣称为已覆盖证据。
-- Goal/Session 中不存在 Reviewer receipt、Review state、reviewGeneration、Plan link 或自动 remediation 状态。
+- `run-goal` 要求 Lead 在完成前创建 fresh direct `analyst + deep + [goal-review]`；Analyst 以普通自然语言报告结论、findings、证据、验证缺口和 residual risk。
+- Lead 对 material finding 修复后创建 fresh review；判断目标已达到后调用严格 `update_goal({ status: "complete", reason })`。
+- Runtime 不接收 Review Session ID、不解析输出、不保存 binding/provenance，也不扫描 Review 后的写入；Goal/Session 中不存在 Reviewer receipt、Review state、reviewGeneration、Plan link 或自动 remediation 状态。
+- complete 只机械验证当前 Goal active、family 无 active child，并以 instance/generation fence 原子拒绝并发 Goal 替换。
 
 ### AC-08 — 用户面、硬切审计与全仓验证
 
 - Config UI 只编辑 Profiles；root Lead Session 可选择并清除模型 override；Session/UI 只显示新 Agent 名称，child Profile/Skills/状态/HITL 来源可检查；不存在 Primary Agent 切换和 Visual 假入口。
-- 自动化集成覆盖三条真实流程：普通 Lead -> 多 child 协作；Todo Discussion -> Ready -> 新 Lead；普通 `ask_user` 确认后创建 Goal -> Build -> `CHANGES_REQUESTED` -> fix -> fresh `APPROVED` -> complete。
+- 自动化集成覆盖三条 wiring 流程：普通 Lead -> 多 child 协作；Todo Discussion -> Ready -> 新 Lead；普通 `ask_user` 确认后创建 Goal -> Build -> ordinary Analyst report -> complete。测试只证明调用链，不声称证明 Lead 的自然语言判断。
 - 真实浏览器验收至少覆盖 Profile 配置保存、root Lead 模型 override 选择/清除、Todo“进入讨论”、Ready 后进入新 Lead，以及 Session 中 child Agent/Profile/Skills/状态可见；刷新后结果一致且 console 无新增错误。
 - 对生产源码的固定搜索确认旧 Agent ID、per-Agent config、owned-scope/lease、Reviewer/Shaper/Plan runtime 和 Visual registration 为零；测试只可为 strict rejection 引用旧输入，历史文档不计。
 - `bun run typecheck`、`bun run test`、`bun run build`、`git diff --check` 全部退出码为 0。
-- fresh 独立 Analyst 按 AC-01 至 AC-08 复核最终实现，结论为 `VERDICT: APPROVED` 且无未关闭 finding。
+- fresh 独立 Analyst 按 AC-01 至 AC-08 复核最终实现，且不存在未关闭的 blocking/high finding。
 
 ## Non-goals
 

@@ -7,9 +7,7 @@ import {
 } from "@archcode/protocol";
 import { z } from "zod/v4";
 
-import { finalOutputForExecution, latestExecution } from "../../delegation/final-output";
-import { hasKnownArtifactWriteAfter } from "../../session-goal/review-provenance";
-import type { GoalReviewBinding, SessionStoreState } from "../../store/types";
+import type { SessionStoreState } from "../../store/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
@@ -27,9 +25,8 @@ export const GetGoalInputSchema = z.strictObject({});
 
 const CompleteGoalInputSchema = z.strictObject({
   status: z.literal("complete")
-    .describe("Mark complete only after a fresh independent Goal review proves the objective achieved."),
-  reason: z.string().trim().min(1).describe("Evidence-backed completion reason after a fresh independent Goal review approved the work."),
-  review_session_id: z.string().trim().min(1).describe("Fresh direct deep Analyst child with goal-review whose one terminal review output returned VERDICT: APPROVED."),
+    .describe("Mark complete only after the Lead determines that the current Goal is achieved."),
+  reason: z.string().trim().min(1).describe("Evidence-backed reason that the current Goal is complete."),
 });
 const BlockGoalInputSchema = z.strictObject({
   status: z.literal("blocked")
@@ -57,12 +54,10 @@ export const createGoalTool: AnyToolDescriptor = defineTool({
       const state = await assertRootLead(ctx, TOOL_CREATE_GOAL);
       const service = requireSessionGoalService(ctx);
       const objective = canonicalGoalObjective(input.objective);
-      const tokenBudget = resolveCreateTokenBudget(objective);
       const goal = await service.create({
         workspaceRoot: ctx.projectContext.project.workspaceRoot,
         sessionId: state.sessionId,
         objective,
-        ...(tokenBudget === undefined ? {} : { tokenBudget }),
         authority: { kind: "user_control" },
       });
       return createTextToolResult(JSON.stringify({
@@ -101,7 +96,7 @@ export const getGoalTool: AnyToolDescriptor = defineTool({
 
 export const updateGoalTool: AnyToolDescriptor = defineTool({
   name: TOOL_UPDATE_GOAL,
-  description: "Set the current Session Goal status to complete or blocked. Completion requires a fresh direct deep Analyst child with goal-review, runtime Goal provenance, exactly one completed review outcome whose first non-empty line is VERDICT: APPROVED, no later ArchCode-known artifact write, and no active child. status=blocked records only a genuine blocker.",
+  description: "Set the current Session Goal status to complete or blocked. Complete only after finishing the work, verifying it, and interpreting a fresh independent Goal review; every child in the Session family must already be terminal. status=blocked records only a genuine blocker.",
   inputSchema: UpdateGoalInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   outputPolicy: { kind: "inline", previewDirection: "head" },
@@ -115,13 +110,17 @@ export const updateGoalTool: AnyToolDescriptor = defineTool({
       const service = requireSessionGoalService(ctx);
 
       if (input.status === "complete") {
-        const approvedGoal = await assertApprovedGoalReview(ctx, state, input.review_session_id);
+        const currentGoal = state.goal;
+        if (currentGoal === undefined || currentGoal.status !== "active") {
+          throw new Error("Goal completion requires the current active Goal");
+        }
+        await assertNoActiveChildren(ctx, state);
         const goal = await service.complete({
           ...target,
           reason: input.reason,
           authority: { kind: "agent" },
-          expectedInstanceId: approvedGoal.instanceId,
-          expectedGeneration: approvedGoal.generation,
+          expectedInstanceId: currentGoal.instanceId,
+          expectedGeneration: currentGoal.generation,
         });
         return createTextToolResult(JSON.stringify(goal, null, 2), {
           sidecar: { executionCompleted: true },
@@ -158,83 +157,16 @@ function requireSessionGoalService(ctx: ToolExecutionContext) {
   return ctx.sessionGoalService;
 }
 
-async function assertApprovedGoalReview(
-  ctx: ToolExecutionContext,
-  rootState: SessionStoreState,
-  reviewSessionId: string,
-): Promise<Pick<NonNullable<SessionStoreState["goal"]>, "instanceId" | "generation">> {
-  const goal = rootState.goal;
-  if (goal === undefined || goal.status !== "active") throw new Error("Goal completion requires the current active Goal");
-  const directReviewLink = rootState.childSessionLinks.find((link) =>
-    link.parentSessionId === rootState.sessionId
-    && link.childSessionId === reviewSessionId
-    && link.childAgentName === "analyst"
-    && link.childProfile === "deep"
-    && link.childSkillNames.includes("goal-review")
-  );
-  if (directReviewLink === undefined) {
-    throw new Error("Goal completion requires a direct deep Analyst child with goal-review");
-  }
-
-  const reviewStore = await ctx.storeManager.getOrLoad(
-    reviewSessionId,
-    ctx.projectContext.project.workspaceRoot,
-  );
-  const reviewState = reviewStore.getState();
-  if (
-    reviewState.agentName !== "analyst"
-    || reviewState.parentSessionId !== rootState.sessionId
-    || reviewState.rootSessionId !== rootState.sessionId
-    || reviewState.delegationRequest?.profile !== "deep"
-    || !reviewState.delegationRequest.skills.includes("goal-review")
-  ) {
-    throw new Error("Goal completion requires a direct deep Analyst child with goal-review");
-  }
-
-  const binding: GoalReviewBinding | undefined = reviewState.goalReviewBinding;
-  if (
-    binding?.goalInstanceId !== goal.instanceId
-    || binding.goalGeneration !== goal.generation
-    || binding.rootSessionId !== rootState.sessionId
-    || binding.createdAt < goal.updatedAt
-    || directReviewLink.createdAt !== binding.createdAt
-  ) throw new Error("Goal review provenance does not bind this fresh Analyst to the current Goal generation");
-
-  const execution = latestExecution(reviewState);
-  if (execution?.status !== "completed") {
-    throw new Error("Goal completion requires the review Analyst's latest Execution to be completed");
-  }
-  const completedExecutions = reviewState.executions.filter((candidate) => candidate.status === "completed");
-  if (completedExecutions.length !== 1 || completedExecutions[0]?.id !== execution.id) {
-    throw new Error("A completed Goal review attempt is terminal and cannot be rewritten by resuming it");
-  }
-  const output = finalOutputForExecution(reviewState, execution.id);
-  const verdict = output
-    ?.split(/\r?\n/u)
-    .find((line) => line.trim().length > 0)
-    ?.trim();
-  if (verdict !== "VERDICT: APPROVED") {
-    throw new Error("Goal completion requires the review Analyst's final output to begin with VERDICT: APPROVED");
-  }
-  await assertReviewFreshness(ctx, rootState, reviewSessionId, binding.createdAt);
-  return { instanceId: goal.instanceId, generation: goal.generation };
-}
-
 const ACTIVE_CHILD_STATUSES = new Set(["linked", "running", "waiting_for_human", "cancelling"]);
 
-async function assertReviewFreshness(
+async function assertNoActiveChildren(
   ctx: ToolExecutionContext,
   rootState: SessionStoreState,
-  reviewSessionId: string,
-  reviewCreatedAt: number,
 ): Promise<void> {
   const states = await loadFamilyStates(ctx, rootState);
   for (const state of states) {
-    if (state.childSessionLinks.some((link) => link.childSessionId !== reviewSessionId && ACTIVE_CHILD_STATUSES.has(link.status))) {
-      throw new Error("Goal completion requires every other child in the Session family to be terminal");
-    }
-    if (hasKnownArtifactWriteAfter(state, reviewCreatedAt, ctx.projectContext.project.workspaceRoot)) {
-      throw new Error("Goal review is stale because ArchCode completed an artifact write after the review started");
+    if (state.childSessionLinks.some((link) => ACTIVE_CHILD_STATUSES.has(link.status))) {
+      throw new Error("Goal completion requires every child in the Session family to be terminal");
     }
   }
 }
@@ -262,48 +194,6 @@ function canonicalGoalObjective(text: string): string {
     throw new Error(`Cannot create the Session Goal: objective must be 1 to ${SESSION_GOAL_OBJECTIVE_MAX_LENGTH} characters.`);
   }
   return objective;
-}
-
-function resolveCreateTokenBudget(objective: string): number | undefined {
-  const text = objective.normalize("NFKC").toLowerCase();
-  const mentionsTokens = /\b(?:token|tokens)\b|令牌/.test(text);
-  const mentionsBudget = /\b(?:budget|cap|limit)\b|预算|上限|限制/.test(text);
-  if (!mentionsTokens || !mentionsBudget) return undefined;
-  const explicitBudgets = extractExplicitTokenBudgets(text);
-  if (explicitBudgets.size === 0) {
-    if (hasBudgetRemovalIntent(text)) return undefined;
-    throw new Error("An explicit token budget request must state exactly one positive numeric budget");
-  }
-  if (explicitBudgets.size > 1 || hasBudgetRemovalIntent(text)) {
-    throw new Error("The Goal objective contains an ambiguous token budget; state exactly one budget or remove it");
-  }
-  return explicitBudgets.values().next().value;
-}
-
-function hasBudgetRemovalIntent(text: string): boolean {
-  return /\b(?:remove|clear|unset|unlimited|no\s+limit|without\s+(?:a\s+)?(?:token\s+)?(?:budget|cap|limit))\b|取消|移除|清除|不限|不设/.test(text);
-}
-
-function extractExplicitTokenBudgets(text: string): ReadonlySet<number> {
-  const budgets = new Set<number>();
-  const numberPattern = /(\d[\d,_]*(?:\.\d+)?)\s*(k|m|万)?/g;
-  for (const match of text.matchAll(numberPattern)) {
-    const index = match.index ?? 0;
-    const before = text.slice(Math.max(0, index - 48), index);
-    const after = text.slice(index + match[0].length, index + match[0].length + 48);
-    const budgetImmediatelyBefore = /(?:(?:token|tokens|令牌)\s*)?(?:budget|cap|limit|预算|上限|限制)(?:\s+(?:of|to|at|is))?\s*[:=为到是]?\s*$/i.test(before);
-    const tokenBudgetImmediatelyAfter = /^\s*(?:token|tokens|令牌)\s*(?:budget|cap|limit|预算|上限|限制)/i.test(after);
-    if (!budgetImmediatelyBefore && !tokenBudgetImmediatelyAfter) {
-      continue;
-    }
-    const raw = match[1]?.replaceAll(",", "").replaceAll("_", "");
-    if (raw === undefined) continue;
-    const base = Number(raw);
-    const multiplier = match[2] === "k" ? 1_000 : match[2] === "m" ? 1_000_000 : match[2] === "万" ? 10_000 : 1;
-    const value = base * multiplier;
-    if (Number.isSafeInteger(value) && value > 0) budgets.add(value);
-  }
-  return budgets;
 }
 
 function sessionGoalToolError(error: unknown) {

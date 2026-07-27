@@ -59,7 +59,7 @@ describe("AskUserInputSchema", () => {
   test("keeps the strict question and option contract at the suspension boundary", () => {
     expect(AskUserInputSchema.safeParse({ questions: [] }).success).toBe(false);
     expect(AskUserInputSchema.safeParse({ questions: [{ ...SINGLE_QUESTION, options: [{ label: "only label" }] }] }).success).toBe(false);
-    expect(AskUserInputSchema.safeParse({ questions: [SINGLE_QUESTION], old_callback_field: true }).success).toBe(false);
+    expect(AskUserInputSchema.safeParse({ questions: [SINGLE_QUESTION], unexpected_field: true }).success).toBe(false);
   });
 
 });

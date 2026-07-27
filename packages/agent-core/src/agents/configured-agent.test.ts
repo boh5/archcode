@@ -441,8 +441,6 @@ describe("ConfiguredAgent", () => {
     expect(JSON.stringify(call.messages)).toContain(objective);
     expect(JSON.stringify(call.messages)).toContain("<goal-notice>");
     expect(call.system).toContain("create a fresh direct deep Analyst");
-    expect(call.system).toContain("VERDICT: APPROVED");
-    expect(call.system).toContain("review_session_id");
   });
 
   test("keeps Prompt and trace stable while an in-loop Goal edit appears only as the next notice", async () => {

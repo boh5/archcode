@@ -62,7 +62,6 @@ export class SessionGoalService {
   async create(input: SessionGoalTarget & {
     readonly authority: SessionGoalAuthority;
     readonly objective: string;
-    readonly tokenBudget?: number;
   }): Promise<SessionGoal> {
     requireAuthority(input.authority, "user_control");
     const objective = SessionGoalObjectiveSchema.parse(input.objective);
@@ -75,7 +74,6 @@ export class SessionGoalService {
         generation: 1,
         objective,
         status: "active",
-        ...(input.tokenBudget === undefined ? {} : { tokenBudget: positiveInt(input.tokenBudget, "tokenBudget") }),
         usage: { tokens: createEmptySessionStats().usage, executionTimeMs: 0, executionCount: 0 },
         createdAt: now,
         activatedAt: now,

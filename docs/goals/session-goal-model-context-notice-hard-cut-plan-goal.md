@@ -1,6 +1,6 @@
 # Session Goal Model-Context Notice Hard-Cut Plan Goal
 
-本计划是 Session Goal 进入模型上下文的新唯一合同。它只重构 Goal 的模型传递方式，不改变 Goal 的用户所有权、状态机、预算、自动续跑和 Review Gate。
+本计划是 Session Goal 进入模型上下文的合同。它只重构 Goal 的模型传递方式，不定义 Goal 的用户所有权、状态机、预算、自动续跑或完成判断。
 
 ## Objective
 
@@ -8,7 +8,7 @@
 
 完成后：
 
-- `Session.goal` 仍是 UI、SSE、预算、continuation 和 Review Gate 的权威状态。
+- `Session.goal` 仍是 UI、SSE、预算和 continuation 的权威状态。
 - Goal objective、status、generation、identity、budget 和 blocked reason 不再动态进入 System Prompt 或 Current Context。
 - Goal 创建、编辑、暂停、恢复、清除、预算变化、预算跨限、blocked 和 complete 均通过持久消息传递。
 - 不新增 Goal Notification Service、消息队列、数据库、后台 worker 或第二套 Goal 状态机。
@@ -161,7 +161,7 @@ Goal history exists:
 
 ## Non-goals
 
-- 不改变 Goal 授权、状态转换、预算算法、自动 continuation、Reviewer binding 或完成门禁。
+- 不改变 Goal 授权、状态转换、预算算法或自动 continuation；完成判断遵循当前 Goal 架构，不由本计划另设协议。
 - 不新增 Goal history 资源、Event Sourcing、ControlMessage 总线、通知中心或 Goal timeline UI。
 - 不实现持久化故障的同进程热恢复。
 - 不迁移、识别或兼容旧 Goal 上下文格式，不增加墓碑测试。
@@ -208,4 +208,4 @@ Goal history exists:
 
 - 定向测试覆盖 Protocol、Session strict schema、Goal service、双 phase/high-water、Query Loop step boundary、Prompt compiler、tool ordering、restart、hard compact/DCP 和 Web traversal。
 - `bun run typecheck`、`bun run test`、`bun run build`、`git diff --check` 全部退出码为 0。
-- 新鲜 direct deep Analyst 对最终 Diff 做只读审查；只有无 blocking/high 的 `VERDICT: APPROVED` 才完成，修改后必须重新审查。
+- 新鲜 direct deep Analyst 对最终 Diff 做只读审查；存在 blocking/high 就修复并重新审查，全部关闭后才完成。

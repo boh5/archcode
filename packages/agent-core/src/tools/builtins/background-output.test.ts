@@ -262,14 +262,14 @@ describe("background_output source pages", () => {
     const store = child(ctx);
     store.getState().append(testExecutionStart("old"));
     store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "VERDICT: APPROVED" });
+    store.getState().append({ type: "text-delta", text: "final review complete" });
     store.getState().append({ type: "text-end" });
     store.getState().append({ type: "execution-end", status: "completed" });
     store.getState().append(testExecutionStart("latest"));
     store.getState().append({ type: "execution-end", status: "failed", error: "boom" });
 
     const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
-    expect(sourceDraftText(result)).not.toContain("VERDICT: APPROVED");
+    expect(sourceDraftText(result)).not.toContain("final review complete");
     expect(sourceDraftText(result)).toContain("No final output is available");
     expect(sourceDraftText(result)).toContain("Execution error: boom");
   });

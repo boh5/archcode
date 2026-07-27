@@ -161,14 +161,6 @@ export interface SessionToolBatch {
   readonly manualInspectionReason?: SessionToolManualInspectionReason;
 }
 
-/** Runtime-authored provenance for one Goal completion review attempt. */
-export interface GoalReviewBinding {
-  readonly goalInstanceId: string;
-  readonly goalGeneration: number;
-  readonly rootSessionId: string;
-  readonly createdAt: number;
-}
-
 export interface SessionStoreState {
   sessionId: string;
   createdAt: number;
@@ -201,8 +193,6 @@ export interface SessionStoreState {
   childSessionLinks: ToolChildSessionLink[];
   /** Immutable parent-to-child handoff. Required for every child Session. */
   delegationRequest?: DelegationRequest;
-  /** Present only on a runtime-created direct Analyst Goal review child. */
-  goalReviewBinding?: GoalReviewBinding;
   /** Complete tool-batch audit history; at most one entry may be active (no archivedAt). */
   toolBatches: SessionToolBatch[];
   // Identity is assigned at creation/load and treated as immutable afterwards.

@@ -43,7 +43,7 @@ Every user-facing Session is rooted at Lead. A Todo Discussion keeps its existin
 
 `Session.goal` is an optional persistent protocol on a root Lead Session. Before creating it, Lead asks with ordinary `ask_user` and interprets the answer semantically. Goal is independent of Plan.
 
-Goal completion requires a fresh direct `analyst + deep + goal-review` child bound by Runtime to the current Goal instance and generation. Its first non-empty final-output line must be exactly `VERDICT: APPROVED`; any completed non-approval, later ArchCode-known artifact write, Goal edit, or active child requires a new review Analyst. Analyst reports evidence, Lead requests completion, and Runtime mechanically validates the provenance.
+Before Goal completion, Lead creates a fresh direct `analyst + deep + goal-review`, reads its ordinary evidence report, fixes material findings and reviews again, or calls `update_goal({ status: "complete", reason })` when it judges the Goal achieved. Runtime does not parse the report or persist Review provenance; it retains only current active-Goal, active-child, and instance/generation consistency checks.
 
 ## UI metadata and configuration
 

@@ -406,12 +406,12 @@ Lead 自行选择 `ask_user` 的问法、语言和选项，并按自然语言语
 Goal 完成继续遵守独立审查：
 
 1. Lead 完成实现和验证；
-2. Goal 工作流在最后一次 ArchCode 已知的成果写入之后创建一个未参与该项设计、Plan 编写或实现的独立 Analyst Session，加载 `goal-review` Skill 并使用 `deep`；
-3. 该 fresh Analyst 的最终输出首个非空行必须是 `VERDICT: APPROVED`；尚未给出最终输出而仅因中断或重启暂停时，可以 resume 同一个 Session；
-4. 若为 `CHANGES_REQUESTED`，Lead 修复后重新审查；
-5. 运行时机械校验审查 Session 的独立来源、Goal 归属和结果后，才允许 Goal complete。
+2. Lead 创建一个 fresh direct Analyst Session，加载 `goal-review` Skill 并使用 `deep`；
+3. Analyst 以普通自然语言报告结论、findings、证据、验证缺口和 residual risk，不使用机器可解析口令；
+4. Lead 语义判断报告：有 material finding 就修复并创建 fresh review；判断通过后调用 `update_goal({ status: "complete", reason })`；
+5. Runtime 只校验当前 Goal 仍 active、Session family 没有 active child，以及 instance/generation 没有并发变化。
 
-Analyst 不控制 Goal 状态，`goal-review` Skill 本身也不授予完成权。Lead 不能用自己的结论、普通 Analyst 输出或参与过方案形成的 Analyst Session 代替这次独立审查。一次最终审查输出会结束当前尝试：`APPROVED` 可以进入完成门禁，`CHANGES_REQUESTED`、空输出或格式错误都要求以后新建 Analyst，不能 resume 后改写结论。成果再次被 ArchCode 修改或 Goal 被编辑也会使本轮最终审查失效；单纯的未完成审查恢复、进程重启以及审查 Analyst 对 Explore/Librarian 的只读委派不会使审查失效。第一阶段不增加 filesystem watcher，因此不声称检测 ArchCode 之外的外部文件修改。
+Analyst 不控制 Goal 状态，`goal-review` Skill 本身也不授予 Runtime authority。Runtime 不保存 Goal Review binding、Session ID、receipt 或 verdict，不解析 Analyst 输出，也不扫描 Review 后的文件写入。Review 是否充分、报告是否通过以及修复后是否应重新 Review 都由 Lead 负责。
 
 ## 10. Project Todo Discussion 保持不变的用户入口
 

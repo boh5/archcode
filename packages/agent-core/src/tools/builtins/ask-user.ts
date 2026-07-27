@@ -29,7 +29,7 @@ const AskUserQuestionSchema = z.strictObject({
     .min(1)
     .describe("Very short display heading."),
   options: z.array(AskUserQuestionOptionSchema).max(3).optional().default([])
-    .describe("Up to three choices. Put the recommended option first and suffix its label with `(Recommended)`. Do not add an `Other` option when custom is enabled."),
+    .describe("Up to three optional choices. When you have a clear preference, put the recommended option first and make its reason clear in language that fits the conversation."),
   multiple: z.boolean().optional()
     .describe("Set true only when more than one choice may be selected."),
   custom: z.boolean().optional().default(true)
@@ -116,7 +116,7 @@ export const askUserTool = defineTool({
     "",
     "Investigate first. Do not ask for facts available from the request, repository, tool output, or a sensible reversible default. Do not use this tool merely to report progress or to ask permission for an ordinary in-scope next step.",
     "",
-    "Put a recommended option first and suffix its label with `(Recommended)`. With custom enabled, the UI adds the free-text choice automatically; do not add an `Other` option yourself.",
+    "When you have a clear recommendation, put that option first and briefly explain why. Choose the language and presentation that fit the conversation; no fixed label or suffix is required. With custom enabled, the user may also answer in free text.",
   ].join("\n"),
   inputSchema: AskUserInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: false },

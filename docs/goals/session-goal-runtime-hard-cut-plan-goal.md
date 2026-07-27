@@ -1,5 +1,7 @@
 # Session Goal Runtime Hard-Cut Plan Goal
 
+> Historical implementation plan. Its Runtime Reviewer/Evaluator design is superseded by the current Lead-owned Goal architecture and `agent-decision-protocol-hard-cut-plan-goal.md`.
+
 本计划是 Goal 重构的唯一实施与验收契约，并取代 `conversation-driven-goal-automation-creation-goal.md` 中 Goal Create Skill、独立 Goal 资源和 Goal Lead 的既有结论；该旧文档的 Automation 结论不受影响。
 
 ## Objective

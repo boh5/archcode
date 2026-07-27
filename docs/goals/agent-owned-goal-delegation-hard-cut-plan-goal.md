@@ -1,5 +1,7 @@
 # Agent-Owned Goal And Delegation Hard-Cut Plan Goal
 
+> Historical implementation plan. Its fixed verdict and Runtime mandatory-Review contract are superseded by `agent-decision-protocol-hard-cut-plan-goal.md`; the current architecture does not parse Analyst reports or persist Review provenance.
+
 本文件是本轮重构的唯一实施与验收契约。目标是让 Agent 控制 Goal 的工作流程，让 Goal 只保存状态，并让所有子 Agent 以普通最终回复交付结果。旧协议直接删除，不迁移、不兼容、不保留 fallback。
 
 ## Objective

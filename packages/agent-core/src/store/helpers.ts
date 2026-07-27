@@ -701,13 +701,6 @@ const SessionToolBatchSchema = z.strictObject({
   });
 });
 
-const GoalReviewBindingSchema = z.strictObject({
-  goalInstanceId: z.string().uuid(),
-  goalGeneration: z.number().int().positive().safe(),
-  rootSessionId: z.string().trim().min(1),
-  createdAt: z.number().finite().nonnegative(),
-});
-
 export const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
@@ -751,7 +744,6 @@ export const SessionFileSchema = z.strictObject({
   reminders: z.array(ReminderSchema),
   childSessionLinks: z.array(ToolChildSessionLinkSchema),
   delegationRequest: DelegationRequestSchema.optional(),
-  goalReviewBinding: GoalReviewBindingSchema.optional(),
   toolBatches: z.array(SessionToolBatchSchema).superRefine((batches, ctx) => {
     if (batches.filter((batch) => batch.archivedAt === undefined).length > 1) {
       ctx.addIssue({ code: "custom", message: "At most one tool batch may be active" });
@@ -786,19 +778,6 @@ export const SessionFileSchema = z.strictObject({
       code: "custom",
       path: ["modelSelection"],
       message: "Child modelSelection must remain initial; delegated Profile is the only child model identity",
-    });
-  }
-  if (session.goalReviewBinding !== undefined
-    && (session.parentSessionId === undefined
-      || session.agentName !== "analyst"
-      || session.delegationRequest?.agent_type !== "analyst"
-      || session.delegationRequest.profile !== "deep"
-      || !session.delegationRequest.skills.includes("goal-review")
-      || session.goalReviewBinding.rootSessionId !== session.rootSessionId)) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["goalReviewBinding"],
-      message: "goalReviewBinding requires a deep Analyst goal-review child identity",
     });
   }
   if (session.goal !== undefined
@@ -867,7 +846,6 @@ export interface SessionSummary {
   rootSessionId: string;
   parentSessionId?: string;
   delegationRequest?: z.output<typeof DelegationRequestSchema>;
-  goalReviewBinding?: z.output<typeof GoalReviewBindingSchema>;
   goal?: z.output<typeof SessionGoalSchema>;
   agentName: string;
   profile: ProfileName;
@@ -880,7 +858,7 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationRequest" | "goalReviewBinding" | "toolBatches" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationRequest" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
   "parentSessionId" | "goal" | "events" | "queueDispatchBarrierAt"
@@ -970,7 +948,6 @@ async function saveSessionTranscript(
     reminders: state.reminders,
     childSessionLinks: state.childSessionLinks,
     ...(state.delegationRequest === undefined ? {} : { delegationRequest: state.delegationRequest }),
-    ...(state.goalReviewBinding === undefined ? {} : { goalReviewBinding: state.goalReviewBinding }),
     toolBatches: state.toolBatches,
     rootSessionId: state.rootSessionId,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
@@ -1023,7 +1000,6 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     reminders: state.reminders,
     childSessionLinks: state.childSessionLinks,
     ...(state.delegationRequest === undefined ? {} : { delegationRequest: state.delegationRequest }),
-    ...(state.goalReviewBinding === undefined ? {} : { goalReviewBinding: state.goalReviewBinding }),
     toolBatches: state.toolBatches,
     rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
@@ -1048,7 +1024,6 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         rootSessionId: parsed.rootSessionId,
         ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
         ...(parsed.delegationRequest === undefined ? {} : { delegationRequest: parsed.delegationRequest }),
-        ...(parsed.goalReviewBinding === undefined ? {} : { goalReviewBinding: parsed.goalReviewBinding }),
         ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
         agentName: parsed.agentName,
         profile: resolveSessionProfile(parsed),
@@ -1103,7 +1078,6 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       rootSessionId: parsed.rootSessionId,
       ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
       ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
-      ...(parsed.goalReviewBinding === undefined ? {} : { goalReviewBinding: parsed.goalReviewBinding }),
       agentName: parsed.agentName,
       profile: resolveSessionProfile(parsed),
       activeSkillNames: parsed.activeSkillNames,

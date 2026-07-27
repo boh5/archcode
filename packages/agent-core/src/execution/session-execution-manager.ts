@@ -48,7 +48,7 @@ import type {
 import { getSessionDir } from "../store/sessions-dir";
 import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
-import type { GoalReviewBinding, Reminder, SessionStoreState } from "../store/types";
+import type { Reminder, SessionStoreState } from "../store/types";
 import type { AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
 import type { Logger } from "../logger";
@@ -270,7 +270,6 @@ interface SessionExecutionManagerConfig {
       readonly title?: string;
       readonly activeSkillNames?: readonly string[];
       readonly delegationRequest?: DelegationRequest;
-      readonly goalReviewBinding?: GoalReviewBinding;
     },
   ) => StoreApi<SessionStoreState>;
   /** Durability barrier for a freshly created Session snapshot. */
@@ -358,8 +357,7 @@ export class DelegationExecutionAdmissionError extends Error {
   constructor(
     public readonly code:
       | "DELEGATION_IDENTITY_REQUIRED"
-      | "DELEGATION_PROFILE_NOT_ALLOWED"
-      | "GOAL_REVIEW_ATTEMPT_TERMINAL",
+      | "DELEGATION_PROFILE_NOT_ALLOWED",
     message: string,
   ) {
     super(message);
@@ -1308,13 +1306,6 @@ export class SessionExecutionManager {
     const background = validatedRequest.background;
     const childTitle = validatedRequest.title;
     const createdAt = Date.now();
-    const goalReviewBinding = createGoalReviewBinding(
-      parentState,
-      targetDefinition.name,
-      validatedRequest.profile,
-      activeSkillNames,
-      createdAt,
-    );
     let childStore: StoreApi<SessionStoreState> | undefined;
     let childLinked = false;
     let execution: ActiveSessionExecution | undefined;
@@ -1331,7 +1322,6 @@ export class SessionExecutionManager {
         title: childTitle,
         activeSkillNames,
         delegationRequest: validatedRequest,
-        ...(goalReviewBinding === undefined ? {} : { goalReviewBinding }),
       });
       await this.#config.flushSessionStore(childSessionId, workspaceRoot);
 
@@ -1526,7 +1516,6 @@ export class SessionExecutionManager {
       .catch(() => { throw new ChildSessionNotFoundError(workspaceRoot, request.sessionId); });
     const initialAdmission = await this.#validateExistingChildActivation(workspaceRoot, childStore);
     let childState = initialAdmission.childState;
-    this.#assertGoalReviewAttemptResumable(childState);
     await this.#assertFamilyToolBatchReady(workspaceRoot, initialAdmission.parentState);
     this.#assertSessionToolBatchReady(request.sessionId, childState);
     if (childState.title === null || childState.title.trim().length === 0) {
@@ -1567,7 +1556,6 @@ export class SessionExecutionManager {
           );
         }
         childState = finalAdmission.childState;
-        this.#assertGoalReviewAttemptResumable(childState);
         await this.#assertFamilyToolBatchReady(workspaceRoot, finalAdmission.parentState);
         this.#reserveChildSlot(workspaceRoot, request.parentSessionId, childPolicy.maxConcurrent);
         childSlotReserved = true;
@@ -2886,15 +2874,6 @@ export class SessionExecutionManager {
     });
   }
 
-  #assertGoalReviewAttemptResumable(state: SessionStoreState): void {
-    if (state.goalReviewBinding === undefined) return;
-    if (!state.executions.some((execution) => execution.status === "completed")) return;
-    throw new DelegationExecutionAdmissionError(
-      "GOAL_REVIEW_ATTEMPT_TERMINAL",
-      `Goal review Session "${state.sessionId}" already produced a completed attempt and cannot be resumed`,
-    );
-  }
-
 }
 
 function effectiveChildPolicy(
@@ -3101,31 +3080,6 @@ function resolveQueuePrefix(
   }
   if (binding === undefined) throw new SessionInputConflictError("empty_queue", "Queue has no resolvable input");
   return { binding, snapshots };
-}
-
-function createGoalReviewBinding(
-  parentState: SessionStoreState,
-  childAgentName: AgentName,
-  profile: ProfileName,
-  activeSkillNames: readonly string[],
-  createdAt: number,
-): GoalReviewBinding | undefined {
-  const goal = parentState.goal;
-  if (
-    parentState.agentName !== "lead"
-    || parentState.parentSessionId !== undefined
-    || parentState.rootSessionId !== parentState.sessionId
-    || goal?.status !== "active"
-    || childAgentName !== "analyst"
-    || profile !== "deep"
-    || !activeSkillNames.includes("goal-review")
-  ) return undefined;
-  return {
-    goalInstanceId: goal.instanceId,
-    goalGeneration: goal.generation,
-    rootSessionId: parentState.sessionId,
-    createdAt,
-  };
 }
 
 function modelAuditFor(

@@ -15,7 +15,7 @@ import { validateCronTrigger } from "./trigger-validation";
 const IsoDateTimeSchema = z.string().datetime({ offset: true });
 const NonEmptyTextSchema = z.string().trim().min(1);
 export const AutomationNameSchema = NonEmptyTextSchema.max(AUTOMATION_NAME_MAX_LENGTH)
-  .describe("Confirmed display name for the Automation. Non-empty; max 200 characters.");
+  .describe("Display name for the Automation. Non-empty; max 200 characters.");
 export const AutomationMessageSchema = NonEmptyTextSchema.max(AUTOMATION_MESSAGE_MAX_LENGTH);
 export const AutomationTimezoneSchema = NonEmptyTextSchema.max(AUTOMATION_TIMEZONE_MAX_LENGTH)
   .describe("IANA timezone used to evaluate the cron expression, for example Asia/Shanghai.");

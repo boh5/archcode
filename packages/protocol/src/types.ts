@@ -1339,7 +1339,7 @@ export interface AutomationInvocation {
 export interface Automation {
   id: string;
   projectSlug: string;
-  /** Ordinary Lead Session in which the user confirmed this Automation. */
+  /** Ordinary Lead Session that created this Automation. */
   createdFromSessionId: string;
   name: string;
   trigger: AutomationTrigger;

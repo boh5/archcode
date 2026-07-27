@@ -156,10 +156,10 @@ describe("SessionGoalService", () => {
       sessionId,
       authority: user,
       objective: "  Finish the migration.  ",
-      tokenBudget: 10_000,
     });
 
     expect(created).toMatchObject({ objective: "Finish the migration.", generation: 1, status: "active" });
+    expect(created.tokenBudget).toBeUndefined();
     expect(Object.keys(created).sort()).toEqual([
       "activatedAt",
       "createdAt",
@@ -167,7 +167,6 @@ describe("SessionGoalService", () => {
       "instanceId",
       "objective",
       "status",
-      "tokenBudget",
       "updatedAt",
       "usage",
     ]);
@@ -184,7 +183,6 @@ describe("SessionGoalService", () => {
       goal: {
         objective: created.objective,
         status: "active",
-        tokenBudget: 10_000,
       },
     });
 
@@ -542,7 +540,6 @@ describe("SessionGoalService", () => {
       sessionId,
       authority: user,
       objective: "Exercise the complete notice matrix.",
-      tokenBudget: 100,
     });
     await service.edit({
       workspaceRoot: TMP_DIR,
@@ -677,8 +674,8 @@ describe("SessionGoalService", () => {
       sessionId,
       authority: user,
       objective: "Respect the budget.",
-      tokenBudget: 7,
     });
+    await service.setTokenBudget({ workspaceRoot: TMP_DIR, sessionId, authority: user, tokenBudget: 7 });
 
     const created = await service.get({ workspaceRoot: TMP_DIR, sessionId });
     const first = await service.recordUsage({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(3), executionTimeMs: 10 });
@@ -753,6 +750,11 @@ describe("SessionGoalService", () => {
       sessionId: usageSession,
       authority: user,
       objective: "Preserve the blocker when usage crosses budget.",
+    });
+    await service.setTokenBudget({
+      workspaceRoot: TMP_DIR,
+      sessionId: usageSession,
+      authority: user,
       tokenBudget: 5,
     });
     await service.recordUsage({
@@ -832,8 +834,6 @@ describe("SessionGoalService", () => {
     const completed = await service.complete({ workspaceRoot: TMP_DIR, sessionId, authority: agent, reason: "Analyst approved", ...expected });
     expect(completed.status).toBe("complete");
     expect(completed.completedAt).toBeNumber();
-    expect(Object.hasOwn(completed, "review")).toBe(false);
-    expect(Object.hasOwn(completed, "lastReviewReceipt")).toBe(false);
 
     const settled = await service.recordUsage({
       workspaceRoot: TMP_DIR,

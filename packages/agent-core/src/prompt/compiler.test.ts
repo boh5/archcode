@@ -103,8 +103,6 @@ describe("PromptContractCompiler", () => {
     }));
 
     expect(result.prompt).toContain("Completion authority: delegated-scope");
-    expect(result.prompt).not.toContain("VERDICT: APPROVED");
-    expect(result.prompt).not.toContain("VERDICT: CHANGES_REQUESTED");
     expect(result.prompt).not.toContain("## Session Goal");
   });
 

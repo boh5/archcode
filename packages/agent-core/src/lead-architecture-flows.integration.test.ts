@@ -132,7 +132,7 @@ describe("Lead architecture full-runtime flows", () => {
                 agent_type: "analyst",
                 profile: "deep",
                 title: "Review the migration",
-                objective: "Independently review the current Goal result and return the strict verdict.",
+                objective: "Independently review the current Goal result and report any material gaps.",
                 skills: ["goal-review"],
                 background: false,
               });
@@ -150,19 +150,15 @@ describe("Lead architecture full-runtime flows", () => {
                 agent_type: "analyst",
                 profile: "deep",
                 title: "Fresh final Goal review",
-                objective: "Review the remediated result independently and return the strict verdict.",
+                objective: "Review the remediated result independently and report the evidence and residual risk.",
                 skills: ["goal-review"],
                 background: false,
               });
-            case 7: {
-              const approvedReviewSessionId = analystSessionIds[1];
-              if (approvedReviewSessionId === undefined) throw new Error("Fresh approved Analyst Session was not observed");
+            case 7:
               return toolStream("complete-goal", "update_goal", {
                 status: "complete",
                 reason: "The remediated result passed a fresh independent Goal review.",
-                review_session_id: approvedReviewSessionId,
               });
-            }
             default:
               return textStream("Goal completed after fresh approval.");
           }
@@ -192,8 +188,8 @@ describe("Lead architecture full-runtime flows", () => {
         }
         analystCalls += 1;
         return textStream(analystCalls === 1
-          ? "VERDICT: CHANGES_REQUESTED\nThe first Build needs one correction."
-          : "VERDICT: APPROVED\nThe remediated result satisfies the Goal.");
+          ? "The Goal is not complete yet: the first Build needs one correction."
+          : "The remediated result satisfies the Goal. Evidence is complete and residual risk is low.");
       }) as never,
       generateText: mock(async () => ({ text: "Goal architecture flow" })) as never,
     });

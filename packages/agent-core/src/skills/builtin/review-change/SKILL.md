@@ -10,4 +10,4 @@ when_to_use: Use in an Analyst Session for plan review, code review, security re
 - For code, inspect the attributable diff and run or assess proportionate tests and diagnostics without modifying source.
 - For security-sensitive work, examine trust boundaries, validation, secret handling, authorization, injection, destructive behavior, and auditability.
 - Report actionable findings in severity order with exact evidence. Distinguish blocking defects from residual risk and optional improvements.
-- Do not use the Goal verdict contract unless `goal-review` is also active in a runtime-bound final review Session.
+- When `goal-review` is active, provide the independent Goal report described by that Skill.

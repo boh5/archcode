@@ -331,7 +331,7 @@ function activationMessage(todo: ProjectTodo, kind: ProjectTodoActivationKind): 
   if (activation === undefined) throw new ProjectTodoActivationConflictError(todo.id, undefined, "Project Todo has no Activation snapshot");
   const snapshot = activationSnapshot(todo.id, activation.todoRevision, activation.snapshot);
   if (kind === "automation") {
-    return `/skill use automation-create Create an Automation from the following Project Todo snapshot. Preserve the existing clarification and explicit confirmation flow; do not call automation_create before confirmation.\n\n${snapshot}`;
+    return `/skill use automation-create Create an Automation from the following Project Todo snapshot.\n\n${snapshot}`;
   }
   return `Implement the following Project Todo as an ordinary Lead Session. The snapshot is fixed at activation revision ${activation.todoRevision}.\n\n${snapshot}`;
 }

@@ -16,7 +16,7 @@ function state(status: "completed" | "failed", latestText?: string): Pick<Sessio
         executionId: "old",
         createdAt: 1,
         completedAt: 2,
-        parts: [{ type: "text", id: "old-text", text: "VERDICT: APPROVED", createdAt: 1, completedAt: 2 }],
+        parts: [{ type: "text", id: "old-text", text: "Earlier completed response", createdAt: 1, completedAt: 2 }],
       },
       ...(latestText === undefined ? [] : [{
         id: "latest-message",

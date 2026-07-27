@@ -10,6 +10,6 @@ when_to_use: Use when completed work needs independent criticism or a review and
 4. Give the Analyst evidence and questions, not a desired verdict. Never treat a child claim as proof without checking the referenced evidence.
 5. Resolve findings yourself. Fix material gaps directly or through a bounded Build, then run proportionate verification again.
 6. For an ordinary review, resume or replace the Analyst according to context contamination and independence needs. Do not create Review state.
-7. For Goal completion, follow `run-goal` and use a fresh Analyst with `deep` plus `goal-review`; an ordinary review cannot authorize Goal completion.
+7. For Goal completion, follow `run-goal` and use a fresh Analyst with `deep` plus `goal-review`; the Lead interprets that independent report before deciding whether to complete.
 
 Report what was reviewed, material findings and fixes, verification evidence, and residual risk.

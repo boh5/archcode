@@ -135,9 +135,9 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "ask_user",
     competitorEvidenceIds: ["CC-160-A:AskUserQuestion", "OC:question"],
     runtimeSourceIds: ["tools/builtins/ask-user.ts:10-27,35-109,138-146"],
-    descriptionPatterns: [/preferences, requirements, or implementation choices/, /Investigate first/, /facts available from the request, repository, tool output/, /sensible reversible default/, /\(Recommended\)/, /do not add an `Other` option/i],
+    descriptionPatterns: [/preferences, requirements, or implementation choices/, /Investigate first/, /facts available from the request, repository, tool output/, /sensible reversible default/],
     schema: [
-      { path: ["properties", "questions", "items", "properties", "options"], descriptionPatterns: [/Do not add an `Other` option/, /recommended (?:choice|option) first/] },
+      { path: ["properties", "questions", "items", "properties", "options"], descriptionPatterns: [/Up to three optional choices/, /recommended option first/] },
       { path: ["properties", "questions", "items", "properties", "custom"], descriptionPatterns: [/free-text answer choice/, /default/] },
     ],
   },
@@ -280,10 +280,10 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "update_goal",
     competitorEvidenceIds: ["CX-LOCAL:update_goal"],
     runtimeSourceIds: ["tools/builtins/session-goal.ts", "session-goal/service.ts"],
-    descriptionPatterns: [/status to complete or blocked/i, /fresh direct deep Analyst/i, /goal-review/i, /VERDICT: APPROVED/i, /no later ArchCode-known artifact write/i, /no active child/i, /genuine blocker/i],
+    descriptionPatterns: [/status to complete or blocked/i, /fresh independent Goal review/i, /every child.*terminal/i, /genuine blocker/i],
     schema: [
       { path: ["oneOf", "0", "properties", "status"] },
-      { path: ["oneOf", "0", "properties", "review_session_id"] },
+      { path: ["oneOf", "0", "properties", "reason"] },
       { path: ["oneOf", "1", "properties", "status"] },
     ],
   },
@@ -291,7 +291,7 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "automation_create",
     competitorEvidenceIds: ["CC-160-A:CronCreate", "CX-LOCAL:automation"],
     runtimeSourceIds: ["tools/builtins/automation-create.ts:13-45", "automations/schema.ts:23-58,92-96"],
-    descriptionPatterns: [/explicitly requests or accepts/i, /separately confirmed/i, /scheduled|recurring|reminder|monitor/i, /do not use.*immediately/i, /Lead root Session/i],
+    descriptionPatterns: [/user-requested/i, /complete proposal/i, /user'?s response/i, /interpret/i, /scheduled|recurring|reminder|monitor/i, /do not use.*immediately/i, /Lead root Session/i],
     schema: [
       { path: ["properties", "trigger"], descriptionPatterns: [/Exactly one trigger/, /once/, /interval/, /cron/] },
       { path: ["properties", "trigger", "oneOf", "2", "properties", "timezone"], descriptionPatterns: [/IANA timezone/, /Asia\/Shanghai/] },

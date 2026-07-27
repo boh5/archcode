@@ -36,7 +36,6 @@ import {
   type SessionStoreState,
   type SessionToolBatch,
   type TextPart,
-  type GoalReviewBinding,
   MAX_EVENTS,
 } from "./types";
 
@@ -67,7 +66,6 @@ export interface CreateSessionOptions {
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
   readonly delegationRequest?: DelegationRequest;
-  readonly goalReviewBinding?: GoalReviewBinding;
   readonly modelSelection?: SessionModelSelection;
   readonly title?: string;
 }
@@ -195,7 +193,6 @@ export class SessionStoreManager {
       reminders: [],
       childSessionLinks: [],
       delegationRequest: options.delegationRequest,
-      goalReviewBinding: options.goalReviewBinding,
       toolBatches: [],
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
@@ -1081,7 +1078,6 @@ export class SessionStoreManager {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         delegationRequest: parsed.delegationRequest,
-        goalReviewBinding: parsed.goalReviewBinding,
         agentName: parsed.agentName,
         activeSkillNames: parsed.activeSkillNames,
         modelSelection: parsed.modelSelection,
@@ -1112,7 +1108,6 @@ export class SessionStoreManager {
         reminders: parsed.reminders,
         childSessionLinks: parsed.childSessionLinks,
         delegationRequest: parsed.delegationRequest,
-        goalReviewBinding: parsed.goalReviewBinding,
         toolBatches: parsed.toolBatches,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,

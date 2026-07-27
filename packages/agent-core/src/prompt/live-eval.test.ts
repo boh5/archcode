@@ -59,7 +59,7 @@ describe("Prompt live eval contract", () => {
     expect(calls[3]!.system).toContain("normal assistant response");
     expect(calls[4]!.system).toContain("Role Contract: Analyst");
     expect(calls[4]!.system).toContain("Completion authority: delegated-scope");
-    expect(calls[5]!.system).not.toContain("VERDICT: APPROVED");
+    expect(calls[5]!.system).toContain("normal assistant response");
     expect(calls.slice(6).every(({ system }) => system.includes("create_goal"))).toBe(true);
     expect(calls.slice(6).every(({ prompt }) => prompt.includes("Reply with exactly CREATE_GOAL"))).toBe(true);
   });
