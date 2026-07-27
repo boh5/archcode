@@ -13,7 +13,6 @@ import {
   kindFromCode,
   normalizeToolErrorResult,
 } from "./errors";
-import { REDACTION_MARKER } from "../security";
 
 function resultText(result: ReturnType<typeof createToolErrorResult>): string {
   if (result.draft.kind !== "text") throw new Error("Expected a text draft");
@@ -21,7 +20,7 @@ function resultText(result: ReturnType<typeof createToolErrorResult>): string {
 }
 
 describe("tool error formatter", () => {
-  test("redacts messages and bounds every caller-controlled field", () => {
+  test("preserves messages and bounds every caller-controlled field", () => {
     const secret = "sk-test_1234567890abcdef";
     const formatted = formatToolError({
       error: new Error(`token=${secret}${"😀".repeat(20_000)}`),
@@ -30,8 +29,7 @@ describe("tool error formatter", () => {
       hint: `token=${secret}${"界".repeat(3_000)}`,
     });
 
-    expect(formatted.message).toContain(REDACTION_MARKER);
-    expect(JSON.stringify(formatted)).not.toContain(secret);
+    expect(formatted.message).toContain(secret);
     expect(utf8ByteLength(formatted.message)).toBeLessThanOrEqual(TOOL_ERROR_MESSAGE_MAX_BYTES);
     expect(utf8ByteLength(formatted.hint)).toBeLessThanOrEqual(TOOL_ERROR_HINT_MAX_BYTES);
     expect(utf8ByteLength(formatted.name)).toBeLessThanOrEqual(TOOL_ERROR_IDENTIFIER_MAX_BYTES);

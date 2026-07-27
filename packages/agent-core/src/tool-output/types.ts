@@ -31,7 +31,7 @@ export interface CaptureDraft {
 
 export type ToolOutputDraft = TextDraft | SourcePageDraft | CaptureDraft;
 
-/** Details before final redaction and size validation. */
+/** Details before final size and shape validation. */
 export type RawToolDetails = ToolResultDetails;
 
 /** Runtime-only effects. This object must never enter Session persistence or SSE. */

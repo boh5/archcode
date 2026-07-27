@@ -13,8 +13,5 @@ export {
   SECRET_LITERAL_MIN_BYTES,
   SecretLiteralPolicyError,
   SecretRedactionPolicy,
-  redactString,
-  redactValue,
-  type StreamingTextRedactor,
 } from "./redaction";
 export { createRuntimeLogSafetyBoundary } from "./runtime-log-safety";

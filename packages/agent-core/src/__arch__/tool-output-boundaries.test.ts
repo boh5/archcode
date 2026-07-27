@@ -76,12 +76,25 @@ describe("tool output ownership boundaries", () => {
     expect(rawCallViolations).toEqual([]);
   });
 
-  test("shared redaction is low-level and independent from tool layers", () => {
+  test("tool input and output ownership is independent from security transforms", () => {
     expect(existsSync(join(srcRoot, "security/redaction.ts"))).toBe(true);
     expect(source("security/redaction.ts")).not.toMatch(/from\s+["'][^"']*(?:tool-output|tools)\//);
     expect(source("tools/security/index.ts")).not.toMatch(
       /redactString|redactValue|REDACTION_MARKER|SecretRedactionPolicy/,
     );
+    for (const path of [
+      "tool-output/finalizer.ts",
+      "tool-output/capture.ts",
+      "tools/registry.ts",
+      "tools/errors.ts",
+      "tools/hooks/audit.ts",
+      "store/projection.ts",
+    ]) {
+      expect(source(path)).not.toMatch(
+        /SecretRedactionPolicy|REDACTION_MARKER|\bredactString\b|\bredactValue\b/,
+      );
+      expect(source(path)).not.toMatch(/from\s+["'][^"']*security(?:\/index)?["']/);
+    }
   });
 
   test("artifact serialization uses a semantic lock capability", () => {

@@ -97,7 +97,6 @@ describe("createExecutionLogger", () => {
       "toolName",
     ]);
     expect("input" in meta).toBe(false);
-    expect("redactedInput" in meta).toBe(false);
     expect("output" in meta).toBe(false);
     expect("rawOutput" in meta).toBe(false);
   });
@@ -188,13 +187,12 @@ describe("createExecutionLogger", () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
-  it("does not log raw or redacted input/output fields", async () => {
+  it("does not log input or output payloads", async () => {
     const mockLogger = createMockLogger();
     const rawSecret = "sk_test_1234567890abcdef";
     const hook = createExecutionLogger(mockLogger as unknown as Logger);
     const ctx = makeCtx({
       input: { command: `token=${rawSecret}` },
-      redactedInput: { command: "token=[REDACTED]" },
     });
 
     await hook(makeResult({ preview: `result ${rawSecret}` }), ctx);
@@ -204,7 +202,6 @@ describe("createExecutionLogger", () => {
     expect(serialized).not.toContain(rawSecret);
     expect(serialized).not.toContain("[REDACTED]");
     expect(fields.meta.input).toBeUndefined();
-    expect(fields.meta.redactedInput).toBeUndefined();
     expect(fields.meta.output).toBeUndefined();
     expect(fields.meta.rawOutput).toBeUndefined();
   });

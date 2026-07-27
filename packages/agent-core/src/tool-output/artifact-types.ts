@@ -57,7 +57,7 @@ export interface ArtifactProjection {
 
 export interface CreateArtifactInput {
   readonly owner: ArtifactOwner;
-  /** Canonical text that has already passed the Runtime redaction policy. */
+  /** Canonical UTF-8 text ready for bounded artifact storage. */
   readonly canonical: string | Uint8Array;
   readonly observedBytes?: number;
   readonly observedLines?: number;

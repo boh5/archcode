@@ -328,7 +328,7 @@ function createOutputPlane(rootDir: string): OutputPlane {
   activeStores.add(store);
   const redactionPolicy = new SecretRedactionPolicy([]);
   const registry = createRegistry({
-    finalizer: new ToolOutputFinalizer({ artifactStore: store, redactionPolicy }),
+    finalizer: new ToolOutputFinalizer({ artifactStore: store }),
     hitlCodec: new HitlBoundaryCodec(redactionPolicy),
     logger: silentLogger,
   }, [bashTool, outputReadTool, outputSearchTool]);

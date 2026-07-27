@@ -8,7 +8,6 @@ import { ServerConfigService, resolveServerConfigPath } from "../config";
 import { silentLogger } from "../logger";
 import type { McpManager } from "../mcp";
 import { createRuntime as createProductionRuntime } from "../runtime";
-import type { StreamingTextRedactor } from "../security";
 import { createTestArtifact } from "./artifact-store-fixture.test";
 import {
   ToolOutputArtifactStore,
@@ -41,10 +40,6 @@ function owner(
     rootSessionId,
     producerSessionId,
   };
-}
-
-function identityRedactor(): StreamingTextRedactor {
-  return { push: (text) => text, finish: () => "" };
 }
 
 async function makeRoot(prefix: string): Promise<string> {
@@ -261,7 +256,7 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
     const root = await makeRoot("archcode-output-producing-quota-");
     const scope = owner("producer-a");
     const store = makeStore(root, { limits: { bodyMaxActive: 1 } });
-    const capture = await store.beginCapture({ owner: scope, redactor: identityRedactor() });
+    const capture = await store.beginCapture({ owner: scope });
     await capture.write(`HEAD\n${"x".repeat(60 * 1024)}\nTAIL`);
     const activeTemp = (await readdir(root)).find((entry) => entry.startsWith(".tmp-"));
     expect(activeTemp).toBeDefined();
@@ -295,8 +290,8 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
     const scope = owner("producer-a");
     const store = makeStore(root, { limits: { ledgerMaxEntries: 1 } });
     const captures = await Promise.all([
-      store.beginCapture({ owner: scope, redactor: identityRedactor() }),
-      store.beginCapture({ owner: scope, redactor: identityRedactor() }),
+      store.beginCapture({ owner: scope }),
+      store.beginCapture({ owner: scope }),
     ]);
     await Promise.all(captures.map((capture, index) => (
       capture.write(`${index}:${"x".repeat(60 * 1024)}`)
@@ -342,27 +337,8 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
     await createTestArtifact(store, { owner: scope, canonical: "second" });
     const search = await store.search({ ...scope, pattern: "x", limit: 1 });
     expect(search.nextCursor).toBeDefined();
-    let markWriterStarted!: () => void;
-    let redactorAborted = false;
-    const writerStarted = new Promise<void>((resolve) => {
-      markWriterStarted = resolve;
-    });
-    const blockedWriter = new Promise<string>(() => undefined);
-    const capture = await store.beginCapture({
-      owner: scope,
-      redactor: {
-        push() {
-          markWriterStarted();
-          return blockedWriter;
-        },
-        finish: () => "",
-        abort() {
-          redactorAborted = true;
-        },
-      },
-    });
+    const capture = await store.beginCapture({ owner: scope });
     await capture.write("active writer");
-    await writerStarted;
     const activeTemp = (await readdir(root)).find((entry) => entry.startsWith(".tmp-"));
     expect(activeTemp).toBeDefined();
 
@@ -377,7 +353,6 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
 
     expect(capture.state).toBe("aborted");
     expect(capture.signal.aborted).toBe(true);
-    expect(redactorAborted).toBe(true);
     expect(internals.cleanupTimer).toBeUndefined();
     expect(internals.leases.size).toBe(0);
     expect(internals.pinnedRefs.size).toBe(0);

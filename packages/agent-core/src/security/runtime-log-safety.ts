@@ -15,9 +15,9 @@ const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\(?:[^\s"'`<>{}\],:;()]+\\)*[^\s"'`<>{
  * Runtime-only logger boundary. Every Runtime-owned logger must pass through
  * this wrapper before it reaches its configured sink.
  *
- * Tool/UI redaction intentionally preserves ordinary absolute paths. Runtime
- * logs have a narrower threat model: they never retain local paths, URLs,
- * headers, raw exception values, or stacks.
+ * Tool payloads are not transformed. Runtime logs have a narrower threat
+ * model: they never retain local paths, URLs, headers, raw exception values,
+ * or stacks.
  */
 export function createRuntimeLogSafetyBoundary(logger: Logger, policy: SecretRedactionPolicy): Logger {
   const emit = (level: "debug" | "info" | "warn" | "error", event: string, fields?: LogFields): void => {

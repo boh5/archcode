@@ -1,6 +1,5 @@
 import type { ZodError } from "zod";
 import type { RawToolResult } from "./types";
-import { redactString } from "../security";
 import { createTextToolResult } from "./results";
 import { decodeUtf8, safeUtf8End, utf8ByteLength } from "../tool-output/utf8";
 
@@ -125,15 +124,15 @@ const HINTS: Record<ToolErrorKind, string> = {
 };
 
 export function formatToolError(options: FormatToolErrorOptions): FormattedToolError {
-  const redactedMessage = redactString(resolveMessage(options));
-  const message = boundUtf8(redactedMessage, TOOL_ERROR_MESSAGE_MAX_BYTES);
-  const rawCode = options.code ?? extractCode(redactedMessage) ?? codeFromKind(options.kind) ?? "TOOL_EXECUTION_FAILED";
+  const rawMessage = resolveMessage(options);
+  const message = boundUtf8(rawMessage, TOOL_ERROR_MESSAGE_MAX_BYTES);
+  const rawCode = options.code ?? extractCode(rawMessage) ?? codeFromKind(options.kind) ?? "TOOL_EXECUTION_FAILED";
   const kind = options.kind ?? kindFromCode(rawCode) ?? kindFromMessage(message) ?? "execution";
-  const code = boundUtf8(redactString(rawCode), TOOL_ERROR_IDENTIFIER_MAX_BYTES);
+  const code = boundUtf8(rawCode, TOOL_ERROR_IDENTIFIER_MAX_BYTES);
   const rawName = options.name ?? (options.error !== undefined ? safeErrorName(options.error) : undefined) ?? "ToolError";
-  const name = boundUtf8(redactString(rawName), TOOL_ERROR_IDENTIFIER_MAX_BYTES);
+  const name = boundUtf8(rawName, TOOL_ERROR_IDENTIFIER_MAX_BYTES);
   const hint = boundUtf8(
-    redactString(options.hint ?? resolveHint(options, message, code)),
+    options.hint ?? resolveHint(options, message, code),
     TOOL_ERROR_HINT_MAX_BYTES,
   );
 

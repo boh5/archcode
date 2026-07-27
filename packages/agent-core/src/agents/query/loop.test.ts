@@ -94,7 +94,7 @@ async function createHarness() {
   const artifactStore = new ToolOutputArtifactStore({ rootDir: join(workspaceRoot, "outputs") });
   await artifactStore.ready();
   const registry = new ToolRegistry({
-    finalizer: new ToolOutputFinalizer({ artifactStore, redactionPolicy }),
+    finalizer: new ToolOutputFinalizer({ artifactStore }),
     hitlCodec: new HitlBoundaryCodec(redactionPolicy),
     logger: silentLogger,
   });

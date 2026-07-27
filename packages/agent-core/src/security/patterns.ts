@@ -1,9 +1,6 @@
 /**
- * Secret detection patterns extracted from the redaction system.
- *
- * These patterns are used both by the redaction hook (to mask secrets in
- * tool output) and by the memory-write tool (to reject writes that contain
- * obvious secrets).
+ * Conservative secret-detection patterns for rejecting unsafe memory writes
+ * and classifying sensitive Bash operations. These are not output transforms.
  */
 
 // ---------------------------------------------------------------------------

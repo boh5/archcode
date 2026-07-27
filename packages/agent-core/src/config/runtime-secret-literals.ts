@@ -18,7 +18,7 @@ export interface RuntimeSecretLiteralInput {
 
 /**
  * Immutable startup registry for exact runtime secret literals. It owns the
- * configuration-policy diagnostics; output redaction only receives values.
+ * configuration-policy diagnostics; explicit safety boundaries receive values.
  */
 export class SecretLiteralRegistry {
   readonly #values: readonly string[];

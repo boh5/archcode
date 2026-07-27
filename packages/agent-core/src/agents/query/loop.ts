@@ -9,7 +9,6 @@ import type { RawToolResult, ToolCallLike, ToolExecutionContext } from "../../to
 import type { ToolRegistry } from "../../tools/registry";
 import { createToolErrorResult } from "../../tools/errors";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
-import { redactValue } from "../../security";
 import { classifyLlmError, runLlmStream } from "../../llm";
 import { redactSensitiveValue, sanitizeProviderError, type SensitiveTextRedactor } from "../../llm/provider-error-sanitizer";
 import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../llm/retry";
@@ -313,7 +312,6 @@ export async function runQueryLoop(
     toolName: toolCall.toolName,
     toolCallId: toolCall.toolCallId,
     input: toolCall.input,
-    redactedInput: redactValue(toolCall.input),
     step,
     abort,
     startedAt: Date.now(),
@@ -331,8 +329,8 @@ export async function runQueryLoop(
     ...(options.acquireSessionCwdTransition === undefined ? {} : { acquireSessionCwdTransition: options.acquireSessionCwdTransition }),
     agentName: options.agentName,
     ...(currentDepth === undefined ? {} : { currentDepth }),
-    onInputResolved(redactedInput) {
-      store.getState().append({ type: "tool-input-resolved", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: redactedInput });
+    onInputResolved(input) {
+      store.getState().append({ type: "tool-input-resolved", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input });
     },
     async onToolAttempt(attempt) {
       store.getState().append({
@@ -742,7 +740,7 @@ async function consumeFullStream(
             type: "tool-call",
             toolCallId: chunk.toolCallId,
             toolName: chunk.toolName,
-            input: redactValue(binding.modelInfo.redactSensitiveValue(chunk.input)),
+            input: binding.modelInfo.redactSensitiveValue(chunk.input),
           });
         }
       }

@@ -1,6 +1,5 @@
 import type { FinalizedToolResult } from "@archcode/protocol";
 import type { FinalizedResultHook, ToolExecutionContext } from "../types";
-import { redactValue } from "../../security";
 
 export interface AuditEvent {
   toolName: string;
@@ -29,7 +28,7 @@ export function createAuditHook(options: AuditHookOptions = {}): FinalizedResult
     const event: AuditEvent = {
       toolName: ctx.toolName,
       toolCallId: ctx.toolCallId,
-      input: redactValue(ctx.redactedInput ?? ctx.input),
+      input: ctx.input,
       ...(ctx.permissionOutcome ? { permissionOutcome: ctx.permissionOutcome } : {}),
       ...(ctx.durationMs !== undefined ? { durationMs: ctx.durationMs } : {}),
       status: result.isError ? "error" : "success",

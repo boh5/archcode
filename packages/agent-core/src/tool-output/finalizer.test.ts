@@ -8,16 +8,12 @@ import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createTestProjectContext } from "../tools/test-project-context";
 import { createToolExecutionContext, type ToolDescriptor } from "../tools/types";
-import { SecretRedactionPolicy } from "../security";
 import { ToolOutputArtifactStore } from "./artifact-store";
 import { ToolOutputFinalizer } from "./finalizer";
 
 const ROOT = join(import.meta.dir, "__test_tmp__", `finalizer-${crypto.randomUUID()}`);
 const artifactStore = new ToolOutputArtifactStore({ rootDir: join(ROOT, "artifacts") });
-const finalizer = new ToolOutputFinalizer({
-  artifactStore,
-  redactionPolicy: new SecretRedactionPolicy(["runtime-secret-value"]),
-});
+const finalizer = new ToolOutputFinalizer({ artifactStore });
 const skillService = new SkillService({ builtinSkills: {} });
 
 afterAll(async () => {
@@ -223,7 +219,25 @@ describe("ToolOutputFinalizer bounds", () => {
     });
 
     expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(50 * 1024);
-    expect(JSON.stringify(result)).not.toContain("runtime-secret-value");
+  });
+
+  test("preserves tool output content while canonicalizing and bounding it", async () => {
+    const text = [
+      "apps/web/src/components/composite/ExecutionWorkstream.tsx",
+      "tokenBudget=5000",
+      "AAAAAAAAAAAAAAA/AAAAAAAAAAAAAAAA",
+    ].join("\n");
+    const result = await finalizer.finalize({
+      descriptor: descriptor({ kind: "inline", previewDirection: "head" }),
+      raw: {
+        isError: false,
+        draft: { kind: "text", text },
+      },
+      context: context(),
+      attempted: false,
+    });
+
+    expect(result.output.preview).toBe(text);
   });
 
   test("fits multibyte system results without synthesizing replacement characters", () => {

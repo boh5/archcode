@@ -49,7 +49,6 @@ export interface ToolExecutionContext {
   toolName: string;
   toolCallId: string;
   input: unknown;
-  redactedInput?: unknown;
   toolTraits?: ToolTraits;
   permissionOutcome?: "allow" | "deny" | "ask";
   step: number;
@@ -77,8 +76,8 @@ export interface ToolExecutionContext {
   /** Acquires a root-scoped cwd-transition lease; callers must always release it. */
   acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   currentDepth?: number;
-  /** Called once after prepareInput + safeParse succeeds, with the resolved (defaults-filled, redacted) input. */
-  onInputResolved?: (redactedInput: unknown) => void;
+  /** Called after prepareInput and before hooks succeed, with the input that will be authorized and executed. */
+  onInputResolved?: (input: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
   onToolAttempt?: (attempt: ToolAttemptMetadata) => MaybePromise<void>;
 }

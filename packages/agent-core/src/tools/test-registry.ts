@@ -33,7 +33,7 @@ export function createTestToolRegistryFixture(options: {
   const artifactStore = new ToolOutputArtifactStore({ rootDir });
   const redactionPolicy = new SecretRedactionPolicy(options.secretLiterals ?? []);
   const hitlCodec = new HitlBoundaryCodec(redactionPolicy);
-  const finalizer = new ToolOutputFinalizer({ artifactStore, redactionPolicy });
+  const finalizer = new ToolOutputFinalizer({ artifactStore });
   const registry = createRegistry(
     { finalizer, hitlCodec, logger: options.logger ?? silentLogger },
     options.descriptors ?? [],

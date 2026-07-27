@@ -204,6 +204,12 @@ export class ToolRegistry {
     const before = await this.#runBeforeHooks(descriptor, currentInput, context);
     if (before.kind === "error") return this.settleSystem(toolCall, context, before.raw);
     currentInput = before.input;
+    context.input = currentInput;
+    try {
+      context.onInputResolved?.(currentInput);
+    } catch (error) {
+      this.#logFailure("tool.onInputResolved.failed", descriptor.name, error);
+    }
 
     const permission = await this.#resolvePermission(descriptor, currentInput, context);
     if (permission.kind === "settled") return this.settleSystem(toolCall, context, permission.raw);
@@ -372,12 +378,6 @@ export class ToolRegistry {
         }),
       };
     }
-    context.redactedInput = this.#finalizer.redactValue(parsed.data);
-    try {
-      context.onInputResolved?.(context.redactedInput);
-    } catch (error) {
-      this.#logFailure("tool.onInputResolved.failed", descriptor.name, error);
-    }
     return { kind: "ok", input: parsed.data };
   }
 
@@ -404,7 +404,6 @@ export class ToolRegistry {
           };
         }
         currentInput = parsed.data;
-        context.redactedInput = this.#finalizer.redactValue(currentInput);
       } catch (error) {
         return { kind: "error", raw: pipelineError("execution", error, false) };
       }
@@ -449,10 +448,10 @@ export class ToolRegistry {
   ): Promise<PermissionResolution> {
     const decisions: PermissionDecision[] = [];
     for (const permission of this.globalPermissions) {
-      decisions.push(this.#redactDecision(await permission(input, context)));
+      decisions.push(await permission(input, context));
     }
     for (const permission of descriptor.permissions ?? []) {
-      decisions.push(this.#redactDecision(await permission(input, context)));
+      decisions.push(await permission(input, context));
     }
 
     const denied = decisions.find((decision) => decision.outcome === "deny");
@@ -472,7 +471,7 @@ export class ToolRegistry {
     const requestInput = {
       toolCallId: context.toolCallId,
       toolName: context.toolName,
-      input: context.redactedInput,
+      input: context.input,
       description: descriptor.description,
       reason: unsatisfied.prompt ?? unsatisfied.reason,
       decisionDisplay: unsatisfied.display,
@@ -489,7 +488,7 @@ export class ToolRegistry {
         toolCallId: context.toolCallId,
         toolName: context.toolName,
       },
-      displayPayload: permissionDisplayPayload(requestInput, this.#finalizer),
+      displayPayload: permissionDisplayPayload(requestInput),
       permissionFingerprint: fingerprint,
       persistentApprovalEligible,
       permission: {
@@ -545,13 +544,8 @@ export class ToolRegistry {
     context.toolName = toolCall.toolName;
     context.toolCallId = toolCall.toolCallId;
     context.input = toolCall.input;
-    context.redactedInput = this.#finalizer.redactValue(toolCall.input);
     context.startedAt = Date.now();
     context.outputCapture = undefined;
-  }
-
-  #redactDecision(decision: PermissionDecision): PermissionDecision {
-    return this.#finalizer.redactValue(decision);
   }
 
   async #createBlockedOutcome(
@@ -635,18 +629,16 @@ function permissionDisplayPayload(
     readonly reason?: string;
     readonly decisionDisplay?: string;
   },
-  finalizer: ToolOutputFinalizer,
 ) {
-  const safe = (value: string) => finalizer.redactString(value);
   return {
-    title: safe(`Approve ${request.toolName}`),
-    summary: safe(request.reason ?? request.description),
+    title: `Approve ${request.toolName}`,
+    summary: request.reason ?? request.description,
     fields: [
-      { label: "Tool", value: safe(request.toolName) },
-      { label: "Input", value: safe(JSON.stringify(finalizer.redactValue(request.input))) },
+      { label: "Tool", value: request.toolName },
+      { label: "Input", value: JSON.stringify(request.input) },
       ...(request.decisionDisplay === undefined
         ? []
-        : [{ label: "Decision", value: safe(request.decisionDisplay) }]),
+        : [{ label: "Decision", value: request.decisionDisplay }]),
     ],
     redacted: true as const,
   };

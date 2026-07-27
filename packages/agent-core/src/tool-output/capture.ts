@@ -18,7 +18,6 @@ import type {
   CreatedArtifact,
 } from "./artifact-types";
 import { safeUtf8End, safeUtf8Start } from "./utf8";
-import type { StreamingTextRedactor } from "../security";
 
 const HEAD_PART_FILE = "head.part";
 const TAIL_RING_FILE = "tail.ring";
@@ -36,7 +35,6 @@ export type CaptureState =
 export interface BeginCaptureInput {
   readonly owner: ArtifactOwner;
   readonly previewDirection?: "head" | "head-tail";
-  readonly redactor: StreamingTextRedactor;
 }
 
 export interface CaptureStats {
@@ -288,12 +286,7 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
       if (!this.isActiveGeneration(generation)) return;
       const trailing = this.decoder.decode();
       if (trailing.length > 0) {
-        const redacted = await this.options.input.redactor.push(trailing);
-        if (redacted.length > 0) await this.persistCanonical(this.encoder.encode(redacted), generation);
-      }
-      const finalRedacted = await this.options.input.redactor.finish();
-      if (finalRedacted.length > 0) {
-        await this.persistCanonical(this.encoder.encode(finalRedacted), generation);
+        await this.persistCanonical(this.encoder.encode(trailing), generation);
       }
     });
     try {
@@ -433,10 +426,7 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
       if (!this.isActiveGeneration(generation)) return;
       const text = this.decoder.decode(raw, { stream: true });
       if (text.length > 0) {
-        const redacted = await this.options.input.redactor.push(text);
-        if (redacted.length > 0) {
-          await this.persistCanonical(this.encoder.encode(redacted), generation);
-        }
+        await this.persistCanonical(this.encoder.encode(text), generation);
       }
     });
     this.writerTail = operation
@@ -720,7 +710,6 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
     this.generation += 1;
     this.currentState = state;
     this.controller.abort();
-    this.options.input.redactor.abort?.();
     for (const waiter of this.capacityWaiters) waiter();
     this.notifyTerminal();
   }

@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { createAuditHook, type AuditEvent } from "./audit";
-import { REDACTION_MARKER } from "../../security";
 import { createTestProjectContext } from "../test-project-context";
 import type { FinalizedToolResult } from "@archcode/protocol";
 
@@ -29,7 +28,6 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   toolName: "bash",
   toolCallId: "call-1",
   input: { command: `echo ${RAW_SECRET}`, token: RAW_SECRET },
-  redactedInput: { command: `echo ${REDACTION_MARKER}`, token: REDACTION_MARKER },
   permissionOutcome: "ask",
   step: 0,
   abort: new AbortController().signal,
@@ -42,7 +40,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
 }
 
 describe("createAuditHook", () => {
-  it("emits minimal redacted structured metadata without raw output", async () => {
+  it("emits execution input and minimal result metadata without tool output", async () => {
     const events: AuditEvent[] = [];
     const auditSink = (event: AuditEvent): void => { events.push(event); };
     const hook = createAuditHook({ sink: auditSink });
@@ -56,7 +54,7 @@ describe("createAuditHook", () => {
       {
         toolName: "bash",
         toolCallId: "call-1",
-        input: { command: `echo ${REDACTION_MARKER}`, token: REDACTION_MARKER },
+        input: { command: `echo ${RAW_SECRET}`, token: RAW_SECRET },
         permissionOutcome: "ask",
         durationMs: 25,
         status: "success",
@@ -64,7 +62,6 @@ describe("createAuditHook", () => {
         output: { completeness: "partial", storedBytes: 7, omittedBytes: 10, recovery: "artifact" },
       },
     ]);
-    expect(JSON.stringify(events)).not.toContain(RAW_SECRET);
     expect(JSON.stringify(events)).not.toContain("raw output");
   });
 });

@@ -12,7 +12,6 @@ import {
   TOOL_OUTPUT_ARTIFACT_HEAD_MAX_BYTES,
   TOOL_OUTPUT_ARTIFACT_TAIL_MAX_BYTES,
 } from "./constants";
-import type { StreamingTextRedactor } from "../security";
 import type { ArtifactOwner, CreatedArtifact } from "./artifact-types";
 
 const ROOT = join(tmpdir(), "archcode-capture-tests", crypto.randomUUID());
@@ -40,10 +39,6 @@ function fakeCreated(draft: CapturedArtifactDraft): CreatedArtifact {
   };
 }
 
-function identityRedactor(): StreamingTextRedactor {
-  return { push: (text) => text, finish: () => "" };
-}
-
 beforeEach(async () => {
   await rm(ROOT, { recursive: true, force: true });
   await mkdir(ROOT, { recursive: true });
@@ -56,7 +51,7 @@ afterEach(async () => {
 describe("StreamingToolOutputCapture", () => {
   test("completes a small result inline without returning a second full string", async () => {
     const store = new ToolOutputArtifactStore({ rootDir: join(ROOT, "inline") });
-    const capture = await store.beginCapture({ owner: OWNER, redactor: identityRedactor() });
+    const capture = await store.beginCapture({ owner: OWNER });
     await capture.write(new Uint8Array([0xf0, 0x9f]));
     await capture.write(new Uint8Array([0x98, 0x80]));
     await capture.write(" ok");
@@ -73,42 +68,29 @@ describe("StreamingToolOutputCapture", () => {
     await store.dispose();
   });
 
-  test("persists only streaming-redacted text across arbitrary secret chunk splits", async () => {
-    const tempDir = join(ROOT, "redacted");
+  test("preserves canonical text across arbitrary byte chunk splits", async () => {
+    const tempDir = join(ROOT, "chunked");
     await mkdir(tempDir);
-    const secret = "secret-value-123";
-    let buffered = "";
-    const redactor: StreamingTextRedactor = {
-      push(text) {
-        buffered += text;
-        return "";
-      },
-      finish() {
-        return buffered.replaceAll(secret, "[REDACTED]");
-      },
-    };
+    const content = "before:apps/web/src/components/composite/ExecutionWorkstream.tsx:after";
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor },
+      input: { owner: OWNER },
       committer: { async commit(draft) { return fakeCreated(draft); } },
     });
-    const raw = new TextEncoder().encode(`before:${secret}:after`);
+    const raw = new TextEncoder().encode(content);
     for (const byte of raw) await capture.write(Uint8Array.of(byte));
     const completed = await capture.complete();
-    expect(completed.projection.preview).toBe("before:[REDACTED]:after");
+    expect(completed.projection.preview).toBe(content);
     expect(completed.observed.bytes).toBe(raw.byteLength);
-    expect(completed.canonical.bytes).toBe(
-      new TextEncoder().encode("before:[REDACTED]:after").byteLength,
-    );
+    expect(completed.canonical.bytes).toBe(raw.byteLength);
     const persisted = await readFile(join(tempDir, "body.txt"), "utf8");
-    expect(persisted).not.toContain(secret);
-    expect(persisted).toContain("[REDACTED]");
+    expect(persisted).toBe(content);
     await capture.discard(completed);
   });
 
   test("commits a large capture only after Registry chooses artifact recovery", async () => {
     const store = new ToolOutputArtifactStore({ rootDir: join(ROOT, "artifact") });
-    const capture = await store.beginCapture({ owner: OWNER, redactor: identityRedactor() });
+    const capture = await store.beginCapture({ owner: OWNER });
     const content = `HEAD_SENTINEL\n${"x".repeat(70 * 1024)}\nTAIL_SENTINEL`;
     for (let offset = 0; offset < content.length; offset += 3_001) {
       expect(await capture.write(content.slice(offset, offset + 3_001))).toBe("accepted");
@@ -134,7 +116,7 @@ describe("StreamingToolOutputCapture", () => {
     let committedBody = "";
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       artifactMaxBytes: 60 * 1024,
       headMaxBytes: 50 * 1024,
       tailMaxBytes: 10 * 1024,
@@ -166,7 +148,7 @@ describe("StreamingToolOutputCapture", () => {
     let tail = "";
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       artifactMaxBytes: 1_024,
       headMaxBytes: 768,
       tailMaxBytes: 256,
@@ -200,7 +182,7 @@ describe("StreamingToolOutputCapture", () => {
     let draft: CapturedArtifactDraft | undefined;
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       artifactMaxBytes: 15,
       headMaxBytes: 8,
       tailMaxBytes: 7,
@@ -228,7 +210,7 @@ describe("StreamingToolOutputCapture", () => {
     await mkdir(tempDir);
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       artifactMaxBytes: 8,
       headMaxBytes: 4,
       tailMaxBytes: 4,
@@ -251,7 +233,7 @@ describe("StreamingToolOutputCapture", () => {
     await mkdir(tempDir);
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       artifactMaxBytes: 96,
       headMaxBytes: 63,
       tailMaxBytes: 32,
@@ -287,7 +269,7 @@ describe("StreamingToolOutputCapture", () => {
     const never = new Promise<void>(() => undefined);
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       queueMaxBytes: 4,
       queueWaitMs: 10,
       beforePersist: async () => never,
@@ -308,7 +290,7 @@ describe("StreamingToolOutputCapture", () => {
     const never = new Promise<void>(() => undefined);
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       queueMaxBytes: 64 * 1024,
       queueWaitMs: 30,
       beforePersist: async () => never,
@@ -330,7 +312,7 @@ describe("StreamingToolOutputCapture", () => {
     await mkdir(tempDir);
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       committer: { async commit(draft) { return fakeCreated(draft); } },
     });
     await capture.write("a".repeat(50 * 1024 - 1));
@@ -351,7 +333,7 @@ describe("StreamingToolOutputCapture", () => {
     let generationIsActive!: () => boolean;
     const capture = new StreamingToolOutputCapture({
       tempDir,
-      input: { owner: OWNER, redactor: identityRedactor() },
+      input: { owner: OWNER },
       commitWaitMs: 10,
       committer: {
         async commit(_draft: CapturedArtifactDraft, active) {

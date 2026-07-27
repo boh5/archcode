@@ -485,7 +485,6 @@ export async function createRuntime(
     await toolOutputArtifactStore.ready();
     const finalizer = new ToolOutputFinalizer({
       artifactStore: toolOutputArtifactStore,
-      redactionPolicy,
     });
     const hitlCodec = new HitlBoundaryCodec(redactionPolicy);
     const toolRegistry = createToolRegistry({ finalizer, hitlCodec, logger: runtimeLogger.child({ module: "tools.registry" }) });

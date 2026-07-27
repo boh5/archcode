@@ -7,7 +7,6 @@ import type {
   ToolResultDetails,
 } from "@archcode/protocol";
 import type { AnyToolDescriptor, RawToolResult, ToolExecutionContext } from "../tools/types";
-import { SecretRedactionPolicy } from "../security";
 import { ToolOutputArtifactStore, computeProjectIdentity } from "./artifact-store";
 import type { ToolOutputCapture } from "./capture";
 import { ToolOutputError, isToolOutputError } from "./errors";
@@ -43,26 +42,15 @@ export interface FinalizeRawToolResultInput {
 
 export interface ToolOutputFinalizerOptions {
   readonly artifactStore: ToolOutputArtifactStore;
-  readonly redactionPolicy: SecretRedactionPolicy;
 }
 
 /** The only conversion from descriptor-owned RawToolResult to the wire contract. */
 export class ToolOutputFinalizer {
   readonly #artifactStore: ToolOutputArtifactStore;
-  readonly #redactionPolicy: SecretRedactionPolicy;
   readonly #projectIdentities = new Map<string, Promise<string>>();
 
   constructor(options: ToolOutputFinalizerOptions) {
     this.#artifactStore = options.artifactStore;
-    this.#redactionPolicy = options.redactionPolicy;
-  }
-
-  redactString(value: string): string {
-    return this.#redactionPolicy.redactString(value);
-  }
-
-  redactValue<T>(value: T): T {
-    return this.#redactionPolicy.redactValue(value);
   }
 
   async beginCapture(
@@ -78,15 +66,12 @@ export class ToolOutputFinalizer {
         producerSessionId: state.sessionId,
       },
       previewDirection: descriptor.outputPolicy.previewDirection,
-      redactor: this.#redactionPolicy.createStreamRedactor(),
     });
   }
 
   async finalize(input: FinalizeRawToolResultInput): Promise<FinalizedToolResult> {
     try {
-      const details = sanitizeDetails(
-        this.#redactionPolicy.redactValue(input.raw.details),
-      );
+      const details = sanitizeDetails(input.raw.details);
       switch (input.descriptor.outputPolicy.kind) {
         case "source":
           return this.#finalizeSource(input, details);
@@ -114,11 +99,11 @@ export class ToolOutputFinalizer {
     readonly hint?: string;
     readonly unknownResult?: boolean;
   }): FinalizedToolResult {
-    const message = this.#redactionPolicy.redactString(input.message);
+    const message = input.message;
     const payload = JSON.stringify({
       code: boundedText(input.code, ERROR_FIELD_MAX_BYTES),
       message,
-      ...(input.hint === undefined ? {} : { hint: boundedText(this.#redactionPolicy.redactString(input.hint), ERROR_HINT_MAX_BYTES) }),
+      ...(input.hint === undefined ? {} : { hint: boundedText(input.hint, ERROR_HINT_MAX_BYTES) }),
     });
     const canonical = canonicalizeUtf8(payload);
     const count = { bytes: canonical.canonicalBytes, lines: canonical.canonicalLines };
@@ -144,7 +129,7 @@ export class ToolOutputFinalizer {
                       name: boundedText(input.name ?? "ToolOutputError", ERROR_FIELD_MAX_BYTES),
                       ...(input.hint === undefined
                         ? {}
-                        : { hint: boundedText(this.#redactionPolicy.redactString(input.hint), ERROR_HINT_MAX_BYTES) }),
+                        : { hint: boundedText(input.hint, ERROR_HINT_MAX_BYTES) }),
                     },
                   }
                 : {}),
@@ -164,9 +149,9 @@ export class ToolOutputFinalizer {
         unknownResult: raw.details?.unknownResult,
       });
     }
-    const details = sanitizeDetails(this.#redactionPolicy.redactValue(raw.details));
+    const details = sanitizeDetails(raw.details);
     const observed = canonicalizeUtf8(raw.draft.text);
-    const canonical = canonicalizeUtf8(this.#redactionPolicy.redactString(raw.draft.text));
+    const canonical = canonicalizeUtf8(raw.draft.text);
     const projection = projectCanonicalText(canonical.bytes, "head");
     if (projection.completeness !== "complete") {
       return this.createSystemResult({
@@ -202,7 +187,7 @@ export class ToolOutputFinalizer {
     const source = input.raw.draft;
     const text = source.text;
     const observed = canonicalizeUtf8(text);
-    const canonical = canonicalizeUtf8(this.#redactionPolicy.redactString(text));
+    const canonical = canonicalizeUtf8(text);
     const projection = projectCanonicalText(
       canonical.bytes,
       input.descriptor.outputPolicy.previewDirection,
@@ -241,7 +226,7 @@ export class ToolOutputFinalizer {
       throw new ToolOutputError("TOOL_OUTPUT_POLICY_VIOLATION");
     }
     const observed = canonicalizeUtf8(input.raw.draft.text);
-    const canonical = canonicalizeUtf8(this.#redactionPolicy.redactString(input.raw.draft.text));
+    const canonical = canonicalizeUtf8(input.raw.draft.text);
     const projection = projectCanonicalText(
       canonical.bytes,
       input.descriptor.outputPolicy.previewDirection,
@@ -317,11 +302,10 @@ export class ToolOutputFinalizer {
     descriptor: AnyToolDescriptor,
     nextInput: JsonObject,
   ): Extract<ToolOutput["recovery"], { kind: "source" }> {
-    const redacted = this.#redactionPolicy.redactValue(nextInput);
-    if (!isBoundedRecoveryValue(redacted)) {
+    if (!isBoundedRecoveryValue(nextInput)) {
       throw new ToolOutputError("TOOL_OUTPUT_POLICY_VIOLATION");
     }
-    const parsed = descriptor.inputSchema.safeParse(redacted);
+    const parsed = descriptor.inputSchema.safeParse(nextInput);
     if (!parsed.success || !isJsonObject(parsed.data)) {
       throw new ToolOutputError("TOOL_OUTPUT_POLICY_VIOLATION");
     }

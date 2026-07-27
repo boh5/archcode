@@ -9,7 +9,6 @@ import {
   type ToolOutputRecovery,
   type ToolResultDetails,
 } from "@archcode/protocol";
-import { REDACTION_MARKER } from "../security";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
 let idCounter = 0;
@@ -490,14 +489,13 @@ describe("toModelMessagesFromStoredMessages", () => {
     expect(JSON.stringify(projected)).not.toContain("args");
   });
 
-  test("tool projection redacts secret-like input defensively", () => {
+  test("tool projection preserves the stored input", () => {
     const rawSecret = "sk_test_1234567890abcdef";
     const projected = toModelMessagesFromStoredMessages([
       storedMessage("assistant", [completedToolPart({ toolCallId: "call-secret", input: { command: `token=${rawSecret}` } })]),
     ]);
 
-    expect(JSON.stringify(projected)).toContain(REDACTION_MARKER);
-    expect(JSON.stringify(projected)).not.toContain(rawSecret);
+    expect(JSON.stringify(projected)).toContain(rawSecret);
   });
 
   test("successful tool result uses output text object and never isError", () => {

@@ -170,7 +170,7 @@ describe("ToolRegistry lifecycle", () => {
     finalize.mockRestore();
   });
 
-  test("redacts raw exceptions before finalized output or logs", async () => {
+  test("preserves raw exceptions in finalized tool output", async () => {
     const secret = "runtime-literal-secret";
     const logFields: unknown[] = [];
     const logger: Logger = {
@@ -182,7 +182,6 @@ describe("ToolRegistry lifecycle", () => {
     };
     const created = fixture({
       logger,
-      secretLiterals: [secret],
       descriptors: [descriptor({ execute: async () => { throw new Error(`boom ${secret}`); } })],
     });
     const ctx = context("echo");
@@ -191,8 +190,7 @@ describe("ToolRegistry lifecycle", () => {
       ctx,
     );
     const serialized = JSON.stringify({ outcome, logFields });
-    expect(serialized).not.toContain(secret);
-    expect(serialized).toContain("[REDACTED:SECRET]");
+    expect(serialized).toContain(secret);
   });
 });
 
@@ -321,7 +319,7 @@ describe("ToolRegistry strict execution pipeline", () => {
     expect(result).toMatchObject({ isError: false, output: { preview: "ok", completeness: "complete" } });
   });
 
-  test("executor exceptions become redacted settled errors", async () => {
+  test("executor exceptions become structured settled errors", async () => {
     const created = fixture({ descriptors: [descriptor({ execute: async () => { throw new Error("boom"); } })] });
     const result = expectSettledResult(await created.registry.execute(
       { toolName: "echo", toolCallId: "throw-call", input: {} },
@@ -770,9 +768,9 @@ describe("ToolRegistry permission and durable HITL boundary", () => {
 });
 
 describe("ToolRegistry current lifecycle callbacks", () => {
-  test("onInputResolved receives the redacted parsed input", async () => {
+  test("onInputResolved receives the parsed input used for execution", async () => {
     const secret = "runtime-secret-value";
-    const created = fixture({ secretLiterals: [secret], descriptors: [descriptor({
+    const created = fixture({ descriptors: [descriptor({
       inputSchema: z.object({ value: z.string() }).strict(),
     })] });
     const onInputResolved = mock(() => undefined);
@@ -781,7 +779,7 @@ describe("ToolRegistry current lifecycle callbacks", () => {
     await created.registry.execute(
       { toolName: "echo", toolCallId: "resolved-input", input: { value: secret } }, ctx,
     );
-    expect(onInputResolved).toHaveBeenCalledWith({ value: "[REDACTED:SECRET]" });
+    expect(onInputResolved).toHaveBeenCalledWith({ value: secret });
   });
 
   test("effectful attempt recording is awaited before execute", async () => {

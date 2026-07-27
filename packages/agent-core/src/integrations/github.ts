@@ -5,7 +5,7 @@ import {
   type ResolvedGithubIntegrationConfig,
   resolveGithubIntegrationConfig,
 } from "../config";
-import { REDACTION_MARKER as SECURITY_REDACTION_MARKER, redactString } from "../security";
+import { REDACTION_MARKER as SECURITY_REDACTION_MARKER } from "../security";
 import { BoundedByteBuffer } from "../utils/bounded-byte-buffer";
 
 export const GITHUB_REST_API_VERSION = "2022-11-28" as const;
@@ -534,7 +534,7 @@ export class GitHubRestProvider implements GitHubIntegrationProvider {
   }
 
   redactMessage(message: string): string {
-    return redactString(redactGitHubTokenValue(message, this.#lastToken));
+    return redactGitHubTokenValue(message, this.#lastToken);
   }
 
   redactValue<T>(value: T): T {
@@ -1276,7 +1276,7 @@ function appendUniqueString(values: string[], value: string | undefined): string
 
 function safeAuditText(value: string | null | undefined): string | undefined {
   if (typeof value !== "string" || value.trim() === "") return undefined;
-  return redactString(redactKnownGitHubTokenPrefixes(value));
+  return redactKnownGitHubTokenPrefixes(value);
 }
 
 function redactKnownGitHubTokenPrefixes(value: string): string {
@@ -1375,7 +1375,7 @@ async function readResponseText(response: Response, token: string): Promise<stri
     if (error instanceof IntegrationError) throw error;
     throw new IntegrationError(
       "integration_bad_response",
-      redactString(redactGitHubTokenValue("Failed to read GitHub response body.", token)),
+      redactGitHubTokenValue("Failed to read GitHub response body.", token),
       { status: response.status, cause: error },
     );
   }

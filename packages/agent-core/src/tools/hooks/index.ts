@@ -1,7 +1,6 @@
 // ─── Hooks barrel ───
 // Re-exports all lifecycle hook factories and helpers.
-// Security primitives (redactString, redactValue, REDACTION_MARKER) are
-// exported from src/tools/security — not from this barrel.
+// Hooks receive finalized output and do not transform tool payloads.
 
 export { createAuditHook } from "./audit";
 export type { AuditEvent, AuditHookOptions, AuditSink } from "./audit";

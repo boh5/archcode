@@ -1,7 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { StoredMessage, StoredPart } from "./types";
 import type { FinalizedToolResult, GoalNoticePart } from "@archcode/protocol";
-import { redactValue } from "../security";
 import { TOOL_OUTPUT_PREVIEW_MAX_BYTES, TOOL_OUTPUT_PREVIEW_MAX_LINES } from "../tool-output/constants";
 import { projectCanonicalText } from "../tool-output/projection";
 import { utf8ByteLength } from "../tool-output/utf8";
@@ -129,7 +128,7 @@ export function projectModelMessagesFromStoredMessages(
             type: "tool-call",
             toolCallId: part.toolCallId,
             toolName: part.toolName,
-            input: redactValue(part.input),
+            input: part.input,
           });
           toolContent.push({
             type: "tool-result",
@@ -147,7 +146,7 @@ export function projectModelMessagesFromStoredMessages(
             type: "tool-call",
             toolCallId: part.toolCallId,
             toolName: part.toolName,
-            input: redactValue(part.input),
+            input: part.input,
           });
           toolContent.push({
             type: "tool-result",
@@ -199,7 +198,7 @@ export function projectModelMessagesFromStoredMessages(
           type: "tool-call",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          input: redactValue(part.input),
+          input: part.input,
         });
         toolContent.push({
           type: "tool-result",
@@ -217,7 +216,7 @@ export function projectModelMessagesFromStoredMessages(
           type: "tool-call",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          input: redactValue(part.input),
+          input: part.input,
         });
         toolContent.push({
           type: "tool-result",
