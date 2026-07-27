@@ -41,6 +41,20 @@ afterEach(async () => {
 });
 
 describe("BootstrapGate", () => {
+  test("directs an uninitialized home page to the terminal setup link instead of showing setup fields", async () => {
+    globalThis.fetch = mock(async () => Response.json({ mode: "setup" })) as unknown as typeof fetch;
+
+    await act(async () => { root.render(<BootstrapGate><p>Workbench mounted</p></BootstrapGate>); });
+
+    expect(document.body.textContent).toContain("Open the setup link from your terminal");
+    expect(document.body.textContent).toContain("Complete first-run setup at");
+    expect(document.body.textContent).not.toContain("Set up your workbench");
+    expect(document.body.textContent).not.toContain("Require login");
+    expect(document.body.textContent).not.toContain("Password");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith("/api/bootstrap", expect.objectContaining({ credentials: "same-origin" }));
+  });
+
   test("does not mount workbench children until bootstrap authorizes ready mode", async () => {
     globalThis.fetch = mock(async () => Response.json({ mode: "ready", authRequired: false, authenticated: false })) as unknown as typeof fetch;
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { LockKeyhole, RefreshCw, ShieldAlert, TriangleAlert } from "lucide-react";
+import { LockKeyhole, RefreshCw, ShieldAlert, Terminal, TriangleAlert } from "lucide-react";
 import type { BootstrapStatus, CompleteSetupRequest, ProviderAdapterCatalog, ServerConfigUpdate } from "@archcode/protocol";
 import { MAX_AUTH_PASSWORD_BYTES, MIN_AUTH_PASSWORD_LENGTH } from "@archcode/protocol";
 import { ApiError, subscribeAuthInvalidation } from "../../api/client";
@@ -78,7 +78,12 @@ export function BootstrapGate({
   if (state.kind === "error") return <BlockingPage icon={<TriangleAlert size={20} />} title="Can’t reach ArchCode" message={state.message} onRetry={reload} />;
 
   const { status } = state;
-  if (status.mode === "setup") return <SetupPage grant={readSetupGrant()} onComplete={reload} />;
+  if (status.mode === "setup") {
+    const grant = readSetupGrant();
+    return grant
+      ? <SetupPage grant={grant} onComplete={reload} />
+      : <SetupLinkRequiredPage onRetry={reload} />;
+  }
   if (status.mode === "activating") return <BootstrapShell title="Finishing setup"><p className="text-sm text-text-tertiary">ArchCode is creating the runtime. This page will continue automatically.</p></BootstrapShell>;
   if (status.mode === "config_error") return <BlockingPage icon={<ShieldAlert size={20} />} title="Configuration needs repair" message={status.message} onRetry={reload} />;
   if (status.mode === "startup_error") return <BlockingPage icon={<TriangleAlert size={20} />} title="ArchCode could not start" message={status.message} onRetry={reload} />;
@@ -105,6 +110,19 @@ function BlockingPage({ icon, title, message, onRetry }: { icon: ReactNode; titl
       <p role="alert" className="text-sm leading-6 text-text-secondary">{message}</p>
     </div>
     <button type="button" className={`mt-6 ${secondaryButton}`} onClick={onRetry}><RefreshCw size={14} aria-hidden="true" />Retry</button>
+  </BootstrapShell>;
+}
+
+function SetupLinkRequiredPage({ onRetry }: { onRetry: () => void }) {
+  return <BootstrapShell title="Open the setup link from your terminal">
+    <div className="flex gap-3">
+      <span className="mt-0.5 text-warning" aria-hidden="true"><Terminal size={20} /></span>
+      <div className="space-y-2 text-sm leading-6 text-text-secondary">
+        <p>This ArchCode server has not been set up yet.</p>
+        <p>Return to the terminal where ArchCode is running and open the URL printed after <span className="font-medium text-text-primary">“Complete first-run setup at”</span>. That URL contains the one-time token required to begin setup.</p>
+      </div>
+    </div>
+    <button type="button" className={`mt-6 ${secondaryButton}`} onClick={onRetry}><RefreshCw size={14} aria-hidden="true" />Check again</button>
   </BootstrapShell>;
 }
 
@@ -138,7 +156,7 @@ function LoginPage({ onLoggedIn }: { onLoggedIn: () => Promise<void> }) {
   </BootstrapShell>;
 }
 
-function SetupPage({ grant, onComplete }: { grant?: string; onComplete: () => Promise<void> }) {
+function SetupPage({ grant, onComplete }: { grant: string; onComplete: () => Promise<void> }) {
   const [config, setConfig] = useState<ServerConfigUpdate>(emptySetupConfig);
   const [adapterCatalog, setAdapterCatalog] = useState<ProviderAdapterCatalog>();
   const [loadingCatalog, setLoadingCatalog] = useState(true);
@@ -152,10 +170,6 @@ function SetupPage({ grant, onComplete }: { grant?: string; onComplete: () => Pr
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    if (!grant) {
-      setLoadingCatalog(false);
-      return;
-    }
     let live = true;
     void getSetupProviderAdapterCatalog(grant).then(
       (catalog) => { if (live) setAdapterCatalog(catalog); },
@@ -179,10 +193,6 @@ function SetupPage({ grant, onComplete }: { grant?: string; onComplete: () => Pr
   const passwordError = validatePassword(password, passwordConfirmation, requireLogin);
 
   const submit = async () => {
-    if (!grant) {
-      setError("This setup link is missing its one-time grant. Run ArchCode again and open the setup URL printed in the terminal.");
-      return;
-    }
     if (Object.keys(jsonErrors).length > 0 || passwordError || (requireLogin && !password)) return;
     if (!requireLogin && !confirmNoLogin) {
       setConfirmNoLogin(true);
@@ -214,7 +224,6 @@ function SetupPage({ grant, onComplete }: { grant?: string; onComplete: () => Pr
         <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">Add one provider and model, then choose whether this server requires a password. Advanced integration settings remain available after setup.</p>
       </header>
       <div className="space-y-8 px-5 py-6 sm:px-7">
-        {!grant && <p role="alert" className="rounded-sm border border-warning/30 bg-warning-muted px-3 py-3 text-sm leading-5 text-warning">Open the setup URL printed in the terminal. Its one-time grant is required to create this server configuration.</p>}
         {error && <p role="alert" className="rounded-sm border border-error/30 bg-error-muted px-3 py-3 text-sm leading-5 text-error">{error}</p>}
         {loadingCatalog ? <p className="text-sm text-text-tertiary">Loading provider adapters…</p> : adapterCatalog ? <>
           <SettingsModelsPanel config={config} adapterCatalog={adapterCatalog} onChange={setConfig} errors={allErrors} onJsonValidationChange={onJsonValidationChange} />
