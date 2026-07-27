@@ -42,6 +42,7 @@ mock.module("../store/session-runtime-store", () => ({
 }));
 mock.module("../api/queries", () => ({
   useProjects: () => ({ data: [] }),
+  useProjectTodos: () => ({ data: [] }),
   useSessions: () => ({
     data: [{
       sessionId: "root",

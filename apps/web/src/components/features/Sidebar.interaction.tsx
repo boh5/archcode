@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import type { Automation, Project, SessionSummaryWithGoal } from "../../api/types";
+import type { Automation, Project, ProjectTodo, SessionSummaryWithGoal } from "../../api/types";
 import type { ScopedHitlView } from "../../store/hitl-store";
 
 const navigationCalls: string[] = [];
@@ -16,11 +16,13 @@ let route = {
 };
 let sessions: SessionSummaryWithGoal[] = [];
 let automations: Automation[] = [];
+let projectTodos: ProjectTodo[] = [];
 let runtimeInitialized = true;
 let runtimeFamilies: Record<string, { activity: "running" | "stopping" | "idle" }> = {};
 let attentionVisibleHitl: ScopedHitlView[] = [];
 
 const Icon = (props: Record<string, unknown>) => <svg {...props} />;
+const ListTodoIcon = (props: Record<string, unknown>) => <svg data-icon="list-todo" {...props} />;
 
 mock.module("react-router-dom", () => ({
   Link: ({ to, children, ...props }: { to: string; children?: ReactNode }) => <a href={to} {...props}>{children}</a>,
@@ -33,6 +35,7 @@ mock.module("lucide-react", () => ({
   ChevronRight: Icon,
   Focus: Icon,
   LayoutDashboard: Icon,
+  ListTodo: ListTodoIcon,
   PanelLeftClose: Icon,
   Plus: Icon,
 }));
@@ -53,6 +56,7 @@ mock.module("../../api/queries", () => ({
   useProjects: () => ({ data: [project] }),
   useSessions: () => ({ data: sessions }),
   useAutomations: () => ({ data: automations }),
+  useProjectTodos: () => ({ data: projectTodos }),
 }));
 
 mock.module("../../context/workbench-layout", () => ({
@@ -146,6 +150,23 @@ function automation(id: string, name: string): Automation {
   } as unknown as Automation;
 }
 
+function projectTodo(
+  id: string,
+  status: ProjectTodo["status"],
+  archivedAt?: number,
+): ProjectTodo {
+  return {
+    id,
+    title: id,
+    body: "",
+    status,
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    ...(archivedAt === undefined ? {} : { archivedAt }),
+  };
+}
+
 let dom: JSDOM;
 let root: Root;
 let container: HTMLElement;
@@ -202,6 +223,13 @@ beforeEach(() => {
     attention("mixed", "ask_user"),
   ];
   automations = [automation("auto-1", "Nightly review")];
+  projectTodos = [
+    projectTodo("idea", "idea"),
+    projectTodo("ready", "ready"),
+    projectTodo("done", "done"),
+    projectTodo("rejected", "rejected"),
+    projectTodo("archived", "idea", 2),
+  ];
   container = document.getElementById("root")!;
   root = createRoot(container);
 });
@@ -221,6 +249,15 @@ async function renderSidebar(): Promise<void> {
 }
 
 describe("Sidebar Session list", () => {
+  test("gives Todos a distinct icon and counts only open active work", async () => {
+    await renderSidebar();
+
+    const todoLink = container.querySelector('a[href="/projects/demo/todos"]') as HTMLAnchorElement;
+    expect(todoLink.querySelector('[data-icon="list-todo"]')).not.toBeNull();
+    expect(todoLink.querySelector('[data-testid="sidebar-todo-count"]')?.textContent).toBe("2");
+    expect(todoLink.getAttribute("aria-label")).toBe("Todos, 2 open");
+  });
+
   test("groups by attention, live work, then recency using one-line accessible Session rows", async () => {
     await renderSidebar();
 

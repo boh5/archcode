@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { ChevronRight, Focus, LayoutDashboard, PanelLeftClose, Plus } from "lucide-react";
+import {
+  ChevronRight,
+  Focus,
+  LayoutDashboard,
+  ListTodo,
+  PanelLeftClose,
+  Plus,
+  type LucideIcon,
+} from "lucide-react";
 import { useCreateSession, usePostMessage } from "../../api/mutations";
-import { useAutomations, useProjects, useSessions } from "../../api/queries";
+import { useAutomations, useProjects, useProjectTodos, useSessions } from "../../api/queries";
 import type {
   Automation,
   Project,
@@ -301,23 +309,37 @@ function DashboardLinkButton({
   to,
   label,
   isActive,
+  icon: Icon = LayoutDashboard,
+  count,
 }: {
   to: string;
   label: string;
   isActive: boolean;
+  icon?: LucideIcon;
+  count?: number;
 }) {
   return (
     <Link
       to={to}
       aria-current={isActive ? "page" : undefined}
+      aria-label={count === undefined ? undefined : `${label}, ${count} open`}
       className={`group relative flex h-8 items-center gap-2 rounded-sm px-3 text-[12px] font-medium transition-colors ${isActive
         ? "bg-brand-subtle text-brand"
         : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
       }`}
     >
       {isActive && <span className="absolute inset-y-1 left-0 w-0.5 rounded-r-sm bg-brand" aria-hidden="true" />}
-      <LayoutDashboard size={13} className="shrink-0" aria-hidden="true" />
+      <Icon size={13} className="shrink-0" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
+      {count !== undefined && (
+        <span
+          data-testid="sidebar-todo-count"
+          className="shrink-0 text-[11px] font-semibold tabular-nums text-text-tertiary"
+          aria-hidden="true"
+        >
+          {count}
+        </span>
+      )}
       <ChevronRight size={12} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
     </Link>
   );
@@ -354,9 +376,15 @@ export function Sidebar({
   const activeProject = projects?.find(p => p.slug === slug) ?? null;
   const { data: sessions } = useSessions(slug);
   const { data: automations } = useAutomations(slug);
+  const { data: projectTodos } = useProjectTodos(slug);
   const runtimeInitialized = useSessionRuntimeInitialized(slug);
   const runtimeFamilies = useSessionRuntimeFamilies();
   const attentionVisibleHitl = useAttentionVisibleScopedHitl([slug]);
+  const openTodoCount = projectTodos?.filter((todo) => (
+    todo.archivedAt === undefined
+    && todo.status !== "done"
+    && todo.status !== "rejected"
+  )).length;
 
   const routeTab = deriveSidebarTabFromPath(location.pathname);
   const activeTab = selectedTab;
@@ -502,6 +530,8 @@ export function Sidebar({
             to={`/projects/${slug}/todos`}
             label="Todos"
             isActive={location.pathname === `/projects/${slug}/todos`}
+            icon={ListTodo}
+            count={openTodoCount}
           />
         </div>
       </div>
