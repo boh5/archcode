@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-07-27
+
 ### Added
 
 - Add strict `ARCHCODE_LOG_LEVEL` and `ARCHCODE_ACCESS_LOG` controls while
@@ -21,6 +23,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - Make the Release installer write a binary-bound management receipt required
   for direct updates. Existing installations must run the installer once to
   enter the managed update path.
+- Simplify Goal creation and completion by moving confirmation and review
+  interpretation into the Lead workflow instead of rigid Runtime protocols.
 
 ## [0.0.3] - 2026-07-24
 

@@ -1,6 +1,6 @@
 {
   "name": "archcode",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "description": "ArchCode — Not just a coding agent. An always-on workbench for AI engineering.",
   "type": "module",
