@@ -38,7 +38,9 @@ jobs:
         run: bun run typecheck
 
       - name: Test
-        run: bun run test
+        env:
+          ARCHCODE_TEST_WATCHDOG_SECONDS: 600
+        run: bash .github/scripts/run-tests-with-diagnostics.sh
 
       - name: Build
         run: bun run build
