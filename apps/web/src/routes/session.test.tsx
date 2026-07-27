@@ -696,20 +696,14 @@ describe("SessionRoute focused view store behavior", () => {
       rootSessionId: "root-session",
       title: "Shape offline mode",
       messages: [],
-    });
+    }) as ReturnType<typeof createSession> & { projectTodo: { todoId: string; entry: "discussion" } };
+    rootSession.projectTodo = { todoId: "todo-offline-mode", entry: "discussion" };
     const projectTodo: ProjectTodo = {
       id: "todo-offline-mode",
       title: "Add resilient offline mode",
       body: "",
       status: "ready",
       revision: 3,
-      discussionSessionId: "root-session",
-      activation: {
-        kind: "session",
-        sourceSessionId: "root-session",
-        todoRevision: 3,
-        snapshot: { title: "Add resilient offline mode", body: "" },
-      },
       createdAt: 1,
       updatedAt: 2,
     };
@@ -752,7 +746,7 @@ describe("SessionRoute focused view store behavior", () => {
       const backlink = container.querySelector('[data-testid="project-todo-backlink"]');
       expect(backlink?.textContent).toBe("Add resilient offline mode");
       expect(backlink?.getAttribute("href")).toBe("/projects/demo/todos?todo=todo-offline-mode");
-      expect(container.textContent).toContain("Discussion Todo · Activation source");
+      expect(container.textContent).toContain("Discussion Todo");
       expect(backlink?.closest("header")).not.toBeNull();
 
       const link = container.querySelector('[data-testid="project-todo-backlink"]');

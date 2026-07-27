@@ -3,7 +3,6 @@ import {
   NotRootSessionError,
   SessionDeleteConflictError,
   SessionDeleteInProgressError,
-  SessionDeleteOwnerConflictError,
   SessionFamilyStopConflictError,
   SessionFamilyStopInProgressError,
   SessionFileNotFoundError,
@@ -257,12 +256,6 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
         throw new ConflictError([error.sessionId], error.message, {
           scopeCode: error.code,
           rootSessionId: error.rootSessionId,
-        });
-      }
-      if (error instanceof SessionDeleteOwnerConflictError) {
-        throw new ConflictError(error.sessionIds, error.message, {
-          scopeCode: error.code,
-          owners: error.owners,
         });
       }
       if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {

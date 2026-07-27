@@ -1,146 +1,117 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCorners,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import {
-  Archive,
-  Ban,
-  Check,
-  ExternalLink,
-  MessageCircle,
-  Plus,
-  RotateCcw,
-  Save,
-  Send,
-  Trash2,
-  X,
-} from "lucide-react";
-import {
-  useActivateProjectTodo,
-  useArchiveProjectTodo,
-  useCreateProjectTodo,
-  useDiscussProjectTodo,
-  useRestoreProjectTodo,
-  useReturnProjectTodoToReady,
-  useUpdateProjectTodo,
-} from "../api/mutations";
+import { Archive, Check, GripVertical, MessageCircle, Plus, RotateCcw, Save, Send, X } from "lucide-react";
+import { useCreateProjectTodo, useCreateProjectTodoSession, useUpdateProjectTodo } from "../api/mutations";
 import { useAutomations, useProjectTodos, useSessions } from "../api/queries";
-import type {
-  Automation,
-  ProjectTodo,
-  ProjectTodoActivationKind,
-  ProjectTodoUpdateInput,
-  SessionSummary,
-} from "../api/types";
-import {
-  runtimeFamilyKey,
-  useSessionRuntimeFamilies,
-  useSessionRuntimeInitialized,
-} from "../store/session-runtime-store";
-import { ActivityArc } from "../components/primitives/ActivityArc";
+import type { Automation, ProjectTodo, ProjectTodoStatus, ProjectTodoUpdateInput, SessionSummary } from "../api/types";
 import { STATUS_TONE_CLASS, type StatusTone } from "../lib/status-visuals";
 import {
-  PROJECT_TODO_DISCUSSION_PRESENTATION,
   PROJECT_TODO_LANE_PRESENTATIONS,
-  presentProjectTodoAssociation,
   presentProjectTodoCard,
-  type ProjectTodoAssociationPresentation,
-  type ProjectTodoGlyph,
   type ProjectTodoLane,
 } from "./project-todo-presentation";
 
 type View = "board" | "rejected" | "archived";
-type RuntimeFamilies = ReturnType<typeof useSessionRuntimeFamilies>;
+type BoardOrder = Record<ProjectTodoLane, string[]>;
+const LANES: readonly ProjectTodoLane[] = ["idea", "ready", "in_progress", "done"];
 
-interface TodoResourceProps {
-  slug: string;
-  sessions?: SessionSummary[];
-  automations?: Automation[];
-  runtimeFamilies: RuntimeFamilies;
-  sessionsLoading: boolean;
-  automationsLoading: boolean;
-  runtimeInitialized: boolean;
+export function deriveProjectTodoGroups(todos: readonly ProjectTodo[]): Record<ProjectTodoLane, ProjectTodo[]> {
+  const groups: Record<ProjectTodoLane, ProjectTodo[]> = { idea: [], ready: [], in_progress: [], done: [] };
+  for (const todo of todos) {
+    if (todo.archivedAt === undefined && todo.status !== "rejected") groups[todo.status].push(todo);
+  }
+  return groups;
+}
+
+function deriveBoardOrder(todos: readonly ProjectTodo[]): BoardOrder {
+  const groups = deriveProjectTodoGroups(todos);
+  return Object.fromEntries(LANES.map((lane) => [lane, groups[lane].map((todo) => todo.id)])) as BoardOrder;
+}
+
+function locateTodo(order: BoardOrder, todoId: string): { lane: ProjectTodoLane; index: number } | undefined {
+  for (const lane of LANES) {
+    const index = order[lane].indexOf(todoId);
+    if (index !== -1) return { lane, index };
+  }
+  return undefined;
+}
+
+/** Component-local projection used exclusively during a drag; server order remains authoritative. */
+export function moveTodoInBoard(order: BoardOrder, todoId: string, destination: ProjectTodoLane, destinationIndex: number): BoardOrder {
+  const source = locateTodo(order, todoId);
+  if (!source) return order;
+  const next: BoardOrder = { idea: [...order.idea], ready: [...order.ready], in_progress: [...order.in_progress], done: [...order.done] };
+  const [moved] = next[source.lane].splice(source.index, 1);
+  if (!moved) return order;
+  next[destination].splice(Math.max(0, Math.min(destinationIndex, next[destination].length)), 0, moved);
+  return next;
+}
+
+export function continueWorkUpdateInput(todo: ProjectTodo): ProjectTodoUpdateInput | undefined {
+  return todo.status === "ready"
+    ? { expectedRevision: todo.revision, status: "in_progress" }
+    : undefined;
 }
 
 export function ProjectTodosRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
-  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { data: todos, isLoading, error } = useProjectTodos(slug);
-  const { data: sessions, isLoading: sessionsLoading } = useSessions(slug);
-  const { data: automations, isLoading: automationsLoading } = useAutomations(slug);
-  const runtimeFamilies = useSessionRuntimeFamilies();
-  const runtimeInitialized = useSessionRuntimeInitialized(slug);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { data: todos = [], isLoading, error } = useProjectTodos(slug);
+  const { data: sessions = [] } = useSessions(slug);
+  const { data: automations = [] } = useAutomations(slug);
+  const createTodo = useCreateProjectTodo();
+  const updateTodo = useUpdateProjectTodo();
+  const createSession = useCreateProjectTodoSession();
   const [view, setView] = useState<View>("board");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
-  const createTodo = useCreateProjectTodo();
-  const selectedTodoId = searchParams.get("todo");
-  const appliedSelectionRef = useRef<string | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [temporaryOrder, setTemporaryOrder] = useState<BoardOrder | null>(null);
+  const [reorderError, setReorderError] = useState<string | null>(null);
+  const selectedId = searchParams.get("todo");
+  const selectedTodo = todos.find((todo) => todo.id === selectedId);
+  const canonicalOrder = useMemo(() => deriveBoardOrder(todos), [todos]);
+  const boardOrder = temporaryOrder ?? canonicalOrder;
+  const todoById = useMemo(() => new Map(todos.map((todo) => [todo.id, todo])), [todos]);
+  const announcements = useMemo(() => createDragAnnouncements(boardOrder, todoById), [boardOrder, todoById]);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
-  const resourceProps: TodoResourceProps = {
-    slug,
-    sessions,
-    automations,
-    runtimeFamilies,
-    sessionsLoading,
-    automationsLoading,
-    runtimeInitialized,
-  };
-
-  useEffect(() => {
-    if (!selectedTodoId) {
-      appliedSelectionRef.current = null;
-      return;
-    }
-    if (appliedSelectionRef.current === selectedTodoId) return;
-    const selectedTodo = todos?.find((todo) => todo.id === selectedTodoId);
-    if (!selectedTodo) return;
-    setView(selectedTodo.archivedAt !== undefined
-      ? "archived"
-      : selectedTodo.status === "rejected"
-        ? "rejected"
-        : "board");
-    setSelectedId(selectedTodo.id);
-    appliedSelectionRef.current = selectedTodoId;
-  }, [selectedTodoId, todos]);
-
-  const visibleTodos = useMemo(() => {
-    const list = todos ?? [];
-    if (view === "archived") return list.filter((todo) => todo.archivedAt !== undefined);
-    if (view === "rejected") {
-      return list.filter((todo) => todo.archivedAt === undefined && todo.status === "rejected");
-    }
-    return list.filter((todo) => todo.archivedAt === undefined && todo.status !== "rejected");
-  }, [todos, view]);
-
-  const groups = useMemo(() => deriveProjectTodoGroups(visibleTodos), [visibleTodos]);
-  const selectedTodo = todos?.find((todo) => todo.id === selectedId);
-
-  const updateSelectionQuery = (id: string | null) => {
+  const selectTodo = (id: string | null) => {
     const next = new URLSearchParams(searchParams);
     if (id) next.set("todo", id);
     else next.delete("todo");
     setSearchParams(next, { replace: true });
   };
 
-  const selectTodo = (id: string) => {
-    setSelectedId(id);
-    updateSelectionQuery(id);
-  };
-
-  const closeTodo = () => {
-    setSelectedId(null);
-    updateSelectionQuery(null);
-  };
-
-  const selectView = (nextView: View) => {
-    setView(nextView);
-    setSelectedId(null);
-    updateSelectionQuery(null);
-  };
-
-  const handleCreate = () => {
+  const create = () => {
     const title = newTitle.trim();
     if (!title) {
       setCreateError("Title is required");
@@ -148,920 +119,221 @@ export function ProjectTodosRoute() {
     }
     setCreateError(null);
     createTodo.mutate({ slug, input: { title } }, {
-      onSuccess: (result) => {
+      onSuccess: ({ todo }) => {
         setNewTitle("");
         setView("board");
-        selectTodo(result.todo.id);
+        selectTodo(todo.id);
       },
-      onError: (cause) => setCreateError(cause instanceof Error ? cause.message : "Failed to create Todo"),
+      onError: (cause) => setCreateError(messageFor(cause)),
     });
   };
 
-  if (isLoading) {
-    return <div className="flex h-full items-center justify-center text-sm text-text-tertiary">Loading Todos…</div>;
-  }
-  if (error) {
-    return <div className="flex h-full items-center justify-center text-sm text-error">Failed to load Todos</div>;
-  }
+  const resolveDrop = (activeId: string, overId: string | null): { lane: ProjectTodoLane; index: number } | undefined => {
+    if (!overId) return undefined;
+    if (isLane(overId)) return { lane: overId, index: boardOrder[overId].length };
+    const target = locateTodo(boardOrder, overId);
+    return target ? { lane: target.lane, index: target.index } : undefined;
+  };
+
+  const onDragStart = ({ active }: DragStartEvent) => {
+    setReorderError(null);
+    setDraggedId(String(active.id));
+    setTemporaryOrder(canonicalOrder);
+  };
+  const onDragOver = ({ active, over }: DragOverEvent) => {
+    const todoId = String(active.id);
+    const destination = resolveDrop(todoId, over ? String(over.id) : null);
+    if (!destination) return;
+    setTemporaryOrder((previous) => moveTodoInBoard(previous ?? canonicalOrder, todoId, destination.lane, destination.index));
+  };
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    const todoId = String(active.id);
+    const todo = todoById.get(todoId);
+    const destination = resolveDrop(todoId, over ? String(over.id) : null);
+    const finalOrder = temporaryOrder ?? canonicalOrder;
+    setDraggedId(null);
+    if (!todo || !destination) {
+      setTemporaryOrder(null);
+      return;
+    }
+    const result = locateTodo(finalOrder, todoId);
+    if (!result) {
+      setTemporaryOrder(null);
+      return;
+    }
+    const beforeTodoId = finalOrder[result.lane][result.index + 1] ?? null;
+    const stateChanged = todo.status !== result.lane;
+    const positionChanged = canonicalOrder[result.lane].indexOf(todoId) !== result.index || todo.status !== result.lane;
+    if (!stateChanged && !positionChanged) {
+      setTemporaryOrder(null);
+      return;
+    }
+    updateTodo.mutate({
+      slug,
+      todoId,
+      input: { expectedRevision: todo.revision, ...(stateChanged ? { status: result.lane } : {}), beforeTodoId },
+    }, {
+      onSuccess: () => setTemporaryOrder(null),
+      onError: (cause) => {
+        setTemporaryOrder(null);
+        setReorderError(messageFor(cause));
+      },
+    });
+  };
+  const onDragCancel = () => {
+    setDraggedId(null);
+    setTemporaryOrder(null);
+  };
+
+  if (isLoading) return <div className="flex h-full items-center justify-center text-sm text-text-tertiary">Loading Todos…</div>;
+  if (error) return <div className="flex h-full items-center justify-center text-sm text-error">Failed to load Todos</div>;
+
+  const visibleTodos = view === "archived"
+    ? todos.filter((todo) => todo.archivedAt !== undefined)
+    : view === "rejected"
+      ? todos.filter((todo) => todo.archivedAt === undefined && todo.status === "rejected")
+      : [];
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg-base">
       <header className="flex min-h-[68px] shrink-0 flex-wrap items-center justify-between gap-4 border-b border-border-default bg-bg-surface px-4 py-3 min-[621px]:px-6">
-        <div className="min-w-0">
-          <div className="flex items-baseline gap-2.5">
-            <h1 className="text-[20px] font-semibold leading-7 tracking-[-0.02em] text-text-primary">Todos</h1>
-            {(todos?.length ?? 0) > 0 && (
-              <span className="text-[11px] font-medium tabular-nums text-text-tertiary">
-                {todos?.length} total
-              </span>
-            )}
-          </div>
-          <p className="mt-0.5 text-[12px] leading-5 text-text-tertiary">
-            Shape intent before handing it to execution.
-          </p>
-        </div>
-        <div className="flex items-center rounded-lg border border-border-default bg-bg-muted p-0.5" role="group" aria-label="Todo views">
-          <ViewButton active={view === "board"} onClick={() => selectView("board")} label="Board" />
-          <ViewButton active={view === "rejected"} onClick={() => selectView("rejected")} label="Rejected" />
-          <ViewButton active={view === "archived"} onClick={() => selectView("archived")} label="Archived" />
+        <div><h1 className="text-[20px] font-semibold leading-7 tracking-[-0.02em] text-text-primary">Todos</h1><p className="mt-0.5 text-[12px] leading-5 text-text-tertiary">Shape intent, then start as many discussions or work sessions as useful.</p></div>
+        <div className="flex items-center rounded-md border border-border-default bg-bg-muted p-0.5" role="group" aria-label="Todo views">
+          <ViewButton active={view === "board"} onClick={() => setView("board")}>Board</ViewButton>
+          <ViewButton active={view === "rejected"} onClick={() => setView("rejected")}>Rejected</ViewButton>
+          <ViewButton active={view === "archived"} onClick={() => setView("archived")}>Archived</ViewButton>
         </div>
       </header>
-
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="shrink-0 px-4 pt-4 min-[621px]:px-6">
-          <div className="mx-auto flex min-h-[58px] max-w-[1500px] flex-col gap-2 rounded-lg border border-border-control bg-bg-elevated p-2.5 shadow-sm transition-[border-color,box-shadow] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-subtle min-[621px]:flex-row min-[621px]:items-center">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <Plus size={15} className="shrink-0 text-text-tertiary" aria-hidden="true" />
-              <input
-                aria-label="New Todo title"
-                value={newTitle}
-                onChange={(event) => {
-                  setNewTitle(event.target.value);
-                  setCreateError(null);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") handleCreate();
-                }}
-                placeholder="Capture a Todo…"
-                className="min-w-0 flex-1 bg-transparent px-2 py-2 text-[16px] leading-6 text-text-primary placeholder:text-text-muted focus:outline-none min-[621px]:text-[14px]"
-              />
-            </div>
-            <button
-              type="button"
-              aria-label="New Todo"
-              onClick={handleCreate}
-              disabled={createTodo.isPending}
-              className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-sm border border-brand bg-brand px-4 text-[12px] font-medium text-bg-base transition-colors hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 min-[621px]:w-auto"
-            >
-              <Plus size={13} aria-hidden="true" /> New Todo
-            </button>
-          </div>
-          {createError && (
-            <p role="alert" className="mx-auto mt-2 max-w-[1500px] px-1 text-xs text-error">{createError}</p>
-          )}
+      <div className="shrink-0 px-4 pt-4 min-[621px]:px-6">
+        <div className="mx-auto flex max-w-[1500px] gap-2 rounded-lg border border-border-control bg-bg-elevated p-2.5 shadow-sm focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-subtle">
+          <Plus size={15} className="shrink-0 self-center text-text-tertiary" aria-hidden="true" />
+          <input aria-label="New Todo" value={newTitle} onChange={(event) => { setNewTitle(event.target.value); setCreateError(null); }} onKeyDown={(event) => { if (event.key === "Enter") create(); }} placeholder="Capture a Todo…" className="h-8 min-w-0 flex-1 bg-transparent px-1 text-[13px] text-text-primary outline-none placeholder:text-text-muted" />
+          <button type="button" onClick={create} disabled={createTodo.isPending} className="h-8 rounded-sm bg-brand px-3 text-[12px] font-medium text-bg-overlay hover:bg-brand-hover disabled:opacity-40">Add</button>
         </div>
-
-        <main className="min-h-0 flex-1 overflow-auto px-4 pb-7 pt-4 min-[621px]:px-6">
-          {view === "board" ? (
-            <div
-              className="mx-auto grid max-w-[1500px] grid-cols-1 items-start gap-4 min-[621px]:grid-cols-2 min-[1181px]:grid-cols-4"
-              data-testid="todo-board"
-            >
-              {(Object.keys(PROJECT_TODO_LANE_PRESENTATIONS) as ProjectTodoLane[]).map((lane) => (
-                <TodoGroup
-                  key={lane}
-                  lane={lane}
-                  todos={groups[lane]}
-                  selectedId={selectedId}
-                  onSelect={selectTodo}
-                  {...resourceProps}
-                />
-              ))}
-            </div>
-          ) : (
-            <TodoFlatList
-              view={view}
-              todos={visibleTodos}
-              selectedId={selectedId}
-              onSelect={selectTodo}
-            />
-          )}
-        </main>
-
-        <TodoDetailDrawer
-          todo={selectedTodo}
-          onClose={closeTodo}
-          navigate={navigate}
-          {...resourceProps}
-        />
+        {createError ? <p role="alert" className="mx-auto mt-1 max-w-[1500px] text-[11px] text-error">{createError}</p> : null}
       </div>
+      <main className="min-h-0 flex-1 overflow-auto px-4 py-4 min-[621px]:px-6">
+        {view === "board" ? (
+          <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel} accessibility={{ announcements }}>
+            <div className="mx-auto grid max-w-[1500px] grid-cols-1 gap-3 min-[700px]:grid-cols-2 min-[1100px]:grid-cols-4" data-testid="todo-board">
+              {LANES.map((lane) => <TodoLane key={lane} lane={lane} order={boardOrder[lane]} todoById={todoById} selectedId={selectedId} onSelect={selectTodo} />)}
+            </div>
+            <DragOverlay dropAnimation={null}>{draggedId ? <DragPreview todo={todoById.get(draggedId)} /> : null}</DragOverlay>
+          </DndContext>
+        ) : <TodoFlatList view={view} todos={visibleTodos} selectedId={selectedId} onSelect={selectTodo} />}
+      </main>
+      {reorderError ? <p role="alert" className="shrink-0 border-t border-error/20 bg-error-muted px-5 py-3 text-[11px] text-error">Could not move Todo: {reorderError}</p> : null}
+      <TodoDetailDrawer todo={selectedTodo} slug={slug} sessions={sessions} automations={automations} navigate={navigate} onClose={() => selectTodo(null)} createSession={createSession} updateTodo={updateTodo} />
     </div>
   );
 }
 
-export type ProjectTodoBoardGroups = Record<ProjectTodoLane, ProjectTodo[]>;
-
-export function deriveProjectTodoGroups(todos: readonly ProjectTodo[]): ProjectTodoBoardGroups {
-  const grouped: ProjectTodoBoardGroups = { idea: [], ready: [], in_progress: [], done: [] };
-  for (const todo of todos) {
-    if (todo.status === "idea") grouped.idea.push(todo);
-    else if (todo.status === "done") grouped.done.push(todo);
-    else if (todo.activation) grouped.in_progress.push(todo);
-    else grouped.ready.push(todo);
-  }
-  return grouped;
-}
-
-function TodoGroup({
-  lane,
-  todos,
-  selectedId,
-  onSelect,
-  ...resourceProps
-}: TodoResourceProps & {
-  lane: ProjectTodoLane;
-  todos: ProjectTodo[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
+function TodoLane({ lane, order, todoById, selectedId, onSelect }: { lane: ProjectTodoLane; order: string[]; todoById: Map<string, ProjectTodo>; selectedId: string | null; onSelect: (id: string) => void }) {
   const presentation = PROJECT_TODO_LANE_PRESENTATIONS[lane];
   const { Icon } = presentation;
-  const laneAccent = {
-    idea: "border-t-border-strong",
-    ready: "border-t-brand",
-    in_progress: "border-t-signal",
-    done: "border-t-success",
-  }[lane];
-  return (
-    <section
-      className={`min-w-0 border-t-2 bg-bg-surface p-3.5 min-[621px]:min-h-[520px] ${laneAccent}`}
-      aria-label={presentation.title}
-    >
-      <div className="flex min-h-12 items-center justify-between gap-2 border-b border-border-subtle pb-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Icon size={14} className={STATUS_TONE_CLASS[presentation.tone]} aria-hidden="true" />
-          <div className="min-w-0">
-            <h2 className="truncate text-[14px] font-semibold leading-5 text-text-primary">{presentation.title}</h2>
-            <p className="truncate text-[12px] leading-4 text-text-tertiary">{presentation.hint}</p>
-          </div>
-        </div>
-        <span className="min-w-6 shrink-0 border border-border-default bg-bg-muted px-1.5 py-0.5 text-center text-[11px] font-semibold tabular-nums text-text-tertiary">{todos.length}</span>
-      </div>
-      <div className="flex flex-col gap-2.5 pt-3">
-        {todos.length === 0 ? (
-          <div className="flex min-h-24 flex-col items-center justify-center px-3 text-center">
-            <Icon size={16} className={`mb-1 ${STATUS_TONE_CLASS[presentation.tone]}`} aria-hidden="true" />
-            <p className="text-[11px] font-medium leading-4 text-text-tertiary">{presentation.emptyTitle}</p>
-            <p className="mt-1 text-[11px] leading-4 text-text-tertiary">{presentation.emptyHint}</p>
-          </div>
-        ) : todos.map((todo) => (
-          <TodoBoardCard
-            key={todo.id}
-            todo={todo}
-            selected={selectedId === todo.id}
-            onSelect={() => onSelect(todo.id)}
-            {...resourceProps}
-          />
-        ))}
-      </div>
-    </section>
-  );
+  const { setNodeRef } = useDroppable({ id: lane, data: { type: "lane", lane } });
+  return <section ref={setNodeRef} className="min-h-40 rounded-lg border border-border-default bg-bg-surface p-3 min-[1100px]:min-h-[500px]" aria-label={presentation.title} data-testid={`todo-lane-${lane}`}>
+    <header className="flex min-h-11 items-center justify-between gap-2 border-b border-border-subtle pb-2"><div className="flex items-center gap-2"><Icon size={14} className={STATUS_TONE_CLASS[presentation.tone]} /><div><h2 className="text-[14px] font-semibold text-text-primary">{presentation.title}</h2><p className="text-[11px] text-text-tertiary">{presentation.hint}</p></div></div><span className="border border-border-default bg-bg-muted px-1.5 py-0.5 text-[11px] text-text-tertiary">{order.length}</span></header>
+    <SortableContext items={order} strategy={verticalListSortingStrategy}><div className="mt-3 flex min-h-24 flex-col gap-2.5">{order.length ? order.map((id) => { const todo = todoById.get(id); return todo ? <SortableTodoCard key={id} todo={todo} selected={selectedId === id} onSelect={() => onSelect(id)} /> : null; }) : <div className="flex min-h-24 flex-col items-center justify-center px-3 text-center"><p className="text-[11px] font-medium text-text-tertiary">{presentation.emptyTitle}</p><p className="mt-1 text-[11px] text-text-tertiary">{presentation.emptyHint}</p></div>}</div></SortableContext>
+  </section>;
 }
 
-function TodoBoardCard({
-  todo,
-  selected,
-  onSelect,
-  ...resourceProps
-}: TodoResourceProps & {
-  todo: ProjectTodo;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const resources = resolveTodoResources(todo, resourceProps);
-  const presentation = presentProjectTodoCard({
-    status: todo.status,
-    ...(todo.archivedAt === undefined ? {} : { archivedAt: todo.archivedAt }),
-    hasActivation: todo.activation !== undefined,
-  });
-
-  return (
-    <article
-      className={`relative min-h-32 overflow-hidden rounded-md border bg-bg-elevated transition-[border-color,box-shadow] ${
-        selected
-          ? "border-brand before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-brand"
-          : "border-border-default hover:border-border-strong"
-      }`}
-      data-testid={`todo-${todo.id}`}
-    >
-      <button
-        type="button"
-        data-testid={`todo-open-${todo.id}`}
-        className="block w-full px-3 pb-2 pt-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/50"
-        onClick={onSelect}
-        aria-expanded={selected}
-        aria-haspopup="dialog"
-      >
-        <span className="inline-flex items-center gap-2 text-[11px] font-semibold leading-4 text-text-secondary">
-          <TodoVisualGlyph Icon={presentation.Icon} tone={presentation.tone} label={presentation.label} />
-          {presentation.label}
-        </span>
-        <span className="mt-2 block text-[14px] font-semibold leading-5 text-text-primary">{todo.title}</span>
-        {todo.body && (
-          <span className="mt-1 line-clamp-2 text-[12px] leading-5 text-text-tertiary">{todo.body}</span>
-        )}
-      </button>
-      <div className="px-3 pb-2">
-        <TodoAssociations todo={todo} {...resources} {...resourceProps} />
-      </div>
-      <button
-        type="button"
-        onClick={onSelect}
-        className="flex w-full items-center justify-between border-t border-border-subtle px-3 py-2 text-left text-[11px] font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-      >
-        <span>{todoNextAction(todo)}</span>
-        <span aria-hidden="true">→</span>
-      </button>
-    </article>
-  );
+function SortableTodoCard({ todo, selected, onSelect }: { todo: ProjectTodo; selected: boolean; onSelect: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: todo.id, data: { type: "todo", todo } });
+  const presentation = presentProjectTodoCard({ status: todo.status, ...(todo.archivedAt === undefined ? {} : { archivedAt: todo.archivedAt }) });
+  const { Icon } = presentation;
+  return <article ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`rounded-md border bg-bg-elevated ${selected ? "border-brand" : "border-border-default"} ${isDragging ? "opacity-35" : ""}`} data-testid={`todo-${todo.id}`}>
+    <div className="flex items-start gap-1 p-2.5"><button type="button" className="mt-0.5 shrink-0 touch-none rounded-sm p-1 text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" aria-label={`Drag ${todo.title}`} {...attributes} {...listeners}><GripVertical size={14} /></button><button type="button" data-testid={`todo-open-${todo.id}`} className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" onClick={onSelect} aria-haspopup="dialog" aria-expanded={selected}><span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}><Icon size={12} />{presentation.label}</span><span className="mt-2 block text-[14px] font-semibold leading-5 text-text-primary">{todo.title}</span>{todo.body ? <span className="mt-1 line-clamp-2 block text-[12px] leading-5 text-text-tertiary">{todo.body}</span> : null}</button></div>
+  </article>;
 }
 
-function TodoFlatList({
-  view,
-  todos,
-  selectedId,
-  onSelect,
-}: {
-  view: Exclude<View, "board">;
-  todos: ProjectTodo[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  const rejected = view === "rejected";
-  return (
-    <section className="mx-auto max-w-[980px]" aria-label={rejected ? "Rejected Todos" : "Archived Todos"}>
-      <header className="flex items-start gap-3 border-b border-border-default pb-3">
-        {rejected
-          ? <Ban size={16} className="mt-0.5 text-warning" aria-hidden="true" />
-          : <Archive size={16} className="mt-0.5 text-text-tertiary" aria-hidden="true" />}
-        <div>
-          <h2 className="text-[14px] font-semibold text-text-primary">
-            {rejected ? "Rejected Todos" : "Archived Todos"}
-          </h2>
-          <p className="mt-0.5 text-[11px] leading-4 text-text-tertiary">
-            {rejected
-              ? "Ideas intentionally declined, with their reasoning preserved."
-              : "Inactive items kept out of the active workflow."}
-          </p>
-        </div>
-      </header>
-      {todos.length === 0 ? (
-        <div className="flex min-h-28 flex-col items-center justify-center border-b border-border-subtle px-6 text-center">
-          <p className="text-[12px] font-medium text-text-secondary">Nothing here yet</p>
-          <p className="mt-1 text-[11px] text-text-tertiary">Items moved here stay recoverable.</p>
-        </div>
-      ) : (
-        <div className="divide-y divide-border-subtle border-b border-border-subtle" data-testid={`todo-${view}-list`}>
-          {todos.map((todo) => {
-            const origin = presentProjectTodoCard({
-              status: todo.status,
-              hasActivation: todo.activation !== undefined,
-            });
-            return (
-              <article
-                key={todo.id}
-                data-testid={`todo-${todo.id}`}
-                className={selectedId === todo.id ? "relative bg-brand-subtle before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-brand" : ""}
-              >
-                <button
-                  type="button"
-                  data-testid={`todo-open-${todo.id}`}
-                  onClick={() => onSelect(todo.id)}
-                  aria-expanded={selectedId === todo.id}
-                  aria-haspopup="dialog"
-                  className="grid min-h-18 w-full gap-2 px-3 py-3 text-left hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/50 min-[621px]:grid-cols-[minmax(0,1fr)_auto] min-[621px]:items-center"
-                >
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-2">
-                      <TodoVisualGlyph
-                        Icon={rejected ? Ban : Archive}
-                        tone={rejected ? "warning" : "neutral"}
-                        label={rejected ? "Rejected" : "Archived"}
-                        size={13}
-                      />
-                      <span className="truncate text-[13px] font-semibold text-text-primary">{todo.title}</span>
-                    </span>
-                    <span className={`mt-1 line-clamp-2 text-[11px] leading-4 ${rejected ? "text-warning" : "text-text-tertiary"}`}>
-                      {rejected
-                        ? todo.rejectionReason ?? "No rejection reason recorded."
-                        : `From ${origin.label} · Archived ${formatTodoDate(todo.archivedAt)}`}
-                    </span>
-                  </span>
-                  <span className="text-[11px] font-medium text-brand">{todoNextAction(todo)} →</span>
-                </button>
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function TodoDetailDrawer({
-  todo,
-  onClose,
-  navigate,
-  ...resourceProps
-}: TodoResourceProps & {
-  todo?: ProjectTodo;
-  onClose: () => void;
-  navigate: ReturnType<typeof useNavigate>;
-}) {
+function DragPreview({ todo }: { todo?: ProjectTodo }) {
   if (!todo) return null;
-
-  return (
-    <DialogPrimitive.Root
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay
-          forceMount
-          className="fixed inset-0 z-[60] bg-black/45"
-        />
-        <DialogPrimitive.Content
-          forceMount
-          data-testid="todo-detail-drawer"
-          className="fixed inset-y-0 right-0 z-[61] flex w-[min(430px,calc(100%-18px))] flex-col border-l border-border-strong bg-bg-elevated shadow-2xl focus:outline-none"
-        >
-          <TodoDetailPanel key={todo.id} todo={todo} navigate={navigate} {...resourceProps} />
-          <DialogPrimitive.Close asChild>
-            <button
-              type="button"
-              aria-label="Close Todo details"
-              className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-            >
-              <X size={15} aria-hidden="true" />
-            </button>
-          </DialogPrimitive.Close>
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
-  );
+  return <div className="w-64 rounded-md border border-brand bg-bg-elevated p-3 shadow-lg"><p className="text-[13px] font-semibold text-text-primary">{todo.title}</p></div>;
 }
 
-function TodoDetailPanel({
-  todo,
-  slug,
-  navigate,
-  ...resourceProps
-}: TodoResourceProps & {
-  todo: ProjectTodo;
-  navigate: ReturnType<typeof useNavigate>;
-}) {
+function TodoFlatList({ view, todos, selectedId, onSelect }: { view: Exclude<View, "board">; todos: ProjectTodo[]; selectedId: string | null; onSelect: (id: string) => void }) {
+  const title = view === "rejected" ? "Rejected Todos" : "Archived Todos";
+  return <section className="mx-auto max-w-[980px]" aria-label={title}><h2 className="border-b border-border-default pb-3 text-[14px] font-semibold text-text-primary">{title}</h2><div className="divide-y divide-border-subtle">{todos.map((todo) => <button key={todo.id} type="button" data-testid={`todo-${todo.id}`} onClick={() => onSelect(todo.id)} className={`block w-full px-3 py-3 text-left hover:bg-bg-hover ${selectedId === todo.id ? "bg-brand-subtle" : ""}`}><span className="text-[13px] font-semibold text-text-primary">{todo.title}</span><span className="mt-1 block text-[11px] text-text-tertiary">{view === "rejected" ? todo.rejectionReason : "Archived"}</span></button>)}</div></section>;
+}
+
+function TodoDetailDrawer({ todo, slug, sessions, automations, navigate, onClose, createSession, updateTodo }: { todo?: ProjectTodo; slug: string; sessions: SessionSummary[]; automations: Automation[]; navigate: ReturnType<typeof useNavigate>; onClose: () => void; createSession: ReturnType<typeof useCreateProjectTodoSession>; updateTodo: ReturnType<typeof useUpdateProjectTodo> }) {
+  if (!todo) return null;
+  return <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) onClose(); }}><DialogPrimitive.Portal><DialogPrimitive.Overlay forceMount className="fixed inset-0 z-[60] bg-black/45" /><DialogPrimitive.Content forceMount data-testid="todo-detail-drawer" className="fixed inset-y-0 right-0 z-[61] flex w-[min(430px,calc(100%-18px))] flex-col border-l border-border-strong bg-bg-elevated shadow-2xl focus:outline-none"><TodoDetailPanel key={todo.id} todo={todo} slug={slug} sessions={sessions} automations={automations} navigate={navigate} createSession={createSession} updateTodo={updateTodo} /><DialogPrimitive.Close asChild><button type="button" aria-label="Close Todo details" className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover"><X size={15} /></button></DialogPrimitive.Close></DialogPrimitive.Content></DialogPrimitive.Portal></DialogPrimitive.Root>;
+}
+
+function TodoDetailPanel({ todo, slug, sessions, automations, navigate, createSession, updateTodo }: { todo: ProjectTodo; slug: string; sessions: SessionSummary[]; automations: Automation[]; navigate: ReturnType<typeof useNavigate>; createSession: ReturnType<typeof useCreateProjectTodoSession>; updateTodo: ReturnType<typeof useUpdateProjectTodo> }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(todo.title);
   const [body, setBody] = useState(todo.body);
-  const [baseRevision, setBaseRevision] = useState<number | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
+  const [reason, setReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
-  const [rejectionError, setRejectionError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const update = useUpdateProjectTodo();
-  const discuss = useDiscussProjectTodo();
-  const activate = useActivateProjectTodo();
-  const archive = useArchiveProjectTodo();
-  const restore = useRestoreProjectTodo();
-  const returnToReady = useReturnProjectTodoToReady();
+  const associatedSessions = sessions.filter((session) => session.projectTodo?.todoId === todo.id).sort((left, right) => right.updatedAt - left.updatedAt);
+  const discussionSessions = associatedSessions.filter((session) => session.projectTodo?.entry === "discussion");
+  const workSessions = associatedSessions.filter((session) => session.projectTodo?.entry === "work");
+  const associatedAutomations = automations.filter((automation) => automation.projectTodoId === todo.id).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   const isArchived = todo.archivedAt !== undefined;
-  const inProgress = todo.activation !== undefined && todo.status !== "done" && !isArchived;
-  const resources = resolveTodoResources(todo, { slug, ...resourceProps });
-  const presentation = presentProjectTodoCard({
-    status: todo.status,
-    ...(todo.archivedAt === undefined ? {} : { archivedAt: todo.archivedAt }),
-    hasActivation: todo.activation !== undefined,
-  });
-
-  useEffect(() => {
-    if (editing) return;
-    setTitle(todo.title);
-    setBody(todo.body);
-    setBaseRevision(null);
-  }, [editing, todo.body, todo.revision, todo.title]);
-
-  const mutate = (fn: () => void) => {
+  const presentation = presentProjectTodoCard({ status: todo.status, ...(isArchived ? { archivedAt: todo.archivedAt } : {}) });
+  const update = (input: ProjectTodoUpdateInput, onSuccess?: () => void) => {
     setActionError(null);
-    fn();
+    updateTodo.mutate({ slug, todoId: todo.id, input }, { onSuccess, onError: (cause) => setActionError(messageFor(cause)) });
   };
-  const showError = (cause: unknown) => {
-    setActionError(cause instanceof Error ? cause.message : "Action failed");
-  };
-  const beginEditing = () => {
-    setTitle(todo.title);
-    setBody(todo.body);
-    setBaseRevision(todo.revision);
-    setEditing(true);
-  };
-  const save = () => {
-    if (baseRevision === null) return;
-    mutate(() => update.mutate({
-      slug,
-      todoId: todo.id,
-      input: { expectedRevision: baseRevision, patch: { title: title.trim(), body } },
-    }, {
-      onSuccess: () => setEditing(false),
-      onError: showError,
-    }));
-  };
-  const setStatus = (
-    status: "idea" | "ready" | "rejected" | "done",
-    rejectionReason?: string,
-  ) => mutate(() => update.mutate({
-    slug,
-    todoId: todo.id,
-    input: {
-      expectedRevision: todo.revision,
-      patch: { status, ...(rejectionReason ? { rejectionReason } : {}) },
-    } as ProjectTodoUpdateInput,
-  }, { onError: showError }));
-  const startDiscussion = () => mutate(() => discuss.mutate({
-    slug,
-    todoId: todo.id,
-    expectedRevision: todo.revision,
-  }, {
-    onSuccess: (result) => navigate(`/projects/${slug}/sessions/${result.sessionId}`),
-    onError: showError,
-  }));
-  const startActivation = (kind: ProjectTodoActivationKind) => {
+  const start = (entry: "discussion" | "work" | "automation") => {
     setActionError(null);
-    void activate.mutateAsync({ slug, todoId: todo.id, kind, expectedRevision: todo.revision })
-      .then((result) => navigate(`/projects/${slug}/sessions/${result.sessionId}`))
-      .catch(showError);
+    createSession.mutate({ slug, todoId: todo.id, input: { expectedRevision: todo.revision, entry } }, { onSuccess: ({ sessionId }) => navigate(`/projects/${slug}/sessions/${sessionId}`), onError: (cause) => setActionError(messageFor(cause)) });
   };
-  const runArchive = () => mutate(() => archive.mutate({
-    slug,
-    todoId: todo.id,
-    expectedRevision: todo.revision,
-  }, { onError: showError }));
-  const runRestore = () => mutate(() => restore.mutate({
-    slug,
-    todoId: todo.id,
-    expectedRevision: todo.revision,
-  }, { onError: showError }));
-  const runReturn = () => mutate(() => returnToReady.mutate({
-    slug,
-    todoId: todo.id,
-    expectedRevision: todo.revision,
-  }, { onError: showError }));
-  const beginRejecting = () => {
-    setRejectReason("");
-    setRejectionError(null);
-    setRejecting(true);
+  const reject = () => {
+    const rejectionReason = reason.trim();
+    if (!rejectionReason) { setActionError("Rejection reason is required"); return; }
+    update({ expectedRevision: todo.revision, status: "rejected", rejectionReason }, () => setRejecting(false));
   };
-  const submitRejection = () => {
-    const reason = rejectReason.trim();
-    if (!reason) {
-      setRejectionError("Rejection reason is required");
+  const continueWork = () => {
+    const sessionId = workSessions[0]?.sessionId;
+    if (!sessionId) return;
+    const navigateToSession = () => navigate(`/projects/${slug}/sessions/${sessionId}`);
+    const input = continueWorkUpdateInput(todo);
+    if (input) {
+      update(input, navigateToSession);
       return;
     }
-    setRejecting(false);
-    setRejectionError(null);
-    setStatus("rejected", reason);
+    navigateToSession();
   };
-
-  return (
-    <>
-      <header className="shrink-0 border-b border-border-default px-5 pb-4 pr-14 pt-4">
-        <span className="inline-flex items-center gap-2 text-[11px] font-semibold text-text-secondary">
-          <TodoVisualGlyph Icon={presentation.Icon} tone={presentation.tone} label={presentation.label} />
-          {presentation.label}
-        </span>
-        <DialogPrimitive.Title className="mt-2 text-[18px] font-semibold leading-6 text-text-primary">
-          {todo.title}
-        </DialogPrimitive.Title>
-        <DialogPrimitive.Description className="mt-1 text-[11px] leading-4 text-text-tertiary">
-          Review linked work and choose the next lifecycle action.
-        </DialogPrimitive.Description>
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <div className="space-y-5">
-          <section aria-label="Todo content">
-            {editing ? (
-              <div className="space-y-2">
-                <input
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  aria-label="Todo title"
-                  className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary placeholder:text-text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle"
-                />
-                <textarea
-                  value={body}
-                  onChange={(event) => setBody(event.target.value)}
-                  aria-label="Todo body"
-                  rows={4}
-                  className="w-full resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[12px] leading-5 text-text-primary placeholder:text-text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle"
-                />
-                <div className="flex gap-2">
-                  <TodoActionButton onClick={save} variant="primary"><Save size={12} /> Save</TodoActionButton>
-                  <TodoActionButton onClick={() => setEditing(false)}><X size={12} /> Cancel</TodoActionButton>
-                </div>
-              </div>
-            ) : (
-              <>
-                {todo.body
-                  ? <p className="whitespace-pre-wrap text-[12px] leading-5 text-text-secondary">{todo.body}</p>
-                  : <p className="text-[12px] leading-5 text-text-tertiary">No additional details.</p>}
-                {todo.rejectionReason && (
-                  <div className="mt-3 border-y border-warning/30 bg-warning-muted px-3 py-2 text-[12px] leading-5 text-warning">
-                    <span className="font-semibold">Rejected:</span> {todo.rejectionReason}
-                  </div>
-                )}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <TodoActionButton onClick={beginEditing}>Edit</TodoActionButton>
-                  {!isArchived && todo.status !== "done" && (
-                    <TodoActionButton
-                      onClick={startDiscussion}
-                      disabled={discuss.isPending}
-                      variant="brand"
-                    >
-                      <MessageCircle size={12} />
-                      {todo.discussionSessionId ? "Continue Discussion" : "Discuss"}
-                    </TodoActionButton>
-                  )}
-                </div>
-              </>
-            )}
-          </section>
-
-          <section aria-label="Linked work" className="border-t border-border-subtle pt-4">
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">
-              Linked work
-            </h3>
-            <TodoAssociations todo={todo} {...resources} slug={slug} {...resourceProps} />
-          </section>
-
-          <section aria-label="Todo actions" className="border-t border-border-subtle pt-4">
-            <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">
-              Next action
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {!isArchived && todo.status === "idea" && (
-                <>
-                  <TodoActionButton onClick={() => setStatus("ready")} variant="info">
-                    <Check size={12} /> Mark Ready
-                  </TodoActionButton>
-                  <RejectButton onClick={beginRejecting} />
-                </>
-              )}
-              {!isArchived && todo.status === "rejected" && (
-                <TodoActionButton onClick={() => setStatus("idea")}>
-                  <RotateCcw size={12} /> Restore to Idea
-                </TodoActionButton>
-              )}
-              {!isArchived && todo.status === "ready" && !todo.activation && (
-                <>
-                  <TodoActionButton
-                    onClick={() => startActivation("session")}
-                    disabled={activate.isPending}
-                    variant="primary"
-                  >
-                    <Send size={12} /> Start Session
-                  </TodoActionButton>
-                  <TodoActionButton
-                    onClick={() => startActivation("automation")}
-                    disabled={activate.isPending}
-                  >
-                    Create Automation
-                  </TodoActionButton>
-                  <TodoActionButton onClick={() => setStatus("idea")}>
-                    <RotateCcw size={12} /> Move to Idea
-                  </TodoActionButton>
-                  <RejectButton onClick={beginRejecting} />
-                  <TodoActionButton onClick={() => setStatus("done")} variant="success">
-                    <Check size={12} /> Mark Done
-                  </TodoActionButton>
-                </>
-              )}
-              {!isArchived && inProgress && (
-                <>
-                  <TodoActionButton onClick={runReturn} disabled={returnToReady.isPending} variant="warning">
-                    Return to Ready
-                  </TodoActionButton>
-                  <TodoActionButton onClick={() => setStatus("done")} variant="success">
-                    <Check size={12} /> Mark Done
-                  </TodoActionButton>
-                </>
-              )}
-              {!isArchived && todo.status === "done" && (
-                <TodoActionButton onClick={() => setStatus("ready")} variant="info">
-                  <RotateCcw size={12} /> Reopen
-                </TodoActionButton>
-              )}
-              {!isArchived && !inProgress && (
-                <TodoActionButton onClick={runArchive} variant="quiet">
-                  <Archive size={12} /> Archive
-                </TodoActionButton>
-              )}
-              {isArchived && (
-                <TodoActionButton onClick={runRestore}>
-                  <RotateCcw size={12} /> Restore
-                </TodoActionButton>
-              )}
-            </div>
-          </section>
-
-          {!isArchived
-            && (todo.status === "idea" || (todo.status === "ready" && !todo.activation))
-            && rejecting && (
-              <div className="border-y border-warning/30 bg-warning-muted p-3">
-                <textarea
-                  autoFocus
-                  aria-label="Rejection reason"
-                  aria-describedby={rejectionError ? `todo-${todo.id}-rejection-error` : undefined}
-                  value={rejectReason}
-                  onChange={(event) => {
-                    setRejectReason(event.target.value);
-                    setRejectionError(null);
-                  }}
-                  placeholder="Why should this Todo be rejected?"
-                  rows={2}
-                  className="w-full resize-none bg-transparent text-[11px] leading-4 text-text-primary outline-none placeholder:text-text-muted"
-                />
-                {rejectionError && (
-                  <p id={`todo-${todo.id}-rejection-error`} role="alert" className="mt-1 text-[11px] text-error">
-                    {rejectionError}
-                  </p>
-                )}
-                <div className="mt-2 flex justify-end gap-2">
-                  <TodoActionButton
-                    onClick={() => {
-                      setRejecting(false);
-                      setRejectionError(null);
-                    }}
-                    variant="quiet"
-                  >
-                    Cancel
-                  </TodoActionButton>
-                  <TodoActionButton onClick={submitRejection} variant="danger">Reject Todo</TodoActionButton>
-                </div>
-              </div>
-            )}
-        </div>
-      </div>
-      {actionError && (
-        <p role="alert" className="shrink-0 border-t border-error/20 bg-error-muted px-5 py-3 text-[11px] text-error">
-          {actionError}
-        </p>
-      )}
-    </>
-  );
+  return <><header className="shrink-0 border-b border-border-default px-5 pb-4 pr-14 pt-4"><span className={`inline-flex items-center gap-2 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}><presentation.Icon size={13} />{presentation.label}</span><DialogPrimitive.Title className="mt-2 text-[18px] font-semibold leading-6 text-text-primary">{todo.title}</DialogPrimitive.Title><DialogPrimitive.Description className="mt-1 text-[11px] leading-4 text-text-tertiary">A Todo can source multiple discussions, work sessions, and automations.</DialogPrimitive.Description></header><div className="min-h-0 flex-1 overflow-y-auto px-5 py-4"><div className="space-y-5"><section aria-label="Todo content">{editing ? <div className="space-y-2"><input aria-label="Todo title" value={title} onChange={(event) => setTitle(event.target.value)} className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px]" /><textarea aria-label="Todo body" rows={4} value={body} onChange={(event) => setBody(event.target.value)} className="w-full resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[12px]" /><div className="flex gap-2"><TodoActionButton variant="primary" onClick={() => update({ expectedRevision: todo.revision, title: title.trim(), body }, () => setEditing(false))}><Save size={12} />Save</TodoActionButton><TodoActionButton onClick={() => setEditing(false)}>Cancel</TodoActionButton></div></div> : <><p className="whitespace-pre-wrap text-[12px] leading-5 text-text-secondary">{todo.body || "No additional details."}</p><div className="mt-3 flex flex-wrap gap-2"><TodoActionButton onClick={() => setEditing(true)}>Edit</TodoActionButton>{!isArchived && discussionSessions[0] ? <TodoActionButton onClick={() => navigate(`/projects/${slug}/sessions/${discussionSessions[0]!.sessionId}`)}>Continue Discussion</TodoActionButton> : null}{!isArchived ? <TodoActionButton variant="brand" onClick={() => start("discussion")} disabled={createSession.isPending}><MessageCircle size={12} />New Discussion</TodoActionButton> : null}</div></>}</section><section className="border-t border-border-subtle pt-4" aria-label="Linked sessions"><h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Sessions</h3><AssociatedSessions slug={slug} sessions={associatedSessions} /></section><section className="border-t border-border-subtle pt-4" aria-label="Linked automations"><h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Automations</h3>{associatedAutomations.length ? <div className="space-y-2">{associatedAutomations.map((automation) => <Link key={automation.id} to={`/projects/${slug}/automations/${automation.id}`} className="block text-[12px] text-brand hover:underline">{automation.name}</Link>)}</div> : <p className="text-[12px] text-text-tertiary">No automations yet.</p>}</section><section className="border-t border-border-subtle pt-4" aria-label="Todo actions"><h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Actions</h3><div className="flex flex-wrap gap-2">{!isArchived && (todo.status === "ready" || todo.status === "in_progress") ? <><TodoActionButton variant="primary" onClick={() => start("work")} disabled={createSession.isPending}><Send size={12} />Start Work</TodoActionButton>{workSessions[0] ? <TodoActionButton onClick={continueWork} disabled={updateTodo.isPending}>Continue Work</TodoActionButton> : null}<TodoActionButton onClick={() => start("automation")} disabled={createSession.isPending}>Create Automation</TodoActionButton></> : null}{!isArchived && todo.status === "rejected" ? <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, status: "idea" })}><RotateCcw size={12} />Restore to Ideas</TodoActionButton> : null}{!isArchived && todo.status !== "rejected" ? <TodoActionButton onClick={() => setRejecting(true)}>Reject</TodoActionButton> : null}{!isArchived && todo.status !== "rejected" && LANES.filter((status) => status !== todo.status).map((status) => <TodoActionButton key={status} onClick={() => update({ expectedRevision: todo.revision, status })}>Move to {labelForStatus(status)}</TodoActionButton>)}{!isArchived ? <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, archived: true })}><Archive size={12} />Archive</TodoActionButton> : <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, archived: false })}><RotateCcw size={12} />Restore</TodoActionButton>}</div>{rejecting ? <div className="mt-3 border-y border-warning/30 bg-warning-muted p-3"><textarea autoFocus aria-label="Rejection reason" rows={2} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why should this Todo be rejected?" className="w-full resize-none bg-transparent text-[12px] outline-none" /><div className="mt-2 flex justify-end gap-2"><TodoActionButton onClick={() => setRejecting(false)}>Cancel</TodoActionButton><TodoActionButton variant="danger" onClick={reject}>Reject Todo</TodoActionButton></div></div> : null}</section></div></div>{actionError ? <p role="alert" className="shrink-0 border-t border-error/20 bg-error-muted px-5 py-3 text-[11px] text-error">{actionError}</p> : null}</>;
 }
 
-function resolveTodoResources(todo: ProjectTodo, props: TodoResourceProps) {
-  const linkedSession = todo.activation?.kind === "session" && todo.activation.resourceId
-    ? props.sessions?.find((session) => session.sessionId === todo.activation?.resourceId)
-    : undefined;
-  const linkedAutomation = todo.activation?.kind === "automation" && todo.activation.resourceId
-    ? props.automations?.find((automation) => automation.id === todo.activation?.resourceId)
-    : undefined;
-  const associationSessionId = todo.activation?.resourceId === undefined
-    ? todo.activation?.sourceSessionId
-    : linkedSession?.sessionId;
-  const associationSessionActivity = associationSessionId && props.runtimeInitialized
-    ? props.runtimeFamilies[runtimeFamilyKey(props.slug, associationSessionId)]?.activity ?? "idle"
-    : undefined;
-  const associationPresentation = todo.activation === undefined ? undefined : presentProjectTodoAssociation({
-    resourceLoading: todo.activation.kind === "session" ? props.sessionsLoading : props.automationsLoading,
-    runtimeInitialized: props.runtimeInitialized,
-    sessionActivity: associationSessionActivity,
-    resourceId: todo.activation.resourceId,
-    resourceAvailable: todo.activation.kind === "session"
-      ? linkedSession !== undefined
-      : linkedAutomation !== undefined,
-    ...(linkedAutomation ? { automationStatus: linkedAutomation.status } : {}),
-  });
+function AssociatedSessions({ slug, sessions }: { slug: string; sessions: SessionSummary[] }) { return sessions.length ? <div className="space-y-2">{sessions.map((session) => <Link key={session.sessionId} className="flex items-center justify-between gap-3 text-[12px] text-brand hover:underline" to={`/projects/${slug}/sessions/${session.sessionId}`}><span className="truncate">{session.title || session.sessionId}</span><span className="shrink-0 text-[11px] text-text-tertiary">{entryLabel(session.projectTodo?.entry)}</span></Link>)}</div> : <p className="text-[12px] text-text-tertiary">No sessions yet.</p>; }
+function TodoActionButton({ children, onClick, disabled, variant = "default" }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; variant?: "default" | "primary" | "brand" | "danger" }) { const tone = variant === "primary" ? "bg-brand text-bg-overlay hover:bg-brand-hover" : variant === "brand" ? "border-brand/40 bg-brand-subtle text-brand hover:bg-brand/15" : variant === "danger" ? "border-error/30 bg-error-muted text-error hover:bg-error/15" : "border-border-default bg-bg-active text-text-secondary hover:bg-bg-hover hover:text-text-primary"; return <button type="button" onClick={onClick} disabled={disabled} className={`inline-flex h-8 items-center gap-1.5 rounded-sm border px-2.5 text-[12px] font-medium disabled:opacity-40 ${tone}`}>{children}</button>; }
+function ViewButton({ children, active, onClick }: { children: React.ReactNode; active: boolean; onClick: () => void }) { return <button type="button" onClick={onClick} className={`h-7 rounded-md px-2.5 text-[11px] font-medium ${active ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"}`}>{children}</button>; }
+function entryLabel(entry?: "discussion" | "work" | "automation"): string { return entry === "discussion" ? "Discussion" : entry === "automation" ? "Automation setup" : "Work"; }
+function labelForStatus(status: ProjectTodoLane): string { return status === "idea" ? "Ideas" : status === "ready" ? "Ready" : status === "in_progress" ? "In Progress" : "Done"; }
+function isLane(value: string): value is ProjectTodoLane { return (LANES as readonly string[]).includes(value); }
+function messageFor(cause: unknown): string { return cause instanceof Error ? cause.message : "Action failed"; }
 
+export function createDragAnnouncements(order: BoardOrder, todoById: ReadonlyMap<string, ProjectTodo>) {
+  const titleFor = (id: string | number) => todoById.get(String(id))?.title ?? "Todo";
+  const describeTarget = (target: { lane: ProjectTodoLane; index: number } | undefined) => {
+    if (!target) return undefined;
+    const count = Math.max(1, order[target.lane].length, target.index + 1);
+    return `${labelForStatus(target.lane)}, position ${target.index + 1} of ${count}`;
+  };
+  const targetFor = (overId: string | number) => {
+    const id = String(overId);
+    return describeTarget(isLane(id)
+      ? { lane: id, index: order[id].length }
+      : locateTodo(order, id));
+  };
   return {
-    linkedSession,
-    linkedAutomation,
-    associationSessionActivity,
-    associationPresentation,
+    onDragStart: ({ active }: { active: { id: string | number } }) => `Picked up ${titleFor(active.id)}.`,
+    onDragOver: ({ active, over }: { active: { id: string | number }; over: { id: string | number } | null }) => {
+      const target = over ? targetFor(over.id) : undefined;
+      return target ? `Moving ${titleFor(active.id)} to ${target}.` : undefined;
+    },
+    onDragEnd: ({ active, over }: { active: { id: string | number }; over: { id: string | number } | null }) => {
+      const target = describeTarget(locateTodo(order, String(active.id)))
+        ?? (over ? targetFor(over.id) : undefined);
+      return target ? `Dropped ${titleFor(active.id)} in ${target}.` : `Cancelled move for ${titleFor(active.id)}.`;
+    },
+    onDragCancel: ({ active }: { active: { id: string | number } }) => `Cancelled move for ${titleFor(active.id)}.`,
   };
-}
-
-function TodoAssociations({
-  todo,
-  slug,
-  linkedSession,
-  linkedAutomation,
-  associationSessionActivity,
-  associationPresentation,
-  sessionsLoading,
-  automationsLoading,
-  runtimeInitialized,
-}: {
-  todo: ProjectTodo;
-  slug: string;
-  linkedSession?: SessionSummary;
-  linkedAutomation?: Automation;
-  associationSessionActivity?: import("@archcode/protocol").SessionFamilyActivity;
-  associationPresentation?: ProjectTodoAssociationPresentation;
-  sessionsLoading: boolean;
-  automationsLoading: boolean;
-  runtimeInitialized: boolean;
-}) {
-  return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] leading-4 text-text-tertiary" aria-label="Todo associations">
-      {todo.discussionSessionId && (
-        <Link
-          className="inline-flex items-center gap-1 text-brand hover:underline"
-          to={`/projects/${slug}/sessions/${todo.discussionSessionId}`}
-        >
-          <TodoVisualGlyph
-            Icon={PROJECT_TODO_DISCUSSION_PRESENTATION.Icon}
-            tone={PROJECT_TODO_DISCUSSION_PRESENTATION.tone}
-            label="Discussion"
-            size={12}
-          />
-          Discussion
-        </Link>
-      )}
-      {todo.activation && (
-        todo.activation.resourceId === undefined ? (
-          <Link
-            className="inline-flex items-center gap-1 text-text-secondary hover:text-text-primary"
-            to={`/projects/${slug}/sessions/${todo.activation.sourceSessionId}`}
-          >
-            <TodoAssociationGlyph presentation={associationPresentation} label="Activation preparing" />
-            Activation · {todo.activation.kind} · preparing
-          </Link>
-        ) : todo.activation.kind === "session" ? (
-          linkedSession ? (
-            <Link
-              className="inline-flex items-center gap-1 text-text-secondary hover:text-text-primary"
-              to={`/projects/${slug}/sessions/${linkedSession.sessionId}`}
-            >
-              <TodoAssociationGlyph presentation={associationPresentation} label="Activation session" />
-              Activation · Session · {runtimeInitialized ? associationSessionActivity ?? "idle" : "loading"}
-            </Link>
-          ) : (
-            <span className="inline-flex items-center gap-1">
-              <TodoAssociationGlyph presentation={associationPresentation} label="Activation session" />
-              Activation · Session · {sessionsLoading ? "loading" : "deleted"}
-            </span>
-          )
-        ) : linkedAutomation ? (
-          <Link
-            className="inline-flex items-center gap-1 text-text-secondary hover:text-text-primary"
-            to={`/projects/${slug}/automations/${linkedAutomation.id}`}
-          >
-            <TodoAssociationGlyph presentation={associationPresentation} label="Activation automation" />
-            Activation · Automation · {linkedAutomation.status}
-          </Link>
-        ) : (
-          <span className="inline-flex items-center gap-1">
-            <TodoAssociationGlyph presentation={associationPresentation} label="Activation automation" />
-            Activation · Automation · {automationsLoading ? "loading" : "deleted"}
-          </span>
-        )
-      )}
-      {!todo.discussionSessionId && !todo.activation && (
-        <span className="py-1 text-text-tertiary">No linked work yet</span>
-      )}
-    </div>
-  );
-}
-
-function todoNextAction(todo: ProjectTodo): string {
-  if (todo.archivedAt !== undefined) return "Restore";
-  if (todo.status === "rejected") return "Restore to Idea";
-  if (todo.status === "idea") return todo.discussionSessionId ? "Continue Discussion" : "Discuss";
-  if (todo.status === "done") return "Reopen";
-  if (todo.activation?.resourceId === undefined && todo.activation) return "Preparing work";
-  if (todo.activation?.kind === "session") return "Open Session";
-  if (todo.activation?.kind === "automation") return "Open Automation";
-  return "Start Session";
-}
-
-function formatTodoDate(timestamp?: number): string {
-  if (timestamp === undefined) return "unknown";
-  return new Date(timestamp).toLocaleDateString();
-}
-
-function TodoVisualGlyph({
-  Icon,
-  tone,
-  label,
-  size = 14,
-  motion = "none",
-}: {
-  Icon: ProjectTodoGlyph;
-  tone: StatusTone;
-  label: string;
-  size?: number;
-  motion?: "none" | "loop";
-}) {
-  if (Icon === "activity-arc") return <ActivityArc size={size} tone={tone} label={label} />;
-  return (
-    <Icon
-      className={`${STATUS_TONE_CLASS[tone]} ${motion === "loop" ? "animate-activity" : ""}`}
-      size={size}
-      strokeWidth={1.75}
-      aria-label={label}
-    />
-  );
-}
-
-function TodoAssociationGlyph({
-  presentation,
-  label,
-}: {
-  presentation?: ProjectTodoAssociationPresentation;
-  label: string;
-}) {
-  if (presentation === undefined) return null;
-  return (
-    <TodoVisualGlyph
-      Icon={presentation.Icon}
-      tone={presentation.tone}
-      motion={presentation.motion}
-      size={12}
-      label={label}
-    />
-  );
-}
-
-function ViewButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={`min-h-8 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors ${
-        active
-          ? "bg-bg-elevated text-text-primary shadow-sm"
-          : "text-text-tertiary hover:bg-bg-hover hover:text-text-primary"
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
-function RejectButton({ onClick }: { onClick: () => void }) {
-  return (
-    <TodoActionButton onClick={onClick} variant="dangerQuiet">
-      <Trash2 size={12} /> Reject
-    </TodoActionButton>
-  );
-}
-
-type TodoActionVariant =
-  | "primary"
-  | "brand"
-  | "info"
-  | "success"
-  | "warning"
-  | "danger"
-  | "dangerQuiet"
-  | "secondary"
-  | "quiet";
-
-const TODO_ACTION_STYLES: Record<TodoActionVariant, string> = {
-  primary: "border-brand bg-brand text-bg-base hover:bg-brand-hover",
-  brand: "border-brand/30 bg-brand-subtle text-brand hover:bg-bg-hover",
-  info: "border-brand/30 bg-brand-subtle text-brand hover:border-brand/50",
-  success: "border-success/30 bg-success-muted text-success hover:border-success/50",
-  warning: "border-warning/30 bg-warning-muted text-warning hover:border-warning/50",
-  danger: "border-error bg-error text-bg-overlay hover:brightness-110",
-  dangerQuiet: "border-error/30 bg-transparent text-error hover:bg-error-muted",
-  secondary: "border-border-default bg-bg-elevated text-text-secondary hover:border-border-strong hover:bg-bg-hover hover:text-text-primary",
-  quiet: "border-transparent bg-transparent text-text-tertiary hover:bg-bg-hover hover:text-text-secondary",
-};
-
-function TodoActionButton({
-  children,
-  onClick,
-  disabled = false,
-  variant = "secondary",
-}: {
-  children: ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-  variant?: TodoActionVariant;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-sm border px-3 text-[12px] font-medium transition-[background-color,border-color,color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 ${TODO_ACTION_STYLES[variant]}`}
-    >
-      {children}
-    </button>
-  );
 }

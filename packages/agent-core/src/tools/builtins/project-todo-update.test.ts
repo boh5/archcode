@@ -10,6 +10,7 @@ import { createToolExecutionContext, type ToolExecutionContext } from "../types"
 import { ProjectTodoUpdateInputSchema, projectTodoUpdateTool } from "./project-todo-update";
 
 const sessionId = "22222222-2222-4222-8222-222222222222";
+const todoId = "11111111-1111-4111-8111-111111111111";
 const input = {
   expectedRevision: 4,
   patch: {
@@ -36,6 +37,7 @@ function makeContext(
     sessionId,
     rootSessionId: sessionId,
     agentName: "lead",
+    projectTodo: { todoId, entry: "discussion" },
     ...overrides,
   });
   const projectContext = {
@@ -98,19 +100,8 @@ describe("project_todo_update", () => {
       },
     }).success).toBe(false);
     expect(ProjectTodoUpdateInputSchema.safeParse({
-      expectedRevision: 4,
-      patch: {
-        reject: { reason: "Not aligned" },
-        decision: { action: "reject", rationale: "Not aligned" },
-      },
-    }).success).toBe(false);
-    expect(ProjectTodoUpdateInputSchema.safeParse({
       ...input,
       patch: { ...input.patch, archivedAt: Date.now() },
-    }).success).toBe(false);
-    expect(ProjectTodoUpdateInputSchema.safeParse({
-      ...input,
-      patch: { ...input.patch, activation: {} },
     }).success).toBe(false);
     expect(ProjectTodoUpdateInputSchema.safeParse({ expectedRevision: 4, patch: {} }).success).toBe(false);
     expect(ProjectTodoUpdateInputSchema.safeParse({
@@ -145,6 +136,7 @@ describe("project_todo_update", () => {
         rootSessionId: sessionId,
         agentName: "lead",
         projectSlug: "test-project",
+        projectTodo: { todoId, entry: "discussion" },
       },
       expectedRevision: 4,
       patch: {
@@ -220,6 +212,7 @@ describe("project_todo_update", () => {
         rootSessionId: sessionId,
         agentName: "lead",
         projectSlug: "test-project",
+        projectTodo: { todoId, entry: "discussion" },
       },
       expectedRevision: 4,
       patch: {
@@ -235,6 +228,7 @@ describe("project_todo_update", () => {
       { agentName: "analyst" as const },
       { rootSessionId: crypto.randomUUID() },
       { parentSessionId: crypto.randomUUID() },
+      { projectTodo: { todoId, entry: "work" as const } },
     ]) {
       const { ctx, updateFromDiscussion } = makeContext(overrides);
 

@@ -1,4 +1,4 @@
-import type { ProjectTodoActivationKind, ProjectTodoStatus } from "@archcode/protocol";
+import type { ProjectTodoStatus } from "@archcode/protocol";
 
 export class ProjectTodoNotFoundError extends Error {
   readonly code = "PROJECT_TODO_NOT_FOUND";
@@ -22,17 +22,15 @@ export class ProjectTodoRevisionConflictError extends Error {
   }
 }
 
-export class ProjectTodoInvalidTransitionError extends Error {
-  readonly code = "PROJECT_TODO_INVALID_TRANSITION";
+export class ProjectTodoInvalidMutationError extends Error {
+  readonly code = "PROJECT_TODO_INVALID_MUTATION";
 
   constructor(
     public readonly todoId: string,
-    public readonly from: ProjectTodoStatus,
-    public readonly to: ProjectTodoStatus,
-    reason?: string,
+    public readonly reason: string,
   ) {
-    super(reason ?? `Project Todo ${todoId} cannot transition from ${from} to ${to}`);
-    this.name = "ProjectTodoInvalidTransitionError";
+    super(`Project Todo ${todoId} cannot be updated: ${reason}`);
+    this.name = "ProjectTodoInvalidMutationError";
   }
 }
 
@@ -45,41 +43,15 @@ export class ProjectTodoArchivedError extends Error {
   }
 }
 
-export class ProjectTodoActivationConflictError extends Error {
-  readonly code = "PROJECT_TODO_ACTIVATION_CONFLICT";
+export class ProjectTodoSessionStateError extends Error {
+  readonly code = "PROJECT_TODO_SESSION_STATE_CONFLICT";
 
   constructor(
     public readonly todoId: string,
-    public readonly currentKind?: ProjectTodoActivationKind,
-    message = `Project Todo cannot start another Activation: ${todoId}`,
+    public readonly status: ProjectTodoStatus,
   ) {
-    super(message);
-    this.name = "ProjectTodoActivationConflictError";
-  }
-}
-
-export class ProjectTodoResourceBindingConflictError extends Error {
-  readonly code = "PROJECT_TODO_RESOURCE_BINDING_CONFLICT";
-
-  constructor(
-    public readonly todoId: string,
-    public readonly currentResourceId: string,
-    public readonly requestedResourceId: string,
-  ) {
-    super(`Project Todo ${todoId} is already bound to resource ${currentResourceId}`);
-    this.name = "ProjectTodoResourceBindingConflictError";
-  }
-}
-
-export class ProjectTodoReturnToReadyConflictError extends Error {
-  readonly code = "PROJECT_TODO_RETURN_TO_READY_CONFLICT";
-
-  constructor(
-    public readonly todoId: string,
-    public readonly reason: string,
-  ) {
-    super(`Project Todo ${todoId} cannot return to Ready: ${reason}`);
-    this.name = "ProjectTodoReturnToReadyConflictError";
+    super(`Project Todo ${todoId} cannot start work from status ${status}`);
+    this.name = "ProjectTodoSessionStateError";
   }
 }
 

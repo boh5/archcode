@@ -19,7 +19,7 @@ import { setLlmAdapterForTest } from "../llm/adapter";
 import { AgentRunningError, ConcurrentLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "../store/errors";
-import { SessionDeleteInProgressError, SessionDeleteOwnerConflictError } from "./session-deletion";
+import { SessionDeleteInProgressError } from "./session-deletion";
 import { SessionFamilyActiveError, SessionFamilyIdentityUnavailableError, SessionFamilyStopInProgressError } from "./session-family-control";
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -528,6 +528,7 @@ async function writeSessionFile(input: {
   toolBatches?: SessionFile["toolBatches"];
   agentName?: AgentName;
   delegationRequest?: DelegationRequest;
+  projectTodo?: SessionFile["projectTodo"];
 }): Promise<void> {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
   const request = input.parentSessionId === undefined
@@ -559,6 +560,7 @@ async function writeSessionFile(input: {
     rootSessionId,
     ...(request === undefined ? {} : { delegationRequest: request }),
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
+    ...(input.projectTodo === undefined ? {} : { projectTodo: input.projectTodo }),
   };
   await mkdir(getSessionDir(workspaceRoot, input.sessionId), { recursive: true });
   await Bun.write(getSessionPath(workspaceRoot, input.sessionId), JSON.stringify(file, null, 2));
@@ -2954,7 +2956,10 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const grandchildId = crypto.randomUUID();
-    await writeSessionFile({ sessionId: rootId });
+    await writeSessionFile({
+      sessionId: rootId,
+      projectTodo: { todoId: crypto.randomUUID(), entry: "work" },
+    });
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
     const { manager, sessionAgentManager, untrackSession } = createManager({});
@@ -2975,11 +2980,10 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({}, {
       factory: makeFactory(),
       deletionLifecycle: {
-        assertDeletable: async () => {
+        prepareForDeletion: async () => {
           preflightEntered.resolve(undefined);
           await releasePreflight.promise;
         },
-        prepareForDeletion: async () => undefined,
       },
     });
 
@@ -3099,21 +3103,13 @@ describe("SessionExecutionManager", () => {
       }),
       dispose: mock(() => undefined),
     };
-    let preflightCount = 0;
     let preparationCount = 0;
     const { manager } = createManager({ [rootId]: agent as MockAgent }, {
       deletionLifecycle: {
-        assertDeletable: async () => {
-          preflightCount += 1;
-        },
         prepareForDeletion: async () => {
           preparationCount += 1;
           if (ownerCreatedDuringAbort) {
-            throw new SessionDeleteOwnerConflictError([{
-              sessionId: rootId,
-              ownerType: "project_todo",
-              ownerId: rootId,
-            }]);
+            throw new Error("Deletion preparation failed");
           }
         },
       },
@@ -3122,11 +3118,9 @@ describe("SessionExecutionManager", () => {
     await runEntered.promise;
 
     await expect(manager.deleteSession(workspaceRoot, rootId)).rejects.toMatchObject({
-      name: "SessionDeleteOwnerConflictError",
-      sessionIds: [rootId],
+      message: "Deletion preparation failed",
     });
 
-    expect(preflightCount).toBe(1);
     expect(preparationCount).toBe(1);
     expect(await Bun.file(getSessionPath(workspaceRoot, rootId)).exists()).toBe(true);
   });

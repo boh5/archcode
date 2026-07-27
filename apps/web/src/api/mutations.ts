@@ -14,8 +14,8 @@ import type {
   Session,
   UpdateAutomationPayload,
   ProjectTodo,
-  ProjectTodoActivationKind,
   ProjectTodoCreateInput,
+  CreateProjectTodoSessionInput,
   ProjectTodoUpdateInput,
 } from "./types";
 import { createClientUuid } from "../lib/client-uuid";
@@ -403,23 +403,16 @@ function todoUrl(slug: string, todoId?: string, action?: string): string {
 async function invalidateProjectTodo(
   queryClient: ReturnType<typeof useQueryClient>,
   slug: string,
-  todoId?: string,
 ): Promise<void> {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: queryKeys.projectTodos(slug), exact: true, refetchType: "all" }),
-    ...(todoId === undefined
-      ? []
-      : [queryClient.invalidateQueries({ queryKey: queryKeys.projectTodo(slug, todoId), exact: true, refetchType: "all" })]),
-  ]);
+  await queryClient.invalidateQueries({ queryKey: queryKeys.projectTodos(slug), exact: true, refetchType: "all" });
 }
 
-async function invalidateProjectTodoExecution(
+async function invalidateProjectTodoSession(
   queryClient: ReturnType<typeof useQueryClient>,
   slug: string,
-  todoId: string,
 ): Promise<void> {
   await Promise.all([
-    invalidateProjectTodo(queryClient, slug, todoId),
+    invalidateProjectTodo(queryClient, slug),
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
     ...invalidateDashboardProjection(queryClient, slug),
     queryClient.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) }),
@@ -459,68 +452,24 @@ export function useUpdateProjectTodo() {
         body: input as unknown as Record<string, unknown>,
       }),
     onSuccess: async (_data, variables) => {
-      await invalidateProjectTodo(queryClient, variables.slug, variables.todoId);
+      await invalidateProjectTodo(queryClient, variables.slug);
     },
     onError: async (_error, variables) => {
-      await invalidateProjectTodo(queryClient, variables.slug, variables.todoId);
+      await invalidateProjectTodo(queryClient, variables.slug);
     },
   });
 }
 
-function useTodoAction(action: "archive" | "restore" | "return-to-ready") {
+export function useCreateProjectTodoSession() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ slug, todoId, expectedRevision }: TodoMutationVariables & { expectedRevision: number }) =>
-      apiFetch<{ todo: ProjectTodo }>(todoUrl(slug, todoId, action), {
-        method: "POST",
-        body: { expectedRevision },
-      }),
+    mutationFn: async ({ slug, todoId, input }: TodoMutationVariables & { input: CreateProjectTodoSessionInput }) =>
+      apiFetch<{ todo: ProjectTodo; sessionId: string }>(todoUrl(slug, todoId, "sessions"), { method: "POST", body: input as unknown as Record<string, unknown> }),
     onSuccess: async (_data, variables) => {
-      await invalidateProjectTodo(queryClient, variables.slug, variables.todoId);
+      await invalidateProjectTodoSession(queryClient, variables.slug);
     },
     onError: async (_error, variables) => {
-      await invalidateProjectTodo(queryClient, variables.slug, variables.todoId);
-    },
-  });
-}
-
-export function useArchiveProjectTodo() { return useTodoAction("archive"); }
-export function useRestoreProjectTodo() { return useTodoAction("restore"); }
-export function useReturnProjectTodoToReady() { return useTodoAction("return-to-ready"); }
-
-export function useDiscussProjectTodo() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ slug, todoId, expectedRevision }: TodoMutationVariables & { expectedRevision: number }) =>
-      apiFetch<{ todo: ProjectTodo; sessionId: string }>(todoUrl(slug, todoId, "discuss"), { method: "POST", body: { expectedRevision } }),
-    onSuccess: async (_data, variables) => {
-      await Promise.all([
-        invalidateProjectTodo(queryClient, variables.slug, variables.todoId),
-        queryClient.invalidateQueries({ queryKey: queryKeys.sessions(variables.slug) }),
-      ]);
-    },
-    onError: async (_error, variables) => {
-      await Promise.all([
-        invalidateProjectTodo(queryClient, variables.slug, variables.todoId),
-        queryClient.invalidateQueries({ queryKey: queryKeys.sessions(variables.slug) }),
-      ]);
-    },
-  });
-}
-
-export function useActivateProjectTodo() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ slug, todoId, kind, expectedRevision }: TodoMutationVariables & { kind: ProjectTodoActivationKind; expectedRevision: number }) =>
-      apiFetch<{ todo: ProjectTodo; sessionId: string }>(todoUrl(slug, todoId, "activate"), {
-        method: "POST",
-        body: { kind, expectedRevision },
-      }),
-    onSuccess: async (_data, variables) => {
-      await invalidateProjectTodoExecution(queryClient, variables.slug, variables.todoId);
-    },
-    onError: async (_error, variables) => {
-      await invalidateProjectTodoExecution(queryClient, variables.slug, variables.todoId);
+      await invalidateProjectTodoSession(queryClient, variables.slug);
     },
   });
 }

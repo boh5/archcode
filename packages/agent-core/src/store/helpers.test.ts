@@ -654,6 +654,40 @@ describe("session transcript serialization", () => {
     }).success).toBe(true);
   });
 
+  test("Project Todo source is persisted only on a root Lead Session and projected in summaries", async () => {
+    const sessionId = uniqueSessionId("project-todo-source");
+    const todoId = crypto.randomUUID();
+    await sessionFileInternals.saveSessionTranscript({
+      ...persistedState(sessionId),
+      projectTodo: { todoId, entry: "work" },
+    }, TMP_DIR);
+
+    const loaded = await sessionFileInternals.readSessionFile(sessionId, TMP_DIR);
+    expect(loaded.projectTodo).toEqual({ todoId, entry: "work" });
+    expect((await sessionFileInternals.listSessionSummaries(TMP_DIR))[0]?.projectTodo)
+      .toEqual({ todoId, entry: "work" });
+
+    expect(SessionFileSchema.safeParse({
+      ...persistedState(crypto.randomUUID()),
+      agentName: "analyst",
+      projectTodo: { todoId, entry: "discussion" },
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...persistedState(
+        crypto.randomUUID(),
+        sampleMessages(),
+        sampleSteps(),
+        sampleTodos(),
+        createEmptySessionStats(),
+        [],
+        [],
+        sessionId,
+        sessionId,
+      ),
+      projectTodo: { todoId, entry: "discussion" },
+    }).success).toBe(false);
+  });
+
   test("Session event persistence rejects known payload types with missing or extra fields", async () => {
     const sessionId = uniqueSessionId("strict-event-payload");
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);

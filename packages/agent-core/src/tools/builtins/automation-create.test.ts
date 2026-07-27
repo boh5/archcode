@@ -37,14 +37,7 @@ function makeContext(
     agentName: "lead",
     ...overrides,
   });
-  const projectContext = {
-    createAutomation,
-    todos: {
-      state: {
-        findByDiscussionSessionId: mock(async () => undefined),
-      },
-    },
-  } as unknown as ToolExecutionContext["projectContext"];
+  const projectContext = { createAutomation } as unknown as ToolExecutionContext["projectContext"];
   return {
     createAutomation,
     ctx: createToolExecutionContext({
@@ -83,11 +76,25 @@ describe("automation_create", () => {
     });
   });
 
+  test("allows Todo Work and Automation setup roots", async () => {
+    for (const entry of ["work", "automation"] as const) {
+      const { ctx, createAutomation } = makeContext({
+        projectTodo: { todoId: crypto.randomUUID(), entry },
+      });
+
+      const result = await automationCreateTool.execute(input, ctx);
+
+      expect(result.isError).toBe(false);
+      expect(createAutomation).toHaveBeenCalledTimes(1);
+    }
+  });
+
   test("rejects child and non-Lead Sessions", async () => {
     for (const override of [
       { rootSessionId: crypto.randomUUID() },
       { parentSessionId: crypto.randomUUID() },
       { agentName: "explore" as const },
+      { projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const } },
     ]) {
       const { ctx, createAutomation } = makeContext(override);
       const result = await automationCreateTool.execute(input, ctx);

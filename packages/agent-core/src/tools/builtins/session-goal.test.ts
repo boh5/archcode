@@ -28,11 +28,13 @@ afterAll(async () => {
 
 function context(options: { readonly discussion?: boolean } = {}): ToolExecutionContext {
   const sessionId = crypto.randomUUID();
-  const store = storeManager.create(sessionId, tempRoot.path, { agentName: "lead" });
+  const store = storeManager.create(sessionId, tempRoot.path, {
+    agentName: "lead",
+    ...(options.discussion === true
+      ? { projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const } }
+      : {}),
+  });
   const projectContext = createTestProjectContext(tempRoot.path);
-  if (options.discussion === true) {
-    projectContext.todos.state.findByDiscussionSessionId = async () => ({ id: "discussion" }) as never;
-  }
   return {
     store,
     storeManager,

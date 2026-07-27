@@ -61,6 +61,7 @@ export const AutomationSchema = z.strictObject({
   id: z.uuid(),
   projectSlug: NonEmptyTextSchema,
   createdFromSessionId: z.uuid(),
+  projectTodoId: z.uuid().optional(),
   name: AutomationNameSchema,
   trigger: AutomationTriggerSchema,
   action: AutomationActionSchema,

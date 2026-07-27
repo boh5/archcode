@@ -1,8 +1,7 @@
 import type {
   ProjectTodo,
-  ProjectTodoActivationKind,
   ProjectTodoCreateInput,
-  ProjectTodoSessionOwner,
+  ProjectTodoStatus,
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 
@@ -11,34 +10,27 @@ import { silentLogger } from "../logger";
 import { projectRuntimePath } from "../projects/runtime-path";
 import { atomicWrite } from "../utils/safe-file";
 import {
-  ProjectTodoActivationConflictError,
   ProjectTodoArchivedError,
-  ProjectTodoInvalidTransitionError,
+  ProjectTodoInvalidMutationError,
   ProjectTodoNotFoundError,
-  ProjectTodoResourceBindingConflictError,
   ProjectTodoRevisionConflictError,
+  ProjectTodoSessionStateError,
 } from "./errors";
 import {
   ProjectTodoCreateSchema,
   ProjectTodoStateFileSchema,
-  ProjectTodoUpdatePatchSchema,
+  ProjectTodoUpdateSchema,
   type ProjectTodoStateFile,
 } from "./schema";
 
-const ALLOWED_TRANSITIONS: Readonly<Record<ProjectTodo["status"], ReadonlySet<ProjectTodo["status"]>>> = {
-  idea: new Set(["ready", "rejected"]),
-  ready: new Set(["idea", "rejected", "done"]),
-  rejected: new Set(["idea"]),
-  done: new Set(["ready"]),
-};
+const BOARD_STATUSES: ReadonlySet<ProjectTodoStatus> = new Set([
+  "idea",
+  "ready",
+  "in_progress",
+  "done",
+]);
 
-type MutableProjectTodo = {
-  -readonly [Key in keyof ProjectTodo]: Key extends "activation"
-    ? (ProjectTodo[Key] extends infer Activation | undefined
-        ? Activation extends object ? { -readonly [ActivationKey in keyof Activation]: Activation[ActivationKey] } : never
-        : never) | undefined
-    : ProjectTodo[Key];
-};
+type MutableProjectTodo = { -readonly [Key in keyof ProjectTodo]: ProjectTodo[Key] };
 
 export interface ProjectTodoStateManagerOptions {
   readonly now?: () => number;
@@ -46,6 +38,7 @@ export interface ProjectTodoStateManagerOptions {
   readonly logger?: Logger;
 }
 
+/** Strict Todo persistence and serialized Todo-only mutations. */
 export class ProjectTodoStateManager {
   readonly workspaceRoot: string;
   readonly #filePath: string;
@@ -90,178 +83,67 @@ export class ProjectTodoStateManager {
   }
 
   async updateTodo(todoId: string, input: ProjectTodoUpdateInput): Promise<ProjectTodo> {
-    const patch = ProjectTodoUpdatePatchSchema.parse(input.patch);
+    const update = ProjectTodoUpdateSchema.parse(input);
     return this.#mutate((state) => {
       const todo = requiredTodo(state, todoId);
+      assertRevision(todo, update.expectedRevision);
+
+      if (update.archived !== undefined) {
+        return this.#setArchived(todo, update.archived);
+      }
+
       assertMutable(todo);
-      assertRevision(todo, input.expectedRevision);
-
       const previousStatus = todo.status;
-      const nextStatus = patch.status ?? todo.status;
-      if (nextStatus !== todo.status && !ALLOWED_TRANSITIONS[todo.status].has(nextStatus)) {
-        throw new ProjectTodoInvalidTransitionError(todo.id, todo.status, nextStatus);
-      }
-      if (todo.activation !== undefined && (nextStatus === "idea" || nextStatus === "rejected")) {
-        throw new ProjectTodoActivationConflictError(todo.id, todo.activation.kind, "Active Project Todo cannot change to Idea or Rejected");
-      }
+      const finalStatus = update.status ?? previousStatus;
+      validateRejection(todo, finalStatus, update.rejectionReason);
+      validateAnchor(state, todo, finalStatus, update.beforeTodoId);
 
-      if (patch.title !== undefined) todo.title = patch.title;
-      if (patch.body !== undefined) todo.body = patch.body;
-      if (patch.status !== undefined) todo.status = patch.status;
-
-      if (nextStatus === "rejected") {
-        const reason = patch.rejectionReason ?? todo.rejectionReason;
-        if (reason === undefined) {
-          throw new ProjectTodoInvalidTransitionError(todo.id, todo.status, "rejected", "Rejected Project Todo requires a rejection reason");
-        }
-        todo.rejectionReason = reason;
+      if (update.title !== undefined) todo.title = update.title;
+      if (update.body !== undefined) todo.body = update.body;
+      todo.status = finalStatus;
+      if (finalStatus === "rejected") {
+        todo.rejectionReason = update.rejectionReason ?? todo.rejectionReason;
       } else {
         todo.rejectionReason = undefined;
-        if (patch.rejectionReason !== undefined) {
-          throw new ProjectTodoInvalidTransitionError(todo.id, todo.status, nextStatus, "Rejection reason is only valid for rejected status");
-        }
       }
 
-      if (previousStatus === "done" && nextStatus === "ready" && todo.activation !== undefined) {
-        // done -> ready is the only transition that clears an old result link.
-        todo.activation = undefined;
-      }
+      const shouldReorder = update.beforeTodoId !== undefined || finalStatus !== previousStatus;
+      if (shouldReorder) reorderTodo(state.todos, todo, finalStatus, update.beforeTodoId ?? null);
       touch(todo, this.#now());
       return structuredClone(todo);
     });
   }
 
-  async archiveTodo(todoId: string, expectedRevision: number): Promise<ProjectTodo> {
+  /** Reads a Todo and verifies its revision inside the serialized mutation lane. */
+  async readCurrentTodo(todoId: string, expectedRevision: number): Promise<ProjectTodo> {
     return this.#mutate((state) => {
       const todo = requiredTodo(state, todoId);
-      assertRevision(todo, expectedRevision);
-      if (todo.archivedAt !== undefined) throw new ProjectTodoArchivedError(todo.id);
-      if (todo.activation !== undefined && todo.status === "ready") {
-        throw new ProjectTodoActivationConflictError(todo.id, todo.activation.kind, "Active Project Todo cannot be archived");
-      }
-      todo.archivedAt = this.#now();
-      touch(todo, this.#now());
-      return structuredClone(todo);
-    });
-  }
-
-  async restoreTodo(todoId: string, expectedRevision: number): Promise<ProjectTodo> {
-    return this.#mutate((state) => {
-      const todo = requiredTodo(state, todoId);
-      assertRevision(todo, expectedRevision);
-      if (todo.archivedAt === undefined) {
-        throw new ProjectTodoInvalidTransitionError(todo.id, todo.status, todo.status, "Project Todo is not archived");
-      }
-      todo.archivedAt = undefined;
-      touch(todo, this.#now());
-      return structuredClone(todo);
-    });
-  }
-
-  /** First checkpoint of the recoverable Discussion creation protocol. */
-  async checkpointDiscussion(todoId: string, expectedRevision: number, proposedSessionId: string): Promise<ProjectTodo> {
-    return this.#mutate((state) => {
-      const todo = requiredTodo(state, todoId);
-      if (todo.discussionSessionId !== undefined) return structuredClone(todo);
       assertMutable(todo);
       assertRevision(todo, expectedRevision);
-      assertUniqueSessionReference(state, proposedSessionId);
-      todo.discussionSessionId = proposedSessionId;
-      touch(todo, this.#now());
       return structuredClone(todo);
     });
   }
 
-  /** First checkpoint of the recoverable Activation creation protocol. */
-  async checkpointActivation(
-    todoId: string,
-    expectedRevision: number,
-    kind: ProjectTodoActivationKind,
-    proposedSourceSessionId: string,
-  ): Promise<ProjectTodo> {
+  /**
+   * Applies the only Todo consequence of starting work. Ready becomes
+   * In Progress at that lane's end; In Progress is a validated no-op.
+   */
+  async beginWork(todoId: string, expectedRevision: number): Promise<ProjectTodo> {
     return this.#mutate((state) => {
       const todo = requiredTodo(state, todoId);
-      if (todo.activation !== undefined) {
-        if (
-          todo.activation.kind === kind
-          && todo.status === "ready"
-          && todo.archivedAt === undefined
-          && expectedRevision === todo.activation.todoRevision
-        ) return structuredClone(todo);
-        throw new ProjectTodoActivationConflictError(todo.id, todo.activation.kind);
-      }
       assertMutable(todo);
       assertRevision(todo, expectedRevision);
-      if (todo.status !== "ready") {
-        throw new ProjectTodoInvalidTransitionError(todo.id, todo.status, todo.status, "Only a ready Project Todo can start");
+      if (todo.status !== "ready" && todo.status !== "in_progress") {
+        throw new ProjectTodoSessionStateError(todo.id, todo.status);
       }
-      assertUniqueSessionReference(state, proposedSourceSessionId);
-      todo.activation = {
-        kind,
-        sourceSessionId: proposedSourceSessionId,
-        todoRevision: todo.revision,
-        snapshot: { title: todo.title, body: todo.body },
-        ...(kind === "session" ? { resourceId: proposedSourceSessionId } : {}),
-      };
-      touch(todo, this.#now());
-      return structuredClone(todo);
-    });
-  }
+      if (todo.status === "in_progress") return structuredClone(todo);
 
-  async bindActivationResource(todoId: string, sourceSessionId: string, resourceId: string): Promise<ProjectTodo> {
-    return this.#mutate((state) => {
-      const todo = requiredTodo(state, todoId);
-      const activation = todo.activation;
-      if (activation === undefined || activation.sourceSessionId !== sourceSessionId || activation.kind === "session") {
-        throw new ProjectTodoActivationConflictError(todo.id, activation?.kind, "Project Todo Activation does not match resource provenance");
-      }
-      if (activation.resourceId !== undefined) {
-        if (activation.resourceId === resourceId) return structuredClone(todo);
-        throw new ProjectTodoResourceBindingConflictError(todo.id, activation.resourceId, resourceId);
-      }
-      activation.resourceId = resourceId;
-      touch(todo, this.#now());
-      return structuredClone(todo);
-    });
-  }
-
-  async clearActivation(todoId: string, expectedRevision: number, sourceSessionId: string): Promise<ProjectTodo> {
-    return this.#mutate((state) => {
-      const todo = requiredTodo(state, todoId);
-      assertRevision(todo, expectedRevision);
-      if (todo.activation?.sourceSessionId !== sourceSessionId) {
-        throw new ProjectTodoActivationConflictError(todo.id, todo.activation?.kind, "Project Todo Activation changed during readiness check");
-      }
-      todo.activation = undefined;
-      todo.status = "ready";
+      todo.status = "in_progress";
       todo.rejectionReason = undefined;
+      reorderTodo(state.todos, todo, "in_progress", null);
       touch(todo, this.#now());
       return structuredClone(todo);
     });
-  }
-
-  async findByDiscussionSessionId(sessionId: string): Promise<ProjectTodo | undefined> {
-    const todo = (await this.#read()).todos.find((item) => item.discussionSessionId === sessionId);
-    return todo === undefined ? undefined : structuredClone(todo);
-  }
-
-  async findByActivationSourceSessionId(sessionId: string): Promise<ProjectTodo | undefined> {
-    const todo = (await this.#read()).todos.find((item) => item.activation?.sourceSessionId === sessionId);
-    return todo === undefined ? undefined : structuredClone(todo);
-  }
-
-  async findSessionOwners(sessionIds: readonly string[]): Promise<ProjectTodoSessionOwner[]> {
-    const requested = new Set(sessionIds);
-    const owners: ProjectTodoSessionOwner[] = [];
-    for (const todo of (await this.#read()).todos) {
-      if (todo.discussionSessionId !== undefined && requested.has(todo.discussionSessionId)) {
-        owners.push({ sessionId: todo.discussionSessionId, ownerType: "project_todo", ownerId: todo.id });
-      }
-      if (todo.activation !== undefined && requested.has(todo.activation.sourceSessionId)) {
-        owners.push({ sessionId: todo.activation.sourceSessionId, ownerType: "project_todo", ownerId: todo.id });
-      }
-    }
-    return owners.sort((left, right) => left.sessionId.localeCompare(right.sessionId));
   }
 
   async #read(): Promise<ProjectTodoStateFile> {
@@ -296,6 +178,22 @@ export class ProjectTodoStateManager {
     return operation;
   }
 
+  #setArchived(todo: MutableProjectTodo, archived: boolean): ProjectTodo {
+    if (archived) {
+      if (todo.archivedAt !== undefined) {
+        throw new ProjectTodoInvalidMutationError(todo.id, "Todo is already archived");
+      }
+      todo.archivedAt = this.#now();
+    } else {
+      if (todo.archivedAt === undefined) {
+        throw new ProjectTodoInvalidMutationError(todo.id, "Todo is not archived");
+      }
+      todo.archivedAt = undefined;
+    }
+    touch(todo, this.#now());
+    return structuredClone(todo);
+  }
+
   #notifyCommitted(todo: ProjectTodo): void {
     if (this.#onCommitted === undefined) return;
     try {
@@ -324,11 +222,72 @@ function assertRevision(todo: ProjectTodo, expectedRevision: number): void {
   }
 }
 
-function assertUniqueSessionReference(state: ProjectTodoStateFile, sessionId: string): void {
-  const referenced = state.todos.some((todo) => (
-    todo.discussionSessionId === sessionId || todo.activation?.sourceSessionId === sessionId
-  ));
-  if (referenced) throw new Error(`Session is already owned by a Project Todo: ${sessionId}`);
+function validateRejection(
+  todo: ProjectTodo,
+  finalStatus: ProjectTodoStatus,
+  rejectionReason: string | undefined,
+): void {
+  if (finalStatus === "rejected") {
+    if (rejectionReason === undefined && todo.status !== "rejected") {
+      throw new ProjectTodoInvalidMutationError(todo.id, "entering Rejected requires a rejection reason");
+    }
+    return;
+  }
+  if (rejectionReason !== undefined) {
+    throw new ProjectTodoInvalidMutationError(todo.id, "rejectionReason is only valid for Rejected");
+  }
+}
+
+function validateAnchor(
+  state: ProjectTodoStateFile,
+  todo: ProjectTodo,
+  finalStatus: ProjectTodoStatus,
+  beforeTodoId: string | null | undefined,
+): void {
+  if (beforeTodoId === undefined) return;
+  if (!BOARD_STATUSES.has(finalStatus)) {
+    throw new ProjectTodoInvalidMutationError(todo.id, "Rejected Todo cannot be ordered on the Board");
+  }
+  if (beforeTodoId === null) return;
+  if (beforeTodoId === todo.id) {
+    throw new ProjectTodoInvalidMutationError(todo.id, "Todo cannot be ordered before itself");
+  }
+  const anchor = state.todos.find((candidate) => candidate.id === beforeTodoId);
+  if (anchor === undefined) {
+    throw new ProjectTodoInvalidMutationError(todo.id, `anchor does not exist: ${beforeTodoId}`);
+  }
+  if (anchor.archivedAt !== undefined) {
+    throw new ProjectTodoInvalidMutationError(todo.id, `anchor is archived: ${beforeTodoId}`);
+  }
+  if (anchor.status !== finalStatus) {
+    throw new ProjectTodoInvalidMutationError(todo.id, `anchor is not in ${finalStatus}: ${beforeTodoId}`);
+  }
+}
+
+function reorderTodo(
+  todos: ProjectTodo[],
+  todo: MutableProjectTodo,
+  finalStatus: ProjectTodoStatus,
+  beforeTodoId: string | null,
+): void {
+  const currentIndex = todos.findIndex((candidate) => candidate.id === todo.id);
+  todos.splice(currentIndex, 1);
+
+  if (beforeTodoId !== null) {
+    const anchorIndex = todos.findIndex((candidate) => candidate.id === beforeTodoId);
+    todos.splice(anchorIndex, 0, todo);
+    return;
+  }
+
+  let insertionIndex = todos.length;
+  for (let index = todos.length - 1; index >= 0; index -= 1) {
+    const candidate = todos[index]!;
+    if (candidate.status === finalStatus && candidate.archivedAt === undefined) {
+      insertionIndex = index + 1;
+      break;
+    }
+  }
+  todos.splice(insertionIndex, 0, todo);
 }
 
 function touch(todo: MutableProjectTodo, now: number): void {

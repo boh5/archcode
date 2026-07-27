@@ -280,13 +280,12 @@ export class ConfiguredAgent implements Agent {
       await this.refreshAgentsMd();
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.projectRoot);
       const state = this.store.getState();
-      const discussionTodo = this.definition.name === "lead"
+      const isDiscussion = this.definition.name === "lead"
         && state.parentSessionId === undefined
         && state.rootSessionId === state.sessionId
-        ? await projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
-        : undefined;
+        && state.projectTodo?.entry === "discussion";
       const baseAllowedTools = this.resolveAllowedTools(this.definition, this.depth);
-      const definitionAllowedTools = discussionTodo === undefined
+      const definitionAllowedTools = !isDiscussion
         ? [
             ...baseAllowedTools.filter((toolName) => toolName !== TOOL_PROJECT_TODO_UPDATE),
             ...this.resolveSessionWorktreeTools(false),
@@ -298,7 +297,7 @@ export class ConfiguredAgent implements Agent {
         definitionAllowedTools,
         extraTools,
         toolProjection,
-        discussionTodo !== undefined,
+        isDiscussion,
       );
       const agentSkills = this.definition.skills;
       const memory = await this.resolveMemorySnapshot();
@@ -458,8 +457,8 @@ export class ConfiguredAgent implements Agent {
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
-    const todo = this.definition.name === "lead"
-      ? await input.projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
+    const todo = this.definition.name === "lead" && state.projectTodo?.entry === "discussion"
+      ? await input.projectContext.todos.readTodo(state.projectTodo.todoId)
       : undefined;
     const parentAgentName = state.parentSessionId === undefined
       ? "none"
@@ -649,7 +648,7 @@ export class ConfiguredAgent implements Agent {
       );
   }
 
-  private async resolveActiveSkillNames(projectContext: ProjectContext): Promise<readonly string[]> {
+  private async resolveActiveSkillNames(_projectContext: ProjectContext): Promise<readonly string[]> {
     const state = this.store.getState();
     const names = [...state.activeSkillNames];
     if (
@@ -658,8 +657,7 @@ export class ConfiguredAgent implements Agent {
       || state.sessionId !== state.rootSessionId
     ) return [...new Set(names)];
 
-    const discussionTodo = await projectContext.todos.state.findByDiscussionSessionId(state.sessionId);
-    const lifecycleSkill = discussionTodo !== undefined
+    const lifecycleSkill = state.projectTodo?.entry === "discussion"
       ? "shape-todo"
       : state.goal?.status === "active"
         ? "run-goal"

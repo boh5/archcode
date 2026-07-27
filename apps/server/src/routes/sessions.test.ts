@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionDeleteOwnerConflictError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionModelSelectionNotAllowedError, silentLogger } from "@archcode/agent-core";
+import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionModelSelectionNotAllowedError, silentLogger } from "@archcode/agent-core";
 import { createRuntimeApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -211,16 +211,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       }
       if (sessionId === "stopping-session") {
         throw new SessionFamilyStopInProgressError(sessionId, "root-session");
-      }
-      if (sessionId === "owned-session") {
-        throw new SessionDeleteOwnerConflictError([
-          { sessionId, ownerType: "project_todo", ownerId: "11111111-1111-4111-8111-111111111111" },
-        ]);
-      }
-      if (sessionId === "todo-owned-session") {
-        throw new SessionDeleteOwnerConflictError([
-          { sessionId, ownerType: "project_todo", ownerId: "11111111-1111-4111-8111-111111111111" },
-        ]);
       }
       const key = `${workspaceRoot}\0${sessionId}`;
       if (!sessions.has(key)) throw new MissingSessionFileError();
@@ -754,52 +744,6 @@ describe("sessions routes", () => {
           sessionIds: ["stopping-session"],
           scopeCode: "SESSION_FAMILY_STOP_IN_PROGRESS",
           rootSessionId: "root-session",
-        },
-      },
-    });
-  });
-
-  test("DELETE returns stable 409 owner details for Todo-managed Sessions", async () => {
-    const { app, project } = await createTestApp("delete-owner-conflict");
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/owned-session`, {
-      method: "DELETE",
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: {
-        code: "DELETE_CONFLICT",
-        message: "Unable to delete owned Session subtree: owned-session",
-        details: {
-          sessionIds: ["owned-session"],
-          scopeCode: "SESSION_DELETE_OWNER_CONFLICT",
-          owners: [
-            { sessionId: "owned-session", ownerType: "project_todo", ownerId: "11111111-1111-4111-8111-111111111111" },
-          ],
-        },
-      },
-    });
-  });
-
-  test("DELETE identifies the owning Project Todo", async () => {
-    const { app, project } = await createTestApp("delete-project-todo-owner-conflict");
-
-    const res = await app.request(`/api/projects/${project.slug}/sessions/todo-owned-session`, {
-      method: "DELETE",
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({
-      error: {
-        code: "DELETE_CONFLICT",
-        details: {
-          scopeCode: "SESSION_DELETE_OWNER_CONFLICT",
-          owners: [{
-            sessionId: "todo-owned-session",
-            ownerType: "project_todo",
-            ownerId: "11111111-1111-4111-8111-111111111111",
-          }],
         },
       },
     });

@@ -506,11 +506,13 @@ describe("ConfiguredAgent", () => {
   test("projects Todo Discussion maxDepth 2 into the Prompt from the authoritative binding", async () => {
     const streamFn = setupMockStreamText("discussion shaped");
     const sessionId = crypto.randomUUID();
-    const store = createStore(sessionId, tmpRoot, { agentName: "lead" });
     const projectContextResolver = createTestProjectContextResolver(storeManager);
     const projectContext = await projectContextResolver.resolve(tmpRoot);
     const todo = await projectContext.todos.createTodo({ title: "Shape runtime architecture" });
-    await projectContext.todos.state.checkpointDiscussion(todo.id, todo.revision, sessionId);
+    const store = createStore(sessionId, tmpRoot, {
+      agentName: "lead",
+      projectTodo: { todoId: todo.id, entry: "discussion" },
+    });
 
     await runAgent(createAgent({
       definition: leadAgentDefinition,

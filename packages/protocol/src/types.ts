@@ -10,6 +10,7 @@ import type {
   SessionModelSelection,
 } from "./model-runtime";
 import type { GlobalSSEUpdateChangedEvent } from "./update";
+import type { ProjectTodoSessionSource } from "./project-todos";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -1149,6 +1150,8 @@ export interface SessionSummary {
   title: string | null;
   /** Present only on a root Lead Session with a current Goal. */
   goal?: SessionGoal;
+  /** Immutable source of a Project Todo root Lead Session. */
+  projectTodo?: ProjectTodoSessionSource;
   createdAt: number;
   updatedAt: number;
 }
@@ -1186,6 +1189,8 @@ export interface Session {
   title: string | null;
   /** Present only on a root Lead Session with a current Goal. */
   goal?: SessionGoal;
+  /** Immutable source of a Project Todo root Lead Session. */
+  projectTodo?: ProjectTodoSessionSource;
   createdAt: number;
   updatedAt: number;
   messages: SessionMessage[];
@@ -1341,6 +1346,8 @@ export interface Automation {
   projectSlug: string;
   /** Ordinary Lead Session that created this Automation. */
   createdFromSessionId: string;
+  /** Project Todo source copied from the creating Session, when present. */
+  projectTodoId?: string;
   name: string;
   trigger: AutomationTrigger;
   action: AutomationAction;

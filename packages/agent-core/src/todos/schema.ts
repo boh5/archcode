@@ -3,33 +3,19 @@ import {
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
   PROJECT_TODO_TITLE_MAX_LENGTH,
   type ProjectTodo,
-  type ProjectTodoActivation,
+  type ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import { z } from "zod/v4";
 
 export const ProjectTodoTitleSchema = z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH);
 export const ProjectTodoBodySchema = z.string().max(PROJECT_TODO_BODY_MAX_LENGTH);
 export const ProjectTodoRejectionReasonSchema = z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH);
-export const ProjectTodoStatusSchema = z.enum(["idea", "ready", "done", "rejected"]);
-
-export const ProjectTodoActivationSchema = z.strictObject({
-  kind: z.enum(["session", "automation"]),
-  sourceSessionId: z.uuid(),
-  todoRevision: z.number().int().positive(),
-  snapshot: z.strictObject({
-    title: ProjectTodoTitleSchema,
-    body: ProjectTodoBodySchema,
-  }),
-  resourceId: z.uuid().optional(),
-}).superRefine((activation, context) => {
-  if (activation.kind === "session" && activation.resourceId !== activation.sourceSessionId) {
-    context.addIssue({
-      code: "custom",
-      path: ["resourceId"],
-      message: "Session Activation resourceId must equal sourceSessionId",
-    });
-  }
-}) satisfies z.ZodType<ProjectTodoActivation>;
+export const ProjectTodoStatusSchema = z.enum(["idea", "ready", "in_progress", "done", "rejected"]);
+export const ProjectTodoSessionEntrySchema = z.enum(["discussion", "work", "automation"]);
+export const CreateProjectTodoSessionSchema = z.strictObject({
+  expectedRevision: z.number().int().positive(),
+  entry: ProjectTodoSessionEntrySchema,
+});
 
 export const ProjectTodoSchema = z.strictObject({
   id: z.uuid(),
@@ -38,8 +24,6 @@ export const ProjectTodoSchema = z.strictObject({
   status: ProjectTodoStatusSchema,
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
   revision: z.number().int().positive(),
-  discussionSessionId: z.uuid().optional(),
-  activation: ProjectTodoActivationSchema.optional(),
   archivedAt: z.number().int().nonnegative().optional(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
@@ -50,12 +34,6 @@ export const ProjectTodoSchema = z.strictObject({
   if (todo.status !== "rejected" && todo.rejectionReason !== undefined) {
     context.addIssue({ code: "custom", path: ["rejectionReason"], message: "Only a rejected Todo may retain a rejection reason" });
   }
-  if (todo.activation !== undefined && todo.status !== "ready" && todo.status !== "done") {
-    context.addIssue({ code: "custom", path: ["activation"], message: "Activation requires ready or done status" });
-  }
-  if (todo.archivedAt !== undefined && todo.activation !== undefined && todo.status === "ready") {
-    context.addIssue({ code: "custom", path: ["archivedAt"], message: "An active Todo cannot be archived" });
-  }
   if (todo.updatedAt < todo.createdAt) {
     context.addIssue({ code: "custom", path: ["updatedAt"], message: "updatedAt must not precede createdAt" });
   }
@@ -65,10 +43,6 @@ export const ProjectTodoStateFileSchema = z.strictObject({
   todos: z.array(ProjectTodoSchema),
 }).superRefine((state, context) => {
   addUniqueIssues(state.todos.map((todo) => todo.id), "Todo id", context);
-  addUniqueIssues(state.todos.flatMap((todo) => [
-    ...(todo.discussionSessionId === undefined ? [] : [todo.discussionSessionId]),
-    ...(todo.activation === undefined ? [] : [todo.activation.sourceSessionId]),
-  ]), "Todo-owned Session", context);
 });
 
 export type ProjectTodoStateFile = z.infer<typeof ProjectTodoStateFileSchema>;
@@ -78,12 +52,23 @@ export const ProjectTodoCreateSchema = z.strictObject({
   body: ProjectTodoBodySchema.optional(),
 });
 
-export const ProjectTodoUpdatePatchSchema = z.strictObject({
+export const ProjectTodoUpdateSchema = z.strictObject({
+  expectedRevision: z.number().int().positive(),
   title: ProjectTodoTitleSchema.optional(),
   body: ProjectTodoBodySchema.optional(),
   status: ProjectTodoStatusSchema.optional(),
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
-}).refine((input) => Object.keys(input).length > 0, { message: "At least one Todo field is required" });
+  archived: z.boolean().optional(),
+  beforeTodoId: z.uuid().nullable().optional(),
+}).superRefine((input, context) => {
+  const mutationFields = Object.keys(input).filter((key) => key !== "expectedRevision");
+  if (mutationFields.length === 0) {
+    context.addIssue({ code: "custom", message: "At least one Todo field is required" });
+  }
+  if (input.archived !== undefined && mutationFields.length !== 1) {
+    context.addIssue({ code: "custom", path: ["archived"], message: "archived cannot be combined with other Todo fields" });
+  }
+}) satisfies z.ZodType<ProjectTodoUpdateInput>;
 
 export const ProjectTodoDiscussionUpdatePatchSchema = z.strictObject({
   title: ProjectTodoTitleSchema.optional(),

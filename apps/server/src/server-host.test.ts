@@ -70,7 +70,6 @@ function fakeRuntime(configService: ServerConfigService): AgentRuntime {
   return {
     configService,
     recoverSessionContinuations: mock(async () => undefined),
-    recoverProjectTodos: mock(async () => undefined),
     startAutomationSchedulers: mock(async () => undefined),
     prepareForRestart: mock(() => ({ ready: true })),
     shutdown: mock(async () => undefined),

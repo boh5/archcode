@@ -415,7 +415,6 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
         logger: this.options.logger,
       });
       await runtime.recoverSessionContinuations();
-      await runtime.recoverProjectTodos();
       await runtime.startAutomationSchedulers();
       this.runtime = runtime;
       this.runtimeApp = createRuntimeApp(runtime, {

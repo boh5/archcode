@@ -283,7 +283,7 @@ export function isProjectTodoQueryKey(queryKey: readonly unknown[]): boolean {
   return queryKey[0] === "projects"
     && typeof queryKey[1] === "string"
     && queryKey[2] === "todos"
-    && (queryKey.length === 3 || (queryKey.length === 4 && typeof queryKey[3] === "string"));
+    && queryKey.length === 3;
 }
 
 export function refreshProjectTodoQueriesAfterSSEOpen(
@@ -482,7 +482,9 @@ export function handleSSEEvent(
       break;
     }
     case "session.runtime_changed": {
-      sessionRuntimeStore.getState().applyChange(parsed as GlobalSSESessionRuntimeChangedEvent);
+      const change = parsed as GlobalSSESessionRuntimeChangedEvent;
+      sessionRuntimeStore.getState().applyChange(change);
+      deps.invalidateQueries({ queryKey: queryKeys.sessions(change.projectSlug) });
       break;
     }
     case "update.changed": {
@@ -501,7 +503,6 @@ function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSERe
 
   if (event.resourceType === "todo") {
     deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
-    deps.invalidateQueries({ queryKey: queryKeys.projectTodo(event.projectSlug, event.resourceId) });
   }
 }
 

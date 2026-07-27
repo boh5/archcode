@@ -34,7 +34,6 @@ export const queryKeys = {
   automation: (slug: string, automationId: string) => ["projects", slug, "automations", automationId] as const,
   automationInvocations: (slug: string, automationId: string) => ["projects", slug, "automations", automationId, "invocations"] as const,
   projectTodos: (slug: string) => ["projects", slug, "todos"] as const,
-  projectTodo: (slug: string, todoId: string) => ["projects", slug, "todos", todoId] as const,
 };
 
 export function modelRuntimeQueryOptions() {
@@ -279,20 +278,6 @@ export function projectTodosQueryOptions(slug: string) {
   });
 }
 
-export function projectTodoQueryOptions(slug: string, todoId: string) {
-  return queryOptions({
-    queryKey: queryKeys.projectTodo(slug, todoId),
-    queryFn: async () => apiFetch<{ todo: ProjectTodo }>(
-      `/api/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(todoId)}`,
-    ).then((response) => response.todo),
-    enabled: slug.length > 0 && todoId.length > 0,
-  });
-}
-
 export function useProjectTodos(slug: string) {
   return useQuery(projectTodosQueryOptions(slug));
-}
-
-export function useProjectTodo(slug: string, todoId: string) {
-  return useQuery(projectTodoQueryOptions(slug, todoId));
 }

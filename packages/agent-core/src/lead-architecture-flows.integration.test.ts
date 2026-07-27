@@ -31,7 +31,7 @@ afterAll(async () => {
 });
 
 describe("Lead architecture full-runtime flows", () => {
-  test("Todo Discussion reaches Ready and activates a fresh ordinary Lead Session", async () => {
+  test("Todo Discussion reaches Ready and starts a fresh ordinary Lead Session", async () => {
     const fixture = await runtimeFixture("Todo architecture flow");
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
     const idea = await context.todos.createTodo({
@@ -39,33 +39,36 @@ describe("Lead architecture full-runtime flows", () => {
       body: "Agree the outcome before implementation.",
     });
 
-    const discussion = await context.todos.discussTodo(idea.id, idea.revision);
-    const discussionSessionId = discussion.discussionSessionId;
-    expect(discussionSessionId).toBeString();
+    const discussion = await context.todos.createSession(idea.id, {
+      expectedRevision: idea.revision,
+      entry: "discussion",
+    });
+    const discussionSessionId = discussion.sessionId;
     await waitForFamilyIdle(
       fixture.runtime,
       fixture.workspaceRoot,
       fixture.projectSlug,
-      discussionSessionId!,
+      discussionSessionId,
     );
 
-    const discussionSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId!);
+    const discussionSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId);
     expect(discussionSession).toMatchObject({
       sessionId: discussionSessionId,
       rootSessionId: discussionSessionId,
       agentName: "lead",
+      projectTodo: { todoId: idea.id, entry: "discussion" },
     });
     expect(discussionSession.parentSessionId).toBeUndefined();
-    expect(await context.todos.state.findByDiscussionSessionId(discussionSessionId!)).toMatchObject({ id: idea.id });
 
     const ready = await context.todos.updateFromDiscussion({
       authorization: {
-        sessionId: discussionSessionId!,
-        rootSessionId: discussionSessionId!,
+        sessionId: discussionSessionId,
+        rootSessionId: discussionSessionId,
         agentName: "lead",
         projectSlug: fixture.projectSlug,
+        projectTodo: discussionSession.projectTodo,
       },
-      expectedRevision: discussion.revision,
+      expectedRevision: discussion.todo.revision,
       patch: {
         body: "The outcome and acceptance boundary are confirmed.",
         status: "ready",
@@ -73,30 +76,36 @@ describe("Lead architecture full-runtime flows", () => {
     });
     expect(ready.status).toBe("ready");
 
-    const activated = await context.todos.activateTodo(ready.id, {
+    const work = await context.todos.createSession(ready.id, {
       expectedRevision: ready.revision,
-      kind: "session",
+      entry: "work",
     });
-    const activationSessionId = activated.activation?.sourceSessionId;
-    expect(activationSessionId).toBeString();
-    expect(activationSessionId).not.toBe(discussionSessionId);
+    const workSessionId = work.sessionId;
+    expect(workSessionId).not.toBe(discussionSessionId);
     await waitForFamilyIdle(
       fixture.runtime,
       fixture.workspaceRoot,
       fixture.projectSlug,
-      activationSessionId!,
+      workSessionId,
     );
 
-    const activationSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, activationSessionId!);
-    expect(activationSession).toMatchObject({
-      sessionId: activationSessionId,
-      rootSessionId: activationSessionId,
+    const workSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, workSessionId);
+    expect(workSession).toMatchObject({
+      sessionId: workSessionId,
+      rootSessionId: workSessionId,
       agentName: "lead",
+      projectTodo: { todoId: ready.id, entry: "work" },
     });
-    expect(activationSession.parentSessionId).toBeUndefined();
-    expect(await context.todos.state.findByDiscussionSessionId(activationSessionId!)).toBeUndefined();
-    expect(activationSession.messages.some((message) => message.role === "user"
-      && message.parts.some((part) => part.type === "text" && part.text.startsWith("Implement the following Project Todo"))))
+    expect(workSession.parentSessionId).toBeUndefined();
+    const acceptedWorkInputs = [
+      ...workSession.pendingMessages.map((message) => message.content),
+      ...workSession.messages.flatMap((message) => (
+        message.role === "user"
+          ? message.parts.flatMap((part) => part.type === "text" ? [part.text] : [])
+          : []
+      )),
+    ];
+    expect(acceptedWorkInputs.some((text) => text.startsWith("Implement the following Project Todo")))
       .toBe(true);
   });
 

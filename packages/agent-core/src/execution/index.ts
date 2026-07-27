@@ -16,10 +16,7 @@ export { SessionFamilyStopService } from "./session-family-stop-service";
 export { collectSessionTreeIds } from "./session-tree";
 export { SessionWorkspaceClosingError } from "./session-workspace-control";
 export type { SessionWorkspaceCloseLease } from "./session-workspace-control";
-export {
-  SessionDeleteInProgressError,
-  SessionDeleteOwnerConflictError,
-} from "./session-deletion";
+export { SessionDeleteInProgressError } from "./session-deletion";
 export {
   SessionFamilyActiveError,
   SessionFamilyIdentityUnavailableError,
@@ -58,8 +55,6 @@ export type {
 } from "./session-family-stop-service";
 export type {
   SessionDeletionLifecycle,
-  SessionDeletionOwnerDetail,
-  SessionDeletionOwnerType,
   SessionDeletionPreflightInput,
 } from "./session-deletion";
 export type {

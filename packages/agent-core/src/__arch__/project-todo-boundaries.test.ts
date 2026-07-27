@@ -28,15 +28,25 @@ describe("Project Todo architecture boundaries", () => {
     const state = readFileSync(join(todosRoot, "state-manager.ts"), "utf8");
     const service = readFileSync(join(todosRoot, "service.ts"), "utf8");
 
-    expect(state).not.toMatch(/SessionExecutionManager|SessionStoreManager|ensureRootSession|ensureExecution/);
+    expect(state).not.toMatch(/SessionExecutionManager|SessionStoreManager|createRootSession|acceptMessage/);
     expect(service).toContain("ProjectTodoSessionCapability");
-    expect(service).toContain("ProjectTodoProvenanceCapability");
     expect(service).not.toMatch(/new\s+(?:SessionExecutionManager|AutomationStateManager)/);
+    expect(service).toContain("readonly #state: ProjectTodoStateManager");
+    expect(service).not.toMatch(/readonly state:\s*ProjectTodoStateManager/);
   });
 
   test("publishes the canonical Project Todo statuses", () => {
     expect(readFileSync(join(projectRoot, "packages/protocol/src/project-todos.ts"), "utf8"))
-      .toContain('export type ProjectTodoStatus = "idea" | "ready" | "done" | "rejected"');
+      .toContain('export type ProjectTodoStatus = "idea" | "ready" | "in_progress" | "done" | "rejected"');
+  });
+
+  test("keeps ProjectContext consumers on the service boundary", () => {
+    const violations = productionSources(agentCoreRoot)
+      .filter((path) => !path.startsWith(todosRoot))
+      .filter((path) => /(?:context|projectContext)\.todos\.state\b/.test(readFileSync(path, "utf8")))
+      .map((path) => relative(projectRoot, path));
+
+    expect(violations).toEqual([]);
   });
 
   test("adapts HTTP through ProjectContext and keeps Web on Protocol DTOs", () => {

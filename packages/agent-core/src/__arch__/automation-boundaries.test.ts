@@ -38,10 +38,6 @@ describe("Automation architecture boundaries", () => {
     const runtime = readFileSync(join(agentCoreRoot, "runtime.ts"), "utf8");
     const sessionRecovery = runtime.slice(
       runtime.indexOf("async function recoverSessionContinuations"),
-      runtime.indexOf("async function recoverProjectTodos"),
-    );
-    const todoRecovery = runtime.slice(
-      runtime.indexOf("async function recoverProjectTodos"),
       runtime.indexOf("async function reconcileRegisteredProject"),
     );
     const familyIdleReconciliation = runtime.slice(
@@ -54,9 +50,6 @@ describe("Automation architecture boundaries", () => {
     expect(dispatcher).not.toMatch(/from\s+["']\.\/(?:scheduler|runtime-session-gateway)["']/);
     expect(scheduler).not.toContain("runtime-session-gateway");
     expect(serverHost.indexOf("runtime.recoverSessionContinuations")).toBeLessThan(
-      serverHost.indexOf("runtime.recoverProjectTodos"),
-    );
-    expect(serverHost.indexOf("runtime.recoverProjectTodos")).toBeLessThan(
       serverHost.indexOf("runtime.startAutomationSchedulers"),
     );
     expect(serverHost.indexOf("runtime.startAutomationSchedulers")).toBeLessThan(
@@ -68,7 +61,6 @@ describe("Automation architecture boundaries", () => {
     expect(boot).toContain("startServer(host.app");
     expect(sessionRecovery).toContain("reconcileAnsweredHitl");
     expect(sessionRecovery).toContain("continueRunnableToolBatches");
-    expect(todoRecovery).toContain("context.todos.reconcileAll()");
     expect(runtime).toContain("reconcileAllActiveGoals");
     expect(runtime).toContain("reconcileActiveGoal");
     // Root and child terminals both release the same root-family activity to

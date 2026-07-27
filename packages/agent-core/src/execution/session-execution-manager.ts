@@ -1659,8 +1659,6 @@ export class SessionExecutionManager {
         throw new Error(`Session "${sessionId}" was not found in tree rooted at "${rootSessionId}"`);
       }
 
-      await this.#config.deletionLifecycle?.assertDeletable({ workspaceRoot, rootSessionId, sessionIds });
-
       const stuckSessionIds = await this.#cancelAndWaitForSessions(workspaceRoot, sessionIds);
       if (stuckSessionIds.length > 0) {
         throw new SessionDeleteConflictError(stuckSessionIds);

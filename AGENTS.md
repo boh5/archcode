@@ -1,6 +1,6 @@
 ## Project
 
-ArchCode is an open-source, self-hosted AI coding workbench. Users run it on a local machine or remote server, capture features, bugs, refactors, experiments, and other ideas as Project Todos, shape Ideas through dedicated Discussions, and start Ready work as durable Sessions or Automations. A Goal is an optional persistent protocol on a root Lead Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with five Agent identities (Lead, Analyst, Build, Explore, Librarian), three model Profiles (`principal`, `deep`, `fast`), workflow Skills, HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
+ArchCode is an open-source, self-hosted AI coding workbench. Users run it on a local machine or remote server, capture features, bugs, refactors, experiments, and other ideas as Project Todos, shape Ideas through dedicated Discussions, and start Ready or In Progress work as durable Sessions or Automations. A Goal is an optional persistent protocol on a root Lead Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with five Agent identities (Lead, Analyst, Build, Explore, Librarian), three model Profiles (`principal`, `deep`, `fast`), workflow Skills, HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Monorepo Structure
 
@@ -123,7 +123,7 @@ packages/agent-core/src/
 ├── session-goal/               # Session.goal schema, ownership service, status, budget, and usage
 ├── hitl/                       # Durable project-scoped approval/question queue and redacted display payloads
 ├── automations/                # Canonical Automation schemas, schedule, durable Invocation, Session dispatch
-├── todos/                      # ProjectTodo schema, state transitions, atomic state, recoverable Session coordination
+├── todos/                      # ProjectTodo schema, serialized state, and narrow Session-entry coordination
 ├── lsp/                        # LspClientPool (acquire/release, idle timeout, crash detection), StdioLspTransport, auto-installer, 18 language servers, 50+ ext mappings
 ├── llm/                        # Managed LLM runtime: runLlmStream/runLlmText/runLlmObject, retry/recovery, adapter test seam
 ├── projects/                   # ProjectRegistry + per-workspace HITL/memory/approval context resolver
@@ -185,7 +185,7 @@ Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resum
 **Multi-project model:**
 - `packages/agent-core/src/projects/registry.ts` persists registered workspaces under `~/.archcode/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
 - `packages/agent-core/src/projects/context-resolver.ts` creates per-workspace runtime context: durable HITL, project memory, approvals, and resource notifications. Automation state is owned by the Automation service.
-- Ordinary Session routes create a `lead`. A root Lead Session may own one optional `Session.goal`; no Goal-specific Session, route family, or worktree exists. A Todo Discussion is a restricted root Lead derived from its authoritative Todo binding.
+- Ordinary Session routes create a `lead`. A root Lead Session may own one optional `Session.goal`; no Goal-specific Session, route family, or worktree exists. A Todo-originated root Lead stores its immutable `{ todoId, entry }` source on the Session itself. A `discussion` entry is a restricted root Lead derived from that Session identity.
 - Web UI Add Project flow should register an existing workspace directory, then use project-scoped API routes (`/api/projects/:slug/...`) for sessions, files, automations, HITL, and events.
 
 **Project `.archcode` layout** (per registered workspace root; user-global `~/.archcode` is unchanged):
@@ -368,7 +368,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Session Store
 
-Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, and delegated identity where applicable; an optional `goal` belongs only to a root Lead Session. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns live execution admission and terminal records; load-time repair only converts restart-orphaned `running` records to `interrupted`.
+Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and, when present, an immutable `projectTodo` source; an optional `goal` belongs only to a root Lead Session. `projectTodo` is valid only on a root Lead and records `{ todoId, entry }`, where entry is `discussion`, `work`, or `automation`. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns live execution admission and terminal records; load-time repair only converts restart-orphaned `running` records to `interrupted`.
 
 ## Context Compaction
 
@@ -384,7 +384,9 @@ Project: `.archcode/runtime/memory/`, User: `~/.archcode/memory/` (user-global, 
 
 ## Project Todos
 
-Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Each Project opens its `/projects/:slug/todos` board by default, while `/projects/:slug` remains the Project Dashboard. `packages/agent-core/src/todos/` exclusively owns strict Todo persistence and transitions. A Todo-bound restricted root Lead Discussion activates `shape-todo`, may update only its bound Todo, and may delegate only Explore/Librarian; it cannot create Goal, Automation, worktree, or source writes. A Ready Todo creates a fresh ordinary Lead Session rather than reusing Discussion. Todo state stores only the exact source Session, immutable activation snapshot, and optional exact resource ID; Session, Goal, and Automation lifecycles remain owned by their existing domains.
+Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Each Project opens its `/projects/:slug/todos` board by default, while `/projects/:slug` remains the Project Dashboard. `ProjectTodoStateManager` owns strict Todo persistence, flat state updates (`idea`, `ready`, `in_progress`, `done`, `rejected`), archive state, revision checks, and the one canonical array order. `ProjectTodoService` is the only Todo application boundary: it exposes list/create/flat-update and creates a new Root Lead Session for a Todo entry. A Todo never points back to Sessions or Automations.
+
+A Todo can have any number of direct root Sessions. Each such root stores its immutable `{ todoId, entry }` source; children never copy it. `discussion` roots activate `shape-todo`, may update only their source Todo, and may delegate only Explore/Librarian. `work` and `automation` roots may start only from Ready or In Progress; starting from Ready moves the Todo to In Progress, while starting from In Progress leaves it there. Creating an Automation copies the source `todoId` into the Automation's own optional `projectTodoId`; Automation Invocation Sessions are not direct Todo relations. Todo moves never create, stop, rebind, or delete Sessions or Automations.
 
 ## HITL
 
@@ -392,7 +394,7 @@ HITL is a durable project-scoped approval/question queue backed by `.archcode/ru
 
 ## Automation System
 
-`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. After the user confirms the creation summary, an ordinary root Lead Session calls `automation_create`; the Runtime rejects Todo-bound Discussions and commits the Automation through the existing scheduler/state path. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Lead Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Session Goal state, and worktree lifecycle remain outside Automation.
+`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. After the user confirms the creation summary, an ordinary root Lead Session calls `automation_create`; the Runtime rejects Todo-bound Discussions and commits the Automation through the existing scheduler/state path. When the creating root has a Todo source, the new Automation copies its `todoId` into its own `projectTodoId`; Invocation Sessions do not inherit that source. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Lead Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Session Goal state, and worktree lifecycle remain outside Automation.
 
 ## LSP Integration
 

@@ -34,7 +34,6 @@ describe("global SSE Automation invalidation", () => {
     });
     expect(calls).toEqual([
       queryKeys.projectTodos("demo"),
-      queryKeys.projectTodo("demo", "t1"),
     ]);
     expect(calls).not.toContainEqual(queryKeys.sessions("demo"));
     expect(calls).not.toContainEqual(queryKeys.dashboardProjection({ kind: "global" }));

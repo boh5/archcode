@@ -11,6 +11,7 @@ import type {
   SessionModelSelection,
   SessionTreeNode,
   SessionTreeResponse,
+  ProjectTodoSessionSource,
 } from "@archcode/protocol";
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
@@ -68,6 +69,7 @@ export interface CreateSessionOptions {
   readonly delegationRequest?: DelegationRequest;
   readonly modelSelection?: SessionModelSelection;
   readonly title?: string;
+  readonly projectTodo?: ProjectTodoSessionSource;
 }
 
 export interface SessionCwdReference {
@@ -138,6 +140,12 @@ export class SessionStoreManager {
     if (existing) return existing;
 
     const rootSessionId = options.rootSessionId ?? sessionId;
+    if (options.projectTodo !== undefined
+      && (options.agentName !== "lead"
+        || options.parentSessionId !== undefined
+        || rootSessionId !== sessionId)) {
+      throw new Error("Project Todo source requires a root Lead Session");
+    }
     const cwd = options.cwd ?? workspaceRoot;
     if (!isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd, "must be an absolute path");
     if (!this.#hydrating.has(key)) this.#assertCwdTargetAllowed(cwd);
@@ -197,6 +205,7 @@ export class SessionStoreManager {
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
       parentSessionId,
+      projectTodo: options.projectTodo === undefined ? undefined : { ...options.projectTodo },
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -470,6 +479,7 @@ export class SessionStoreManager {
       agentName: options.agentName,
       activeSkillNames: [...new Set(options.activeSkillNames ?? [])],
       cwd: options.cwd ?? workspaceRoot,
+      projectTodo: options.projectTodo,
     } as const;
     const actual = {
       sessionId: session.sessionId,
@@ -478,6 +488,7 @@ export class SessionStoreManager {
       agentName: session.agentName,
       activeSkillNames: session.activeSkillNames,
       cwd: session.cwd,
+      projectTodo: session.projectTodo,
     } as const;
 
     for (const field of Object.keys(expected) as Array<keyof typeof expected>) {
@@ -485,6 +496,8 @@ export class SessionStoreManager {
         ? sameResolvedPath(String(expected[field]), String(actual[field]))
         : field === "activeSkillNames"
           ? JSON.stringify(expected.activeSkillNames) === JSON.stringify(actual.activeSkillNames)
+          : field === "projectTodo"
+            ? JSON.stringify(expected.projectTodo) === JSON.stringify(actual.projectTodo)
         : expected[field] === actual[field];
       if (!matches) {
         throw new SessionFileIdentityConflictError(sessionId, field, expected[field], actual[field]);
@@ -1082,6 +1095,7 @@ export class SessionStoreManager {
         activeSkillNames: parsed.activeSkillNames,
         modelSelection: parsed.modelSelection,
         ...(parsed.title === null ? {} : { title: parsed.title }),
+        ...(parsed.projectTodo === undefined ? {} : { projectTodo: parsed.projectTodo }),
       });
       store.setState({
         sessionId: parsed.sessionId,
@@ -1112,6 +1126,7 @@ export class SessionStoreManager {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         goal: parsed.goal,
+        projectTodo: parsed.projectTodo,
         isRunning: false,
         isStreamingModel: false,
         currentExecutionId: undefined,
@@ -1348,6 +1363,7 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
     ...(file.goal === undefined ? {} : { goal: file.goal }),
+    ...(file.projectTodo === undefined ? {} : { projectTodo: file.projectTodo }),
     agentName: file.agentName,
     profile: resolveSessionProfile(file),
     activeSkillNames: file.activeSkillNames,

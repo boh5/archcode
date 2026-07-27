@@ -207,7 +207,7 @@ describe("SSE liveness watchdog", () => {
     expect(isSessionSnapshotQueryKey(["sessions", "root-1"])).toBe(false);
   });
 
-  test("selects and actively refreshes only project Todo list and detail queries after SSE opens", async () => {
+  test("selects and actively refreshes only project Todo list queries after SSE opens", async () => {
     const candidates = [
       ["projects", "demo", "todos"],
       ["projects", "demo", "todos", "todo-1"],
@@ -234,7 +234,6 @@ describe("SSE liveness watchdog", () => {
 
     expect(refreshed).toEqual([
       ["projects", "demo", "todos"],
-      ["projects", "demo", "todos", "todo-1"],
       ["projects", "other", "todos"],
     ]);
     expect(isProjectTodoQueryKey(["projects", 1, "todos"])).toBe(false);
@@ -545,44 +544,6 @@ describe("handleSSEEvent", () => {
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
   });
 
-  test("waits for execution-start before refreshing Session topology after a Todo checkpoint", () => {
-    const store = createMockStore();
-    mockFindWebSessionStore.mockReturnValue(store);
-
-    handleSSEEvent({ event: "resource.changed", data: JSON.stringify({
-      type: "resource.changed",
-      projectSlug: "proj",
-      resourceType: "todo",
-      resourceId: "todo-1",
-      createdAt: 1,
-    }) }, deps);
-
-    expect(mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey)).toEqual([
-      queryKeys.projectTodos("proj"),
-      queryKeys.projectTodo("proj", "todo-1"),
-    ]);
-    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: queryKeys.sessions("proj") });
-
-    const executionStart: GlobalSessionEventEnvelope = {
-      type: "event",
-      slug: "proj",
-      sessionId: "source-session",
-      eventId: 1,
-      createdAt: 2,
-      payload: { type: "execution-start", executionId: "project-todo:todo-1:activation", binding, origin: "user_message" },
-      agentName: "lead",
-    };
-    handleSSEEvent({ event: "event", data: JSON.stringify(executionStart) }, deps);
-
-    expect(mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey)).toEqual([
-      queryKeys.projectTodos("proj"),
-      queryKeys.projectTodo("proj", "todo-1"),
-      queryKeys.session("proj", "source-session"),
-      queryKeys.sessions("proj"),
-    ]);
-    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(executionStart);
-  });
-
   test("invalidates topology queries and preloads child metadata on child session link", () => {
     const parentStore = createMockStore();
     const childStore = {
@@ -775,6 +736,7 @@ describe("handleSSEEvent", () => {
     };
     handleSSEEvent({ event: running.type, data: JSON.stringify(running) }, deps);
     expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe("running");
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.sessions("proj") });
 
     const idle: GlobalSSESessionRuntimeChangedEvent = { ...running, activity: "idle", createdAt: 3 };
     handleSSEEvent({ event: idle.type, data: JSON.stringify(idle) }, deps);

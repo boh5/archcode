@@ -215,14 +215,11 @@ function acquireCwdTransition(
 
 async function validateInteractiveRootSession(ctx: ToolExecutionContext): Promise<RawToolResult | undefined> {
   const state = ctx.store.getState();
-  const discussion = state.parentSessionId === undefined
-    ? await ctx.projectContext.todos.state.findByDiscussionSessionId(state.sessionId)
-    : undefined;
   if (
     ctx.agentName !== "lead"
     || state.parentSessionId !== undefined
     || (ctx.currentDepth ?? 0) !== 0
-    || discussion !== undefined
+    || state.projectTodo?.entry === "discussion"
   ) {
     return createToolErrorResult({
       kind: "permission-denied",

@@ -2,19 +2,8 @@ export const PROJECT_TODO_TITLE_MAX_LENGTH = 200;
 export const PROJECT_TODO_BODY_MAX_LENGTH = 20_000;
 export const PROJECT_TODO_REJECTION_REASON_MAX_LENGTH = 4_000;
 
-export type ProjectTodoStatus = "idea" | "ready" | "done" | "rejected";
-export type ProjectTodoActivationKind = "session" | "automation";
-
-export interface ProjectTodoActivation {
-  readonly kind: ProjectTodoActivationKind;
-  readonly sourceSessionId: string;
-  readonly todoRevision: number;
-  readonly snapshot: {
-    readonly title: string;
-    readonly body: string;
-  };
-  readonly resourceId?: string;
-}
+export type ProjectTodoStatus = "idea" | "ready" | "in_progress" | "done" | "rejected";
+export type ProjectTodoSessionEntry = "discussion" | "work" | "automation";
 
 /** Project-owned intent, separate from a Session-scoped execution checklist. */
 export interface ProjectTodo {
@@ -24,11 +13,15 @@ export interface ProjectTodo {
   readonly status: ProjectTodoStatus;
   readonly rejectionReason?: string;
   readonly revision: number;
-  readonly discussionSessionId?: string;
-  readonly activation?: ProjectTodoActivation;
   readonly archivedAt?: number;
   readonly createdAt: number;
   readonly updatedAt: number;
+}
+
+/** Immutable source identity owned by a root Lead Session. */
+export interface ProjectTodoSessionSource {
+  readonly todoId: string;
+  readonly entry: ProjectTodoSessionEntry;
 }
 
 export interface ProjectTodoCreateInput {
@@ -36,11 +29,18 @@ export interface ProjectTodoCreateInput {
   readonly body?: string;
 }
 
-export interface ProjectTodoUpdatePatch {
+/**
+ * The single Todo mutation contract. `beforeTodoId` orders the Todo in its
+ * final status lane; `null` explicitly appends it to that lane.
+ */
+export interface ProjectTodoUpdateInput {
+  readonly expectedRevision: number;
   readonly title?: string;
   readonly body?: string;
   readonly status?: ProjectTodoStatus;
   readonly rejectionReason?: string;
+  readonly archived?: boolean;
+  readonly beforeTodoId?: string | null;
 }
 
 export interface ProjectTodoDiscussionUpdatePatch {
@@ -50,18 +50,9 @@ export interface ProjectTodoDiscussionUpdatePatch {
   readonly rejectionReason?: string;
 }
 
-export interface ProjectTodoMutationInput {
+export interface CreateProjectTodoSessionInput {
   readonly expectedRevision: number;
-}
-
-export interface ProjectTodoUpdateInput extends ProjectTodoMutationInput {
-  readonly patch: ProjectTodoUpdatePatch;
-}
-
-export interface ProjectTodoDiscussInput extends ProjectTodoMutationInput {}
-
-export interface ProjectTodoActivateInput extends ProjectTodoMutationInput {
-  readonly kind: ProjectTodoActivationKind;
+  readonly entry: ProjectTodoSessionEntry;
 }
 
 export interface ProjectTodoListResponse {
@@ -72,12 +63,6 @@ export interface ProjectTodoResponse {
   readonly todo: ProjectTodo;
 }
 
-export interface ProjectTodoSessionResponse extends ProjectTodoResponse {
+export interface CreateProjectTodoSessionResponse extends ProjectTodoResponse {
   readonly sessionId: string;
-}
-
-export interface ProjectTodoSessionOwner {
-  readonly sessionId: string;
-  readonly ownerType: "project_todo";
-  readonly ownerId: string;
 }

@@ -27,6 +27,7 @@ export class AutomationInvocationNotFoundError extends Error {
 export interface CreateAutomationInput {
   readonly projectSlug: string;
   readonly createdFromSessionId: string;
+  readonly projectTodoId?: string;
   readonly name: string;
   readonly trigger: AutomationTrigger;
   readonly action: AutomationAction;
@@ -83,6 +84,9 @@ export class AutomationStateManager {
         id: crypto.randomUUID(),
         projectSlug: requireProjectSlug(input.projectSlug),
         createdFromSessionId: requireUuid(input.createdFromSessionId, "createdFromSessionId"),
+        ...(input.projectTodoId === undefined ? {} : {
+          projectTodoId: requireUuid(input.projectTodoId, "projectTodoId"),
+        }),
         name: validated.name,
         trigger,
         action,

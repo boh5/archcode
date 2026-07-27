@@ -39,7 +39,7 @@ A Plan is an ordinary Markdown file under `.archcode/plans/`, not a service, sta
 
 ## Sessions, Todos, and Goals
 
-Every user-facing Session is rooted at Lead. A Todo Discussion keeps its existing product entry but derives a restricted Lead capability surface from the authoritative Todo binding and activates `shape-todo`; Ready starts a new ordinary Lead Session.
+Every user-facing Session is rooted at Lead. A Todo-originated root carries an immutable `{ todoId, entry }` identity. A `discussion` entry derives the restricted Lead capability surface and activates `shape-todo`; it may update only that source Todo. A `work` or `automation` entry is otherwise an ordinary root Lead Session. Todo identity never propagates to child Sessions.
 
 `Session.goal` is an optional persistent protocol on a root Lead Session. Before creating it, Lead asks with ordinary `ask_user` and interprets the answer semantically. Goal is independent of Plan.
 

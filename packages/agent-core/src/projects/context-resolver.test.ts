@@ -50,11 +50,16 @@ function createResolver(overrides: Partial<ProjectContextResolverOptions> = {}):
       workspaceRoot,
       projectSlug: project.slug,
       sessions: {
-        ensureRootSession: async () => {},
-        ensureExecution: async () => {},
-        acquireIdleFamily: async () => ({ release: () => {} }),
+        createRootSession: async (input) => {
+          const session = await sessions.createSessionFile(input.workspaceRoot, {
+            agentName: input.agentName,
+            title: input.title,
+            projectTodo: input.projectTodo,
+          });
+          return { sessionId: session.sessionId };
+        },
+        acceptMessage: async () => {},
       },
-      provenance: { listResources: async () => [] },
     })),
     createAutomation: overrides.createAutomation ?? (async () => {
       throw new Error("Automation creation is not configured for this test resolver");

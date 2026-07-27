@@ -30,11 +30,17 @@ return to the same Session later.
 
 Project Todos are optional, project-owned entries for anything you may want to
 build, fix, investigate, or improve. A new Todo starts as an Idea. You can open
-a dedicated Discussion to clarify and shape it, then mark it Ready or Rejected.
+a dedicated Discussion to clarify and shape it, then freely organize it among
+Idea, Ready, In Progress, and Done; Rejected and Archived are separate from the
+main board.
 
-A Ready Todo can start a fresh ordinary Lead Session or an Automation. The
-resulting work stays linked to the Todo, which can be marked Done or returned to
-Ready. You can also start a Session directly without creating a Todo.
+A Ready or In Progress Todo can start any number of fresh ordinary Lead work
+Sessions or an Automation setup Session. Starting work from Ready moves the
+Todo to In Progress; opening or continuing an existing Session does not change
+the Todo. Each direct root Session keeps its own immutable Todo source, while
+an Automation keeps its own optional Todo association. The Todo itself never
+stores Session or Automation IDs. You can also start a Session directly without
+creating a Todo.
 
 ## Goal
 

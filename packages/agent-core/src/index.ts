@@ -33,7 +33,6 @@ export type { SlashCommandResult } from "./commands/types";
 export {
   SessionCwdReferenceMigrationService,
   SessionDeleteInProgressError,
-  SessionDeleteOwnerConflictError,
   SessionFamilyActiveError,
   SessionFamilyIdentityUnavailableError,
   SessionFamilyStopConflictError,
@@ -56,8 +55,6 @@ export type {
   SessionCwdReferenceMigrationServiceOptions,
   SessionCwdRemovalLifecycle,
   SessionCwdRemovalResult,
-  SessionDeletionOwnerDetail,
-  SessionDeletionOwnerType,
   SessionDeletionLifecycle,
   SessionDeletionPreflightInput,
   SessionExecutionClaimCoordinator,

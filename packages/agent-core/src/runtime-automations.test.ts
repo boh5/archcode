@@ -13,7 +13,6 @@ import { createRuntime, type AgentRuntime } from "./runtime";
 import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gateway";
 import type { AutomationSchedulerTimer, AutomationSchedulerTimerHandle } from "./automations/scheduler";
 import { SessionStoreManager } from "./store/session-store-manager";
-import { ProjectTodoStateManager, activationExecutionId, discussionExecutionId } from "./todos";
 
 const roots: string[] = [];
 const START = Date.parse("2026-07-13T00:00:00.000Z");
@@ -93,6 +92,43 @@ describe("RuntimeSessionDispatchGateway", () => {
 });
 
 describe("AgentRuntime Automation wiring", () => {
+  test("copies Todo source to Automation without propagating it through Invocations", async () => {
+    const fixture = await runtimeFixture();
+    const todoId = crypto.randomUUID();
+    const source = await fixture.runtime.createSession(fixture.workspaceRoot, {
+      agentName: "lead",
+      projectTodo: { todoId, entry: "automation" },
+    });
+    const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      name: "Todo automation",
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: { kind: "start_session", message: "Check the project", location: "project" },
+      createdFromSessionId: source.sessionId,
+    });
+
+    expect(automation.projectTodoId).toBe(todoId);
+    const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
+    const invocationSession = await fixture.runtime.getSessionFile(
+      fixture.workspaceRoot,
+      invocation.sessionId!,
+    );
+    expect(invocationSession.projectTodo).toBeUndefined();
+
+    const target = await fixture.runtime.createSession(fixture.workspaceRoot, {
+      agentName: "lead",
+      projectTodo: { todoId, entry: "work" },
+    });
+    const send = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      name: "Continue Todo work",
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: { kind: "send_message", sessionId: target.sessionId, message: "Continue" },
+      createdFromSessionId: source.sessionId,
+    });
+    await fixture.runtime.runAutomationNow(fixture.workspaceRoot, send.id);
+    expect((await fixture.runtime.getSessionFile(fixture.workspaceRoot, target.sessionId)).projectTodo)
+      .toEqual({ todoId, entry: "work" });
+  });
+
   test("creates a normal Lead Session with the preallocated dispatch identities", async () => {
     const fixture = await runtimeFixture();
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
@@ -157,66 +193,6 @@ describe("AgentRuntime Automation wiring", () => {
       clientRequestId: invocation.id,
       status: "canonical",
     }));
-  });
-
-  test("routes Project Todo starts through typed execution paths and binds exact resources", async () => {
-    const fixture = await runtimeFixture();
-    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
-
-    const idea = await context.todos.createTodo({ title: "Shape through server events" });
-    const discussed = await context.todos.discussTodo(idea.id, idea.revision);
-    const discussionSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussed.discussionSessionId!);
-    expect(discussionSession.agentName).toBe("lead");
-    expect(discussionSession.executions).toContainEqual(expect.objectContaining({
-      id: discussionExecutionId(idea.id),
-    }));
-
-    const automationIdea = await context.todos.createTodo({ title: "Automate exact resource binding" });
-    const ready = await context.todos.updateTodo(automationIdea.id, {
-      expectedRevision: automationIdea.revision,
-      patch: { status: "ready" },
-    });
-    const active = await context.todos.activateTodo(ready.id, {
-      expectedRevision: ready.revision,
-      kind: "automation",
-    });
-    const activationSession = await fixture.runtime.getSessionFile(fixture.workspaceRoot, active.activation!.sourceSessionId);
-    expect(activationSession.executions).toContainEqual(expect.objectContaining({
-      id: activationExecutionId(active.id),
-    }));
-
-    const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
-      name: "Todo provenance",
-      trigger: { kind: "interval", everyMs: 30_000 },
-      action: { kind: "start_session", message: "Check", location: "project" },
-      createdFromSessionId: active.activation!.sourceSessionId,
-    });
-    expect((await context.todos.readTodo(active.id)).activation?.resourceId).toBe(automation.id);
-    await fixture.runtime.abortAllSessionExecutions();
-  });
-
-  test("recovers durable Project Todo checkpoints through its typed execution path", async () => {
-    let todoId = "";
-    let discussionSessionId = "";
-    const fixture = await runtimeFixture({
-      beforeRuntime: async ({ workspaceRoot }) => {
-        const state = new ProjectTodoStateManager(workspaceRoot);
-        const todo = await state.createTodo({ title: "Recover after restart" });
-        discussionSessionId = crypto.randomUUID();
-        todoId = todo.id;
-        await state.checkpointDiscussion(todo.id, todo.revision, discussionSessionId);
-      },
-    });
-
-    const events = sessionEventProbe(fixture.runtime);
-    await fixture.runtime.recoverProjectTodos();
-    await events.waitFor((event) => event.sessionId === discussionSessionId
-      && event.payload.type === "execution-end");
-    events.dispose();
-
-    await fixture.runtime.recoverProjectTodos();
-    const recovered = await fixture.runtime.getSessionFile(fixture.workspaceRoot, discussionSessionId);
-    expect(recovered.executions.filter((execution) => execution.id === discussionExecutionId(todoId))).toHaveLength(1);
   });
 
   test("rejects worktree actions on non-Git projects during create and update", async () => {

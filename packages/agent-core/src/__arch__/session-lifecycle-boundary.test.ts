@@ -8,7 +8,6 @@ describe("Session lifecycle architecture", () => {
 
     expect(source).not.toMatch(/from\s+["']\.\.\/session-goal(?:\/|["'])/);
     expect(source).toContain("deletionLifecycle");
-    expect(source).toContain("assertDeletable");
     expect(source).toContain("prepareForDeletion");
     expect(source).toContain("executionClaimCoordinator");
   });

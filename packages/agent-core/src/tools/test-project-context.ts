@@ -22,7 +22,7 @@ export function createTestHitlCodec(): HitlBoundaryCodec {
 
 export function createTestProjectContext(
   workspaceRoot: string,
-  _sessions = new SessionStoreManager({ logger: silentLogger }),
+  sessions = new SessionStoreManager({ logger: silentLogger }),
 ): ProjectContext {
   const project = {
     slug: "test-project",
@@ -31,7 +31,7 @@ export function createTestProjectContext(
     addedAt: new Date().toISOString(),
   };
   const hitl = new ProjectHitlQueue({ workspaceRoot, codec: TEST_HITL_CODEC });
-  const todos = createTestProjectTodoService(workspaceRoot, project.slug);
+  const todos = createTestProjectTodoService(workspaceRoot, project.slug, sessions);
   return {
     project,
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test context"); },
@@ -46,7 +46,7 @@ export function createTestProjectContext(
 }
 
 export function createTestProjectContextResolverOptions(
-  _sessionStoreManager: SessionStoreManager,
+  sessionStoreManager: SessionStoreManager,
 ): ProjectContextResolverOptions {
   return {
     hitlCodec: TEST_HITL_CODEC,
@@ -56,21 +56,32 @@ export function createTestProjectContextResolverOptions(
       workspaceRoot,
       addedAt: new Date().toISOString(),
     }),
-    projectTodoFactory: ({ workspaceRoot, project }) => createTestProjectTodoService(workspaceRoot, project.slug),
+    projectTodoFactory: ({ workspaceRoot, project }) => (
+      createTestProjectTodoService(workspaceRoot, project.slug, sessionStoreManager)
+    ),
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test resolver"); },
   };
 }
 
-export function createTestProjectTodoService(workspaceRoot: string, projectSlug: string): ProjectTodoService {
+export function createTestProjectTodoService(
+  workspaceRoot: string,
+  projectSlug: string,
+  sessions = new SessionStoreManager({ logger: silentLogger }),
+): ProjectTodoService {
   return new ProjectTodoService({
     workspaceRoot,
     projectSlug,
     sessions: {
-      ensureRootSession: async () => {},
-      ensureExecution: async () => {},
-      acquireIdleFamily: async () => ({ release: () => {} }),
+      createRootSession: async (input) => {
+        const session = await sessions.createSessionFile(input.workspaceRoot, {
+          agentName: input.agentName,
+          title: input.title,
+          projectTodo: input.projectTodo,
+        });
+        return { sessionId: session.sessionId };
+      },
+      acceptMessage: async () => {},
     },
-    provenance: { listResources: async () => [] },
   });
 }
 

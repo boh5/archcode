@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import type {
+  CreateProjectTodoSessionInput,
+  CreateProjectTodoSessionResponse,
   ProjectTodo,
-  ProjectTodoActivateInput,
   ProjectTodoCreateInput,
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
@@ -22,37 +23,40 @@ const ProjectTodoParamsSchema = z.strictObject({
   slug: z.string().min(1),
   todoId: z.uuid(),
 });
-const ProjectTodoExpectedRevisionSchema = z.strictObject({
-  expectedRevision: z.number().int().positive(),
-});
 const ProjectTodoCreateBodySchema = z.strictObject({
   title: z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH),
   body: z.string().max(PROJECT_TODO_BODY_MAX_LENGTH).optional(),
 });
 const ProjectTodoUpdateBodySchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
-  patch: z.strictObject({
-    title: z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH).optional(),
-    body: z.string().max(PROJECT_TODO_BODY_MAX_LENGTH).optional(),
-    status: z.enum(["idea", "ready", "done", "rejected"]).optional(),
-    rejectionReason: z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH).optional(),
-  }).refine((patch) => Object.keys(patch).length > 0, "At least one Todo field is required"),
+  title: z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH).optional(),
+  body: z.string().max(PROJECT_TODO_BODY_MAX_LENGTH).optional(),
+  status: z.enum(["idea", "ready", "in_progress", "done", "rejected"]).optional(),
+  rejectionReason: z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH).optional(),
+  archived: z.boolean().optional(),
+  beforeTodoId: z.uuid().nullable().optional(),
+}).superRefine((input, context) => {
+  const mutationFields = Object.keys(input).filter((key) => key !== "expectedRevision");
+  if (mutationFields.length === 0) {
+    context.addIssue({ code: "custom", message: "At least one Todo field is required" });
+  }
+  if (input.archived !== undefined && mutationFields.length !== 1) {
+    context.addIssue({ code: "custom", path: ["archived"], message: "archived cannot be combined with other Todo fields" });
+  }
 });
-const ProjectTodoActivateBodySchema = z.strictObject({
+const CreateProjectTodoSessionBodySchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
-  kind: z.enum(["session", "automation"]),
+  entry: z.enum(["discussion", "work", "automation"]),
 });
 
 export interface ProjectTodoServiceLike {
   listTodos(): Promise<readonly ProjectTodo[]>;
-  readTodo(todoId: string): Promise<ProjectTodo>;
   createTodo(input: ProjectTodoCreateInput): Promise<ProjectTodo>;
   updateTodo(todoId: string, input: ProjectTodoUpdateInput): Promise<ProjectTodo>;
-  archiveTodo(todoId: string, expectedRevision: number): Promise<ProjectTodo>;
-  restoreTodo(todoId: string, expectedRevision: number): Promise<ProjectTodo>;
-  discussTodo(todoId: string, expectedRevision: number): Promise<ProjectTodo>;
-  activateTodo(todoId: string, input: ProjectTodoActivateInput): Promise<ProjectTodo>;
-  returnToReady(todoId: string, expectedRevision: number): Promise<ProjectTodo>;
+  createSession(
+    todoId: string,
+    input: CreateProjectTodoSessionInput,
+  ): Promise<CreateProjectTodoSessionResponse>;
 }
 
 export function createTodosRoutes(runtime: AgentRuntime): Hono {
@@ -68,104 +72,52 @@ export function createTodosRoutes(runtime: AgentRuntime): Hono {
     }
   });
 
-  app.post("/:slug/todos", zValidator("param", ProjectTodoListParamsSchema), zValidator("json", ProjectTodoCreateBodySchema), async (c) => {
-    const project = await resolveProject(runtime, c.req.valid("param").slug);
-    const service = await resolveTodos(runtime, project.workspaceRoot);
-    try {
-      return c.json({ todo: await service.createTodo(c.req.valid("json")) }, 201);
-    } catch (error) {
-      throw mapTodoError(error);
-    }
-  });
-
-  app.get("/:slug/todos/:todoId", zValidator("param", ProjectTodoParamsSchema), async (c) => {
-    const { slug, todoId } = c.req.valid("param");
-    const project = await resolveProject(runtime, slug);
-    const service = await resolveTodos(runtime, project.workspaceRoot);
-    try {
-      return c.json({ todo: await service.readTodo(todoId) });
-    } catch (error) {
-      throw mapTodoError(error);
-    }
-  });
-
-  app.patch("/:slug/todos/:todoId", zValidator("param", ProjectTodoParamsSchema), zValidator("json", ProjectTodoUpdateBodySchema), async (c) => {
-    const { slug, todoId } = c.req.valid("param");
-    const project = await resolveProject(runtime, slug);
-    const service = await resolveTodos(runtime, project.workspaceRoot);
-    try {
-      return c.json({ todo: await service.updateTodo(todoId, c.req.valid("json")) });
-    } catch (error) {
-      throw mapTodoError(error);
-    }
-  });
-
-  app.post("/:slug/todos/:todoId/archive", zValidator("param", ProjectTodoParamsSchema), zValidator("json", ProjectTodoExpectedRevisionSchema), async (c) => {
-    const { slug, todoId } = c.req.valid("param");
-    const project = await resolveProject(runtime, slug);
-    const service = await resolveTodos(runtime, project.workspaceRoot);
-    try {
-      const { expectedRevision } = c.req.valid("json");
-      return c.json({ todo: await service.archiveTodo(todoId, expectedRevision) });
-    } catch (error) {
-      throw mapTodoError(error);
-    }
-  });
-
-  app.post("/:slug/todos/:todoId/restore", zValidator("param", ProjectTodoParamsSchema), zValidator("json", ProjectTodoExpectedRevisionSchema), async (c) => {
-    const { slug, todoId } = c.req.valid("param");
-    const project = await resolveProject(runtime, slug);
-    const service = await resolveTodos(runtime, project.workspaceRoot);
-    try {
-      const { expectedRevision } = c.req.valid("json");
-      return c.json({ todo: await service.restoreTodo(todoId, expectedRevision) });
-    } catch (error) {
-      throw mapTodoError(error);
-    }
-  });
-
-  app.post("/:slug/todos/:todoId/discuss", zValidator("param", ProjectTodoParamsSchema), zValidator("json", ProjectTodoExpectedRevisionSchema), async (c) => {
-    const { slug, todoId } = c.req.valid("param");
-    const project = await resolveProject(runtime, slug);
-    const service = await resolveTodos(runtime, project.workspaceRoot);
-    try {
-      const { expectedRevision } = c.req.valid("json");
-      const todo = await service.discussTodo(todoId, expectedRevision);
-      if (todo.discussionSessionId === undefined) {
-        throw new Error(`Project Todo discussion did not produce a Session: ${todoId}`);
+  app.post(
+    "/:slug/todos",
+    zValidator("param", ProjectTodoListParamsSchema),
+    zValidator("json", ProjectTodoCreateBodySchema),
+    async (c) => {
+      const project = await resolveProject(runtime, c.req.valid("param").slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json({ todo: await service.createTodo(c.req.valid("json")) }, 201);
+      } catch (error) {
+        throw mapTodoError(error);
       }
-      return c.json({ todo, sessionId: todo.discussionSessionId });
-    } catch (error) {
-      throw mapTodoError(error);
-    }
-  });
+    },
+  );
 
-  app.post("/:slug/todos/:todoId/activate", zValidator("param", ProjectTodoParamsSchema), zValidator("json", ProjectTodoActivateBodySchema), async (c) => {
-    const { slug, todoId } = c.req.valid("param");
-    const project = await resolveProject(runtime, slug);
-    const service = await resolveTodos(runtime, project.workspaceRoot);
-    try {
-      const todo = await service.activateTodo(todoId, c.req.valid("json"));
-      const sessionId = todo.activation?.sourceSessionId;
-      if (sessionId === undefined) {
-        throw new Error(`Project Todo activation did not produce a Session: ${todoId}`);
+  app.patch(
+    "/:slug/todos/:todoId",
+    zValidator("param", ProjectTodoParamsSchema),
+    zValidator("json", ProjectTodoUpdateBodySchema),
+    async (c) => {
+      const { slug, todoId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json({ todo: await service.updateTodo(todoId, c.req.valid("json")) });
+      } catch (error) {
+        throw mapTodoError(error);
       }
-      return c.json({ todo, sessionId });
-    } catch (error) {
-      throw mapTodoError(error);
-    }
-  });
+    },
+  );
 
-  app.post("/:slug/todos/:todoId/return-to-ready", zValidator("param", ProjectTodoParamsSchema), zValidator("json", ProjectTodoExpectedRevisionSchema), async (c) => {
-    const { slug, todoId } = c.req.valid("param");
-    const project = await resolveProject(runtime, slug);
-    const service = await resolveTodos(runtime, project.workspaceRoot);
-    try {
-      return c.json({ todo: await service.returnToReady(todoId, c.req.valid("json").expectedRevision) });
-    } catch (error) {
-      throw mapTodoError(error);
-    }
-  });
+  app.post(
+    "/:slug/todos/:todoId/sessions",
+    zValidator("param", ProjectTodoParamsSchema),
+    zValidator("json", CreateProjectTodoSessionBodySchema),
+    async (c) => {
+      const { slug, todoId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json(await service.createSession(todoId, c.req.valid("json")), 201);
+      } catch (error) {
+        throw mapTodoError(error);
+      }
+    },
+  );
 
   return app;
 }
@@ -179,15 +131,12 @@ function mapTodoError(error: unknown): Error {
   if (error instanceof z.ZodError) {
     return new BadRequestError("Request body is invalid", z.treeifyError(error));
   }
-
   if (hasCode(error, "PROJECT_TODO_NOT_FOUND")) {
     return new ServerError("PROJECT_TODO_NOT_FOUND", error.message, 404, { todoId: error.todoId });
   }
-
   if (isProjectTodoConflict(error)) {
     return new ServerError(error.code, error.message, 409, error);
   }
-
   return error instanceof Error ? error : new Error(String(error));
 }
 
@@ -197,20 +146,16 @@ function hasCode(error: unknown, code: string): error is Error & { readonly code
 
 type ProjectTodoConflictCode =
   | "PROJECT_TODO_REVISION_CONFLICT"
-  | "PROJECT_TODO_INVALID_TRANSITION"
+  | "PROJECT_TODO_INVALID_MUTATION"
   | "PROJECT_TODO_ARCHIVED"
-  | "PROJECT_TODO_ACTIVATION_CONFLICT"
-  | "PROJECT_TODO_RESOURCE_BINDING_CONFLICT"
-  | "PROJECT_TODO_RETURN_TO_READY_CONFLICT"
+  | "PROJECT_TODO_SESSION_STATE_CONFLICT"
   | "PROJECT_TODO_DISCUSSION_UNAUTHORIZED";
 
 const PROJECT_TODO_CONFLICT_CODES: ReadonlySet<string> = new Set<ProjectTodoConflictCode>([
   "PROJECT_TODO_REVISION_CONFLICT",
-  "PROJECT_TODO_INVALID_TRANSITION",
+  "PROJECT_TODO_INVALID_MUTATION",
   "PROJECT_TODO_ARCHIVED",
-  "PROJECT_TODO_ACTIVATION_CONFLICT",
-  "PROJECT_TODO_RESOURCE_BINDING_CONFLICT",
-  "PROJECT_TODO_RETURN_TO_READY_CONFLICT",
+  "PROJECT_TODO_SESSION_STATE_CONFLICT",
   "PROJECT_TODO_DISCUSSION_UNAUTHORIZED",
 ]);
 

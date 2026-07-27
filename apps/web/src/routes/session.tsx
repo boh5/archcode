@@ -30,13 +30,15 @@ export function SessionRoute() {
   const { data: projectTodos = [] } = useProjectTodos(slug);
   const { data: agents = [] } = useAgents();
   const rootSessionId = session?.rootSessionId ?? sessionId;
-  const linkedProjectTodo = projectTodos.find((todo) => todo.discussionSessionId === rootSessionId)
-    ?? projectTodos.find((todo) => todo.activation?.sourceSessionId === rootSessionId);
-  const linkedProjectTodoContext = linkedProjectTodo?.discussionSessionId === rootSessionId
-    ? linkedProjectTodo.activation?.sourceSessionId === rootSessionId
-      ? "Discussion Todo · Activation source"
-      : "Discussion Todo"
-    : "Activation source Todo";
+  const sessionSource = session?.projectTodo;
+  const linkedProjectTodo = sessionSource
+    ? projectTodos.find((todo) => todo.id === sessionSource.todoId)
+    : undefined;
+  const linkedProjectTodoContext = sessionSource?.entry === "discussion"
+    ? "Discussion Todo"
+    : sessionSource?.entry === "automation"
+      ? "Automation setup Todo"
+      : "Work Todo";
   const focusSessionId = searchParams.get("focus");
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
   const focusHitlId = searchParams.get("hitl");

@@ -235,8 +235,7 @@ describe("createRuntime", () => {
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Lead collaboration" });
     const session = await runtime.createSession(workspaceRoot, { agentName: "lead", title: "Lead collaboration" });
-    const projectContext = await runtime.contextResolver.resolve(workspaceRoot);
-    expect(await projectContext.todos.state.findByDiscussionSessionId(session.sessionId)).toBeUndefined();
+    expect(session.projectTodo).toBeUndefined();
     const overriddenModel = await runtime.patchSessionModelSelection({
       workspaceRoot,
       sessionId: session.sessionId,

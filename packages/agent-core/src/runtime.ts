@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { defaultAgentDefinitions } from "./agents";
 import type { AgentName } from "./agents";
-import { AgentRunningError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError } from "./agents/errors";
+import { AgentRunningError } from "./agents/errors";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import {
   ServerConfigService,
@@ -67,6 +67,7 @@ import type {
   CompressionStateSnapshot,
   SessionGoal,
   SessionTreeResponse,
+  ProjectTodoSessionSource,
 } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, createToolExecutionContext, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import {
@@ -241,6 +242,7 @@ export interface CreateRuntimeSessionOptions {
   /** Current execution directory; Session persistence remains under workspaceRoot. */
   readonly cwd?: string;
   readonly title?: string;
+  readonly projectTodo?: ProjectTodoSessionSource;
 }
 
 export interface ProjectControlPlaneSnapshot {
@@ -380,8 +382,6 @@ export interface AgentRuntime {
   startAutomationSchedulers(): Promise<void>;
   /** Recovers durable HITL and Session continuations through the managed Session executor. */
   recoverSessionContinuations(): Promise<void>;
-  /** Recovers durable Project Todo checkpoints after the managed Session executor is installed. */
-  recoverProjectTodos(): Promise<void>;
   reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void>;
   stopAutomationSchedulers(): Promise<void>;
   /**
@@ -646,66 +646,29 @@ export async function createRuntime(
           },
         }),
         sessions: {
-          ensureRootSession: async (input) => {
-            await sessionStoreManager.ensureSessionFile(input.workspaceRoot, input.sessionId, {
+          createRootSession: async (input) => {
+            const session = await sessionStoreManager.createSessionFile(input.workspaceRoot, {
               agentName: input.agentName,
               title: input.title,
-              rootSessionId: input.sessionId,
               cwd: input.workspaceRoot,
+              projectTodo: input.projectTodo,
             });
+            return { sessionId: session.sessionId };
           },
-          ensureExecution: async (input) => {
-            const active = executionManager.getExecution(input.workspaceRoot, input.sessionId);
-            if (active?.executionId === input.executionId) return;
-            const session = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
-            if (session.executions.some((execution) => execution.id === input.executionId)) return;
-            const execution = await startCheckedSessionExecution({
+          acceptMessage: async (input) => {
+            const session = projectSessionModels(await sessionStoreManager.getSessionFile(
+              input.workspaceRoot,
+              input.sessionId,
+            ));
+            await acceptSessionMessage({
               slug: project.slug,
               workspaceRoot: input.workspaceRoot,
               sessionId: input.sessionId,
-              input: { kind: "direct", text: input.userMessage },
-              executionId: input.executionId,
+              text: input.text,
+              clientRequestId: input.clientRequestId,
+              source: "user",
+              requestedModelSelection: session.nextModelSelection.requested,
             });
-            void execution.promise.catch((error: unknown) => {
-              runtimeLogger.warn("todos.session_execution.failed", {
-                error,
-                context: { sessionId: input.sessionId, executionId: input.executionId },
-                meta: { workspaceRoot: input.workspaceRoot },
-              });
-            });
-          },
-          acquireIdleFamily: async (input) => {
-            if (executionManager.getSessionFamilyActivity(input.workspaceRoot, input.rootSessionId) !== "idle") {
-              return undefined;
-            }
-            try {
-              const release = executionManager.acquireIdleSessionCwdTransition(
-                input.workspaceRoot,
-                input.rootSessionId,
-              );
-              return { release };
-            } catch (error) {
-              if (
-                error instanceof SessionCwdTransitionConflictError
-                || error instanceof SessionCwdTransitionInProgressError
-                || error instanceof SessionDeleteInProgressError
-                || error instanceof SessionFamilyStopInProgressError
-              ) return undefined;
-              throw error;
-            }
-          },
-        },
-        provenance: {
-          listResources: async ({ kind, sourceSessionId }) => {
-            return (await listAutomations(workspaceRoot))
-              .filter((automation) => automation.createdFromSessionId === sourceSessionId)
-              .map((automation) => ({
-                kind: "automation" as const,
-                id: automation.id,
-                createdFromSessionId: automation.createdFromSessionId,
-                createdAt: automation.createdAt,
-                status: automation.status,
-              }));
           },
         },
       }),
@@ -713,8 +676,8 @@ export async function createRuntime(
       logger: runtimeLogger.child({ module: "projects" }),
     });
     const isDiscussionSession = async (workspaceRoot: string, sessionId: string): Promise<boolean> => (
-      await (await contextResolver.resolve(workspaceRoot)).todos.state.findByDiscussionSessionId(sessionId)
-    ) !== undefined;
+      await sessionStoreManager.getSessionFile(workspaceRoot, sessionId)
+    ).projectTodo?.entry === "discussion";
     const sessionModelSelectionService = new SessionModelSelectionService(sessionStoreManager);
     executionScopeValidator = new SessionExecutionScopeValidator();
     let executionManager!: SessionExecutionManager;
@@ -804,10 +767,6 @@ export async function createRuntime(
             },
             new Set(sessionIds),
           );
-        },
-        findProjectTodoOwners: async (input) => {
-          const context = await contextResolver.resolve(input.workspaceRoot);
-          return await context.todos.findSessionOwners(input.sessionIds);
         },
       }),
       logger: runtimeLogger.child({ module: "sessions.execution" }),
@@ -1456,35 +1415,22 @@ export async function createRuntime(
     ): Promise<Automation> {
       const project = await projectRegistry.getByWorkspace(workspaceRoot);
       if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
-      await assertResourceCreationSource(workspaceRoot, input.createdFromSessionId);
+      const sourceSession = await assertResourceCreationSource(workspaceRoot, input.createdFromSessionId);
       await assertAutomationWorktreeSupported(workspaceRoot, input.action);
       const automation = await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
         ...input,
         projectSlug: project.slug,
+        ...(sourceSession.projectTodo === undefined
+          ? {}
+          : { projectTodoId: sourceSession.projectTodo.todoId }),
       });
-      try {
-        const context = await contextResolver.resolve(workspaceRoot);
-        await context.todos.handleResourceCreated({
-          kind: "automation",
-          sourceSessionId: automation.createdFromSessionId,
-          resourceId: automation.id,
-        });
-      } catch (error) {
-        // Automation is already committed. Binding remains recoverable from
-        // createdFromSessionId and must never turn a retry into a duplicate.
-        runtimeLogger.warn("todos.automation_resource_binding.failed", {
-          error,
-          context: { todoSourceSessionId: automation.createdFromSessionId, automationId: automation.id },
-          meta: { workspaceRoot },
-        });
-      }
       return automation;
     }
 
     async function assertResourceCreationSource(
       workspaceRoot: string,
       sessionId: string,
-    ): Promise<void> {
+    ): Promise<SessionFile> {
       let session: SessionFile;
       try {
         session = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
@@ -1505,14 +1451,13 @@ export async function createRuntime(
           `Creation source Session ${sessionId} must be an ordinary root Lead Session`,
         );
       }
-      const discussion = await (await contextResolver.resolve(workspaceRoot))
-        .todos.state.findByDiscussionSessionId(sessionId);
-      if (discussion !== undefined) {
+      if (session.projectTodo?.entry === "discussion") {
         throw new ResourceCreationSourceError(
           sessionId,
           `Creation source Session ${sessionId} is bound to a Todo Discussion`,
         );
       }
+      return session;
     }
 
     async function updateAutomation(
@@ -1579,14 +1524,6 @@ export async function createRuntime(
       });
     }
 
-    async function recoverProjectTodos(): Promise<void> {
-      for (const project of await projectRegistry.list()) {
-        projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
-        const context = await contextResolver.resolve(project.workspaceRoot);
-        await context.todos.reconcileAll();
-      }
-    }
-
     async function reconcileRegisteredProject(workspaceRoot: string, projectSlug: string): Promise<void> {
       const key = `${workspaceRoot}\0${projectSlug}`;
       const registered = await projectRegistry.get(projectSlug);
@@ -1599,8 +1536,7 @@ export async function createRuntime(
       projectReconcileInFlight.add(key);
       try {
         projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
-        const context = await contextResolver.resolve(workspaceRoot);
-        await context.todos.reconcileAll();
+        await contextResolver.resolve(workspaceRoot);
         await reconcileAnsweredHitl(workspaceRoot, projectSlug);
         await continueRunnableToolBatches(workspaceRoot, projectSlug);
         await recoverQueuedSessionInputs(workspaceRoot, projectSlug);
@@ -2012,7 +1948,6 @@ export async function createRuntime(
       startAutomationScheduler,
       startAutomationSchedulers,
       recoverSessionContinuations,
-      recoverProjectTodos,
       reconcileRegisteredProject,
       stopAutomationSchedulers,
       prepareForRestart: () => executionManager.closeAdmissionIfIdle(),

@@ -22,6 +22,7 @@ describe("AutomationStateManager", () => {
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
       createdFromSessionId: "11111111-1111-4111-8111-111111111111",
+      projectTodoId: "22222222-2222-4222-8222-222222222222",
       name: "daily check",
       trigger: { kind: "interval", everyMs: 60_000 },
       action: { kind: "start_session", message: "Review the project", location: "project" },
@@ -31,6 +32,7 @@ describe("AutomationStateManager", () => {
     const reloaded = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     expect((await reloaded.listAutomations()).map((item) => item.id)).toEqual([automation.id]);
     expect((await reloaded.readAutomation(automation.id)).createdFromSessionId).toBe("11111111-1111-4111-8111-111111111111");
+    expect((await reloaded.readAutomation(automation.id)).projectTodoId).toBe("22222222-2222-4222-8222-222222222222");
     expect((await reloaded.listInvocations(automation.id))[0]).toEqual(invocation);
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "runtime", "automations", "state.json")).exists()).toBe(true);
 
@@ -58,6 +60,7 @@ describe("AutomationStateManager", () => {
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
     });
+    expect(automation.projectTodoId).toBeUndefined();
     await expect(manager.updateAutomation(automation.id, {
       action: { kind: "start_session", message: "x".repeat(10_001), location: "project" },
     })).rejects.toThrow();

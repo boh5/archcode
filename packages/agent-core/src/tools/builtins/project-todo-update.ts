@@ -51,7 +51,7 @@ export const projectTodoUpdateTool = defineTool({
     const agentName = ctx.agentName ?? state.agentName;
     const isRootSession = state.sessionId === state.rootSessionId && state.parentSessionId === undefined;
 
-    if (agentName !== "lead" || !isRootSession) {
+    if (agentName !== "lead" || !isRootSession || state.projectTodo?.entry !== "discussion") {
       return createToolErrorResult({
         kind: "permission-denied",
         code: "PROJECT_TODO_UPDATE_DENIED",
@@ -79,6 +79,7 @@ export const projectTodoUpdateTool = defineTool({
           rootSessionId: state.rootSessionId,
           agentName,
           projectSlug: ctx.projectContext.project.slug,
+          projectTodo: state.projectTodo,
         },
         expectedRevision: input.expectedRevision,
         patch,

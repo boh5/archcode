@@ -145,8 +145,9 @@ async function assertRootLead(ctx: ToolExecutionContext, toolName: string) {
   ) {
     throw new Error(`${toolName} requires the current root Lead Session`);
   }
-  const discussion = await ctx.projectContext.todos.state.findByDiscussionSessionId(state.sessionId);
-  if (discussion !== undefined) throw new Error(`${toolName} is unavailable in a Project Todo Discussion`);
+  if (state.projectTodo?.entry === "discussion") {
+    throw new Error(`${toolName} is unavailable in a Project Todo Discussion`);
+  }
   return state;
 }
 

@@ -753,6 +753,10 @@ export const SessionFileSchema = z.strictObject({
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
   goal: SessionGoalSchema.optional(),
+  projectTodo: z.strictObject({
+    todoId: z.uuid(),
+    entry: z.enum(["discussion", "work", "automation"]),
+  }).optional(),
   eventCursor: z.number().optional(),
 }).superRefine((session, ctx) => {
   const isChild = session.parentSessionId !== undefined;
@@ -785,6 +789,12 @@ export const SessionFileSchema = z.strictObject({
       || session.rootSessionId !== session.sessionId
       || session.agentName !== "lead")) {
     ctx.addIssue({ code: "custom", path: ["goal"], message: "Only root Lead Sessions may own a Goal" });
+  }
+  if (session.projectTodo !== undefined
+    && (session.parentSessionId !== undefined
+      || session.rootSessionId !== session.sessionId
+      || session.agentName !== "lead")) {
+    ctx.addIssue({ code: "custom", path: ["projectTodo"], message: "Only root Lead Sessions may have a Project Todo source" });
   }
   const goalNoticeError = sessionGoalNoticeInvariantError(session);
   if (goalNoticeError !== undefined) {
@@ -847,6 +857,7 @@ export interface SessionSummary {
   parentSessionId?: string;
   delegationRequest?: z.output<typeof DelegationRequestSchema>;
   goal?: z.output<typeof SessionGoalSchema>;
+  projectTodo?: z.output<typeof SessionFileSchema>["projectTodo"];
   agentName: string;
   profile: ProfileName;
   activeSkillNames: string[];
@@ -861,7 +872,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationRequest" | "toolBatches" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "parentSessionId" | "goal" | "events" | "queueDispatchBarrierAt"
+  "parentSessionId" | "goal" | "projectTodo" | "events" | "queueDispatchBarrierAt"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -953,6 +964,7 @@ async function saveSessionTranscript(
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goal === undefined ? {} : { goal: state.goal }),
+    ...(state.projectTodo === undefined ? {} : { projectTodo: state.projectTodo }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -1006,6 +1018,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goal === undefined ? {} : { goal: state.goal }),
+    ...(state.projectTodo === undefined ? {} : { projectTodo: state.projectTodo }),
   };
 }
 
@@ -1025,6 +1038,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
         ...(parsed.delegationRequest === undefined ? {} : { delegationRequest: parsed.delegationRequest }),
         ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
+        ...(parsed.projectTodo === undefined ? {} : { projectTodo: parsed.projectTodo }),
         agentName: parsed.agentName,
         profile: resolveSessionProfile(parsed),
         activeSkillNames: parsed.activeSkillNames,
@@ -1078,6 +1092,7 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       rootSessionId: parsed.rootSessionId,
       ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
       ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
+      ...(parsed.projectTodo === undefined ? {} : { projectTodo: parsed.projectTodo }),
       agentName: parsed.agentName,
       profile: resolveSessionProfile(parsed),
       activeSkillNames: parsed.activeSkillNames,
