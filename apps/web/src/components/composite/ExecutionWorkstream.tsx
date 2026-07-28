@@ -6,6 +6,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type TouchEvent as ReactTouchEvent,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   ChevronDown,
@@ -51,8 +54,19 @@ import { ReasoningBlock, ReasoningUsageSummary } from "./ReasoningBlock";
 import { RecoveryNotice } from "./RecoveryNotice";
 import { ToolCard } from "./ToolCard";
 import { ToolRunCard } from "./ToolRunCard";
+import { ExecutionNavigationRail } from "../features/ExecutionNavigationRail";
+import { ScrollToLatestButton } from "../features/ScrollToLatestButton";
 
-const NEAR_BOTTOM_THRESHOLD_PX = 100;
+const AT_BOTTOM_THRESHOLD_PX = 24;
+const SHOW_JUMP_TO_LATEST_THRESHOLD_PX = 48;
+const EXECUTION_NAVIGATION_MINIMUM_ITEMS = 4;
+const EXECUTION_NAVIGATION_MINIMUM_GUTTER_PX = 32;
+const EXECUTION_NAVIGATION_HITBOX_WIDTH_PX = 28;
+const EXECUTION_NAVIGATION_MINIMUM_LEFT_PX = 4;
+const EXECUTION_NAVIGATION_PREFERRED_LEFT_PX = 12;
+const EXECUTION_READING_LINE_PX = 16;
+const EXECUTION_NAVIGATION_SETTLE_MS = 120;
+const TOUCH_MOMENTUM_IDLE_MS = 180;
 const SESSION_SCROLLBAR_GUTTER_PROPERTY = "--session-scrollbar-gutter";
 
 interface WorkstreamUiSnapshot {
@@ -60,7 +74,7 @@ interface WorkstreamUiSnapshot {
   manualOverrideIds: Set<string>;
   statusByExecutionId: Map<string, SessionExecutionRecord["status"]>;
   scrollTop: number;
-  nearBottom: boolean;
+  followLatest: boolean;
   hasScrollPosition: boolean;
 }
 
@@ -85,9 +99,37 @@ function createWorkstreamUiSnapshot(): WorkstreamUiSnapshot {
     manualOverrideIds: new Set(),
     statusByExecutionId: new Map(),
     scrollTop: 0,
-    nearBottom: true,
+    followLatest: true,
     hasScrollPosition: false,
   };
+}
+
+function distanceFromBottom(element: HTMLElement): number {
+  return Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
+}
+
+function scrollElementTo(
+  element: HTMLElement,
+  top: number,
+  behavior: ScrollBehavior = "auto",
+): void {
+  if (typeof element.scrollTo === "function") {
+    element.scrollTo({ top, behavior });
+    return;
+  }
+  element.scrollTop = top;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.matches("input, textarea, select, [contenteditable='true']")
+      || target.closest("[data-testid='session-composer-dock'], [data-inspector-surface]") !== null);
 }
 
 function getWorkstreamUiSnapshot(slug: string, routeScopeId: string, sessionId: string): WorkstreamUiSnapshot {
@@ -579,6 +621,7 @@ interface ExecutionTurnProps {
   focusStoreSessionId: string;
   onToggle: (executionId: string, button: HTMLButtonElement) => void;
   onButtonRef: (executionId: string, button: HTMLButtonElement | null) => void;
+  onArticleRef: (executionId: string, article: HTMLElement | null) => void;
   onInspectModelAudit?: (messageId: string) => void;
   checkpoint?: SessionExecutionInputCheckpoint;
   continuationExecutionNumber?: number;
@@ -594,11 +637,17 @@ const ExecutionTurn = memo(function ExecutionTurn({
   checkpoint,
   continuationExecutionNumber,
   onButtonRef,
+  onArticleRef,
 }: ExecutionTurnProps) {
   executionTurnRenderObserverForTest?.(execution.id);
 
   return (
-    <article className="flex min-w-0 flex-col gap-3" data-testid={`execution-turn-${execution.id}`}>
+    <article
+      ref={(article) => onArticleRef(execution.id, article)}
+      className="flex min-w-0 scroll-mt-4 flex-col gap-3"
+      data-testid={`execution-turn-${execution.id}`}
+      data-execution-navigation-target={execution.id}
+    >
       {execution.userMessages.map((message) => (
         <MsgUser
           key={message.id}
@@ -748,19 +797,201 @@ export function ExecutionWorkstream({
   );
   const expandedIdsRef = useRef(expandedIds);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const nearBottomRef = useRef(uiSnapshotRef.current.nearBottom);
+  const followLatestRef = useRef(uiSnapshotRef.current.followLatest);
+  const lastScrollTopRef = useRef(uiSnapshotRef.current.scrollTop);
+  const pointerScrollingRef = useRef(false);
+  const touchYRef = useRef<number | null>(null);
+  const touchMomentumDirectionRef = useRef<"up" | "down" | null>(null);
+  const touchMomentumTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputDirectionRef = useRef<"up" | "down" | null>(null);
+  const inputDirectionClearFrameRef = useRef<number | null>(null);
+  const inputDirectionGenerationRef = useRef(0);
+  const jumpingToBottomRef = useRef(false);
+  const navigationFrameRef = useRef<number | null>(null);
+  const navigationSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const executionNavigationTargetRef = useRef<{
+    executionId: string;
+    targetTop: number;
+  } | null>(null);
   const workButtonByExecutionIdRef = useRef(new Map<string, HTMLButtonElement>());
+  const articleByExecutionIdRef = useRef(new Map<string, HTMLElement>());
   const pendingDisclosureAnchorRef = useRef<{ executionId: string; viewportTop: number } | null>(null);
   const pendingAutoCollapseRef = useRef(false);
+  const [jumpToLatestVisible, setJumpToLatestVisible] = useState(false);
+  const [currentExecutionId, setCurrentExecutionId] = useState<string | null>(
+    projection.executions[0]?.id ?? null,
+  );
+  const [navigationLayout, setNavigationLayout] = useState({ visible: false, left: 0 });
+
+  const setFollowLatest = useCallback((followLatest: boolean) => {
+    followLatestRef.current = followLatest;
+    uiSnapshotRef.current.followLatest = followLatest;
+    if (followLatest) setJumpToLatestVisible(false);
+  }, []);
+
+  const clearPendingInputDirection = useCallback(() => {
+    inputDirectionGenerationRef.current += 1;
+    if (inputDirectionClearFrameRef.current !== null) {
+      cancelAnimationFrame(inputDirectionClearFrameRef.current);
+      inputDirectionClearFrameRef.current = null;
+    }
+    inputDirectionRef.current = null;
+  }, []);
+
+  const markInputDirection = useCallback((
+    direction: "up" | "down",
+  ) => {
+    clearPendingInputDirection();
+    inputDirectionRef.current = direction;
+    const generation = inputDirectionGenerationRef.current;
+    inputDirectionClearFrameRef.current = requestAnimationFrame(() => {
+      if (inputDirectionGenerationRef.current !== generation) return;
+      inputDirectionClearFrameRef.current = null;
+      inputDirectionRef.current = null;
+    });
+  }, [clearPendingInputDirection]);
+
+  const clearTouchMomentum = useCallback(() => {
+    if (touchMomentumTimerRef.current !== null) {
+      clearTimeout(touchMomentumTimerRef.current);
+      touchMomentumTimerRef.current = null;
+    }
+    touchMomentumDirectionRef.current = null;
+  }, []);
+
+  const scheduleTouchMomentumClear = useCallback(() => {
+    if (touchMomentumTimerRef.current !== null) {
+      clearTimeout(touchMomentumTimerRef.current);
+    }
+    touchMomentumTimerRef.current = setTimeout(() => {
+      touchMomentumTimerRef.current = null;
+      touchMomentumDirectionRef.current = null;
+    }, TOUCH_MOMENTUM_IDLE_MS);
+  }, []);
+
+  const syncScrollGeometry = useCallback((element: HTMLElement) => {
+    const distance = distanceFromBottom(element);
+    const atBottom = distance <= AT_BOTTOM_THRESHOLD_PX;
+    const snapshot = uiSnapshotRef.current;
+    snapshot.scrollTop = element.scrollTop;
+    snapshot.hasScrollPosition = true;
+    setJumpToLatestVisible((visible) => {
+      if (followLatestRef.current || atBottom) return false;
+      if (distance > SHOW_JUMP_TO_LATEST_THRESHOLD_PX) return true;
+      return visible;
+    });
+    return { atBottom, distance };
+  }, []);
+
+  const syncExecutionNavigation = useCallback(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const readingLine = scrollerRect.top + EXECUTION_READING_LINE_PX;
+    const atBottom = distanceFromBottom(scroller) <= AT_BOTTOM_THRESHOLD_PX;
+    const pendingNavigation = executionNavigationTargetRef.current;
+    const pendingExecutionExists = pendingNavigation
+      ? projection.executions.some((execution) => execution.id === pendingNavigation.executionId)
+      : false;
+    const pendingTargetTop = pendingNavigation && pendingExecutionExists
+      ? Math.min(
+        Math.max(0, pendingNavigation.targetTop),
+        Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+      )
+      : null;
+    if (
+      pendingNavigation
+      && (
+        !pendingExecutionExists
+        || (pendingTargetTop !== null && Math.abs(scroller.scrollTop - pendingTargetTop) <= 1)
+      )
+    ) {
+      executionNavigationTargetRef.current = null;
+    }
+    let low = 0;
+    let high = projection.executions.length - 1;
+    let currentIndex = -1;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const execution = projection.executions[middle];
+      if (!execution) break;
+      const article = articleByExecutionIdRef.current.get(execution.id);
+      if (!article) {
+        currentIndex = -1;
+        break;
+      }
+      if (article.getBoundingClientRect().top <= readingLine) {
+        currentIndex = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    const current = pendingNavigation && pendingExecutionExists
+      ? pendingNavigation.executionId
+      : atBottom
+        ? projection.executions.at(-1)?.id ?? null
+        : currentIndex >= 0
+          ? projection.executions[currentIndex]?.id ?? null
+          : projection.executions[0]?.id ?? null;
+    const fallback = projection.executions[0]?.id ?? null;
+    setCurrentExecutionId((previous) => {
+      const next = current ?? fallback;
+      return previous === next ? previous : next;
+    });
+
+    const thread = scroller.querySelector<HTMLElement>("[data-session-thread-column]");
+    const finePointer = typeof window.matchMedia !== "function"
+      || window.matchMedia("(pointer: fine)").matches;
+    const gutter = thread
+      ? thread.getBoundingClientRect().left - scrollerRect.left
+      : 0;
+    const visible = projection.executions.length >= EXECUTION_NAVIGATION_MINIMUM_ITEMS
+      && scroller.scrollHeight > scroller.clientHeight + 1
+      && gutter >= EXECUTION_NAVIGATION_MINIMUM_GUTTER_PX
+      && finePointer;
+    const left = Math.max(
+      EXECUTION_NAVIGATION_MINIMUM_LEFT_PX,
+      Math.min(
+        EXECUTION_NAVIGATION_PREFERRED_LEFT_PX,
+        gutter - EXECUTION_NAVIGATION_HITBOX_WIDTH_PX,
+      ),
+    );
+    setNavigationLayout((previous) => previous.visible === visible && previous.left === left
+      ? previous
+      : { visible, left });
+  }, [projection.executions]);
+
+  const scheduleExecutionNavigationSync = useCallback(() => {
+    if (navigationFrameRef.current !== null) return;
+    navigationFrameRef.current = requestAnimationFrame(() => {
+      navigationFrameRef.current = null;
+      syncExecutionNavigation();
+    });
+  }, [syncExecutionNavigation]);
+
+  const scheduleExecutionNavigationSettle = useCallback(() => {
+    if (navigationSettleTimerRef.current !== null) {
+      clearTimeout(navigationSettleTimerRef.current);
+    }
+    navigationSettleTimerRef.current = setTimeout(() => {
+      navigationSettleTimerRef.current = null;
+      executionNavigationTargetRef.current = null;
+      syncExecutionNavigation();
+    }, EXECUTION_NAVIGATION_SETTLE_MS);
+  }, [syncExecutionNavigation]);
 
   useLayoutEffect(() => {
     const element = scrollerRef.current;
-    const sessionCanvas = element?.parentElement;
-    if (!element || !sessionCanvas) return;
+    const transcriptSurface = element?.closest<HTMLElement>("[data-session-transcript-surface]")
+      ?? element?.parentElement;
+    if (!element || !transcriptSurface) return;
 
     const syncScrollbarGutter = () => {
       const symmetricGutter = Math.max(0, (element.offsetWidth - element.clientWidth) / 2);
-      sessionCanvas.style.setProperty(SESSION_SCROLLBAR_GUTTER_PROPERTY, `${symmetricGutter}px`);
+      transcriptSurface.style.setProperty(SESSION_SCROLLBAR_GUTTER_PROPERTY, `${symmetricGutter}px`);
+      syncExecutionNavigation();
     };
     syncScrollbarGutter();
 
@@ -771,9 +1002,30 @@ export function ExecutionWorkstream({
 
     return () => {
       resizeObserver?.disconnect();
-      sessionCanvas.style.removeProperty(SESSION_SCROLLBAR_GUTTER_PROPERTY);
+      transcriptSurface.style.removeProperty(SESSION_SCROLLBAR_GUTTER_PROPERTY);
     };
-  }, []);
+  }, [syncExecutionNavigation]);
+
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    const thread = scroller?.querySelector<HTMLElement>("[data-session-thread-column]");
+    if (!scroller) return;
+    syncExecutionNavigation();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(syncExecutionNavigation);
+    observer.observe(scroller);
+    if (thread) observer.observe(thread);
+    return () => observer.disconnect();
+  }, [projection.executions, syncExecutionNavigation]);
+
+  useEffect(() => () => {
+    if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current);
+    if (navigationSettleTimerRef.current !== null) {
+      clearTimeout(navigationSettleTimerRef.current);
+    }
+    clearPendingInputDirection();
+    clearTouchMomentum();
+  }, [clearPendingInputDirection, clearTouchMomentum]);
 
   useLayoutEffect(() => {
     const snapshot = uiSnapshotRef.current;
@@ -800,7 +1052,7 @@ export function ExecutionWorkstream({
       } else if (
         previousStatus === "running"
         && execution.record.status === "completed"
-        && nearBottomRef.current
+        && followLatestRef.current
         && !manuallyOverridden
         && next.has(execution.id)
       ) {
@@ -834,20 +1086,25 @@ export function ExecutionWorkstream({
     if (!element) return;
 
     if (uiSnapshot.hasScrollPosition) {
-      element.scrollTop = uiSnapshot.scrollTop;
-      nearBottomRef.current = uiSnapshot.nearBottom;
+      followLatestRef.current = uiSnapshot.followLatest;
+      element.scrollTop = uiSnapshot.followLatest
+        ? element.scrollHeight
+        : uiSnapshot.scrollTop;
     } else {
       element.scrollTop = element.scrollHeight;
-      nearBottomRef.current = true;
+      followLatestRef.current = true;
     }
+    lastScrollTopRef.current = element.scrollTop;
+    syncScrollGeometry(element);
+    syncExecutionNavigation();
 
     return () => {
       uiSnapshot.scrollTop = element.scrollTop;
-      uiSnapshot.nearBottom = nearBottomRef.current;
+      uiSnapshot.followLatest = followLatestRef.current;
       uiSnapshot.hasScrollPosition = true;
       uiSnapshot.expandedIds = new Set(expandedIdsRef.current);
     };
-  }, []);
+  }, [syncExecutionNavigation, syncScrollGeometry]);
 
   useLayoutEffect(() => {
     const element = scrollerRef.current;
@@ -860,31 +1117,41 @@ export function ExecutionWorkstream({
         if (Math.abs(delta) > 0.5) element.scrollTop += delta;
       }
       pendingDisclosureAnchorRef.current = null;
-      const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-      nearBottomRef.current = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX;
+      const { atBottom } = syncScrollGeometry(element);
+      setFollowLatest(atBottom);
       const snapshot = uiSnapshotRef.current;
       snapshot.scrollTop = element.scrollTop;
-      snapshot.nearBottom = nearBottomRef.current;
       snapshot.hasScrollPosition = true;
+      lastScrollTopRef.current = element.scrollTop;
+      scheduleExecutionNavigationSync();
       return;
     }
 
     if (pendingAutoCollapseRef.current) {
       pendingAutoCollapseRef.current = false;
-      if (nearBottomRef.current) element.scrollTop = element.scrollHeight;
+      if (followLatestRef.current) element.scrollTop = element.scrollHeight;
       const snapshot = uiSnapshotRef.current;
       snapshot.scrollTop = element.scrollTop;
-      snapshot.nearBottom = nearBottomRef.current;
       snapshot.hasScrollPosition = true;
+      lastScrollTopRef.current = element.scrollTop;
+      syncScrollGeometry(element);
+      scheduleExecutionNavigationSync();
       return;
     }
 
-    if (!nearBottomRef.current) return;
+    if (!followLatestRef.current) {
+      syncScrollGeometry(element);
+      scheduleExecutionNavigationSync();
+      return;
+    }
     element.scrollTop = element.scrollHeight;
     const uiSnapshot = uiSnapshotRef.current;
     uiSnapshot.scrollTop = element.scrollTop;
-    uiSnapshot.nearBottom = true;
+    uiSnapshot.followLatest = true;
     uiSnapshot.hasScrollPosition = true;
+    lastScrollTopRef.current = element.scrollTop;
+    syncScrollGeometry(element);
+    scheduleExecutionNavigationSync();
   }, [
     childSessionLinks,
     compression,
@@ -893,21 +1160,182 @@ export function ExecutionWorkstream({
     expandedIds,
     messages,
     steps,
+    scheduleExecutionNavigationSync,
+    setFollowLatest,
+    syncScrollGeometry,
   ]);
 
   const handleScroll = useCallback(() => {
     const element = scrollerRef.current;
     if (!element) return;
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    const nearBottom = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX;
-    nearBottomRef.current = nearBottom;
-    const uiSnapshot = uiSnapshotRef.current;
-    uiSnapshot.scrollTop = element.scrollTop;
-    uiSnapshot.nearBottom = nearBottom;
-    uiSnapshot.hasScrollPosition = true;
+    const previousScrollTop = lastScrollTopRef.current;
+    const { atBottom } = syncScrollGeometry(element);
+    const direction = inputDirectionRef.current
+      ?? (pointerScrollingRef.current
+        ? element.scrollTop < previousScrollTop ? "up" : "down"
+        : touchMomentumDirectionRef.current);
+    clearPendingInputDirection();
+    if (direction === "up") {
+      if (jumpingToBottomRef.current) {
+        jumpingToBottomRef.current = false;
+        scrollElementTo(element, element.scrollTop);
+      }
+      setFollowLatest(false);
+    } else if (direction === "down" && atBottom) {
+      jumpingToBottomRef.current = false;
+      clearTouchMomentum();
+      setFollowLatest(true);
+    } else if (jumpingToBottomRef.current && atBottom) {
+      jumpingToBottomRef.current = false;
+    }
+    if (touchYRef.current === null && touchMomentumDirectionRef.current !== null) {
+      scheduleTouchMomentumClear();
+    }
+    lastScrollTopRef.current = element.scrollTop;
+    scheduleExecutionNavigationSync();
+    scheduleExecutionNavigationSettle();
+  }, [
+    clearPendingInputDirection,
+    clearTouchMomentum,
+    scheduleExecutionNavigationSettle,
+    scheduleExecutionNavigationSync,
+    scheduleTouchMomentumClear,
+    setFollowLatest,
+    syncScrollGeometry,
+  ]);
+
+  const handleWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+    if (event.deltaY === 0) return;
+    executionNavigationTargetRef.current = null;
+    clearTouchMomentum();
+    markInputDirection(event.deltaY < 0 ? "up" : "down");
+    if (event.deltaY < 0) {
+      if (jumpingToBottomRef.current && scrollerRef.current) {
+        jumpingToBottomRef.current = false;
+        scrollElementTo(scrollerRef.current, scrollerRef.current.scrollTop);
+      }
+      setFollowLatest(false);
+    }
+  }, [clearTouchMomentum, markInputDirection, setFollowLatest]);
+
+  const handlePointerDown = useCallback(() => {
+    executionNavigationTargetRef.current = null;
+    clearTouchMomentum();
+    pointerScrollingRef.current = true;
+    lastScrollTopRef.current = scrollerRef.current?.scrollTop ?? 0;
+  }, [clearTouchMomentum]);
+
+  const handlePointerEnd = useCallback(() => {
+    pointerScrollingRef.current = false;
   }, []);
 
+  useEffect(() => {
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+    return () => {
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [handlePointerEnd]);
+
+  const handleTouchStart = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
+    executionNavigationTargetRef.current = null;
+    clearTouchMomentum();
+    touchYRef.current = event.touches[0]?.clientY ?? null;
+  }, [clearTouchMomentum]);
+
+  const handleTouchMove = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
+    const previousY = touchYRef.current;
+    const nextY = event.touches[0]?.clientY;
+    if (previousY === null || nextY === undefined || nextY === previousY) return;
+    const direction = nextY > previousY ? "up" : "down";
+    markInputDirection(direction);
+    touchMomentumDirectionRef.current = direction;
+    touchYRef.current = nextY;
+    if (direction === "up") setFollowLatest(false);
+  }, [markInputDirection, setFollowLatest]);
+
+  const handleTouchEnd = useCallback(() => {
+    touchYRef.current = null;
+    if (touchMomentumDirectionRef.current !== null) scheduleTouchMomentumClear();
+  }, [scheduleTouchMomentumClear]);
+
+  const navigateRelativeExecution = useCallback((direction: -1 | 1) => {
+    const index = projection.executions.findIndex((execution) => execution.id === currentExecutionId);
+    const next = projection.executions[Math.min(
+      projection.executions.length - 1,
+      Math.max(0, (index < 0 ? 0 : index) + direction),
+    )];
+    if (!next) return;
+    const element = scrollerRef.current;
+    const article = articleByExecutionIdRef.current.get(next.id);
+    if (!element || !article) return;
+    clearPendingInputDirection();
+    clearTouchMomentum();
+    jumpingToBottomRef.current = false;
+    setFollowLatest(false);
+    const targetTop = article.getBoundingClientRect().top
+      - element.getBoundingClientRect().top
+      + element.scrollTop
+      - EXECUTION_READING_LINE_PX;
+    executionNavigationTargetRef.current = { executionId: next.id, targetTop };
+    scrollElementTo(element, targetTop, prefersReducedMotion() ? "auto" : "smooth");
+    setCurrentExecutionId(next.id);
+  }, [
+    clearPendingInputDirection,
+    clearTouchMomentum,
+    currentExecutionId,
+    projection.executions,
+    setFollowLatest,
+  ]);
+
+  const handleScrollerKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (isEditableTarget(event.target)) return;
+    if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      event.preventDefault();
+      navigateRelativeExecution(event.key === "ArrowUp" ? -1 : 1);
+      return;
+    }
+    executionNavigationTargetRef.current = null;
+    if (
+      event.key === "ArrowUp"
+      || event.key === "PageUp"
+      || event.key === "Home"
+      || (event.key === " " && event.shiftKey)
+    ) {
+      clearTouchMomentum();
+      markInputDirection("up");
+      setFollowLatest(false);
+    } else if (
+      event.key === "ArrowDown"
+      || event.key === "PageDown"
+      || event.key === "End"
+      || (event.key === " " && !event.shiftKey)
+    ) {
+      clearTouchMomentum();
+      markInputDirection("down");
+    }
+  }, [
+    clearTouchMomentum,
+    markInputDirection,
+    navigateRelativeExecution,
+    setFollowLatest,
+  ]);
+
   const toggleExecution = useCallback((executionId: string, button: HTMLButtonElement) => {
+    // A disclosure click is a reading action. Suspend follow immediately so a
+    // stream update batched with the expansion cannot pin before the anchor is
+    // restored; the layout effect resumes follow only if the anchor lands at
+    // the actual bottom.
+    const element = scrollerRef.current;
+    if (jumpingToBottomRef.current && element) {
+      scrollElementTo(element, element.scrollTop);
+    }
+    jumpingToBottomRef.current = false;
+    executionNavigationTargetRef.current = null;
+    clearPendingInputDirection();
+    clearTouchMomentum();
+    setFollowLatest(false);
     pendingDisclosureAnchorRef.current = {
       executionId,
       viewportTop: button.getBoundingClientRect().top,
@@ -920,7 +1348,7 @@ export function ExecutionWorkstream({
     snapshot.expandedIds = new Set(next);
     expandedIdsRef.current = next;
     setExpandedIds(next);
-  }, []);
+  }, [clearPendingInputDirection, clearTouchMomentum, setFollowLatest]);
 
   const registerWorkButton = useCallback((
     executionId: string,
@@ -930,87 +1358,172 @@ export function ExecutionWorkstream({
     else workButtonByExecutionIdRef.current.delete(executionId);
   }, []);
 
+  const registerExecutionArticle = useCallback((
+    executionId: string,
+    article: HTMLElement | null,
+  ) => {
+    if (article) articleByExecutionIdRef.current.set(executionId, article);
+    else articleByExecutionIdRef.current.delete(executionId);
+  }, []);
+
+  const jumpToLatest = useCallback(() => {
+    const element = scrollerRef.current;
+    if (!element) return;
+    clearPendingInputDirection();
+    clearTouchMomentum();
+    executionNavigationTargetRef.current = null;
+    setFollowLatest(true);
+    const hasRunningExecution = projection.executions.some(
+      (execution) => execution.record.status === "running",
+    );
+    const behavior = hasRunningExecution || prefersReducedMotion() ? "auto" : "smooth";
+    jumpingToBottomRef.current = behavior === "smooth";
+    scrollElementTo(element, element.scrollHeight, behavior);
+    if (behavior === "auto") {
+      lastScrollTopRef.current = element.scrollTop;
+      syncScrollGeometry(element);
+      scheduleExecutionNavigationSync();
+    }
+    element.focus({ preventScroll: true });
+  }, [
+    clearPendingInputDirection,
+    clearTouchMomentum,
+    projection.executions,
+    scheduleExecutionNavigationSync,
+    setFollowLatest,
+    syncScrollGeometry,
+  ]);
+
+  const jumpToExecution = useCallback((
+    executionId: string,
+    behavior: ScrollBehavior,
+  ) => {
+    const element = scrollerRef.current;
+    const article = articleByExecutionIdRef.current.get(executionId);
+    if (!element || !article) return;
+    clearPendingInputDirection();
+    clearTouchMomentum();
+    jumpingToBottomRef.current = false;
+    setFollowLatest(false);
+    const targetTop = article.getBoundingClientRect().top
+      - element.getBoundingClientRect().top
+      + element.scrollTop
+      - EXECUTION_READING_LINE_PX;
+    executionNavigationTargetRef.current = { executionId, targetTop };
+    scrollElementTo(
+      element,
+      targetTop,
+      prefersReducedMotion() ? "auto" : behavior,
+    );
+    setCurrentExecutionId(executionId);
+  }, [clearPendingInputDirection, clearTouchMomentum, setFollowLatest]);
+
   const isEmpty = projection.items.length === 0 && projection.diagnostics.length === 0;
 
   return (
     <div
-      ref={scrollerRef}
-      onScroll={handleScroll}
-      className="conversation-scroller min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden bg-bg-base"
-      style={{ overflowAnchor: "none", scrollbarGutter: "stable both-edges" }}
-      data-testid="execution-workstream-scroller"
+      className="relative min-h-0 w-full flex-1 overflow-hidden bg-bg-base"
+      data-testid="execution-workstream-viewport"
     >
-      <ConversationRail
-        className="conversation-surface flex min-h-full py-9 max-[639px]:py-6"
-        data-testid="execution-workstream-rail"
+      <div
+        ref={scrollerRef}
+        onKeyDown={handleScrollerKeyDown}
+        onPointerCancel={handlePointerEnd}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerEnd}
+        onScroll={handleScroll}
+        onTouchEnd={handleTouchEnd}
+        onTouchMove={handleTouchMove}
+        onTouchStart={handleTouchStart}
+        onWheel={handleWheel}
+        className="conversation-scroller h-full min-h-0 w-full overflow-y-auto overflow-x-hidden bg-bg-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+        style={{ overflowAnchor: "none", scrollbarGutter: "stable both-edges" }}
+        data-testid="execution-workstream-scroller"
+        role="region"
+        aria-label="Session conversation"
+        tabIndex={0}
       >
-        <SessionThreadColumn
-          className={`flex min-h-full flex-1 flex-col ${isEmpty ? "items-center justify-center" : "gap-6"}`}
-          data-testid="execution-thread-column"
+        <ConversationRail
+          className="conversation-surface flex min-h-full py-9 max-[639px]:py-6"
+          data-testid="execution-workstream-rail"
         >
-          {isEmpty ? (
-            <div className="text-sm text-text-tertiary">No executions yet</div>
-          ) : (
-            <>
-              {projection.diagnostics.map((diagnostic, index) => (
-                <DiagnosticBlock
-                  key={`${diagnostic.code}-${"executionId" in diagnostic ? diagnostic.executionId : diagnostic.message.id}-${index}`}
-                  diagnostic={diagnostic}
-                  projectSlug={slug}
-                  focusStoreSessionId={focusStoreSessionId}
-                  onInspectModelAudit={onInspectModelAudit}
-                />
-              ))}
-              {projection.items.map((item) => {
-                if (item.kind === "execution") {
-                  const checkpoint = checkpointByExecutionId.get(item.id);
-                  const continuationExecutionNumber = checkpoint?.continuationExecutionId === undefined
-                    ? undefined
-                    : executionNumberById.get(checkpoint.continuationExecutionId);
+          <SessionThreadColumn
+            className={`flex min-h-full flex-1 flex-col ${isEmpty ? "items-center justify-center" : "gap-6"}`}
+            data-testid="execution-thread-column"
+          >
+            {isEmpty ? (
+              <div className="text-sm text-text-tertiary">No executions yet</div>
+            ) : (
+              <>
+                {projection.diagnostics.map((diagnostic, index) => (
+                  <DiagnosticBlock
+                    key={`${diagnostic.code}-${"executionId" in diagnostic ? diagnostic.executionId : diagnostic.message.id}-${index}`}
+                    diagnostic={diagnostic}
+                    projectSlug={slug}
+                    focusStoreSessionId={focusStoreSessionId}
+                    onInspectModelAudit={onInspectModelAudit}
+                  />
+                ))}
+                {projection.items.map((item) => {
+                  if (item.kind === "execution") {
+                    const checkpoint = checkpointByExecutionId.get(item.id);
+                    const continuationExecutionNumber = checkpoint?.continuationExecutionId === undefined
+                      ? undefined
+                      : executionNumberById.get(checkpoint.continuationExecutionId);
+                    return (
+                      <ExecutionTurn
+                        key={`execution-${item.id}`}
+                        execution={item}
+                        expanded={expandedIds.has(item.id)}
+                        projectSlug={slug}
+                        focusStoreSessionId={focusStoreSessionId}
+                        checkpoint={checkpoint}
+                        continuationExecutionNumber={continuationExecutionNumber}
+                        onToggle={toggleExecution}
+                        onButtonRef={registerWorkButton}
+                        onArticleRef={registerExecutionArticle}
+                        onInspectModelAudit={onInspectModelAudit}
+                      />
+                    );
+                  }
+                  if (item.kind === "compression") {
+                    return (
+                      <CompressionBlock
+                        key={`compression-${item.block.blockRef}-${item.id}`}
+                        part={item.block}
+                        projectSlug={slug}
+                        sessionId={sessionId}
+                        focusStoreSessionId={focusStoreSessionId}
+                        snapshot={item.snapshot}
+                        childSessionLinks={childSessionLinks}
+                      />
+                    );
+                  }
                   return (
-                    <ExecutionTurn
-                      key={`execution-${item.id}`}
-                      execution={item}
-                      expanded={expandedIds.has(item.id)}
-                      projectSlug={slug}
-                      focusStoreSessionId={focusStoreSessionId}
-                      checkpoint={checkpoint}
-                      continuationExecutionNumber={continuationExecutionNumber}
-                      onToggle={toggleExecution}
-                      onButtonRef={registerWorkButton}
-                      onInspectModelAudit={onInspectModelAudit}
-                    />
+                    <section key={`activity-${item.id}`} className="border-l-2 border-warning px-3 py-2">
+                      <SessionMessageView
+                        message={item.message}
+                        projectSlug={slug}
+                        focusStoreSessionId={focusStoreSessionId}
+                        childSessionLinks={[]}
+                        onInspectModelAudit={onInspectModelAudit}
+                      />
+                    </section>
                   );
-                }
-                if (item.kind === "compression") {
-                  return (
-                    <CompressionBlock
-                      key={`compression-${item.block.blockRef}-${item.id}`}
-                      part={item.block}
-                      projectSlug={slug}
-                      sessionId={sessionId}
-                      focusStoreSessionId={focusStoreSessionId}
-                      snapshot={item.snapshot}
-                      childSessionLinks={childSessionLinks}
-                    />
-                  );
-                }
-                return (
-                  <section key={`activity-${item.id}`} className="border-l-2 border-warning px-3 py-2">
-                    <SessionMessageView
-                      message={item.message}
-                      projectSlug={slug}
-                      focusStoreSessionId={focusStoreSessionId}
-                      childSessionLinks={[]}
-                      onInspectModelAudit={onInspectModelAudit}
-                    />
-                  </section>
-                );
-              })}
-            </>
-          )}
-        </SessionThreadColumn>
-      </ConversationRail>
+                })}
+              </>
+            )}
+          </SessionThreadColumn>
+        </ConversationRail>
+      </div>
+      <ExecutionNavigationRail
+        executions={projection.executions}
+        currentExecutionId={currentExecutionId}
+        left={navigationLayout.left}
+        visible={navigationLayout.visible}
+        onNavigate={jumpToExecution}
+      />
+      {jumpToLatestVisible && <ScrollToLatestButton onClick={jumpToLatest} />}
     </div>
   );
 }

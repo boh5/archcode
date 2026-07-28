@@ -214,6 +214,18 @@ async function clickWork(executionId: string): Promise<void> {
   await act(async () => workSummary(executionId).click());
 }
 
+async function userScroll(
+  scroller: HTMLElement,
+  scrollTop: number,
+  deltaY: number,
+): Promise<void> {
+  await act(async () => {
+    scroller.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY }));
+    scroller.scrollTop = scrollTop;
+    scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+  });
+}
+
 beforeEach(() => {
   dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
   Object.defineProperties(dom.window.HTMLElement.prototype, {
@@ -230,6 +242,7 @@ beforeEach(() => {
     Event: dom.window.Event,
     MouseEvent: dom.window.MouseEvent,
     MutationObserver: dom.window.MutationObserver,
+    ResizeObserver: undefined,
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     requestAnimationFrame: (callback: FrameRequestCallback) => {
       queueMicrotask(() => callback(0));
@@ -794,7 +807,7 @@ describe("ExecutionWorkstream", () => {
     expect(container.textContent).toContain("No executions yet");
   });
 
-  test("auto-follows within 100px of bottom and preserves a reader more than 100px away", async () => {
+  test("keeps programmatic scrolling in follow mode and preserves an upward-scrolling reader", async () => {
     const store = initializeSession([
       message("user", "user", "execution", "Initial", 1),
     ], [execution("execution", 1, "running")]);
@@ -817,8 +830,7 @@ describe("ExecutionWorkstream", () => {
     });
     expect(scroller.scrollTop).toBe(1_200);
 
-    scroller.scrollTop = 200;
-    await act(async () => scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
+    await userScroll(scroller, 200, -300);
     scrollHeight = 1_400;
     await act(async () => {
       store.setState((state) => ({
@@ -826,6 +838,462 @@ describe("ExecutionWorkstream", () => {
       }));
     });
     expect(scroller.scrollTop).toBe(200);
+  });
+
+  test("shows the jump control after upward intent and resumes live following from the bottom", async () => {
+    const store = initializeSession([
+      message("user", "user", "execution", "Initial", 1),
+    ], [execution("execution", 1, "running")]);
+    await renderWorkstream();
+
+    const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
+    if (!scroller) throw new Error("Missing workstream scroller");
+    let scrollHeight = 1_000;
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+
+    await userScroll(scroller, 200, -300);
+    const jump = container.querySelector<HTMLButtonElement>('[data-testid="scroll-to-latest"]');
+    expect(jump?.getAttribute("aria-label")).toBe("Jump to latest");
+
+    await act(async () => jump?.click());
+    expect(scroller.scrollTop).toBe(1_000);
+    expect(container.querySelector('[data-testid="scroll-to-latest"]')).toBeNull();
+    expect(document.activeElement).toBe(scroller);
+
+    scrollHeight = 1_200;
+    await act(async () => {
+      store.setState((state) => ({
+        messages: [...state.messages, message("stream", "assistant", "execution", "Live update", 2)],
+      }));
+    });
+    expect(scroller.scrollTop).toBe(1_200);
+  });
+
+  test("clears boundary input intent before jumping to latest", async () => {
+    const store = initializeSession([
+      message("user", "user", "execution", "Initial", 1),
+    ], [execution("execution", 1, "running")]);
+    await renderWorkstream();
+
+    const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
+    if (!scroller) throw new Error("Missing workstream scroller");
+    let scrollHeight = 1_000;
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+
+    await userScroll(scroller, 0, -300);
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+      await Promise.resolve();
+    });
+    const jump = container.querySelector<HTMLButtonElement>('[data-testid="scroll-to-latest"]');
+    if (!jump) throw new Error("Missing jump control");
+
+    await act(async () => jump.click());
+    expect(scroller.scrollTop).toBe(1_000);
+
+    scrollHeight = 1_200;
+    await act(async () => {
+      store.setState((state) => ({
+        messages: [...state.messages, message("stream-after-boundary", "assistant", "execution", "Live update", 2)],
+      }));
+    });
+    expect(scroller.scrollTop).toBe(1_200);
+  });
+
+  test("resumes following when touch momentum reaches the bottom", async () => {
+    const store = initializeSession([
+      message("user", "user", "execution", "Initial", 1),
+    ], [execution("execution", 1, "running")]);
+    await renderWorkstream();
+
+    const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
+    if (!scroller) throw new Error("Missing workstream scroller");
+    let scrollHeight = 1_000;
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+    await userScroll(scroller, 400, -200);
+
+    const touchEvent = (type: string, clientY?: number) => {
+      const event = new dom.window.Event(type, { bubbles: true });
+      Object.defineProperty(event, "touches", {
+        configurable: true,
+        value: clientY === undefined ? [] : [{ clientY }],
+      });
+      return event;
+    };
+    await act(async () => {
+      scroller.dispatchEvent(touchEvent("touchstart", 200));
+      scroller.dispatchEvent(touchEvent("touchmove", 120));
+      scroller.dispatchEvent(touchEvent("touchend"));
+      await Promise.resolve();
+    });
+
+    scroller.scrollTop = 580;
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="scroll-to-latest"]')).toBeNull();
+
+    scrollHeight = 1_200;
+    await act(async () => {
+      store.setState((state) => ({
+        messages: [...state.messages, message("stream-after-touch", "assistant", "execution", "Live update", 2)],
+      }));
+    });
+    expect(scroller.scrollTop).toBe(1_200);
+  });
+
+  test("treats Shift+Space as upward reading intent without blocking native scrolling", async () => {
+    const store = initializeSession([
+      message("user", "user", "execution", "Initial", 1),
+    ], [execution("execution", 1, "running")]);
+    await renderWorkstream();
+
+    const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
+    if (!scroller) throw new Error("Missing workstream scroller");
+    let scrollHeight = 1_000;
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+    scroller.scrollTop = 600;
+    await act(async () => scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
+
+    const shiftSpace = new dom.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: " ",
+      shiftKey: true,
+    });
+    await act(async () => {
+      scroller.dispatchEvent(shiftSpace);
+      scroller.scrollTop = 300;
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    expect(shiftSpace.defaultPrevented).toBe(false);
+
+    scrollHeight = 1_200;
+    await act(async () => {
+      store.setState((state) => ({
+        messages: [...state.messages, message("stream-after-shift-space", "assistant", "execution", "Live update", 2)],
+      }));
+    });
+    expect(scroller.scrollTop).toBe(300);
+  });
+
+  test("uses 24/48px hysteresis for the jump control", async () => {
+    initializeSession([
+      message("user", "user", "execution", "Initial", 1),
+    ], [execution("execution", 1, "running")]);
+    await renderWorkstream();
+
+    const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
+    if (!scroller) throw new Error("Missing workstream scroller");
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => 1_000 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+
+    await userScroll(scroller, 560, -40);
+    expect(container.querySelector('[data-testid="scroll-to-latest"]')).toBeNull();
+    await userScroll(scroller, 540, -20);
+    expect(container.querySelector('[data-testid="scroll-to-latest"]')).not.toBeNull();
+    await userScroll(scroller, 550, 10);
+    expect(container.querySelector('[data-testid="scroll-to-latest"]')).not.toBeNull();
+    await userScroll(scroller, 580, 30);
+    expect(container.querySelector('[data-testid="scroll-to-latest"]')).toBeNull();
+  });
+
+  test("shows an accessible Execution rail only for a long desktop transcript", async () => {
+    Object.defineProperty(dom.window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        matches: query === "(pointer: fine)",
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => true,
+      }),
+    });
+    const records = [
+      execution("one", 1),
+      execution("two", 2),
+      execution("three", 3),
+      { ...execution("four", 4), origin: "tool_batch" as const },
+    ];
+    initializeSession([
+      message("user-one", "user", "one", "First request", 1),
+      message("user-two", "user", "two", "Second request", 2),
+      message("user-three", "user", "three", `Third ${"very long request ".repeat(20)}`, 3),
+    ], records);
+    await renderWorkstream();
+
+    const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
+    const thread = container.querySelector<HTMLElement>('[data-testid="execution-thread-column"]');
+    if (!scroller || !thread) throw new Error("Missing transcript geometry");
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => 1_200 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(scroller, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new dom.window.DOMRect(0, 0, 600, 400),
+    });
+    let threadGutter = 40;
+    Object.defineProperty(thread, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new dom.window.DOMRect(threadGutter, 0, 600 - threadGutter * 2, 1_200),
+    });
+    const articleTops = [0, 240, 480, 1_000];
+    records.forEach((record, index) => {
+      const article = turn(record.id);
+      Object.defineProperty(article, "getBoundingClientRect", {
+        configurable: true,
+        value: () => new dom.window.DOMRect(
+          40,
+          (articleTops[index] ?? 0) - scroller.scrollTop,
+          520,
+          200,
+        ),
+      });
+    });
+
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const rail = container.querySelector<HTMLElement>('[data-testid="execution-navigation-rail"]');
+    expect(rail?.getAttribute("aria-label")).toBe("Execution navigation");
+    expect(rail?.style.left).toBe("12px");
+    const markers = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-execution-navigation-id]"),
+    );
+    expect(markers).toHaveLength(4);
+    expect(markers[0]?.getAttribute("aria-current")).toBe("location");
+    expect(markers[0]?.tabIndex).toBe(0);
+    expect(markers[2]?.getAttribute("aria-label")?.length).toBeLessThan(220);
+    expect(markers[2]?.getAttribute("aria-label")).toContain("…");
+    expect(markers[3]?.getAttribute("aria-label")).toContain("Tool batch continuation");
+
+    for (const [gutter, expectedLeft] of [[35, 7], [32, 4], [40, 12]] as const) {
+      threadGutter = gutter;
+      await act(async () => {
+        scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+        await Promise.resolve();
+      });
+      expect(rail?.style.left).toBe(`${expectedLeft}px`);
+      expect(expectedLeft + 28).toBeLessThanOrEqual(gutter);
+    }
+
+    const requestedScroll = { top: null as number | null };
+    Object.defineProperty(scroller, "scrollTo", {
+      configurable: true,
+      value: ({ top }: ScrollToOptions) => {
+        requestedScroll.top = top ?? null;
+      },
+    });
+    await act(async () => markers[2]?.click());
+    expect(requestedScroll.top).toBe(464);
+    expect(markers[2]?.getAttribute("aria-current")).toBe("location");
+
+    scroller.scrollTop = 200;
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(markers[2]?.getAttribute("aria-current")).toBe("location");
+
+    scroller.scrollTop = requestedScroll.top ?? 0;
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(markers[2]?.getAttribute("aria-current")).toBe("location");
+
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 120 }));
+      scroller.scrollTop = 800;
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 140));
+    });
+    expect(markers[3]?.getAttribute("aria-current")).toBe("location");
+
+    await act(async () => markers[1]?.focus());
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toContain("Second request");
+    expect(markers[1]?.getAttribute("aria-describedby")).not.toBeNull();
+
+    await act(async () => {
+      markers[1]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        key: "ArrowDown",
+      }));
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(markers[2]);
+  });
+
+  test("keeps the current marker visible in a long Execution rail", async () => {
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: TestResizeObserver,
+    });
+    Object.defineProperty(dom.window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        matches: query === "(pointer: fine)",
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => true,
+      }),
+    });
+    const records = Array.from({ length: 24 }, (_, index) => execution(`execution-${index + 1}`, index + 1));
+    initializeSession(
+      records.map((record, index) => message(
+        `user-${record.id}`,
+        "user",
+        record.id,
+        `Request ${index + 1}`,
+        index + 1,
+      )),
+      records,
+    );
+    await renderWorkstream();
+
+    const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
+    const thread = container.querySelector<HTMLElement>('[data-testid="execution-thread-column"]');
+    if (!scroller || !thread) throw new Error("Missing transcript geometry");
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => 6_000 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(scroller, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new dom.window.DOMRect(0, 0, 600, 400),
+    });
+    Object.defineProperty(thread, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new dom.window.DOMRect(40, 0, 520, 6_000),
+    });
+    let articleRectReads = 0;
+    records.forEach((record, index) => {
+      Object.defineProperty(turn(record.id), "getBoundingClientRect", {
+        configurable: true,
+        value: () => {
+          articleRectReads += 1;
+          return new dom.window.DOMRect(40, index * 240 - scroller.scrollTop, 520, 200);
+        },
+      });
+    });
+
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(articleRectReads).toBeLessThan(10);
+
+    const rail = container.querySelector<HTMLElement>('[data-testid="execution-navigation-rail"]');
+    const markers = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-execution-navigation-id]"),
+    );
+    if (!rail || markers.length !== records.length) throw new Error("Missing long Execution rail");
+    const lastMarker = markers.at(-1);
+    if (!lastMarker) throw new Error("Missing last Execution marker");
+    let railHeight = 200;
+    Object.defineProperty(rail, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new dom.window.DOMRect(12, 100, 28, railHeight),
+    });
+    markers.forEach((marker, index) => {
+      Object.defineProperty(marker, "getBoundingClientRect", {
+        configurable: true,
+        value: () => new dom.window.DOMRect(12, 112 + index * 24 - rail.scrollTop, 28, 24),
+      });
+    });
+
+    await act(async () => {
+      lastMarker.click();
+      await Promise.resolve();
+    });
+    expect(lastMarker.getAttribute("aria-current")).toBe("location");
+    expect(rail.scrollTop).toBeGreaterThan(0);
+    expect(rail.getAttribute("style")).toContain(
+      "max-height: min(70vh, 40rem, calc(100% - 16px))",
+    );
+
+    const scrollTopBeforeResize = rail.scrollTop;
+    railHeight = 80;
+    await act(async () => {
+      for (const callback of resizeCallbacks) {
+        callback([], {} as ResizeObserver);
+      }
+    });
+    expect(rail.scrollTop).toBeGreaterThan(scrollTopBeforeResize);
+    expect(lastMarker.getBoundingClientRect().bottom)
+      .toBeLessThanOrEqual(rail.getBoundingClientRect().bottom - 12);
+
+    await act(async () => lastMarker.focus());
+    expect(document.activeElement).toBe(lastMarker);
+    scroller.scrollTop = 0;
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(markers[0]?.getAttribute("aria-current")).toBe("location");
+    expect(rail.scrollTop).toBe(0);
+  });
+
+  test("does not show the Execution rail when the transcript does not overflow", async () => {
+    Object.defineProperty(dom.window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        media: "(pointer: fine)",
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => true,
+      }),
+    });
+    const records = ["one", "two", "three", "four"].map((id, index) => execution(id, index + 1));
+    initializeSession(
+      records.map((record, index) => message(`user-${record.id}`, "user", record.id, `Request ${index + 1}`, index + 1)),
+      records,
+    );
+    await renderWorkstream();
+
+    const scroller = container.querySelector<HTMLElement>('[data-testid="execution-workstream-scroller"]');
+    const thread = container.querySelector<HTMLElement>('[data-testid="execution-thread-column"]');
+    if (!scroller || !thread) throw new Error("Missing transcript geometry");
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(scroller, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new dom.window.DOMRect(0, 0, 600, 400),
+    });
+    Object.defineProperty(thread, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new dom.window.DOMRect(40, 0, 520, 400),
+    });
+
+    await act(async () => {
+      scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-testid="execution-navigation-rail"]')).toBeNull();
   });
 
   test("does not auto-collapse a completed Work after the reader has manually chosen its disclosure state", async () => {
@@ -879,8 +1347,7 @@ describe("ExecutionWorkstream", () => {
     if (!scroller) throw new Error("Missing workstream scroller");
     Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => 2_000 });
     Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 400 });
-    scroller.scrollTop = 200;
-    await act(async () => scroller.dispatchEvent(new dom.window.Event("scroll", { bubbles: true })));
+    await userScroll(scroller, 200, -300);
 
     await act(async () => {
       store.setState((state) => ({

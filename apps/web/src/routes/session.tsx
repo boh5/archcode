@@ -290,7 +290,11 @@ export function SessionRoute() {
             Loading sub-agent session...
           </div>
         ) : (
-          <>
+          <div
+            className="relative flex min-h-0 flex-1 flex-col"
+            data-session-transcript-surface=""
+            data-testid="session-transcript-surface"
+          >
             <ExecutionWorkstream
               key={focusSessionId}
               slug={slug}
@@ -308,7 +312,7 @@ export function SessionRoute() {
               sessionId={rootSessionId}
               focusHitlId={focusHitlId}
             />
-          </>
+          </div>
         )}
       </div>
     );
@@ -353,7 +357,11 @@ export function SessionRoute() {
           </div>
         </div>
       ) : (
-        <>
+        <div
+          className="relative flex min-h-0 flex-1 flex-col"
+          data-session-transcript-surface=""
+          data-testid="session-transcript-surface"
+        >
           <ExecutionWorkstream
             key={rootSessionId}
             slug={slug}
@@ -368,7 +376,7 @@ export function SessionRoute() {
             sessionId={rootSessionId}
             focusHitlId={focusHitlId}
           />
-        </>
+        </div>
       )}
     </div>
   );

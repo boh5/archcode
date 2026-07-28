@@ -660,11 +660,18 @@ describe("SessionRoute focused view store behavior", () => {
       await renderSessionRoute(reactRoot, queryClient);
 
       const surface = container.querySelector('[data-testid="session-composer-dock"]');
+      const transcriptSurface = container.querySelector('[data-testid="session-transcript-surface"]');
+      const viewport = container.querySelector('[data-testid="execution-workstream-viewport"]');
+      const scroller = container.querySelector('[data-testid="execution-workstream-scroller"]');
       const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
       const threadColumn = container.querySelector('[data-testid="composer-thread-column"]');
       const attention = container.querySelector('[data-testid="composer-attention-stack"]');
       const decision = container.querySelector('[data-testid="hitl-decision-card"]');
       expect(decision).not.toBeNull();
+      expect(transcriptSurface?.contains(viewport)).toBe(true);
+      expect(transcriptSurface?.contains(surface)).toBe(true);
+      expect(viewport?.contains(scroller)).toBe(true);
+      expect(viewport?.contains(surface)).toBe(false);
       expect(surface?.classList.contains("border-t")).toBe(true);
       expect(surface?.classList.contains("px-5")).toBe(false);
       expect(rail?.className).toContain("w-full");
