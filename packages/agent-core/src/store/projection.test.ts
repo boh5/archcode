@@ -8,10 +8,12 @@ import type { CompactionPart, StoredMessage, StoredPart, SystemNoticePart } from
 import {
   SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH,
   SESSION_GOAL_OBJECTIVE_MAX_LENGTH,
+  type AssistantSessionPart,
   type FinalizedToolResult,
   type GoalNoticePart,
   type ToolOutputRecovery,
   type ToolResultDetails,
+  type UserSessionPart,
 } from "@archcode/protocol";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
@@ -22,7 +24,11 @@ function nextId(prefix: string): string {
   return `${prefix}-${idCounter}`;
 }
 
-function textPart(text: string, completed = true, meta?: Record<string, unknown>): StoredPart {
+function textPart(
+  text: string,
+  completed = true,
+  meta?: Record<string, unknown>,
+): UserSessionPart {
   return {
     type: "text",
     id: nextId("text"),
@@ -33,10 +39,32 @@ function textPart(text: string, completed = true, meta?: Record<string, unknown>
   };
 }
 
-function reasoningPart(text: string, completed = true): StoredPart {
+function outputPart(
+  text: string,
+  completed = true,
+  meta?: Record<string, unknown>,
+): AssistantSessionPart {
+  const id = nextId("output");
+  return {
+    type: "assistant-output",
+    id,
+    blockId: id,
+    text,
+    createdAt: idCounter,
+    ...(completed ? { completedAt: idCounter + 1 } : {}),
+    ...(meta ? { meta } : {}),
+  };
+}
+
+function reasoningPart(
+  text: string,
+  completed = true,
+): AssistantSessionPart {
+  const id = nextId("reasoning");
   return {
     type: "reasoning",
-    id: nextId("reasoning"),
+    id,
+    blockId: id,
     text,
     createdAt: idCounter,
     ...(completed ? { completedAt: idCounter + 1 } : {}),
@@ -46,7 +74,7 @@ function reasoningPart(text: string, completed = true): StoredPart {
 function attachmentPart(
   name = "diagram<&>.png",
   id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-): StoredPart {
+): UserSessionPart {
   return {
     type: "attachment",
     id: nextId("attachment"),
@@ -91,7 +119,7 @@ function completedToolPart(options: {
   preview?: string;
   details?: ToolResultDetails;
   recovery?: ToolOutputRecovery;
-}): StoredPart {
+}): AssistantSessionPart {
   return {
     type: "tool",
     id: nextId("tool"),
@@ -117,7 +145,7 @@ function errorToolPart(options: {
   input?: unknown;
   preview?: string;
   details?: ToolResultDetails;
-}): StoredPart {
+}): AssistantSessionPart {
   return {
     type: "tool",
     id: nextId("tool"),
@@ -132,7 +160,7 @@ function errorToolPart(options: {
   };
 }
 
-function pendingToolPart(): StoredPart {
+function pendingToolPart(): AssistantSessionPart {
   return {
     type: "tool",
     id: nextId("tool"),
@@ -143,7 +171,7 @@ function pendingToolPart(): StoredPart {
   };
 }
 
-function runningToolPart(): StoredPart {
+function runningToolPart(): AssistantSessionPart {
   return {
     type: "tool",
     id: nextId("tool"),
@@ -205,14 +233,38 @@ function decodeXmlText(value: string): string {
     .replaceAll("&amp;", "&");
 }
 
-function storedMessage(role: StoredMessage["role"], parts: StoredPart[], compacted?: boolean): StoredMessage {
-  return {
+function storedMessage(
+  role: "user",
+  parts: UserSessionPart[],
+  compacted?: boolean,
+): StoredMessage;
+function storedMessage(
+  role: "assistant",
+  parts: AssistantSessionPart[],
+  compacted?: boolean,
+): StoredMessage;
+function storedMessage(
+  role: StoredMessage["role"],
+  parts: UserSessionPart[] | AssistantSessionPart[],
+  compacted?: boolean,
+): StoredMessage {
+  const base = {
     id: nextId("message"),
-    role,
-    parts,
     createdAt: idCounter,
     completedAt: idCounter + 1,
     ...(compacted ? { compacted: true } : {}),
+  };
+  if (role === "user") {
+    return { ...base, role, parts: parts as UserSessionPart[] };
+  }
+  return {
+    ...base,
+    role,
+    parts: parts as AssistantSessionPart[],
+    executionId: `execution:${base.id}`,
+    runOrdinal: 0,
+    stepId: `step:${base.id}`,
+    outputPhase: "commentary",
   };
 }
 
@@ -358,7 +410,7 @@ describe("toModelMessagesFromStoredMessages", () => {
       id: "msg-old-user",
     };
     const oldAssistant: StoredMessage = {
-      ...storedMessage("assistant", [textPart("old")]),
+      ...storedMessage("assistant", [outputPart("old")]),
       id: "msg-old-assistant",
     };
     const tail: StoredMessage = {
@@ -395,7 +447,7 @@ describe("toModelMessagesFromStoredMessages", () => {
   });
 
   test("projects an assistant message with completed text to assistant text content", () => {
-    const messages = [storedMessage("assistant", [textPart("answer")])];
+    const messages = [storedMessage("assistant", [outputPart("answer")])];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([
       { role: "assistant", content: [{ type: "text", text: "answer" }] },
@@ -403,7 +455,7 @@ describe("toModelMessagesFromStoredMessages", () => {
   });
 
   test("omits an assistant message with incomplete text", () => {
-    const messages = [storedMessage("assistant", [textPart("partial", false)])];
+    const messages = [storedMessage("assistant", [outputPart("partial", false)])];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([]);
   });
@@ -412,7 +464,7 @@ describe("toModelMessagesFromStoredMessages", () => {
     const messages = [
       storedMessage("user", [textPart("please continue")]),
       storedMessage("assistant", [
-        textPart("PARTIAL_ASSISTANT_SHOULD_NOT_APPEAR", true, { interrupted: true, discardedFromContext: true }),
+        outputPart("PARTIAL_ASSISTANT_SHOULD_NOT_APPEAR", true, { interrupted: true, discardedFromContext: true }),
       ]),
     ];
 
@@ -428,8 +480,8 @@ describe("toModelMessagesFromStoredMessages", () => {
   test("omits text marked discardedFromContext even when not explicitly interrupted", () => {
     const messages = [
       storedMessage("assistant", [
-        textPart("discarded", true, { discardedFromContext: true }),
-        textPart("safe"),
+        outputPart("discarded", true, { discardedFromContext: true }),
+        outputPart("safe"),
       ]),
     ];
 
@@ -441,14 +493,14 @@ describe("toModelMessagesFromStoredMessages", () => {
 
   test("omits an assistant message with only incomplete parts", () => {
     const messages = [
-      storedMessage("assistant", [textPart("partial", false), pendingToolPart(), runningToolPart()]),
+      storedMessage("assistant", [outputPart("partial", false), pendingToolPart(), runningToolPart()]),
     ];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([]);
   });
 
   test("preserves order for multiple completed assistant text parts", () => {
-    const messages = [storedMessage("assistant", [textPart("first"), textPart(" second")])];
+    const messages = [storedMessage("assistant", [outputPart("first"), outputPart(" second")])];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([
       {
@@ -462,7 +514,7 @@ describe("toModelMessagesFromStoredMessages", () => {
   });
 
   test("filters completed reasoning parts", () => {
-    const messages = [storedMessage("assistant", [reasoningPart("hidden"), textPart("visible")])];
+    const messages = [storedMessage("assistant", [reasoningPart("hidden"), outputPart("visible")])];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([
       { role: "assistant", content: [{ type: "text", text: "visible" }] },
@@ -470,7 +522,7 @@ describe("toModelMessagesFromStoredMessages", () => {
   });
 
   test("filters incomplete reasoning parts", () => {
-    const messages = [storedMessage("assistant", [reasoningPart("hidden", false), textPart("visible")])];
+    const messages = [storedMessage("assistant", [reasoningPart("hidden", false), outputPart("visible")])];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([
       { role: "assistant", content: [{ type: "text", text: "visible" }] },
@@ -550,7 +602,7 @@ describe("toModelMessagesFromStoredMessages", () => {
   });
 
   test("filters pending tool parts", () => {
-    const messages = [storedMessage("assistant", [pendingToolPart(), textPart("done")])];
+    const messages = [storedMessage("assistant", [pendingToolPart(), outputPart("done")])];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([
       { role: "assistant", content: [{ type: "text", text: "done" }] },
@@ -558,7 +610,7 @@ describe("toModelMessagesFromStoredMessages", () => {
   });
 
   test("filters running tool parts", () => {
-    const messages = [storedMessage("assistant", [runningToolPart(), textPart("done")])];
+    const messages = [storedMessage("assistant", [runningToolPart(), outputPart("done")])];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([
       { role: "assistant", content: [{ type: "text", text: "done" }] },
@@ -672,9 +724,9 @@ describe("toModelMessagesFromStoredMessages", () => {
   test("projects mixed assistant parts in order with separate tool result message", () => {
     const messages = [
       storedMessage("assistant", [
-        textPart("before"),
+        outputPart("before"),
         completedToolPart({ toolCallId: "call-6", toolName: "read", input: { file: "a" }, preview: "A" }),
-        textPart("after"),
+        outputPart("after"),
         errorToolPart({ toolCallId: "call-7", toolName: "write", input: { file: "b" }, preview: "B" }),
       ]),
     ];
@@ -712,7 +764,7 @@ describe("toModelMessagesFromStoredMessages", () => {
   test("preserves message order across multiple stored messages", () => {
     const messages = [
       storedMessage("user", [textPart("one")]),
-      storedMessage("assistant", [textPart("two")]),
+      storedMessage("assistant", [outputPart("two")]),
       storedMessage("user", [textPart("three")]),
     ];
 
@@ -735,7 +787,7 @@ describe("toModelMessagesFromStoredMessages", () => {
   test("projects a full conversation with user, assistant text, user, assistant tool, and tool result", () => {
     const messages = [
       storedMessage("user", [textPart("read the file")]),
-      storedMessage("assistant", [textPart("I will read it.")]),
+      storedMessage("assistant", [outputPart("I will read it.")]),
       storedMessage("user", [textPart("thanks")]),
       storedMessage("assistant", [
         completedToolPart({
@@ -780,14 +832,14 @@ describe("toModelMessagesFromStoredMessages", () => {
 describe("toModelMessagesFromStoredMessages compaction", () => {
   test("projection after compaction includes the summary and tail", () => {
     const tailMsg = storedMessage("user", [textPart("tail question")]);
-    const tailAssistantMsg = storedMessage("assistant", [textPart("tail answer")]);
+    const tailAssistantMsg = storedMessage("assistant", [outputPart("tail answer")]);
 
     const compactionMsg = storedMessage("user", [
       compactionPart("Summary of old conversation", tailMsg.id),
     ]);
 
     const prefixMsg = storedMessage("user", [textPart("old question")], true);
-    const prefixAssistantMsg = storedMessage("assistant", [textPart("old answer")], true);
+    const prefixAssistantMsg = storedMessage("assistant", [outputPart("old answer")], true);
 
     const messages = [prefixMsg, prefixAssistantMsg, compactionMsg, tailMsg, tailAssistantMsg];
 
@@ -806,7 +858,7 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
       compactionPart("Summary of old conversation", tailMsg.id),
     ]);
     const prefixMsg = storedMessage("user", [textPart("old question")], true);
-    const prefixAssistantMsg = storedMessage("assistant", [textPart("old answer")], true);
+    const prefixAssistantMsg = storedMessage("assistant", [outputPart("old answer")], true);
 
     const messages = [prefixMsg, prefixAssistantMsg, compactionMsg, tailMsg];
 
@@ -839,7 +891,7 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
 
   test("model mode skips SystemNoticePart in assistant messages", () => {
     const messages = [
-      storedMessage("assistant", [systemNoticePart("notice"), textPart("response")]),
+      storedMessage("assistant", [systemNoticePart("notice"), outputPart("response")]),
     ];
 
     const projected = toModelMessagesFromStoredMessages(messages);
@@ -954,7 +1006,7 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
   test("non-compacted sessions project identically to current behavior", () => {
     const messages = [
       storedMessage("user", [textPart("hello")]),
-      storedMessage("assistant", [textPart("world")]),
+      storedMessage("assistant", [outputPart("world")]),
       storedMessage("user", [textPart("how are you")]),
     ];
 
@@ -1102,7 +1154,7 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
 describe("toModelMessagesFromStoredMessages compression projection", () => {
   test("carries forward the latest GoalNotice exactly once when an active DCP block covers it", () => {
     const notice = { ...storedMessage("user", [goalNoticePart()]), id: "msg-old-user" };
-    const assistant = { ...storedMessage("assistant", [textPart("old answer")]), id: "msg-old-assistant" };
+    const assistant = { ...storedMessage("assistant", [outputPart("old answer")]), id: "msg-old-assistant" };
     const tail = { ...storedMessage("user", [textPart("tail")]), id: "msg-tail" };
 
     const serialized = JSON.stringify(toModelMessagesFromStoredMessages(
@@ -1117,7 +1169,7 @@ describe("toModelMessagesFromStoredMessages compression projection", () => {
 
   test("does not duplicate an uncovered latest GoalNotice beside an active DCP block", () => {
     const oldUser = { ...storedMessage("user", [textPart("old request")]), id: "msg-old-user" };
-    const oldAssistant = { ...storedMessage("assistant", [textPart("old answer")]), id: "msg-old-assistant" };
+    const oldAssistant = { ...storedMessage("assistant", [outputPart("old answer")]), id: "msg-old-assistant" };
     const notice = { ...storedMessage("user", [goalNoticePart()]), id: "msg-tail" };
 
     const serialized = JSON.stringify(toModelMessagesFromStoredMessages(
@@ -1131,7 +1183,7 @@ describe("toModelMessagesFromStoredMessages compression projection", () => {
 
   test("projection-only refs replace active ranges without mutating canonical text", () => {
     const oldUser = storedMessage("user", [textPart("ORIGINAL_OLD_USER")]);
-    const oldAssistant = storedMessage("assistant", [textPart("ORIGINAL_OLD_ASSISTANT")]);
+    const oldAssistant = storedMessage("assistant", [outputPart("ORIGINAL_OLD_ASSISTANT")]);
     const tail = storedMessage("user", [textPart("TAIL_VISIBLE")]);
     const messages: StoredMessage[] = [
       { ...oldUser, id: "msg-old-user" },
@@ -1157,7 +1209,7 @@ describe("toModelMessagesFromStoredMessages compression projection", () => {
   test("full-history mode keeps covered originals and omits compression block projection", () => {
     const messages: StoredMessage[] = [
       { ...storedMessage("user", [textPart("ORIGINAL_OLD_USER")]), id: "msg-old-user" },
-      { ...storedMessage("assistant", [textPart("ORIGINAL_OLD_ASSISTANT")]), id: "msg-old-assistant" },
+      { ...storedMessage("assistant", [outputPart("ORIGINAL_OLD_ASSISTANT")]), id: "msg-old-assistant" },
       { ...storedMessage("user", [textPart("TAIL_VISIBLE")]), id: "msg-tail" },
     ];
 
@@ -1173,7 +1225,7 @@ describe("toModelMessagesFromStoredMessages compression projection", () => {
   test("child block refs are present exactly once through the validated summary", () => {
     const messages: StoredMessage[] = [
       { ...storedMessage("user", [textPart("old")]), id: "msg-old-user" },
-      { ...storedMessage("assistant", [textPart("older")]), id: "msg-old-assistant" },
+      { ...storedMessage("assistant", [outputPart("older")]), id: "msg-old-assistant" },
     ];
     const compression = compressionStateForProjection({ childBlockRefs: ["b2"], summary: compressionSummary(["b2"]) });
 
@@ -1186,10 +1238,12 @@ describe("toModelMessagesFromStoredMessages compression projection", () => {
   test("fresh compression state injects projection refs for uncompressed messages", () => {
     const messages: StoredMessage[] = [
       { ...storedMessage("user", [textPart("fresh question")]), id: "msg-fresh-user" },
-      { ...storedMessage("assistant", [textPart("fresh answer")]), id: "msg-fresh-assistant" },
+      { ...storedMessage("assistant", [outputPart("fresh answer")]), id: "msg-fresh-assistant" },
     ];
     const originalUserText = messages[0]!.parts[0]!.type === "text" ? messages[0]!.parts[0]!.text : "";
-    const originalAssistantText = messages[1]!.parts[0]!.type === "text" ? messages[1]!.parts[0]!.text : "";
+    const originalAssistantText = messages[1]!.parts[0]!.type === "assistant-output"
+      ? messages[1]!.parts[0]!.text
+      : "";
 
     const projected = toModelMessagesFromStoredMessages(messages, { compression: createEmptyCompressionState() });
     const userContent = projected[0]?.role === "user" ? projected[0].content : "";
@@ -1202,7 +1256,11 @@ describe("toModelMessagesFromStoredMessages compression projection", () => {
     expect(assistantContent).toContainEqual({ type: "text", text: "<message ref=\"m0002\">" });
     expect(assistantContent).toContainEqual({ type: "text", text: "fresh answer" });
     expect(messages[0]!.parts[0]!.type === "text" ? messages[0]!.parts[0]!.text : "").toBe(originalUserText);
-    expect(messages[1]!.parts[0]!.type === "text" ? messages[1]!.parts[0]!.text : "").toBe(originalAssistantText);
+    expect(
+      messages[1]!.parts[0]!.type === "assistant-output"
+        ? messages[1]!.parts[0]!.text
+        : "",
+    ).toBe(originalAssistantText);
     expect(fullHistorySerialized).toContain("fresh question");
     expect(fullHistorySerialized).toContain("fresh answer");
     expect(fullHistorySerialized).not.toContain("m0001");

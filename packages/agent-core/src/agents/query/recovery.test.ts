@@ -40,8 +40,12 @@ function createTestRegistry(descriptors: AnyToolDescriptor[] = []): ToolRegistry
 type StreamTextFn = typeof import("ai").streamText;
 
 type MockChunk =
-  | { type: "text-delta"; text: string }
-  | { type: "reasoning-delta"; text: string }
+  | { type: "text-start"; id: string }
+  | { type: "text-delta"; id: string; text: string }
+  | { type: "text-end"; id: string }
+  | { type: "reasoning-start"; id: string }
+  | { type: "reasoning-delta"; id: string; text: string }
+  | { type: "reasoning-end"; id: string }
   | { type: "tool-input-start"; id: string; toolName: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
   | { type: "error"; error: unknown };
@@ -182,7 +186,15 @@ function createMockStreamText(rounds: MockRound[]) {
     const round = rounds[index++];
     if (!round) throw new Error("No more mock rounds");
     if (round.throwBeforeOutput) throw round.throwBeforeOutput;
-    const chunks = round.chunks ?? (round.text ? [{ type: "text-delta" as const, text: round.text }] : []);
+    const chunks = round.chunks ?? (
+      round.text
+        ? [
+            { type: "text-start" as const, id: "output" },
+            { type: "text-delta" as const, id: "output", text: round.text },
+            { type: "text-end" as const, id: "output" },
+          ]
+        : []
+    );
 
     return {
       fullStream: round.fullStreamFactory?.() ?? (async function* () {
@@ -212,8 +224,12 @@ function collectToolCalls(chunks: MockChunk[]) {
   }));
 }
 
-function assistantMessages(store: ReturnType<typeof createStore>): StoredMessage[] {
-  return store.getState().messages.filter((message) => message.role === "assistant");
+type AssistantStoredMessage = Extract<StoredMessage, { role: "assistant" }>;
+
+function assistantMessages(store: ReturnType<typeof createStore>): AssistantStoredMessage[] {
+  return store.getState().messages.filter(
+    (message): message is AssistantStoredMessage => message.role === "assistant",
+  );
 }
 
 function streamMessages(fn: ReturnType<typeof createMockStreamText>, callIndex: number): ModelMessage[] {
@@ -223,7 +239,9 @@ function streamMessages(fn: ReturnType<typeof createMockStreamText>, callIndex: 
 }
 
 function textParts(store: ReturnType<typeof createStore>) {
-  return assistantMessages(store).flatMap((message) => message.parts).filter((part) => part.type === "text");
+  return assistantMessages(store)
+    .flatMap((message) => message.parts)
+    .filter((part) => part.type === "assistant-output");
 }
 
 beforeEach(() => {
@@ -449,7 +467,13 @@ describe("query loop LLM stream recovery", () => {
     const store = createStore();
     const events = captureEvents(store);
     const streamFn = createMockStreamText([
-      { chunks: [{ type: "text-delta", text: "PARTIAL_SHOULD_NOT_REPLAY" }], fullStreamError: retryableEof("EOF truncated body", 0.001) },
+      {
+        chunks: [
+          { type: "text-start", id: "output" },
+          { type: "text-delta", id: "output", text: "PARTIAL_SHOULD_NOT_REPLAY" },
+        ],
+        fullStreamError: retryableEof("EOF truncated body", 0.001),
+      },
       { text: "Recovered continuation" },
     ]);
 
@@ -539,7 +563,13 @@ describe("query loop LLM stream recovery", () => {
     ]);
     createMockStreamText([
       { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-done", toolName: "writeThing", input: {} }] },
-      { chunks: [{ type: "text-delta", text: "partial after tool" }], fullStreamError: retryableEof("later eof", 0.001) },
+      {
+        chunks: [
+          { type: "text-start", id: "output" },
+          { type: "text-delta", id: "output", text: "partial after tool" },
+        ],
+        fullStreamError: retryableEof("later eof", 0.001),
+      },
       { text: "Recovered final" },
     ]);
 
@@ -621,7 +651,13 @@ describe("query loop LLM stream recovery", () => {
     createMockStreamText([
       { fullStreamError: retryableEof("eof-1") },
       { fullStreamError: retryableEof("eof-2") },
-      { chunks: [{ type: "text-delta", text: "partial" }], fullStreamError: retryableEof("partial eof", 0.001) },
+      {
+        chunks: [
+          { type: "text-start", id: "output" },
+          { type: "text-delta", id: "output", text: "partial" },
+        ],
+        fullStreamError: retryableEof("partial eof", 0.001),
+      },
       { text: "Recovered" },
     ]);
 

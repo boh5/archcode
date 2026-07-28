@@ -59,11 +59,41 @@ function messages(): StoredMessage[] {
   ];
 }
 
-function message(id: string, role: StoredMessage["role"], text: string): StoredMessage {
+function message(
+  id: string,
+  role: StoredMessage["role"],
+  text: string,
+): StoredMessage {
+  if (role === "user") {
+    return {
+      id,
+      role,
+      parts: [{
+        type: "text",
+        id: `${id}-text`,
+        text,
+        createdAt: 1,
+        completedAt: 2,
+      }],
+      createdAt: 1,
+      completedAt: 2,
+    };
+  }
   return {
     id,
     role,
-    parts: [{ type: "text", id: `${id}-text`, text, createdAt: 1, completedAt: 2 }],
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
+    parts: [{
+      type: "assistant-output",
+      id: `${id}-output`,
+      blockId: `${id}-block`,
+      text,
+      createdAt: 1,
+      completedAt: 2,
+    }],
     createdAt: 1,
     completedAt: 2,
   };

@@ -17,6 +17,7 @@ export function ReasoningUsageSummary({ tokens }: { readonly tokens: number }) {
       <Sparkles size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
       <span className="font-medium text-text-secondary">Reasoning</span>
       <span className="tabular-nums">{formattedTokens} tokens</span>
+      <span>· text unavailable</span>
     </div>
   );
 }

@@ -244,12 +244,15 @@ describe("SessionStoreManager", () => {
       completedAt: 1300,
       executionId: "execution-checkpoint",
       runOrdinal: 0,
+      stepId: "step-checkpoint",
+      outputPhase: "commentary",
     };
     const batch: SessionToolBatch = {
       batchId: "batch-checkpoint",
       executionId: "execution-checkpoint",
       runOrdinal: 0,
       assistantMessageId: message.id,
+      stepId: "step-checkpoint",
       step: 0,
       agentName: "lead",
       allowedTools: ["read_tool"],
@@ -351,14 +354,14 @@ describe("SessionStoreManager", () => {
         events: [{ type: "system-notice", message: "accepted" }],
       }));
       await saveStarted;
-      store.getState().append({ type: "text-delta", text: "later" });
+      store.getState().append({ type: "system-notice", message: "later" });
 
       expect(received).toEqual([]);
       expect(store.getState().publishableNextEventId).toBe(0);
 
       releaseSave();
       await mutation;
-      expect(received).toEqual(["system-notice", "text-delta"]);
+      expect(received).toEqual(["system-notice", "system-notice"]);
       expect(store.getState().publishableNextEventId).toBe(2);
     } finally {
       sessionFileInternals.saveSessionTranscript = originalSave;
@@ -664,10 +667,10 @@ describe("SessionStoreManager", () => {
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
     store.getState().append(executionStart("execution-1"));
-    store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "Inspecting." });
-    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "Inspecting." });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output" });
     const currentAssistantMessageId = store.getState().currentAssistantMessageId;
 
     const snapshot = await manager.getSessionReadSnapshot(TMP_DIR, id);
@@ -683,7 +686,7 @@ describe("SessionStoreManager", () => {
       id: currentAssistantMessageId,
       executionId: "execution-1",
       parts: [expect.objectContaining({
-        type: "text",
+        type: "assistant-output",
         text: "Inspecting.",
         completedAt: expect.any(Number),
       })],
@@ -1173,6 +1176,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-1"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
     store.getState().append({
       type: "tool-attempt",
@@ -1206,6 +1210,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-live-output"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({
       type: "tool-call",
       toolCallId: "bash-live",
@@ -1251,6 +1256,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-partial-input"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({
       type: "tool-input-start",
       toolCallId: "call-partial",
@@ -1281,6 +1287,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-undefined-input"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({
       type: "tool-call",
       toolCallId: "call-undefined",
@@ -1307,7 +1314,7 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().nextEventId).toBe(Number(raw.eventCursor) + 1);
   });
 
-  test("load reconciliation marks interrupted partial text visible but excluded from model context", async () => {
+  test("load reconciliation discards a completed provider block from an open attempt", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     await sessionFileInternals.saveSessionTranscript(
@@ -1318,17 +1325,28 @@ describe("SessionStoreManager", () => {
             role: "assistant",
             parts: [
               {
-                type: "text",
+                type: "assistant-output",
                 id: "text-1",
+                blockId: "output-1",
                 text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
                 createdAt: 1001,
+                completedAt: 1002,
               },
             ],
             createdAt: 1001,
             executionId: "run-1",
             runOrdinal: 0,
+            stepId: "step-1",
+            outputPhase: "commentary",
           },
         ],
+        steps: [{
+          id: "step-1",
+          step: 0,
+          executionId: "run-1",
+          runOrdinal: 0,
+          startedAt: 1001,
+        }],
         executions: [runningExecution("run-1")],
       }),
       TMP_DIR,
@@ -1337,7 +1355,7 @@ describe("SessionStoreManager", () => {
     const loaded = await manager.getOrLoad(id, TMP_DIR);
     const text = loaded.getState().messages[0]?.parts[0];
     expect(text).toMatchObject({
-      type: "text",
+      type: "assistant-output",
       text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
       meta: { interrupted: true, discardedFromContext: true },
     });
@@ -1488,6 +1506,7 @@ describe("SessionStoreManager", () => {
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
 
     store.getState().append(executionStart("run-1"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
     store.getState().append({
       type: "tool-attempt",
@@ -1524,8 +1543,8 @@ describe("SessionStoreManager", () => {
     const errorMsg = "Execution terminated due to terminal failure";
 
     store.getState().append(executionStart("run-1"));
-    store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "execution-error", stepId: "step-0", step: 0, error: errorMsg });
 
     const filePath = canonicalSessionPath(id);
     await manager.flushSession(id, TMP_DIR);
@@ -1540,8 +1559,8 @@ describe("SessionStoreManager", () => {
     const errorMsg = "model crashed in step 0";
 
     store.getState().append(executionStart("run-1"));
-    store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "execution-error", step: 0, error: errorMsg });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "execution-error", stepId: "step-0", step: 0, error: errorMsg });
 
     const filePath = canonicalSessionPath(id);
     await manager.flushSession(id, TMP_DIR);
@@ -1606,8 +1625,20 @@ describe("SessionStoreManager", () => {
             ],
             createdAt: 1001,
             completedAt: 1002,
+            executionId: "run-1",
+            runOrdinal: 0,
+            stepId: "step-1",
+            outputPhase: "commentary",
           },
         ],
+        steps: [{
+          id: "step-1",
+          step: 0,
+          executionId: "run-1",
+          runOrdinal: 0,
+          startedAt: 1001,
+        }],
+        executions: [runningExecution("run-1")],
       }),
       TMP_DIR,
     );

@@ -11,6 +11,7 @@ import {
   type TextPart,
   type ReasoningPart,
   type AttachmentPart,
+  type AssistantOutputPart,
 } from "@archcode/protocol";
 import {
   MsgUser as MsgUserComponent,
@@ -143,9 +144,10 @@ describe("PartRenderer", () => {
   const defaultProps = { projectSlug: "demo", focusStoreSessionId: "session-1", childSessionLinks: [] as never[] };
 
   test("renders interrupted text with badge", () => {
-    const part: TextPart = {
-      type: "text",
+    const part: AssistantOutputPart = {
+      type: "assistant-output",
       id: "text-1",
+      blockId: "block-1",
       text: "Partial response content",
       createdAt: Date.now(),
       completedAt: Date.now(),
@@ -175,6 +177,7 @@ describe("PartRenderer", () => {
     const part: ReasoningPart = {
       type: "reasoning",
       id: "reasoning-1",
+      blockId: "reasoning-block-1",
       text: "Partial reasoning",
       createdAt: Date.now(),
       completedAt: Date.now(),
@@ -532,6 +535,10 @@ describe("CompressionBlock", () => {
           message: {
             id: "msg-2",
             role: "assistant",
+            executionId: "execution",
+            runOrdinal: 0,
+            stepId: "step-1",
+            outputPhase: "commentary",
             parts: [
               {
                 type: "tool",
@@ -669,6 +676,10 @@ describe("CompressionBlock", () => {
           message: {
             id: "msg-1",
             role: "assistant",
+            executionId: "execution",
+            runOrdinal: 0,
+            stepId: "step-1",
+            outputPhase: "commentary",
             parts: [
               {
                 type: "tool",
@@ -782,6 +793,10 @@ describe("CompressionBlock", () => {
           message: {
             id: "msg-1",
             role: "assistant",
+            executionId: "execution",
+            runOrdinal: 0,
+            stepId: "step-1",
+            outputPhase: "commentary",
             parts: [
               {
                 type: "tool",

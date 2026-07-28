@@ -179,7 +179,7 @@ describe("global SSE wire protocol types", () => {
       sessionId: "s1",
       eventId: 42,
       createdAt: 1,
-      payload: { type: "text-delta", text: "hello" },
+      payload: { type: "text-delta", stepId: "step-1", blockId: "output-1", text: "hello" },
       agentName: "lead",
     };
 
@@ -192,7 +192,7 @@ describe("global SSE wire protocol types", () => {
     expect(parsed.eventId).toBe(42);
     expect(parsed.createdAt).toBe(1);
     expect(parsed.payload.type).toBe("text-delta");
-    expect(parsed.payload).toEqual({ type: "text-delta", text: "hello" });
+    expect(parsed.payload).toEqual({ type: "text-delta", stepId: "step-1", blockId: "output-1", text: "hello" });
     expect(parsed.agentName).toBe("lead");
   });
 
@@ -203,14 +203,14 @@ describe("global SSE wire protocol types", () => {
       sessionId: "s1",
       eventId: 42,
       createdAt: 1,
-      payload: { type: "text-delta", text: "hello" },
+      payload: { type: "text-delta", stepId: "step-1", blockId: "output-1", text: "hello" },
       agentName: "lead",
     };
     const second: GlobalSessionEventEnvelope<TextDeltaEvent> = {
       ...first,
       slug: "proj-b",
       sessionId: "s2",
-      payload: { type: "text-delta", text: "world" },
+      payload: { type: "text-delta", stepId: "step-1", blockId: "output-1", text: "world" },
     };
 
     expect(first.eventId).toBe(second.eventId);
@@ -289,7 +289,7 @@ describe("global SSE wire protocol types", () => {
         sessionId: "s1",
         eventId: 42,
         createdAt: 1,
-        payload: { type: "text-delta", text: "hello" },
+        payload: { type: "text-delta", stepId: "step-1", blockId: "output-1", text: "hello" },
         agentName: "lead",
       },
       { type: "heartbeat", createdAt: 2 },

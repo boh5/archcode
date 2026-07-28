@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { createEmptyCompressionState, prepareDynamicRangeCompression, purgeRepeatedOldErrors } from "./index";
 import type { CompressionSummary } from "./types";
 import type { SessionStoreState, StoredMessage } from "../store/types";
-import { createEmptySessionStats } from "@archcode/protocol";
+import {
+  createEmptySessionStats,
+  type AssistantSessionPart,
+  type UserSessionPart,
+} from "@archcode/protocol";
 
 function summary(childBlockRefs: string[] = []): CompressionSummary {
   return {
@@ -22,12 +26,48 @@ function summary(childBlockRefs: string[] = []): CompressionSummary {
   };
 }
 
-function message(id: string, role: StoredMessage["role"], parts: StoredMessage["parts"]): StoredMessage {
-  return { id, role, parts, createdAt: 100, completedAt: 101 };
+function message(id: string, role: "user", parts: UserSessionPart[]): StoredMessage;
+function message(id: string, role: "assistant", parts: AssistantSessionPart[]): StoredMessage;
+function message(
+  id: string,
+  role: StoredMessage["role"],
+  parts: UserSessionPart[] | AssistantSessionPart[],
+): StoredMessage {
+  if (role === "user") {
+    return {
+      id,
+      role,
+      parts: parts as UserSessionPart[],
+      createdAt: 100,
+      completedAt: 101,
+    };
+  }
+  return {
+    id,
+    role,
+    parts: parts as AssistantSessionPart[],
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
+    createdAt: 100,
+    completedAt: 101,
+  };
 }
 
-function text(id: string, textValue: string): StoredMessage["parts"][number] {
+function text(id: string, textValue: string): UserSessionPart {
   return { type: "text", id, text: textValue, createdAt: 100, completedAt: 101 };
+}
+
+function output(id: string, textValue: string): AssistantSessionPart {
+  return {
+    type: "assistant-output",
+    id,
+    blockId: `block:${id}`,
+    text: textValue,
+    createdAt: 100,
+    completedAt: 101,
+  };
 }
 
 function finalizedResult(preview: string, isError = false, unknownResult = false) {
@@ -98,11 +138,11 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
 function fourMessages(): StoredMessage[] {
   return [
     message("msg-1", "user", [text("t1", "one")]),
-    message("msg-2", "assistant", [text("t2", "two")]),
+    message("msg-2", "assistant", [output("t2", "two")]),
     message("msg-3", "user", [text("t3", "three")]),
-    message("msg-4", "assistant", [text("t4", "four")]),
+    message("msg-4", "assistant", [output("t4", "four")]),
     message("msg-5", "user", [text("t5", "five")]),
-    message("msg-6", "assistant", [text("t6", "six")]),
+    message("msg-6", "assistant", [output("t6", "six")]),
   ];
 }
 
@@ -192,7 +232,7 @@ describe("dynamic range compression", () => {
 
   test("protects pending and running tools, unknown results, protect tags, child links, todos, and reminders", () => {
     const state = baseState([
-      message("msg-1", "user", [text("t1", "<protect>keep this</protect>")]),
+      message("msg-1", "assistant", [output("t1", "<protect>keep this</protect>")]),
       message("msg-2", "assistant", [{ type: "tool", id: "tool-pending", state: "pending", toolCallId: "call-pending", toolName: "file_read", createdAt: 1 }]),
       message("msg-3", "assistant", [{ type: "tool", id: "tool-1", state: "running", toolCallId: "call-1", toolName: "bash", input: {}, createdAt: 1, startedAt: 2 }]),
       message("msg-4", "assistant", [{ type: "tool", id: "tool-2", state: "error", toolCallId: "call-2", toolName: "file_write", input: {}, result: finalizedResult("unknown", true, true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
@@ -223,7 +263,7 @@ describe("dynamic range compression", () => {
       message("msg-3", "assistant", [{ type: "tool", id: "err-1", state: "error", toolCallId: "err-1", toolName: "bash", input: "bad", result: finalizedResult("failed", true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
       message("msg-4", "assistant", [{ type: "tool", id: "err-2", state: "error", toolCallId: "err-2", toolName: "bash", input: "bad", result: finalizedResult("failed", true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
       message("msg-5", "user", [text("tail-1", "tail one")]),
-      message("msg-6", "assistant", [text("tail-2", "tail two")]),
+      message("msg-6", "assistant", [output("tail-2", "tail two")]),
     ]);
 
     const result = prepareDynamicRangeCompression(state, { startId: "m0001", endId: "m0004", summary: summary() }, 1000);

@@ -436,7 +436,6 @@ export class ConfiguredAgent implements Agent {
         });
         this.store.getState().append({
           type: "execution-error",
-          step: -1,
           error: error instanceof Error ? error.message : String(error),
         });
       }

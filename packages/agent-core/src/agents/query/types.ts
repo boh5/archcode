@@ -59,6 +59,8 @@ export interface QueryLoopOptions {
 
 interface QueryLoopResultBase {
   readonly text: string;
+  /** Final-eligible model attempt selected only after this QueryLoop has no further model step. */
+  readonly finalOutputStepId?: string;
   /** Total canonical step cursor after this run, not a per-run reset. */
   readonly steps: number;
   readonly cwdChanged?: {

@@ -55,10 +55,30 @@ function summary() {
 }
 
 function message(index: number): StoredMessage {
+  if (index % 2 === 1) {
+    return {
+      id: `msg-${index}`,
+      role: "user",
+      parts: [{ type: "text", id: `text-${index}`, text: `message ${index}`, createdAt: 1, completedAt: 2 }],
+      createdAt: 1,
+      completedAt: 2,
+    };
+  }
   return {
     id: `msg-${index}`,
-    role: index % 2 === 1 ? "user" : "assistant",
-    parts: [{ type: "text", id: `text-${index}`, text: `message ${index}`, createdAt: 1, completedAt: 2 }],
+    role: "assistant",
+    executionId: `execution-${index}`,
+    runOrdinal: 0,
+    stepId: `step-${index}`,
+    outputPhase: "commentary",
+    parts: [{
+      type: "assistant-output",
+      id: `text-${index}`,
+      blockId: `block-${index}`,
+      text: `message ${index}`,
+      createdAt: 1,
+      completedAt: 2,
+    }],
     createdAt: 1,
     completedAt: 2,
   };
@@ -94,7 +114,20 @@ function binding(context = 1000): ExecutionModelBinding {
 }
 
 function buildCtx(store: ReturnType<typeof createStore>, inputTokens: number): BeforeModelBuildContext {
-  store.setState({ steps: [{ id: "step-1", executionId: "execution-1", runOrdinal: 0, step: 1, startedAt: 1, usage: { inputTokens, outputTokens: 1, totalTokens: inputTokens + 1 } }] });
+  store.setState({ steps: [{
+    id: "step-1",
+    executionId: "execution-1",
+    runOrdinal: 0,
+    step: 1,
+    startedAt: 1,
+    usage: {
+      inputTokens,
+      outputTokens: 1,
+      totalTokens: inputTokens + 1,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+    },
+  }] });
   return { store, binding: binding(), logger: silentLogger };
 }
 

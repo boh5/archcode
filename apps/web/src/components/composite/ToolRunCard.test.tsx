@@ -229,7 +229,16 @@ function props(tools: ToolPart[], items?: ToolRunItem[]) {
     projectSlug: "project",
     sessionId: "session",
     items: items ?? tools.map((part) => ({
-      message: { id: "message", role: "assistant" as const, parts: [part], createdAt: 1 },
+      message: {
+        id: "message",
+        role: "assistant" as const,
+        executionId: "execution",
+        runOrdinal: 0,
+        stepId: "step",
+        outputPhase: "commentary" as const,
+        parts: [part],
+        createdAt: 1,
+      },
       part,
     })),
   };
@@ -357,7 +366,16 @@ describe("ToolRunCard", () => {
     booleanStates = [true];
     const first = completed("one", "a.ts");
     const second = completed("two", "b.ts");
-    const message = { id: "message", role: "assistant" as const, parts: [first, second], createdAt: 1 };
+    const message = {
+      id: "message",
+      role: "assistant" as const,
+      executionId: "execution",
+      runOrdinal: 0,
+      stepId: "step",
+      outputPhase: "commentary" as const,
+      parts: [first, second],
+      createdAt: 1,
+    };
     const element = ToolRunCard(props([first, second], [
       { message, part: first },
       { message, part: second },

@@ -34,10 +34,14 @@ resolve the current Session/Profile model again and therefore use a new binding
 without changing the logical Execution. Queued new input waits for the current
 Execution to end, then starts a new one.
 
-The workbench may show one Execution as several Work Segments, split in
-persisted message order at canonical user inputs (including Steer). Segments
-are independent display and navigation projections only: they do not create,
-persist, or schedule Executions.
+The workbench may show one Execution as several Work Segments. Each canonical
+UserMessage (including Steer) starts exactly one Segment in persisted message
+order, even when adjacent inputs have no intervening work. Commentary,
+Reasoning, and tools remain ordered inside that Segment's Work disclosure;
+only persisted `outputPhase: "final_answer"` output appears below Work.
+Reasoning usage belongs to its individual model attempt, never to a synthetic
+Execution-wide Reasoning item. Segments are independent display and navigation
+projections only: they do not create, persist, or schedule Executions.
 
 ## Todo
 

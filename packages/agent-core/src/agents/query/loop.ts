@@ -34,6 +34,7 @@ type HookList<T> = Array<(ctx: T) => Promise<void>> | undefined;
 
 interface ModelAttemptOptions {
   step: number;
+  stepId: string;
   store: StoreApi<SessionStoreState>;
   binding: QueryLoopOptions["binding"];
   systemPrompt: QueryLoopOptions["systemPrompt"];
@@ -57,11 +58,13 @@ interface ModelAttemptOptions {
 type ModelAttemptResult =
   | {
       outcome: "success";
+      stepId: string;
       finalized: FinalizedModelResult;
       streamError?: unknown;
     }
   | {
       outcome: "terminal";
+      stepId: string;
       error: unknown;
       errorKind: string;
       message: string;
@@ -69,11 +72,11 @@ type ModelAttemptResult =
     }
   | {
       outcome: "retry";
+      stepId: string;
       error: unknown;
       errorKind: string;
       message: string;
       hadDurableOutput: boolean;
-      recoveryAttempt: number;
     };
 
 interface FinalizedModelResult {
@@ -85,7 +88,9 @@ interface FinalizedModelResult {
 
 type FinalizationKind = "result" | "toolCalls";
 
-type RetryOrTerminalAttemptResult = Exclude<ModelAttemptResult, { outcome: "success" }>;
+type RetryOrTerminalAttemptResult =
+  | Omit<Extract<ModelAttemptResult, { outcome: "terminal" }>, "stepId">
+  | Omit<Extract<ModelAttemptResult, { outcome: "retry" }>, "stepId">;
 
 type ToolCallArray = Array<{
   toolCallId: string;
@@ -127,9 +132,18 @@ class DoomTracker {
 class ProviderOutputSecretError extends Error {
   readonly statusCode = 400;
 
-  constructor(field: "toolCallId" | "toolName") {
+  constructor(field: "toolCallId" | "toolName" | "textBlockId" | "reasoningBlockId") {
     super(`Provider output contained a configured secret in ${field}`);
     this.name = "ProviderOutputSecretError";
+  }
+}
+
+class MalformedProviderStreamError extends Error {
+  readonly statusCode = 400;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "MalformedProviderStreamError";
   }
 }
 
@@ -143,6 +157,7 @@ class ModelAttemptPreparationError extends Error {
 async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttemptResult> {
   const {
     step,
+    stepId,
     store,
     binding,
     systemPrompt: staticSystemPrompt,
@@ -189,12 +204,12 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     });
     const resolved = toolRegistry.resolveForAgent(allowedTools);
     tools = resolved.descriptors.length > 0 ? resolved.toAITools() : undefined;
-    store.getState().append({ type: "step-start", step });
+    store.getState().append({ type: "step-start", stepId, step });
     stepStarted = true;
     await storeManager.flushSession(sessionId, projectContext.project.workspaceRoot);
   } catch (err) {
     if (stepStarted) {
-      store.getState().append({ type: "step-end", step, finishReason: "error" });
+      store.getState().append({ type: "step-end", stepId, step, finishReason: "error" });
       throw err;
     }
     throw new ModelAttemptPreparationError(err);
@@ -215,24 +230,33 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       result.fullStream as AsyncIterable<TextStreamPart>,
       store,
       binding,
+      stepId,
       abort,
     );
-    const finalized = await finalizeModelResult(result, streamError, store, step, abort, redactProviderSecrets);
+    const finalized = await finalizeModelResult(result, streamError, store, stepId, step, abort, redactProviderSecrets);
     if (finalized.outcome !== "success") {
       if (finalized.outcome === "retry") await settleUnfinalizedToolParts();
-      return finalized;
+      return { ...finalized, stepId };
     }
-    return { outcome: "success", finalized: finalized.finalized, streamError };
+    return { outcome: "success", stepId, finalized: finalized.finalized, streamError };
   } catch (err) {
     await settleModelResultPromises(result, abort);
-    const failure = buildRetryOrTerminalFailure(err, store, step, abort, redactProviderSecrets);
+    if (classifyLlmError(err, { boundary: "provider-request" }).kind === "abort") {
+      if (isStepOpen(store, stepId)) {
+        store.getState().append({ type: "step-end", stepId, step, finishReason: "interrupted" });
+      }
+      await settleUnfinalizedToolParts();
+      throw sanitizeProviderError(err, redactProviderSecrets);
+    }
+    const failure = buildRetryOrTerminalFailure(err, store, stepId, step, abort, redactProviderSecrets);
     store.getState().append({
       type: "step-end",
+      stepId,
       step,
       finishReason: failure.outcome === "retry" ? "interrupted" : "error",
     });
     if (failure.outcome === "retry") await settleUnfinalizedToolParts();
-    return failure;
+    return { ...failure, stepId };
   }
 }
 
@@ -316,6 +340,8 @@ export async function runQueryLoop(
   let toolBatchScheduler!: SessionToolBatchScheduler;
   let steps = initialStep;
   let lastText = "";
+  let finalOutputStepId: string | undefined;
+  let latestStepId: string | undefined;
   let failed = false;
   let runEndStatus: SessionExecutionTerminalStatus = "completed";
   let runEndError: string | undefined;
@@ -323,7 +349,9 @@ export async function runQueryLoop(
   let recoveredFromFailure = false;
   let zeroOutputShortAttempt = 0;
   let sessionRetryAttempt = 0;
+  let partialOutputRecoveryAttempt = 0;
   let lastRecoveryAttempt = 0;
+  let recoveryNoticeStepId: string | undefined;
   const doomTracker = new DoomTracker();
   const createContext = async (toolCall: ToolCallLike, step: number): Promise<ToolExecutionContext> => {
     const attachmentReadPaths = await options.resolveAttachmentReadPaths();
@@ -433,6 +461,7 @@ export async function runQueryLoop(
         const classification = classifyLlmError(err);
         appendTerminalLlmFailureNotice(store, err, classification.kind, {
           steps,
+          ...(recoveryNoticeStepId === undefined ? {} : { stepId: recoveryNoticeStepId }),
           recoveredFromFailure,
           sessionRetryAttempt,
           zeroOutputShortAttempt,
@@ -443,9 +472,12 @@ export async function runQueryLoop(
 
       const activeBatch = toolBatchScheduler.activeBatch();
       const continuingBatch = activeBatch !== undefined;
+      const stepId = crypto.randomUUID();
+      latestStepId = stepId;
 
       const attempt = await runModelAttempt({
         step: steps,
+        stepId,
         store,
         binding,
         systemPrompt: options.systemPrompt,
@@ -475,22 +507,24 @@ export async function runQueryLoop(
 
       if (attempt.outcome === "retry") {
         recoveredFromFailure = true;
-        lastRecoveryAttempt = attempt.recoveryAttempt;
         if (attempt.hadDurableOutput) {
           zeroOutputShortAttempt = 0;
           sessionRetryAttempt = 0;
-          const delayMs = computeSessionRetryDelayMs(attempt.recoveryAttempt, attempt.error, retryScheduler);
+          partialOutputRecoveryAttempt++;
+          lastRecoveryAttempt = partialOutputRecoveryAttempt;
+          recoveryNoticeStepId ??= attempt.stepId;
+          const delayMs = computeSessionRetryDelayMs(partialOutputRecoveryAttempt, attempt.error, retryScheduler);
           const nextRetryAt = retryScheduler.now() + delayMs;
           store.getState().append({
             type: "llm-retry",
             scope: "session",
             visibility: "session",
             profile: "partial-output-recovery",
-            attempt: attempt.recoveryAttempt,
+            attempt: partialOutputRecoveryAttempt,
             errorKind: attempt.errorKind,
-            message: `Model stream was interrupted after partial output. Continuing with recovery attempt ${attempt.recoveryAttempt}.`,
+            message: `Model stream was interrupted after partial output. Continuing with recovery attempt ${partialOutputRecoveryAttempt}.`,
             nextRetryAt,
-            stepId: `step-${steps}`,
+            stepId: recoveryNoticeStepId,
           });
           await retryScheduler.sleep(delayMs, abort);
           continue;
@@ -507,13 +541,14 @@ export async function runQueryLoop(
             attempt: zeroOutputShortAttempt,
             errorKind: attempt.errorKind,
             message: `Zero-output model attempt failed: ${attempt.message}`,
-            stepId: `step-${steps}`,
+            stepId: attempt.stepId,
           });
           continue;
         }
 
         sessionRetryAttempt++;
         lastRecoveryAttempt = sessionRetryAttempt;
+        recoveryNoticeStepId ??= attempt.stepId;
         const delayMs = computeSessionRetryDelayMs(sessionRetryAttempt, attempt.error, retryScheduler);
         const nextRetryAt = retryScheduler.now() + delayMs;
         store.getState().append({
@@ -525,7 +560,7 @@ export async function runQueryLoop(
           errorKind: attempt.errorKind,
           message: `Model request is still failing before output. Retrying in ${Math.ceil(delayMs / 1000)}s: ${attempt.message}`,
           nextRetryAt,
-          stepId: `step-${steps}`,
+          stepId: recoveryNoticeStepId,
         });
         await retryScheduler.sleep(delayMs, abort);
         continue;
@@ -533,7 +568,7 @@ export async function runQueryLoop(
 
       if (attempt.outcome === "terminal") {
         if (attempt.finalizationKind) {
-          appendPostStreamTerminalFailure(store, attempt.error, steps, attempt.finalizationKind);
+          appendPostStreamTerminalFailure(store, attempt.error, attempt.stepId, steps, attempt.finalizationKind);
           await interruptUnfinalizedToolParts(
             store,
             options.storeManager,
@@ -545,10 +580,12 @@ export async function runQueryLoop(
           store.getState().append({
             type: "execution-error",
             step: steps,
+            stepId: attempt.stepId,
             error: attempt.message,
           });
           appendTerminalLlmFailureNotice(store, attempt.error, attempt.errorKind, {
             steps,
+            stepId: recoveryNoticeStepId ?? attempt.stepId,
             recoveredFromFailure,
             sessionRetryAttempt,
             zeroOutputShortAttempt,
@@ -568,19 +605,28 @@ export async function runQueryLoop(
       }
 
       if (recoveredFromFailure) {
+        const recoveredPartialOutput = partialOutputRecoveryAttempt > 0;
         store.getState().append({
           type: "llm-recovery",
-          scope: sessionRetryAttempt > 0 ? "session" : "short",
+          scope: sessionRetryAttempt > 0 || recoveredPartialOutput ? "session" : "short",
           visibility: sessionRetryAttempt > 0 || zeroOutputShortAttempt === 0 ? "session" : "internal",
-          profile: sessionRetryAttempt > 0 ? "zero-output-session" : zeroOutputShortAttempt > 0 ? "zero-output-short" : "partial-output-recovery",
-          attempt: Math.max(sessionRetryAttempt, zeroOutputShortAttempt, 1),
+          profile: sessionRetryAttempt > 0
+            ? "zero-output-session"
+            : recoveredPartialOutput
+              ? "partial-output-recovery"
+              : "zero-output-short",
+          attempt: recoveredPartialOutput
+            ? partialOutputRecoveryAttempt
+            : Math.max(sessionRetryAttempt, zeroOutputShortAttempt, 1),
           message: "Model stream recovered and resumed.",
-          stepId: `step-${steps}`,
+          stepId: recoveryNoticeStepId ?? attempt.stepId,
         });
         recoveredFromFailure = false;
         zeroOutputShortAttempt = 0;
         sessionRetryAttempt = 0;
+        partialOutputRecoveryAttempt = 0;
         lastRecoveryAttempt = 0;
+        recoveryNoticeStepId = undefined;
       }
 
       if (abort.aborted) {
@@ -588,6 +634,7 @@ export async function runQueryLoop(
         const classification = classifyLlmError(err);
         appendTerminalLlmFailureNotice(store, err, classification.kind, {
           steps,
+          stepId: attempt.stepId,
           recoveredFromFailure,
           sessionRetryAttempt,
           zeroOutputShortAttempt,
@@ -602,10 +649,15 @@ export async function runQueryLoop(
 
       store.getState().append({
         type: "step-end",
+        stepId: attempt.stepId,
         step: completedStep,
         finishReason: finalized.finishReason,
         usage: finalized.usage,
       });
+      finalOutputStepId = finalized.finishReason === "stop"
+        && hasTrustedOutputForStep(store, attempt.stepId)
+        ? attempt.stepId
+        : undefined;
       await runHooks("afterStepEnd", afterStepEnd, { store, binding, logger, abort, projectContext: options.projectContext }, logger, { sessionId, agentName });
 
       // `steps` is the cursor for the next model round, not the index of the
@@ -619,6 +671,7 @@ export async function runQueryLoop(
       const toolExecution = await executeToolCalls(
         toolCalls,
         toolBatchScheduler,
+        attempt.stepId,
         completedStep,
         doomTracker,
       );
@@ -653,6 +706,7 @@ export async function runQueryLoop(
         store.getState().append({
           type: "execution-error",
           step: completedStep,
+          stepId: attempt.stepId,
           error: runEndError,
         });
         return { outcome: "terminal", text: lastText, steps, status: runEndStatus, error: runEndError };
@@ -674,6 +728,7 @@ export async function runQueryLoop(
       text: lastText,
       steps,
       status: runEndStatus,
+      ...(runEndStatus === "completed" && finalOutputStepId !== undefined ? { finalOutputStepId } : {}),
       ...(runEndError === undefined ? {} : { error: runEndError }),
     };
   } catch (err) {
@@ -691,9 +746,13 @@ export async function runQueryLoop(
           type: "execution-error",
           error: safeError.message,
         }
-      : {
+      : latestStepId === undefined ? {
+          type: "execution-error",
+          error: safeError.message,
+        } : {
           type: "execution-error",
           step: steps,
+          stepId: latestStepId,
           error: safeError.message,
         });
     // Model-call failures are finalized inside runModelAttempt. Reaching this
@@ -703,6 +762,9 @@ export async function runQueryLoop(
       const classification = classifyLlmError(safeError);
       appendTerminalLlmFailureNotice(store, safeError, classification.kind, {
         steps,
+        ...((recoveryNoticeStepId ?? latestStepId) === undefined
+          ? {}
+          : { stepId: recoveryNoticeStepId ?? latestStepId }),
         recoveredFromFailure,
         sessionRetryAttempt,
         zeroOutputShortAttempt,
@@ -726,6 +788,20 @@ export async function runQueryLoop(
       projectContext: options.projectContext,
     }, logger, { sessionId, agentName });
   }
+}
+
+function hasTrustedOutputForStep(store: StoreApi<SessionStoreState>, stepId: string): boolean {
+  const message = store.getState().messages.find(
+    (candidate) => candidate.role === "assistant" && candidate.stepId === stepId,
+  );
+  const outputs = message?.parts.filter((part) => part.type === "assistant-output") ?? [];
+  return outputs.length > 0
+    && outputs.every((part) => (
+      part.completedAt !== undefined
+      && part.meta?.interrupted !== true
+      && part.meta?.discardedFromContext !== true
+    ))
+    && outputs.some((part) => part.text.trim().length > 0);
 }
 
 async function runHooks<T>(
@@ -758,29 +834,24 @@ async function consumeFullStream(
   fullStream: AsyncIterable<TextStreamPart>,
   store: StoreApi<SessionStoreState>,
   binding: QueryLoopOptions["binding"],
+  stepId: string,
   abort?: AbortSignal,
 ): Promise<{ streamError?: unknown }> {
-  let textOpen = false;
-  let reasoningOpen = false;
   let streamError: unknown;
-  const textRedactor = binding.modelInfo.createSensitiveTextStream();
-  const reasoningRedactor = binding.modelInfo.createSensitiveTextStream();
-
-  const appendText = (text: string): void => {
-    if (text.length === 0) return;
-    if (!textOpen) {
-      store.getState().append({ type: "text-start" });
-      textOpen = true;
-    }
-    store.getState().append({ type: "text-delta", text });
+  type OpenProviderBlock = {
+    redactor: ReturnType<typeof binding.modelInfo.createSensitiveTextStream>;
   };
-  const appendReasoning = (text: string): void => {
+  const textBlocks = new Map<string, OpenProviderBlock>();
+  const reasoningBlocks = new Map<string, OpenProviderBlock>();
+  const seenTextBlockIds = new Set<string>();
+  const seenReasoningBlockIds = new Set<string>();
+  const appendText = (blockId: string, block: OpenProviderBlock, text: string): void => {
     if (text.length === 0) return;
-    if (!reasoningOpen) {
-      store.getState().append({ type: "reasoning-start" });
-      reasoningOpen = true;
-    }
-    store.getState().append({ type: "reasoning-delta", text });
+    store.getState().append({ type: "text-delta", stepId, blockId, text });
+  };
+  const appendReasoning = (blockId: string, block: OpenProviderBlock, text: string): void => {
+    if (text.length === 0) return;
+    store.getState().append({ type: "reasoning-delta", stepId, blockId, text });
   };
 
   try {
@@ -793,13 +864,65 @@ async function consumeFullStream(
           continue;
         }
 
+        if (chunk.type === "text-start") {
+          assertProviderBlockId(chunk.id, "text", binding);
+          if (seenTextBlockIds.has(chunk.id)) {
+            throw new MalformedProviderStreamError(`Duplicate text block start: ${chunk.id}`);
+          }
+          seenTextBlockIds.add(chunk.id);
+          textBlocks.set(chunk.id, {
+            redactor: binding.modelInfo.createSensitiveTextStream(),
+          });
+          store.getState().append({ type: "text-start", stepId, blockId: chunk.id });
+          continue;
+        }
+
         if (chunk.type === "text-delta") {
-          appendText(textRedactor.push(chunk.text));
+          assertProviderBlockId(chunk.id, "text", binding);
+          const block = textBlocks.get(chunk.id);
+          if (block === undefined) throw new MalformedProviderStreamError(`Text delta without open block: ${chunk.id}`);
+          appendText(chunk.id, block, block.redactor.push(chunk.text));
+          continue;
+        }
+
+        if (chunk.type === "text-end") {
+          assertProviderBlockId(chunk.id, "text", binding);
+          const block = textBlocks.get(chunk.id);
+          if (block === undefined) throw new MalformedProviderStreamError(`Text end without open block: ${chunk.id}`);
+          appendText(chunk.id, block, block.redactor.flush());
+          store.getState().append({ type: "text-end", stepId, blockId: chunk.id });
+          textBlocks.delete(chunk.id);
+          continue;
+        }
+
+        if (chunk.type === "reasoning-start") {
+          assertProviderBlockId(chunk.id, "reasoning", binding);
+          if (seenReasoningBlockIds.has(chunk.id)) {
+            throw new MalformedProviderStreamError(`Duplicate reasoning block start: ${chunk.id}`);
+          }
+          seenReasoningBlockIds.add(chunk.id);
+          reasoningBlocks.set(chunk.id, {
+            redactor: binding.modelInfo.createSensitiveTextStream(),
+          });
+          store.getState().append({ type: "reasoning-start", stepId, blockId: chunk.id });
           continue;
         }
 
         if (chunk.type === "reasoning-delta") {
-          appendReasoning(reasoningRedactor.push(chunk.text));
+          assertProviderBlockId(chunk.id, "reasoning", binding);
+          const block = reasoningBlocks.get(chunk.id);
+          if (block === undefined) throw new MalformedProviderStreamError(`Reasoning delta without open block: ${chunk.id}`);
+          appendReasoning(chunk.id, block, block.redactor.push(chunk.text));
+          continue;
+        }
+
+        if (chunk.type === "reasoning-end") {
+          assertProviderBlockId(chunk.id, "reasoning", binding);
+          const block = reasoningBlocks.get(chunk.id);
+          if (block === undefined) throw new MalformedProviderStreamError(`Reasoning end without open block: ${chunk.id}`);
+          appendReasoning(chunk.id, block, block.redactor.flush());
+          store.getState().append({ type: "reasoning-end", stepId, blockId: chunk.id });
+          reasoningBlocks.delete(chunk.id);
           continue;
         }
 
@@ -826,12 +949,18 @@ async function consumeFullStream(
         }
       }
     })(), abort);
+    if (textBlocks.size > 0 || reasoningBlocks.size > 0) {
+      throw new MalformedProviderStreamError("Provider stream ended with open text or reasoning blocks");
+    }
   } finally {
-    appendText(textRedactor.flush());
-    appendReasoning(reasoningRedactor.flush());
-    // Flush open streams even on error so partial content reaches persistent layer
-    if (textOpen) store.getState().append({ type: "text-end" });
-    if (reasoningOpen) store.getState().append({ type: "reasoning-end" });
+    for (const [blockId, block] of textBlocks) {
+      appendText(blockId, block, block.redactor.flush());
+      store.getState().append({ type: "text-end", stepId, blockId });
+    }
+    for (const [blockId, block] of reasoningBlocks) {
+      appendReasoning(blockId, block, block.redactor.flush());
+      store.getState().append({ type: "reasoning-end", stepId, blockId });
+    }
   }
 
   return { streamError };
@@ -841,6 +970,7 @@ async function finalizeModelResult(
   result: AnyStreamTextResult,
   streamError: unknown,
   store: StoreApi<SessionStoreState>,
+  stepId: string,
   step: number,
   abort: AbortSignal,
   redactProviderSecrets: SensitiveTextRedactor,
@@ -862,7 +992,7 @@ async function finalizeModelResult(
     usage = settled[1];
     text = redactProviderSecrets(settled[2]);
   } catch (err) {
-    return handleFinalizationFailure(preferStreamError(streamError, err), store, step, abort, "result", redactProviderSecrets);
+    return handleFinalizationFailure(preferStreamError(streamError, err), store, stepId, step, abort, "result", redactProviderSecrets);
   }
 
   if (finishReason !== "tool-calls") {
@@ -882,7 +1012,20 @@ async function finalizeModelResult(
     });
     return { outcome: "success", finalized: { finishReason, usage, text, toolCalls } };
   } catch (err) {
-    return handleFinalizationFailure(preferStreamError(streamError, err), store, step, abort, "toolCalls", redactProviderSecrets);
+    return handleFinalizationFailure(preferStreamError(streamError, err), store, stepId, step, abort, "toolCalls", redactProviderSecrets);
+  }
+}
+
+function assertProviderBlockId(
+  value: string,
+  channel: "text" | "reasoning",
+  binding: QueryLoopOptions["binding"],
+): void {
+  if (value.trim().length === 0) {
+    throw new MalformedProviderStreamError(`Provider emitted a blank ${channel} block id`);
+  }
+  if (binding.modelInfo.redactSensitiveText(value) !== value) {
+    throw new ProviderOutputSecretError(`${channel}BlockId`);
   }
 }
 
@@ -900,16 +1043,17 @@ function assertSafeProviderToolIdentifier(
 function handleFinalizationFailure(
   err: unknown,
   store: StoreApi<SessionStoreState>,
+  stepId: string,
   step: number,
   abort: AbortSignal,
   kind: FinalizationKind,
   redactProviderSecrets: SensitiveTextRedactor,
 ): RetryOrTerminalAttemptResult {
-  const failure = buildRetryOrTerminalFailure(err, store, step, abort, redactProviderSecrets);
+  const failure = buildRetryOrTerminalFailure(err, store, stepId, step, abort, redactProviderSecrets);
 
   if (failure.outcome === "retry") {
-    if (isStepOpen(store, step)) {
-      store.getState().append({ type: "step-end", step, finishReason: "interrupted" });
+    if (isStepOpen(store, stepId)) {
+      store.getState().append({ type: "step-end", stepId, step, finishReason: "interrupted" });
     }
     return failure;
   }
@@ -920,6 +1064,7 @@ function handleFinalizationFailure(
 function buildRetryOrTerminalFailure(
   err: unknown,
   store: StoreApi<SessionStoreState>,
+  stepId: string,
   step: number,
   abort: AbortSignal,
   redactProviderSecrets: SensitiveTextRedactor,
@@ -935,7 +1080,6 @@ function buildRetryOrTerminalFailure(
       errorKind: classification.kind,
       message: safeError.message,
       hadDurableOutput: hasCurrentStepDurableOutput(store),
-      recoveryAttempt: countRecoveryAttempts(store, step) + 1,
     };
   }
 
@@ -964,17 +1108,10 @@ function hasCurrentStepDurableOutput(store: StoreApi<SessionStoreState>): boolea
   if (!message) return false;
 
   return message.parts.some((part) => {
-    if (part.type === "text" || part.type === "reasoning") return part.text.length > 0;
+    if (part.type === "assistant-output" || part.type === "reasoning") return part.text.length > 0;
     if (part.type === "recovery-notice" || part.type === "system-notice" || part.type === "compaction") return false;
     return true;
   });
-}
-
-function countRecoveryAttempts(store: StoreApi<SessionStoreState>, step: number): number {
-  const stepId = `step-${step}`;
-  return store.getState().events.filter((event) =>
-    (event.payload.type === "llm-retry" || event.payload.type === "llm-recovery") && event.payload.stepId === stepId,
-  ).length;
 }
 
 function appendTerminalLlmFailureNotice(
@@ -983,6 +1120,7 @@ function appendTerminalLlmFailureNotice(
   errorKind: string,
   attempts: {
     steps: number;
+    stepId?: string;
     recoveredFromFailure: boolean;
     sessionRetryAttempt: number;
     zeroOutputShortAttempt: number;
@@ -1006,31 +1144,34 @@ function appendTerminalLlmFailureNotice(
     errorKind,
     statusCode: classification.statusCode,
     message: recoveryExhausted ? `Recovery failed: ${message}` : options.message ?? `Model call failed: ${message}`,
-    stepId: `step-${attempts.steps}`,
+    ...(attempts.stepId === undefined ? {} : { stepId: attempts.stepId }),
   });
 }
 
 function appendPostStreamTerminalFailure(
   store: StoreApi<SessionStoreState>,
   err: unknown,
+  stepId: string,
   step: number,
   kind: "result" | "toolCalls",
 ): void {
   const message = errorMessage(err);
   const classification = classifyLlmError(err);
 
-  if (isStepOpen(store, step)) {
-    store.getState().append({ type: "step-end", step, finishReason: "error" });
+  if (isStepOpen(store, stepId)) {
+    store.getState().append({ type: "step-end", stepId, step, finishReason: "error" });
   }
 
   store.getState().append({
     type: "execution-error",
     step,
+    stepId,
     error: message,
   });
 
   appendTerminalLlmFailureNotice(store, err, classification.kind, {
     steps: step,
+    stepId,
     recoveredFromFailure: false,
     sessionRetryAttempt: 0,
     zeroOutputShortAttempt: 0,
@@ -1042,10 +1183,9 @@ function appendPostStreamTerminalFailure(
   });
 }
 
-function isStepOpen(store: StoreApi<SessionStoreState>, step: number): boolean {
-  const currentExecutionId = store.getState().currentExecutionId;
+function isStepOpen(store: StoreApi<SessionStoreState>, stepId: string): boolean {
   return store.getState().steps.some((candidate) =>
-    candidate.step === step && candidate.executionId === currentExecutionId && candidate.completedAt === undefined,
+    candidate.id === stepId && candidate.completedAt === undefined,
   );
 }
 
@@ -1056,10 +1196,10 @@ function markCurrentAssistantModelOutputDiscardedFromContext(store: StoreApi<Ses
   store.setState((state) => {
     let changed = false;
     const messages = state.messages.map((message) => {
-      if (message.id !== currentAssistantMessageId) return message;
+      if (message.id !== currentAssistantMessageId || message.role !== "assistant") return message;
 
       const parts = message.parts.map((part) => {
-        if ((part.type !== "text" && part.type !== "reasoning") || part.text.length === 0) return part;
+        if ((part.type !== "assistant-output" && part.type !== "reasoning") || part.text.length === 0) return part;
         if (part.meta?.interrupted === true && part.meta?.discardedFromContext === true) return part;
 
         changed = true;
@@ -1113,6 +1253,7 @@ function computeSessionRetryDelayMs(attempt: number, error: unknown, retrySchedu
 async function executeToolCalls(
   toolCalls: ToolCallArray,
   scheduler: SessionToolBatchScheduler,
+  stepId: string,
   step: number,
   doomTracker?: DoomTracker,
 ): Promise<ToolBatchExecutionResult> {
@@ -1121,7 +1262,7 @@ async function executeToolCalls(
     if (doomTracker?.check(toolCall)) doomCallIds.add(toolCall.toolCallId);
   }
   if (toolCalls.length === 0) return { sessionCwdChanged: false };
-  await scheduler.createBatch(toolCalls, step);
+  await scheduler.createBatch(toolCalls, stepId, step);
   for (const toolCallId of doomCallIds) {
     await scheduler.settleQueuedCall(toolCallId, createToolErrorResult({
       kind: "execution",
@@ -1167,7 +1308,10 @@ function finishToolBatchAdvance(
 ): { runEndStatus: SessionExecutionTerminalStatus; result: QueryLoopResult } | undefined {
   if (result.status === "manual_inspection_required") {
     const reason = manualInspectionMessage(result.reason);
-    store.getState().append({ type: "execution-error", step: steps, error: reason });
+    const stepId = store.getState().toolBatches.find((batch) => batch.archivedAt === undefined)?.stepId;
+    store.getState().append(stepId === undefined
+      ? { type: "execution-error", error: reason }
+      : { type: "execution-error", step: steps, stepId, error: reason });
     return { runEndStatus: "failed", result: { outcome: "terminal", text, steps, status: "failed", error: reason } };
   }
   if (result.sessionCwdChanged) {

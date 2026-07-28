@@ -74,10 +74,30 @@ function makeStore(messageCount = 6): StoreApi<SessionStoreState> {
 }
 
 function message(index: number): StoredMessage {
+  if (index % 2 === 1) {
+    return {
+      id: `msg-${index}`,
+      role: "user",
+      parts: [{ type: "text", id: `text-${index}`, text: `message ${index}`, createdAt: 1, completedAt: 2 }],
+      createdAt: 1,
+      completedAt: 2,
+    };
+  }
   return {
     id: `msg-${index}`,
-    role: index % 2 === 1 ? "user" : "assistant",
-    parts: [{ type: "text", id: `text-${index}`, text: `message ${index}`, createdAt: 1, completedAt: 2 }],
+    role: "assistant",
+    executionId: `execution-${index}`,
+    runOrdinal: 0,
+    stepId: `step-${index}`,
+    outputPhase: "commentary",
+    parts: [{
+      type: "assistant-output",
+      id: `text-${index}`,
+      blockId: `block-${index}`,
+      text: `message ${index}`,
+      createdAt: 1,
+      completedAt: 2,
+    }],
     createdAt: 1,
     completedAt: 2,
   };
@@ -195,7 +215,7 @@ describe("hybrid compression hooks", () => {
     store.setState({ messages: [
       message(1), message(2), message(3), message(4), message(5), message(6),
       message(7), message(8), message(9), message(10),
-      { ...message(11), role: "user" },
+      message(11),
     ] });
     const hook = createHybridCompressionHook(silentLogger);
 

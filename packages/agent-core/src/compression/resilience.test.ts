@@ -48,10 +48,37 @@ afterEach(() => {
 });
 
 function message(index: number): StoredMessage {
+  const id = `msg-${index}`;
+  if (index % 2 === 1) {
+    return {
+      id,
+      role: "user",
+      parts: [{
+        type: "text",
+        id: `text-${index}`,
+        text: `message ${index}`,
+        createdAt: 1,
+        completedAt: 2,
+      }],
+      createdAt: 1,
+      completedAt: 2,
+    };
+  }
   return {
-    id: `msg-${index}`,
-    role: index % 2 === 1 ? "user" : "assistant",
-    parts: [{ type: "text", id: `text-${index}`, text: `message ${index}`, createdAt: 1, completedAt: 2 }],
+    id,
+    role: "assistant",
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
+    parts: [{
+      type: "assistant-output",
+      id: `output-${index}`,
+      blockId: `block-${index}`,
+      text: `message ${index}`,
+      createdAt: 1,
+      completedAt: 2,
+    }],
     createdAt: 1,
     completedAt: 2,
   };

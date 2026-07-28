@@ -810,7 +810,7 @@ export class SessionExecutionManager {
       const childCall = activeBatch?.calls.find((call) =>
         call.state === "child_launch" || call.state === "child_dependency"
       );
-      const runEndedAt = recoveryRunEndedAt(state, record, activeBatch);
+      let runEndedAt = recoveryRunEndedAt(state, record, activeBatch);
       const claimedSteers = state.pendingMessages.filter((message) =>
         message.state === "steering"
         && message.targetExecutionId === record!.id
@@ -916,6 +916,25 @@ export class SessionExecutionManager {
             "Execution lost its live tool continuation and requires manual inspection",
           );
         }
+        const interruptedExecutionId = record.id;
+        for (const openStep of store.getState().steps.filter((step) =>
+          step.executionId === interruptedExecutionId
+          && step.runOrdinal === run.ordinal
+          && step.completedAt === undefined
+        )) {
+          store.getState().append({
+            type: "step-end",
+            stepId: openStep.id,
+            step: openStep.step,
+            finishReason: "interrupted",
+          });
+        }
+        runEndedAt = Math.max(
+          runEndedAt,
+          ...store.getState().steps
+            .filter((step) => step.executionId === interruptedExecutionId && step.runOrdinal === run.ordinal)
+            .flatMap((step) => step.completedAt === undefined ? [] : [step.completedAt]),
+        );
         const terminalSettlement = {
           key: `terminal:${state.sessionId}:${record.id}`,
           goalInstanceId,
@@ -2542,6 +2561,7 @@ export class SessionExecutionManager {
     let store = this.#config.getSessionStore(input.sessionId, input.workspaceRoot);
     let terminalStatus: SessionExecutionTerminalStatus = "completed";
     let terminalError: string | undefined;
+    let finalOutputStepId: string | undefined;
     let suspension: Exclude<SessionExecutionSuspension, { kind: "resume_pending" }> | undefined;
     let runEndedAt: number | undefined;
     try {
@@ -2650,6 +2670,9 @@ export class SessionExecutionManager {
             suspension = result.suspension;
           } else {
             terminalStatus = result.status;
+            finalOutputStepId = result.status === "completed"
+              ? result.finalOutputStepId
+              : undefined;
             terminalError = result.error === undefined
               ? undefined
               : execution.binding.modelInfo.redactSensitiveText(result.error);
@@ -2685,6 +2708,7 @@ export class SessionExecutionManager {
       if (execution.abortController.signal.aborted) {
         suspension = undefined;
         terminalStatus = abortExecutionStatus(execution.abortController.signal);
+        finalOutputStepId = undefined;
       }
       const current = this.#active.get(key);
       if (current?.executionToken === execution.executionToken) {
@@ -2733,6 +2757,9 @@ export class SessionExecutionManager {
               type: "execution-end",
               executionId: execution.executionId,
               terminalStatus,
+              ...(terminalStatus === "completed" && finalOutputStepId !== undefined
+                ? { finalOutputStepId }
+                : {}),
               endedAt: effectiveRunEndedAt,
               runEndedAt: effectiveRunEndedAt,
               runUsageDelta,

@@ -1054,6 +1054,12 @@ function copyPendingMessage(message: PendingSessionMessage): PendingSessionMessa
 }
 
 function copySessionMessage(message: SessionMessage): SessionMessage {
+  if (message.role === "assistant") {
+    return {
+      ...message,
+      parts: message.parts.map((part) => ({ ...part })),
+    };
+  }
   return {
     ...message,
     parts: message.parts.map((part) => part.type === "attachment"

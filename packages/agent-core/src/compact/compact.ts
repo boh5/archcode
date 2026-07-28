@@ -251,7 +251,7 @@ function omitRecoverableArtifactTools(messages: StoredMessage[]): StoredMessage[
       (part.state !== "completed" && part.state !== "error") ||
       part.result.output.recovery.kind !== "artifact"
     ),
-  }));
+  } as StoredMessage));
 }
 
 function estimateTokensFromModelMessages(messages: import("ai").ModelMessage[]): number {

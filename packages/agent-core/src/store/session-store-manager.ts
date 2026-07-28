@@ -20,7 +20,7 @@ import type {
   SessionExecutionRecord,
   ExecutionLifecycleEvent,
   SessionProjection,
-  TextPart,
+  AssistantOutputPart,
   ReasoningPart,
   ToolPart,
 } from "@archcode/protocol";
@@ -1626,15 +1626,14 @@ function reconcileRestartProjection(
       if (
         message.executionId !== undefined
         && nonterminalExecutionIds.has(message.executionId)
-        && (part.type === "text" || part.type === "reasoning")
-        && part.completedAt === undefined
+        && (part.type === "assistant-output" || part.type === "reasoning")
       ) {
         changed = true;
         messageChanged = true;
-        const partial = part as TextPart | ReasoningPart;
+        const partial = part as AssistantOutputPart | ReasoningPart;
         return {
           ...partial,
-          completedAt: now,
+          completedAt: partial.completedAt ?? now,
           meta: { ...(partial.meta ?? {}), interrupted: true, discardedFromContext: true },
         };
       }
@@ -1642,8 +1641,11 @@ function reconcileRestartProjection(
       return part;
     });
 
-    return messageChanged ? { ...message, parts, completedAt: message.completedAt ?? now } : message;
+    return messageChanged
+      ? { ...message, parts, completedAt: message.completedAt ?? now } as HydratedSessionFile["messages"][number]
+      : message;
   });
+  messages = messages as HydratedSessionFile["messages"];
   const inputRequestReceipts = file.inputRequestReceipts.map((receipt) => {
     if (receipt.kind !== "command" || receipt.status !== "executing") return receipt;
     changed = true;
@@ -1709,29 +1711,19 @@ function reconcileRestartProjection(
 
 function findActiveBatchToolPart(
   messages: HydratedSessionFile["messages"],
-  assistantMessageId: string | undefined,
+  assistantMessageId: string,
   toolCallId: string,
 ): ToolPart | undefined {
-  if (assistantMessageId !== undefined) {
-    return messages
-      .find((message) => message.id === assistantMessageId)
-      ?.parts.find((part): part is ToolPart => part.type === "tool" && part.toolCallId === toolCallId);
-  }
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const part = messages[index]!.parts.find(
-      (candidate): candidate is ToolPart =>
-        candidate.type === "tool" && candidate.toolCallId === toolCallId,
-    );
-    if (part !== undefined) return part;
-  }
-  return undefined;
+  return messages
+    .find((message) => message.id === assistantMessageId)
+    ?.parts.find((part): part is ToolPart => part.type === "tool" && part.toolCallId === toolCallId);
 }
 
 function sessionProjectionForRepair(
   file: HydratedSessionFile,
   messages: HydratedSessionFile["messages"],
   stats: HydratedSessionFile["stats"],
-  currentAssistantMessageId: string | undefined,
+  currentAssistantMessageId: string,
 ): SessionProjection {
   const currentExecution = file.executions.find(
     (execution) => execution.status === "running" || execution.status === "suspended",
@@ -1757,7 +1749,7 @@ function sessionProjectionForRepair(
     isRunning: currentExecution?.status === "running",
     isStreamingModel: false,
     ...(currentExecution === undefined ? {} : { currentExecutionId: currentExecution.id }),
-    ...(currentAssistantMessageId === undefined ? {} : { currentAssistantMessageId }),
+    currentAssistantMessageId,
     modelSelection: file.modelSelection,
   };
 }

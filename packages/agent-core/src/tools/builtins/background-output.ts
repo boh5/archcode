@@ -370,7 +370,7 @@ function latestUnits(state: SessionStoreState, message: StoredMessage): OutputUn
     const output = finalOutputForExecution(state, execution.id);
     return output === undefined || output.length === 0 ? [] : [{ text: output }];
   }
-  return message.parts.flatMap((part) => part.type === "text" && part.text.length > 0
+  return message.parts.flatMap((part) => part.type === "assistant-output" && part.text.length > 0
     ? [{ text: part.text }]
     : []);
 }
@@ -385,6 +385,7 @@ function fullSessionUnits(message: StoredMessage, input: BackgroundOutputInput):
 function renderPartUnits(part: StoredPart, input: BackgroundOutputInput): OutputUnit[] {
   switch (part.type) {
     case "text":
+    case "assistant-output":
       return part.text.length === 0 ? [] : [{ text: part.text }];
     case "reasoning":
       return input.include_reasoning ? [{ text: "### Reasoning" }, { text: part.text }] : [];

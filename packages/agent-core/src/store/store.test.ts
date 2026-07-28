@@ -224,6 +224,13 @@ function textPart(message: StoredMessage, index = 0): TextPart {
   return part;
 }
 
+function assistantOutputPart(message: StoredMessage, index = 0) {
+  const part = message.parts[index];
+  expect(part?.type).toBe("assistant-output");
+  if (!part || part.type !== "assistant-output") throw new Error("Expected assistant output part");
+  return part;
+}
+
 function reasoningPart(message: StoredMessage, index = 0): ReasoningPart {
   const part = message.parts[index];
   expect(part?.type).toBe("reasoning");
@@ -286,10 +293,11 @@ describe("SessionStoreManager", () => {
 
     const state = store.getState();
     state.append(executionStart("run-1"));
-    state.append({ type: "text-start" });
-    state.append({ type: "text-delta", text: "hel" });
-    state.append({ type: "text-delta", text: "lo" });
-    state.append({ type: "text-end" });
+    state.append({ type: "step-start", stepId: "step-0", step: 0 });
+    state.append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    state.append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "hel" });
+    state.append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "lo" });
+    state.append({ type: "text-end", stepId: "step-0", blockId: "output" });
     state.append(executionEnd(store, "completed"));
 
     const persisted = await readFlushedSession(sessionId);
@@ -323,8 +331,9 @@ describe("SessionStoreManager", () => {
     const state = store.getState();
 
     state.append(executionStart("run-1"));
-    state.append({ type: "text-start" });
-    state.append({ type: "text-delta", text: "final answer" });
+    state.append({ type: "step-start", stepId: "step-0", step: 0 });
+    state.append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    state.append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "final answer" });
     state.append(executionEnd(store, "completed"));
 
     const persisted = await readFlushedSession(sessionId);
@@ -355,16 +364,16 @@ describe("SessionStoreManager", () => {
 
     state.append(executionStart("run-one"));
     appendUserMessage(store, "collect stats");
-    state.append({ type: "step-start", step: 0 });
+    state.append({ type: "step-start", stepId: "step-one", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-ok", toolName: "read", input: { path: "a.ts" } });
     state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", result: finalizedResult("ok"), settledAt: Date.now() });
-    state.append({ type: "step-end", step: 0, finishReason: "tool-calls", usage: { inputTokens: 2, outputTokens: 3 } });
+    state.append({ type: "step-end", stepId: "step-one", step: 0, finishReason: "tool-calls", usage: { inputTokens: 2, outputTokens: 3 } });
     state.append(executionEnd(store, "completed"));
     state.append(executionStart("run-two"));
-    state.append({ type: "step-start", step: 0 });
+    state.append({ type: "step-start", stepId: "step-two", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-fail", toolName: "bash", input: "false" });
     state.append({ type: "tool-result", toolCallId: "tool-fail", toolName: "bash", result: finalizedResult("failed", true), settledAt: Date.now() });
-    state.append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } });
+    state.append({ type: "step-end", stepId: "step-two", step: 0, finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } });
     state.append(executionEnd(store, "failed", "child failed"));
 
     const expectedStats = store.getState().stats;
@@ -724,12 +733,12 @@ describe("execution lifecycle", () => {
   test("execution-end completed clears all temporary state and completes assistant message", () => {
     const store = createFreshStore("execution-end-success");
     store.getState().append(executionStart("run"));
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "hello" });
-    store.getState().append({ type: "text-end" });
-    store.getState().append({ type: "reasoning-start" });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "hello" });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output" });
+    store.getState().append({ type: "reasoning-start", stepId: "step-0", blockId: "reasoning" });
     store.getState().append({ type: "tool-input-start", toolCallId: "tool", toolName: "read" });
-    store.getState().append({ type: "step-start", step: 0 });
     store.getState().append(executionEnd(store, "completed"));
 
     const state = store.getState();
@@ -808,13 +817,15 @@ describe("user messages", () => {
 });
 
 describe("text streaming", () => {
-  test("text-start creates an assistant message and empty text part", () => {
+  test("text-start creates an assistant model-step output block", () => {
     const store = createFreshStore("text-start");
-    store.getState().append({ type: "text-start" });
+    store.getState().append(executionStart("execution-text-start"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
 
     const state = store.getState();
     const message = onlyMessage(state.messages);
-    const part = textPart(message);
+    const part = assistantOutputPart(message);
     expect(message.role).toBe("assistant");
     expect(state.currentAssistantMessageId).toBe(message.id);
     expect(part.text).toBe("");
@@ -823,76 +834,71 @@ describe("text streaming", () => {
 
   test("text-delta appends directly to the text part", () => {
     const store = createFreshStore("text-delta");
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "hel" });
-    store.getState().append({ type: "text-delta", text: "lo" });
+    store.getState().append(executionStart("execution-text-delta"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "hel" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "lo" });
 
     const state = store.getState();
-    expect(textPart(onlyMessage(state.messages)).text).toBe("hello");
+    expect(assistantOutputPart(onlyMessage(state.messages)).text).toBe("hello");
   });
 
   test("text-end completes ordinary text without altering it", () => {
     const store = createFreshStore("text-end");
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "done" });
-    store.getState().append({ type: "text-end" });
+    store.getState().append(executionStart("execution-text-end"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "done" });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output" });
 
     const state = store.getState();
-    const part = textPart(onlyMessage(state.messages));
+    const part = assistantOutputPart(onlyMessage(state.messages));
     expect(part.text).toBe("done");
     expect(part.completedAt).toBeGreaterThan(0);
   });
 
   test("text-end removes a complete echoed message-ref envelope", () => {
     const store = createFreshStore("text-end-message-ref");
-    store.getState().append({ type: "text-start" });
+    store.getState().append(executionStart("execution-text-end-message-ref"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
     store.getState().append({
       type: "text-delta",
+      stepId: "step-0",
+      blockId: "output",
       text: "<message ref=\"m0014\">Created the file.</message>",
     });
-    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output" });
 
-    const part = textPart(onlyMessage(store.getState().messages));
+    const part = assistantOutputPart(onlyMessage(store.getState().messages));
     expect(part.text).toBe("Created the file.");
     expect(part.completedAt).toBeGreaterThan(0);
   });
 
-  test("text-delta without text-start implicitly starts text streaming", () => {
-    const store = createFreshStore("implicit-text");
-    store.getState().append({ type: "text-delta", text: "implicit" });
-
-    const state = store.getState();
-    const message = onlyMessage(state.messages);
-    const part = textPart(message);
-    expect(part.text).toBe("implicit");
-    expect(part.completedAt).toBeUndefined();
-  });
-
-  test("text-end without streaming text does not crash", () => {
-    const store = createFreshStore("text-end-noop");
-    store.getState().append({ type: "text-end" });
-    expect(store.getState().messages).toEqual([]);
-  });
-
   test("multiple text-start events create multiple text parts", () => {
     const store = createFreshStore("multi-text");
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "one" });
-    store.getState().append({ type: "text-end" });
-    store.getState().append({ type: "text-start" });
+    store.getState().append(executionStart("execution-multi-text"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output-1" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output-1", text: "one" });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output-1" });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output-2" });
 
     const message = onlyMessage(store.getState().messages);
     expect(message.parts).toHaveLength(2);
-    expect(textPart(message, 0).text).toBe("one");
-    expect(textPart(message, 0).completedAt).toBeGreaterThan(0);
-    expect(textPart(message, 1).text).toBe("");
+    expect(assistantOutputPart(message, 0).text).toBe("one");
+    expect(assistantOutputPart(message, 0).completedAt).toBeGreaterThan(0);
+    expect(assistantOutputPart(message, 1).text).toBe("");
   });
 });
 
 describe("reasoning streaming", () => {
   test("reasoning-start creates an assistant message and empty reasoning part", () => {
     const store = createFreshStore("reasoning-start");
-    store.getState().append({ type: "reasoning-start" });
+    store.getState().append(executionStart("execution-reasoning-start"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "reasoning-start", stepId: "step-0", blockId: "reasoning" });
 
     const state = store.getState();
     const message = onlyMessage(state.messages);
@@ -903,8 +909,10 @@ describe("reasoning streaming", () => {
 
   test("reasoning-delta appends directly to the reasoning part", () => {
     const store = createFreshStore("reasoning-delta");
-    store.getState().append({ type: "reasoning-start" });
-    store.getState().append({ type: "reasoning-delta", text: "think" });
+    store.getState().append(executionStart("execution-reasoning-delta"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "reasoning-start", stepId: "step-0", blockId: "reasoning" });
+    store.getState().append({ type: "reasoning-delta", stepId: "step-0", blockId: "reasoning", text: "think" });
 
     const state = store.getState();
     expect(reasoningPart(onlyMessage(state.messages)).text).toBe("think");
@@ -912,8 +920,11 @@ describe("reasoning streaming", () => {
 
   test("reasoning-end completes the reasoning part without altering its text", () => {
     const store = createFreshStore("reasoning-end");
-    store.getState().append({ type: "reasoning-delta", text: "because" });
-    store.getState().append({ type: "reasoning-end" });
+    store.getState().append(executionStart("execution-reasoning-end"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "reasoning-start", stepId: "step-0", blockId: "reasoning" });
+    store.getState().append({ type: "reasoning-delta", stepId: "step-0", blockId: "reasoning", text: "because" });
+    store.getState().append({ type: "reasoning-end", stepId: "step-0", blockId: "reasoning" });
 
     const state = store.getState();
     const part = reasoningPart(onlyMessage(state.messages));
@@ -923,19 +934,23 @@ describe("reasoning streaming", () => {
 
   test("reasoning before text creates the assistant message correctly", () => {
     const store = createFreshStore("reasoning-before-text");
-    store.getState().append({ type: "reasoning-start" });
-    store.getState().append({ type: "text-start" });
+    store.getState().append(executionStart("execution-reasoning-before-text"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "reasoning-start", stepId: "step-0", blockId: "reasoning" });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
 
     const message = onlyMessage(store.getState().messages);
     expect(message.role).toBe("assistant");
     expect(reasoningPart(message, 0).type).toBe("reasoning");
-    expect(textPart(message, 1).type).toBe("text");
+    expect(assistantOutputPart(message, 1).type).toBe("assistant-output");
   });
 });
 
 describe("tool streaming", () => {
   test("tool-input-start creates assistant message and pending tool part", () => {
     const store = createFreshStore("tool-input-start");
+    store.getState().append(executionStart("run-tool-input-start"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-input-start", toolCallId: "call-1", toolName: "read" });
 
     const state = store.getState();
@@ -950,6 +965,8 @@ describe("tool streaming", () => {
   test("tool-call after tool-input-start transitions pending to running and stores input", () => {
     const store = createFreshStore("tool-call-after-input");
     const input = { path: "file.ts" };
+    store.getState().append(executionStart("run-tool-call-after-input"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-input-start", toolCallId: "call-1", toolName: "read" });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input });
 
@@ -963,6 +980,8 @@ describe("tool streaming", () => {
 
   test("tool-call without tool-input-start creates a running tool part directly", () => {
     const store = createFreshStore("direct-tool-call");
+    store.getState().append(executionStart("run-direct-tool-call"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "pwd" });
 
     const state = store.getState();
@@ -975,6 +994,8 @@ describe("tool streaming", () => {
 
   test("successful tool-result completes the part with a finalized result", () => {
     const store = createFreshStore("tool-result-success");
+    store.getState().append(executionStart("run-tool-result-success"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } });
     store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("content"), settledAt: Date.now() });
 
@@ -988,6 +1009,8 @@ describe("tool streaming", () => {
 
   test("error tool-result records a finalized error result and endedAt", () => {
     const store = createFreshStore("tool-result-error");
+    store.getState().append(executionStart("run-tool-result-error"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "bad" });
     store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "bash", result: finalizedResult("failed", true), settledAt: Date.now() });
 
@@ -1000,6 +1023,8 @@ describe("tool streaming", () => {
 
   test("tool-result updates the stored tool part when it already exists", () => {
     const store = createFreshStore("tool-result-existing-part");
+    store.getState().append(executionStart("run-tool-result-existing-part"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: "input" });
     store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("ok"), settledAt: Date.now() });
 
@@ -1009,6 +1034,8 @@ describe("tool streaming", () => {
 
   test("multiple tools update independently and preserve part order", () => {
     const store = createFreshStore("multi-tools");
+    store.getState().append(executionStart("run-multi-tools"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-input-start", toolCallId: "a", toolName: "first" });
     store.getState().append({ type: "tool-input-start", toolCallId: "b", toolName: "second" });
     store.getState().append({ type: "tool-call", toolCallId: "b", toolName: "second", input: 2 });
@@ -1028,15 +1055,16 @@ describe("settleIncompleteState behavior", () => {
   test("execution-end marks incomplete text and reasoning parts completed", () => {
     const store = createFreshStore("settle-incomplete");
     store.getState().append(executionStart("run"));
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "hello" });
-    store.getState().append({ type: "reasoning-start" });
-    store.getState().append({ type: "reasoning-delta", text: "why" });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "hello" });
+    store.getState().append({ type: "reasoning-start", stepId: "step-0", blockId: "reasoning" });
+    store.getState().append({ type: "reasoning-delta", stepId: "step-0", blockId: "reasoning", text: "why" });
 
     store.getState().append(executionEnd(store, "completed"));
 
     const message = onlyMessage(store.getState().messages);
-    const text = textPart(message, 0);
+    const text = assistantOutputPart(message, 0);
     const reasoning = reasoningPart(message, 1);
     expect(text.text).toBe("hello");
     expect(text.completedAt).toBeGreaterThan(0);
@@ -1048,6 +1076,7 @@ describe("settleIncompleteState behavior", () => {
   test("interrupted execution marks an attempted tool interrupted without fabricating a result", () => {
     const store = createFreshStore("unknown-result-store");
     store.getState().append(executionStart("run"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { filePath: "a.ts" } });
     store.getState().append({
       type: "tool-attempt",
@@ -1072,7 +1101,7 @@ describe("steps and errors", () => {
   test("step-start sets isStreamingModel and creates StepInfo", () => {
     const store = createFreshStore("step-start");
     store.getState().append(executionStart("run-step"));
-    store.getState().append({ type: "step-start", step: 1 });
+    store.getState().append({ type: "step-start", stepId: "step-1", step: 1 });
 
     const state = store.getState();
     const step = onlyStep(state.steps);
@@ -1084,45 +1113,40 @@ describe("steps and errors", () => {
 
   test("step-end stops streaming and records finishReason, usage, and completedAt", () => {
     const store = createFreshStore("step-end");
-    const usage = { inputTokens: 1, outputTokens: 2 };
+    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, reasoningTokens: 0, cachedInputTokens: 0 };
     store.getState().append(executionStart("run-step-end"));
-    store.getState().append({ type: "step-start", step: 1 });
-    store.getState().append({ type: "step-end", step: 1, finishReason: "stop", usage });
+    store.getState().append({ type: "step-start", stepId: "step-1", step: 1 });
+    store.getState().append({ type: "step-end", stepId: "step-1", step: 1, finishReason: "stop", usage });
 
     const state = store.getState();
     const step = onlyStep(state.steps);
     expect(state.isStreamingModel).toBe(false);
     expect(step.finishReason).toBe("stop");
-    expect(step.usage).toBe(usage);
+    expect(step.usage).toEqual(usage);
     expect(step.completedAt).toBeGreaterThan(0);
   });
 
   test("multiple steps are appended in order", () => {
     const store = createFreshStore("multi-steps");
     store.getState().append(executionStart("run-multi-steps"));
-    store.getState().append({ type: "step-start", step: 1 });
-    store.getState().append({ type: "step-start", step: 2 });
+    store.getState().append({ type: "step-start", stepId: "step-1", step: 1 });
+    store.getState().append({ type: "step-start", stepId: "step-2", step: 2 });
     expect(store.getState().steps.map((step) => step.step)).toEqual([1, 2]);
   });
 
   test("execution-error records error on a matching step", () => {
     const store = createFreshStore("execution-error-match");
     store.getState().append(executionStart("run-error-match"));
-    store.getState().append({ type: "step-start", step: 3 });
-    store.getState().append({ type: "execution-error", step: 3, error: "bad execution" });
+    store.getState().append({ type: "step-start", stepId: "step-3", step: 3 });
+    store.getState().append({ type: "execution-error", stepId: "step-3", step: 3, error: "bad execution" });
     expect(onlyStep(store.getState().steps).error).toBe("bad execution");
   });
 
-  test("execution-error without a matching step appends an error step", () => {
+  test("execution-error without a matching model attempt is ignored", () => {
     const store = createFreshStore("execution-error-append");
     store.getState().append(executionStart("run-error"));
-    store.getState().append({ type: "execution-error", step: 4, error: "missing step" });
-
-    const step = onlyStep(store.getState().steps);
-    expect(step.step).toBe(4);
-    expect(step.executionId).toBe("run-error");
-    expect(step.error).toBe("missing step");
-    expect(step.startedAt).toBeGreaterThan(0);
+    store.getState().append({ type: "execution-error", stepId: "step-4", step: 4, error: "missing step" });
+    expect(store.getState().steps).toEqual([]);
   });
 });
 
@@ -1188,26 +1212,26 @@ describe("Oracle regression tests", () => {
     appendUserMessage(store, "run tool");
 
     // Step 0: assistant calls a tool
-    store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "I'll run it" });
-    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "I'll run it" });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output" });
     store.getState().append({ type: "tool-input-start", toolCallId: "tc-1", toolName: "bash" });
     store.getState().append({ type: "tool-call", toolCallId: "tc-1", toolName: "bash", input: "ls" });
-    store.getState().append({ type: "step-end", step: 0, finishReason: "tool-calls" });
+    store.getState().append({ type: "step-end", stepId: "step-0", step: 0, finishReason: "tool-calls" });
 
     store.getState().append({ type: "tool-result", toolCallId: "tc-1", toolName: "bash", result: finalizedResult("file.txt"), settledAt: Date.now() });
 
     // Step 1: should create a NEW assistant message (not merge into step 0's)
-    store.getState().append({ type: "step-start", step: 1 });
+    store.getState().append({ type: "step-start", stepId: "step-1", step: 1 });
     const messagesBeforeStep1 = store.getState().messages;
     const step0Assistant = messagesBeforeStep1.find(m => m.role === "assistant");
     expect(step0Assistant).toBeDefined();
 
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "Here's the result" });
-    store.getState().append({ type: "text-end" });
-    store.getState().append({ type: "step-end", step: 1, finishReason: "stop" });
+    store.getState().append({ type: "text-start", stepId: "step-1", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-1", blockId: "output", text: "Here's the result" });
+    store.getState().append({ type: "text-end", stepId: "step-1", blockId: "output" });
+    store.getState().append({ type: "step-end", stepId: "step-1", step: 1, finishReason: "stop" });
     store.getState().append(executionEnd(store, "completed"));
 
     // Two distinct assistant messages — tool-call in one, final text in another
@@ -1229,18 +1253,18 @@ describe("Oracle regression tests", () => {
     // Execution 1
     store.getState().append(executionStart());
     appendUserMessage(store, "first");
-    store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "first response" });
-    store.getState().append({ type: "text-end" });
-    store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
+    store.getState().append({ type: "step-start", stepId: "step-one", step: 0 });
+    store.getState().append({ type: "text-start", stepId: "step-one", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-one", blockId: "output", text: "first response" });
+    store.getState().append({ type: "text-end", stepId: "step-one", blockId: "output" });
+    store.getState().append({ type: "step-end", stepId: "step-one", step: 0, finishReason: "stop" });
     store.getState().append(executionEnd(store, "completed"));
 
     // Execution 2 with same step number
     store.getState().append(executionStart());
     appendUserMessage(store, "second");
-    store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
+    store.getState().append({ type: "step-start", stepId: "step-two", step: 0 });
+    store.getState().append({ type: "step-end", stepId: "step-two", step: 0, finishReason: "stop" });
     store.getState().append(executionEnd(store, "completed"));
 
     const run2Steps = store.getState().steps;
@@ -1253,46 +1277,48 @@ describe("Oracle regression tests", () => {
     const store = createFreshStore("stream-error-text");
     store.getState().append(executionStart());
     appendUserMessage(store, "prompt");
-    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
 
     // Start text streaming, then simulate error (execution-end handles cleanup)
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "partial" });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output", text: "partial" });
 
     // consumeFullStream's finally block would flush text-end,
     // then execution-error records the failure, then execution-end settles incomplete state
-    store.getState().append({ type: "text-end" }); // flushed by try/finally
-    store.getState().append({ type: "execution-error", step: 0, error: "stream failed" });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output" }); // flushed by try/finally
+    store.getState().append({ type: "execution-error", stepId: "step-0", step: 0, error: "stream failed" });
     store.getState().append(executionEnd(store, "failed"));
 
     // Partial text should be persisted (not lost)
     const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
     expect(assistantMsg).toBeDefined();
-    const textParts = assistantMsg!.parts.filter(p => p.type === "text");
+    const textParts = assistantMsg!.parts.filter(p => p.type === "assistant-output");
     expect(textParts.length).toBe(1);
     expect(textParts[0]!.text).toBe("partial");
     expect(textParts[0]!.completedAt).toBeDefined();
   });
 
-  test("duplicate text-start flushes previous text part", () => {
+  test("separate output blocks preserve their explicit completion", () => {
     const store = createFreshStore("dup-text-start");
     store.getState().append(executionStart());
     appendUserMessage(store, "prompt");
-    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
 
     // First text section
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "First " });
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output-1" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output-1", text: "First " });
 
-    // Duplicate text-start should finalize the first and start a second
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "Second" });
-    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output-1" });
+
+    // A later output block starts only after the preceding block ended.
+    store.getState().append({ type: "text-start", stepId: "step-0", blockId: "output-2" });
+    store.getState().append({ type: "text-delta", stepId: "step-0", blockId: "output-2", text: "Second" });
+    store.getState().append({ type: "text-end", stepId: "step-0", blockId: "output-2" });
 
     const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
     expect(assistantMsg).toBeDefined();
-    const textParts = assistantMsg!.parts.filter(p => p.type === "text");
-    // Should have two text parts: first completed, second streaming
+    const textParts = assistantMsg!.parts.filter(p => p.type === "assistant-output");
+    // Both explicitly delimited blocks remain available in order.
     expect(textParts.length).toBe(2);
     expect(textParts[0]!.completedAt).toBeDefined();
   });
@@ -1301,13 +1327,13 @@ describe("Oracle regression tests", () => {
     const store = createFreshStore("failed-execution-tools");
     store.getState().append(executionStart());
     appendUserMessage(store, "use tool");
-    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
 
     store.getState().append({ type: "tool-input-start", toolCallId: "tc-1", toolName: "bash" });
     store.getState().append({ type: "tool-call", toolCallId: "tc-1", toolName: "bash", input: "ls" });
 
     // Execution ends before tool-result arrives
-    store.getState().append({ type: "execution-error", step: 0, error: "model crashed" });
+    store.getState().append({ type: "execution-error", stepId: "step-0", step: 0, error: "model crashed" });
     store.getState().append(executionEnd(store, "failed"));
 
     const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
@@ -1322,6 +1348,8 @@ describe("Oracle regression tests", () => {
 describe("strict details propagation through tool-result event", () => {
   test("process details propagate to CompletedToolPart", () => {
     const store = createFreshStore("meta-completed");
+    store.getState().append(executionStart("run-meta-completed"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-meta-1", toolName: "bash", input: "ls" });
     store.getState().append({
       type: "tool-result",
@@ -1339,6 +1367,8 @@ describe("strict details propagation through tool-result event", () => {
 
   test("process details propagate to ErrorToolPart", () => {
     const store = createFreshStore("meta-error");
+    store.getState().append(executionStart("run-meta-error"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-meta-2", toolName: "bash", input: "bad" });
     store.getState().append({
       type: "tool-result",
@@ -1356,6 +1386,8 @@ describe("strict details propagation through tool-result event", () => {
 
   test("tool-result without details does not add details", () => {
     const store = createFreshStore("meta-absent");
+    store.getState().append(executionStart("run-meta-absent"));
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({ type: "tool-call", toolCallId: "call-no-meta", toolName: "read", input: {} });
     store.getState().append({
       type: "tool-result",

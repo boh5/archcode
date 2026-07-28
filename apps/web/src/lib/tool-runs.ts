@@ -6,7 +6,10 @@ import {
   type SessionPart,
   type ToolPart,
 } from "@archcode/protocol";
-import type { ExecutionWorkstreamMessageSlice } from "./execution-workstream";
+import type {
+  ExecutionWorkstreamReasoningUsageItem,
+  ExecutionWorkstreamWorkItem,
+} from "./execution-workstream";
 
 export interface ToolRunItem {
   readonly message: SessionMessage;
@@ -27,7 +30,10 @@ export interface ToolRunTimelineRun {
   readonly tools: readonly ToolPart[];
 }
 
-export type ToolRunTimelineEntry = ToolRunTimelineMessage | ToolRunTimelineRun;
+export type ToolRunTimelineEntry =
+  | ToolRunTimelineMessage
+  | ToolRunTimelineRun
+  | ExecutionWorkstreamReasoningUsageItem;
 
 interface MutableMessageEntry {
   kind: "message";
@@ -36,7 +42,10 @@ interface MutableMessageEntry {
   parts: SessionPart[];
 }
 
-type MutableTimelineEntry = MutableMessageEntry | ToolRunTimelineRun;
+type MutableTimelineEntry =
+  | MutableMessageEntry
+  | ToolRunTimelineRun
+  | ExecutionWorkstreamReasoningUsageItem;
 
 function isOrdinaryTool(part: SessionPart): part is ToolPart {
   if (
@@ -59,7 +68,7 @@ function isOrdinaryTool(part: SessionPart): part is ToolPart {
  * so singleton tools keep the direct ToolCard presentation.
  */
 export function buildToolRunTimeline(
-  slices: readonly ExecutionWorkstreamMessageSlice[],
+  items: readonly ExecutionWorkstreamWorkItem[],
 ): readonly ToolRunTimelineEntry[] {
   const timeline: MutableTimelineEntry[] = [];
   let candidates: ToolRunItem[] = [];
@@ -96,20 +105,25 @@ export function buildToolRunTimeline(
     candidates = [];
   };
 
-  for (const slice of slices) {
-    if (slice.message.role !== "assistant") {
+  for (const item of items) {
+    if (item.kind === "reasoning-usage") {
       flushCandidates();
-      for (const part of slice.parts) appendMessagePart(slice.message, part);
+      timeline.push(item);
+      continue;
+    }
+    if (item.message.role !== "assistant") {
+      flushCandidates();
+      for (const part of item.parts) appendMessagePart(item.message, part);
       continue;
     }
 
-    for (const part of slice.parts) {
+    for (const part of item.parts) {
       if (isOrdinaryTool(part)) {
-        candidates.push({ message: slice.message, part });
+        candidates.push({ message: item.message, part });
         continue;
       }
       flushCandidates();
-      appendMessagePart(slice.message, part);
+      appendMessagePart(item.message, part);
     }
   }
   flushCandidates();

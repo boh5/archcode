@@ -54,7 +54,7 @@ function executionEnd(
   executionId: string,
   terminalStatus: "completed" | "failed" | "aborted" | "cancelled" | "timed_out" | "interrupted",
   error?: string,
-): StreamEvent {
+): Extract<StreamEvent, { type: "execution-end" }> {
   return {
     type: "execution-end",
     executionId,
@@ -66,6 +66,13 @@ function executionEnd(
     terminalSettlement: { key: `terminal:session-test:${executionId}`, goalInstanceId: null },
     ...(error === undefined ? {} : { error }),
   };
+}
+
+function modelAttempt(executionId: string, stepId: string, step = 0): StreamEvent[] {
+  return [
+    executionStart(executionId),
+    { type: "step-start", stepId, step },
+  ];
 }
 
 function makeFinalizedResult(
@@ -111,9 +118,11 @@ function createProjection(overrides: Partial<SessionProjection> = {}): SessionPr
   };
 }
 
-function applyEvents(state: SessionProjection, events: StreamEvent[]): SessionProjection {
-  const ctx = createDeterministicContext();
-
+function applyEvents(
+  state: SessionProjection,
+  events: StreamEvent[],
+  ctx: ReduceContext = createDeterministicContext(),
+): SessionProjection {
   return events.reduce(
     (current, event) => ({ ...current, ...reduceStreamEvent(current, event, ctx) }),
     state,
@@ -240,6 +249,10 @@ describe("reduceStreamEvent", () => {
       id: "message-tools",
       role: "assistant",
       createdAt: 1,
+      executionId: "execution-tools",
+      runOrdinal: 0,
+      stepId: "step-tools",
+      outputPhase: "commentary",
       parts: [
         {
           type: "tool",
@@ -372,13 +385,15 @@ describe("reduceStreamEvent", () => {
 
   test("accumulates text deltas between start and end", () => {
     const state = applyEvents(createProjection(), [
-      { type: "text-start" },
-      { type: "text-delta", text: "hel" },
-      { type: "text-delta", text: "lo" },
-      { type: "text-end" },
+      executionStart("run-text"),
+      { type: "step-start", stepId: "step-text", step: 0 },
+      { type: "text-start", stepId: "step-text", blockId: "output" },
+      { type: "text-delta", stepId: "step-text", blockId: "output", text: "hel" },
+      { type: "text-delta", stepId: "step-text", blockId: "output", text: "lo" },
+      { type: "text-end", stepId: "step-text", blockId: "output" },
     ]);
 
-    const text = partOfType(onlyMessage(state.messages), "text");
+    const text = partOfType(onlyMessage(state.messages), "assistant-output");
     expect(text.text).toBe("hello");
     expect(text.completedAt).toBeGreaterThan(0);
     expect(state.currentAssistantMessageId).toBe(state.messages[0]!.id);
@@ -387,14 +402,16 @@ describe("reduceStreamEvent", () => {
 
   test("unwraps a complete echoed message-ref envelope when Assistant text ends", () => {
     const state = applyEvents(createProjection(), [
-      { type: "text-start" },
-      { type: "text-delta", text: "<message ref=\"m0006\">\n" },
-      { type: "text-delta", text: "Visible response" },
-      { type: "text-delta", text: "\n</message>" },
-      { type: "text-end" },
+      executionStart("run-envelope"),
+      { type: "step-start", stepId: "step-envelope", step: 0 },
+      { type: "text-start", stepId: "step-envelope", blockId: "output" },
+      { type: "text-delta", stepId: "step-envelope", blockId: "output", text: "<message ref=\"m0006\">\n" },
+      { type: "text-delta", stepId: "step-envelope", blockId: "output", text: "Visible response" },
+      { type: "text-delta", stepId: "step-envelope", blockId: "output", text: "\n</message>" },
+      { type: "text-end", stepId: "step-envelope", blockId: "output" },
     ]);
 
-    const text = partOfType(onlyMessage(state.messages), "text");
+    const text = partOfType(onlyMessage(state.messages), "assistant-output");
     expect(text.text).toBe("Visible response");
     expect(text.completedAt).toBeGreaterThan(0);
   });
@@ -409,11 +426,13 @@ describe("reduceStreamEvent", () => {
 
     for (const example of examples) {
       const state = applyEvents(createProjection(), [
-        { type: "text-start" },
-        { type: "text-delta", text: example },
-        { type: "text-end" },
+        executionStart("run-literal"),
+        { type: "step-start", stepId: "step-literal", step: 0 },
+        { type: "text-start", stepId: "step-literal", blockId: "output" },
+        { type: "text-delta", stepId: "step-literal", blockId: "output", text: example },
+        { type: "text-end", stepId: "step-literal", blockId: "output" },
       ]);
-      expect(partOfType(onlyMessage(state.messages), "text").text).toBe(example);
+      expect(partOfType(onlyMessage(state.messages), "assistant-output").text).toBe(example);
     }
   });
 
@@ -421,10 +440,10 @@ describe("reduceStreamEvent", () => {
     const events: StreamEvent[] = [
       executionStart("run-identical"),
       committedUserEvent("hello", "run-identical"),
-      { type: "step-start", step: 0 },
-      { type: "text-start" },
-      { type: "text-delta", text: "hi" },
-      { type: "text-end" },
+      { type: "step-start", stepId: "step-identical", step: 0 },
+      { type: "text-start", stepId: "step-identical", blockId: "output" },
+      { type: "text-delta", stepId: "step-identical", blockId: "output", text: "hi" },
+      { type: "text-end", stepId: "step-identical", blockId: "output" },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a.ts" } },
       {
         type: "tool-result",
@@ -433,7 +452,7 @@ describe("reduceStreamEvent", () => {
         settledAt: 123456700,
         result: makeFinalizedResult("content"),
       },
-      { type: "step-end", step: 0, finishReason: "stop" },
+      { type: "step-end", stepId: "step-identical", step: 0, finishReason: "stop" },
       executionEnd("run-identical", "completed"),
     ];
 
@@ -445,10 +464,12 @@ describe("reduceStreamEvent", () => {
 
   test("accumulates reasoning deltas between start and end", () => {
     const state = applyEvents(createProjection(), [
-      { type: "reasoning-start" },
-      { type: "reasoning-delta", text: "think" },
-      { type: "reasoning-delta", text: "ing" },
-      { type: "reasoning-end" },
+      executionStart("run-reasoning"),
+      { type: "step-start", stepId: "step-reasoning", step: 0 },
+      { type: "reasoning-start", stepId: "step-reasoning", blockId: "reasoning" },
+      { type: "reasoning-delta", stepId: "step-reasoning", blockId: "reasoning", text: "think" },
+      { type: "reasoning-delta", stepId: "step-reasoning", blockId: "reasoning", text: "ing" },
+      { type: "reasoning-end", stepId: "step-reasoning", blockId: "reasoning" },
     ]);
 
     const reasoning = partOfType(onlyMessage(state.messages), "reasoning");
@@ -459,6 +480,7 @@ describe("reduceStreamEvent", () => {
   test("transitions tool call lifecycle from pending to running to completed", () => {
     const input = { path: "file.ts" };
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-tool-lifecycle", "step-tool-lifecycle"),
       { type: "tool-input-start", toolCallId: "call-1", toolName: "read" },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input },
       {
@@ -484,6 +506,7 @@ describe("reduceStreamEvent", () => {
 
   test("projects bounded live Bash output and clears it when the durable result settles", () => {
     const running = applyEvents(createProjection(), [
+      ...modelAttempt("run-live-output", "step-live-output"),
       { type: "tool-call", toolCallId: "call-live", toolName: "bash", input: "run" },
       {
         type: "tool-output-delta",
@@ -531,6 +554,7 @@ describe("reduceStreamEvent", () => {
 
   test("keeps the latest 50 KiB UTF-8 suffix without splitting a multibyte character", () => {
     const deltas: StreamEvent[] = [
+      ...modelAttempt("run-utf8", "step-utf8"),
       { type: "tool-call", toolCallId: "call-utf8", toolName: "bash", input: "run" },
       {
         type: "tool-output-delta",
@@ -570,6 +594,7 @@ describe("reduceStreamEvent", () => {
 
   test("ignores live deltas for unknown, pending, non-Bash, interrupted, and settled tools", () => {
     const pending = applyEvents(createProjection(), [
+      ...modelAttempt("run-pending-output", "step-pending-output"),
       { type: "tool-input-start", toolCallId: "pending", toolName: "bash" },
     ]);
     const pendingAfterDelta = applyEvents(pending, [{
@@ -583,6 +608,7 @@ describe("reduceStreamEvent", () => {
     expect(pendingAfterDelta.messages).toEqual(pending.messages);
 
     const nonBash = applyEvents(createProjection(), [
+      ...modelAttempt("run-nonbash-output", "step-nonbash-output"),
       { type: "tool-call", toolCallId: "read", toolName: "file_read", input: {} },
       {
         type: "tool-output-delta",
@@ -597,6 +623,7 @@ describe("reduceStreamEvent", () => {
 
     const interrupted = applyEvents(createProjection(), [
       executionStart("run-interrupted-tool"),
+      { type: "step-start", stepId: "step-interrupted-tool", step: 0 },
       { type: "tool-call", toolCallId: "interrupted", toolName: "bash", input: "run" },
       executionEnd("run-interrupted-tool", "aborted"),
       {
@@ -611,6 +638,7 @@ describe("reduceStreamEvent", () => {
     expect(partOfType(onlyMessage(interrupted.messages), "tool")).not.toHaveProperty("liveOutput");
 
     const settled = applyEvents(createProjection(), [
+      ...modelAttempt("run-settled-output", "step-settled-output"),
       { type: "tool-call", toolCallId: "settled", toolName: "bash", input: "run" },
       {
         type: "tool-result",
@@ -643,6 +671,7 @@ describe("reduceStreamEvent", () => {
   test("waiting_for_human preserves a running tool and its transient live output", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-waiting"),
+      { type: "step-start", stepId: "step-waiting", step: 0 },
       { type: "tool-call", toolCallId: "waiting", toolName: "bash", input: "run" },
       {
         type: "tool-output-delta",
@@ -670,6 +699,7 @@ describe("reduceStreamEvent", () => {
 
   test("settles a persisted tool after transient message focus is cleared", () => {
     const running = applyEvents(createProjection(), [
+      ...modelAttempt("run-restart", "step-restart"),
       { type: "tool-call", toolCallId: "call-before-restart", toolName: "ask_user", input: { questions: [] } },
     ]);
     const reloaded = { ...running, currentAssistantMessageId: undefined };
@@ -694,9 +724,10 @@ describe("reduceStreamEvent", () => {
   test("allows a later assistant message to reuse a completed toolCallId", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-reuse"),
+      { type: "step-start", stepId: "step-reuse-first", step: 0 },
       { type: "tool-call", toolCallId: "reused-call", toolName: "read", input: { path: "first.ts" } },
       { type: "tool-result", toolCallId: "reused-call", toolName: "read", settledAt: 123456700, result: makeFinalizedResult("first") },
-      { type: "step-start", step: 1 },
+      { type: "step-start", stepId: "step-reuse-second", step: 1 },
       { type: "tool-input-start", toolCallId: "reused-call", toolName: "read" },
       { type: "tool-call", toolCallId: "reused-call", toolName: "read", input: { path: "second.ts" } },
       { type: "tool-result", toolCallId: "reused-call", toolName: "read", settledAt: 123456701, result: makeFinalizedResult("second") },
@@ -723,8 +754,9 @@ describe("reduceStreamEvent", () => {
   test("ignores a duplicate result for a reused current call instead of settling older work", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-reuse"),
+      { type: "step-start", stepId: "step-reuse-old", step: 0 },
       { type: "tool-call", toolCallId: "reused-running", toolName: "read", input: { path: "old.ts" } },
-      { type: "step-start", step: 1 },
+      { type: "step-start", stepId: "step-reuse-current", step: 1 },
       { type: "tool-call", toolCallId: "reused-running", toolName: "read", input: { path: "current.ts" } },
       { type: "tool-result", toolCallId: "reused-running", toolName: "read", settledAt: 123456700, result: makeFinalizedResult("current") },
       { type: "tool-result", toolCallId: "reused-running", toolName: "read", settledAt: 123456701, result: makeFinalizedResult("duplicate") },
@@ -739,6 +771,7 @@ describe("reduceStreamEvent", () => {
 
   test("records effectful tool attempt metadata on running tool part", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-attempt", "step-attempt"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -760,6 +793,7 @@ describe("reduceStreamEvent", () => {
   test("execution-end marks an attempted tool interrupted without a synthetic result", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-unknown"),
+      { type: "step-start", stepId: "step-unknown", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -784,6 +818,7 @@ describe("reduceStreamEvent", () => {
   test("a retry attempt resumes an interrupted Bash tool so live output can continue", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-read-retry"),
+      { type: "step-start", stepId: "step-read-retry", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "pwd" } },
       executionEnd("run-read-retry", "interrupted"),
       {
@@ -821,6 +856,7 @@ describe("reduceStreamEvent", () => {
   test("execution-end marks partial tool input interrupted without counting a terminal result", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-partial-input"),
+      { type: "step-start", stepId: "step-partial-input", step: 0 },
       { type: "tool-input-start", toolCallId: "call-partial", toolName: "file_write" },
       executionEnd("run-partial-input", "aborted"),
     ]);
@@ -833,6 +869,7 @@ describe("reduceStreamEvent", () => {
 
   test("resolved undefined tool input is canonicalized to null", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-resolved-input", "step-resolved-input"),
       { type: "tool-call", toolCallId: "call-undefined-resolved", toolName: "read", input: {} },
       { type: "tool-input-resolved", toolCallId: "call-undefined-resolved", toolName: "read", input: undefined },
     ]);
@@ -845,6 +882,7 @@ describe("reduceStreamEvent", () => {
 
   test("direct undefined tool-call input is canonicalized to null", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-direct-input", "step-direct-input"),
       { type: "tool-call", toolCallId: "call-direct-undefined", toolName: "read", input: undefined },
     ]);
 
@@ -857,6 +895,7 @@ describe("reduceStreamEvent", () => {
   test("a durable result can settle an interrupted projection after execution-end", () => {
     const interrupted = applyEvents(createProjection(), [
       executionStart("run-unknown-late"),
+      { type: "step-start", stepId: "step-unknown-late", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -883,6 +922,7 @@ describe("reduceStreamEvent", () => {
   test("completed tool result is preserved across later recovery settlement", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-completed"),
+      { type: "step-start", stepId: "step-completed-tool", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
       {
         type: "tool-attempt",
@@ -907,15 +947,16 @@ describe("reduceStreamEvent", () => {
   test("interrupted execution marks incomplete text and reasoning as discarded context", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-interrupted"),
-      { type: "text-start" },
-      { type: "text-delta", text: "partial assistant truth" },
-      { type: "reasoning-start" },
-      { type: "reasoning-delta", text: "partial hidden thought" },
+      { type: "step-start", stepId: "step-interrupted", step: 0 },
+      { type: "text-start", stepId: "step-interrupted", blockId: "output" },
+      { type: "text-delta", stepId: "step-interrupted", blockId: "output", text: "partial assistant truth" },
+      { type: "reasoning-start", stepId: "step-interrupted", blockId: "reasoning" },
+      { type: "reasoning-delta", stepId: "step-interrupted", blockId: "reasoning", text: "partial hidden thought" },
       executionEnd("run-interrupted", "interrupted"),
     ]);
 
     const message = onlyMessage(state.messages);
-    const text = partOfType(message, "text");
+    const text = partOfType(message, "assistant-output");
     const reasoning = partOfType(message, "reasoning");
     expect(text).toMatchObject({
       text: "partial assistant truth",
@@ -932,12 +973,13 @@ describe("reduceStreamEvent", () => {
   test("failed execution marks incomplete text as discarded context", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-failed"),
-      { type: "text-start" },
-      { type: "text-delta", text: "partial before failure" },
+      { type: "step-start", stepId: "step-failed", step: 0 },
+      { type: "text-start", stepId: "step-failed", blockId: "output" },
+      { type: "text-delta", stepId: "step-failed", blockId: "output", text: "partial before failure" },
       executionEnd("run-failed", "failed", "stream failed"),
     ]);
 
-    expect(partOfType(onlyMessage(state.messages), "text").meta).toEqual({
+    expect(partOfType(onlyMessage(state.messages), "assistant-output").meta).toEqual({
       interrupted: true,
       discardedFromContext: true,
     });
@@ -946,12 +988,15 @@ describe("reduceStreamEvent", () => {
   test("completed execution finalizes incomplete text without discarding it", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-completed"),
-      { type: "text-start" },
-      { type: "text-delta", text: "late but accepted" },
-      executionEnd("run-completed", "completed"),
+      { type: "step-start", stepId: "step-completed", step: 0 },
+      { type: "text-start", stepId: "step-completed", blockId: "output" },
+      { type: "text-delta", stepId: "step-completed", blockId: "output", text: "late but accepted" },
+      { type: "text-end", stepId: "step-completed", blockId: "output" },
+      { type: "step-end", stepId: "step-completed", step: 0, finishReason: "stop" },
+      { ...executionEnd("run-completed", "completed"), finalOutputStepId: "step-completed" },
     ]);
 
-    const text = partOfType(onlyMessage(state.messages), "text");
+    const text = partOfType(onlyMessage(state.messages), "assistant-output");
     expect(text.completedAt).toBe(123456789);
     expect(text.meta).toBeUndefined();
   });
@@ -959,18 +1004,18 @@ describe("reduceStreamEvent", () => {
   test("interrupted step marks completed text and reasoning as discarded context", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-step-interrupted"),
-      { type: "step-start", step: 0 },
-      { type: "text-start" },
-      { type: "text-delta", text: "partial answer" },
-      { type: "text-end" },
-      { type: "reasoning-start" },
-      { type: "reasoning-delta", text: "partial reasoning" },
-      { type: "reasoning-end" },
-      { type: "step-end", step: 0, finishReason: "interrupted" },
+      { type: "step-start", stepId: "step-interrupted", step: 0 },
+      { type: "text-start", stepId: "step-interrupted", blockId: "output" },
+      { type: "text-delta", stepId: "step-interrupted", blockId: "output", text: "partial answer" },
+      { type: "text-end", stepId: "step-interrupted", blockId: "output" },
+      { type: "reasoning-start", stepId: "step-interrupted", blockId: "reasoning" },
+      { type: "reasoning-delta", stepId: "step-interrupted", blockId: "reasoning", text: "partial reasoning" },
+      { type: "reasoning-end", stepId: "step-interrupted", blockId: "reasoning" },
+      { type: "step-end", stepId: "step-interrupted", step: 0, finishReason: "interrupted" },
     ]);
 
     const message = onlyMessage(state.messages);
-    expect(partOfType(message, "text")).toMatchObject({
+    expect(partOfType(message, "assistant-output")).toMatchObject({
       text: "partial answer",
       completedAt: 123456789,
       meta: { interrupted: true, discardedFromContext: true },
@@ -1047,6 +1092,7 @@ describe("reduceStreamEvent", () => {
       ],
     };
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-diff", "step-diff"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_edit", input: { filePath: "src/index.ts" } },
       {
         type: "tool-result",
@@ -1067,6 +1113,7 @@ describe("reduceStreamEvent", () => {
 
   test("transitions tool call lifecycle from pending to running to error", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-tool-error", "step-tool-error"),
       { type: "tool-input-start", toolCallId: "call-1", toolName: "bash" },
       { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "bad" },
       {
@@ -1131,11 +1178,11 @@ describe("reduceStreamEvent", () => {
   });
 
   test("tracks step start and end", () => {
-    const usage = { inputTokens: 1, outputTokens: 2 };
+    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, reasoningTokens: 0, cachedInputTokens: 0 };
     const state = applyEvents(createProjection(), [
       executionStart("run-1"),
-      { type: "step-start", step: 0 },
-      { type: "step-end", step: 0, finishReason: "stop", usage },
+      { type: "step-start", stepId: "step-track", step: 0 },
+      { type: "step-end", stepId: "step-track", step: 0, finishReason: "stop", usage },
     ]);
 
     const step = onlyStep(state.steps);
@@ -1143,7 +1190,7 @@ describe("reduceStreamEvent", () => {
     expect(step.step).toBe(0);
     expect(step.executionId).toBe("run-1");
     expect(step.finishReason).toBe("stop");
-    expect(step.usage).toBe(usage);
+    expect(step.usage).toEqual(usage);
     expect(step.completedAt).toBeGreaterThan(0);
     expect(state.stats.steps).toEqual({ started: 1, completed: 1 });
     expect(state.stats.usage).toEqual({
@@ -1166,9 +1213,13 @@ describe("reduceStreamEvent", () => {
     const tail: SessionMessage = {
       id: "tail",
       role: "assistant",
-      parts: [{ type: "text", id: "p2", text: "tail", createdAt: 2, completedAt: 2 }],
+      parts: [{ type: "assistant-output", id: "p2", blockId: "output-tail", text: "tail", createdAt: 2, completedAt: 2 }],
       createdAt: 2,
       completedAt: 2,
+      executionId: "execution-tail",
+      runOrdinal: 0,
+      stepId: "step-tail",
+      outputPhase: "commentary",
     };
 
     const state = applyEvents(createProjection({ messages: [first, tail] }), [
@@ -1189,9 +1240,11 @@ describe("reduceStreamEvent", () => {
   test("stats remain unchanged after a compact event", () => {
     const before = applyEvents(createProjection(), [
       committedUserEvent("hello"),
-      { type: "text-start" },
-      { type: "text-delta", text: "hi" },
-      { type: "text-end" },
+      executionStart("run-stats"),
+      { type: "step-start", stepId: "step-stats", step: 0 },
+      { type: "text-start", stepId: "step-stats", blockId: "output" },
+      { type: "text-delta", stepId: "step-stats", blockId: "output", text: "hi" },
+      { type: "text-end", stepId: "step-stats", blockId: "output" },
     ]);
 
     const after = applyEvents(before, [{ type: "compact", summary: "summary", tailStartId: "missing" }]);
@@ -1210,9 +1263,13 @@ describe("reduceStreamEvent", () => {
     const tail: SessionMessage = {
       id: "tail",
       role: "assistant",
-      parts: [{ type: "text", id: "p2", text: "tail", createdAt: 2, completedAt: 2 }],
+      parts: [{ type: "assistant-output", id: "p2", blockId: "output-tail", text: "tail", createdAt: 2, completedAt: 2 }],
       createdAt: 2,
       completedAt: 2,
+      executionId: "execution-tail",
+      runOrdinal: 0,
+      stepId: "step-tail",
+      outputPhase: "commentary",
     };
 
     const state = applyEvents(createProjection({ messages: [first, tail] }), [
@@ -1304,20 +1361,38 @@ describe("reduceStreamEvent", () => {
   test("user, assistant, and total message counts update exactly without compaction double-counting", () => {
     const state = applyEvents(createProjection(), [
       committedUserEvent("first"),
-      { type: "text-start" },
-      { type: "text-delta", text: "reply" },
-      { type: "text-end" },
+      executionStart("run-message-count"),
+      { type: "step-start", stepId: "step-message-count", step: 0 },
+      { type: "text-start", stepId: "step-message-count", blockId: "output" },
+      { type: "text-delta", stepId: "step-message-count", blockId: "output", text: "reply" },
+      { type: "text-end", stepId: "step-message-count", blockId: "output" },
       { type: "compact", summary: "summary", tailStartId: "missing" },
-      { type: "text-start" },
-      { type: "text-delta", text: "same assistant message" },
+      { type: "text-start", stepId: "step-message-count", blockId: "output-2" },
+      { type: "text-delta", stepId: "step-message-count", blockId: "output-2", text: "same assistant message" },
     ]);
 
     expect(state.stats.messages).toEqual({ user: 1, assistant: 1, total: 2 });
   });
 
+  test("an empty stream anchor before a Tool counts the content-bearing Assistant exactly once", () => {
+    const state = applyEvents(createProjection(), [
+      executionStart("run-empty-before-tool"),
+      { type: "step-start", stepId: "step-empty-before-tool", step: 0 },
+      { type: "text-start", stepId: "step-empty-before-tool", blockId: "empty" },
+      { type: "tool-call", toolCallId: "call-1", toolName: "read", input: {} },
+      { type: "text-end", stepId: "step-empty-before-tool", blockId: "empty" },
+    ]);
+
+    const message = onlyMessage(state.messages);
+    expect(message.parts).toHaveLength(1);
+    expect(partOfType(message, "tool").toolCallId).toBe("call-1");
+    expect(state.stats.messages).toEqual({ user: 0, assistant: 1, total: 1 });
+  });
+
   test("N concurrent tool-call events produce N tool call stats", () => {
     const state = applyEvents(createProjection(), [
-      { type: "step-start", step: 0 },
+      executionStart("run-tools"),
+      { type: "step-start", stepId: "step-tools", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: {} },
       { type: "tool-call", toolCallId: "call-2", toolName: "read", input: {} },
       { type: "tool-call", toolCallId: "call-3", toolName: "read", input: {} },
@@ -1328,7 +1403,8 @@ describe("reduceStreamEvent", () => {
 
   test("failed tool-result counts as called and failed but not completed", () => {
     const state = applyEvents(createProjection(), [
-      { type: "step-start", step: 0 },
+      executionStart("run-failed-tool"),
+      { type: "step-start", stepId: "step-failed-tool", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "exit 1" },
       { type: "tool-result", toolCallId: "call-1", toolName: "bash", settledAt: 123456700, result: makeFinalizedResult("boom", true) },
     ]);
@@ -1338,6 +1414,7 @@ describe("reduceStreamEvent", () => {
 
   test("tool-input-start followed by duplicate calls and results counts one call and one terminal", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-duplicate-tool", "step-duplicate-tool"),
       { type: "tool-input-start", toolCallId: "call-1", toolName: "read" },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } },
@@ -1351,6 +1428,7 @@ describe("reduceStreamEvent", () => {
   test("execution-end does not count a tool failure before Registry settlement", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-1"),
+      { type: "step-start", stepId: "step-unsettled-tool", step: 0 },
       { type: "tool-input-start", toolCallId: "pending", toolName: "read" },
       { type: "tool-call", toolCallId: "running", toolName: "read", input: {} },
       executionEnd("run-1", "failed", "boom"),
@@ -1363,12 +1441,12 @@ describe("reduceStreamEvent", () => {
   test("step-end usage provider variants normalize into shared usage stats", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-usage"),
-      { type: "step-start", step: 0 },
-      { type: "step-end", step: 0, finishReason: "stop", usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 6 } },
-      { type: "step-start", step: 1 },
-      { type: "step-end", step: 1, finishReason: "stop", usage: { input_tokens: 5, output_tokens: 7 } },
-      { type: "step-start", step: 2 },
-      { type: "step-end", step: 2, finishReason: "stop", usage: { prompt_token_count: 11, candidates_token_count: 13, total_token_count: 29 } },
+      { type: "step-start", stepId: "step-usage-0", step: 0 },
+      { type: "step-end", stepId: "step-usage-0", step: 0, finishReason: "stop", usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 6 } },
+      { type: "step-start", stepId: "step-usage-1", step: 1 },
+      { type: "step-end", stepId: "step-usage-1", step: 1, finishReason: "stop", usage: { input_tokens: 5, output_tokens: 7 } },
+      { type: "step-start", stepId: "step-usage-2", step: 2 },
+      { type: "step-end", stepId: "step-usage-2", step: 2, finishReason: "stop", usage: { prompt_token_count: 11, candidates_token_count: 13, total_token_count: 29 } },
     ]);
 
     expect(state.stats.usage).toEqual({
@@ -1383,12 +1461,12 @@ describe("reduceStreamEvent", () => {
   test("reasoning and cached-token aliases populate normalized usage fields", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-usage"),
-      { type: "step-start", step: 0 },
-      { type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 1, outputTokens: 2, reasoningTokens: 3, cachedInputTokens: 4 } },
-      { type: "step-start", step: 1 },
-      { type: "step-end", step: 1, finishReason: "stop", usage: { promptTokens: 5, completionTokens: 6, completion_tokens_details: { reasoning_tokens: 7 }, prompt_tokens_details: { cached_tokens: 8 } } },
-      { type: "step-start", step: 2 },
-      { type: "step-end", step: 2, finishReason: "stop", usage: { input_tokens: 9, output_tokens: 10, output_token_details: { reasoning: 11 }, cache_read_input_tokens: 12 } },
+      { type: "step-start", stepId: "step-reason-0", step: 0 },
+      { type: "step-end", stepId: "step-reason-0", step: 0, finishReason: "stop", usage: { inputTokens: 1, outputTokens: 2, reasoningTokens: 3, cachedInputTokens: 4 } },
+      { type: "step-start", stepId: "step-reason-1", step: 1 },
+      { type: "step-end", stepId: "step-reason-1", step: 1, finishReason: "stop", usage: { promptTokens: 5, completionTokens: 6, completion_tokens_details: { reasoning_tokens: 7 }, prompt_tokens_details: { cached_tokens: 8 } } },
+      { type: "step-start", stepId: "step-reason-2", step: 2 },
+      { type: "step-end", stepId: "step-reason-2", step: 2, finishReason: "stop", usage: { input_tokens: 9, output_tokens: 10, output_token_details: { reasoning: 11 }, cache_read_input_tokens: 12 } },
     ]);
 
     expect(state.stats.usage).toEqual({
@@ -1414,7 +1492,7 @@ describe("reduceStreamEvent", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-computed"),
       committedUserEvent("hello", "run-computed"),
-      { type: "step-start", step: 0 },
+      { type: "step-start", stepId: "step-computed", step: 0 },
     ]);
     const executionId = state.executions[0]!.id;
 
@@ -1463,10 +1541,11 @@ describe("reduceStreamEvent", () => {
   test("compaction summary updates do not mutate existing stats", () => {
     const before = applyEvents(createProjection(), [
       committedUserEvent("old"),
-      { type: "step-start", step: 0 },
+      executionStart("run-compact"),
+      { type: "step-start", stepId: "step-compact", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: {} },
       { type: "tool-result", toolCallId: "call-1", toolName: "read", settledAt: 123456700, result: makeFinalizedResult("ok") },
-      { type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 3, outputTokens: 4 } },
+      { type: "step-end", stepId: "step-compact", step: 0, finishReason: "stop", usage: { inputTokens: 3, outputTokens: 4 } },
     ]);
     const stats = before.stats;
 
@@ -1553,22 +1632,19 @@ describe("reduceStreamEvent", () => {
     ]);
   });
 
-  test("records execution errors on matching or synthetic steps without fabricating a pre-Step failure", () => {
+  test("records execution errors only on an existing model attempt", () => {
     const matching = applyEvents(createProjection(), [
       executionStart("run-error"),
-      { type: "step-start", step: 1 },
-      { type: "execution-error", step: 1, error: "bad execution" },
+      { type: "step-start", stepId: "step-error", step: 1 },
+      { type: "execution-error", stepId: "step-error", step: 1, error: "bad execution" },
     ]);
     expect(onlyStep(matching.steps).error).toBe("bad execution");
 
-    const synthetic = applyEvents(createProjection(), [
+    const unknownAttempt = applyEvents(createProjection(), [
       executionStart("run-error"),
-      { type: "execution-error", step: 4, error: "missing step" },
+      { type: "execution-error", stepId: "step-missing", step: 4, error: "missing step" },
     ]);
-    const step = onlyStep(synthetic.steps);
-    expect(step.step).toBe(4);
-    expect(step.executionId).toBe("run-error");
-    expect(step.error).toBe("missing step");
+    expect(unknownAttempt.steps).toEqual([]);
 
     const preparation = applyEvents(createProjection({ currentExecutionId: "run-error" }), [
       { type: "execution-error", error: "context preparation failed" },
@@ -1578,6 +1654,7 @@ describe("reduceStreamEvent", () => {
 
   test("tool-input-resolved updates running tool part input with defaults", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-input-resolved", "step-input-resolved"),
       { type: "tool-call", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc" } },
       { type: "tool-input-resolved", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc", block: false, timeout_ms: 60000 } },
     ]);
@@ -1590,6 +1667,7 @@ describe("reduceStreamEvent", () => {
 
   test("tool-input-resolved updates completed tool part input", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-input-completed", "step-input-completed"),
       { type: "tool-call", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc" } },
       { type: "tool-result", toolCallId: "call-1", toolName: "background_output", settledAt: 123456700, result: makeFinalizedResult("done") },
       { type: "tool-input-resolved", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc", block: false } },
@@ -1603,6 +1681,7 @@ describe("reduceStreamEvent", () => {
 
   test("tool-input-resolved is ignored for pending tool part", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-input-pending", "step-input-pending"),
       { type: "tool-input-start", toolCallId: "call-1", toolName: "background_output" },
       { type: "tool-input-resolved", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc", block: false } },
     ]);
@@ -1615,6 +1694,7 @@ describe("reduceStreamEvent", () => {
 
   test("tool-input-resolved is ignored when toolCallId not found", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-input-missing", "step-input-missing"),
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a.ts" } },
       { type: "tool-input-resolved", toolCallId: "call-unknown", toolName: "read", input: { path: "a.ts" } },
     ]);
@@ -1646,6 +1726,7 @@ describe("reduceStreamEvent", () => {
 
   test("session-visible llm retry creates a recovery notice part", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-retry-notice", "step-1"),
       {
         type: "llm-retry",
         scope: "session",
@@ -1674,6 +1755,7 @@ describe("reduceStreamEvent", () => {
 
   test("session-visible recovery transitions a notice to recovered", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-recovery-notice", "step-1"),
       {
         type: "llm-retry",
         scope: "session",
@@ -1709,6 +1791,7 @@ describe("reduceStreamEvent", () => {
 
   test("session-visible recovery failure transitions a notice to failed", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-recovery-failed", "step-recovery-failed"),
       {
         type: "llm-retry",
         scope: "session",
@@ -1743,6 +1826,7 @@ describe("reduceStreamEvent", () => {
 
   test("llm-recovery-failed with attempt 0 creates a failed recovery-notice part", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-recovery-zero", "step-1"),
       {
         type: "llm-recovery-failed",
         scope: "session",
@@ -1767,6 +1851,7 @@ describe("reduceStreamEvent", () => {
 
   test("llm-recovery-failed with statusCode passes it to recovery-notice part", () => {
     const state = applyEvents(createProjection(), [
+      ...modelAttempt("run-recovery-status", "step-1"),
       {
         type: "llm-recovery-failed",
         scope: "session",
@@ -1790,7 +1875,7 @@ describe("reduceStreamEvent", () => {
 
   test("retry and recovery events are serializable and replay-safe", () => {
     const events: StreamEvent[] = [
-      executionStart("run-retry"),
+      ...modelAttempt("run-retry", "step-retry"),
       {
         type: "llm-retry",
         scope: "session",
@@ -1836,8 +1921,8 @@ describe("reduceStreamEvent", () => {
   test("recoverable attempts do not end execution and execution errors remain after recovery", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-recover"),
-      { type: "step-start", step: 0 },
-      { type: "execution-error", step: 0, error: "transient stream error" },
+      { type: "step-start", stepId: "step-recover", step: 0 },
+      { type: "execution-error", stepId: "step-recover", step: 0, error: "transient stream error" },
       {
         type: "llm-retry",
         scope: "session",
@@ -1845,7 +1930,7 @@ describe("reduceStreamEvent", () => {
         attempt: 1,
         errorKind: "network",
         message: "retrying",
-        stepId: "step-1",
+        stepId: "step-recover",
       },
       {
         type: "llm-recovery",
@@ -1853,7 +1938,7 @@ describe("reduceStreamEvent", () => {
         visibility: "session",
         attempt: 1,
         message: "recovered",
-        stepId: "step-1",
+        stepId: "step-recover",
       },
     ]);
 
@@ -1863,9 +1948,87 @@ describe("reduceStreamEvent", () => {
     expect(partOfType(onlyMessage(state.messages), "recovery-notice").status).toBe("recovered");
   });
 
+  test("recovery notices targeting an older attempt do not move the current Assistant pointer", () => {
+    const ctx = createDeterministicContext();
+    const interrupted = applyEvents(createProjection(), [
+      executionStart("run-retry-tool"),
+      { type: "step-start", stepId: "step-failed", step: 0 },
+      { type: "tool-call", toolCallId: "call-reused", toolName: "read", input: { path: "old.ts" } },
+      { type: "step-end", stepId: "step-failed", step: 0, finishReason: "interrupted" },
+    ], ctx);
+    const state = applyEvents({
+      ...interrupted,
+      messages: interruptIncompleteToolParts(interrupted.messages, 123456700),
+    }, [
+      { type: "step-start", stepId: "step-success", step: 0 },
+      { type: "tool-call", toolCallId: "call-reused", toolName: "read", input: { path: "new.ts" } },
+      {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        profile: "partial-output-recovery",
+        attempt: 1,
+        errorKind: "network",
+        message: "retrying",
+        stepId: "step-failed",
+      },
+      {
+        type: "llm-recovery",
+        scope: "session",
+        visibility: "session",
+        profile: "partial-output-recovery",
+        attempt: 1,
+        message: "recovered",
+        stepId: "step-failed",
+      },
+      {
+        type: "tool-attempt",
+        toolCallId: "call-reused",
+        toolName: "read",
+        attemptId: "attempt-new",
+        timestamp: 123456700,
+        destructive: false,
+      },
+      {
+        type: "tool-result",
+        toolCallId: "call-reused",
+        toolName: "read",
+        settledAt: 123456701,
+        result: makeFinalizedResult("new content"),
+      },
+    ], ctx);
+
+    const attempts = state.messages.filter((message) => message.role === "assistant");
+    expect(state.currentAssistantMessageId).toBe(attempts[1]!.id);
+    expect(partOfType(attempts[0]!, "tool").state).toBe("interrupted");
+    expect(partOfType(attempts[1]!, "tool")).toMatchObject({
+      state: "completed",
+      input: { path: "new.ts" },
+    });
+    expect(partOfType(attempts[0]!, "recovery-notice").status).toBe("recovered");
+  });
+
+  test("non-completed execution terminals discard incomplete model output", () => {
+    for (const terminalStatus of ["failed", "aborted", "cancelled", "timed_out", "interrupted"] as const) {
+      const state = applyEvents(createProjection(), [
+        executionStart(`run-${terminalStatus}`),
+        { type: "step-start", stepId: `step-${terminalStatus}`, step: 0 },
+        { type: "text-start", stepId: `step-${terminalStatus}`, blockId: "output" },
+        { type: "text-delta", stepId: `step-${terminalStatus}`, blockId: "output", text: "partial" },
+        executionEnd(`run-${terminalStatus}`, terminalStatus),
+      ]);
+
+      expect(partOfType(onlyMessage(state.messages), "assistant-output")).toMatchObject({
+        completedAt: 123456789,
+        meta: { interrupted: true, discardedFromContext: true },
+      });
+    }
+  });
+
   test("execution-end completes in-flight recovery notices", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-notice"),
+      { type: "step-start", stepId: "step-1", step: 0 },
       {
         type: "llm-retry",
         scope: "session",

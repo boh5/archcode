@@ -7,7 +7,10 @@ import type { StoredMessage } from "../store/types";
 import { storeManager } from "../store/store";
 import { setLlmAdapterForTest } from "../llm";
 import { createFakeRetryScheduler } from "../testing/fake-retry-scheduler";
-import { createTestModelInfo } from "../testing/test-execution-fixtures";
+import {
+  createTestModelInfo,
+  testExecutionStart,
+} from "../testing/test-execution-fixtures";
 import {
   CompactError,
   type CompactInput,
@@ -68,7 +71,18 @@ function makeAssistantMessage(id: string, text: string): StoredMessage {
   return {
     id,
     role: "assistant",
-    parts: [{ type: "text", id: `part-${id}`, text, createdAt: Date.now(), completedAt: Date.now() }],
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
+    parts: [{
+      type: "assistant-output",
+      id: `part-${id}`,
+      blockId: `block-${id}`,
+      text,
+      createdAt: Date.now(),
+      completedAt: Date.now(),
+    }],
     createdAt: Date.now(),
     completedAt: Date.now(),
   };
@@ -93,6 +107,10 @@ function makeAssistantMessageWithTool(
     return {
       id,
       role: "assistant",
+      executionId: `execution:${id}`,
+      runOrdinal: 0,
+      stepId: `step:${id}`,
+      outputPhase: "commentary",
       parts: [
         {
           ...basePart,
@@ -112,6 +130,10 @@ function makeAssistantMessageWithTool(
     return {
       id,
       role: "assistant",
+      executionId: `execution:${id}`,
+      runOrdinal: 0,
+      stepId: `step:${id}`,
+      outputPhase: "commentary",
       parts: [
         {
           ...basePart,
@@ -131,6 +153,10 @@ function makeAssistantMessageWithTool(
     return {
       id,
       role: "assistant",
+      executionId: `execution:${id}`,
+      runOrdinal: 0,
+      stepId: `step:${id}`,
+      outputPhase: "commentary",
       parts: [
         {
           ...basePart,
@@ -145,6 +171,10 @@ function makeAssistantMessageWithTool(
   return {
     id,
     role: "assistant",
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
     parts: [
       {
         ...basePart,
@@ -603,9 +633,18 @@ describe("compact", () => {
         clientRequestId: `request-${messageId}`,
       }],
     });
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "Hi" });
-    store.getState().append({ type: "text-end" });
+    const stepId = `step:${messageId}`;
+    const blockId = `block:${messageId}`;
+    store.getState().append(testExecutionStart(executionId));
+    store.getState().append({ type: "step-start", stepId, step: 0 });
+    store.getState().append({ type: "text-start", stepId, blockId });
+    store.getState().append({
+      type: "text-delta",
+      stepId,
+      blockId,
+      text: "Hi",
+    });
+    store.getState().append({ type: "text-end", stepId, blockId });
 
     const result: CompactResult = {
       summary: "Test summary of conversation",

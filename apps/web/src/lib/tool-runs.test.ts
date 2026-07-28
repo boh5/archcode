@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   TOOL_ASK_USER,
   TOOL_DELEGATE,
+  type AssistantSessionPart,
   type SessionMessage,
-  type SessionPart,
   type ToolPart,
 } from "@archcode/protocol";
 import { buildToolRunTimeline } from "./tool-runs";
@@ -49,36 +49,85 @@ function tool(id: string, toolName = "file_read", state: ToolPart["state"] = "ru
   };
 }
 
-function text(id: string, value: string): SessionPart {
+function output(id: string, value: string): AssistantSessionPart {
   const createdAt = partTime();
-  return { type: "text", id, text: value, createdAt, completedAt: createdAt };
+  return {
+    type: "assistant-output",
+    id,
+    blockId: id,
+    text: value,
+    createdAt,
+    completedAt: createdAt,
+  };
 }
 
-function reasoning(id: string): SessionPart {
+function reasoning(id: string): AssistantSessionPart {
   const createdAt = partTime();
-  return { type: "reasoning", id, text: id, createdAt, completedAt: createdAt };
+  return {
+    type: "reasoning",
+    id,
+    blockId: id,
+    text: id,
+    createdAt,
+    completedAt: createdAt,
+  };
 }
 
-function notice(id: string): SessionPart {
+function notice(id: string): AssistantSessionPart {
   const createdAt = partTime();
   return { type: "system-notice", id, notice: id, createdAt, completedAt: createdAt };
 }
 
-function message(id: string, parts: SessionPart[], role: SessionMessage["role"] = "assistant"): SessionMessage {
-  return { id, role, parts, createdAt: partTime(), completedAt: partTime() };
+function message(
+  id: string,
+  parts: AssistantSessionPart[],
+): SessionMessage {
+  const createdAt = partTime();
+  return {
+    id,
+    role: "assistant",
+    parts,
+    executionId: "execution",
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
+    createdAt,
+    completedAt: partTime(),
+  };
+}
+
+function userMessage(id: string, value: string): SessionMessage {
+  const createdAt = partTime();
+  return {
+    id,
+    role: "user",
+    parts: [{
+      type: "text",
+      id: `${id}:text`,
+      text: value,
+      createdAt,
+      completedAt: createdAt,
+    }],
+    createdAt,
+    completedAt: createdAt,
+  };
 }
 
 function slices(...messages: SessionMessage[]) {
-  return messages.map((entry) => ({ message: entry, parts: entry.parts }));
+  return messages.map((entry) => ({
+    kind: "message" as const,
+    message: entry,
+    parts: entry.parts,
+  }));
 }
 
 describe("buildToolRunTimeline", () => {
   test("keeps Reasoning visible as a hard boundary between Tool Runs", () => {
     const result = buildToolRunTimeline(slices(
-      message("intro", [text("text-a", "I will inspect this.")]),
+      message("intro", [output("text-a", "I will inspect this.")]),
       message("tools-a", [reasoning("reason-a"), tool("one"), tool("two")]),
       message("tools-b", [tool("three"), reasoning("reason-b"), tool("four"), tool("five")]),
-      message("middle", [text("text-b", "The first pass found the boundary.")]),
+      message("middle", [output("text-b", "The first pass found the boundary.")]),
       message("tools-c", [tool("six"), tool("seven"), tool("eight")]),
     ));
 
@@ -155,7 +204,7 @@ describe("buildToolRunTimeline", () => {
         tool("five"),
         tool("six"),
       ]),
-      message("user", [text("reply", "Yes")], "user"),
+      userMessage("user", "Yes"),
       message("after-user", [tool("seven"), tool("eight")]),
     ));
 
@@ -168,7 +217,7 @@ describe("buildToolRunTimeline", () => {
     ]);
     expect(result.filter((entry) => entry.kind === "message").flatMap((entry) =>
       entry.kind === "message" ? entry.parts.map((part) => part.id) : []
-    )).toEqual(["delegate", "three", "ask", "four", "notice", "reply"]);
+    )).toEqual(["delegate", "three", "ask", "four", "notice", "user:text"]);
   });
 
   test("keeps mutations and Bash direct so their specialized disclosure remains available", () => {
@@ -205,10 +254,10 @@ describe("buildToolRunTimeline", () => {
 
   test("keeps message fragments on both sides of a run", () => {
     const source = message("mixed", [
-      text("before", "Before"),
+      output("before", "Before"),
       tool("one"),
       tool("two"),
-      text("after", "After"),
+      output("after", "After"),
     ]);
     const result = buildToolRunTimeline(slices(source));
     const messageEntries = result.filter(
@@ -224,7 +273,7 @@ describe("buildToolRunTimeline", () => {
 
   test("does not insert an extra message between text and a trailing Tool Run", () => {
     const source = message("mixed", [
-      text("before", "Before"),
+      output("before", "Before"),
       tool("one"),
       tool("two"),
     ]);

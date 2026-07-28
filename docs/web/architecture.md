@@ -118,9 +118,13 @@ authoritative Session snapshot.
 ### Execution workstream projection
 
 An Execution is a single logical record even when it has several run spans.
-The Web renders its persisted messages in array order as alternating canonical
-user input and Work Segments. A canonical user input starts the following
-segment; tools are never aggregated across that boundary. HITL resume does not
-add a segment. Segment IDs and collapse/navigation state are Web-only, while
-Execution status, duration, usage, and final response remain attached to the
-one Execution.
+The Web renders persisted messages and parts in their stored order. Every
+canonical UserMessage starts exactly one Work Segment, including adjacent
+inputs; there is no input batching. Each Segment keeps commentary, Reasoning,
+and tools in one ordered Work timeline, and tool aggregation never crosses a
+Segment or intervening non-tool item boundary. Only Assistant output with persisted
+`outputPhase: "final_answer"` renders below Work; Web does not infer finality.
+Reasoning usage is attached to its exact model attempt, not summed into an
+Execution-wide timeline item. HITL resume does not add a segment. Segment IDs
+and collapse/navigation state are Web-only, while Execution status, duration,
+usage, and final response remain attached to the one Execution.

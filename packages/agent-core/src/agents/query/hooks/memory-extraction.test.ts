@@ -55,10 +55,15 @@ function makeAssistantMessage(text: string, now: number): StoredMessage {
   return {
     id: crypto.randomUUID(),
     role: "assistant",
+    executionId: "execution-memory",
+    runOrdinal: 0,
+    stepId: crypto.randomUUID(),
+    outputPhase: "commentary",
     parts: [
       {
-        type: "text",
+        type: "assistant-output",
         id: crypto.randomUUID(),
+        blockId: crypto.randomUUID(),
         text,
         createdAt: now,
         completedAt: now,

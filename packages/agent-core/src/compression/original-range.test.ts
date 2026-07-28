@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createEmptySessionStats } from "@archcode/protocol";
+import {
+  createEmptySessionStats,
+  type AssistantSessionPart,
+  type UserSessionPart,
+} from "@archcode/protocol";
 import { createEmptyCompressionState, prepareDynamicRangeCompression } from "./index";
 import { resolveCompressionOriginalRange } from "./original-range";
 import type { CompressionSummary } from "./types";
@@ -43,12 +47,48 @@ function summary(childBlockRefs: CompressionSummary["childBlockRefs"] = []): Com
   };
 }
 
-function text(id: string, value: string): StoredMessage["parts"][number] {
+function text(id: string, value: string): UserSessionPart {
   return { type: "text", id, text: value, createdAt: 100, completedAt: 101 };
 }
 
-function message(id: string, role: StoredMessage["role"], parts: StoredMessage["parts"]): StoredMessage {
-  return { id, role, parts, createdAt: 100, completedAt: 101 };
+function output(id: string, value: string): AssistantSessionPart {
+  return {
+    type: "assistant-output",
+    id,
+    blockId: `block:${id}`,
+    text: value,
+    createdAt: 100,
+    completedAt: 101,
+  };
+}
+
+function message(id: string, role: "user", parts: UserSessionPart[]): StoredMessage;
+function message(id: string, role: "assistant", parts: AssistantSessionPart[]): StoredMessage;
+function message(
+  id: string,
+  role: StoredMessage["role"],
+  parts: UserSessionPart[] | AssistantSessionPart[],
+): StoredMessage {
+  if (role === "user") {
+    return {
+      id,
+      role,
+      parts: parts as UserSessionPart[],
+      createdAt: 100,
+      completedAt: 101,
+    };
+  }
+  return {
+    id,
+    role,
+    parts: parts as AssistantSessionPart[],
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
+    createdAt: 100,
+    completedAt: 101,
+  };
 }
 
 function messagesWithTools(): StoredMessage[] {
@@ -86,7 +126,7 @@ function messagesWithTools(): StoredMessage[] {
       endedAt: 101,
     }]),
     message("msg-5", "user", [text("t5", "tail user")]),
-    message("msg-6", "assistant", [text("t6", "tail assistant")]),
+    message("msg-6", "assistant", [output("t6", "tail assistant")]),
   ];
 }
 

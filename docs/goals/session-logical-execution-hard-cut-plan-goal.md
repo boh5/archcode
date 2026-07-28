@@ -270,6 +270,11 @@ Startup recovery 的唯一 lifecycle writer 是 Manager；Store load 只返回�
 
 这些是当前格式写入边界的 crash recovery，不是 migration、compatibility 或 fallback。
 
+> **Superseded for Web display.** The ordered Work, Assistant phase, adjacent
+> UserMessage, and Reasoning-usage clauses in this section are superseded by
+> `session-workstream-message-phase-hard-cut-plan-goal.md`. This goal remains
+> authoritative for Execution lifecycle, suspension, recovery, and duration.
+
 ## Web Ordered Work Segments
 
 Web 在每个 Execution 内严格遍历 canonical `messages` 数组，禁止按时间重排：
@@ -419,6 +424,11 @@ Navigation/Inspector：
 - Steer claim 后仍有 durable tool output 再 crash 时，该 Work 仍属于旧 Segment；recovered Steer 在 post-prior-work boundary 开新 Segment，连续 recovered Steer 仍是一个 input batch，全部 duration 精确分区。
 - orphan HITL 不可继续回答；任何 recovery 都不创建 tool_batch/补偿 Execution，也不自动重放未知 effectful call。
 - Store load 没有 lifecycle mutation；架构测试证明只有 Manager 写 start/suspend/update/resume/end。
+
+> **Superseded for Web display.** The Work/Assistant-output, adjacent-input,
+> and Reasoning display clauses in AC-07 are superseded by
+> `session-workstream-message-phase-hard-cut-plan-goal.md`; its lifecycle and
+> duration clauses remain historical acceptance evidence for this goal.
 
 ### AC-07：Work Segment、状态与导航显示准确
 

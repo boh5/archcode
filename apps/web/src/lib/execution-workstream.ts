@@ -1,8 +1,9 @@
 import {
   TOOL_DELEGATE,
-  normalizeUsage,
   renderCompressionSummarySnapshot,
   type AgentDescriptor,
+  type AssistantSessionPart,
+  type AssistantOutputPart,
   type CompressionBlockPart,
   type CompressionBlockSnapshot,
   type CompressionStateSnapshot,
@@ -11,8 +12,8 @@ import {
   type SessionMessage,
   type SessionPart,
   type SessionStep,
-  type TextPart,
   type ToolChildSessionLink,
+  type UserSessionPart,
 } from "@archcode/protocol";
 
 export interface ExecutionWorkstreamInput {
@@ -35,34 +36,43 @@ export interface WorkstreamSessionIdentity {
   displayName?: string;
 }
 
-export interface ExecutionWorkstreamMessageSlice {
+export interface ExecutionWorkstreamFinalResponse {
+  /** The Assistant message explicitly committed as final by Runtime. */
+  message: SessionMessage;
+  /** Ordered output blocks owned by the final-phase message. */
+  outputParts: readonly AssistantOutputPart[];
+}
+
+export interface ExecutionWorkstreamMessageItem {
+  kind: "message";
   /** Authoritative owning message. */
   message: SessionMessage;
-  /** Ordered references to the parts that remain inside Work. */
+  /** Ordered references to parts that remain inside Work. */
   parts: readonly SessionPart[];
 }
 
-export interface ExecutionWorkstreamFinalResponse {
-  /** The last Assistant message in the completed Execution. */
-  message: SessionMessage;
-  /** Ordered, completed, trusted, non-empty Text part references. */
-  textParts: readonly TextPart[];
+export interface ExecutionWorkstreamReasoningUsageItem {
+  kind: "reasoning-usage";
+  id: string;
+  stepId: string;
+  tokens: number;
 }
+
+export type ExecutionWorkstreamWorkItem =
+  | ExecutionWorkstreamMessageItem
+  | ExecutionWorkstreamReasoningUsageItem;
 
 /**
  * A read-only, Web-only slice of one logical Execution.  Its boundaries are
- * canonical input batches in message-array order; it is not a persisted
+ * canonical inputs in message-array order; it is not a persisted
  * lifecycle object.
  */
 export interface ExecutionWorkstreamSegment {
   id: string;
   executionId: string;
   executionNumber: number;
-  inputMessages: readonly SessionMessage[];
-  inputMessageIds: readonly string[];
-  workMessages: readonly ExecutionWorkstreamMessageSlice[];
-  /** Assistant text rendered outside the collapsible Work disclosure. */
-  outputMessages: readonly ExecutionWorkstreamMessageSlice[];
+  inputMessage?: SessionMessage;
+  workItems: readonly ExecutionWorkstreamWorkItem[];
   finalResponse?: ExecutionWorkstreamFinalResponse;
   windowStartedAt: number;
   windowEndedAt: number;
@@ -78,8 +88,6 @@ export interface ExecutionWorkstreamExecution {
   /** Ordered Web display projection; domain ownership remains the Execution. */
   segments: readonly ExecutionWorkstreamSegment[];
   stepCount: number;
-  /** Sum of provider-reported reasoning usage for this Execution. */
-  reasoningTokens: number;
   toolCount: number;
   childCount: number;
   /** Only links resolved through delegate Tool parts in this Execution. */
@@ -139,18 +147,27 @@ function sameReferences<T>(left: readonly T[], right: readonly T[]): boolean {
   );
 }
 
-function sameMessageSlices(
-  left: readonly ExecutionWorkstreamMessageSlice[],
-  right: readonly ExecutionWorkstreamMessageSlice[],
+function sameWorkItems(
+  left: readonly ExecutionWorkstreamWorkItem[],
+  right: readonly ExecutionWorkstreamWorkItem[],
 ): boolean {
   return (
     left.length === right.length &&
-    left.every((slice, index) => {
+    left.every((item, index) => {
       const candidate = right[index];
+      if (candidate === undefined || item.kind !== candidate.kind) return false;
+      if (item.kind === "reasoning-usage") {
+        return (
+          candidate.kind === "reasoning-usage" &&
+          item.id === candidate.id &&
+          item.stepId === candidate.stepId &&
+          item.tokens === candidate.tokens
+        );
+      }
       return (
-        candidate !== undefined &&
-        slice.message === candidate.message &&
-        sameReferences(slice.parts, candidate.parts)
+        candidate.kind === "message" &&
+        item.message === candidate.message &&
+        sameReferences(item.parts, candidate.parts)
       );
     })
   );
@@ -163,7 +180,7 @@ function sameFinalResponse(
   if (left === undefined || right === undefined) return left === right;
   return (
     left.message === right.message &&
-    sameReferences(left.textParts, right.textParts)
+    sameReferences(left.outputParts, right.outputParts)
   );
 }
 
@@ -176,10 +193,8 @@ function sameSegment(
     left.windowStartedAt === right.windowStartedAt &&
     left.windowEndedAt === right.windowEndedAt &&
     left.activeDurationMs === right.activeDurationMs &&
-    sameReferences(left.inputMessages, right.inputMessages) &&
-    sameReferences(left.inputMessageIds, right.inputMessageIds) &&
-    sameMessageSlices(left.workMessages, right.workMessages) &&
-    sameMessageSlices(left.outputMessages, right.outputMessages) &&
+    left.inputMessage === right.inputMessage &&
+    sameWorkItems(left.workItems, right.workItems) &&
     sameFinalResponse(left.finalResponse, right.finalResponse)
   );
 }
@@ -194,7 +209,6 @@ function sameExecutionProjection(
     left.sortTime === right.sortTime &&
     left.record === right.record &&
     left.stepCount === right.stepCount &&
-    left.reasoningTokens === right.reasoningTokens &&
     left.toolCount === right.toolCount &&
     left.childCount === right.childCount &&
     left.segments.length === right.segments.length &&
@@ -315,54 +329,40 @@ export function isWebVisibleSessionPart(part: SessionPart): boolean {
       return false;
     case "text":
     case "attachment":
-    case "reasoning":
     case "tool":
     case "compaction":
     case "system-notice":
     case "recovery-notice":
       return true;
+    case "assistant-output":
+    case "reasoning":
+      return part.text.length > 0;
   }
 }
 
-function isTrustedFinalTextPart(part: SessionPart): part is TextPart {
-  return (
-    part.type === "text" &&
-    part.completedAt !== undefined &&
-    part.text.trim().length > 0 &&
-    part.meta?.interrupted !== true &&
-    part.meta?.discardedFromContext !== true
-  );
+function isAssistantOutputPart(
+  part: SessionPart,
+): part is AssistantOutputPart {
+  return part.type === "assistant-output";
 }
 
 function finalResponseForExecution(
-  record: SessionExecutionRecord,
   messages: readonly SessionMessage[],
-  steps: readonly SessionStep[],
 ): ExecutionWorkstreamFinalResponse | undefined {
-  if (record.status !== "completed") return undefined;
-
-  const terminalStep = steps.at(-1);
-  if (
-    terminalStep?.completedAt === undefined ||
-    terminalStep.finishReason === undefined ||
-    terminalStep.finishReason === "tool-calls" ||
-    terminalStep.finishReason === "interrupted" ||
-    terminalStep.finishReason === "error"
-  ) {
-    return undefined;
-  }
-
   let message: SessionMessage | undefined;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const candidate = messages[index];
-    if (candidate?.role !== "assistant") continue;
-    message = candidate;
-    break;
+    if (
+      candidate?.role === "assistant" &&
+      candidate.outputPhase === "final_answer"
+    ) {
+      message = candidate;
+      break;
+    }
   }
-  if (message?.completedAt === undefined) return undefined;
-
-  const textParts = message.parts.filter(isTrustedFinalTextPart);
-  return textParts.length === 0 ? undefined : { message, textParts };
+  if (message === undefined) return undefined;
+  const outputParts = message.parts.filter(isAssistantOutputPart);
+  return outputParts.length === 0 ? undefined : { message, outputParts };
 }
 
 function messageBoundary(message: SessionMessage): number {
@@ -378,9 +378,8 @@ function messageBoundary(message: SessionMessage): number {
 
 interface MutableSegment {
   id: string;
-  inputMessages: SessionMessage[];
-  workMessages: ExecutionWorkstreamMessageSlice[];
-  outputMessages: ExecutionWorkstreamMessageSlice[];
+  inputMessage?: SessionMessage;
+  workItems: ExecutionWorkstreamWorkItem[];
   windowStartedAt: number;
 }
 
@@ -414,12 +413,16 @@ function activeDurationInWindow(
 function projectExecutionSegments(
   record: SessionExecutionRecord,
   messages: readonly SessionMessage[],
+  steps: readonly SessionStep[],
   finalResponse: ExecutionWorkstreamFinalResponse | undefined,
   executionNumber: number,
   snapshotNow: number,
 ): readonly ExecutionWorkstreamSegment[] {
   const segments: MutableSegment[] = [];
-  const finalTextParts = new Set<SessionPart>(finalResponse?.textParts ?? []);
+  const finalOutputParts = new Set<SessionPart>(
+    finalResponse?.outputParts ?? [],
+  );
+  const stepsById = new Map(steps.map((step) => [step.id, step]));
   let current: MutableSegment | undefined;
   let previousBoundary = record.startedAt;
 
@@ -427,60 +430,66 @@ function projectExecutionSegments(
     if (current) return current;
     current = {
       id: `work:${record.id}:implicit`,
-      inputMessages: [],
-      workMessages: [],
-      outputMessages: [],
+      workItems: [],
       windowStartedAt: previousBoundary,
     };
     segments.push(current);
     return current;
   };
 
-  for (let index = 0; index < messages.length;) {
+  for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     if (message && isCanonicalUserMessage(message)) {
-      const batch: SessionMessage[] = [];
-      while (
-        index < messages.length &&
-        messages[index] &&
-        isCanonicalUserMessage(messages[index]!)
-      ) {
-        batch.push(messages[index]!);
-        index += 1;
-      }
-      const boundary = Math.max(previousBoundary, messageBoundary(batch[0]!));
+      const boundary = Math.max(previousBoundary, messageBoundary(message));
       const isFirstSegment = segments.length === 0;
       previousBoundary = boundary;
       current = {
-        id: `work:${record.id}:after:${batch[0]!.id}`,
-        inputMessages: batch,
-        workMessages: [],
-        outputMessages: [],
+        id: `work:${record.id}:after:${message.id}`,
+        inputMessage: message,
+        workItems: [],
         windowStartedAt: isFirstSegment ? record.startedAt : boundary,
       };
       segments.push(current);
       continue;
     }
 
-    if (!message) break;
+    if (!message) continue;
+    const nonEmptyParts = message.parts.filter((part) =>
+      part.type !== "assistant-output" && part.type !== "reasoning"
+        ? true
+        : part.text.length > 0
+    );
     const visibleParts =
       message === finalResponse?.message
-        ? message.parts.filter((part) => !finalTextParts.has(part))
-        : message.parts;
-    const outputParts = message.role === "assistant"
-      ? visibleParts.filter((part) => part.type === "text")
-      : [];
-    const workParts = visibleParts.filter((part) =>
-      message.role !== "assistant" || part.type !== "text"
-    );
+        ? nonEmptyParts.filter((part) => !finalOutputParts.has(part))
+        : nonEmptyParts;
     const segment = openImplicit();
-    if (outputParts.length > 0) {
-      segment.outputMessages.push({ message, parts: outputParts });
+    if (message.role === "assistant") {
+      const step = stepsById.get(message.stepId);
+      const reasoningTokens = Math.max(
+        0,
+        step?.usage?.reasoningTokens ?? 0,
+      );
+      const hasReasoningText = message.parts.some(
+        (part) =>
+          part.type === "reasoning" && part.text.trim().length > 0,
+      );
+      if (reasoningTokens > 0 && !hasReasoningText) {
+        segment.workItems.push({
+          kind: "reasoning-usage",
+          id: `reasoning-usage:${message.stepId}`,
+          stepId: message.stepId,
+          tokens: reasoningTokens,
+        });
+      }
     }
-    if (workParts.length > 0) {
-      segment.workMessages.push({ message, parts: workParts });
+    if (visibleParts.length > 0) {
+      segment.workItems.push({
+        kind: "message",
+        message,
+        parts: visibleParts,
+      });
     }
-    index += 1;
   }
 
   // A terminal response belongs to the final display segment, including an
@@ -500,10 +509,10 @@ function projectExecutionSegments(
       id: segment.id,
       executionId: record.id,
       executionNumber,
-      inputMessages: segment.inputMessages,
-      inputMessageIds: segment.inputMessages.map((message) => message.id),
-      workMessages: segment.workMessages,
-      outputMessages: segment.outputMessages,
+      ...(segment.inputMessage
+        ? { inputMessage: segment.inputMessage }
+        : {}),
+      workItems: segment.workItems,
       ...(index === segments.length - 1 && finalResponse
         ? { finalResponse }
         : {}),
@@ -590,12 +599,18 @@ export function buildExecutionWorkstream(
   const sortableItems: SortableItem[] = [];
 
   input.messages.forEach((sourceMessage, sourceIndex) => {
-    const visibleParts = sourceMessage.parts.filter(isWebVisibleSessionPart);
-    if (visibleParts.length === 0) return;
-    const message =
+    const visibleParts: UserSessionPart[] | AssistantSessionPart[] =
+      sourceMessage.role === "user"
+        ? sourceMessage.parts.filter(isWebVisibleSessionPart)
+        : sourceMessage.parts.filter(isWebVisibleSessionPart);
+    const modelStepAnchor = sourceMessage.role === "assistant";
+    if (visibleParts.length === 0 && !modelStepAnchor) return;
+    const message: SessionMessage =
       visibleParts.length === sourceMessage.parts.length
         ? sourceMessage
-        : { ...sourceMessage, parts: visibleParts };
+        : sourceMessage.role === "user"
+          ? { ...sourceMessage, parts: visibleParts as UserSessionPart[] }
+          : { ...sourceMessage, parts: visibleParts as AssistantSessionPart[] };
     const executionId = message.executionId;
     if (executionId !== undefined && executionId.length > 0) {
       if (duplicateIds.has(executionId)) {
@@ -662,7 +677,7 @@ export function buildExecutionWorkstream(
             left.sourceIndex - right.sourceIndex,
         )
         .map(({ step }) => step);
-      const finalResponse = finalResponseForExecution(record, messages, steps);
+      const finalResponse = finalResponseForExecution(messages);
       const childSessionLinks = resolveChildLinks(
         messages,
         input.childSessionLinks,
@@ -676,16 +691,12 @@ export function buildExecutionWorkstream(
         segments: projectExecutionSegments(
           record,
           messages,
+          steps,
           finalResponse,
           index + 1,
           snapshotNow,
         ),
         stepCount: steps.length,
-        reasoningTokens: steps.reduce(
-          (total, step) =>
-            total + Math.max(0, normalizeUsage(step.usage).reasoningTokens),
-          0,
-        ),
         toolCount: countTools(messages),
         childCount: childSessionLinks.length,
         childSessionLinks,

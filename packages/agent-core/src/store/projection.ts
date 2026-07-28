@@ -155,9 +155,9 @@ export function projectModelMessagesFromStoredMessages(
       const toolContent: Extract<ModelMessage, { role: "tool" }>["content"] = [];
 
       for (const part of message.parts) {
-        if (part.type === "attachment" || part.type === "system-notice" || part.type === "recovery-notice" || part.type === "goal-notice") continue;
+        if (part.type === "system-notice" || part.type === "recovery-notice") continue;
 
-        if (part.type === "text") {
+        if (part.type === "assistant-output") {
           if (isDiscardedFromContext(part)) {
             pushRecoveryMarker(modelMessages);
           } else if (part.completedAt !== undefined) {
@@ -167,10 +167,6 @@ export function projectModelMessagesFromStoredMessages(
         }
 
         if (part.type === "reasoning") {
-          continue;
-        }
-
-        if (part.type === "compaction") {
           continue;
         }
 
@@ -226,8 +222,7 @@ export function projectModelMessagesFromStoredMessages(
     const toolContent: Extract<ModelMessage, { role: "tool" }>["content"] = [];
 
     for (const part of message.parts) {
-      if (part.type === "attachment") continue;
-      if (part.type === "text") {
+      if (part.type === "assistant-output") {
         if (isDiscardedFromContext(part)) {
           pushRecoveryMarker(modelMessages);
         } else if (part.completedAt !== undefined) {
@@ -241,7 +236,7 @@ export function projectModelMessagesFromStoredMessages(
         continue;
       }
 
-      if (part.type === "compaction" || part.type === "system-notice" || part.type === "recovery-notice" || part.type === "goal-notice") {
+      if (part.type === "system-notice" || part.type === "recovery-notice") {
         continue;
       }
 
@@ -460,7 +455,7 @@ function formatProjectionMessageRef(index: number): MessageRef {
 }
 
 function isDiscardedFromContext(part: StoredPart): boolean {
-  if (part.type !== "text" && part.type !== "reasoning") return false;
+  if (part.type !== "assistant-output" && part.type !== "reasoning") return false;
   return part.meta?.interrupted === true || part.meta?.discardedFromContext === true;
 }
 

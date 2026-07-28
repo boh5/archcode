@@ -87,6 +87,8 @@ export interface ExecutionEndEvent {
   type: "execution-end";
   executionId: string;
   terminalStatus: SessionExecutionTerminalStatus;
+  /** The only model attempt whose Assistant output is promoted to the final answer. */
+  finalOutputStepId?: string;
   endedAt: number;
   runEndedAt?: number;
   runUsageDelta?: NormalizedUsage;
@@ -165,6 +167,7 @@ export interface RunningSessionExecutionRecord extends SessionExecutionRecordBas
   endedAt?: never;
   error?: never;
   terminalSettlement?: never;
+  finalOutputStepId?: never;
 }
 
 export interface SuspendedSessionExecutionRecord extends SessionExecutionRecordBase {
@@ -173,12 +176,14 @@ export interface SuspendedSessionExecutionRecord extends SessionExecutionRecordB
   endedAt?: never;
   error?: never;
   terminalSettlement?: never;
+  finalOutputStepId?: never;
 }
 
 export interface TerminalSessionExecutionRecord extends SessionExecutionRecordBase {
   status: SessionExecutionTerminalStatus;
   suspension?: never;
   endedAt: number;
+  finalOutputStepId?: string;
   error?: string;
   terminalSettlement: SessionExecutionSettlement;
 }
@@ -345,28 +350,40 @@ export interface SystemNoticeEvent {
 
 export interface TextStartEvent {
   type: "text-start";
+  stepId: string;
+  blockId: string;
 }
 
 export interface TextDeltaEvent {
   type: "text-delta";
+  stepId: string;
+  blockId: string;
   text: string;
 }
 
 export interface TextEndEvent {
   type: "text-end";
+  stepId: string;
+  blockId: string;
 }
 
 export interface ReasoningStartEvent {
   type: "reasoning-start";
+  stepId: string;
+  blockId: string;
 }
 
 export interface ReasoningDeltaEvent {
   type: "reasoning-delta";
+  stepId: string;
+  blockId: string;
   text: string;
 }
 
 export interface ReasoningEndEvent {
   type: "reasoning-end";
+  stepId: string;
+  blockId: string;
 }
 
 export interface ToolInputStartEvent {
@@ -647,22 +664,32 @@ export interface ReminderConsumedEvent {
 
 export interface StepStartEvent {
   type: "step-start";
+  stepId: string;
   step: number;
 }
 
 export interface StepEndEvent {
   type: "step-end";
+  stepId: string;
   step: number;
   finishReason: string;
   usage?: unknown;
 }
 
 /** An error raised by the generic LLM query loop, not a product Automation. */
-export interface ExecutionErrorEvent {
-  type: "execution-error";
-  step?: number;
-  error: string;
-}
+export type ExecutionErrorEvent =
+  | {
+      type: "execution-error";
+      error: string;
+      step?: never;
+      stepId?: never;
+    }
+  | {
+      type: "execution-error";
+      error: string;
+      step: number;
+      stepId: string;
+    };
 
 export type PromptSourceStatus = "present" | "absent" | "error";
 export type PromptMcpStatus = "pending" | "ready" | "ready-zero" | "partial-warning" | "failed";
@@ -1069,6 +1096,18 @@ export interface TextPart {
   meta?: Record<string, unknown>;
 }
 
+export interface AssistantOutputPart {
+  type: "assistant-output";
+  id: string;
+  /** Provider stream identity, unique within one model attempt's output channel. */
+  blockId: string;
+  text: string;
+  createdAt: number;
+  completedAt?: number;
+  /** Set when persisted output is partial and excluded from trusted model context/final output. */
+  meta?: Record<string, unknown>;
+}
+
 export interface AttachmentPart {
   type: "attachment";
   id: string;
@@ -1080,6 +1119,8 @@ export interface AttachmentPart {
 export interface ReasoningPart {
   type: "reasoning";
   id: string;
+  /** Provider stream identity, unique within one model attempt's Reasoning channel. */
+  blockId: string;
   text: string;
   createdAt: number;
   completedAt?: number;
@@ -1219,6 +1260,7 @@ export interface RecoveryNoticePart {
 
 export type SessionPart =
   | TextPart
+  | AssistantOutputPart
   | AttachmentPart
   | ReasoningPart
   | ToolPart
@@ -1227,10 +1269,8 @@ export type SessionPart =
   | RecoveryNoticePart
   | GoalNoticePart;
 
-export interface SessionMessage {
+interface SessionMessageBase {
   id: string;
-  role: "user" | "assistant";
-  parts: SessionPart[];
   createdAt: number;
   completedAt?: number;
   executionId?: string;
@@ -1238,9 +1278,40 @@ export interface SessionMessage {
   /** Correlates a canonical user message with Queue admission and optimistic UI. */
   clientRequestId?: string;
   compacted?: boolean;
-  /** Required for canonical user input; absent from Assistant and internal notice messages. */
-  modelAudit?: MessageModelAudit;
 }
+
+export type UserSessionPart = Exclude<
+  SessionPart,
+  AssistantOutputPart | ReasoningPart | ToolPart | RecoveryNoticePart
+>;
+
+export interface UserSessionMessage extends SessionMessageBase {
+  role: "user";
+  parts: UserSessionPart[];
+  modelAudit?: MessageModelAudit;
+  stepId?: never;
+  outputPhase?: never;
+}
+
+export type AssistantSessionPart = Exclude<
+  SessionPart,
+  TextPart | AttachmentPart | CompactionPart | GoalNoticePart
+>;
+
+export interface ModelStepAssistantMessage extends SessionMessageBase {
+  role: "assistant";
+  parts: AssistantSessionPart[];
+  executionId: string;
+  runOrdinal: number;
+  /** Unique provider-attempt identity shared with exactly one SessionStep. */
+  stepId: string;
+  /** Normalized Runtime-owned phase for this model attempt's Assistant output. */
+  outputPhase: "commentary" | "final_answer";
+  clientRequestId?: never;
+  modelAudit?: never;
+}
+
+export type SessionMessage = UserSessionMessage | ModelStepAssistantMessage;
 
 export interface SessionStep {
   id: string;
@@ -1250,7 +1321,7 @@ export interface SessionStep {
   startedAt: number;
   completedAt?: number;
   finishReason?: string;
-  usage?: unknown;
+  usage?: NormalizedUsage;
   error?: string;
 }
 

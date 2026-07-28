@@ -160,7 +160,9 @@ function makeToolRegistry() {
 function setupMockStreamText(text = "ok") {
   const fn = mock((_opts: Record<string, unknown>) => ({
     fullStream: (async function* () {
-      yield { type: "text-delta", text };
+      yield { type: "text-start", id: "output" };
+      yield { type: "text-delta", id: "output", text };
+      yield { type: "text-end", id: "output" };
     })(),
     finishReason: Promise.resolve("stop"),
     text: Promise.resolve(text),
@@ -178,7 +180,11 @@ function setupToolCallStreamText(toolName: string, input: Record<string, unknown
     round += 1;
     if (round > 1) {
       return {
-        fullStream: (async function* () {})(),
+        fullStream: (async function* () {
+          yield { type: "text-start", id: "output" };
+          yield { type: "text-delta", id: "output", text: "done" };
+          yield { type: "text-end", id: "output" };
+        })(),
         finishReason: Promise.resolve("stop"),
         text: Promise.resolve("done"),
         toolCalls: Promise.resolve([]),
@@ -640,6 +646,7 @@ describe("ConfiguredAgent", () => {
       text: "explicit model ok",
       steps: 1,
       status: "completed",
+      finalOutputStepId: expect.any(String),
     });
     expect(streamText).toHaveBeenCalledWith(expect.objectContaining({
       model: modelInfo.model,

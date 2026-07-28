@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import type { SessionMessage } from "@archcode/protocol";
+import type { AssistantOutputPart, SessionMessage } from "@archcode/protocol";
 import type { ExecutionWorkstreamSegment } from "../../lib/execution-workstream";
 import { ExecutionNavigationRail } from "./ExecutionNavigationRail";
 
@@ -71,11 +71,15 @@ function outputMessage(id: string, text: string): SessionMessage {
     id,
     role: "assistant",
     executionId: "execution",
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "final_answer",
     createdAt: 2_000,
     completedAt: 2_000,
     parts: [{
-      id: `${id}:text`,
-      type: "text",
+      id: `${id}:output`,
+      type: "assistant-output",
+      blockId: `${id}:block`,
       text,
       createdAt: 2_000,
       completedAt: 2_000,
@@ -96,10 +100,19 @@ function createSegment(
     id: `segment-${ordinal}`,
     executionId: "execution",
     executionNumber: 1,
-    inputMessages: [input],
-    inputMessageIds: [input.id],
-    workMessages: [],
-    outputMessages: output ? [{ message: output, parts: output.parts }] : [],
+    inputMessage: input,
+    workItems: [],
+    ...(output
+      ? {
+          finalResponse: {
+            message: output,
+            outputParts: output.parts.filter(
+              (part): part is AssistantOutputPart =>
+                part.type === "assistant-output",
+            ),
+          },
+        }
+      : {}),
     windowStartedAt: 1_000 + ordinal * 3_000,
     windowEndedAt: 3_000 + ordinal * 3_000,
     activeDurationMs: 2_000,

@@ -103,6 +103,32 @@ function nextFamilyActivity(
   });
 }
 
+function seedToolBatchAnchor(
+  store: Awaited<ReturnType<SessionStoreManager["getOrLoad"]>>,
+  input: Omit<SessionToolBatch, "stepId" | "assistantMessageId">,
+): SessionToolBatch {
+  const stepId = crypto.randomUUID();
+  store.getState().append({ type: "step-start", stepId, step: input.step });
+  for (const call of input.calls) {
+    store.getState().append({
+      type: "tool-call",
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      input: call.input,
+    });
+  }
+  store.getState().append({
+    type: "step-end",
+    stepId,
+    step: input.step,
+    finishReason: "tool-calls",
+  });
+  const assistantMessageId = store.getState().messages.find(
+    (message) => message.role === "assistant" && message.stepId === stepId,
+  )!.id;
+  return { ...input, stepId, assistantMessageId };
+}
+
 function createGoalActivationStream(
   objective = "Complete the requested migration and verify every relevant test passes.",
 ): unknown {
@@ -660,7 +686,11 @@ describe("createRuntime", () => {
     let integratedMessages = "";
     const seenToolSets: string[][] = [];
     const textStream = (text: string) => ({
-      fullStream: (async function* () { yield { type: "text-delta", text }; })(),
+      fullStream: (async function* () {
+        yield { type: "text-start", id: "output" };
+        yield { type: "text-delta", id: "output", text };
+        yield { type: "text-end", id: "output" };
+      })(),
       finishReason: Promise.resolve("stop"),
       usage: Promise.resolve({ totalTokens: 1 }),
       text: Promise.resolve(text),
@@ -785,7 +815,7 @@ describe("createRuntime", () => {
     expect(file.inputRequestReceipts).toEqual([
       expect.objectContaining({ kind: "command", clientRequestId, status: "completed" }),
     ]);
-    expect(file.messages.flatMap((message) => message.parts)
+    expect(file.messages.flatMap((message) => message.role === "user" ? message.parts : [])
       .filter((part) => part.type === "system-notice" && part.notice.includes("Unknown command")))
       .toHaveLength(1);
   });
@@ -821,7 +851,7 @@ describe("createRuntime", () => {
     expect(file.inputRequestReceipts).toEqual([
       expect.objectContaining({ kind: "command", clientRequestId, status: "completed" }),
     ]);
-    expect(file.messages.flatMap((message) => message.parts)
+    expect(file.messages.flatMap((message) => message.role === "user" ? message.parts : [])
       .filter((part) => part.type === "system-notice" && part.notice.includes("Unknown command")))
       .toHaveLength(1);
   });
@@ -1435,7 +1465,7 @@ describe("createRuntime", () => {
 
     const executionId = "execution-repair-answered-hitl";
     const now = new Date().toISOString();
-    const batch: SessionToolBatch = {
+    const batchInput: Omit<SessionToolBatch, "stepId" | "assistantMessageId"> = {
       batchId: "batch-repair-answered-hitl",
       executionId,
       step: 0,
@@ -1466,15 +1496,9 @@ describe("createRuntime", () => {
     const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
     const seedStore = await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
     seedStore.getState().append(testExecutionStart(executionId));
-    seedStore.getState().append({ type: "step-start", step: batch.step });
-    seedStore.getState().append({
-      type: "tool-call",
-      toolCallId: "repair-question",
-      toolName: "ask_user",
-      input: questionInput,
-    });
+    const batch = seedToolBatchAnchor(seedStore, batchInput);
     const durableTool = seedStore.getState().messages
-      .flatMap((message) => message.parts)
+      .flatMap((message) => message.role === "assistant" ? message.parts : [])
       .find((part) => part.type === "tool" && part.toolCallId === "repair-question");
     if (durableTool?.type !== "tool" || durableTool.state !== "running") {
       throw new Error("Expected durable tool checkpoint");
@@ -1592,7 +1616,7 @@ describe("createRuntime", () => {
       displayPayload: secondRequest.displayPayload,
     })).record;
     const now = new Date().toISOString();
-    const batch: SessionToolBatch = {
+    const batchInput: Omit<SessionToolBatch, "stepId" | "assistantMessageId"> = {
       batchId: "batch-1",
       executionId: "execution-1",
       step: 0,
@@ -1623,8 +1647,8 @@ describe("createRuntime", () => {
     };
     const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
     const seedStore = await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
-    seedStore.getState().append(testExecutionStart(batch.executionId));
-    seedStore.getState().append({ type: "step-start", step: batch.step });
+    seedStore.getState().append(testExecutionStart(batchInput.executionId));
+    const batch = seedToolBatchAnchor(seedStore, batchInput);
     const firstSuspendedAt = Date.now();
     seedStore.getState().append(testExecutionSuspended(batch.executionId, {
       kind: "hitl",
@@ -1738,7 +1762,7 @@ describe("createRuntime", () => {
 
     const executionId = "execution-hitl-stop-race";
     const now = new Date().toISOString();
-    const batch: SessionToolBatch = {
+    const batchInput: Omit<SessionToolBatch, "stepId" | "assistantMessageId"> = {
       batchId: "batch-hitl-stop-race",
       executionId,
       step: 0,
@@ -1770,7 +1794,7 @@ describe("createRuntime", () => {
     const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
     const seedStore = await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
     seedStore.getState().append(testExecutionStart(executionId));
-    seedStore.getState().append({ type: "step-start", step: batch.step });
+    const batch = seedToolBatchAnchor(seedStore, batchInput);
     const suspendedAt = Date.now();
     seedStore.getState().append(testExecutionSuspended(executionId, {
       kind: "hitl",
@@ -1869,7 +1893,7 @@ describe("createRuntime", () => {
       displayPayload: concurrentRequest.displayPayload,
     })).record;
     const now = new Date().toISOString();
-    const batch: SessionToolBatch = {
+    const batchInput: Omit<SessionToolBatch, "stepId" | "assistantMessageId"> = {
       batchId: "batch-concurrent",
       executionId: "execution-concurrent",
       step: 0,
@@ -1900,8 +1924,8 @@ describe("createRuntime", () => {
     };
     const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
     const seedStore = await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
-    seedStore.getState().append(testExecutionStart(batch.executionId));
-    seedStore.getState().append({ type: "step-start", step: batch.step });
+    seedStore.getState().append(testExecutionStart(batchInput.executionId));
+    const batch = seedToolBatchAnchor(seedStore, batchInput);
     const concurrentSuspendedAt = Date.now();
     seedStore.getState().append(testExecutionSuspended(batch.executionId, {
       kind: "hitl",
@@ -2183,7 +2207,11 @@ describe("createRuntime", () => {
 function installTestLlmAdapter(): void {
   setLlmAdapterForTest({
     streamText: mock(() => ({
-      fullStream: (async function* () { yield { type: "text-delta", text: "Done." }; })(),
+      fullStream: (async function* () {
+        yield { type: "text-start", id: "output" };
+        yield { type: "text-delta", id: "output", text: "Done." };
+        yield { type: "text-end", id: "output" };
+      })(),
       finishReason: Promise.resolve("stop"),
       usage: Promise.resolve({ totalTokens: 1 }),
       text: Promise.resolve("Done."),

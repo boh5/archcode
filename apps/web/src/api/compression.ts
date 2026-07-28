@@ -6,6 +6,7 @@ import type {
   CompressionRangeSnapshot,
   CompressionStrategy,
   CompressionTrigger,
+  SessionMessage,
   SessionPart,
 } from "@archcode/protocol";
 
@@ -14,15 +15,7 @@ import type {
 // live transcript; artifact bodies and storage paths never enter this response.
 export type OriginalRangePart = SessionPart;
 
-export interface OriginalRangeMessage {
-  readonly id: string;
-  readonly role: "user" | "assistant";
-  readonly parts: OriginalRangePart[];
-  readonly createdAt: number;
-  readonly completedAt?: number;
-  readonly executionId?: string;
-  readonly compacted?: boolean;
-}
+export type OriginalRangeMessage = SessionMessage;
 
 export interface CompressionOriginalRangeEntry {
   readonly ref: CompressionMessageRef;

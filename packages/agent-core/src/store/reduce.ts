@@ -7,6 +7,7 @@ import {
 } from "./types";
 import {
   validateExecutionTransition,
+  validateExecutionFinalOutputSelection,
   type ExecutionLifecycleEvent,
   type SessionGoalChangedEvent,
 } from "@archcode/protocol";
@@ -51,6 +52,12 @@ export function reduceStreamEvent(
       throw new InvalidExecutionTransitionError(transition.reason);
     }
     if (transition.outcome === "duplicate") return {};
+    if (event.type === "execution-end") {
+      const finalSelection = validateExecutionFinalOutputSelection(state, event);
+      if (finalSelection.outcome === "invalid") {
+        throw new InvalidExecutionTransitionError(finalSelection.reason);
+      }
+    }
   }
 
   if (event.type === "todo-write") {

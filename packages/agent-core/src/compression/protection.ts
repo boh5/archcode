@@ -97,7 +97,7 @@ function collectReminderRefs(
 }
 
 function partHasProtectTag(part: StoredPart): boolean {
-  if (part.type !== "text" && part.type !== "reasoning") return false;
+  if (part.type !== "assistant-output" && part.type !== "reasoning") return false;
   return /<protect>[\s\S]*?<\/protect>/i.test(part.text) || /<protect\b/i.test(part.text);
 }
 

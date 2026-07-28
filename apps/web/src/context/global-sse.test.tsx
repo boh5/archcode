@@ -320,7 +320,11 @@ describe("parseSSEEvent", () => {
       sessionId: "s",
       eventId: 1,
       createdAt: 0,
-      payload: { type: "text-start" },
+      payload: {
+        type: "text-start",
+        stepId: "step-1",
+        blockId: "block-1",
+      },
       agentName: "lead",
     });
     const result = parseSSEEvent("event", data);
@@ -555,7 +559,11 @@ describe("parseSSEEvent", () => {
         sessionId: "s",
         eventId: 1,
         createdAt: 0,
-        payload: { type: "text-start" },
+        payload: {
+          type: "text-start",
+          stepId: "step-1",
+          blockId: "block-1",
+        },
         agentName: "lead",
       }),
     );
@@ -597,7 +605,11 @@ describe("handleSSEEvent", () => {
       sessionId: "session-1",
       eventId: 42,
       createdAt: Date.now(),
-      payload: { type: "text-start" },
+      payload: {
+        type: "text-start",
+        stepId: "step-1",
+        blockId: "block-1",
+      },
       agentName: "lead",
     };
 
@@ -712,7 +724,11 @@ describe("handleSSEEvent", () => {
       sessionId: "unknown-session",
       eventId: 1,
       createdAt: Date.now(),
-      payload: { type: "text-start" },
+      payload: {
+        type: "text-start",
+        stepId: "step-1",
+        blockId: "block-1",
+      },
       agentName: "lead",
     };
 
@@ -933,7 +949,11 @@ describe("handleSSEEvent", () => {
       sessionId: "gap-session",
       eventId: 3,
       createdAt: 1,
-      payload: { type: "text-start" },
+      payload: {
+        type: "text-start",
+        stepId: "step-1",
+        blockId: "block-1",
+      },
       agentName: "lead",
     };
 

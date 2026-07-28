@@ -66,9 +66,11 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "execution-end":
       return exact(event, [
         "type", "executionId", "terminalStatus", "endedAt", "terminalSettlement",
-      ], ["runEndedAt", "runUsageDelta", "runSettlement", "error"])
+      ], ["finalOutputStepId", "runEndedAt", "runUsageDelta", "runSettlement", "error"])
         && isString(event.executionId)
         && oneOf(event.terminalStatus, ["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted"])
+        && (event.finalOutputStepId === undefined
+          || (event.terminalStatus === "completed" && isString(event.finalOutputStepId)))
         && isNonNegativeSafeInteger(event.endedAt)
         && ((event.runEndedAt === undefined
           && event.runUsageDelta === undefined
@@ -125,10 +127,12 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "text-end":
     case "reasoning-start":
     case "reasoning-end":
-      return exact(event, ["type"]);
+      return exact(event, ["type", "stepId", "blockId"])
+        && isString(event.stepId) && isNonBlankString(event.blockId);
     case "text-delta":
     case "reasoning-delta":
-      return exact(event, ["type", "text"]) && isString(event.text);
+      return exact(event, ["type", "stepId", "blockId", "text"])
+        && isString(event.stepId) && isNonBlankString(event.blockId) && isString(event.text);
     case "tool-input-start":
       return exact(event, ["type", "toolCallId", "toolName"])
         && isString(event.toolCallId) && isString(event.toolName);
@@ -169,14 +173,17 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "reminder-consumed":
       return exact(event, ["type", "reminderIds"]) && arrayOf(event.reminderIds, isString);
     case "step-start":
-      return exact(event, ["type", "step"]) && isNonNegativeSafeInteger(event.step);
+      return exact(event, ["type", "stepId", "step"])
+        && isString(event.stepId) && isNonNegativeSafeInteger(event.step);
     case "step-end":
-      return exact(event, ["type", "step", "finishReason"], ["usage"])
-        && isNonNegativeSafeInteger(event.step)
+      return exact(event, ["type", "stepId", "step", "finishReason"], ["usage"])
+        && isString(event.stepId) && isNonNegativeSafeInteger(event.step)
         && isString(event.finishReason);
     case "execution-error":
-      return exact(event, ["type", "error"], ["step"])
-        && isString(event.error) && optionalFiniteNumber(event.step);
+      return exact(event, ["type", "error"], ["step", "stepId"])
+        && isString(event.error)
+        && ((event.step === undefined && event.stepId === undefined)
+          || (isFiniteNumber(event.step) && isString(event.stepId)));
     case "prompt-trace":
       return exact(event, ["type", "trace"]) && isPromptTrace(event.trace);
     case "llm-retry":
@@ -1238,6 +1245,10 @@ function keyedRecord(
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
+}
+
+function isNonBlankString(value: unknown): value is string {
+  return isString(value) && value.trim().length > 0;
 }
 
 function optionalString(value: unknown): boolean {

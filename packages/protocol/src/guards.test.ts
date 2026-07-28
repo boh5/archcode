@@ -178,12 +178,12 @@ const validPayloads = [
   { type: "session.messages_committed", executionId: "execution-1", messages: [canonicalMessage] },
   { type: "execution-stop-requested", executionId: "execution-1", timestamp: 2 },
   { type: "system-notice", message: "notice" },
-  { type: "text-start" },
-  { type: "text-delta", text: "hello" },
-  { type: "text-end" },
-  { type: "reasoning-start" },
-  { type: "reasoning-delta", text: "thinking" },
-  { type: "reasoning-end" },
+  { type: "text-start", stepId: "step-1", blockId: "output-1" },
+  { type: "text-delta", stepId: "step-1", blockId: "output-1", text: "hello" },
+  { type: "text-end", stepId: "step-1", blockId: "output-1" },
+  { type: "reasoning-start", stepId: "step-1", blockId: "reasoning-1" },
+  { type: "reasoning-delta", stepId: "step-1", blockId: "reasoning-1", text: "thinking" },
+  { type: "reasoning-end", stepId: "step-1", blockId: "reasoning-1" },
   { type: "tool-input-start", toolCallId: "call-1", toolName: "file_read" },
   { type: "tool-call", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
   { type: "tool-input-resolved", toolCallId: "call-1", toolName: "file_read", input: { path: "README.md" } },
@@ -231,9 +231,9 @@ const validPayloads = [
     },
   },
   { type: "reminder-consumed", reminderIds: ["reminder-1"] },
-  { type: "step-start", step: 1 },
-  { type: "step-end", step: 1, finishReason: "stop", usage: {} },
-  { type: "execution-error", step: 1, error: "failed" },
+  { type: "step-start", stepId: "step-1", step: 1 },
+  { type: "step-end", stepId: "step-1", step: 1, finishReason: "stop", usage: {} },
+  { type: "execution-error", stepId: "step-1", step: 1, error: "failed" },
   { type: "llm-retry", scope: "short", visibility: "internal", attempt: 1, errorKind: "network", message: "retry", nextRetryAt: 2 },
   { type: "llm-recovery", scope: "session", visibility: "session", attempt: 1, message: "recovered" },
   { type: "llm-recovery-failed", scope: "session", visibility: "session", attempt: 1, errorKind: "network", message: "failed", statusCode: 500 },
@@ -340,8 +340,17 @@ describe("protocol event guards", () => {
   });
 
   test("recognizes stream events and excludes wire-only events", () => {
-    expect(isStreamEvent({ type: "text-delta", text: "ok" })).toBe(true);
+    expect(isStreamEvent({ type: "text-delta", stepId: "step-1", blockId: "output-1", text: "ok" })).toBe(true);
     expect(isStreamEvent({ type: "shutdown" } as never)).toBe(false);
+  });
+
+  test("rejects blank provider block ids at the wire boundary", () => {
+    for (const type of ["text-start", "text-end", "reasoning-start", "reasoning-end"] as const) {
+      expect(isSessionEventPayload({ type, stepId: "step-1", blockId: " \t" })).toBe(false);
+    }
+    for (const type of ["text-delta", "reasoning-delta"] as const) {
+      expect(isSessionEventPayload({ type, stepId: "step-1", blockId: "\n", text: "content" })).toBe(false);
+    }
   });
 
   test("rejects malformed Session event payloads without throwing", () => {
@@ -397,8 +406,6 @@ describe("protocol event guards", () => {
     for (const event of validPayloads) {
       expect(isSessionEventPayload({ ...event, unexpectedField: true })).toBe(false);
     }
-    expect(isSessionEventPayload({ type: "text-delta" })).toBe(false);
-    expect(isSessionEventPayload({ type: "text-delta", text: 1 })).toBe(false);
     expect(isSessionEventPayload({
       type: "tool-output-delta",
       toolCallId: "call-1",

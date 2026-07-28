@@ -17,9 +17,10 @@ import type {
   StoredPart,
   StoredTodo,
   SystemNoticePart,
+  TextPart,
 } from "./types";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
-import type { DelegationRequest } from "@archcode/protocol";
+import type { AssistantOutputPart, DelegationRequest } from "@archcode/protocol";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers", crypto.randomUUID());
 const TEST_BINDING = {
@@ -38,6 +39,12 @@ const TEST_USER_PROVENANCE = {
   executionId: "run-1",
   runOrdinal: 0,
   modelAudit: TEST_MODEL_AUDIT,
+};
+const TEST_ASSISTANT_PROVENANCE = {
+  executionId: "run-1",
+  runOrdinal: 0,
+  stepId: "step-1",
+  outputPhase: "commentary" as const,
 };
 const executionStart = (executionId: string) => ({
   type: "execution-start" as const,
@@ -99,10 +106,16 @@ async function writeRawSessionFile(sessionId: string, content: string): Promise<
   await Bun.write(sessionFilePath(sessionId), content);
 }
 
-function textPart(id: string, text: string, completedAt?: number): StoredPart {
+function textPart(id: string, text: string, completedAt?: number): TextPart {
   return completedAt === undefined
     ? { type: "text", id, text, createdAt: 100 }
     : { type: "text", id, text, createdAt: 100, completedAt };
+}
+
+function assistantOutputPart(id: string, text: string, completedAt?: number): AssistantOutputPart {
+  return completedAt === undefined
+    ? { type: "assistant-output", id, blockId: `${id}:block`, text, createdAt: 100 }
+    : { type: "assistant-output", id, blockId: `${id}:block`, text, createdAt: 100, completedAt };
 }
 
 function finalizedResult(
@@ -145,11 +158,13 @@ function sampleMessages(): StoredMessage[] {
     {
       id: "assistant-1",
       role: "assistant",
-      parts: [textPart("assistant-text-1", "world", 103)],
+      parts: [assistantOutputPart("assistant-text-1", "world", 103)],
       createdAt: 102,
       completedAt: 104,
       executionId: "run-1",
       runOrdinal: 0,
+      stepId: "step-1",
+      outputPhase: "commentary",
     },
   ];
 }
@@ -160,12 +175,14 @@ function allPartVariantsMessage(): StoredMessage {
     role: "assistant",
     createdAt: 200,
     completedAt: 220,
-    executionId: "run-all",
+    executionId: "run-1",
     runOrdinal: 0,
+    stepId: "step-1",
+    outputPhase: "commentary",
     parts: [
-      { type: "text", id: "text-complete", text: "done", createdAt: 201, completedAt: 202 },
-      { type: "text", id: "text-incomplete", text: "streaming", createdAt: 203, meta: { interrupted: true, discardedFromContext: true } },
-      { type: "reasoning", id: "reasoning-complete", text: "because", createdAt: 204, completedAt: 205 },
+      { type: "assistant-output", id: "text-complete", blockId: "output-complete", text: "done", createdAt: 201, completedAt: 202 },
+      { type: "assistant-output", id: "text-incomplete", blockId: "output-incomplete", text: "streaming", createdAt: 203, meta: { interrupted: true, discardedFromContext: true } },
+      { type: "reasoning", id: "reasoning-complete", blockId: "reasoning-complete", text: "because", createdAt: 204, completedAt: 205 },
       { type: "tool", state: "pending", id: "tool-pending", toolCallId: "call-pending", toolName: "read", createdAt: 206 },
       { type: "tool", state: "running", id: "tool-running", toolCallId: "call-running", toolName: "bash", input: { cmd: "pwd" }, createdAt: 207, startedAt: 208 },
       { type: "tool", state: "completed", id: "tool-completed", toolCallId: "call-completed", toolName: "write", input: { path: "a.ts" }, result: finalizedResult("ok"), createdAt: 209, startedAt: 210, endedAt: 211 },
@@ -184,7 +201,7 @@ function sampleSteps(): StepInfo[] {
       startedAt: 300,
       completedAt: 310,
       finishReason: "stop",
-      usage: { inputTokens: 1, outputTokens: 2 },
+      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, reasoningTokens: 0, cachedInputTokens: 0 },
     },
   ];
 }
@@ -387,6 +404,8 @@ function persistedToolBatch(
   return {
     batchId: "batch-1",
     executionId: "execution-1",
+    assistantMessageId: "assistant-1",
+    stepId: "step-0",
     step: 0,
     runOrdinal: 0,
     agentName: "lead",
@@ -525,8 +544,18 @@ describe("session transcript serialization", () => {
       completedAt: 101,
       executionId: "execution-1",
       runOrdinal: 0,
+    }, {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [assistantOutputPart("batch-output", "Preparing the request", 101)],
+      createdAt: 100,
+      completedAt: 101,
+      executionId: "execution-1",
+      runOrdinal: 0,
+      stepId: "step-0",
+      outputPhase: "commentary",
     }], [{
-      id: "batch-step",
+      id: "step-0",
       step: 0,
       executionId: "execution-1",
       runOrdinal: 0,
@@ -623,7 +652,7 @@ describe("session transcript serialization", () => {
 
   test("SessionFileSchema rejects corrupt cross-run cursors and Tool Batch step links", () => {
     const sessionId = uniqueSessionId("execution-cursors");
-    const messages: StoredMessage[] = [0, 1].map((runOrdinal) => ({
+    const messages: StoredMessage[] = [0, 1].flatMap((runOrdinal) => [{
       id: `execution-message-${runOrdinal}`,
       role: "user",
       parts: [],
@@ -631,7 +660,17 @@ describe("session transcript serialization", () => {
       completedAt: 100 + runOrdinal * 100,
       executionId: "execution-1",
       runOrdinal,
-    }));
+    }, {
+      id: `assistant-${runOrdinal}`,
+      role: "assistant",
+      parts: [assistantOutputPart(`output-${runOrdinal}`, `step ${runOrdinal}`, 101 + runOrdinal * 100)],
+      createdAt: 100 + runOrdinal * 100,
+      completedAt: 101 + runOrdinal * 100,
+      executionId: "execution-1",
+      runOrdinal,
+      stepId: `execution-step-${runOrdinal}`,
+      outputPhase: "commentary" as const,
+    }]);
     const steps: StepInfo[] = [0, 1].map((runOrdinal) => ({
       id: `execution-step-${runOrdinal}`,
       step: runOrdinal,
@@ -653,6 +692,8 @@ describe("session transcript serialization", () => {
 
     const matchingBatch = {
       ...persistedToolBatch("queued"),
+      assistantMessageId: "assistant-1",
+      stepId: "execution-step-1",
       step: 1,
       runOrdinal: 1,
     };
@@ -660,6 +701,87 @@ describe("session transcript serialization", () => {
     expect(SessionFileSchema.safeParse({
       ...base,
       toolBatches: [{ ...matchingBatch, step: 0 }],
+    }).success).toBe(false);
+  });
+
+  test("SessionFileSchema revalidates final output authority on cold load", () => {
+    const sessionId = uniqueSessionId("final-output-authority");
+    const finalMessage: StoredMessage = {
+      id: "assistant-final",
+      role: "assistant",
+      parts: [assistantOutputPart("final-output", "authoritative", 130)],
+      createdAt: 120,
+      completedAt: 130,
+      executionId: "execution-final",
+      runOrdinal: 0,
+      stepId: "step-final",
+      outputPhase: "final_answer",
+    };
+    const finalStep: StepInfo = {
+      id: "step-final",
+      step: 0,
+      executionId: "execution-final",
+      runOrdinal: 0,
+      startedAt: 110,
+      completedAt: 130,
+      finishReason: "stop",
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, reasoningTokens: 0, cachedInputTokens: 0 },
+    };
+    const completedExecution: SessionExecutionRecord = {
+      id: "execution-final",
+      startedAt: 100,
+      origin: "user_message",
+      maxSteps: 50,
+      durationMs: 40,
+      runs: [{
+        ordinal: 0,
+        startedAt: 100,
+        endedAt: 140,
+        durationMs: 40,
+        binding: TEST_BINDING,
+        usageDelta: createEmptySessionStats().usage,
+        settlement: {
+          key: `run:${sessionId}:execution-final:0`,
+          goalInstanceId: null,
+        },
+      }],
+      status: "completed",
+      endedAt: 140,
+      finalOutputStepId: "step-final",
+      terminalSettlement: {
+        key: `terminal:${sessionId}:execution-final`,
+        goalInstanceId: null,
+      },
+    };
+    const base = persistedFile(persistedState(
+      sessionId,
+      [finalMessage],
+      [finalStep],
+      [],
+      createEmptySessionStats(),
+      [completedExecution],
+    ));
+
+    expect(SessionFileSchema.safeParse(base).success).toBe(true);
+    expect(SessionFileSchema.safeParse({
+      ...base,
+      steps: [{ ...finalStep, finishReason: "tool-calls" }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...base,
+      executions: [{
+        ...completedExecution,
+        status: "running",
+        durationMs: 0,
+        runs: [{
+          ordinal: 0,
+          startedAt: 100,
+          binding: TEST_BINDING,
+        }],
+        finalOutputStepId: undefined,
+        endedAt: undefined,
+        terminalSettlement: undefined,
+      }],
     }).success).toBe(false);
   });
 
@@ -1017,7 +1139,7 @@ describe("session transcript serialization", () => {
     const [loadedMessage] = loaded.getState().messages;
     expect(loadedMessage).toBeDefined();
     expect(loadedMessage!.parts[1]).toMatchObject({
-      type: "text",
+      type: "assistant-output",
       id: "text-incomplete",
       text: "streaming",
       createdAt: 203,
@@ -1371,16 +1493,17 @@ describe("session transcript serialization", () => {
       {
         id: "assistant",
         role: "assistant",
+        ...TEST_ASSISTANT_PROVENANCE,
         createdAt: 3,
         completedAt: 8,
         parts: [
-          { type: "text", id: "assistant-text", text: "hi", createdAt: 4, completedAt: 5 },
+          { type: "assistant-output", id: "assistant-text", blockId: "output", text: "hi", createdAt: 4, completedAt: 5 },
           { type: "tool", state: "completed", id: "tool", toolCallId: "call", toolName: "read", input: { path: "a" }, result: finalizedResult("content"), createdAt: 5, startedAt: 6, endedAt: 7 },
         ],
       },
     ];
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, sampleSteps()), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     expect(loaded.getState().toModelMessages()).toEqual([
@@ -1573,8 +1696,8 @@ describe("getAssistantText", () => {
 
   test("concatenates completed assistant text in message and part order", () => {
     const messages: StoredMessage[] = [
-      { id: "a", role: "assistant", createdAt: 1, parts: [textPart("a1", "hel", 2), textPart("a2", "lo", 3)] },
-      { id: "b", role: "assistant", createdAt: 4, parts: [textPart("b1", " world", 5)] },
+      { id: "a", role: "assistant", ...TEST_ASSISTANT_PROVENANCE, createdAt: 1, parts: [assistantOutputPart("a1", "hel", 2), assistantOutputPart("a2", "lo", 3)] },
+      { id: "b", role: "assistant", ...TEST_ASSISTANT_PROVENANCE, createdAt: 4, parts: [assistantOutputPart("b1", " world", 5)] },
     ];
 
     expect(getAssistantText(messages)).toBe("hello world");
@@ -1583,7 +1706,7 @@ describe("getAssistantText", () => {
   test("ignores user text", () => {
     const messages: StoredMessage[] = [
       { id: "user", role: "user", createdAt: 1, parts: [textPart("user-text", "ignore", 2)] },
-      { id: "assistant", role: "assistant", createdAt: 3, parts: [textPart("assistant-text", "keep", 4)] },
+      { id: "assistant", role: "assistant", ...TEST_ASSISTANT_PROVENANCE, createdAt: 3, parts: [assistantOutputPart("assistant-text", "keep", 4)] },
     ];
 
     expect(getAssistantText(messages)).toBe("keep");
@@ -1591,7 +1714,7 @@ describe("getAssistantText", () => {
 
   test("ignores incomplete assistant text", () => {
     const messages: StoredMessage[] = [
-      { id: "assistant", role: "assistant", createdAt: 1, parts: [textPart("incomplete", "ignore"), textPart("complete", "keep", 2)] },
+      { id: "assistant", role: "assistant", ...TEST_ASSISTANT_PROVENANCE, createdAt: 1, parts: [assistantOutputPart("incomplete", "ignore"), assistantOutputPart("complete", "keep", 2)] },
     ];
 
     expect(getAssistantText(messages)).toBe("keep");
@@ -1663,12 +1786,12 @@ describe("compaction and meta transcript round-trip", () => {
     const sessionId = uniqueSessionId("compression-state-roundtrip");
     const messages: StoredMessage[] = [
       { id: "msg-1", role: "user", ...TEST_USER_PROVENANCE, parts: [textPart("part-1", "old user", 1)], createdAt: 1, completedAt: 1 },
-      { id: "msg-2", role: "assistant", parts: [textPart("part-2", "old assistant", 2)], createdAt: 2, completedAt: 2 },
+      { id: "msg-2", role: "assistant", ...TEST_ASSISTANT_PROVENANCE, parts: [assistantOutputPart("part-2", "old assistant", 2)], createdAt: 2, completedAt: 2 },
       { id: "msg-3", role: "user", ...TEST_USER_PROVENANCE, parts: [textPart("part-3", "tail", 3)], createdAt: 3, completedAt: 3 },
     ];
     const compression = richCompressionState();
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, [], [], createEmptySessionStats(), [], [], undefined, undefined, [], compression), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, sampleSteps(), [], createEmptySessionStats(), [], [], undefined, undefined, [], compression), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     const loadedCompression = loaded.getState().compression;
@@ -1750,6 +1873,7 @@ describe("compaction and meta transcript round-trip", () => {
       {
         id: "msg-tool",
         role: "assistant",
+        ...TEST_ASSISTANT_PROVENANCE,
         parts: [{
           type: "tool",
           state: "completed",
@@ -1767,7 +1891,7 @@ describe("compaction and meta transcript round-trip", () => {
       },
     ];
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, sampleSteps()), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     expect(loaded.getState().messages).toEqual(messages);
@@ -1795,6 +1919,7 @@ describe("compaction and meta transcript round-trip", () => {
     const messages: StoredMessage[] = [{
       id: "msg-simplified-diff",
       role: "assistant",
+      ...TEST_ASSISTANT_PROVENANCE,
       parts: [{
         type: "tool",
         state: "completed",
@@ -1812,7 +1937,7 @@ describe("compaction and meta transcript round-trip", () => {
     }];
 
     await sessionFileInternals.saveSessionTranscript(
-      persistedState(sessionId, messages, []),
+      persistedState(sessionId, messages, sampleSteps()),
       TMP_DIR,
     );
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
@@ -1826,6 +1951,7 @@ describe("compaction and meta transcript round-trip", () => {
       {
         id: "msg-tool-err",
         role: "assistant",
+        ...TEST_ASSISTANT_PROVENANCE,
         parts: [{
           type: "tool",
           state: "error",
@@ -1843,7 +1969,7 @@ describe("compaction and meta transcript round-trip", () => {
       },
     ];
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, sampleSteps()), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     expect(loaded.getState().messages).toEqual(messages);
@@ -1884,6 +2010,7 @@ describe("compaction and meta transcript round-trip", () => {
       {
         id: "msg-assistant",
         role: "assistant",
+        ...TEST_ASSISTANT_PROVENANCE,
         parts: [{
           type: "tool",
           state: "completed",
@@ -1901,7 +2028,7 @@ describe("compaction and meta transcript round-trip", () => {
       },
     ];
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, sampleSteps()), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     expect(loaded.getState().messages).toEqual(messages);

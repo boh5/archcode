@@ -1,6 +1,6 @@
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
-import type { CompletedToolPart, SessionStoreState, StoredMessage, TextPart } from "../../store/types";
+import type { CompletedToolPart, SessionStoreState, StoredMessage, StoredPart, TextPart } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
 import type { MemoryExtractionResult } from "../../memory/schemas";
 import { MemoryExtractionResultSchema } from "../../memory/schemas";
@@ -38,7 +38,7 @@ export function filterMessagesForExtraction(messages: StoredMessage[]): StoredMe
   const filtered: StoredMessage[] = [];
 
   for (const message of messages) {
-    const parts: StoredMessage["parts"] = [];
+    const parts: StoredPart[] = [];
 
     for (const part of message.parts) {
       if (part.type === "text") {

@@ -193,7 +193,8 @@ export interface SessionToolBatchPartition {
 export interface SessionToolBatch {
   readonly batchId: string;
   readonly executionId: string;
-  readonly assistantMessageId?: string;
+  readonly stepId: string;
+  readonly assistantMessageId: string;
   readonly step: number;
   readonly runOrdinal: number;
   readonly agentName: AgentName;

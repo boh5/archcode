@@ -83,13 +83,20 @@ function makeUserMessages(count: number, text = "A".repeat(300), now = Date.now(
 }
 
 function makeAssistantMessage(text: string, now: number): StoredMessage {
+  const id = crypto.randomUUID();
+  const stepId = crypto.randomUUID();
   return {
-    id: crypto.randomUUID(),
+    id,
     role: "assistant",
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId,
+    outputPhase: "commentary",
     parts: [
       {
-        type: "text",
+        type: "assistant-output",
         id: crypto.randomUUID(),
+        blockId: crypto.randomUUID(),
         text,
         createdAt: now,
         completedAt: now,
@@ -105,9 +112,14 @@ function makeToolMessage(toolName: string, output: string, now: number): StoredM
     bytes: new TextEncoder().encode(output).byteLength,
     lines: output.length === 0 ? 0 : output.split("\n").length,
   };
+  const id = crypto.randomUUID();
   return {
-    id: crypto.randomUUID(),
+    id,
     role: "assistant",
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
     parts: [
       {
         type: "tool",

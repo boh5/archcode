@@ -342,15 +342,26 @@ function loopContinuationReminder(createdAt: number): Reminder {
   };
 }
 
-function assistantMessage(parts: StoredPart[], id = "assistant-1"): StoredMessage {
-  return { id, role: "assistant", parts, createdAt: 1 };
+type StoredToolPart = Extract<StoredPart, { type: "tool" }>;
+
+function assistantMessage(parts: StoredToolPart[], id = "assistant-1"): StoredMessage {
+  return {
+    id,
+    role: "assistant",
+    executionId: "execution-1",
+    runOrdinal: 0,
+    stepId: `step-${id}`,
+    outputPhase: "commentary",
+    parts,
+    createdAt: 1,
+  };
 }
 
 function userMessage(id: string): StoredMessage {
   return { id, role: "user", parts: [], createdAt: 1 };
 }
 
-function toolPart(toolName: string): StoredPart {
+function toolPart(toolName: string): StoredToolPart {
   return {
     type: "tool",
     state: "pending",

@@ -40,7 +40,7 @@ async function createHarness() {
   const sessionId = crypto.randomUUID();
   const store = storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
   store.getState().append(testExecutionStart("test-execution", "tool_call"));
-  store.getState().append({ type: "step-start", step: 0 });
+  store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
   await storeManager.flushSession(sessionId, TMP_DIR);
   const projectContext = createTestProjectContext(TMP_DIR, storeManager);
   const redactionPolicy = new SecretRedactionPolicy([]);
@@ -215,7 +215,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
     const harness = await createHarness();
     const batch = await harness.scheduler.createBatch([
       { toolCallId: "read-1", toolName: "read_tool", input: { value: "hello" } },
-    ], 0);
+    ], "step-0", 0);
     const queuedCheckpointAt = batch.calls[0]!.checkpointAt;
     expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
     const call = harness.scheduler.activeBatch()!.calls[0]!;
@@ -233,7 +233,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "read-checkpoint-failure",
       toolName: "read_tool",
       input: { value: "must-not-publish" },
-    }], 0);
+    }], "step-0", 0);
 
     const published: string[] = [];
     const unsubscribe = harness.storeManager.subscribeToSessionEvents(({ envelope }) => {
@@ -265,7 +265,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "ask-1",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
-    }], 0);
+    }], "step-0", 0);
     const waiting = await harness.scheduler.advance();
     expect(waiting.status).toBe("suspended_hitl");
     expect(eventResults(harness)).toHaveLength(0);
@@ -291,7 +291,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "ask-repair",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
-    }], 0);
+    }], "step-0", 0);
     const queuedCheckpointAt = batch.calls[0]!.checkpointAt;
     await harness.scheduler.advance();
     const blocked = harness.scheduler.activeBatch()!.calls[0]!;
@@ -330,7 +330,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "ask-archived",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
-    }], 0);
+    }], "step-0", 0);
     await harness.scheduler.advance();
     const blocker = harness.scheduler.activeBatch()!.calls[0]!.blocker!;
     const response = { type: "question_answer" as const, answers: ["Yes"] };
@@ -374,7 +374,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "ask-recovery",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
-    }], 0);
+    }], "step-0", 0);
     await harness.scheduler.advance();
     const blocked = harness.scheduler.activeBatch()!.calls[0]!;
     const response = { type: "question_answer" as const, answers: ["Yes"] };
@@ -421,7 +421,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
         toolName: "permission_tool",
         input: {},
       },
-    ], 0);
+    ], "step-0", 0);
     expect(await harness.scheduler.advance()).toMatchObject({
       status: "suspended_hitl",
       hitlIds: expect.any(Array),
@@ -463,7 +463,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
     await harness.scheduler.createBatch([
       { toolCallId: "permission-first", toolName: "permission_tool", input: {} },
       { toolCallId: "permission-second", toolName: "permission_tool", input: {} },
-    ], 0);
+    ], "step-0", 0);
     expect(await harness.scheduler.advance()).toMatchObject({ status: "suspended_hitl" });
 
     const batch = harness.scheduler.activeBatch()!;
@@ -541,7 +541,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "ask-1",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
-    }], 0);
+    }], "step-0", 0);
     await harness.scheduler.advance();
     const blocker = harness.scheduler.activeBatch()!.calls[0]!.blocker!;
     await expect(validateSessionToolBatchResponse({
@@ -561,7 +561,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "ask-1",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
-    }], 0);
+    }], "step-0", 0);
     await harness.scheduler.advance();
     const blocker = harness.scheduler.activeBatch()!.calls[0]!.blocker!;
     await applySessionToolBatchResponse({
@@ -580,7 +580,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("permission approval resumes the exact call and performs the effect once", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "permission-1", toolName: "permission_tool", input: {} }], 0);
+    await harness.scheduler.createBatch([{ toolCallId: "permission-1", toolName: "permission_tool", input: {} }], "step-0", 0);
     await harness.scheduler.advance();
     expect(harness.permissionExecutions()).toBe(0);
     expect(eventResults(harness)).toHaveLength(0);
@@ -606,7 +606,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
         toolCallId: "child-1",
         toolName: "delegate",
         input: {},
-      }], 0);
+      }], "step-0", 0);
 
       expect(await harness.scheduler.advance()).toMatchObject({
         status: "waiting_for_child",
@@ -651,7 +651,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("retries a read-only running call once after restart", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], 0);
+    const batch = await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
     await markRunning(harness, batch.calls[0]!, 1);
     expect(await harness.scheduler.recoverInterruptedBatch()).toMatchObject({ status: "ready_for_continuation" });
     expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({ state: "completed", attempt: 2 });
@@ -659,7 +659,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("finalizes an exhausted read-only recovery through the Registry system lane", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], 0);
+    const batch = await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
     await markRunning(harness, batch.calls[0]!, 2);
     await harness.scheduler.recoverInterruptedBatch();
     expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({
@@ -672,7 +672,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("effectful running recovery becomes strict manual inspection without a fabricated result", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], 0);
+    const batch = await harness.scheduler.createBatch([{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], "step-0", 0);
     await markRunning(harness, batch.calls[0]!, 1);
     const runningCheckpointAt = harness.scheduler.activeBatch()!.calls[0]!.checkpointAt;
     expect(await harness.scheduler.recoverInterruptedBatch()).toEqual({
@@ -695,7 +695,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
     await harness.scheduler.createBatch([
       { toolCallId: "cwd-1", toolName: "cwd_tool", input: {} },
       { toolCallId: "read-2", toolName: "read_tool", input: {} },
-    ], 0);
+    ], "step-0", 0);
     expect(await harness.scheduler.advance()).toMatchObject({ sessionCwdChanged: true });
     expect(harness.scheduler.activeBatch()!.calls.map((call) => call.state)).toEqual(["completed", "failed"]);
     expect(eventResults(harness)).toHaveLength(2);
@@ -706,7 +706,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
     await harness.scheduler.createBatch([
       { toolCallId: "complete-1", toolName: "completion_tool", input: {} },
       { toolCallId: "effect-2", toolName: "effect_tool", input: {} },
-    ], 0);
+    ], "step-0", 0);
 
     expect(await harness.scheduler.advance()).toEqual({
       status: "execution_completed",
@@ -726,7 +726,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("external cancellation uses an injected Registry system lane", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], 0);
+    await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
     const result = await cancelSessionToolBatch({
       storeManager: harness.storeManager,
       hitlQueue: harness.hitlQueue,
@@ -747,7 +747,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("external cancellation settles an attempted effectful call as an unknown result", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], 0);
+    const batch = await harness.scheduler.createBatch([{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], "step-0", 0);
     await markRunning(harness, batch.calls[0]!, 1);
 
     const result = await cancelSessionToolBatch({
@@ -792,7 +792,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("external cancellation clears child dependency correlation from the failed call", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "child-1", toolName: "delegate", input: {} }], 0);
+    await harness.scheduler.createBatch([{ toolCallId: "child-1", toolName: "delegate", input: {} }], "step-0", 0);
     expect(await harness.scheduler.advance()).toMatchObject({ status: "waiting_for_child" });
 
     await cancelSessionToolBatch({
@@ -818,7 +818,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("settleQueuedCall rejects non-text system drafts via the bounded system lane", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], 0);
+    await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
     await harness.scheduler.settleQueuedCall("read-1", {
       ...createToolErrorResult({ kind: "execution", message: "bad" }),
       draft: { kind: "source", text: "bad" },

@@ -86,6 +86,7 @@ export function testExecutionEnd(
     runUsageDelta: overrides.runUsageDelta ?? testExecutionUsage,
     runSettlement: overrides.runSettlement ?? { key: `run:test-session:${executionId}:0`, goalInstanceId: null },
     terminalSettlement: overrides.terminalSettlement ?? { key: `terminal:test-session:${executionId}`, goalInstanceId: null },
+    ...(overrides.finalOutputStepId === undefined ? {} : { finalOutputStepId: overrides.finalOutputStepId }),
     ...(overrides.error === undefined ? {} : { error: overrides.error }),
   };
 }

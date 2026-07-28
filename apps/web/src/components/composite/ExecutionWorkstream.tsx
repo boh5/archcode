@@ -14,12 +14,12 @@ import { ChevronDown, CircleAlert, Info, TriangleAlert } from "lucide-react";
 import {
   TOOL_DELEGATE,
   type AgentDescriptor,
+  type AssistantOutputPart,
   type ProfileName,
   type SessionExecutionRecord,
   type SessionMessage,
   type SessionPart,
   type SystemNoticePart,
-  type TextPart,
   type ToolChildSessionLink,
 } from "@archcode/protocol";
 import { useSessionStore } from "../../store/session-store";
@@ -349,6 +349,15 @@ export function PartRenderer({
 }) {
   switch (part.type) {
     case "text": {
+      return (
+        <div className="max-w-[72ch] text-[13px] leading-[1.7] text-text-secondary">
+          <MarkdownContent isStreaming={!part.completedAt}>
+            {part.text}
+          </MarkdownContent>
+        </div>
+      );
+    }
+    case "assistant-output": {
       const interrupted =
         (part.meta as Record<string, unknown> | undefined)?.interrupted ===
         true;
@@ -482,7 +491,9 @@ function SessionMessageView({
 function currentExecutionActivity(
   segment: ExecutionWorkstreamSegment,
 ): string | undefined {
-  const parts = segment.workMessages.flatMap((slice) => slice.parts);
+  const parts = segment.workItems.flatMap((item) =>
+    item.kind === "message" ? item.parts : []
+  );
   let latestActiveTool: Extract<SessionPart, { type: "tool" }> | undefined;
   for (let index = parts.length - 1; index >= 0; index -= 1) {
     const part = parts[index];
@@ -504,13 +515,11 @@ function currentExecutionActivity(
 
 function FinalAgentResponse({
   message,
-  textParts,
+  outputParts,
 }: {
   message: SessionMessage;
-  textParts: readonly TextPart[];
+  outputParts: readonly AssistantOutputPart[];
 }) {
-  const text = textParts.map((part) => part.text).join("");
-
   return (
     <section
       className="w-full min-w-0"
@@ -518,9 +527,15 @@ function FinalAgentResponse({
       data-testid={`final-response-${message.executionId ?? message.id}`}
     >
       <div className="msg-parts">
-        <div className="conversation-part" data-conversation-part="content">
-          <MarkdownContent variant="response">{text}</MarkdownContent>
-        </div>
+        {outputParts.map((part) => (
+          <div
+            key={part.id}
+            className="conversation-part"
+            data-conversation-part="content"
+          >
+            <MarkdownContent variant="response">{part.text}</MarkdownContent>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -548,17 +563,8 @@ function WorkDisclosure({
   current: boolean;
 }) {
   const timeline = useMemo(
-    () => buildToolRunTimeline(segment.workMessages),
-    [segment.workMessages],
-  );
-  const hasReasoningText = useMemo(
-    () =>
-      segment.workMessages.some(({ parts }) =>
-        parts.some(
-          (part) => part.type === "reasoning" && part.text.trim().length > 0,
-        ),
-      ),
-    [segment.workMessages],
+    () => buildToolRunTimeline(segment.workItems),
+    [segment.workItems],
   );
   const status = presentExecutionStatus(execution.record);
   const active = current && execution.record.status === "running";
@@ -646,12 +652,6 @@ function WorkDisclosure({
           className="ml-1 flex w-[calc(100%-4px)] min-w-0 flex-col gap-3 border-l border-border-subtle pb-2 pl-5 pt-2"
           data-testid={`work-body-${execution.id}`}
         >
-          {current &&
-            execution.reasoningTokens > 0 &&
-            !hasReasoningText &&
-            segment.workMessages.length > 0 && (
-              <ReasoningUsageSummary tokens={execution.reasoningTokens} />
-            )}
           {timeline.map((entry) =>
             entry.kind === "tool-run" ? (
               <div
@@ -667,6 +667,8 @@ function WorkDisclosure({
                   sessionId={focusStoreSessionId}
                 />
               </div>
+            ) : entry.kind === "reasoning-usage" ? (
+              <ReasoningUsageSummary key={entry.id} tokens={entry.tokens} />
             ) : (
               <SessionMessageView
                 key={entry.id}
@@ -738,16 +740,15 @@ const ExecutionTurn = memo(function ExecutionTurn({
           data-execution-navigation-target={segment.id}
           data-work-segment={segment.id}
         >
-          {segment.inputMessages.map((message) => (
+          {segment.inputMessage && (
             <MsgUser
-              key={message.id}
-              message={message}
+              message={segment.inputMessage}
               projectSlug={projectSlug}
               focusStoreSessionId={focusStoreSessionId}
               childSessionLinks={execution.childSessionLinks}
               onInspectModelAudit={onInspectModelAudit}
             />
-          ))}
+          )}
           <WorkDisclosure
             execution={execution}
             segment={segment}
@@ -759,21 +760,10 @@ const ExecutionTurn = memo(function ExecutionTurn({
             buttonRef={(button) => onButtonRef(segment.id, button)}
             current={index === execution.segments.length - 1}
           />
-          {segment.outputMessages.map(({ message, parts }) => (
-            <SessionMessageView
-              key={`${message.id}:output`}
-              message={message}
-              parts={parts}
-              projectSlug={projectSlug}
-              focusStoreSessionId={focusStoreSessionId}
-              childSessionLinks={execution.childSessionLinks}
-              onInspectModelAudit={onInspectModelAudit}
-            />
-          ))}
           {segment.finalResponse && (
             <FinalAgentResponse
               message={segment.finalResponse.message}
-              textParts={segment.finalResponse.textParts}
+              outputParts={segment.finalResponse.outputParts}
             />
           )}
         </section>

@@ -24,7 +24,11 @@ import { ToolOutputArtifactStore } from "./artifact-store";
 import { ToolOutputFinalizer } from "./finalizer";
 import { createHermeticArtifactSearchRunner } from "./fixtures/hermetic-search-runner";
 import { isOutputRef } from "./ref";
-import { createTestModelInfo, testExecutionStart } from "../testing/test-execution-fixtures";
+import {
+  createTestModelInfo,
+  testExecutionStart,
+  testExecutionUsage,
+} from "../testing/test-execution-fixtures";
 
 const TOOL_NAMES = new Set(["bash", "output_read", "output_search"]);
 const CHILD_REOPEN_FIXTURE = join(import.meta.dir, "fixtures", "reopen-store-child.ts");
@@ -116,7 +120,11 @@ describe("Tool Output Plane real user stories", () => {
     ].join("\n");
     const input = { description: "Emit output that must survive hard compact", command };
     const toolCallId = crypto.randomUUID();
-    const executionId = beginUserRound(harness.rootStore, "Run the diagnostic command");
+    const round = beginUserRound(
+      harness.rootStore,
+      "Run the diagnostic command",
+    );
+    const { executionId } = round;
     const context = executionContext(harness.rootStore, access, "bash", toolCallId, executionId);
 
     harness.rootStore.getState().append({ type: "tool-call", toolCallId, toolName: "bash", input });
@@ -127,6 +135,13 @@ describe("Tool Output Plane real user stories", () => {
       toolName: "bash",
       settledAt: Date.now(),
       result,
+    });
+    harness.rootStore.getState().append({
+      type: "step-end",
+      stepId: round.stepId,
+      step: 0,
+      finishReason: "tool-calls",
+      usage: testExecutionUsage,
     });
     endExecution(harness.rootStore, executionId);
 
@@ -155,7 +170,13 @@ describe("Tool Output Plane real user stories", () => {
       steps: [{
         index: 0,
         finishReason: "stop",
-        usage: { inputTokens: 850, outputTokens: 1, totalTokens: 851 },
+        usage: {
+          inputTokens: 850,
+          outputTokens: 1,
+          totalTokens: 851,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+        },
       }] as never,
     });
     const modelInfo = createTestModelInfo({
@@ -233,7 +254,9 @@ describe("Tool Output Plane real user stories", () => {
     const input = { description: "Emit a recoverable mixed-stream artifact", command };
     const toolCallId = crypto.randomUUID();
     const childExecutionId = crypto.randomUUID();
+    const childStepId = crypto.randomUUID();
     harness.childStore.getState().append(testExecutionStart(childExecutionId));
+    harness.childStore.getState().append({ type: "step-start", stepId: childStepId, step: 0 });
     const context = executionContext(harness.childStore, childAccess, "bash", toolCallId, childExecutionId);
 
     harness.childStore.getState().append({ type: "tool-call", toolCallId, toolName: "bash", input });
@@ -245,6 +268,14 @@ describe("Tool Output Plane real user stories", () => {
       settledAt: Date.now(),
       result,
     });
+    harness.childStore.getState().append({
+      type: "step-end",
+      stepId: childStepId,
+      step: 0,
+      finishReason: "tool-calls",
+      usage: testExecutionUsage,
+    });
+    endExecution(harness.childStore, childExecutionId);
     await harness.sessions.flushSession(harness.childSessionId, harness.workspace);
 
     expect(result.isError).toBe(false);
@@ -385,8 +416,12 @@ function executionContext(
   };
 }
 
-function beginUserRound(store: StoryHarness["rootStore"], text: string): string {
+function beginUserRound(
+  store: StoryHarness["rootStore"],
+  text: string,
+): { executionId: string; stepId: string } {
   const executionId = crypto.randomUUID();
+  const stepId = crypto.randomUUID();
   const messageId = crypto.randomUUID();
   store.getState().append(testExecutionStart(executionId, "user_message"));
   store.getState().append({
@@ -402,18 +437,36 @@ function beginUserRound(store: StoryHarness["rootStore"], text: string): string 
       clientRequestId: `request-${messageId}`,
     }],
   });
-  return executionId;
+  store.getState().append({ type: "step-start", stepId, step: 0 });
+  return { executionId, stepId };
 }
 
 function appendCompletedRound(store: StoryHarness["rootStore"], userText: string, assistantText: string): void {
-  const executionId = beginUserRound(store, userText);
-  store.getState().append({ type: "text-start" });
-  store.getState().append({ type: "text-delta", text: assistantText });
-  store.getState().append({ type: "text-end" });
-  endExecution(store, executionId);
+  const { executionId, stepId } = beginUserRound(store, userText);
+  const blockId = crypto.randomUUID();
+  store.getState().append({ type: "text-start", stepId, blockId });
+  store.getState().append({
+    type: "text-delta",
+    stepId,
+    blockId,
+    text: assistantText,
+  });
+  store.getState().append({ type: "text-end", stepId, blockId });
+  store.getState().append({
+    type: "step-end",
+    stepId,
+    step: 0,
+    finishReason: "stop",
+    usage: testExecutionUsage,
+  });
+  endExecution(store, executionId, stepId);
 }
 
-function endExecution(store: StoryHarness["rootStore"], executionId: string): void {
+function endExecution(
+  store: StoryHarness["rootStore"],
+  executionId: string,
+  finalOutputStepId?: string,
+): void {
   const state = store.getState();
   const run = state.executions.find((execution) => execution.id === executionId)?.runs.at(-1);
   if (run === undefined) throw new Error(`Missing active run for ${executionId}`);
@@ -427,6 +480,7 @@ function endExecution(store: StoryHarness["rootStore"], executionId: string): vo
     runUsageDelta: state.stats.usage,
     runSettlement: { key: `run:${state.sessionId}:${executionId}:${run.ordinal}`, goalInstanceId: null },
     terminalSettlement: { key: `terminal:${state.sessionId}:${executionId}`, goalInstanceId: null },
+    ...(finalOutputStepId === undefined ? {} : { finalOutputStepId }),
   });
 }
 

@@ -195,11 +195,16 @@ describe("logical Execution lifecycle", () => {
       binding,
     }, 0);
     state = apply(state, {
+      type: "step-start",
+      stepId: "step-1",
+      step: 0,
+    }, 1);
+    state = apply(state, {
       type: "tool-call",
       toolCallId: "call-1",
       toolName: "ask_user",
       input: {},
-    }, 1);
+    }, 2);
     const assistantMessageId = state.currentAssistantMessageId;
     state = apply(state, {
       type: "execution-suspended",

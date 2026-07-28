@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
+  AssistantSessionPart,
   ExecutionModelBindingSummary,
   SessionExecutionRecord,
   SessionMessage,
@@ -118,22 +119,121 @@ function message(
   role: SessionMessage["role"],
   value: string,
   createdAt: number,
+  outputPhase: "commentary" | "final_answer" = "commentary",
 ): SessionMessage {
-  return {
-    id,
-    role,
-    executionId: "execution",
-    createdAt,
-    completedAt: createdAt,
-    parts: [
-      {
+  if (role === "user") {
+    return {
+      id,
+      role,
+      executionId: "execution",
+      createdAt,
+      completedAt: createdAt,
+      parts: [{
         type: "text",
         id: `${id}:text`,
         text: value,
         createdAt,
         completedAt: createdAt,
-      },
-    ],
+      }],
+    };
+  }
+  return {
+    id,
+    role,
+    executionId: "execution",
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase,
+    createdAt,
+    completedAt: createdAt,
+    parts: [{
+      type: "assistant-output",
+      id: `${id}:output`,
+      blockId: `${id}:block`,
+      text: value,
+      createdAt,
+      completedAt: createdAt,
+    }],
+  };
+}
+
+function modelMessage(
+  id: string,
+  stepId: string,
+  parts: AssistantSessionPart[],
+  createdAt: number,
+  outputPhase: "commentary" | "final_answer" = "commentary",
+): SessionMessage {
+  return {
+    id,
+    role: "assistant",
+    executionId: "execution",
+    runOrdinal: 0,
+    stepId,
+    outputPhase,
+    parts,
+    createdAt,
+    completedAt: createdAt,
+  };
+}
+
+function modelOutput(
+  id: string,
+  text: string,
+  createdAt: number,
+): AssistantSessionPart {
+  return {
+    type: "assistant-output",
+    id,
+    blockId: id,
+    text,
+    createdAt,
+    completedAt: createdAt,
+  };
+}
+
+function runningTool(id: string, path: string, createdAt: number): AssistantSessionPart {
+  return {
+    type: "tool",
+    id,
+    state: "running",
+    toolCallId: `call:${id}`,
+    toolName: "file_read",
+    input: { path },
+    createdAt,
+    startedAt: createdAt,
+  };
+}
+
+function reasoningPart(
+  id: string,
+  text: string,
+  createdAt: number,
+): AssistantSessionPart {
+  return {
+    type: "reasoning",
+    id,
+    blockId: id,
+    text,
+    createdAt,
+    completedAt: createdAt,
+  };
+}
+
+function usageStep(
+  id: string,
+  startedAt: number,
+  reasoningTokens: number,
+): SessionStep {
+  return {
+    id,
+    executionId: "execution",
+    runOrdinal: 0,
+    step: startedAt,
+    startedAt,
+    completedAt: startedAt + 1,
+    finishReason: "tool-calls",
+    usage: { ...usage, reasoningTokens },
   };
 }
 
@@ -211,6 +311,114 @@ afterEach(() => {
 });
 
 describe("ExecutionWorkstream", () => {
+  test("renders commentary and tools in exact Work order with per-attempt token-only Reasoning", async () => {
+    await render(
+      [
+        message("input", "user", "Inspect", 5),
+        modelMessage("attempt-1", "step-1", [
+          modelOutput("commentary-1", "First commentary", 10),
+          runningTool("tool-1", "one.ts", 11),
+        ], 10),
+        modelMessage("attempt-2", "step-2", [
+          modelOutput("commentary-2", "Second commentary", 20),
+          runningTool("tool-2", "two.ts", 21),
+        ], 20),
+        modelMessage("final", "step-3", [
+          modelOutput("final-output", "Done", 90),
+        ], 90, "final_answer"),
+      ],
+      completed(),
+      [
+        usageStep("step-1", 10, 137),
+        usageStep("step-2", 20, 56),
+        { ...usageStep("step-3", 90, 0), finishReason: "stop" },
+      ],
+    );
+    const segmentId = "work:execution:after:input";
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        `[data-testid="work-summary-${segmentId}"]`,
+      )?.click();
+    });
+    const body = container.querySelector(`[id="work-body-${segmentId}"]`);
+    const bodyText = body?.textContent ?? "";
+    const usageRows = Array.from(
+      body?.querySelectorAll('[data-testid="reasoning-usage-summary"]') ?? [],
+    );
+
+    expect(usageRows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("137 tokens"),
+      expect.stringContaining("56 tokens"),
+    ]);
+    expect(bodyText).not.toContain("193");
+    expect(bodyText.indexOf("137 tokens")).toBeLessThan(
+      bodyText.indexOf("First commentary"),
+    );
+    expect(bodyText.indexOf("First commentary")).toBeLessThan(
+      bodyText.indexOf("one.ts"),
+    );
+    expect(bodyText.indexOf("one.ts")).toBeLessThan(
+      bodyText.indexOf("56 tokens"),
+    );
+    expect(bodyText.indexOf("56 tokens")).toBeLessThan(
+      bodyText.indexOf("Second commentary"),
+    );
+    expect(bodyText.indexOf("Second commentary")).toBeLessThan(
+      bodyText.indexOf("two.ts"),
+    );
+    expect(
+      container.querySelector('[data-testid="final-response-execution"]')
+        ?.textContent,
+    ).toContain("Done");
+  });
+
+  test("renders multiple Reasoning blocks independently without a token placeholder", async () => {
+    await render(
+      [
+        modelMessage("attempt", "step-1", [
+          reasoningPart("reason-a", "First reasoning", 10),
+          modelOutput("commentary", "Between", 11),
+          reasoningPart("reason-b", "Second reasoning", 12),
+        ], 10),
+      ],
+      completed(),
+      [usageStep("step-1", 10, 193)],
+    );
+    const segmentId = "work:execution:implicit";
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        `[data-testid="work-summary-${segmentId}"]`,
+      )?.click();
+    });
+    const body = container.querySelector(`[id="work-body-${segmentId}"]`);
+
+    expect(body?.querySelectorAll('[data-testid="reasoning-block"]'))
+      .toHaveLength(2);
+    expect(body?.querySelector('[data-testid="reasoning-usage-summary"]'))
+      .toBeNull();
+    expect(body?.textContent).toContain("Between");
+  });
+
+  test("renders adjacent canonical UserMessages as independent empty Work Segments", async () => {
+    await render(
+      [
+        message("one", "user", "One", 10),
+        message("two", "user", "Two", 11),
+      ],
+      completed(),
+    );
+
+    expect(container.querySelectorAll("[data-work-segment]")).toHaveLength(2);
+    expect(
+      container.querySelector('[data-work-segment="work:execution:after:one"]')
+        ?.textContent,
+    ).toContain("One");
+    expect(
+      container.querySelector('[data-work-segment="work:execution:after:two"]')
+        ?.textContent,
+    ).toContain("Two");
+  });
+
   test("renders ordered independent Work Segments while final output stays with the last segment", async () => {
     await render(
       [
@@ -218,7 +426,7 @@ describe("ExecutionWorkstream", () => {
         message("early", "assistant", "Early work", 20),
         message("steer", "user", "Steer the work", 40),
         message("late", "assistant", "Later work", 50),
-        message("final", "assistant", "Done", 90),
+        message("final", "assistant", "Done", 90, "final_answer"),
       ],
       completed(),
       [
@@ -247,10 +455,18 @@ describe("ExecutionWorkstream", () => {
     ).toContain("Worked for");
     expect(
       container.querySelector(`[data-work-segment="${first}"]`)?.textContent,
-    ).toContain("Early work");
+    ).not.toContain("Early work");
     expect(
       container.querySelector(`[id="work-body-${first}"]`),
     ).toBeNull();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        `[data-testid="work-summary-${first}"]`,
+      )?.click();
+    });
+    expect(
+      container.querySelector(`[id="work-body-${first}"]`)?.textContent,
+    ).toContain("Early work");
     expect(container.textContent?.match(/Early work/g)).toHaveLength(1);
     expect(
       container
@@ -418,7 +634,13 @@ describe("ExecutionWorkstream", () => {
     expect(container.querySelector(`[data-testid="work-disclosure-${latest}"]`)
       ?.getAttribute("data-work-expanded")).toBe("true");
 
-    const final = message("final", "assistant", "Done", 90);
+    const final = message(
+      "final",
+      "assistant",
+      "Done",
+      90,
+      "final_answer",
+    );
     await render([input, final], completed(), [
       {
         id: "step",

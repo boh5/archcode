@@ -61,7 +61,7 @@ describe("Session Store logical Execution hard cut", () => {
       maxSteps: 50,
       binding,
     });
-    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({
       type: "tool-call",
       toolCallId: "call-1",
@@ -73,6 +73,7 @@ describe("Session Store logical Execution hard cut", () => {
       batchId: "batch-1",
       executionId: "execution-2",
       assistantMessageId,
+      stepId: "step-0",
       step: 0,
       runOrdinal: 0,
       agentName: "lead",

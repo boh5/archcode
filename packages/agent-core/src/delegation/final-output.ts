@@ -11,16 +11,17 @@ export function finalOutputForExecution(
 ): string | undefined {
   const execution = state.executions.find((candidate) => candidate.id === executionId);
   if (execution?.status !== "completed") return undefined;
-
-  for (let index = state.messages.length - 1; index >= 0; index -= 1) {
-    const message = state.messages[index];
-    if (message?.role !== "assistant" || message.executionId !== executionId) continue;
-    return message.parts
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("");
-  }
-  return "";
+  if (execution.finalOutputStepId === undefined) return "";
+  const message = state.messages.find((candidate) => (
+    candidate.role === "assistant"
+    && candidate.executionId === executionId
+    && candidate.stepId === execution.finalOutputStepId
+    && candidate.outputPhase === "final_answer"
+  ));
+  return message?.parts
+    .filter((part) => part.type === "assistant-output")
+    .map((part) => part.text)
+    .join("") ?? "";
 }
 
 export function latestExecution(

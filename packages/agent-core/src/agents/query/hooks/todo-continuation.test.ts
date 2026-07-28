@@ -234,7 +234,16 @@ function seedAssistantTool(store: StoreApi<SessionStoreState>, toolName: string)
   };
 
   store.setState({
-    messages: [{ id: "assistant-1", role: "assistant", parts: [part], createdAt: 1 }],
+    messages: [{
+      id: "assistant-1",
+      role: "assistant",
+      executionId: "execution-1",
+      runOrdinal: 0,
+      stepId: "step-1",
+      outputPhase: "commentary",
+      parts: [part],
+      createdAt: 1,
+    }],
   });
 }
 

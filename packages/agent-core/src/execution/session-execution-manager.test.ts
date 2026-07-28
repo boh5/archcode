@@ -214,7 +214,7 @@ type MockAgentResult = {
   readonly cwdChanged?: AgentResult["cwdChanged"];
 };
 
-function normalizeMockAgentResult(result: MockAgentResult): AgentResult {
+function normalizeMockAgentResult(result: MockAgentResult, finalOutputStepId?: string): AgentResult {
   if (result.outcome === "suspended") {
     if (result.suspension === undefined) throw new Error("Suspended mock result requires a suspension");
     return {
@@ -230,6 +230,9 @@ function normalizeMockAgentResult(result: MockAgentResult): AgentResult {
     text: result.text,
     steps: result.steps,
     status: result.status ?? "completed",
+    ...((result.status ?? "completed") === "completed" && finalOutputStepId !== undefined
+      ? { finalOutputStepId }
+      : {}),
     ...(result.error === undefined ? {} : { error: result.error }),
     ...(result.cwdChanged === undefined ? {} : { cwdChanged: result.cwdChanged }),
   };
@@ -245,10 +248,20 @@ class MockAgent implements Agent {
     this.runStarted.resolve(undefined);
     const signal = options.abort;
     const result = await withAbort(this.result, signal);
-    this.store.getState().append({ type: "text-start" });
-    this.store.getState().append({ type: "text-delta", text: result.text });
-    this.store.getState().append({ type: "text-end" });
-    return normalizeMockAgentResult(result);
+    const stepId = crypto.randomUUID();
+    const step = options.initialStep;
+    this.store.getState().append({ type: "step-start", stepId, step });
+    this.store.getState().append({ type: "text-start", stepId, blockId: "output" });
+    this.store.getState().append({ type: "text-delta", stepId, blockId: "output", text: result.text });
+    this.store.getState().append({ type: "text-end", stepId, blockId: "output" });
+    const completed = result.outcome !== "suspended" && (result.status ?? "completed") === "completed";
+    this.store.getState().append({
+      type: "step-end",
+      stepId,
+      step,
+      finishReason: completed ? "stop" : result.outcome === "suspended" ? "tool-calls" : "error",
+    });
+    return normalizeMockAgentResult(result, completed && result.text.trim().length > 0 ? stepId : undefined);
   });
 
   constructor(
@@ -437,10 +450,14 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
           const result: MockAgentResult = options.childRun
             ? await withAbort(options.childRun, signal)
             : { text: "child result", steps: 1 };
-          input.store.getState().append({ type: "text-start" });
-          input.store.getState().append({ type: "text-delta", text: result.text });
-          input.store.getState().append({ type: "text-end" });
-          return normalizeMockAgentResult(result);
+          const stepId = crypto.randomUUID();
+          const step = runOptions?.initialStep ?? 0;
+          input.store.getState().append({ type: "step-start", stepId, step });
+          input.store.getState().append({ type: "text-start", stepId, blockId: "output" });
+          input.store.getState().append({ type: "text-delta", stepId, blockId: "output", text: result.text });
+          input.store.getState().append({ type: "text-end", stepId, blockId: "output" });
+          input.store.getState().append({ type: "step-end", stepId, step, finishReason: "stop" });
+          return normalizeMockAgentResult(result, result.text.trim().length > 0 ? stepId : undefined);
         }),
         dispose: mock(() => undefined),
       } as unknown as MockAgent;
@@ -645,6 +662,7 @@ async function writeSessionFile(input: {
   parentSessionId?: string;
   cwd?: string;
   title?: string;
+  messages?: SessionFile["messages"];
   executions?: SessionFile["executions"];
   steps?: SessionFile["steps"];
   childSessionLinks?: SessionFile["childSessionLinks"];
@@ -669,7 +687,7 @@ async function writeSessionFile(input: {
     activeSkillNames: [],
     modelSelection: { revision: 0 },
     title: input.title ?? null,
-    messages: [],
+    messages: input.messages ?? [],
     pendingMessages: [],
     inputRequestReceipts: [],
     steps: input.steps ?? [],
@@ -699,6 +717,8 @@ function blockedToolBatch(hitlId: string): SessionToolBatch {
     executionId: `execution-${hitlId}`,
     runOrdinal: 0,
     step: 0,
+    stepId: `step-${hitlId}`,
+    assistantMessageId: `assistant-${hitlId}`,
     agentName: "lead",
     allowedTools: ["ask_user"],
     agentSkills: [],
@@ -796,6 +816,9 @@ describe("SessionExecutionManager", () => {
     });
     expect(state.executions[0]?.runs.at(-1)?.binding.selection).toEqual({ model: "test:model" });
     expect(state.executions[0]?.origin).toBe("user_message");
+    const finalAssistant = state.messages.find((message) => message.role === "assistant");
+    expect(state.executions[0]?.finalOutputStepId).toBe(finalAssistant?.stepId);
+    expect(finalAssistant?.outputPhase).toBe("final_answer");
     expect(rootAgent.runBindings[0]!.summary).toEqual(state.executions[0]!.runs.at(-1)!.binding);
   });
 
@@ -2053,12 +2076,15 @@ describe("SessionExecutionManager", () => {
         modelRound += 1;
         now += 60_001;
         if (modelRound === 2) store.setState({ todos: [{ id: "todo-1", content: "finish the task", status: "completed" }] });
+        const text = modelRound === 1 ? "started" : "finished";
         return {
           fullStream: (async function* () {
-            yield { type: "text-delta", text: modelRound === 1 ? "started" : "finished" };
+            yield { type: "text-start", id: "output" };
+            yield { type: "text-delta", id: "output", text };
+            yield { type: "text-end", id: "output" };
           })(),
           finishReason: Promise.resolve("stop"),
-          text: Promise.resolve(modelRound === 1 ? "started" : "finished"),
+          text: Promise.resolve(text),
           toolCalls: Promise.resolve([]),
           usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
         };
@@ -2400,6 +2426,8 @@ describe("SessionExecutionManager", () => {
         executionId: parentExecutionId,
         runOrdinal: 0,
         step: 0,
+        stepId: `step-${parentExecutionId}`,
+        assistantMessageId: `assistant-${parentExecutionId}`,
         agentName: "lead",
         allowedTools: ["delegate"],
         agentSkills: [],
@@ -2588,6 +2616,8 @@ describe("SessionExecutionManager", () => {
           executionId: parentExecutionId,
           runOrdinal: 0,
           step: 0,
+          stepId: `step-${parentExecutionId}`,
+          assistantMessageId: `assistant-${parentExecutionId}`,
           agentName,
           allowedTools: ["delegate"],
           agentSkills: [],
@@ -2948,6 +2978,8 @@ describe("SessionExecutionManager", () => {
 
     const execution = await manager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "work" } });
     await Promise.resolve();
+    const interruptedStepId = crypto.randomUUID();
+    agent.store.getState().append({ type: "step-start", stepId: interruptedStepId, step: 0 });
     agent.store.getState().append({ type: "tool-input-start", toolCallId: "late-tool", toolName: "bash" });
     agent.store.getState().append({ type: "tool-call", toolCallId: "late-tool", toolName: "bash", input: {} });
     const stopping = manager.stopSessionFamily(workspaceRoot, sessionId);
@@ -2957,7 +2989,9 @@ describe("SessionExecutionManager", () => {
     const state = agent.store.getState();
     expect(state.executions).toHaveLength(1);
     expect(state.executions[0]?.status).toBe("cancelled");
-    const tool = state.messages.flatMap((message) => message.parts).find((part) => part.type === "tool");
+    const tool = state.messages
+      .flatMap((message) => message.role === "assistant" ? message.parts : [])
+      .find((part) => part.type === "tool");
     expect(tool).toMatchObject({ type: "tool", state: "interrupted", toolCallId: "late-tool" });
     expect(JSON.parse(JSON.stringify(tool))).not.toHaveProperty("result");
   });
@@ -4169,9 +4203,34 @@ describe("SessionExecutionManager", () => {
   test("restart reconciliation terminalizes an unknown running Execution without replay", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
+    const stepId = crypto.randomUUID();
     const now = Date.now();
     await writeSessionFile({
       sessionId: rootId,
+      messages: [{
+        id: "assistant-open-at-restart",
+        role: "assistant",
+        executionId: "execution-running",
+        runOrdinal: 0,
+        stepId,
+        outputPhase: "commentary",
+        parts: [{
+          type: "assistant-output",
+          id: "output-open-at-restart",
+          blockId: "provider-output",
+          text: "RESTART_COMPLETED_OUTPUT_SHOULD_NOT_PROJECT",
+          createdAt: now - 500,
+          completedAt: now - 400,
+        }],
+        createdAt: now - 500,
+      }],
+      steps: [{
+        id: stepId,
+        executionId: "execution-running",
+        runOrdinal: 0,
+        step: 0,
+        startedAt: now - 500,
+      }],
       executions: [testExecutionRecord("execution-running", "running")],
       childSessionLinks: [{
         parentSessionId: rootId,
@@ -4190,6 +4249,11 @@ describe("SessionExecutionManager", () => {
       }],
     });
     const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loadedBeforeBarrier = await restarted.getOrLoad(rootId, workspaceRoot);
+    expect(loadedBeforeBarrier.getState().executions.at(-1)?.status).toBe("running");
+    expect(loadedBeforeBarrier.getState().steps.at(-1)?.completedAt).toBeUndefined();
+    expect((await restarted.getSessionFile(workspaceRoot, rootId)).executions.at(-1)?.status)
+      .toBe("running");
 
     const { manager } = createManager({}, { storeManager: restarted });
     await manager.reconcileDurableSession({
@@ -4205,8 +4269,20 @@ describe("SessionExecutionManager", () => {
       status: "interrupted",
       error: "Execution lost its live model/tool continuation and requires manual inspection",
     });
+    expect(store.getState().steps.at(-1)).toMatchObject({
+      id: stepId,
+      finishReason: "interrupted",
+      completedAt: expect.any(Number),
+    });
+    expect(store.getState().messages[0]?.parts[0]).toMatchObject({
+      type: "assistant-output",
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(JSON.stringify(store.getState().toModelMessages()))
+      .not.toContain("RESTART_COMPLETED_OUTPUT_SHOULD_NOT_PROJECT");
     expect(store.getState().childSessionLinks.at(-1)).toMatchObject({ status: "cancelling" });
     expect(file.executions.at(-1)?.status).toBe("interrupted");
+    expect(file.steps.at(-1)?.finishReason).toBe("interrupted");
     expect(file.childSessionLinks.at(-1)?.status).toBe("cancelling");
   });
 
@@ -4219,6 +4295,8 @@ describe("SessionExecutionManager", () => {
       executionId: "execution-orphaned",
       runOrdinal: 0,
       step: 0,
+      stepId: "step-orphaned",
+      assistantMessageId: "assistant-orphaned",
       agentName: "lead",
       allowedTools: ["effect_tool"],
       agentSkills: [],
@@ -4239,6 +4317,25 @@ describe("SessionExecutionManager", () => {
     };
     await writeSessionFile({
       sessionId: rootId,
+      messages: [{
+        id: batch.assistantMessageId,
+        role: "assistant",
+        executionId: batch.executionId,
+        runOrdinal: batch.runOrdinal,
+        stepId: batch.stepId,
+        outputPhase: "commentary",
+        parts: [{
+          type: "tool",
+          id: "tool-part-effect-1",
+          state: "running",
+          toolCallId: "effect-1",
+          toolName: "effect_tool",
+          input: {},
+          createdAt: runningCheckpointAt,
+          startedAt: runningCheckpointAt,
+        }],
+        createdAt: runningCheckpointAt,
+      }],
       executions: [testExecutionRecord("execution-orphaned", "running")],
       steps: [{
         id: "step-orphaned",
@@ -4285,7 +4382,22 @@ describe("SessionExecutionManager", () => {
     );
     const reconciled = await restarted.getSessionFile(workspaceRoot, rootId);
     expect(reconciled.toolBatches[0]?.archivedAt).toEqual(expect.any(String));
-    expect(reconciled.executions[0]?.runs[0]).toMatchObject({ endedAt: runningCheckpointAt });
+    const reconciledExecution = reconciled.executions[0];
+    if (
+      reconciledExecution === undefined
+      || reconciledExecution.status === "running"
+      || reconciledExecution.status === "suspended"
+    ) throw new Error("Expected terminalized restart Execution");
+    const reconciledRun = reconciledExecution.runs[0];
+    if (reconciledRun === undefined || !("endedAt" in reconciledRun)) {
+      throw new Error("Expected closed restart run");
+    }
+    expect(reconciledRun.endedAt).toBeGreaterThanOrEqual(runningCheckpointAt);
+    expect(reconciled.steps[0]).toMatchObject({
+      id: batch.stepId,
+      finishReason: "interrupted",
+      completedAt: expect.any(Number),
+    });
 
     const next = await manager.startCheckedExecution({
       slug: "project",
@@ -4310,6 +4422,26 @@ describe("SessionExecutionManager", () => {
     };
     await writeSessionFile({
       sessionId: rootId,
+      messages: [{
+        id: batch.assistantMessageId,
+        role: "assistant",
+        executionId,
+        runOrdinal: batch.runOrdinal,
+        stepId: batch.stepId,
+        outputPhase: "commentary",
+        parts: [{
+          type: "tool",
+          id: "tool-part-terminal-active",
+          state: "running",
+          toolCallId: batch.calls[0]!.toolCallId,
+          toolName: batch.calls[0]!.toolName,
+          input: batch.calls[0]!.input,
+          createdAt: 1,
+          startedAt: 1,
+        }],
+        createdAt: 1,
+        completedAt: 1,
+      }],
       executions: [{
         ...terminal,
         runs: terminal.runs.map((run) => ({
@@ -4410,8 +4542,14 @@ describe("SessionExecutionManager", () => {
       binding: recoveryBinding,
       origin: "user_message",
     });
-    store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "step-end", step: 0, finishReason: "tool-calls" });
+    const recoveryStepId = crypto.randomUUID();
+    store.getState().append({ type: "step-start", stepId: recoveryStepId, step: 0 });
+    store.getState().append({
+      type: "step-end",
+      stepId: recoveryStepId,
+      step: 0,
+      finishReason: "tool-calls",
+    });
     const accepted = await inputs.acceptMessage({
       sessionId: rootId,
       workspaceRoot,
@@ -4449,7 +4587,7 @@ describe("SessionExecutionManager", () => {
       },
     };
     const durableTool = store.getState().messages
-      .flatMap((message) => message.parts)
+      .flatMap((message) => message.role === "assistant" ? message.parts : [])
       .find((part) => part.type === "tool" && part.toolCallId === "prior-work");
     if (durableTool?.type !== "tool" || durableTool.state !== "running") {
       throw new Error("Expected running durable tool work");
@@ -4509,24 +4647,28 @@ describe("SessionExecutionManager", () => {
 
     expect(committedAt).toBe(settledAt);
     const recovered = await restarted.getSessionFile(workspaceRoot, rootId);
-    expect(recovered.messages.map((message) => message.parts
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join(""))).toEqual(["Initial", "", "Steer"]);
-    expect(recovered.messages.at(-1)?.parts).toContainEqual(expect.objectContaining({
+    expect(recovered.messages.map((message) => message.role === "user"
+      ? message.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("")
+      : "")).toEqual(["Initial", "", "Steer"]);
+    const recoveredSteer = recovered.messages.at(-1);
+    if (recoveredSteer?.role !== "user") throw new Error("Expected recovered user Steer");
+    expect(recoveredSteer.parts).toContainEqual(expect.objectContaining({
       type: "attachment",
       id: `${accepted.messageId}:attachment:${attachment.id}`,
       attachment,
       completedAt: settledAt,
     }));
-    expect(recovered.messages.at(-1)?.completedAt).toBe(settledAt);
+    expect(recoveredSteer.completedAt).toBe(settledAt);
     expect(recovered.executions[0]).toMatchObject({
       id: executionId,
       status: "suspended",
       runs: [{ endedAt: settledAt }],
     });
     const recoveredPriorTool = recovered.messages
-      .flatMap((message) => message.parts)
+      .flatMap((message) => message.role === "assistant" ? message.parts : [])
       .find((part) => part.type === "tool" && part.toolCallId === "prior-work");
     expect(recoveredPriorTool).toMatchObject({ type: "tool", state: "running" });
     expect(settledAt).toBeLessThan(repairedAt);
@@ -5013,6 +5155,25 @@ describe("SessionExecutionManager", () => {
     const sessionId = crypto.randomUUID();
     await writeSessionFile({
       sessionId,
+      messages: [{
+        id: "assistant-hitl-pending",
+        role: "assistant",
+        executionId: "execution-hitl-pending",
+        runOrdinal: 0,
+        stepId: "step-hitl-pending",
+        outputPhase: "commentary",
+        parts: [{
+          type: "tool",
+          id: "tool-part-hitl-pending",
+          state: "running",
+          toolCallId: "tool-hitl-pending",
+          toolName: "ask_user",
+          input: {},
+          createdAt: 1,
+          startedAt: 1,
+        }],
+        createdAt: 1,
+      }],
       executions: [testExecutionRecord("execution-hitl-pending", "running")],
       steps: [{
         id: "step-hitl-pending",

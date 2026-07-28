@@ -159,11 +159,15 @@ function validateEnd(
         && settlementMatches(run.settlement, event.runSettlement);
     return execution.status === event.terminalStatus
       && execution.endedAt === event.endedAt
+      && execution.finalOutputStepId === event.finalOutputStepId
       && execution.error === event.error
       && settlementMatches(execution.terminalSettlement, event.terminalSettlement)
       && sameRunClose
       ? duplicate()
       : invalid(`Execution ${event.executionId} is already terminal`);
+  }
+  if (event.finalOutputStepId !== undefined && event.terminalStatus !== "completed") {
+    return invalid("Only a completed Execution may select final Assistant output");
   }
   if (execution.status === "running") {
     if (event.runEndedAt === undefined

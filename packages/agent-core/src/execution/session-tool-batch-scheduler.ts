@@ -79,7 +79,7 @@ export class SessionToolBatchScheduler {
     return this.#options.store.getState().toolBatches.find((batch) => batch.archivedAt === undefined);
   }
 
-  async createBatch(toolCalls: readonly ToolCallLike[], step: number): Promise<SessionToolBatch> {
+  async createBatch(toolCalls: readonly ToolCallLike[], stepId: string, step: number): Promise<SessionToolBatch> {
     if (this.activeBatch() !== undefined) throw new Error("Session already has an active tool batch");
     const partitions = partitionToolCalls([...toolCalls], this.#options.registry);
     const partitionIndexByCall = new Map<string, number>();
@@ -95,11 +95,22 @@ export class SessionToolBatchScheduler {
         `Tool batch execution ${this.#options.executionId} does not match current Session execution ${state.currentExecutionId ?? "none"}`,
       );
     }
+    const assistantMessageId = state.currentAssistantMessageId;
+    if (assistantMessageId === undefined) {
+      throw new Error(`Tool batch step ${stepId} has no current Assistant message`);
+    }
+    const assistant = assistantMessageId === undefined
+      ? undefined
+      : state.messages.find((message) => message.id === assistantMessageId);
+    if (assistant?.role !== "assistant" || assistant.stepId !== stepId) {
+      throw new Error(`Tool batch step ${stepId} has no current model-step Assistant message`);
+    }
     const batch: SessionToolBatch = {
       batchId: crypto.randomUUID(),
       executionId: this.#options.executionId,
       runOrdinal: this.#options.runOrdinal,
-      ...(state.currentAssistantMessageId === undefined ? {} : { assistantMessageId: state.currentAssistantMessageId }),
+      stepId,
+      assistantMessageId,
       step,
       agentName: this.#options.agentName,
       allowedTools: [...this.#options.allowedTools],

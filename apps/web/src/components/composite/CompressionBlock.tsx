@@ -279,6 +279,13 @@ function OriginalRangePartView({
           <span className="whitespace-pre-wrap break-words">{part.text}</span>
         </div>
       );
+    case "assistant-output":
+      return (
+        <div className="flex items-start gap-2 text-[13px] leading-5 text-text-secondary">
+          <FileText size={11} className="text-text-muted shrink-0 mt-1" aria-hidden="true" />
+          <span className="whitespace-pre-wrap break-words">{part.text}</span>
+        </div>
+      );
     case "reasoning":
       return (
         <div className="flex items-start gap-2 text-[12px] leading-4 text-text-tertiary italic">

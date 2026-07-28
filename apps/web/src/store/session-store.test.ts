@@ -1004,7 +1004,16 @@ describe("authoritative snapshot", () => {
     expect(store.getState().nextEventId).toBe(2);
 
     // Snapshot from server has up-to-date data (eventCursor matches)
-    const snapshotMessages: SessionMessage[] = [{ id: "msg-1", role: "assistant", parts: [], createdAt: 1000 }];
+    const snapshotMessages: SessionMessage[] = [{
+      id: "msg-1",
+      role: "assistant",
+      executionId: "run-1",
+      runOrdinal: 0,
+      stepId: "step-1",
+      outputPhase: "commentary",
+      parts: [],
+      createdAt: 1000,
+    }];
     applySnapshot(store, {
       messages: snapshotMessages,
       steps: [],
@@ -1067,8 +1076,18 @@ describe("authoritative snapshot", () => {
   test("restores live reducer ownership before applying post-snapshot tool events", () => {
     const store = createWebSessionStore("session-1", "demo");
     const executionId = "running-execution";
+    const assistant: SessionMessage = {
+      id: "assistant-message",
+      role: "assistant",
+      executionId,
+      runOrdinal: 0,
+      stepId: "running-step",
+      outputPhase: "commentary",
+      parts: [],
+      createdAt: 1,
+    };
     applySnapshot(store, {
-      messages: [],
+      messages: [assistant],
       steps: [
         {
           id: "running-step",
@@ -1093,7 +1112,7 @@ describe("authoritative snapshot", () => {
       isRunning: true,
       isStreamingModel: true,
       currentExecutionId: executionId,
-      currentAssistantMessageId: undefined,
+      currentAssistantMessageId: assistant.id,
       activeModelBinding: binding,
       eventCursor: 10,
     });
@@ -1117,6 +1136,9 @@ describe("authoritative snapshot", () => {
     expect(store.getState().messages[0]).toMatchObject({
       role: "assistant",
       executionId,
+      runOrdinal: 0,
+      stepId: "running-step",
+      outputPhase: "commentary",
       parts: [
         {
           type: "tool",
@@ -1134,6 +1156,9 @@ describe("authoritative snapshot", () => {
       id: "assistant-message",
       role: "assistant",
       executionId,
+      runOrdinal: 0,
+      stepId: "step-1",
+      outputPhase: "commentary",
       createdAt: 1,
       parts: [
         {
@@ -1194,11 +1219,15 @@ describe("authoritative snapshot", () => {
       id: "assistant-message",
       role: "assistant",
       executionId,
+      runOrdinal: 0,
+      stepId: "running-step",
+      outputPhase: "commentary",
       createdAt: 1,
       parts: [
         {
-          type: "text",
+          type: "assistant-output",
           id: "text-part",
+          blockId: "text-block",
           text: "Checking the workspace.",
           createdAt: 1,
           completedAt: 2,
@@ -1248,7 +1277,10 @@ describe("authoritative snapshot", () => {
       id: assistant.id,
       executionId,
       parts: [
-        { type: "text", text: "Checking the workspace." },
+        {
+          type: "assistant-output",
+          text: "Checking the workspace.",
+        },
         { type: "tool", state: "pending", toolCallId: "live-tool" },
       ],
     });

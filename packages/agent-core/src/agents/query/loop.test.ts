@@ -89,6 +89,35 @@ function bindingWithInputModalities(
   };
 }
 
+function bindingWithProviderSecrets(
+  providerSecretValues: readonly string[],
+): ExecutionModelBinding {
+  const modelInfo = new ModelInfo({
+    model: { modelId: "mock", provider: "mock" } as never,
+    config: {
+      name: "Mock",
+      limit: { context: 100_000, output: 10_000 },
+      modalities: { input: ["text"], output: ["text"] },
+    },
+    providerId: "mock",
+    modelId: "mock",
+    providerSecretValues,
+  });
+  return {
+    modelInfo,
+    options: undefined,
+    summary: {
+      selection: { model: modelInfo.qualifiedId },
+      providerId: modelInfo.providerId,
+      modelId: modelInfo.modelId,
+      providerDisplayName: modelInfo.providerDisplayName,
+      modelDisplayName: modelInfo.displayName,
+      resolution: "profile_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
+}
+
 function byteStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(controller) {
@@ -257,11 +286,34 @@ function stageQueuedBatch(
   agentSkills: string[],
 ): void {
   const now = new Date().toISOString();
+  const stepId = "recovered-step";
+  harness.store.getState().append({
+    type: "step-start",
+    stepId,
+    step: harness.options.initialStep,
+  });
+  harness.store.getState().append({
+    type: "tool-call",
+    toolCallId: "recovered-call",
+    toolName,
+    input: {},
+  });
+  harness.store.getState().append({
+    type: "step-end",
+    stepId,
+    step: harness.options.initialStep,
+    finishReason: "tool-calls",
+  });
+  const assistantMessageId = harness.store.getState().messages.find(
+    (message) => message.role === "assistant" && message.stepId === stepId,
+  )!.id;
   const batch: SessionToolBatch = {
     batchId: crypto.randomUUID(),
     executionId: harness.options.executionId,
     runOrdinal: harness.options.runOrdinal,
     step: harness.options.initialStep,
+    stepId,
+    assistantMessageId,
     agentName: "lead",
     allowedTools,
     agentSkills,
@@ -294,7 +346,15 @@ describe("QueryLoop Tool Output Plane", () => {
         toolCalls: [{ toolCallId: "call-1", toolName: "echo", input: { value: "hello" } }],
         chunks: [{ type: "tool-call", toolCallId: "call-1", toolName: "echo", input: { value: "hello" } } as StreamPart],
       },
-      { finishReason: "stop", text: "done", chunks: [{ type: "text-delta", text: "done" } as StreamPart] },
+      {
+        finishReason: "stop",
+        text: "done",
+        chunks: [
+          { type: "text-start", id: "output" } as StreamPart,
+          { type: "text-delta", id: "output", text: "done" } as StreamPart,
+          { type: "text-end", id: "output" } as StreamPart,
+        ],
+      },
     ]);
 
     expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed", text: "done" });
@@ -836,26 +896,432 @@ describe("QueryLoop Tool Output Plane", () => {
     expect(streamEvents(harness)).not.toContain("step-end");
   });
 
-  test("projects streamed text and reasoning in their original order", async () => {
+  test("projects provider-addressed text and reasoning blocks in their original order", async () => {
     const harness = await createHarness();
     harness.appendUser("stream");
     installRounds([{
       finishReason: "stop",
       text: "hello world",
       chunks: [
-        { type: "reasoning-delta", text: "think" } as StreamPart,
-        { type: "text-delta", text: "hello " } as StreamPart,
-        { type: "reasoning-delta", text: " more" } as StreamPart,
-        { type: "text-delta", text: "world" } as StreamPart,
+        { type: "reasoning-start", id: "reasoning-a" } as StreamPart,
+        { type: "reasoning-delta", id: "reasoning-a", text: "think" } as StreamPart,
+        { type: "reasoning-end", id: "reasoning-a" } as StreamPart,
+        { type: "text-start", id: "output-a" } as StreamPart,
+        { type: "text-delta", id: "output-a", text: "hello world" } as StreamPart,
+        { type: "text-end", id: "output-a" } as StreamPart,
+        { type: "reasoning-start", id: "reasoning-b" } as StreamPart,
+        { type: "reasoning-delta", id: "reasoning-b", text: "more" } as StreamPart,
+        { type: "reasoning-end", id: "reasoning-b" } as StreamPart,
       ],
     }]);
 
-    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed", text: "hello world" });
+    const result = await runQueryLoop(harness.options);
+    expect(result).toMatchObject({ status: "completed", text: "hello world" });
+    expect(result.finalOutputStepId).toBeString();
     expect(streamEvents(harness)).toEqual(expect.arrayContaining([
       "reasoning-start", "reasoning-delta", "text-start", "text-delta", "reasoning-end", "text-end",
     ]));
     const assistant = harness.store.getState().messages.at(-1)!;
-    expect(assistant.parts.map((part) => part.type)).toEqual(["reasoning", "text"]);
+    expect(assistant.parts.map((part) => part.type)).toEqual([
+      "reasoning",
+      "assistant-output",
+      "reasoning",
+    ]);
+    expect(assistant.stepId).toBe(result.finalOutputStepId);
+  });
+
+  test("preserves block order when secret-prefix buffering delays visible reasoning text", async () => {
+    const harness = await createHarness();
+    harness.options.binding = bindingWithProviderSecrets(["secret"]);
+    harness.appendUser("stream");
+    installRounds([{
+      finishReason: "stop",
+      text: "comment",
+      chunks: [
+        { type: "reasoning-start", id: "reasoning" } as StreamPart,
+        { type: "reasoning-delta", id: "reasoning", text: "s" } as StreamPart,
+        { type: "text-start", id: "output" } as StreamPart,
+        { type: "text-delta", id: "output", text: "comment" } as StreamPart,
+        { type: "text-end", id: "output" } as StreamPart,
+        { type: "reasoning-end", id: "reasoning" } as StreamPart,
+      ],
+    }]);
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({
+      status: "completed",
+      text: "comment",
+    });
+    const assistant = harness.store.getState().messages.find((message) => message.role === "assistant");
+    expect(assistant?.parts.map((part) => part.type)).toEqual([
+      "reasoning",
+      "assistant-output",
+    ]);
+    expect(assistant?.parts.map((part) => "text" in part ? part.text : undefined)).toEqual([
+      "s",
+      "comment",
+    ]);
+  });
+
+  test("retains an open provider block as discarded partial output when the stream fails", async () => {
+    const harness = await createHarness();
+    harness.appendUser("stream");
+    const streamFailure = Object.assign(new Error("stream failed"), { statusCode: 400 });
+    setLlmAdapterForTest({
+      streamText: mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "text-start", id: "output" } as StreamPart;
+          yield { type: "text-delta", id: "output", text: "partial tail" } as StreamPart;
+          throw streamFailure;
+        })(),
+        finishReason: Promise.resolve("error"),
+        usage: Promise.resolve({ totalTokens: 1 }),
+        text: Promise.resolve("partial tail"),
+        toolCalls: Promise.resolve([]),
+      }) as never),
+    });
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "failed" });
+    const assistant = harness.store.getState().messages.at(-1)!;
+    const output = assistant.parts.find((part) => part.type === "assistant-output");
+    expect(output).toMatchObject({
+      text: "partial tail",
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(output?.completedAt).toBeNumber();
+  });
+
+  test("rejects provider deltas without an addressed open block", async () => {
+    const harness = await createHarness();
+    harness.appendUser("stream");
+    installRounds([{
+      finishReason: "stop",
+      text: "must not become final",
+      chunks: [{ type: "text-delta", id: "missing", text: "invalid" } as StreamPart],
+    }]);
+
+    const result = await runQueryLoop(harness.options);
+    expect(result).toMatchObject({ status: "failed" });
+    expect(result.finalOutputStepId).toBeUndefined();
+    const assistant = harness.store.getState().messages.at(-1)!;
+    expect(assistant.parts.some((part) => part.type === "assistant-output")).toBe(false);
+    expect(assistant.parts.find((part) => part.type === "recovery-notice")?.id)
+      .toBe(`recovery:session:${assistant.stepId}`);
+  });
+
+  test("rejects blank provider text and reasoning block ids before persistence", async () => {
+    for (const type of ["text-start", "reasoning-start"] as const) {
+      const harness = await createHarness();
+      harness.appendUser("stream");
+      installRounds([{
+        finishReason: "stop",
+        text: "must not become final",
+        chunks: [{ type, id: " \t" } as StreamPart],
+      }]);
+
+      const result = await runQueryLoop(harness.options);
+      expect(result).toMatchObject({ status: "failed" });
+      expect(result.finalOutputStepId).toBeUndefined();
+      const assistant = harness.store.getState().messages.at(-1)!;
+      expect(assistant.parts.some((part) =>
+        part.type === "assistant-output" || part.type === "reasoning"
+      )).toBe(false);
+    }
+  });
+
+  test("rejects secret-bearing provider block ids without leaking them to Store events", async () => {
+    const secret = "provider-secret-block-id";
+    for (const type of ["text-start", "reasoning-start"] as const) {
+      const harness = await createHarness();
+      harness.options.binding = bindingWithProviderSecrets([secret]);
+      harness.appendUser("stream");
+      installRounds([{
+        finishReason: "stop",
+        text: "must not become final",
+        chunks: [{ type, id: `prefix-${secret}-suffix` } as StreamPart],
+      }]);
+
+      const result = await runQueryLoop(harness.options);
+      expect(result).toMatchObject({ status: "failed" });
+      expect(result.finalOutputStepId).toBeUndefined();
+      const state = harness.store.getState();
+      expect(JSON.stringify({ messages: state.messages, events: state.events })).not.toContain(secret);
+    }
+  });
+
+  test("rejects a reused text block id after the original block ended", async () => {
+    const harness = await createHarness();
+    harness.appendUser("stream");
+    installRounds([{
+      finishReason: "stop",
+      text: "must not become final",
+      chunks: [
+        { type: "text-start", id: "duplicate" } as StreamPart,
+        { type: "text-delta", id: "duplicate", text: "first" } as StreamPart,
+        { type: "text-end", id: "duplicate" } as StreamPart,
+        { type: "text-start", id: "duplicate" } as StreamPart,
+      ],
+    }]);
+
+    const result = await runQueryLoop(harness.options);
+
+    expect(result).toMatchObject({ status: "failed" });
+    expect(result.finalOutputStepId).toBeUndefined();
+    const output = harness.store.getState().messages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "assistant-output");
+    expect(output).toMatchObject({
+      text: "first",
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+  });
+
+  test("rejects a reused reasoning block id after the original block ended", async () => {
+    const harness = await createHarness();
+    harness.appendUser("stream");
+    installRounds([{
+      finishReason: "stop",
+      text: "",
+      chunks: [
+        { type: "reasoning-start", id: "duplicate" } as StreamPart,
+        { type: "reasoning-delta", id: "duplicate", text: "first" } as StreamPart,
+        { type: "reasoning-end", id: "duplicate" } as StreamPart,
+        { type: "reasoning-start", id: "duplicate" } as StreamPart,
+      ],
+    }]);
+
+    const result = await runQueryLoop(harness.options);
+
+    expect(result).toMatchObject({ status: "failed" });
+    const reasoning = harness.store.getState().messages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "reasoning");
+    expect(reasoning).toMatchObject({
+      text: "first",
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+  });
+
+  test("uses a fresh attempt id when retrying the same numeric step", async () => {
+    const harness = await createHarness();
+    harness.appendUser("stream");
+    const retryable = Object.assign(new Error("temporary stream failure"), { statusCode: 503 });
+    let call = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        call += 1;
+        if (call === 1) {
+          return {
+            fullStream: (async function* () {
+              yield { type: "text-start", id: "output" } as StreamPart;
+              yield { type: "text-delta", id: "output", text: "partial" } as StreamPart;
+              throw retryable;
+            })(),
+            finishReason: Promise.resolve("error"),
+            usage: Promise.resolve({ totalTokens: 1 }),
+            text: Promise.resolve("partial"),
+            toolCalls: Promise.resolve([]),
+          } as never;
+        }
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-start", id: "output" } as StreamPart;
+            yield { type: "text-delta", id: "output", text: "done" } as StreamPart;
+            yield { type: "text-end", id: "output" } as StreamPart;
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ totalTokens: 1 }),
+          text: Promise.resolve("done"),
+          toolCalls: Promise.resolve([]),
+        } as never;
+      }),
+    });
+
+    const result = await runQueryLoop(harness.options, {
+      now: () => 0,
+      sleep: async () => {},
+    });
+    expect(result).toMatchObject({ status: "completed", text: "done" });
+    const steps = harness.store.getState().steps;
+    expect(steps).toHaveLength(2);
+    expect(steps.map((step) => step.step)).toEqual([0, 0]);
+    expect(new Set(steps.map((step) => step.id)).size).toBe(2);
+    const attempts = harness.store.getState().messages.filter((message) => message.role === "assistant");
+    const partial = attempts[0]?.parts.find((part) => part.type === "assistant-output");
+    expect(partial?.meta).toMatchObject({
+      interrupted: true,
+      discardedFromContext: true,
+    });
+    expect(result.finalOutputStepId).toBe(steps[1]?.id);
+  });
+
+  test("keeps partial-output recovery numbering and backoff across fresh attempt ids", async () => {
+    const harness = await createHarness();
+    harness.appendUser("stream");
+    const retryable = Object.assign(new Error("temporary stream failure"), { statusCode: 503 });
+    const delays: number[] = [];
+    let call = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        call += 1;
+        if (call <= 2) {
+          return {
+            fullStream: (async function* () {
+              yield { type: "text-start", id: "output" } as StreamPart;
+              yield { type: "text-delta", id: "output", text: `partial-${call}` } as StreamPart;
+              throw retryable;
+            })(),
+            finishReason: Promise.resolve("error"),
+            usage: Promise.resolve({ totalTokens: 1 }),
+            text: Promise.resolve(`partial-${call}`),
+            toolCalls: Promise.resolve([]),
+          } as never;
+        }
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-start", id: "output" } as StreamPart;
+            yield { type: "text-delta", id: "output", text: "done" } as StreamPart;
+            yield { type: "text-end", id: "output" } as StreamPart;
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ totalTokens: 1 }),
+          text: Promise.resolve("done"),
+          toolCalls: Promise.resolve([]),
+        } as never;
+      }),
+    });
+
+    const result = await runQueryLoop(harness.options, {
+      now: () => 0,
+      sleep: async (delayMs) => { delays.push(delayMs); },
+    });
+
+    expect(result).toMatchObject({ status: "completed", text: "done" });
+    expect(harness.store.getState().steps.map((step) => step.step)).toEqual([0, 0, 0]);
+    expect(new Set(harness.store.getState().steps.map((step) => step.id)).size).toBe(3);
+    const retries = harness.store.getState().events
+      .map((event) => event.payload)
+      .filter((event): event is Extract<typeof event, { type: "llm-retry" }> =>
+        event.type === "llm-retry" && event.profile === "partial-output-recovery"
+      );
+    expect(retries.map((event) => event.attempt)).toEqual([1, 2]);
+    expect(new Set(retries.map((event) => event.stepId)).size).toBe(1);
+    expect(delays).toEqual([2_000, 4_000]);
+    const recoveryNotices = harness.store.getState().messages.flatMap((message) =>
+      message.parts.filter((part) => part.type === "recovery-notice")
+    );
+    expect(recoveryNotices).toEqual([
+      expect.objectContaining({ status: "recovered", attempt: 2 }),
+    ]);
+  });
+
+  test("settles a reused tool call on the recovered attempt without moving focus to the failed attempt", async () => {
+    const harness = await createHarness();
+    registerInline(harness, "read", ({ value }) => createTextToolResult(value ?? "new content"));
+    harness.options.allowedTools = ["read"];
+    harness.appendUser("stream");
+    const retryable = Object.assign(new Error("temporary stream failure"), { statusCode: 503 });
+    let call = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        call += 1;
+        if (call === 1) {
+          return {
+            fullStream: (async function* () {
+              yield { type: "text-start", id: "output" } as StreamPart;
+              yield { type: "text-delta", id: "output", text: "partial" } as StreamPart;
+              yield {
+                type: "tool-call",
+                toolCallId: "call-reused",
+                toolName: "read",
+                input: { value: "old" },
+              } as StreamPart;
+              throw retryable;
+            })(),
+            finishReason: Promise.resolve("error"),
+            usage: Promise.resolve({ totalTokens: 1 }),
+            text: Promise.resolve("partial"),
+            toolCalls: Promise.resolve([]),
+          } as never;
+        }
+        if (call === 2) {
+          return {
+            fullStream: (async function* () {
+              yield {
+                type: "tool-call",
+                toolCallId: "call-reused",
+                toolName: "read",
+                input: { value: "new" },
+              } as StreamPart;
+            })(),
+            finishReason: Promise.resolve("tool-calls"),
+            usage: Promise.resolve({ totalTokens: 1 }),
+            text: Promise.resolve(""),
+            toolCalls: Promise.resolve([{
+              toolCallId: "call-reused",
+              toolName: "read",
+              input: { value: "new" },
+            }]),
+          } as never;
+        }
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-start", id: "output" } as StreamPart;
+            yield { type: "text-delta", id: "output", text: "done" } as StreamPart;
+            yield { type: "text-end", id: "output" } as StreamPart;
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ totalTokens: 1 }),
+          text: Promise.resolve("done"),
+          toolCalls: Promise.resolve([]),
+        } as never;
+      }),
+    });
+
+    const result = await runQueryLoop(harness.options, {
+      now: () => 0,
+      sleep: async () => {},
+    });
+
+    expect(result).toMatchObject({ status: "completed", text: "done" });
+    const attempts = harness.store.getState().messages.filter((message) => message.role === "assistant");
+    const failedTool = attempts[0]!.parts.find((part) =>
+      part.type === "tool" && part.toolCallId === "call-reused"
+    );
+    const recoveredTool = attempts[1]!.parts.find((part) =>
+      part.type === "tool" && part.toolCallId === "call-reused"
+    );
+    expect(failedTool).toMatchObject({ state: "interrupted", input: { value: "old" } });
+    expect(recoveredTool).toMatchObject({
+      state: "completed",
+      input: { value: "new" },
+      result: expect.objectContaining({ isError: false }),
+    });
+    expect(harness.store.getState().currentAssistantMessageId).toBe(attempts[2]!.id);
+  });
+
+  test("does not persist or count empty provider text and reasoning blocks", async () => {
+    const harness = await createHarness();
+    harness.appendUser("empty");
+    installRounds([{
+      finishReason: "stop",
+      text: "",
+      chunks: [
+        { type: "reasoning-start", id: "reasoning-empty" } as StreamPart,
+        { type: "reasoning-end", id: "reasoning-empty" } as StreamPart,
+        { type: "text-start", id: "output-empty" } as StreamPart,
+        { type: "text-end", id: "output-empty" } as StreamPart,
+      ],
+    }]);
+
+    const result = await runQueryLoop(harness.options);
+
+    expect(result).toMatchObject({ status: "completed", text: "" });
+    expect(result.finalOutputStepId).toBeUndefined();
+    const assistant = harness.store.getState().messages.find((message) => message.role === "assistant");
+    expect(assistant?.parts).toEqual([]);
+    expect(harness.store.getState().stats.messages.assistant).toBe(0);
   });
 
   test("settles unknown and disallowed model calls as strict errors without executing a tool", async () => {
@@ -1044,7 +1510,8 @@ describe("QueryLoop Tool Output Plane", () => {
     setLlmAdapterForTest({
       streamText: mock(() => ({
         fullStream: (async function* () {
-          yield { type: "text-delta", text: "partial" } as StreamPart;
+          yield { type: "text-start", id: "output" } as StreamPart;
+          yield { type: "text-delta", id: "output", text: "partial" } as StreamPart;
           signalStreamEnded();
         })(),
         finishReason: new Promise<string>(() => undefined),
@@ -1059,5 +1526,14 @@ describe("QueryLoop Tool Output Plane", () => {
     controller.abort(new DOMException("stopped", "AbortError"));
 
     await expect(running).resolves.toMatchObject({ status: "aborted" });
+    const output = harness.store.getState().messages
+      .filter((message) => message.role === "assistant")
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "assistant-output");
+    expect(output).toMatchObject({
+      text: "partial",
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(output?.completedAt).toBeNumber();
   });
 });

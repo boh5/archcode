@@ -26,7 +26,18 @@ function makeAssistantMessage(id: string, text: string): StoredMessage {
   return {
     id,
     role: "assistant",
-    parts: [{ type: "text", id: `part-${id}`, text, createdAt: Date.now(), completedAt: Date.now() }],
+    executionId: `execution:${id}`,
+    runOrdinal: 0,
+    stepId: `step:${id}`,
+    outputPhase: "commentary",
+    parts: [{
+      type: "assistant-output",
+      id: `part-${id}`,
+      blockId: `block-${id}`,
+      text,
+      createdAt: Date.now(),
+      completedAt: Date.now(),
+    }],
     createdAt: Date.now(),
     completedAt: Date.now(),
   };

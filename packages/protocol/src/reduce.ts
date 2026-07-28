@@ -7,6 +7,8 @@ import type {
   CompactionPart,
   CompletedToolPart,
   ErrorToolPart,
+  AssistantOutputPart,
+  AssistantSessionPart,
   ReasoningPart,
   RecoveryNoticePart,
   RunningToolPart,
@@ -18,11 +20,11 @@ import type {
   StreamEvent,
   SystemNoticePart,
   ToolChildSessionLink,
-  TextPart,
   ToolPart,
   FinalizedToolResult,
   ExecutionLifecycleEvent,
   ExecutionEndEvent,
+  ExecutionTransitionValidation,
   SessionExecutionRecord,
 } from "./types";
 import type { SessionGoalChangedEvent } from "./session-goal";
@@ -45,6 +47,12 @@ const TODO_STATUSES = new Set<SessionTodo["status"]>([
 interface AssistantMessageResult {
   messages: SessionMessage[];
   currentAssistantMessageId: string;
+  stats?: SessionStats;
+}
+
+interface RecoveryAssistantResult {
+  messages: SessionMessage[];
+  assistantMessageId: string;
   stats?: SessionStats;
 }
 
@@ -76,6 +84,10 @@ export function reduceStreamEvent(
   if (isExecutionLifecycleEvent(event)) {
     const transition = validateExecutionTransition(state.executions, event);
     if (transition.outcome !== "valid") return {};
+    if (
+      event.type === "execution-end"
+      && validateExecutionFinalOutputSelection(state, event).outcome === "invalid"
+    ) return {};
   }
 
   switch (event.type) {
@@ -158,14 +170,17 @@ export function reduceStreamEvent(
 
     case "execution-end": {
       const executions = endExecution(state, event);
+      const settledMessages = settleIncompleteState(
+        state.messages,
+        state.currentAssistantMessageId,
+        event.endedAt,
+        event.terminalStatus,
+      );
 
       return {
-        messages: settleIncompleteState(
-          state.messages,
-          state.currentAssistantMessageId,
-          event.endedAt,
-          event.terminalStatus,
-        ),
+        messages: event.finalOutputStepId === undefined
+          ? settledMessages
+          : promoteFinalAssistantOutput(settledMessages, event.executionId, event.finalOutputStepId),
         executions,
         executionCount: executions.length,
         isRunning: false,
@@ -246,59 +261,52 @@ export function reduceStreamEvent(
     }
 
     case "text-start": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
-      const messages = finalizeLastIncompletePartOfType(
-        assistant.messages,
-        assistant.currentAssistantMessageId,
-        "text",
+      if (!isActiveOpenStep(state, event.stepId)) return {};
+      const messageId = modelStepMessageId(state.messages, event.stepId);
+      if (messageId === undefined || findBlockLocation(state.messages, event.stepId, "assistant-output", event.blockId)) {
+        return {};
+      }
+      return appendAssistantOutputPart(
+        state.messages,
+        messageId,
+        event.blockId,
         timestamp,
+        "",
+        ctx,
       );
-
-      return appendTextPart(messages, assistant.currentAssistantMessageId, timestamp, "", ctx, assistant.stats);
     }
 
     case "text-delta": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
-      const location = findLatestIncompletePartLocation(
-        assistant.messages,
-        assistant.currentAssistantMessageId,
-        "text",
-      );
-
-      if (location) {
-        return {
-          messages: updateMessagePart(
-            assistant.messages,
-            location.messageId,
-            location.partId,
-            (part) =>
-              part.type === "text"
-                ? { ...part, text: `${part.text}${event.text}` }
-                : part,
-          ),
-          currentAssistantMessageId: assistant.currentAssistantMessageId,
-          ...(assistant.stats ? { stats: assistant.stats } : {}),
-        };
-      }
-
-      return appendTextPart(
-        assistant.messages,
-        assistant.currentAssistantMessageId,
-        timestamp,
-        event.text,
-        ctx,
-        assistant.stats,
-      );
+      if (!isActiveOpenStep(state, event.stepId)) return {};
+      const location = findBlockLocation(state.messages, event.stepId, "assistant-output", event.blockId);
+      const part = location === undefined ? undefined : getPartAtLocation(state.messages, location);
+      if (!location || part?.type !== "assistant-output" || part.completedAt !== undefined) return {};
+      const stats = part.text.length === 0 && event.text.length > 0
+        ? firstAssistantContentStats(state, location.messageId)
+        : undefined;
+      return {
+        messages: updateMessagePart(
+          state.messages,
+          location.messageId,
+          location.partId,
+          (part) => part.type === "assistant-output"
+            ? { ...part, text: `${part.text}${event.text}` }
+            : part,
+        ),
+        ...(stats === undefined ? {} : { stats }),
+      };
     }
 
     case "text-end": {
-      const location = findLatestIncompletePartLocation(
-        state.messages,
-        state.currentAssistantMessageId,
-        "text",
-      );
-
-      if (!location) return {};
+      if (!isActiveOpenStep(state, event.stepId)) return {};
+      const location = findBlockLocation(state.messages, event.stepId, "assistant-output", event.blockId);
+      const part = location === undefined ? undefined : getPartAtLocation(state.messages, location);
+      if (!location || part?.type !== "assistant-output" || part.completedAt !== undefined) return {};
+      if (part.text.length === 0) {
+        return {
+          messages: removeMessagePart(state.messages, location.messageId, location.partId),
+        };
+      }
 
       return {
         messages: updateMessagePart(
@@ -306,7 +314,7 @@ export function reduceStreamEvent(
           location.messageId,
           location.partId,
           (part) =>
-            part.type === "text"
+            part.type === "assistant-output"
               ? {
                   ...part,
                   text: unwrapAssistantProjectionEnvelope(part.text),
@@ -318,59 +326,52 @@ export function reduceStreamEvent(
     }
 
     case "reasoning-start": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
-      const messages = finalizeLastIncompletePartOfType(
-        assistant.messages,
-        assistant.currentAssistantMessageId,
-        "reasoning",
+      if (!isActiveOpenStep(state, event.stepId)) return {};
+      const messageId = modelStepMessageId(state.messages, event.stepId);
+      if (messageId === undefined || findBlockLocation(state.messages, event.stepId, "reasoning", event.blockId)) {
+        return {};
+      }
+      return appendReasoningPart(
+        state.messages,
+        messageId,
+        event.blockId,
         timestamp,
+        "",
+        ctx,
       );
-
-      return appendReasoningPart(messages, assistant.currentAssistantMessageId, timestamp, "", ctx, assistant.stats);
     }
 
     case "reasoning-delta": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
-      const location = findLatestIncompletePartLocation(
-        assistant.messages,
-        assistant.currentAssistantMessageId,
-        "reasoning",
-      );
-
-      if (location) {
-        return {
-          messages: updateMessagePart(
-            assistant.messages,
-            location.messageId,
-            location.partId,
-            (part) =>
-              part.type === "reasoning"
-                ? { ...part, text: `${part.text}${event.text}` }
-                : part,
-          ),
-          currentAssistantMessageId: assistant.currentAssistantMessageId,
-          ...(assistant.stats ? { stats: assistant.stats } : {}),
-        };
-      }
-
-      return appendReasoningPart(
-        assistant.messages,
-        assistant.currentAssistantMessageId,
-        timestamp,
-        event.text,
-        ctx,
-        assistant.stats,
-      );
+      if (!isActiveOpenStep(state, event.stepId)) return {};
+      const location = findBlockLocation(state.messages, event.stepId, "reasoning", event.blockId);
+      const part = location === undefined ? undefined : getPartAtLocation(state.messages, location);
+      if (!location || part?.type !== "reasoning" || part.completedAt !== undefined) return {};
+      const stats = part.text.length === 0 && event.text.length > 0
+        ? firstAssistantContentStats(state, location.messageId)
+        : undefined;
+      return {
+        messages: updateMessagePart(
+          state.messages,
+          location.messageId,
+          location.partId,
+          (part) => part.type === "reasoning"
+            ? { ...part, text: `${part.text}${event.text}` }
+            : part,
+        ),
+        ...(stats === undefined ? {} : { stats }),
+      };
     }
 
     case "reasoning-end": {
-      const location = findLatestIncompletePartLocation(
-        state.messages,
-        state.currentAssistantMessageId,
-        "reasoning",
-      );
-
-      if (!location) return {};
+      if (!isActiveOpenStep(state, event.stepId)) return {};
+      const location = findBlockLocation(state.messages, event.stepId, "reasoning", event.blockId);
+      const part = location === undefined ? undefined : getPartAtLocation(state.messages, location);
+      if (!location || part?.type !== "reasoning" || part.completedAt !== undefined) return {};
+      if (part.text.length === 0) {
+        return {
+          messages: removeMessagePart(state.messages, location.messageId, location.partId),
+        };
+      }
 
       return {
         messages: updateMessagePart(
@@ -633,15 +634,26 @@ export function reduceStreamEvent(
       const executionId = state.currentExecutionId;
       const runOrdinal = currentRunOrdinal(state);
       if (executionId === undefined || runOrdinal === undefined) return {};
-      const resetAssistantMessage = event.step > 0 ? undefined : state.currentAssistantMessageId;
+      if (state.steps.some((step) => step.id === event.stepId)) return {};
+      const message: SessionMessage = {
+        id: ctx.generateId(),
+        role: "assistant",
+        parts: [],
+        createdAt: timestamp,
+        executionId,
+        runOrdinal,
+        stepId: event.stepId,
+        outputPhase: "commentary",
+      };
 
       return {
         isStreamingModel: true,
-        currentAssistantMessageId: resetAssistantMessage,
+        messages: [...state.messages, message],
+        currentAssistantMessageId: message.id,
         steps: [
           ...state.steps,
           {
-            id: ctx.generateId(),
+            id: event.stepId,
             step: event.step,
             executionId,
             runOrdinal,
@@ -658,18 +670,22 @@ export function reduceStreamEvent(
       if (executionId === undefined || runOrdinal === undefined) return {};
       const usage = normalizeUsage(event.usage);
       const hasOpenStep = state.steps.some(
-        (step) => step.step === event.step
+        (step) => step.id === event.stepId
+          && step.step === event.step
           && step.executionId === executionId
           && step.runOrdinal === runOrdinal
           && !step.completedAt,
       );
-      const messages = event.finishReason === "interrupted"
-        ? markCurrentAssistantModelOutputInterrupted(state.messages, state.currentAssistantMessageId, timestamp)
+      if (!hasOpenStep) return {};
+      const interruptedMessages = event.finishReason === "interrupted" || event.finishReason === "error"
+        ? markAssistantModelOutputInterruptedForStep(state.messages, event.stepId, timestamp)
         : state.messages;
+      const messages = completeAssistantMessageForStep(interruptedMessages, event.stepId, timestamp);
       return {
         isStreamingModel: false,
         steps: state.steps.map((step) =>
-          step.step === event.step
+          step.id === event.stepId
+            && step.step === event.step
             && step.executionId === executionId
             && step.runOrdinal === runOrdinal
             && !step.completedAt
@@ -677,12 +693,12 @@ export function reduceStreamEvent(
                 ...step,
                 completedAt: timestamp,
                 finishReason: event.finishReason,
-                usage: event.usage,
+                usage,
               }
             : step,
         ),
         messages,
-        ...(hasOpenStep ? { stats: incrementStepCompleted(state.stats, usage) } : {}),
+        stats: incrementStepCompleted(state.stats, usage),
       };
     }
 
@@ -696,7 +712,8 @@ export function reduceStreamEvent(
 
       const matchingStep =
         state.steps.find(
-          (step) => step.step === event.step
+          (step) => step.id === event.stepId
+            && step.step === event.step
             && step.executionId === executionId
             && step.runOrdinal === runOrdinal,
         );
@@ -709,19 +726,7 @@ export function reduceStreamEvent(
         };
       }
 
-      return {
-        steps: [
-          ...state.steps,
-          {
-            id: ctx.generateId(),
-            step: event.step,
-            executionId,
-            runOrdinal,
-            startedAt: timestamp,
-            error: event.error,
-          },
-        ],
-      };
+      return {};
     }
 
     case "prompt-trace":
@@ -730,11 +735,12 @@ export function reduceStreamEvent(
     case "llm-retry": {
       if (event.visibility === "internal") return {};
 
-      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
+      const assistant = assistantForRecoveryEvent(state, event);
+      if (assistant === undefined) return {};
       const status = event.nextRetryAt === undefined || event.nextRetryAt <= timestamp ? "retrying" : "scheduled";
       return upsertRecoveryNoticePart(
         assistant.messages,
-        assistant.currentAssistantMessageId,
+        assistant.assistantMessageId,
         {
           type: "recovery-notice",
           id: recoveryNoticeId(event, ctx),
@@ -752,10 +758,11 @@ export function reduceStreamEvent(
     case "llm-recovery": {
       if (event.visibility === "internal") return {};
 
-      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
+      const assistant = assistantForRecoveryEvent(state, event);
+      if (assistant === undefined) return {};
       return upsertRecoveryNoticePart(
         assistant.messages,
-        assistant.currentAssistantMessageId,
+        assistant.assistantMessageId,
         {
           type: "recovery-notice",
           id: recoveryNoticeId(event, ctx),
@@ -771,10 +778,11 @@ export function reduceStreamEvent(
     }
 
     case "llm-recovery-failed": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
+      const assistant = assistantForRecoveryEvent(state, event);
+      if (assistant === undefined) return {};
       return upsertRecoveryNoticePart(
         assistant.messages,
-        assistant.currentAssistantMessageId,
+        assistant.assistantMessageId,
         {
           type: "recovery-notice",
           id: recoveryNoticeId(event, ctx),
@@ -833,7 +841,7 @@ export function reduceStreamEvent(
 
       if (existingCompactionIndex !== -1) {
         const existingMessage = messages[existingCompactionIndex]!;
-        const updatedParts: SessionPart[] = existingMessage.parts.map((part) => {
+        const updatedParts = existingMessage.parts.map((part) => {
           if (part.type === "compaction") {
             return {
               ...part,
@@ -849,7 +857,7 @@ export function reduceStreamEvent(
           ...existingMessage,
           parts: updatedParts,
           compacted: undefined,
-        };
+        } as SessionMessage;
       } else {
         const compactionPart: CompactionPart = {
           type: "compaction",
@@ -873,6 +881,67 @@ export function reduceStreamEvent(
       return { messages, compression: undefined, compressionBlocks: [] };
     }
   }
+}
+
+function completeAssistantMessageForStep(
+  messages: SessionMessage[],
+  stepId: string,
+  completedAt: number,
+): SessionMessage[] {
+  return messages.map((message) => (
+    message.role === "assistant" && message.stepId === stepId && message.completedAt === undefined
+      ? { ...message, completedAt }
+      : message
+  ));
+}
+
+export function validateExecutionFinalOutputSelection(
+  state: Pick<SessionProjection, "messages" | "steps">,
+  event: Pick<ExecutionEndEvent, "executionId" | "terminalStatus" | "finalOutputStepId">,
+): ExecutionTransitionValidation {
+  if (event.finalOutputStepId === undefined) return { outcome: "valid" };
+  if (event.terminalStatus !== "completed") {
+    return { outcome: "invalid", reason: "Only a completed Execution may select final Assistant output" };
+  }
+  const executionSteps = state.steps.filter((step) => step.executionId === event.executionId);
+  const selected = executionSteps.at(-1);
+  if (selected?.id !== event.finalOutputStepId || selected.completedAt === undefined) {
+    return { outcome: "invalid", reason: "Final Assistant output must select the last completed model attempt" };
+  }
+  if (selected.finishReason !== "stop") {
+    return { outcome: "invalid", reason: "Final Assistant output requires finishReason stop" };
+  }
+  if (!hasTrustedAssistantOutput(state.messages, selected.id)) {
+    return { outcome: "invalid", reason: "Final Assistant output must be completed, non-empty, and trusted" };
+  }
+  return { outcome: "valid" };
+}
+
+function hasTrustedAssistantOutput(messages: SessionMessage[], stepId: string): boolean {
+  const message = messages.find((candidate) => candidate.role === "assistant" && candidate.stepId === stepId);
+  if (message?.role !== "assistant") return false;
+  const outputParts = message.parts.filter((part) => part.type === "assistant-output");
+  return outputParts.length > 0
+    && outputParts.every((part) => (
+      part.completedAt !== undefined
+      && part.meta?.interrupted !== true
+      && part.meta?.discardedFromContext !== true
+    ))
+    && outputParts.some((part) => part.text.trim().length > 0);
+}
+
+function promoteFinalAssistantOutput(
+  messages: SessionMessage[],
+  executionId: string,
+  stepId: string,
+): SessionMessage[] {
+  return messages.map((message) => (
+    message.role === "assistant"
+    && message.executionId === executionId
+    && message.stepId === stepId
+      ? { ...message, outputPhase: "final_answer" }
+      : message
+  ));
 }
 
 function createEmptyCompressionRefMapSnapshot(): CompressionRefMapSnapshot {
@@ -1120,6 +1189,7 @@ function endExecution(
       durationMs,
       runs,
       endedAt: event.endedAt,
+      ...(event.finalOutputStepId === undefined ? {} : { finalOutputStepId: event.finalOutputStepId }),
       ...(event.error === undefined ? {} : { error: event.error }),
       terminalSettlement: event.terminalSettlement,
     };
@@ -1168,10 +1238,11 @@ function settleIncompleteState(
   timestamp: number,
   executionStatus: ExecutionEndEvent["terminalStatus"],
 ): SessionMessage[] {
-  const shouldDiscardPartialModelOutput = executionStatus === "interrupted" || executionStatus === "failed";
+  const shouldDiscardPartialModelOutput = executionStatus !== "completed";
   const settledMessages = messages.map((message) => {
-    const parts: SessionPart[] = message.parts.map((part): SessionPart => {
-      if (part.type === "text" && part.completedAt === undefined) {
+    if (message.role !== "assistant") return message;
+    const parts: AssistantSessionPart[] = message.parts.map((part): AssistantSessionPart => {
+      if (part.type === "assistant-output" && part.completedAt === undefined) {
         return shouldDiscardPartialModelOutput
           ? {
               ...part,
@@ -1231,8 +1302,9 @@ export function interruptIncompleteToolParts(
 ): SessionMessage[] {
   let messagesChanged = false;
   const nextMessages = messages.map((message) => {
+    if (message.role !== "assistant") return message;
     let partsChanged = false;
-    const parts = message.parts.map((part): SessionPart => {
+    const parts = message.parts.map((part): AssistantSessionPart => {
       if (part.type !== "tool" || (part.state !== "pending" && part.state !== "running")) {
         return part;
       }
@@ -1248,19 +1320,17 @@ export function interruptIncompleteToolParts(
   return messagesChanged ? nextMessages : messages;
 }
 
-function markCurrentAssistantModelOutputInterrupted(
+function markAssistantModelOutputInterruptedForStep(
   messages: SessionMessage[],
-  currentAssistantMessageId: string | undefined,
+  stepId: string,
   timestamp: number,
 ): SessionMessage[] {
-  if (!currentAssistantMessageId) return messages;
-
   let changed = false;
   const nextMessages = messages.map((message) => {
-    if (message.id !== currentAssistantMessageId) return message;
+    if (message.role !== "assistant" || message.stepId !== stepId) return message;
 
-    const parts = message.parts.map((part): SessionPart => {
-      if ((part.type !== "text" && part.type !== "reasoning") || part.text.length === 0) {
+    const parts = message.parts.map((part): AssistantSessionPart => {
+      if ((part.type !== "assistant-output" && part.type !== "reasoning") || part.text.length === 0) {
         return part;
       }
 
@@ -1282,8 +1352,21 @@ function markCurrentAssistantModelOutputInterrupted(
   return changed ? nextMessages : messages;
 }
 
+function isActiveOpenStep(state: SessionProjection, stepId: string): boolean {
+  const executionId = state.currentExecutionId;
+  const runOrdinal = currentRunOrdinal(state);
+  return executionId !== undefined
+    && runOrdinal !== undefined
+    && state.steps.some((step) =>
+      step.id === stepId
+      && step.executionId === executionId
+      && step.runOrdinal === runOrdinal
+      && step.completedAt === undefined
+    );
+}
+
 function isIncompletePart(part: SessionPart): boolean {
-  if (part.type === "text" || part.type === "reasoning" || part.type === "system-notice" || part.type === "recovery-notice") {
+  if (part.type === "assistant-output" || part.type === "reasoning" || part.type === "system-notice" || part.type === "recovery-notice") {
     return part.completedAt === undefined;
   }
 
@@ -1292,28 +1375,43 @@ function isIncompletePart(part: SessionPart): boolean {
 
 function ensureCurrentAssistantMessage(
   state: SessionProjection,
-  timestamp: number,
-  ctx: ReduceContext,
+  _timestamp: number,
+  _ctx: ReduceContext,
 ): AssistantMessageResult {
   if (state.currentAssistantMessageId) {
+    const existing = state.messages.find((message): message is Extract<SessionMessage, { role: "assistant" }> =>
+      message.id === state.currentAssistantMessageId && message.role === "assistant"
+    );
+    if (existing === undefined) throw new Error("Current Assistant message is not a model-step message");
     return {
       messages: state.messages,
       currentAssistantMessageId: state.currentAssistantMessageId,
+      ...(!assistantMessageHasContent(existing)
+        ? { stats: incrementAssistantMessages(state.stats ?? createEmptySessionStats()) }
+        : {}),
     };
   }
+  throw new Error("Assistant event requires a current model-step message");
+}
 
-  const message: SessionMessage = {
-    id: ctx.generateId(),
-    role: "assistant",
-    parts: [],
-    createdAt: timestamp,
-    ...currentMessageExecution(state),
-  };
-
+function assistantForRecoveryEvent(
+  state: SessionProjection,
+  event: { stepId?: string },
+): RecoveryAssistantResult | undefined {
+  const messageId = event.stepId === undefined
+    ? state.currentAssistantMessageId
+    : modelStepMessageId(state.messages, event.stepId);
+  if (messageId === undefined) return undefined;
+  const message = state.messages.find((candidate): candidate is Extract<SessionMessage, { role: "assistant" }> =>
+    candidate.id === messageId && candidate.role === "assistant"
+  );
+  if (message === undefined) return undefined;
   return {
-    messages: [...state.messages, message],
-    currentAssistantMessageId: message.id,
-    stats: incrementAssistantMessages(state.stats ?? createEmptySessionStats()),
+    messages: state.messages,
+    assistantMessageId: messageId,
+    ...(!assistantMessageHasContent(message)
+      ? { stats: incrementAssistantMessages(state.stats ?? createEmptySessionStats()) }
+      : {}),
   };
 }
 
@@ -1321,10 +1419,10 @@ function updateMessagePart(
   messages: SessionMessage[],
   messageId: string,
   partId: string,
-  update: (part: SessionPart) => SessionPart,
+  update: (part: AssistantSessionPart) => AssistantSessionPart,
 ): SessionMessage[] {
   return messages.map((message) => {
-    if (message.id !== messageId) return message;
+    if (message.id !== messageId || message.role !== "assistant") return message;
 
     return {
       ...message,
@@ -1333,48 +1431,68 @@ function updateMessagePart(
   });
 }
 
-function appendPartToMessage(
+function removeMessagePart(
   messages: SessionMessage[],
   messageId: string,
-  part: SessionPart,
+  partId: string,
 ): SessionMessage[] {
   return messages.map((message) =>
-    message.id === messageId ? { ...message, parts: [...message.parts, part] } : message,
+    message.id === messageId && message.role === "assistant"
+      ? { ...message, parts: message.parts.filter((part) => part.id !== partId) }
+      : message
   );
 }
 
-function finalizeLastIncompletePartOfType(
+function appendPartToMessage(
   messages: SessionMessage[],
   messageId: string,
-  partType: "text" | "reasoning",
-  timestamp: number,
+  part: AssistantSessionPart,
 ): SessionMessage[] {
-  const location = findLatestIncompletePartLocation(messages, messageId, partType);
-  if (!location) return messages;
-
-  return updateMessagePart(messages, location.messageId, location.partId, (part) => {
-    if (part.type !== partType) return part;
-    return { ...part, completedAt: timestamp };
-  });
+  return messages.map((message) =>
+    message.id === messageId && message.role === "assistant"
+      ? { ...message, parts: [...message.parts, part] }
+      : message,
+  );
 }
 
-function findLatestIncompletePartLocation(
+function modelStepMessageId(
   messages: SessionMessage[],
-  messageId: string | undefined,
-  partType: "text" | "reasoning",
+  stepId: string,
+): string | undefined {
+  return messages.find((message) => message.role === "assistant" && message.stepId === stepId)?.id;
+}
+
+function findBlockLocation(
+  messages: SessionMessage[],
+  stepId: string,
+  partType: "assistant-output" | "reasoning",
+  blockId: string,
 ): PartLocation | undefined {
-  if (!messageId) return undefined;
+  const message = messages.find((item) => item.role === "assistant" && item.stepId === stepId);
+  const part = message?.parts.find((item) => item.type === partType && item.blockId === blockId);
+  return message && part ? { messageId: message.id, partId: part.id } : undefined;
+}
 
-  const message = messages.find((item) => item.id === messageId);
-  if (!message) return undefined;
+function getPartAtLocation(messages: SessionMessage[], location: PartLocation): SessionPart | undefined {
+  return messages.find((message) => message.id === location.messageId)
+    ?.parts.find((part) => part.id === location.partId);
+}
 
-  for (let index = message.parts.length - 1; index >= 0; index -= 1) {
-    const part = message.parts[index];
-    if (!part || part.type !== partType || part.completedAt !== undefined) continue;
-    return { messageId, partId: part.id };
-  }
+function firstAssistantContentStats(state: SessionProjection, messageId: string): SessionStats | undefined {
+  const message = state.messages.find((candidate) => candidate.id === messageId);
+  return message?.role === "assistant" && !assistantMessageHasContent(message)
+    ? incrementAssistantMessages(state.stats)
+    : undefined;
+}
 
-  return undefined;
+function assistantMessageHasContent(
+  message: Extract<SessionMessage, { role: "assistant" }>,
+): boolean {
+  return message.parts.some((part) =>
+    part.type === "assistant-output" || part.type === "reasoning"
+      ? part.text.length > 0
+      : true
+  );
 }
 
 function findCurrentToolPartByCallId(
@@ -1416,17 +1534,19 @@ function getToolPartAtLocation(
   return part?.type === "tool" ? part : undefined;
 }
 
-function appendTextPart(
+function appendAssistantOutputPart(
   messages: SessionMessage[],
   messageId: string,
+  blockId: string,
   timestamp: number,
   text: string,
   ctx: ReduceContext,
   stats?: SessionStats,
 ): Partial<SessionProjection> {
-  const part: TextPart = {
-    type: "text",
+  const part: AssistantOutputPart = {
+    type: "assistant-output",
     id: ctx.generateId(),
+    blockId,
     text,
     createdAt: timestamp,
   };
@@ -1441,6 +1561,7 @@ function appendTextPart(
 function appendReasoningPart(
   messages: SessionMessage[],
   messageId: string,
+  blockId: string,
   timestamp: number,
   text: string,
   ctx: ReduceContext,
@@ -1449,6 +1570,7 @@ function appendReasoningPart(
   const part: ReasoningPart = {
     type: "reasoning",
     id: ctx.generateId(),
+    blockId,
     text,
     createdAt: timestamp,
   };
@@ -1468,7 +1590,7 @@ function upsertRecoveryNoticePart(
 ): Partial<SessionProjection> {
   let found = false;
   const updatedMessages = messages.map((message) => {
-    if (message.id !== messageId) return message;
+    if (message.id !== messageId || message.role !== "assistant") return message;
 
     const parts = message.parts.map((part) => {
       if (part.type !== "recovery-notice" || part.id !== nextPart.id) return part;
@@ -1493,7 +1615,6 @@ function upsertRecoveryNoticePart(
 
   return {
     messages: found ? updatedMessages : appendPartToMessage(messages, messageId, nextPart),
-    currentAssistantMessageId: messageId,
     ...(stats ? { stats } : {}),
   };
 }

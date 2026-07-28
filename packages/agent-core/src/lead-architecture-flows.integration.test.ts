@@ -269,7 +269,7 @@ describe("Lead architecture full-runtime flows", () => {
               response: call.blocker?.response,
             })),
           })),
-          tools: current.messages.flatMap((message) => message.parts)
+          tools: current.messages.flatMap((message) => message.role === "assistant" ? message.parts : [])
             .filter((part) => part.type === "tool")
             .map((part) => ({
               toolName: part.toolName,
@@ -366,7 +366,10 @@ function stoppedLlmAdapter() {
 function textStream(text: string): unknown {
   return {
     fullStream: (async function* () {
-      yield { type: "text-delta", text };
+      const id = crypto.randomUUID();
+      yield { type: "text-start", id };
+      yield { type: "text-delta", id, text };
+      yield { type: "text-end", id };
     })(),
     finishReason: Promise.resolve("stop"),
     usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),

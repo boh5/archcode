@@ -21,10 +21,11 @@ const RAIL_MAX_HEIGHT = "min(70vh, 40rem, calc(100% - 16px))";
 function summarizeText(
   parts: readonly SessionPart[],
   maximumCharacters: number,
+  type: "text" | "assistant-output",
 ): string | undefined {
   const values: string[] = [];
   for (const part of parts) {
-    if (part.type !== "text") continue;
+    if (part.type !== type) continue;
     const value = part.text.trim();
     if (value) values.push(value);
   }
@@ -36,10 +37,12 @@ function summarizeText(
 }
 
 function segmentRequest(segment: ExecutionWorkstreamSegment): string {
-  for (const message of segment.inputMessages) {
+  const message = segment.inputMessage;
+  if (message) {
     const value = summarizeText(
       message.parts,
       REQUEST_SUMMARY_MAX_CHARACTERS,
+      "text",
     );
     if (value) return value;
     const attachment = message.parts.find(
@@ -54,14 +57,12 @@ function segmentResponse(
   segment: ExecutionWorkstreamSegment,
 ): string | undefined {
   const finalResponse = summarizeText(
-    segment.finalResponse?.textParts ?? [],
+    segment.finalResponse?.outputParts ?? [],
     RESPONSE_SUMMARY_MAX_CHARACTERS,
+    "assistant-output",
   );
   if (finalResponse) return finalResponse;
-  return summarizeText(
-    segment.outputMessages.flatMap((message) => message.parts),
-    RESPONSE_SUMMARY_MAX_CHARACTERS,
-  );
+  return undefined;
 }
 
 function SegmentMarker({

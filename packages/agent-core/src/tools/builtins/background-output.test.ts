@@ -19,6 +19,7 @@ import {
   testExecutionEnd,
   testExecutionStart,
   testExecutionSuspended,
+  testExecutionUsage,
 } from "../../testing/test-execution-fixtures";
 
 // Keep mutable fixtures out of the source worktree: constrained runners can mount it read-only.
@@ -33,12 +34,14 @@ function endExecution(
   executionId: string,
   terminalStatus: Parameters<typeof testExecutionEnd>[1] = "completed",
   error?: string,
+  finalOutputStepId?: string,
 ) {
   const endedAt = Date.now() + 1;
   return testExecutionEnd(executionId, terminalStatus, {
     endedAt,
     runEndedAt: endedAt,
     ...(error === undefined ? {} : { error }),
+    ...(finalOutputStepId === undefined ? {} : { finalOutputStepId }),
   });
 }
 
@@ -80,6 +83,30 @@ function appendUser(store: ReturnType<typeof child>, id: string, text: string): 
 
 function setMessages(store: ReturnType<typeof child>, messages: StoredMessage[]): void {
   store.setState({ messages } as Partial<SessionStoreState>);
+}
+
+function appendOutputAttempt(
+  store: ReturnType<typeof child>,
+  stepId: string,
+  text: string,
+  options: {
+    finishReason?: string;
+    complete?: boolean;
+  } = {},
+): void {
+  const blockId = `block:${stepId}`;
+  store.getState().append({ type: "step-start", stepId, step: 0 });
+  store.getState().append({ type: "text-start", stepId, blockId });
+  store.getState().append({ type: "text-delta", stepId, blockId, text });
+  if (options.complete === false) return;
+  store.getState().append({ type: "text-end", stepId, blockId });
+  store.getState().append({
+    type: "step-end",
+    stepId,
+    step: 0,
+    finishReason: options.finishReason ?? "stop",
+    usage: testExecutionUsage,
+  });
 }
 
 async function readAllPages(
@@ -133,10 +160,10 @@ describe("background_output source pages", () => {
     const ctx = context();
     const store = child(ctx);
     store.getState().append(testExecutionStart("run"));
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "latest" });
-    store.getState().append({ type: "text-end" });
-    store.getState().append(endExecution("run"));
+    appendOutputAttempt(store, "step:run", "latest");
+    store.getState().append(
+      endExecution("run", "completed", undefined, "step:run"),
+    );
 
     const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
     expect(result.draft.kind).toBe("source");
@@ -148,21 +175,35 @@ describe("background_output source pages", () => {
     const ctx = context();
     const store = child(ctx);
     store.getState().append(testExecutionStart("huge"));
+    store.getState().append({ type: "step-start", stepId: "step:huge", step: 0 });
     setMessages(store, [{
       id: "assistant-huge",
       role: "assistant",
       executionId: "huge",
+      runOrdinal: 0,
+      stepId: "step:huge",
+      outputPhase: "commentary",
       createdAt: 1,
       completedAt: 2,
       parts: [{
-        type: "text",
-        id: "text-huge",
+        type: "assistant-output",
+        id: "output-huge",
+        blockId: "block:huge",
         text: `HEAD_SENTINEL${"界".repeat(45_000)}TAIL_SENTINEL`,
         createdAt: 1,
         completedAt: 2,
       }],
     }]);
-    store.getState().append(endExecution("huge"));
+    store.getState().append({
+      type: "step-end",
+      stepId: "step:huge",
+      step: 0,
+      finishReason: "stop",
+      usage: testExecutionUsage,
+    });
+    store.getState().append(
+      endExecution("huge", "completed", undefined, "step:huge"),
+    );
 
     const { pages, nextInputs } = await readAllPages(input(store.getState().sessionId), ctx);
     expect(pages.length).toBeGreaterThan(2);
@@ -188,8 +229,9 @@ describe("background_output source pages", () => {
     const ctx = context();
     const store = child(ctx);
     store.getState().append(testExecutionStart("running"));
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "still working" });
+    appendOutputAttempt(store, "step:running", "still working", {
+      complete: false,
+    });
 
     const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
     expect(sourceDraftText(result)).toContain("Snapshot: false (live Session)");
@@ -261,9 +303,12 @@ describe("background_output source pages", () => {
     const ctx = context();
     const store = child(ctx);
     store.getState().append(testExecutionStart("waiting"));
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "I need one decision before continuing." });
-    store.getState().append({ type: "text-end" });
+    appendOutputAttempt(
+      store,
+      "step:waiting",
+      "I need one decision before continuing.",
+      { finishReason: "tool-calls" },
+    );
     store.getState().append(testExecutionSuspended("waiting", {
       kind: "hitl",
       toolBatchId: "batch-1",
@@ -281,10 +326,10 @@ describe("background_output source pages", () => {
     const ctx = context();
     const store = child(ctx);
     store.getState().append(testExecutionStart("old"));
-    store.getState().append({ type: "text-start" });
-    store.getState().append({ type: "text-delta", text: "final review complete" });
-    store.getState().append({ type: "text-end" });
-    store.getState().append(endExecution("old"));
+    appendOutputAttempt(store, "step:old", "final review complete");
+    store.getState().append(
+      endExecution("old", "completed", undefined, "step:old"),
+    );
     store.getState().append(testExecutionStart("latest"));
     store.getState().append(endExecution("latest", "failed", "boom"));
 

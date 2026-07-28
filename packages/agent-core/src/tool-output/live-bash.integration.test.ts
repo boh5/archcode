@@ -3,6 +3,7 @@ import {
   MAX_EVENTS,
   type FinalizedToolResult,
   type SessionEventEnvelope,
+  type SessionPart,
   type ToolOutputDeltaEvent,
   type ToolResultEvent,
 } from "@archcode/protocol";
@@ -38,6 +39,7 @@ interface LiveBashHarness {
   readonly workspace: string;
   readonly sessionId: string;
   readonly executionId: string;
+  readonly stepId: string;
   readonly storeManager: SessionStoreManager;
   readonly store: ReturnType<SessionStoreManager["create"]>;
   readonly scheduler: SessionToolBatchScheduler;
@@ -212,7 +214,7 @@ describe("live Bash output through the durable Session tool path", () => {
     expect(restarted.getState().promptTraces).toEqual([trace]);
     expect(restarted.getState().events).toEqual([]);
     expect(restarted.getState().nextEventId).toBe(persisted.eventCursor + 1);
-    const restartedPart = restarted.getState().messages.flatMap((message) => message.parts)
+    const restartedPart = sessionParts(restarted.getState())
       .find((part) => part.type === "tool" && part.toolCallId === call.toolCallId);
     expect(restartedPart).toMatchObject({
       type: "tool",
@@ -504,8 +506,9 @@ async function createHarness(options: {
     cwd: workspace,
   });
   const executionId = crypto.randomUUID();
+  const stepId = crypto.randomUUID();
   store.getState().append(testExecutionStart(executionId));
-  store.getState().append({ type: "step-start", step: 0 });
+  store.getState().append({ type: "step-start", stepId, step: 0 });
   await storeManager.flushSession(sessionId, workspace);
 
   const projectContext = createTestProjectContext(workspace, storeManager);
@@ -579,6 +582,7 @@ async function createHarness(options: {
     workspace,
     sessionId,
     executionId,
+    stepId,
     storeManager,
     store,
     scheduler,
@@ -606,7 +610,11 @@ async function startBash(input: {
     toolName: "bash",
     input,
   });
-  await harness.scheduler.createBatch([{ toolCallId, toolName: "bash", input }], 0);
+  await harness.scheduler.createBatch(
+    [{ toolCallId, toolName: "bash", input }],
+    harness.stepId,
+    0,
+  );
 
   let didFinish = false;
   const completion = harness.scheduler.advance().then((result) => {
@@ -682,7 +690,7 @@ function expectSettledProjectionMatchesFinal(
   result: FinalizedToolResult,
   settledAt: number,
 ): void {
-  const part = harness.store.getState().messages.flatMap((message) => message.parts)
+  const part = sessionParts(harness.store.getState())
     .find((candidate) => candidate.type === "tool" && candidate.toolCallId === toolCallId);
   expect(part).toBeDefined();
   expect(part).toMatchObject({
@@ -693,4 +701,12 @@ function expectSettledProjectionMatchesFinal(
     endedAt: settledAt,
   });
   expect(part).not.toHaveProperty("liveOutput");
+}
+
+function sessionParts(state: SessionStoreState): SessionPart[] {
+  const parts: SessionPart[] = [];
+  for (const message of state.messages) {
+    for (const part of message.parts) parts.push(part);
+  }
+  return parts;
 }

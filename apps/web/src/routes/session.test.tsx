@@ -709,6 +709,9 @@ describe("SessionRoute focused view store behavior", () => {
           id: "root-message",
           role: "assistant",
           executionId: "root-execution",
+          runOrdinal: 0,
+          stepId: "root-step",
+          outputPhase: "commentary",
           createdAt: 1,
           parts: [
             {
@@ -790,11 +793,15 @@ describe("SessionRoute focused view store behavior", () => {
           id: "child-message",
           role: "assistant",
           executionId: "child-execution",
+          runOrdinal: 0,
+          stepId: "child-step",
+          outputPhase: "final_answer",
           createdAt: 2,
           parts: [
             {
-              type: "text",
+              type: "assistant-output",
               id: "child-text",
+              blockId: "child-block",
               text: "Child content",
               createdAt: 2,
             },
@@ -1331,10 +1338,15 @@ describe("SessionRoute focused view store behavior", () => {
         {
           id: "m1",
           role: "assistant" as const,
+          executionId: "child-execution",
+          runOrdinal: 0,
+          stepId: "child-step",
+          outputPhase: "final_answer" as const,
           parts: [
             {
-              type: "text" as const,
+              type: "assistant-output" as const,
               id: "p1",
+              blockId: "child-block",
               text: "child response",
               createdAt: Date.now(),
             },

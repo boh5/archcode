@@ -6,6 +6,7 @@ import {
   isSessionEventPayload,
   isValidAttachmentMediaType,
   isValidAttachmentName,
+  validateExecutionFinalOutputSelection,
   type FinalizedToolResult,
   type JsonObject,
   type SessionModelSelection,
@@ -287,6 +288,7 @@ const SessionExecutionRecordSchema = z.discriminatedUnion("status", [
     ...SessionExecutionRecordBaseShape,
     status: z.enum(["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted"]),
     endedAt: z.number().int().nonnegative(),
+    finalOutputStepId: z.string().trim().min(1).optional(),
     error: z.string().optional(),
     terminalSettlement: ExecutionSettlementSchema,
   }),
@@ -316,6 +318,15 @@ const SessionExecutionRecordSchema = z.discriminatedUnion("status", [
     }
   } else if (openRuns.length !== 0) {
     ctx.addIssue({ code: "custom", path: ["runs"], message: "A suspended or terminal Execution cannot have an open run" });
+  }
+  if ("finalOutputStepId" in execution
+    && execution.finalOutputStepId !== undefined
+    && execution.status !== "completed") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["finalOutputStepId"],
+      message: "Only completed Executions may select final Assistant output",
+    });
   }
 });
 
@@ -520,9 +531,20 @@ const TextPartSchema = z.strictObject({
   meta: z.record(z.string(), z.unknown()).optional(),
 });
 
+const AssistantOutputPartSchema = z.strictObject({
+  type: z.literal("assistant-output"),
+  id: z.string(),
+  blockId: z.string().trim().min(1),
+  text: z.string(),
+  createdAt: z.number(),
+  completedAt: z.number().optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
+});
+
 const ReasoningPartSchema = z.strictObject({
   type: z.literal("reasoning"),
   id: z.string(),
+  blockId: z.string().trim().min(1),
   text: z.string(),
   createdAt: z.number(),
   completedAt: z.number().optional(),
@@ -647,26 +669,33 @@ const AttachmentPartSchema = z.strictObject({
   completedAt: z.number().optional(),
 });
 
-const StoredPartSchema = z.discriminatedUnion("type", [
+const UserStoredPartSchema = z.discriminatedUnion("type", [
   TextPartSchema,
-  ReasoningPartSchema,
-  ToolPartSchema,
   CompactionPartSchema,
   SystemNoticePartSchema,
-  RecoveryNoticePartSchema,
   AttachmentPartSchema,
   GoalNoticePartSchema,
 ]);
 
-const StoredMessageSchema = z.strictObject({
+const AssistantStoredPartSchema = z.discriminatedUnion("type", [
+  AssistantOutputPartSchema,
+  ReasoningPartSchema,
+  ToolPartSchema,
+  SystemNoticePartSchema,
+  RecoveryNoticePartSchema,
+]);
+
+const UserStoredMessageSchema = z.strictObject({
   id: z.string(),
-  role: z.enum(["user", "assistant"]),
-  parts: z.array(StoredPartSchema),
+  role: z.literal("user"),
+  parts: z.array(UserStoredPartSchema),
   createdAt: z.number(),
   completedAt: z.number().optional(),
   executionId: z.string().optional(),
   runOrdinal: z.number().int().nonnegative().optional(),
   clientRequestId: z.string().optional(),
+  stepId: z.never().optional(),
+  outputPhase: z.never().optional(),
   compacted: z.boolean().optional(),
   modelAudit: MessageModelAuditSchema.optional(),
 }).superRefine((message, ctx) => {
@@ -677,21 +706,14 @@ const StoredMessageSchema = z.strictObject({
       message: "executionId and runOrdinal must be present together",
     });
   }
-  if (message.role === "assistant" && message.modelAudit !== undefined) {
-    ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Assistant messages cannot carry modelAudit" });
-  }
   const attachmentParts = message.parts.filter((part) => part.type === "attachment");
   if (attachmentParts.length > 0) {
-    if (message.role !== "user") {
-      ctx.addIssue({ code: "custom", path: ["parts"], message: "Assistant messages cannot carry attachments" });
-    }
     if (attachmentParts.length > MAX_ATTACHMENTS_PER_MESSAGE
       || new Set(attachmentParts.map((part) => part.attachment.id)).size !== attachmentParts.length) {
       ctx.addIssue({ code: "custom", path: ["parts"], message: "Canonical attachment ids must be unique and within the message limit" });
     }
   }
-  const hasCanonicalUserInput = message.role === "user"
-    && message.parts.some((part) => part.type === "text" || part.type === "attachment");
+  const hasCanonicalUserInput = message.parts.some((part) => part.type === "text" || part.type === "attachment");
   if (hasCanonicalUserInput) {
     if (message.executionId === undefined || message.runOrdinal === undefined) {
       ctx.addIssue({
@@ -708,7 +730,7 @@ const StoredMessageSchema = z.strictObject({
       });
     }
   }
-  if (message.role === "user" && message.clientRequestId !== undefined) {
+  if (message.clientRequestId !== undefined) {
     const hasText = message.parts.some((part) => part.type === "text" && part.text.trim().length > 0);
     if (!hasText && attachmentParts.length === 0) {
       ctx.addIssue({ code: "custom", path: ["parts"], message: "Canonical user input requires text or attachments" });
@@ -717,8 +739,7 @@ const StoredMessageSchema = z.strictObject({
   const goalNotices = message.parts.filter((part) => part.type === "goal-notice");
   if (goalNotices.length > 0) {
     const notice = goalNotices[0]!;
-    if (message.role !== "user"
-      || message.parts.length !== 1
+    if (message.parts.length !== 1
       || message.id !== notice.id
       || message.createdAt !== notice.createdAt
       || message.completedAt !== notice.createdAt
@@ -734,6 +755,26 @@ const StoredMessageSchema = z.strictObject({
   }
 });
 
+const AssistantStoredMessageSchema = z.strictObject({
+  id: z.string(),
+  role: z.literal("assistant"),
+  parts: z.array(AssistantStoredPartSchema),
+  createdAt: z.number(),
+  completedAt: z.number().optional(),
+  executionId: z.string().trim().min(1),
+  runOrdinal: z.number().int().nonnegative(),
+  stepId: z.string().trim().min(1),
+  outputPhase: z.enum(["commentary", "final_answer"]),
+  clientRequestId: z.never().optional(),
+  modelAudit: z.never().optional(),
+  compacted: z.boolean().optional(),
+});
+
+const StoredMessageSchema = z.discriminatedUnion("role", [
+  UserStoredMessageSchema,
+  AssistantStoredMessageSchema,
+]);
+
 const StepInfoSchema = z.strictObject({
   id: z.string(),
   step: z.number().int().nonnegative(),
@@ -742,7 +783,7 @@ const StepInfoSchema = z.strictObject({
   startedAt: z.number(),
   completedAt: z.number().optional(),
   finishReason: z.string().optional(),
-  usage: z.unknown().optional(),
+  usage: NormalizedUsageSchema.optional(),
   error: z.string().optional(),
 });
 
@@ -960,7 +1001,8 @@ const SessionToolBatchCallSchema = z.strictObject({
 const SessionToolBatchSchema = z.strictObject({
   batchId: z.string().trim().min(1),
   executionId: z.string().trim().min(1),
-  assistantMessageId: z.string().optional(),
+  stepId: z.string().trim().min(1),
+  assistantMessageId: z.string().trim().min(1),
   step: z.number().int().nonnegative(),
   runOrdinal: z.number().int().nonnegative(),
   agentName: AgentNameSchema,
@@ -1119,7 +1161,8 @@ export const SessionFileSchema = z.strictObject({
     if (receipt.kind === "command") continue;
     const pending = pendingById.get(receipt.messageId);
     const canonical = canonicalById.get(receipt.messageId);
-    const requested = pending?.requestedModelSelection ?? canonical?.modelAudit?.requested;
+    const requested = pending?.requestedModelSelection
+      ?? (canonical?.role === "user" ? canonical.modelAudit?.requested : undefined);
     if (requested !== undefined
       && JSON.stringify(requested) !== JSON.stringify(receipt.requestedModelSelection)) {
       ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Receipt ${receipt.clientRequestId} model selection mismatch` });
@@ -1128,7 +1171,7 @@ export const SessionFileSchema = z.strictObject({
       ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Pending receipt ${receipt.clientRequestId} has no message` });
     }
     if (receipt.status === "canonical"
-      && (canonical === undefined || canonical.clientRequestId !== receipt.clientRequestId)) {
+      && (canonical?.role !== "user" || canonical.clientRequestId !== receipt.clientRequestId)) {
       ctx.addIssue({ code: "custom", path: ["inputRequestReceipts"], message: `Canonical receipt ${receipt.clientRequestId} has no matching message` });
     }
     if (receipt.status === "deleted" && (pending !== undefined || canonical !== undefined)) {
@@ -1167,12 +1210,50 @@ export const SessionFileSchema = z.strictObject({
     }
   }
   for (const message of session.messages) {
-    if (message.modelAudit === undefined || message.executionId === undefined) continue;
+    if (message.role !== "user" || message.modelAudit === undefined || message.executionId === undefined) continue;
     const execution = executionById.get(message.executionId);
     const run = message.runOrdinal === undefined ? undefined : execution?.runs[message.runOrdinal];
     if (run === undefined
       || JSON.stringify(message.modelAudit.actual) !== JSON.stringify(run.binding.selection)) {
       ctx.addIssue({ code: "custom", path: ["messages"], message: `Message ${message.id} model audit has no matching execution binding` });
+    }
+  }
+  const stepById = new Map(session.steps.map((step) => [step.id, step]));
+  if (stepById.size !== session.steps.length) {
+    ctx.addIssue({ code: "custom", path: ["steps"], message: "Step ids must be unique" });
+  }
+  const assistantByStepId = new Map<string, (typeof session.messages)[number]>();
+  for (const message of session.messages) {
+    if (message.role !== "assistant") continue;
+    const step = stepById.get(message.stepId);
+    if (step === undefined
+      || step.executionId !== message.executionId
+      || step.runOrdinal !== message.runOrdinal) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["messages"],
+        message: `Assistant message ${message.id} has no exact persisted Step`,
+      });
+    }
+    if (assistantByStepId.has(message.stepId)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["messages"],
+        message: `Step ${message.stepId} has more than one Assistant message`,
+      });
+    }
+    assistantByStepId.set(message.stepId, message);
+    for (const channel of ["assistant-output", "reasoning"] as const) {
+      const blockIds = message.parts.flatMap((part) =>
+        part.type === channel ? [part.blockId] : []
+      );
+      if (new Set(blockIds).size !== blockIds.length) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["messages"],
+          message: `Assistant message ${message.id} has duplicate ${channel} block ids`,
+        });
+      }
     }
   }
   for (const step of session.steps) {
@@ -1185,6 +1266,13 @@ export const SessionFileSchema = z.strictObject({
         code: "custom",
         path: ["steps"],
         message: `Step ${step.id} exceeds Execution ${step.executionId} maxSteps`,
+      });
+    }
+    if (!assistantByStepId.has(step.id)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["steps"],
+        message: `Step ${step.id} has no model-step Assistant message`,
       });
     }
   }
@@ -1205,15 +1293,63 @@ export const SessionFileSchema = z.strictObject({
     if (executionById.get(batch.executionId)?.runs[batch.runOrdinal] === undefined) {
       ctx.addIssue({ code: "custom", path: ["toolBatches"], message: `Tool Batch ${batch.batchId} has no matching Execution run` });
     }
-    if (!session.steps.some((step) =>
-      step.executionId === batch.executionId
-      && step.step === batch.step
-      && step.runOrdinal === batch.runOrdinal
-    )) {
+    const step = stepById.get(batch.stepId);
+    if (step === undefined
+      || step.executionId !== batch.executionId
+      || step.step !== batch.step
+      || step.runOrdinal !== batch.runOrdinal) {
       ctx.addIssue({
         code: "custom",
         path: ["toolBatches"],
         message: `Tool Batch ${batch.batchId} has no matching persisted Step`,
+      });
+    }
+    if (assistantByStepId.get(batch.stepId)?.id !== batch.assistantMessageId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["toolBatches"],
+        message: `Tool Batch ${batch.batchId} has no matching Assistant message`,
+      });
+    }
+  }
+  for (const execution of session.executions) {
+    const finalMessages = session.messages.filter(
+      (message) => message.role === "assistant"
+        && message.executionId === execution.id
+        && message.outputPhase === "final_answer",
+    );
+    if (execution.status === "running" || execution.status === "suspended") {
+      if (finalMessages.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["executions"],
+          message: `Nonterminal Execution ${execution.id} has final output`,
+        });
+      }
+      continue;
+    }
+    if (execution.finalOutputStepId === undefined) {
+      if (finalMessages.length > 0) {
+        ctx.addIssue({ code: "custom", path: ["executions"], message: `Execution ${execution.id} has unselected final output` });
+      }
+      continue;
+    }
+    const finalMessage = assistantByStepId.get(execution.finalOutputStepId);
+    if (execution.status !== "completed"
+      || finalMessages.length !== 1
+      || finalMessage !== finalMessages[0]) {
+      ctx.addIssue({ code: "custom", path: ["executions"], message: `Execution ${execution.id} final output selection is inconsistent` });
+    }
+    const selection = validateExecutionFinalOutputSelection(session, {
+      executionId: execution.id,
+      terminalStatus: execution.status,
+      finalOutputStepId: execution.finalOutputStepId,
+    });
+    if (selection.outcome === "invalid") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executions"],
+        message: `Execution ${execution.id} final output selection is invalid: ${selection.reason}`,
       });
     }
   }
@@ -1254,7 +1390,7 @@ export function getAssistantText(messages: StoredMessage[]): string {
     if (message.role !== "assistant") continue;
 
     for (const part of message.parts) {
-      if (part.type === "text" && part.completedAt !== undefined) {
+      if (part.type === "assistant-output" && part.completedAt !== undefined) {
         if (part.meta?.interrupted === true || part.meta?.discardedFromContext === true) continue;
         text += part.text;
       }
@@ -1410,7 +1546,7 @@ function persistedMessages(messages: readonly StoredMessage[]): StoredMessage[] 
       messageChanged = true;
       return persisted;
     });
-    return messageChanged ? { ...message, parts } : message;
+    return messageChanged ? { ...message, parts } as StoredMessage : message;
   });
   return changed ? projected : [...messages];
 }
