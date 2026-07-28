@@ -1,12 +1,10 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
+import type { SessionStoreState, StoredMessage } from "./types";
 import {
-  isSessionEventPayload,
   type FinalizedToolResult,
   type JsonObject,
-  type SessionEventPayload,
   type SessionModelSelection,
 } from "@archcode/protocol";
 import { getSessionPath, getSessionsDir } from "./sessions-dir";
@@ -524,6 +522,21 @@ const RunningToolPartSchema = z.strictObject({
   attemptDestructive: z.boolean().optional(),
 });
 
+const InterruptedToolPartSchema = z.strictObject({
+  type: z.literal("tool"),
+  state: z.literal("interrupted"),
+  id: ToolLifecycleIdSchema,
+  toolCallId: ToolLifecycleIdSchema,
+  toolName: ToolNameSchema,
+  input: z.unknown().optional(),
+  createdAt: ToolLifecycleTimestampSchema,
+  startedAt: ToolLifecycleTimestampSchema.optional(),
+  endedAt: ToolLifecycleTimestampSchema,
+  attemptId: ToolLifecycleIdSchema.optional(),
+  attemptTimestamp: ToolLifecycleTimestampSchema.optional(),
+  attemptDestructive: z.boolean().optional(),
+});
+
 const CompletedToolPartSchema = z.strictObject({
   type: z.literal("tool"),
   state: z.literal("completed"),
@@ -559,6 +572,7 @@ const ErrorToolPartSchema = z.strictObject({
 const ToolPartSchema = z.discriminatedUnion("state", [
   PendingToolPartSchema,
   RunningToolPartSchema,
+  InterruptedToolPartSchema,
   CompletedToolPartSchema,
   ErrorToolPartSchema,
 ]);
@@ -759,11 +773,31 @@ const CompressionStateSchema = z.strictObject({
   updatedAt: z.number().optional(),
 });
 
-const SessionEventEnvelopeSchema = z.strictObject({
-  id: z.number(),
-  createdAt: z.number(),
-  payload: z.custom<SessionEventPayload>(isSessionEventPayload, "Expected a Session event payload with a current type"),
-}).transform((value) => value as SessionEventEnvelope);
+const PromptTraceSnapshotSchema = z.strictObject({
+  version: z.literal("2"),
+  status: z.enum(["compiled", "error"]),
+  hash: z.string(),
+  sections: z.array(z.strictObject({
+    name: z.string(),
+    source: z.string(),
+    hash: z.string(),
+  })),
+  skills: z.strictObject({
+    status: z.enum(["present", "absent", "error"]),
+    active: z.array(z.strictObject({
+      name: z.string(),
+      source: z.string(),
+    })),
+  }),
+  visibleTools: z.array(z.string()),
+  agentsMd: z.enum(["present", "absent", "error"]),
+  memory: z.enum(["present", "absent", "error"]),
+  mcp: z.record(
+    z.string(),
+    z.enum(["pending", "ready", "ready-zero", "partial-warning", "failed"]),
+  ),
+  warnings: z.array(z.string()),
+});
 
 const SessionToolRecoveryFailureSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("read_retry_exhausted") }),
@@ -818,6 +852,7 @@ const SessionToolBatchCallSchema = z.strictObject({
   attempt: z.number().int().nonnegative(),
   checkpointAt: z.number().int().nonnegative(),
   result: FinalizedToolResultSchema.optional(),
+  settledAt: ToolLifecycleTimestampSchema.optional(),
   executionCompleted: z.literal(true).optional(),
   blocker: HitlBoundaryCodec.sessionToolCallBlockerSchema.optional(),
   childDependency: SessionToolChildDependencySchema.optional(),
@@ -826,6 +861,9 @@ const SessionToolBatchCallSchema = z.strictObject({
   const terminalResult = call.state === "completed" || call.state === "failed";
   if (terminalResult !== (call.result !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["result"], message: `${call.state} has invalid result presence` });
+  }
+  if (terminalResult !== (call.settledAt !== undefined)) {
+    ctx.addIssue({ code: "custom", path: ["settledAt"], message: `${call.state} has invalid settledAt presence` });
   }
   if (call.state === "completed" && call.result?.isError !== false) {
     ctx.addIssue({ code: "custom", path: ["result", "isError"], message: "completed result must not be an error" });
@@ -936,8 +974,8 @@ export const SessionFileSchema = z.strictObject({
   steps: z.array(StepInfoSchema),
   stats: SessionStatsSchema,
   executions: z.array(SessionExecutionRecordSchema),
+  promptTraces: z.array(PromptTraceSnapshotSchema),
   compression: CompressionStateSchema,
-  events: z.array(SessionEventEnvelopeSchema).optional(),
   todos: z.array(StoredTodoSchema)
     .refine(
       (todos) => todos.filter((todo) => todo.status === "in_progress").length <= 1,
@@ -959,7 +997,7 @@ export const SessionFileSchema = z.strictObject({
     todoId: z.uuid(),
     entry: z.enum(["discussion", "work", "automation"]),
   }).optional(),
-  eventCursor: z.number().optional(),
+  eventCursor: z.number().int().min(-1),
 }).superRefine((session, ctx) => {
   const isChild = session.parentSessionId !== undefined;
   if (isChild !== (session.delegationRequest !== undefined)) {
@@ -1143,10 +1181,10 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationRequest" | "toolBatches" | "rootSessionId"
+  "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "promptTraces" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationRequest" | "toolBatches" | "rootSessionId" | "nextEventId"
 > & Partial<Pick<
   SessionStoreState,
-  "parentSessionId" | "goal" | "projectTodo" | "events" | "queueDispatchBarrierAt"
+  "parentSessionId" | "goal" | "projectTodo" | "queueDispatchBarrierAt"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -1219,7 +1257,7 @@ async function saveSessionTranscript(
     activeSkillNames: state.activeSkillNames,
     modelSelection: state.modelSelection,
     title: state.title,
-    messages: state.messages,
+    messages: persistedMessages(state.messages),
     pendingMessages: state.pendingMessages,
     ...(state.queueDispatchBarrierAt === undefined ? {} : {
       queueDispatchBarrierAt: state.queueDispatchBarrierAt,
@@ -1228,6 +1266,7 @@ async function saveSessionTranscript(
     steps: state.steps,
     stats: state.stats,
     executions: state.executions,
+    promptTraces: state.promptTraces,
     compression: state.compression,
     todos: state.todos,
     reminders: state.reminders,
@@ -1235,7 +1274,7 @@ async function saveSessionTranscript(
     ...(state.delegationRequest === undefined ? {} : { delegationRequest: state.delegationRequest }),
     toolBatches: state.toolBatches,
     rootSessionId: state.rootSessionId,
-    ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
+    eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goal === undefined ? {} : { goal: state.goal }),
     ...(state.projectTodo === undefined ? {} : { projectTodo: state.projectTodo }),
@@ -1272,7 +1311,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     activeSkillNames: state.activeSkillNames,
     modelSelection: state.modelSelection,
     title: state.title,
-    messages: state.messages,
+    messages: persistedMessages(state.messages),
     pendingMessages: state.pendingMessages,
     ...(state.queueDispatchBarrierAt === undefined ? {} : {
       queueDispatchBarrierAt: state.queueDispatchBarrierAt,
@@ -1281,6 +1320,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     steps: state.steps,
     stats: state.stats,
     executions: state.executions,
+    promptTraces: state.promptTraces,
     compression: state.compression,
     todos: state.todos,
     reminders: state.reminders,
@@ -1289,11 +1329,30 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     toolBatches: state.toolBatches,
     rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
-    ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goal === undefined ? {} : { goal: state.goal }),
     ...(state.projectTodo === undefined ? {} : { projectTodo: state.projectTodo }),
   };
+}
+
+function persistedMessages(messages: readonly StoredMessage[]): StoredMessage[] {
+  let changed = false;
+  const projected = messages.map((message) => {
+    let messageChanged = false;
+    const parts = message.parts.map((part) => {
+      if (
+        part.type !== "tool"
+        || part.state !== "running"
+        || part.liveOutput === undefined
+      ) return part;
+      const { liveOutput: _liveOutput, ...persisted } = part;
+      changed = true;
+      messageChanged = true;
+      return persisted;
+    });
+    return messageChanged ? { ...message, parts } : message;
+  });
+  return changed ? projected : [...messages];
 }
 
 async function listSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {

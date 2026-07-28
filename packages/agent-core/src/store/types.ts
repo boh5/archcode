@@ -47,6 +47,7 @@ export type {
   ToolCallEvent,
   ToolInputResolvedEvent,
   ToolAttemptEvent,
+  ToolOutputDeltaEvent,
   ToolResultEvent,
   FinalizedToolResult,
   ToolOutput,
@@ -69,6 +70,8 @@ export type {
   ReasoningPart,
   PendingToolPart,
   RunningToolPart,
+  ToolLiveOutput,
+  InterruptedToolPart,
   CompletedToolPart,
   ErrorToolPart,
   ToolPart,
@@ -171,6 +174,8 @@ export interface SessionToolBatchCall {
   /** Canonical time of the latest execution-relevant call state transition. Metadata-only repair preserves it. */
   readonly checkpointAt: number;
   readonly result?: FinalizedToolResult;
+  /** Required exactly when result is present; shared with the terminal tool-result event. */
+  readonly settledAt?: number;
   /** Durable marker that this successful call ended its owning Execution. */
   readonly executionCompleted?: true;
   readonly blocker?: SessionToolCallBlocker;
@@ -224,7 +229,7 @@ export interface SessionStoreState {
   stats: SessionStats;
   executions: SessionExecutionRecord[];
   /** Durable audit records for every model-call Prompt compilation. */
-  promptTraces?: PromptTraceSnapshot[];
+  promptTraces: PromptTraceSnapshot[];
   compression: CompressionState;
 
   // Session-only state

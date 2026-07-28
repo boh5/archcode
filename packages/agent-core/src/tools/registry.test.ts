@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
+import { MAX_EVENTS } from "@archcode/protocol";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -7,6 +8,8 @@ import { z } from "zod";
 
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
+import { createMockStore } from "../store/test-helpers";
+import { LiveToolOutputPublisher } from "../tool-output/live-publisher";
 import type { Logger } from "../logger";
 import { createTestProjectContext } from "./test-project-context";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "./test-registry";
@@ -184,6 +187,61 @@ describe("ToolRegistry lifecycle", () => {
     expect(captureWasPresent).toBe(true);
     expect(attempt).toHaveBeenCalledTimes(1);
     expect(outcome.kind === "settled" ? outcome.result.output.preview : "").toBe("captured output");
+  });
+
+  test("deferred, throwing, and exhausted live publishers never block capture or the authoritative final", async () => {
+    const cases = ["deferred", "throwing", "exhausted"] as const;
+
+    for (const mode of cases) {
+      const created = fixture({
+        descriptors: [descriptor({
+          outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+          execute: async (_input, ctx) => {
+            await ctx.outputCapture?.write(`canonical-${mode}`, { source: "bash-live" });
+            return { isError: false, draft: { kind: "capture" } };
+          },
+        })],
+      });
+      await created.artifactStore.ready();
+
+      const projectionStore = createMockStore(mode === "exhausted"
+        ? { nextEventId: MAX_EVENTS, publishableNextEventId: 0 }
+        : undefined);
+      if (mode === "throwing") {
+        projectionStore.getState().append = () => {
+          throw new Error("projection unavailable");
+        };
+      }
+      const livePublisher = new LiveToolOutputPublisher({
+        store: projectionStore,
+        toolCallId: `live-${mode}`,
+        intervalMs: 60_000,
+        timer: {
+          setTimeout: () => 1,
+          clearTimeout: () => undefined,
+        },
+      });
+      const ctx = context("echo");
+      ctx.liveToolOutput = livePublisher;
+
+      const outcome = await created.registry.execute(
+        { toolName: "echo", toolCallId: ctx.toolCallId, input: {} },
+        ctx,
+      );
+
+      expect(outcome.kind).toBe("settled");
+      expect(outcome.kind === "settled" ? outcome.result : undefined).toMatchObject({
+        isError: false,
+        output: { preview: `canonical-${mode}`, completeness: "complete" },
+      });
+      expect(ctx.outputCapture).toBeUndefined();
+      expect(livePublisher.stopped).toBe(true);
+      if (mode === "deferred") {
+        expect(projectionStore.getState().events).toHaveLength(1);
+      } else {
+        expect(projectionStore.getState().events).toHaveLength(0);
+      }
+    }
   });
 
   test("distinguishes pre-attempt capture failure from post-attempt finalizer failure", async () => {

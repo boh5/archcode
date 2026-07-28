@@ -16,7 +16,9 @@ import {
 import {
   __resetWebSessionStoresForTest,
   createWebSessionStore,
+  currentSessionSnapshotGeneration,
 } from "../../store/session-store";
+import { sessionAuthoritativeSnapshot } from "../../test-support/session-authoritative-snapshot";
 
 let dom: JSDOM;
 let root: Root;
@@ -143,20 +145,14 @@ async function render(
   await act(async () => {
     createWebSessionStore("session", "project")
       .getState()
-      .initializeFromSnapshot({
-        executionCount: 1,
-        isRunning: execution.status === "running",
-        isStreamingModel: false,
-        currentExecutionId:
-          execution.status === "completed" ? undefined : execution.id,
-        currentAssistantMessageId: undefined,
+      .applyAuthoritativeSnapshot(sessionAuthoritativeSnapshot("session", {
         rootSessionId: "session",
         agentName: "lead",
         eventCursor: -1,
         messages,
         executions: [execution],
         steps,
-      });
+      }), currentSessionSnapshotGeneration());
     root.render(
       <StrictMode>
         <QueryClientProvider

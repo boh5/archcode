@@ -246,6 +246,7 @@ export class ToolRegistry {
         unknownResult: raw.details?.unknownResult,
       });
     }
+    context.liveToolOutput?.dispose();
     await this.#runFinalizedHooks(result, context);
     return {
       kind: "settled",
@@ -439,6 +440,7 @@ export class ToolRegistry {
       });
     }
     context.outputCapture = undefined;
+    context.liveToolOutput?.dispose();
     await this.#runFinalizedHooks(result, context);
     return {
       kind: "settled",
@@ -653,6 +655,7 @@ export class ToolRegistry {
     context: ToolExecutionContext,
     request: ToolBlockedRequest,
   ): Promise<RegistryExecutionOutcome> {
+    context.liveToolOutput?.dispose();
     try {
       return {
         kind: "blocked",

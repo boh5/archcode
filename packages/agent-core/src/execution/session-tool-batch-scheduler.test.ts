@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
 import { silentLogger } from "../logger";
+import { sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionToolBatchCall } from "../store/types";
 import { ToolOutputArtifactStore } from "../tool-output/artifact-store";
@@ -224,6 +225,38 @@ describe("SessionToolBatchScheduler output ownership", () => {
       type: "tool-result",
       result: { isError: false, output: { preview: "hello" } },
     });
+  });
+
+  test("does not append or publish a tool result when its durable checkpoint fails", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([{
+      toolCallId: "read-checkpoint-failure",
+      toolName: "read_tool",
+      input: { value: "must-not-publish" },
+    }], 0);
+
+    const published: string[] = [];
+    const unsubscribe = harness.storeManager.subscribeToSessionEvents(({ envelope }) => {
+      published.push(envelope.payload.type);
+    });
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const failure = new Error("simulated tool result checkpoint failure");
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      const checkpointed = state.toolBatches.some((batch) =>
+        batch.calls.some((call) => call.toolCallId === "read-checkpoint-failure" && call.result !== undefined)
+      );
+      if (checkpointed) throw failure;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      await expect(harness.scheduler.advance()).rejects.toBe(failure);
+      expect(eventResults(harness)).toEqual([]);
+      expect(published).not.toContain("tool-result");
+    } finally {
+      unsubscribe();
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
   });
 
   test("blocked calls emit zero tool results, then answers resume the same descriptor", async () => {

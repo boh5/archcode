@@ -134,9 +134,25 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
       return exact(event, ["type", "toolCallId", "toolName", "attemptId", "timestamp", "destructive"])
         && isString(event.toolCallId) && isString(event.toolName) && isString(event.attemptId)
         && isFiniteNumber(event.timestamp) && typeof event.destructive === "boolean";
+    case "tool-output-delta":
+      return exact(event, [
+        "type",
+        "toolCallId",
+        "toolName",
+        "delta",
+        "omittedBytes",
+        "liveLimitReached",
+      ])
+        && isString(event.toolCallId)
+        && event.toolName === "bash"
+        && isString(event.delta)
+        && utf8ByteLength(event.delta) <= 4 * 1024
+        && isNonNegativeSafeInteger(event.omittedBytes)
+        && typeof event.liveLimitReached === "boolean";
     case "tool-result":
-      return exact(event, ["type", "toolCallId", "toolName", "result"])
+      return exact(event, ["type", "toolCallId", "toolName", "settledAt", "result"])
         && isString(event.toolCallId) && isString(event.toolName)
+        && isNonNegativeSafeInteger(event.settledAt)
         && isFinalizedToolResult(event.result);
     case "tool-child-session-link":
       return exact(event, ["type", "link"]) && isToolChildSessionLink(event.link);

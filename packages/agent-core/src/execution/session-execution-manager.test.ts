@@ -674,7 +674,9 @@ async function writeSessionFile(input: {
     reminders: [],
     childSessionLinks: input.childSessionLinks ?? [],
     toolBatches: input.toolBatches ?? [],
+    promptTraces: [],
     rootSessionId,
+    eventCursor: -1,
     ...(request === undefined ? {} : { delegationRequest: request }),
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
     ...(input.projectTodo === undefined ? {} : { projectTodo: input.projectTodo }),
@@ -2908,7 +2910,7 @@ describe("SessionExecutionManager", () => {
     await expect(pendingManager.startCheckedExecution({ slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "two" } })).rejects.toThrow(SessionFamilyActiveError);
   });
 
-  test("family stop cancels execution without fabricating a query-loop tool result", async () => {
+  test("family stop cancels execution and marks its unfinalized tool interrupted without fabricating a result", async () => {
     const run = deferred<MockAgentResult>();
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, run.promise, workspaceRoot);
@@ -2926,7 +2928,8 @@ describe("SessionExecutionManager", () => {
     expect(state.executions).toHaveLength(1);
     expect(state.executions[0]?.status).toBe("cancelled");
     const tool = state.messages.flatMap((message) => message.parts).find((part) => part.type === "tool");
-    expect(tool).toMatchObject({ type: "tool", state: "running", toolCallId: "late-tool" });
+    expect(tool).toMatchObject({ type: "tool", state: "interrupted", toolCallId: "late-tool" });
+    expect(JSON.parse(JSON.stringify(tool))).not.toHaveProperty("result");
   });
 
   test("family stop is isolated by workspace root for identical session ids", async () => {
@@ -4405,7 +4408,7 @@ describe("SessionExecutionManager", () => {
     const durableTool = store.getState().messages
       .flatMap((message) => message.parts)
       .find((part) => part.type === "tool" && part.toolCallId === "prior-work");
-    if (durableTool?.type !== "tool" || !("startedAt" in durableTool)) {
+    if (durableTool?.type !== "tool" || durableTool.state !== "running") {
       throw new Error("Expected running durable tool work");
     }
     await Bun.sleep(2);

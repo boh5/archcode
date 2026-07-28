@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -10,17 +10,85 @@ import { SessionComposerDock } from "../components/features/SessionComposerDock"
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
+import { useAgents, useFocusedSession, useProjectTodos, useSession } from "../api/queries";
 import {
-  useAgents,
-  useFocusedSession,
-  useProjectTodos,
-  useSession,
-} from "../api/queries";
-import {
+  beginSessionSnapshotRecovery,
   getWebSessionStore,
   markSessionForeground,
 } from "../store/session-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
+import {
+  createSessionSnapshotRecoveryRetry,
+  type SessionSnapshotRecoveryRetry,
+  type SessionSnapshotRequestState,
+} from "../lib/session-snapshot-recovery-retry";
+
+export function hasSessionSnapshotRecoveryOwner(
+  slug: string,
+  sessionId: string | null,
+): sessionId is string {
+  return slug.length > 0 && sessionId !== null && sessionId.length > 0;
+}
+
+function useSessionSnapshotRecoveryRetry(input: {
+  slug: string;
+  sessionId: string | null;
+  terminalFailure: boolean;
+  fetching: boolean;
+  refetch: () => Promise<unknown>;
+}): void {
+  const controllerRef = useRef<SessionSnapshotRecoveryRetry | null>(null);
+  const requestStateRef = useRef<SessionSnapshotRequestState>({
+    terminalFailure: input.terminalFailure,
+    fetching: input.fetching,
+  });
+  requestStateRef.current = {
+    terminalFailure: input.terminalFailure,
+    fetching: input.fetching,
+  };
+
+  useEffect(() => {
+    const ownerSessionId = input.sessionId;
+    if (!hasSessionSnapshotRecoveryOwner(input.slug, ownerSessionId)) return;
+    const store = getWebSessionStore(ownerSessionId, input.slug);
+    const controller = createSessionSnapshotRecoveryRetry({
+      readRecoveryState: () => {
+        const state = store.getState();
+        return {
+          status: state.snapshotRecoveryStatus,
+          generation: state.snapshotRecoveryGeneration,
+        };
+      },
+      refetch: input.refetch,
+    });
+    controllerRef.current = controller;
+    const unsubscribe = store.subscribe(() => {
+      controller.update(requestStateRef.current);
+    });
+    controller.update(requestStateRef.current);
+
+    return () => {
+      unsubscribe();
+      controller.dispose();
+      if (controllerRef.current === controller) controllerRef.current = null;
+    };
+  }, [input.refetch, input.sessionId, input.slug]);
+
+  useEffect(() => {
+    controllerRef.current?.update(requestStateRef.current);
+  }, [input.fetching, input.terminalFailure]);
+}
+
+export function effectiveSessionFocusId(
+  routeSessionId: string,
+  requestedFocusSessionId: string | null,
+): string | null {
+  return requestedFocusSessionId === null
+    || requestedFocusSessionId.length === 0
+    || requestedFocusSessionId === routeSessionId
+    ? null
+    : requestedFocusSessionId;
+}
 
 export function SessionRoute() {
   const { slug = "", sessionId = "" } = useParams<{
@@ -37,7 +105,9 @@ export function SessionRoute() {
   const {
     data: session,
     isLoading: isSessionLoading,
+    isFetching: isSessionFetching,
     error: sessionError,
+    refetch: refetchSession,
   } = useSession(slug, sessionId);
   const { data: projectTodos = [] } = useProjectTodos(slug);
   const { data: agents = [] } = useAgents();
@@ -46,18 +116,36 @@ export function SessionRoute() {
   const linkedProjectTodo = sessionSource
     ? projectTodos.find((todo) => todo.id === sessionSource.todoId)
     : undefined;
-  const linkedProjectTodoContext =
-    sessionSource?.entry === "discussion"
-      ? "Discussion Todo"
-      : sessionSource?.entry === "automation"
-        ? "Automation setup Todo"
-        : "Work Todo";
-  const focusSessionId = searchParams.get("focus");
+  const linkedProjectTodoContext = sessionSource?.entry === "discussion"
+    ? "Discussion Todo"
+    : sessionSource?.entry === "automation"
+      ? "Automation setup Todo"
+      : "Work Todo";
+  const focusSessionId = effectiveSessionFocusId(
+    sessionId,
+    searchParams.get("focus"),
+  );
   const {
     data: focusedSession,
     isLoading: isFocusedLoading,
+    isFetching: isFocusedFetching,
     error: focusedError,
+    refetch: refetchFocusedSession,
   } = useFocusedSession(slug, focusSessionId);
+  useSessionSnapshotRecoveryRetry({
+    slug,
+    sessionId,
+    terminalFailure: sessionError !== null,
+    fetching: isSessionFetching,
+    refetch: refetchSession,
+  });
+  useSessionSnapshotRecoveryRetry({
+    slug,
+    sessionId: focusSessionId,
+    terminalFailure: focusedError !== null,
+    fetching: isFocusedFetching,
+    refetch: refetchFocusedSession,
+  });
   const focusHitlId = searchParams.get("hitl");
   const inspectModelAudit = (messageId: string) => {
     const next = new URLSearchParams(searchParams);
@@ -71,58 +159,18 @@ export function SessionRoute() {
   useEffect(() => {
     if (focusSessionId && focusedSession) {
       const childStore = getWebSessionStore(focusSessionId, slug);
-      const {
-        messages,
-        pendingMessages,
-        steps,
-        todos,
-        title,
-        createdAt,
-        rootSessionId,
-        parentSessionId,
-        agentName,
-        stats,
-        executions,
-        executionCount,
-        isRunning,
-        isStreamingModel,
-        currentExecutionId,
-        currentAssistantMessageId,
-        childSessionLinks,
-        eventCursor,
-        modelSelection,
-        nextModelSelection,
-        activeModelBinding,
-        cwd,
-        compression,
-      } = focusedSession;
-      childStore.getState().initializeFromSnapshot({
-        messages,
-        pendingMessages,
-        steps,
-        todos,
-        title,
-        createdAt,
-        rootSessionId,
-        parentSessionId,
-        agentName,
-        stats,
-        executions,
-        executionCount,
-        isRunning,
-        isStreamingModel,
-        currentExecutionId,
-        currentAssistantMessageId,
-        childSessionLinks,
-        eventCursor,
-        modelSelection,
-        nextModelSelection,
-        activeModelBinding,
-        cwd,
-        compression,
-      });
+      const result = childStore.getState().applyAuthoritativeSnapshot(
+        focusedSession,
+        focusedSession.snapshotGeneration,
+      );
+      if (result === "refresh-required") {
+        beginSessionSnapshotRecovery();
+        void refetchFocusedSession();
+      } else if (result === "stale-generation") {
+        void refetchFocusedSession();
+      }
     }
-  }, [focusSessionId, focusedSession, slug]);
+  }, [focusSessionId, focusedSession, refetchFocusedSession, slug]);
 
   useEffect(() => {
     if (!session || session.rootSessionId !== sessionId) return;
@@ -140,60 +188,18 @@ export function SessionRoute() {
   useEffect(() => {
     if (session) {
       const store = getWebSessionStore(sessionId, slug);
-      const {
-        messages,
-        pendingMessages,
-        steps,
-        todos,
-        title,
-        createdAt,
-        rootSessionId,
-        parentSessionId,
-        agentName,
-        stats,
-        executions,
-        executionCount,
-        isRunning,
-        isStreamingModel,
-        currentExecutionId,
-        currentAssistantMessageId,
-        childSessionLinks,
-        eventCursor,
-        modelSelection,
-        nextModelSelection,
-        activeModelBinding,
-        cwd,
-        compression,
-        goal,
-      } = session;
-      store.getState().initializeFromSnapshot({
-        messages,
-        pendingMessages,
-        steps,
-        todos,
-        title,
-        createdAt,
-        rootSessionId,
-        parentSessionId,
-        agentName,
-        stats,
-        executions,
-        executionCount,
-        isRunning,
-        isStreamingModel,
-        currentExecutionId,
-        currentAssistantMessageId,
-        childSessionLinks,
-        eventCursor,
-        modelSelection,
-        nextModelSelection,
-        activeModelBinding,
-        cwd,
-        compression,
-        goal,
-      });
+      const result = store.getState().applyAuthoritativeSnapshot(
+        session,
+        session.snapshotGeneration,
+      );
+      if (result === "refresh-required") {
+        beginSessionSnapshotRecovery();
+        void refetchSession();
+      } else if (result === "stale-generation") {
+        void refetchSession();
+      }
     }
-  }, [session, sessionId, slug]);
+  }, [refetchSession, session, sessionId, slug]);
 
   useEffect(() => {
     if (!session || session.rootSessionId === sessionId) return;

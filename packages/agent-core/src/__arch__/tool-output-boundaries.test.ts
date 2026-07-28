@@ -76,6 +76,28 @@ describe("tool output ownership boundaries", () => {
     expect(rawCallViolations).toEqual([]);
   });
 
+  test("Bash live projection and terminal settlement each have one production owner", () => {
+    const production = productionFiles().map((file) => ({
+      file: relative(srcRoot, file),
+      text: readFileSync(file, "utf8"),
+    }));
+
+    const terminalAppendOwners = production.flatMap(({ file, text }) => (
+      /\.append\s*\(\s*\{\s*type:\s*["']tool-result["']/.test(text) ? [file] : []
+    ));
+    expect(terminalAppendOwners).toEqual(["execution/session-tool-batch-scheduler.ts"]);
+
+    const liveAppendOwners = production.flatMap(({ file, text }) => (
+      /\.append\s*\(\s*\{\s*type:\s*["']tool-output-delta["']/.test(text) ? [file] : []
+    ));
+    expect(liveAppendOwners).toEqual(["tool-output/live-publisher.ts"]);
+
+    const liveCaptureSources = production.flatMap(({ file, text }) => (
+      /\bcapture\.write\s*\([\s\S]{0,160}?source:\s*["']bash-live["']/.test(text) ? [file] : []
+    ));
+    expect(liveCaptureSources).toEqual(["tools/builtins/bash.ts"]);
+  });
+
   test("tool input and output ownership is independent from security transforms", () => {
     expect(existsSync(join(srcRoot, "security/redaction.ts"))).toBe(true);
     expect(source("security/redaction.ts")).not.toMatch(/from\s+["'][^"']*(?:tool-output|tools)\//);

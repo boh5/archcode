@@ -37,6 +37,24 @@ describe("toolRunItemNeedsDetails", () => {
     } as RunningToolPart)).toBe(false);
   });
 
+  test("routes a grouped running Bash preview through its full ToolCard", () => {
+    expect(toolRunItemNeedsDetails({
+      type: "tool",
+      id: "bash",
+      state: "running",
+      toolCallId: "call-bash",
+      toolName: "bash",
+      input: { command: "printf live", description: "Print output" },
+      liveOutput: {
+        preview: "live",
+        omittedBytes: 0,
+        liveLimitReached: false,
+      },
+      createdAt: 1,
+      startedAt: 1,
+    })).toBe(true);
+  });
+
   test("preserves detail access for errors, unknown outcomes, and output artifacts", () => {
     expect(toolRunItemNeedsDetails({
       ...completed(),

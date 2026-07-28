@@ -358,9 +358,11 @@ describe("bashTool", () => {
       kill: mock(() => {}),
     }) as any);
     let canonical = "";
+    const sources: unknown[] = [];
     const outputCapture = {
-      async write(chunk: string | Uint8Array) {
+      async write(chunk: string | Uint8Array, options?: unknown) {
         canonical += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+        sources.push(options);
         return "accepted" as const;
       },
     };
@@ -374,6 +376,9 @@ describe("bashTool", () => {
     expect(canonical).toBe(
       "STDOUT:\nout-1\nSTDERR:\nerr-1\nSTDOUT:\nout-2\nSTDERR:\nerr-2\nEXIT_CODE: 0\n",
     );
+    expect(sources.every((source) => (
+      JSON.stringify(source) === JSON.stringify({ source: "bash-live" })
+    ))).toBe(true);
   });
 
   test("includes an explicit empty stream segment in the canonical stream", async () => {

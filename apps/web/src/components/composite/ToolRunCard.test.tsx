@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
   CompletedToolPart,
   ErrorToolPart,
+  InterruptedToolPart,
   RunningToolPart,
   ToolPart,
 } from "@archcode/protocol";
@@ -187,6 +188,20 @@ function failed(id: string, path: string): ErrorToolPart {
   };
 }
 
+function interrupted(id: string, path: string): InterruptedToolPart {
+  return {
+    type: "tool",
+    id,
+    state: "interrupted",
+    toolCallId: `call-${id}`,
+    toolName: "file_read",
+    input: { path },
+    createdAt: 1,
+    startedAt: 1,
+    endedAt: 2,
+  };
+}
+
 function artifact(id: string, path: string): CompletedToolPart {
   const base = completed(id, path);
   return {
@@ -305,6 +320,36 @@ describe("ToolRunCard", () => {
     expect(summaryButton?.props?.["aria-label"]).toBe(
       "2 tool calls, file_read, file_read, Error",
     );
+  });
+
+  test("reports interrupted calls distinctly in the grouped summary and rows", () => {
+    booleanStates = [true];
+    const element = ToolRunCard(props([
+      completed("one", "a.ts"),
+      interrupted("two", "b.ts"),
+      interrupted("three", "c.ts"),
+    ]));
+    const summaryButton = findButtons(element)[0];
+
+    expect(summaryButton?.props?.["aria-label"]).toBe(
+      "3 tool calls, file_read, file_read, file_read, 2 Interrupted",
+    );
+    expect(textContent(element)).toContain("2 Interrupted");
+    expect(textContent(element)).not.toContain("Completed");
+    expect(textContent(findByTestId(element, "tool-run-list"))).toContain("Interrupted");
+  });
+
+  test("keeps the interrupted count visible when another grouped call failed", () => {
+    booleanStates = [false];
+    const element = ToolRunCard(props([
+      failed("one", "a.ts"),
+      interrupted("two", "b.ts"),
+    ]));
+    expect(findButtons(element)[0]?.props?.["aria-label"]).toBe(
+      "2 tool calls, file_read, file_read, Error, 1 Interrupted",
+    );
+    expect(textContent(element)).toContain("Error");
+    expect(textContent(element)).toContain("Interrupted");
   });
 
   test("expands on demand to a flat tool-only ordered list", () => {

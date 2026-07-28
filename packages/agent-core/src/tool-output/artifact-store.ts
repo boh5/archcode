@@ -618,7 +618,10 @@ export class ToolOutputArtifactStore {
     });
   }
 
-  async beginCapture(input: BeginCaptureInput): Promise<ToolOutputCapture> {
+  async beginCapture(
+    input: BeginCaptureInput,
+    runtime?: { readonly onLiveCanonicalChunk?: (bytes: Uint8Array) => void },
+  ): Promise<ToolOutputCapture> {
     await this.assertReady();
     assertOwner(input.owner);
     const tempDir = join(this.rootDir, `${TEMP_PREFIX}${crypto.randomUUID()}`);
@@ -633,6 +636,9 @@ export class ToolOutputArtifactStore {
         commit: (draft, generationIsActive) =>
           this.commitCapturedArtifact(draft, generationIsActive),
       },
+      ...(runtime?.onLiveCanonicalChunk === undefined
+        ? {}
+        : { onLiveCanonicalChunk: runtime.onLiveCanonicalChunk }),
       onTerminal: () => this.activeCaptures.delete(tempDir),
     });
     this.activeCaptures.set(tempDir, capture);

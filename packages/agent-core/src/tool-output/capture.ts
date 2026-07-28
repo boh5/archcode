@@ -77,7 +77,10 @@ export interface CaptureCommitter {
 export interface ToolOutputCapture {
   readonly signal: AbortSignal;
   readonly state: CaptureState;
-  write(chunk: string | Uint8Array): Promise<"accepted" | "discarded">;
+  write(
+    chunk: string | Uint8Array,
+    options?: { readonly source: "bash-live" },
+  ): Promise<"accepted" | "discarded">;
   complete(): Promise<CapturedOutput>;
   commit(completed: CapturedOutput): Promise<CreatedArtifact>;
   discard(completed: CapturedOutput): Promise<void>;
@@ -97,6 +100,7 @@ export interface StreamingCaptureOptions {
   readonly headMaxBytes?: number;
   readonly tailMaxBytes?: number;
   readonly beforePersist?: (bytes: Uint8Array, signal: AbortSignal) => Promise<void>;
+  readonly onLiveCanonicalChunk?: (bytes: Uint8Array) => void;
   readonly onTerminal?: () => void;
 }
 
@@ -214,6 +218,7 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
   private tailPrecedingByte: number | undefined;
   private writerTail: Promise<void> = Promise.resolve();
   private writerFailure: ToolOutputError | undefined;
+  private lastDecoderInputWasLive = false;
   private capacityWaiters = new Set<() => void>();
   private completed?: {
     readonly output: CapturedOutput;
@@ -246,7 +251,11 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
     return this.currentState;
   }
 
-  async write(chunk: string | Uint8Array): Promise<"accepted" | "discarded"> {
+  async write(
+    chunk: string | Uint8Array,
+    options?: { readonly source: "bash-live" },
+  ): Promise<"accepted" | "discarded"> {
+    const liveEligible = options?.source === "bash-live";
     const raw = typeof chunk === "string" ? this.encoder.encode(chunk) : chunk;
     this.observe(raw);
     if (this.currentState !== "accepting") {
@@ -268,7 +277,7 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
         this.discardedBytes += raw.byteLength - offset;
         return "discarded";
       }
-      this.enqueueReserved(part);
+      this.enqueueReserved(part, liveEligible);
       offset = end;
     }
     return "accepted";
@@ -286,7 +295,11 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
       if (!this.isActiveGeneration(generation)) return;
       const trailing = this.decoder.decode();
       if (trailing.length > 0) {
-        await this.persistCanonical(this.encoder.encode(trailing), generation);
+        await this.persistCanonical(
+          this.encoder.encode(trailing),
+          generation,
+          this.lastDecoderInputWasLive,
+        );
       }
     });
     try {
@@ -420,13 +433,14 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
     return false;
   }
 
-  private enqueueReserved(raw: Uint8Array): void {
+  private enqueueReserved(raw: Uint8Array, liveEligible: boolean): void {
     const generation = this.generation;
     const operation = this.writerTail.then(async () => {
       if (!this.isActiveGeneration(generation)) return;
+      this.lastDecoderInputWasLive = liveEligible;
       const text = this.decoder.decode(raw, { stream: true });
       if (text.length > 0) {
-        await this.persistCanonical(this.encoder.encode(text), generation);
+        await this.persistCanonical(this.encoder.encode(text), generation, liveEligible);
       }
     });
     this.writerTail = operation
@@ -446,10 +460,21 @@ export class StreamingToolOutputCapture implements ToolOutputCapture {
     for (const waiter of this.capacityWaiters) waiter();
   }
 
-  private async persistCanonical(bytes: Uint8Array, generation: number): Promise<void> {
+  private async persistCanonical(
+    bytes: Uint8Array,
+    generation: number,
+    liveEligible: boolean,
+  ): Promise<void> {
     if (!this.isActiveGeneration(generation) || bytes.byteLength === 0) return;
     await this.options.beforePersist?.(bytes, this.signal);
     if (!this.isActiveGeneration(generation)) return;
+    if (liveEligible) {
+      try {
+        this.options.onLiveCanonicalChunk?.(bytes);
+      } catch {
+        // Live projection is best-effort and must never poison capture.
+      }
+    }
     const previousCanonicalLastByte = this.canonicalLastByte;
     this.canonicalBytes += bytes.byteLength;
     for (const byte of bytes) if (byte === 0x0a) this.canonicalNewlines += 1;

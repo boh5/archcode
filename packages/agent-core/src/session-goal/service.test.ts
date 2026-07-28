@@ -196,7 +196,7 @@ describe("SessionGoalService", () => {
       "updatedAt",
       "usage",
     ]);
-    expect([...((await manager.getSessionFile(TMP_DIR, sessionId)).events ?? [])]
+    expect([...manager.get(sessionId, TMP_DIR)!.getState().events]
       .reverse().find((event) => event.payload.type === "session.goal_changed")?.payload)
       .toMatchObject({ type: "session.goal_changed", action: "created", goal: created });
     const createdReminder = pendingGoalReminders(manager.get(sessionId, TMP_DIR)!.getState().reminders);
@@ -241,7 +241,7 @@ describe("SessionGoalService", () => {
     await service.clear({ workspaceRoot: TMP_DIR, sessionId, authority: user });
     const cleared = await manager.getSessionFile(TMP_DIR, sessionId);
     expect(cleared.goal).toBeUndefined();
-    expect([...(cleared.events ?? [])].reverse()
+    expect([...manager.get(sessionId, TMP_DIR)!.getState().events].reverse()
       .find((event) => event.payload.type === "session.goal_changed")?.payload)
       .toMatchObject({ type: "session.goal_changed", action: "cleared", goal: null });
     expect(pendingGoalReminders(cleared.reminders).at(-1)?.source.notice)

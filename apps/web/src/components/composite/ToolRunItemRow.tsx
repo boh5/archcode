@@ -9,6 +9,7 @@ function isSettled(part: ToolPart): part is Extract<ToolPart, { state: "complete
 }
 
 export function toolRunItemNeedsDetails(part: ToolPart): boolean {
+  if (part.state === "running" && part.liveOutput !== undefined) return true;
   if (!isSettled(part)) return false;
   return part.state === "error"
     || part.result.details?.error !== undefined
@@ -68,6 +69,9 @@ export function ToolRunItemRow({
         <span className="text-[10px] font-semibold text-signal-foreground">
           {part.state === "pending" ? "Pending" : "Running"}
         </span>
+      )}
+      {part.state === "interrupted" && (
+        <span className="text-[10px] font-semibold text-warning">Interrupted</span>
       )}
     </div>
   );

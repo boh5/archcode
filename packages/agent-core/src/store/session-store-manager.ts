@@ -1,7 +1,11 @@
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
-import { createEmptySessionStats, validateExecutionTransition } from "@archcode/protocol";
+import {
+  createEmptySessionStats,
+  reduceStreamEvent as reduceProtocolStreamEvent,
+  validateExecutionTransition,
+} from "@archcode/protocol";
 import type { AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
 import { collectSessionTreeIds } from "../execution/session-tree";
@@ -15,6 +19,10 @@ import type {
   NormalizedUsage,
   SessionExecutionRecord,
   ExecutionLifecycleEvent,
+  SessionProjection,
+  TextPart,
+  ReasoningPart,
+  ToolPart,
 } from "@archcode/protocol";
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
@@ -100,6 +108,12 @@ export interface PublishableSessionEvent {
 
 export type SessionEventSourceListener = (event: PublishableSessionEvent) => void;
 
+interface SessionPersistenceRevisions {
+  latestQueued: number;
+  latestSucceeded: number;
+  operations: Map<number, Promise<void>>;
+}
+
 export interface CreateSessionOptions {
   readonly agentName: AgentName;
   /** Canonical Skill identity. New root Sessions use an empty list. */
@@ -142,6 +156,7 @@ export class SessionStoreManager {
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
   #pendingPersists = new Map<string, Promise<void>>();
   #persistFailures = new Map<string, unknown>();
+  #persistenceRevisions = new Map<string, SessionPersistenceRevisions>();
   /** targetNextEventId -> first event id withheld by that durable transaction. */
   #publicationBarriers = new Map<string, Map<number, number>>();
   #eventSourceListeners = new Set<SessionEventSourceListener>();
@@ -370,13 +385,9 @@ export class SessionStoreManager {
   async flushSession(sessionId: string, workspaceRoot: string): Promise<void> {
     const key = this.key(sessionId, workspaceRoot);
     while (true) {
-      const pending = this.#pendingPersists.get(key);
-      if (pending === undefined) {
-        const failure = this.#persistFailures.get(key);
-        if (failure !== undefined) throw failure;
-        return;
-      }
-      await pending;
+      const targetRevision = this.#persistenceRevisions.get(key)?.latestQueued ?? 0;
+      await this.#awaitPersistedRevision(key, targetRevision);
+      if ((this.#persistenceRevisions.get(key)?.latestQueued ?? 0) === targetRevision) return;
     }
   }
 
@@ -661,17 +672,24 @@ export class SessionStoreManager {
     workspaceRoot: string,
     sessionId: string,
   ): Promise<SessionReadSnapshot> {
-    const state = (await this.getOrLoad(sessionId, workspaceRoot)).getState();
-    return {
-      file: sessionFileInternals.toSessionFile(state),
-      liveState: {
-        executionCount: state.executionCount,
-        isRunning: state.isRunning,
-        isStreamingModel: state.isStreamingModel,
-        currentExecutionId: state.currentExecutionId,
-        currentAssistantMessageId: state.currentAssistantMessageId,
-      },
-    };
+    const store = await this.getOrLoad(sessionId, workspaceRoot);
+    const key = this.key(sessionId, workspaceRoot);
+    while (true) {
+      const targetRevision = this.#persistenceRevisions.get(key)?.latestQueued ?? 0;
+      await this.#awaitPersistedRevision(key, targetRevision);
+      const state = store.getState();
+      if ((this.#persistenceRevisions.get(key)?.latestQueued ?? 0) !== targetRevision) continue;
+      return {
+        file: sessionFileInternals.toSessionFile(state),
+        liveState: {
+          executionCount: state.executionCount,
+          isRunning: state.isRunning,
+          isStreamingModel: state.isStreamingModel,
+          currentExecutionId: state.currentExecutionId,
+          currentAssistantMessageId: state.currentAssistantMessageId,
+        },
+      };
+    }
   }
 
   async resolveCompressionOriginalRange(
@@ -914,13 +932,26 @@ export class SessionStoreManager {
     state: SessionStoreState,
     now = Date.now(),
   ): Promise<void> {
+    const revisions = this.#persistenceRevisions.get(key) ?? {
+      latestQueued: 0,
+      latestSucceeded: 0,
+      operations: new Map<number, Promise<void>>(),
+    };
+    const revision = revisions.latestQueued + 1;
+    revisions.latestQueued = revision;
+    this.#persistenceRevisions.set(key, revisions);
     const updatedAt = Math.max(now, state.updatedAt + 1);
     const persistState = { ...state, updatedAt };
     this.#registry.get(key)?.setState({ updatedAt });
     const previousFailure = this.#persistFailures.get(key);
     const pending = this.#pendingPersists.get(key)
       ?? (previousFailure === undefined ? Promise.resolve() : Promise.reject(previousFailure));
-    const operation = pending.then(() => sessionFileInternals.saveSessionTranscript(persistState, workspaceRoot));
+    const operation = pending
+      .then(() => sessionFileInternals.saveSessionTranscript(persistState, workspaceRoot))
+      .then(() => {
+        revisions.latestSucceeded = Math.max(revisions.latestSucceeded, revision);
+      });
+    revisions.operations.set(revision, operation);
     this.#pendingPersists.set(key, operation);
     void operation
       .catch((error) => {
@@ -932,9 +963,29 @@ export class SessionStoreManager {
         });
       })
       .finally(() => {
+        revisions.operations.delete(revision);
         if (this.#pendingPersists.get(key) === operation) this.#pendingPersists.delete(key);
       });
     return operation;
+  }
+
+  async #awaitPersistedRevision(key: string, targetRevision: number): Promise<void> {
+    const failure = this.#persistFailures.get(key);
+    if (failure !== undefined) throw failure;
+    if (targetRevision === 0) return;
+    const revisions = this.#persistenceRevisions.get(key);
+    if (revisions === undefined) throw new Error("Session persistence revision state is missing");
+    if (revisions.latestSucceeded >= targetRevision) return;
+    const operation = revisions.operations.get(targetRevision);
+    if (operation === undefined) {
+      throw new Error(`Session persistence revision ${targetRevision} is not pending or durable`);
+    }
+    await operation;
+    const settledFailure = this.#persistFailures.get(key);
+    if (settledFailure !== undefined) throw settledFailure;
+    if (revisions.latestSucceeded < targetRevision) {
+      throw new Error(`Session persistence revision ${targetRevision} did not become durable`);
+    }
   }
 
   #hasPublicationBarrier(key: string): boolean {
@@ -1233,7 +1284,9 @@ export class SessionStoreManager {
     workspaceRoot: string,
   ): Promise<StoreApi<SessionStoreState>> {
     const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
-    const parsed = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
+    const loaded = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
+    const repair = reconcileRestartProjection(loaded, Date.now());
+    const parsed = repair.file;
 
     // Re-check registry after I/O: a concurrent create() may have registered
     // a store for this key while we were reading from disk. If so, return it
@@ -1279,9 +1332,7 @@ export class SessionStoreManager {
         steps: parsed.steps,
         stats: parsed.stats,
         executions: parsed.executions,
-        promptTraces: (parsed.events ?? []).flatMap((event) =>
-          event.payload.type === "prompt-trace" ? [event.payload.trace] : []
-        ),
+        promptTraces: parsed.promptTraces,
         compression: parsed.compression,
         executionCount: parsed.executions.length,
         todos: parsed.todos,
@@ -1298,12 +1349,15 @@ export class SessionStoreManager {
         currentExecutionId: nonterminalExecution?.id,
         currentAssistantMessageId: activeBatch?.assistantMessageId,
         readSnapshots: new Map(),
-        events: parsed.events ?? [],
-        eventOffset: eventOffsetFromEvents(parsed.events ?? []),
-        nextEventId: nextEventIdFromEvents(parsed.events ?? []),
-        publishableNextEventId: nextEventIdFromEvents(parsed.events ?? []),
+        events: [],
+        eventOffset: parsed.eventCursor + 1,
+        nextEventId: parsed.eventCursor + 1,
+        publishableNextEventId: parsed.eventCursor + 1,
       });
       this.#registerRootSessionId(parsed.sessionId, workspaceRoot, parsed.rootSessionId);
+      if (repair.changed) {
+        await this.#enqueuePersist(key, sessionId, workspaceRoot, store.getState());
+      }
 
       return store;
     } finally {
@@ -1320,6 +1374,7 @@ export class SessionStoreManager {
     const removed = this.#registry.delete(key);
     this.#pendingPersists.delete(key);
     this.#persistFailures.delete(key);
+    this.#persistenceRevisions.delete(key);
     this.#publicationBarriers.delete(key);
     if (options.forgetWorkspaceIndex === true) this.#forgetWorkspaceIndex(workspaceRoot);
     else this.#forgetSessionIndex(sessionId, workspaceRoot);
@@ -1340,6 +1395,9 @@ export class SessionStoreManager {
     for (const key of [...this.#persistFailures.keys()]) {
       if (key.startsWith(prefix)) this.#persistFailures.delete(key);
     }
+    for (const key of [...this.#persistenceRevisions.keys()]) {
+      if (key.startsWith(prefix)) this.#persistenceRevisions.delete(key);
+    }
     for (const key of [...this.#publicationBarriers.keys()]) {
       if (key.startsWith(prefix)) this.#publicationBarriers.delete(key);
     }
@@ -1352,6 +1410,7 @@ export class SessionStoreManager {
     this.#pendingLoads.clear();
     this.#pendingPersists.clear();
     this.#persistFailures.clear();
+    this.#persistenceRevisions.clear();
     this.#publicationBarriers.clear();
     this.#rootIdIndex.clear();
     this.#scanPromiseByWorkspace.clear();
@@ -1460,15 +1519,6 @@ function isDurableControlEvent(event: SessionEventPayload): boolean {
     || event.type === "execution-end";
 }
 
-function nextEventIdFromEvents(events: readonly SessionEventEnvelope[]): number {
-  const latest = events.at(-1);
-  return latest === undefined ? 0 : latest.id + 1;
-}
-
-function eventOffsetFromEvents(events: readonly SessionEventEnvelope[]): number {
-  return events.at(0)?.id ?? 0;
-}
-
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
@@ -1546,6 +1596,163 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     title: file.title,
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,
+  };
+}
+
+interface RestartProjectionRepair {
+  readonly file: HydratedSessionFile;
+  readonly changed: boolean;
+}
+
+function reconcileRestartProjection(
+  file: HydratedSessionFile,
+  now: number,
+): RestartProjectionRepair {
+  let changed = false;
+  const nonterminalExecutionIds = new Set(
+    file.executions
+      .filter((execution) => execution.status === "running" || execution.status === "suspended")
+      .map((execution) => execution.id),
+  );
+  let messages = file.messages.map((message) => {
+    let messageChanged = false;
+    const parts = message.parts.map((part) => {
+      if (
+        message.executionId !== undefined
+        && nonterminalExecutionIds.has(message.executionId)
+        && (part.type === "text" || part.type === "reasoning")
+        && part.completedAt === undefined
+      ) {
+        changed = true;
+        messageChanged = true;
+        const partial = part as TextPart | ReasoningPart;
+        return {
+          ...partial,
+          completedAt: now,
+          meta: { ...(partial.meta ?? {}), interrupted: true, discardedFromContext: true },
+        };
+      }
+
+      return part;
+    });
+
+    return messageChanged ? { ...message, parts, completedAt: message.completedAt ?? now } : message;
+  });
+  const inputRequestReceipts = file.inputRequestReceipts.map((receipt) => {
+    if (receipt.kind !== "command" || receipt.status !== "executing") return receipt;
+    changed = true;
+    return {
+      ...receipt,
+      status: "indeterminate" as const,
+      error: "Command outcome is unknown because execution was interrupted by restart",
+    };
+  });
+
+  const activeBatch = file.toolBatches.find((batch) => batch.archivedAt === undefined);
+  let stats = file.stats;
+  if (activeBatch !== undefined) {
+    for (const call of activeBatch.calls) {
+      if (call.result === undefined || call.settledAt === undefined) continue;
+      const existing = findActiveBatchToolPart(messages, activeBatch.assistantMessageId, call.toolCallId);
+      if (existing === undefined) {
+        throw new Error(`Durable tool result ${call.toolCallId} has no active ToolPart projection`);
+      }
+      if (existing.state === "completed" || existing.state === "error") {
+        if (
+          existing.endedAt !== call.settledAt
+          || JSON.stringify(existing.result) !== JSON.stringify(call.result)
+        ) {
+          throw new Error(`Durable tool result ${call.toolCallId} conflicts with its settled ToolPart projection`);
+        }
+        continue;
+      }
+
+      const projection = sessionProjectionForRepair(
+        file,
+        messages,
+        stats,
+        activeBatch.assistantMessageId,
+      );
+      const partial = reduceProtocolStreamEvent(
+        projection,
+        {
+          type: "tool-result",
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          settledAt: call.settledAt,
+          result: call.result,
+        },
+        { timestamp: call.settledAt, generateId: () => crypto.randomUUID() },
+      );
+      if (partial.messages === undefined || partial.stats === undefined) {
+        throw new Error(`Durable tool result ${call.toolCallId} could not repair its ToolPart projection`);
+      }
+      messages = partial.messages;
+      stats = partial.stats;
+      changed = true;
+    }
+  }
+
+  return {
+    file: changed
+      ? { ...file, messages, stats, inputRequestReceipts }
+      : file,
+    changed,
+  };
+}
+
+function findActiveBatchToolPart(
+  messages: HydratedSessionFile["messages"],
+  assistantMessageId: string | undefined,
+  toolCallId: string,
+): ToolPart | undefined {
+  if (assistantMessageId !== undefined) {
+    return messages
+      .find((message) => message.id === assistantMessageId)
+      ?.parts.find((part): part is ToolPart => part.type === "tool" && part.toolCallId === toolCallId);
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const part = messages[index]!.parts.find(
+      (candidate): candidate is ToolPart =>
+        candidate.type === "tool" && candidate.toolCallId === toolCallId,
+    );
+    if (part !== undefined) return part;
+  }
+  return undefined;
+}
+
+function sessionProjectionForRepair(
+  file: HydratedSessionFile,
+  messages: HydratedSessionFile["messages"],
+  stats: HydratedSessionFile["stats"],
+  currentAssistantMessageId: string | undefined,
+): SessionProjection {
+  const currentExecution = file.executions.find(
+    (execution) => execution.status === "running" || execution.status === "suspended",
+  );
+  return {
+    sessionId: file.sessionId,
+    cwd: file.cwd,
+    rootSessionId: file.rootSessionId,
+    ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
+    ...(file.delegationRequest === undefined ? {} : { delegationRequest: file.delegationRequest }),
+    ...(file.goal === undefined ? {} : { goal: file.goal }),
+    title: file.title,
+    messages,
+    pendingMessages: file.pendingMessages,
+    steps: file.steps,
+    todos: file.todos,
+    reminders: file.reminders,
+    childSessionLinks: file.childSessionLinks,
+    stats,
+    executions: file.executions,
+    promptTraces: file.promptTraces,
+    executionCount: file.executions.length,
+    isRunning: currentExecution?.status === "running",
+    isStreamingModel: false,
+    ...(currentExecution === undefined ? {} : { currentExecutionId: currentExecution.id }),
+    ...(currentAssistantMessageId === undefined ? {} : { currentAssistantMessageId }),
+    modelSelection: file.modelSelection,
   };
 }
 

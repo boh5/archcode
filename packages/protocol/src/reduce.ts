@@ -30,6 +30,9 @@ import { renderCompressionSummarySnapshot } from "./compression";
 import { addUsage, createEmptySessionStats, normalizeUsage } from "./usage";
 import { validateExecutionTransition } from "./execution";
 
+const LIVE_TOOL_OUTPUT_PREVIEW_MAX_BYTES = 50 * 1024;
+const UTF8_ENCODER = new TextEncoder();
+
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
   "pending",
   "in_progress",
@@ -452,7 +455,7 @@ export function reduceStreamEvent(
       if (!location) return {};
 
       const existing = getToolPartAtLocation(state.messages, location.messageId, location.partId);
-      if (!existing || existing.state === "pending") return {};
+      if (!existing || existing.state === "pending" || existing.state === "interrupted") return {};
 
       return {
         messages: updateMessagePart(
@@ -477,7 +480,16 @@ export function reduceStreamEvent(
       if (!location) return {};
 
       const existing = getToolPartAtLocation(state.messages, location.messageId, location.partId);
-      if (!existing || existing.state === "completed" || existing.state === "error") return {};
+      if (
+        !existing
+        || (
+          existing.state !== "pending"
+          && existing.state !== "running"
+          && existing.state !== "interrupted"
+        )
+      ) {
+        return {};
+      }
 
       return {
         messages: updateMessagePart(
@@ -485,6 +497,40 @@ export function reduceStreamEvent(
           location.messageId,
           location.partId,
           (part) => part.type === "tool" ? withToolAttempt(part, event) : part,
+        ),
+      };
+    }
+
+    case "tool-output-delta": {
+      const location = findCurrentToolPartByCallId(
+        state.messages,
+        state.currentAssistantMessageId,
+        event.toolCallId,
+      ) ?? findLatestIncompleteToolPartByCallId(
+        state.messages,
+        event.toolCallId,
+      );
+
+      if (!location) return {};
+
+      const existing = getToolPartAtLocation(state.messages, location.messageId, location.partId);
+      if (
+        !existing
+        || existing.state !== "running"
+        || existing.toolName !== "bash"
+        || existing.toolName !== event.toolName
+      ) {
+        return {};
+      }
+
+      return {
+        messages: updateMessagePart(
+          state.messages,
+          location.messageId,
+          location.partId,
+          (part) => part.type === "tool" && part.state === "running"
+            ? appendLiveToolOutput(part, event)
+            : part,
         ),
       };
     }
@@ -511,7 +557,7 @@ export function reduceStreamEvent(
           location.partId,
           (part) =>
             part.type === "tool"
-              ? toSettledToolPart(part, event.result, timestamp)
+              ? toSettledToolPart(part, event.result, event.settledAt)
               : part,
         ),
         stats: event.result.isError ? incrementToolFailures(state.stats, 1) : incrementToolCompleted(state.stats),
@@ -1105,7 +1151,7 @@ function settleIncompleteState(
   executionStatus: ExecutionEndEvent["terminalStatus"],
 ): SessionMessage[] {
   const shouldDiscardPartialModelOutput = executionStatus === "interrupted" || executionStatus === "failed";
-  return messages.map((message) => {
+  const settledMessages = messages.map((message) => {
     const parts: SessionPart[] = message.parts.map((part): SessionPart => {
       if (part.type === "text" && part.completedAt === undefined) {
         return shouldDiscardPartialModelOutput
@@ -1153,6 +1199,35 @@ function settleIncompleteState(
       ...(shouldCompleteMessage ? { completedAt: timestamp } : {}),
     };
   });
+
+  return interruptIncompleteToolParts(settledMessages, timestamp);
+}
+
+/**
+ * Projects incomplete Tool Parts into their non-final interrupted state.
+ * This is intentionally independent of events, results, persistence, and stats.
+ */
+export function interruptIncompleteToolParts(
+  messages: SessionMessage[],
+  endedAt: number,
+): SessionMessage[] {
+  let messagesChanged = false;
+  const nextMessages = messages.map((message) => {
+    let partsChanged = false;
+    const parts = message.parts.map((part): SessionPart => {
+      if (part.type !== "tool" || (part.state !== "pending" && part.state !== "running")) {
+        return part;
+      }
+      partsChanged = true;
+      return toInterruptedToolPart(part, endedAt);
+    });
+
+    if (!partsChanged) return message;
+    messagesChanged = true;
+    return { ...message, parts };
+  });
+
+  return messagesChanged ? nextMessages : messages;
 }
 
 function markCurrentAssistantModelOutputInterrupted(
@@ -1426,7 +1501,48 @@ function toRunningToolPart(
     toolName: part.toolName,
     input: input === undefined ? null : input,
     createdAt: part.createdAt,
-    startedAt: "startedAt" in part ? part.startedAt : timestamp,
+    startedAt: "startedAt" in part && part.startedAt !== undefined ? part.startedAt : timestamp,
+    ...(part.state === "running" && part.liveOutput !== undefined
+      ? { liveOutput: part.liveOutput }
+      : {}),
+    ...(part.attemptId !== undefined ? { attemptId: part.attemptId } : {}),
+    ...(part.attemptTimestamp !== undefined ? { attemptTimestamp: part.attemptTimestamp } : {}),
+    ...(part.attemptDestructive !== undefined ? { attemptDestructive: part.attemptDestructive } : {}),
+  };
+}
+
+function appendLiveToolOutput(
+  part: RunningToolPart,
+  event: Extract<StreamEvent, { type: "tool-output-delta" }>,
+): RunningToolPart {
+  const existing = part.liveOutput;
+  const combined = `${existing?.preview ?? ""}${event.delta}`;
+  const suffix = utf8Suffix(combined, LIVE_TOOL_OUTPUT_PREVIEW_MAX_BYTES);
+
+  return {
+    ...part,
+    liveOutput: {
+      preview: suffix.value,
+      omittedBytes: (existing?.omittedBytes ?? 0) + event.omittedBytes + suffix.omittedBytes,
+      liveLimitReached: (existing?.liveLimitReached ?? false) || event.liveLimitReached,
+    },
+  };
+}
+
+function toInterruptedToolPart(
+  part: Extract<ToolPart, { state: "pending" | "running" }>,
+  timestamp: number,
+): Extract<ToolPart, { state: "interrupted" }> {
+  return {
+    type: "tool",
+    id: part.id,
+    state: "interrupted",
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    ...("input" in part ? { input: part.input } : {}),
+    createdAt: part.createdAt,
+    ...("startedAt" in part ? { startedAt: part.startedAt } : {}),
+    endedAt: timestamp,
     ...(part.attemptId !== undefined ? { attemptId: part.attemptId } : {}),
     ...(part.attemptTimestamp !== undefined ? { attemptTimestamp: part.attemptTimestamp } : {}),
     ...(part.attemptDestructive !== undefined ? { attemptDestructive: part.attemptDestructive } : {}),
@@ -1437,8 +1553,12 @@ function withToolAttempt(
   part: ToolPart,
   event: Extract<StreamEvent, { type: "tool-attempt" }>,
 ): ToolPart {
+  const attemptedPart = part.state === "interrupted"
+    ? toRunningToolPart(part, part.input, event.timestamp)
+    : part;
+
   return {
-    ...part,
+    ...attemptedPart,
     attemptId: event.attemptId,
     attemptTimestamp: event.timestamp,
     attemptDestructive: event.destructive,
@@ -1451,10 +1571,11 @@ function toSettledToolPart(
   timestamp: number,
 ): CompletedToolPart | ErrorToolPart {
   const runningPart = toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp);
+  const { liveOutput: _liveOutput, ...settledPart } = runningPart;
 
   if (result.isError) {
     return {
-      ...runningPart,
+      ...settledPart,
       state: "error",
       result,
       endedAt: timestamp,
@@ -1462,9 +1583,43 @@ function toSettledToolPart(
   }
 
   return {
-    ...runningPart,
+    ...settledPart,
     state: "completed",
     result,
     endedAt: timestamp,
+  };
+}
+
+function utf8Suffix(value: string, maxBytes: number): { value: string; omittedBytes: number } {
+  const totalBytes = UTF8_ENCODER.encode(value).byteLength;
+  if (totalBytes <= maxBytes) {
+    return { value, omittedBytes: 0 };
+  }
+
+  let retainedBytes = 0;
+  let start = value.length;
+  while (start > 0) {
+    let codePointStart = start - 1;
+    const codeUnit = value.charCodeAt(codePointStart);
+    if (
+      codeUnit >= 0xdc00
+      && codeUnit <= 0xdfff
+      && codePointStart > 0
+    ) {
+      const preceding = value.charCodeAt(codePointStart - 1);
+      if (preceding >= 0xd800 && preceding <= 0xdbff) {
+        codePointStart -= 1;
+      }
+    }
+
+    const codePointBytes = UTF8_ENCODER.encode(value.slice(codePointStart, start)).byteLength;
+    if (retainedBytes + codePointBytes > maxBytes) break;
+    retainedBytes += codePointBytes;
+    start = codePointStart;
+  }
+
+  return {
+    value: value.slice(start),
+    omittedBytes: totalBytes - retainedBytes,
   };
 }

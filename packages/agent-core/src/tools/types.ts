@@ -24,6 +24,7 @@ import type {
   ToolOutputPolicy,
 } from "../tool-output/types";
 import type { ToolOutputCapture } from "../tool-output/capture";
+import type { LiveToolOutputPublisher } from "../tool-output/live-publisher";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
 
@@ -82,6 +83,8 @@ export interface ToolExecutionContext {
   readonly cwd: string;
   /** Registry-owned capture for artifact-policy tools. Descriptors may only write; Registry owns finalize/abort. */
   outputCapture?: ToolOutputCapture;
+  /** Bash-only transient projection. Registry always disposes it before returning a terminal outcome. */
+  liveToolOutput?: LiveToolOutputPublisher;
   /** Scope-bound artifact accessor. Descriptors never receive project/root authorization fields. */
   outputArtifacts?: ToolOutputAccessService;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;

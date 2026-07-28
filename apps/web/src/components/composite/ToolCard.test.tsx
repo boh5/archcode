@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CompletedToolPart, ErrorToolPart, FinalizedToolResult, PendingToolPart, RunningToolPart } from "@archcode/protocol";
+import type { CompletedToolPart, ErrorToolPart, FinalizedToolResult, InterruptedToolPart, PendingToolPart, RunningToolPart } from "@archcode/protocol";
 
 interface ElementLike { type?: unknown; props?: Record<string, unknown> | null }
 function isElement(value: unknown): value is ElementLike {
@@ -269,6 +269,29 @@ describe("ToolCard strict result consumer", () => {
     expect(findByType(pendingElement, "button")).toBeUndefined();
     expect(findByType(runningElement, "button")).toBeUndefined();
     expect(findByProp(runningElement, "data-tool-summary-static", "")?.props?.["aria-label"]).toContain("Running");
+  });
+
+  test("renders interrupted as a stopped non-final state", () => {
+    const interrupted: InterruptedToolPart = {
+      type: "tool",
+      id: "interrupted",
+      state: "interrupted",
+      toolCallId: "interrupted",
+      toolName: "bash",
+      input: { command: "sleep 10", description: "Wait" },
+      createdAt: 1,
+      startedAt: 2,
+      endedAt: 3,
+    };
+    const element = ToolCard({
+      part: interrupted,
+      projectSlug: "demo",
+      sessionId: "root-1",
+    });
+    expect(textContent(element)).toContain("Interrupted");
+    expect(textContent(element)).not.toContain("Completed");
+    expect(textContent(element)).not.toContain("Error");
+    expect(findByProp(element, "data-tool-summary-static", "")?.props?.["aria-label"]).toContain("Interrupted");
   });
 
   test("shows the exact Bash command and does not duplicate runtime schema validation in Web", () => {

@@ -121,7 +121,13 @@ describe("Tool Output Plane real user stories", () => {
 
     harness.rootStore.getState().append({ type: "tool-call", toolCallId, toolName: "bash", input });
     const result = await executeRegistered(plane.registry, "bash", input, context);
-    harness.rootStore.getState().append({ type: "tool-result", toolCallId, toolName: "bash", result });
+    harness.rootStore.getState().append({
+      type: "tool-result",
+      toolCallId,
+      toolName: "bash",
+      settledAt: Date.now(),
+      result,
+    });
     endExecution(harness.rootStore, executionId);
 
     expect(result.output.recovery.kind).toBe("artifact");
@@ -232,7 +238,13 @@ describe("Tool Output Plane real user stories", () => {
 
     harness.childStore.getState().append({ type: "tool-call", toolCallId, toolName: "bash", input });
     const result = await executeRegistered(plane.registry, "bash", input, context);
-    harness.childStore.getState().append({ type: "tool-result", toolCallId, toolName: "bash", result });
+    harness.childStore.getState().append({
+      type: "tool-result",
+      toolCallId,
+      toolName: "bash",
+      settledAt: Date.now(),
+      result,
+    });
     await harness.sessions.flushSession(harness.childSessionId, harness.workspace);
 
     expect(result.isError).toBe(false);

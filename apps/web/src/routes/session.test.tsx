@@ -18,24 +18,40 @@ import type {
 import type { HitlView, ProjectTodo, Session } from "../api/types";
 import {
   __resetWebSessionStoresForTest,
+  currentSessionSnapshotGeneration,
   createWebSessionStore,
   evictIdleSessionStores,
   findWebSessionStore,
   getWebSessionStore,
   markSessionForeground,
 } from "../store/session-store";
+import {
+  sessionAuthoritativeSnapshot,
+  type SessionAuthoritativeSnapshotFixture,
+} from "../test-support/session-authoritative-snapshot";
 import { hitlStore } from "../store/hitl-store";
 import {
   focusedSessionQueryOptions,
   projectTodosQueryOptions,
   sessionQueryOptions,
 } from "../api/queries";
-import { SessionRoute } from "./session";
 import {
-  WorkbenchLayoutProvider,
-  useWorkbenchLayout,
-} from "../context/workbench-layout";
+  effectiveSessionFocusId,
+  hasSessionSnapshotRecoveryOwner,
+  SessionRoute,
+} from "./session";
+import { WorkbenchLayoutProvider, useWorkbenchLayout } from "../context/workbench-layout";
 import { SettingsModalProvider } from "../context/settings-modal";
+
+function applySnapshot(
+  store: ReturnType<typeof createWebSessionStore>,
+  snapshot: SessionAuthoritativeSnapshotFixture,
+) {
+  return store.getState().applyAuthoritativeSnapshot(
+    sessionAuthoritativeSnapshot(store.getState().sessionId, snapshot),
+    currentSessionSnapshotGeneration(),
+  );
+}
 
 function createSession(input: {
   id: string;
@@ -280,7 +296,7 @@ describe("SessionRoute store-level behavior", () => {
     expect(findWebSessionStore("fg-unpin", "demo")).toBeUndefined();
   });
 
-  test("getWebSessionStore followed by initializeFromSnapshot populates the store", () => {
+  test("getWebSessionStore followed by authoritative snapshot populates the store", () => {
     const slug = "demo";
     const sessionId = "route-snapshot";
     const sessionData = {
@@ -313,7 +329,7 @@ describe("SessionRoute store-level behavior", () => {
     };
 
     const store = createWebSessionStore(sessionId, slug);
-    store.getState().initializeFromSnapshot(sessionData);
+    applySnapshot(store, sessionData);
 
     const state = store.getState();
     expect(state.messages).toHaveLength(1);
@@ -331,6 +347,64 @@ describe("SessionRoute focused view store behavior", () => {
   afterEach(() => {
     restoreGlobals();
     mock.restore();
+  });
+
+  test("treats a self-focus URL as the root view with no focused owner", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    const rootSession = createSession({
+      id: "root-session",
+      rootSessionId: "root-session",
+      title: "Root Session",
+      messages: [],
+    });
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/api/projects") return Response.json({ projects: [] });
+      if (path === "/api/agents") return Response.json({ agents: [] });
+      if (path === "/api/projects/demo/todos") return Response.json({ todos: [] });
+      if (path === "/api/projects/demo/sessions/root-session") return Response.json(rootSession);
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+    });
+    await queryClient.fetchQuery(sessionQueryOptions("demo", "root-session"));
+    const reactRoot = createRoot(container);
+
+    try {
+      await act(async () => {
+        reactRoot.render(
+          <SettingsModalProvider>
+            <WorkbenchLayoutProvider>
+              <QueryClientProvider client={queryClient}>
+                <MemoryRouter initialEntries={["/projects/demo/sessions/root-session?focus=root-session"]}>
+                  <Routes>
+                    <Route path="/projects/:slug/sessions/:sessionId" element={<SessionRoute />} />
+                  </Routes>
+                </MemoryRouter>
+              </QueryClientProvider>
+            </WorkbenchLayoutProvider>
+          </SettingsModalProvider>,
+        );
+      });
+
+      expect(container.textContent).not.toContain("Back to Root Session");
+      expect(container.querySelector("textarea")).not.toBeNull();
+      expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
+      expect(fetchMock.mock.calls.filter(([input]) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        return new URL(url, "http://localhost").pathname
+          === "/api/projects/demo/sessions/root-session";
+      })).toHaveLength(1);
+    } finally {
+      await act(async () => reactRoot.unmount());
+      queryClient.clear();
+      dom.window.close();
+    }
   });
 
   test("hydrates the Session Goal and renders usage changes directly from the live store", async () => {
@@ -1203,6 +1277,20 @@ describe("SessionRoute focused view store behavior", () => {
     expect(options.enabled).toBe(false);
   });
 
+  test("self-focus has no focused query or retry owner while child focus stays independent", () => {
+    const selfFocus = effectiveSessionFocusId("root-1", "root-1");
+    expect(selfFocus).toBeNull();
+    expect(focusedSessionQueryOptions("demo", selfFocus).enabled).toBe(false);
+    expect(hasSessionSnapshotRecoveryOwner("demo", selfFocus)).toBe(false);
+
+    const childFocus = effectiveSessionFocusId("root-1", "child-1");
+    expect(childFocus).toBe("child-1");
+    expect(focusedSessionQueryOptions("demo", childFocus).enabled).toBe(true);
+    expect(hasSessionSnapshotRecoveryOwner("demo", "root-1")).toBe(true);
+    expect(hasSessionSnapshotRecoveryOwner("demo", childFocus)).toBe(true);
+    expect(new Set(["root-1", childFocus])).toEqual(new Set(["root-1", "child-1"]));
+  });
+
   test("focusedSessionQueryOptions is disabled when slug is empty", () => {
     const options = focusedSessionQueryOptions("", "child-1");
     expect(options.enabled).toBe(false);
@@ -1262,7 +1350,7 @@ describe("SessionRoute focused view store behavior", () => {
       parentSessionId: rootSessionId,
       eventCursor: 3,
     };
-    childStore.getState().initializeFromSnapshot(snapshot);
+    applySnapshot(childStore, snapshot);
 
     const state = childStore.getState();
     expect(state.messages).toHaveLength(1);

@@ -5,7 +5,25 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { queryKeys } from "../../api/queries";
 import { sessionRuntimeStore } from "../../store/session-runtime-store";
-import { __resetWebSessionStoresForTest, createWebSessionStore } from "../../store/session-store";
+import {
+  __resetWebSessionStoresForTest,
+  createWebSessionStore,
+  currentSessionSnapshotGeneration,
+} from "../../store/session-store";
+import {
+  sessionAuthoritativeSnapshot,
+  type SessionAuthoritativeSnapshotFixture,
+} from "../../test-support/session-authoritative-snapshot";
+
+function applySnapshot(
+  store: ReturnType<typeof createWebSessionStore>,
+  snapshot: SessionAuthoritativeSnapshotFixture,
+) {
+  return store.getState().applyAuthoritativeSnapshot(
+    sessionAuthoritativeSnapshot(store.getState().sessionId, snapshot),
+    currentSessionSnapshotGeneration(),
+  );
+}
 
 type ComposerQueueListComponent = typeof import("./ComposerQueueList").ComposerQueueList;
 
@@ -110,12 +128,7 @@ afterEach(() => {
 describe("ComposerQueueList", () => {
   test("owns every Queue state and preserves Edit, Delete, Steer, Retry, and model invalidation", async () => {
     const store = createWebSessionStore("session-queue", "project-1");
-    store.getState().initializeFromSnapshot({
-      executionCount: 0,
-      isRunning: false,
-      isStreamingModel: false,
-      currentExecutionId: undefined,
-      currentAssistantMessageId: undefined,
+    applySnapshot(store, {
       rootSessionId: "session-queue",
       eventCursor: -1,
       agentName: "lead",

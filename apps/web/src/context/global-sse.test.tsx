@@ -17,9 +17,11 @@ import type {
   McpServerStatus,
   SessionGoal,
 } from "@archcode/protocol";
-import type {
-  RemoteEnvelopeApplyOutcome,
-  WebSessionStoreState,
+import {
+  __resetWebSessionStoresForTest,
+  createWebSessionStore,
+  type RemoteEnvelopeApplyResult,
+  type WebSessionStoreState,
 } from "../store/session-store";
 import { queryKeys } from "../api/queries";
 import {
@@ -96,11 +98,9 @@ function createMockStore(): StoreApi<WebSessionStoreState> {
 }
 
 const mockApplyRemoteEnvelope = mock(
-  (_envelope: GlobalSessionEventEnvelope): RemoteEnvelopeApplyOutcome => "applied",
+  (_envelope: GlobalSessionEventEnvelope): RemoteEnvelopeApplyResult => "applied",
 );
-const mockInitializeMetadata = mock(
-  (_data: Partial<WebSessionStoreState>) => {},
-);
+const mockApplyMetadataPatch = mock((_data: Partial<WebSessionStoreState>) => {});
 const mockFindWebSessionStore = mock(
   (_sessionId: string, _slug?: string) =>
     undefined as StoreApi<WebSessionStoreState> | undefined,
@@ -567,11 +567,12 @@ describe("handleSSEEvent", () => {
   let deps: SSEEventHandlerDeps;
 
   beforeEach(() => {
+    __resetWebSessionStoresForTest();
     mockApplyRemoteEnvelope.mockClear();
     mockApplyRemoteEnvelope.mockImplementation(
-      (_envelope: GlobalSessionEventEnvelope) => "applied",
+      (_envelope: GlobalSessionEventEnvelope): RemoteEnvelopeApplyResult => "applied",
     );
-    mockInitializeMetadata.mockClear();
+    mockApplyMetadataPatch.mockClear();
     mockFindWebSessionStore.mockClear();
     mockCreateWebSessionStore.mockClear();
     mockInvalidateQueries.mockClear();
@@ -609,7 +610,7 @@ describe("handleSSEEvent", () => {
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
   });
 
-  test("refreshes the authoritative Session query after an invalid lifecycle edge", () => {
+  test("starts authoritative snapshot recovery after an invalid lifecycle edge", () => {
     const store = createMockStore();
     mockFindWebSessionStore.mockReturnValue(store);
     mockApplyRemoteEnvelope.mockImplementation(
@@ -633,10 +634,8 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.session("my-project", "session-1"),
-    });
+    expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
   test("accepts update events and invalidates only the process-level update query", () => {
@@ -734,11 +733,10 @@ describe("handleSSEEvent", () => {
     const parentStore = createMockStore();
     const childStore = {
       ...createMockStore(),
-      getState: () =>
-        ({
-          applyRemoteEnvelope: mockApplyRemoteEnvelope,
-          initializeMetadata: mockInitializeMetadata,
-        }) as unknown as WebSessionStoreState,
+      getState: () => ({
+        applyRemoteEnvelope: mockApplyRemoteEnvelope,
+        applyMetadataPatch: mockApplyMetadataPatch,
+      } as unknown as WebSessionStoreState),
     } as StoreApi<WebSessionStoreState>;
     parentStore.getState = () =>
       ({
@@ -780,20 +778,11 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.session("proj", "parent-session"),
-    });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["projects", "proj", "sessions"],
-    });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["projects", "proj", "sessions", "root-session", "tree"],
-    });
-    expect(mockCreateWebSessionStore).toHaveBeenCalledWith(
-      "child-session",
-      "proj",
-    );
-    expect(mockInitializeMetadata).toHaveBeenCalledWith({
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.session("proj", "parent-session") });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "root-session", "tree"] });
+    expect(mockCreateWebSessionStore).toHaveBeenCalledWith("child-session", "proj");
+    expect(mockApplyMetadataPatch).toHaveBeenCalledWith({
       rootSessionId: "root-session",
       parentSessionId: "parent-session",
       agentName: "explore",
@@ -915,6 +904,43 @@ describe("handleSSEEvent", () => {
     });
     expect(mockFindWebSessionStore).not.toHaveBeenCalled();
     expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
+    expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
+  });
+
+  test("lagged closes every existing Session store behind the next snapshot generation", () => {
+    const first = createWebSessionStore("first", "proj");
+    const second = createWebSessionStore("second", "proj");
+    const lagged: GlobalSSELaggedEvent = {
+      type: "lagged",
+      dropped: 1,
+      reason: "client_backpressure",
+    };
+
+    handleSSEEvent({ event: "lagged", data: JSON.stringify(lagged) }, deps);
+
+    expect(first.getState().snapshotRecoveryStatus).toBe("awaiting");
+    expect(second.getState().snapshotRecoveryStatus).toBe("awaiting");
+    expect(first.getState().snapshotRecoveryGeneration).toBe(1);
+    expect(second.getState().snapshotRecoveryGeneration).toBe(1);
+  });
+
+  test("an event gap enters recovery and buffers the observed envelope before refreshing", () => {
+    const store = createWebSessionStore("gap-session", "proj");
+    deps.findStore = () => store;
+    const envelope: GlobalSessionEventEnvelope = {
+      type: "event",
+      slug: "proj",
+      sessionId: "gap-session",
+      eventId: 3,
+      createdAt: 1,
+      payload: { type: "text-start" },
+      agentName: "lead",
+    };
+
+    handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
+
+    expect(store.getState().snapshotRecoveryStatus).toBe("awaiting");
+    expect(store.getState().snapshotRecoveryGeneration).toBe(1);
     expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
   });
 

@@ -264,6 +264,7 @@ type PersistedSessionState = Pick<
   | "steps"
   | "stats"
   | "executions"
+  | "promptTraces"
   | "compression"
   | "todos"
   | "reminders"
@@ -272,6 +273,7 @@ type PersistedSessionState = Pick<
   | "toolBatches"
   | "rootSessionId"
   | "parentSessionId"
+  | "nextEventId"
 >;
 
 function persistedState(
@@ -354,6 +356,7 @@ function persistedState(
     steps,
     stats,
     executions: coherentExecutions,
+    promptTraces: [],
     compression,
     todos,
     reminders,
@@ -361,9 +364,18 @@ function persistedState(
     toolBatches: [],
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
+    nextEventId: 0,
     ...(parentSessionId === undefined ? {} : {
       delegationRequest,
     }),
+  };
+}
+
+function persistedFile<T extends PersistedSessionState>(state: T) {
+  const { nextEventId, ...file } = state;
+  return {
+    ...file,
+    eventCursor: nextEventId > 0 ? nextEventId - 1 : -1,
   };
 }
 
@@ -392,7 +404,7 @@ function persistedToolBatch(
       attempt: 1,
       checkpointAt: Date.parse("2026-07-18T00:00:00.000Z"),
       ...(blocker === undefined ? {} : { blocker }),
-      ...(result === undefined ? {} : { result }),
+      ...(result === undefined ? {} : { result, settledAt: 100 }),
     }],
     createdAt: "2026-07-18T00:00:00.000Z",
     updatedAt: "2026-07-18T00:00:00.000Z",
@@ -505,7 +517,7 @@ function richCompressionState(): CompressionState {
 describe("session transcript serialization", () => {
   test("SessionFileSchema reuses the strict HITL boundary for every durable blocker state", () => {
     const sessionId = uniqueSessionId("strict-hitl-blocker");
-    const base = persistedState(sessionId, [{
+    const base = persistedFile(persistedState(sessionId, [{
       id: "batch-user",
       role: "user",
       parts: [],
@@ -519,7 +531,7 @@ describe("session transcript serialization", () => {
       executionId: "execution-1",
       runOrdinal: 0,
       startedAt: 100,
-    }]);
+    }]));
     const askBlocker: SessionToolCallBlocker = {
       requestKey: "tool:ask-1",
       hitlId: "hitl-ask-1",
@@ -627,7 +639,7 @@ describe("session transcript serialization", () => {
       runOrdinal,
       startedAt: 101 + runOrdinal * 100,
     }));
-    const base = persistedState(sessionId, messages, steps);
+    const base = persistedFile(persistedState(sessionId, messages, steps));
 
     expect(SessionFileSchema.safeParse(base).success).toBe(true);
     expect(SessionFileSchema.safeParse({
@@ -654,7 +666,7 @@ describe("session transcript serialization", () => {
   test("SessionFileSchema requires canonical user text provenance and matches its run binding", () => {
     const sessionId = uniqueSessionId("canonical-user-provenance");
     const canonical = sampleMessages()[0]!;
-    const base = persistedState(sessionId, [canonical], []);
+    const base = persistedFile(persistedState(sessionId, [canonical], []));
     expect(SessionFileSchema.safeParse(base).success).toBe(true);
 
     const { modelAudit: _modelAudit, ...withoutAudit } = canonical;
@@ -694,7 +706,7 @@ describe("session transcript serialization", () => {
     };
 
     expect(SessionFileSchema.safeParse(
-      persistedState(sessionId, [notice], []),
+      persistedFile(persistedState(sessionId, [notice], [])),
     ).success).toBe(true);
   });
 
@@ -812,7 +824,7 @@ describe("session transcript serialization", () => {
   });
 
   test("child Session without a V2 delegation identity fails closed", () => {
-    const child = persistedState(
+    const child = persistedFile(persistedState(
       crypto.randomUUID(),
       sampleMessages(),
       sampleSteps(),
@@ -822,13 +834,13 @@ describe("session transcript serialization", () => {
       [],
       "root-session",
       "parent-session",
-    );
+    ));
     const { delegationRequest: _request, ...childWithoutDelegationIdentity } = child;
     expect(SessionFileSchema.safeParse(childWithoutDelegationIdentity).success).toBe(false);
   });
 
   test("child Session rejects active Skills that differ from its delegation identity", () => {
-    const child = persistedState(
+    const child = persistedFile(persistedState(
       crypto.randomUUID(),
       sampleMessages(),
       sampleSteps(),
@@ -838,7 +850,7 @@ describe("session transcript serialization", () => {
       [],
       "root-session",
       "parent-session",
-    );
+    ));
 
     expect(SessionFileSchema.safeParse({
       ...child,
@@ -849,7 +861,7 @@ describe("session transcript serialization", () => {
       activeSkillNames: ["codemap", "research-docs"],
       delegationRequest: {
         ...child.delegationRequest!,
-        skills: ["codemap", "research-docs", "codemap"],
+        skills: ["codemap", "research-docs"],
       },
     }).success).toBe(true);
   });
@@ -867,12 +879,12 @@ describe("session transcript serialization", () => {
     expect((await sessionFileInternals.listSessionSummaries(TMP_DIR))[0]?.projectTodo)
       .toEqual({ todoId, entry: "work" });
 
-    expect(SessionFileSchema.safeParse({
+    expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(crypto.randomUUID()),
       agentName: "analyst",
       projectTodo: { todoId, entry: "discussion" },
-    }).success).toBe(false);
-    expect(SessionFileSchema.safeParse({
+    })).success).toBe(false);
+    expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(
         crypto.randomUUID(),
         sampleMessages(),
@@ -885,38 +897,7 @@ describe("session transcript serialization", () => {
         sessionId,
       ),
       projectTodo: { todoId, entry: "discussion" },
-    }).success).toBe(false);
-  });
-
-  test("Session event persistence rejects known payload types with missing or extra fields", async () => {
-    const sessionId = uniqueSessionId("strict-event-payload");
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
-    const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
-
-    expect(SessionFileSchema.safeParse({
-      ...raw,
-      events: [{ id: 1, createdAt: 1, payload: { type: "text-delta", text: "ok" } }],
-    }).success).toBe(true);
-    expect(SessionFileSchema.safeParse({
-      ...raw,
-      events: [{ id: 1, createdAt: 1, payload: {
-        type: "llm-retry",
-        scope: "session",
-        visibility: "session",
-        attempt: 1,
-        errorKind: "network",
-        message: "Retrying",
-        nextRetryAt: 2,
-      } }],
-    }).success).toBe(true);
-    expect(SessionFileSchema.safeParse({
-      ...raw,
-      events: [{ id: 1, createdAt: 1, payload: { type: "text-delta" } }],
-    }).success).toBe(false);
-    expect(SessionFileSchema.safeParse({
-      ...raw,
-      events: [{ id: 1, createdAt: 1, payload: { type: "text-start", unexpectedField: true } }],
-    }).success).toBe(false);
+    })).success).toBe(false);
   });
 
   test("root save writes the canonical session.json", async () => {
@@ -1351,7 +1332,7 @@ describe("session transcript serialization", () => {
 
   test("load rejects sessionId mismatch", async () => {
     const requestedSessionId = uniqueSessionId("requested");
-    await writeSessionFile(requestedSessionId, persistedState(crypto.randomUUID()));
+    await writeSessionFile(requestedSessionId, persistedFile(persistedState(crypto.randomUUID())));
 
     await expect(storeManager.getOrLoad(requestedSessionId, TMP_DIR)).rejects.toThrow("Session ID mismatch");
   });
@@ -1424,11 +1405,13 @@ describe("session transcript serialization", () => {
       "compression",
       "createdAt",
       "cwd",
+      "eventCursor",
       "executions",
       "inputRequestReceipts",
       "messages",
       "modelSelection",
       "pendingMessages",
+      "promptTraces",
       "reminders",
       "rootSessionId",
       "sessionId",
@@ -1443,6 +1426,8 @@ describe("session transcript serialization", () => {
     expect("executionCount" in parsed).toBe(false);
     expect(parsed.stats).toEqual(createEmptySessionStats());
     expect(parsed.executions).toEqual(state.executions);
+    expect(parsed.promptTraces).toEqual([]);
+    expect(parsed.eventCursor).toBe(-1);
     expect(parsed.todos).toEqual(sampleTodos());
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);

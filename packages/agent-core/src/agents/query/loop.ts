@@ -1,9 +1,11 @@
 import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
+import { interruptIncompleteToolParts } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionExecutionTerminalStatus } from "@archcode/protocol";
 import type { Logger } from "../../logger";
 import { toDurableToolInput } from "../../store/durable-tool-input";
-import type { SessionStoreState } from "../../store/types";
+import type { SessionStoreManager } from "../../store/session-store-manager";
+import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
 import type { SessionToolManualInspectionReason } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
 import type { RawToolResult, ToolCallLike, ToolExecutionContext } from "../../tools/index";
@@ -15,6 +17,7 @@ import { redactSensitiveValue, sanitizeProviderError, type SensitiveTextRedactor
 import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../llm/retry";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionToolBatchScheduler, type SessionToolBatchAdvanceResult } from "../../execution/session-tool-batch-scheduler";
+import { LiveToolOutputPublisher } from "../../tool-output/live-publisher";
 
 export const DEFAULT_QUERY_MAX_STEPS = 50;
 const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
@@ -317,6 +320,9 @@ export async function runQueryLoop(
       ?? (() => { throw new Error("Tool execution has no active Tool Batch"); })();
     const persistedAllowedTools = new Set(batch.allowedTools);
     const persistedSkills = new Set(batch.agentSkills);
+    const liveToolOutput = toolCall.toolName === "bash"
+      ? new LiveToolOutputPublisher({ store, toolCallId: toolCall.toolCallId })
+      : undefined;
     return createToolExecutionContext({
       store,
       toolName: toolCall.toolName,
@@ -336,6 +342,7 @@ export async function runQueryLoop(
       skillService: options.skillService,
       storeManager: options.storeManager,
       outputArtifacts: options.toolOutputAccess,
+      ...(liveToolOutput === undefined ? {} : { liveToolOutput }),
       ...(options.startChildExecution === undefined ? {} : {
         startChildExecution: async (request) => {
           if (!request.request.background) await toolBatchScheduler.prepareChildLaunch(request);
@@ -400,7 +407,11 @@ export async function runQueryLoop(
         return startupResult.result;
       }
     } else {
-      await settleUnfinalizedToolPartsForRecovery(store, toolRegistry, createContext, steps);
+      await interruptUnfinalizedToolParts(
+        store,
+        options.storeManager,
+        options.projectContext.project.workspaceRoot,
+      );
       await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
     }
 
@@ -440,7 +451,11 @@ export async function runQueryLoop(
         consumeSteers: options.consumeSteers,
         prepareModelContext: options.prepareModelContext,
         settleUnfinalizedToolParts: async () => {
-          await settleUnfinalizedToolPartsForRecovery(store, toolRegistry, createContext, steps);
+          await interruptUnfinalizedToolParts(
+            store,
+            options.storeManager,
+            options.projectContext.project.workspaceRoot,
+          );
           await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
         },
       });
@@ -506,7 +521,11 @@ export async function runQueryLoop(
       if (attempt.outcome === "terminal") {
         if (attempt.finalizationKind) {
           appendPostStreamTerminalFailure(store, attempt.error, steps, attempt.finalizationKind);
-          await settleUnfinalizedToolPartsForRecovery(store, toolRegistry, createContext, steps);
+          await interruptUnfinalizedToolParts(
+            store,
+            options.storeManager,
+            options.projectContext.project.workspaceRoot,
+          );
           await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
           markCurrentAssistantModelOutputDiscardedFromContext(store);
         } else {
@@ -1044,40 +1063,22 @@ function markCurrentAssistantModelOutputDiscardedFromContext(store: StoreApi<Ses
   });
 }
 
-async function settleUnfinalizedToolPartsForRecovery(
+async function interruptUnfinalizedToolParts(
   store: StoreApi<SessionStoreState>,
-  registry: ToolRegistry,
-  createContext: (call: ToolCallLike, step: number) => Promise<ToolExecutionContext>,
-  step: number,
+  storeManager: SessionStoreManager,
+  workspaceRoot: string,
 ): Promise<void> {
-  const parts = store.getState().messages.flatMap((message) => message.parts.filter(
-    (part) => part.type === "tool" && (part.state === "pending" || part.state === "running"),
-  ));
-  for (const part of parts) {
-    const hasAttempt = part.attemptId !== undefined;
-    const call: ToolCallLike = {
-      toolCallId: part.toolCallId,
-      toolName: part.toolName,
-      input: toDurableToolInput("input" in part ? part.input : undefined),
-    };
-    const raw = createToolErrorResult({
-      kind: "execution",
-      code: hasAttempt ? "TOOL_RESULT_UNKNOWN" : "TOOL_NOT_EXECUTED",
-      message: hasAttempt
-        ? "Tool execution result is unknown because execution was interrupted"
-        : "Execution ended before the tool ran",
-    });
-    const outcome = await registry.settleSystem(call, await createContext(call, step), hasAttempt
-      ? { ...raw, details: { ...raw.details, unknownResult: true } }
-      : raw);
-    if (outcome.kind !== "settled") throw new Error("Recovery system result unexpectedly blocked");
-    store.getState().append({
-      type: "tool-result",
-      toolCallId: call.toolCallId,
-      toolName: call.toolName,
-      result: outcome.result,
-    });
-  }
+  await storeManager.commitDurableSessionMutation(
+    store.getState().sessionId,
+    workspaceRoot,
+    (state) => {
+      const messages = interruptIncompleteToolParts(state.messages, Date.now());
+      return {
+        result: undefined,
+        ...(messages === state.messages ? {} : { patch: { messages } }),
+      };
+    },
+  );
 }
 
 function hasRecoveryAttempts(attempts: {

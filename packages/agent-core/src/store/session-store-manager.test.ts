@@ -1,9 +1,20 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot, type DelegationRequest, type FinalizedToolResult, type ToolChildSessionLink } from "@archcode/protocol";
+import {
+  MAX_EVENTS,
+  createEmptySessionStats,
+  type CompressionBlockSnapshot,
+  type DelegationRequest,
+  type FinalizedToolResult,
+  type SessionExecutionRecord,
+  type SessionMessage,
+  type ToolChildSessionLink,
+  type ToolPart,
+} from "@archcode/protocol";
 import { COMPRESSION_SUMMARY_SECTION_NAMES, createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
+import type { SessionToolBatch } from "./types";
 import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
 import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
@@ -100,6 +111,45 @@ describe("SessionStoreManager", () => {
 
   type PersistedSessionState = Parameters<typeof sessionFileInternals.saveSessionTranscript>[0];
 
+  function runningExecution(id: string, startedAt = 1000): SessionExecutionRecord {
+    return {
+      id,
+      startedAt,
+      status: "running",
+      origin: "user_message",
+      maxSteps: 50,
+      durationMs: 0,
+      runs: [{ ordinal: 0, startedAt, binding: TEST_BINDING }],
+    };
+  }
+
+  function interruptedExecution(
+    sessionId: string,
+    id: string,
+    startedAt = 1000,
+    endedAt = 1300,
+  ): SessionExecutionRecord {
+    return {
+      id,
+      startedAt,
+      status: "interrupted",
+      origin: "tool_call",
+      maxSteps: 50,
+      endedAt,
+      durationMs: endedAt - startedAt,
+      runs: [{
+        ordinal: 0,
+        startedAt,
+        endedAt,
+        durationMs: endedAt - startedAt,
+        binding: TEST_BINDING,
+        usageDelta: createEmptySessionStats().usage,
+        settlement: { key: `run:${sessionId}:${id}:0`, goalInstanceId: null },
+      }],
+      terminalSettlement: { key: `terminal:${sessionId}:${id}`, goalInstanceId: null },
+    };
+  }
+
   function persistedSession(
     id: string,
     overrides: Partial<PersistedSessionState> = {},
@@ -127,12 +177,14 @@ describe("SessionStoreManager", () => {
       steps: [],
       stats: createEmptySessionStats(),
       executions: [],
+      promptTraces: [],
       compression: createEmptyCompressionState(),
       todos: [],
       reminders: [],
-    childSessionLinks: [],
-    toolBatches: [],
+      childSessionLinks: [],
+      toolBatches: [],
       rootSessionId: id,
+      nextEventId: 0,
       ...(overrides.parentSessionId === undefined ? {} : {
         delegationRequest: {
           ...delegationRequest,
@@ -141,6 +193,108 @@ describe("SessionStoreManager", () => {
       }),
       ...overrides,
     };
+  }
+
+  function persistedCheckpointSession(input: {
+    id: string;
+    isError: boolean;
+    projection: "running" | "interrupted" | "settled";
+    settledAt?: number;
+    projectedSettledAt?: number;
+    projectedResult?: FinalizedToolResult;
+  }): PersistedSessionState {
+    const settledAt = input.settledAt ?? 1400;
+    const result = finalizedResult(input.isError ? "failed checkpoint" : "completed checkpoint", input.isError);
+    const basePart = {
+      type: "tool" as const,
+      id: "tool-part-checkpoint",
+      toolCallId: "call-checkpoint",
+      toolName: "read_tool",
+      input: { value: "checkpoint" },
+      createdAt: 1100,
+      startedAt: 1200,
+    };
+    const part: ToolPart = input.projection === "running"
+      ? {
+          ...basePart,
+          state: "running",
+          liveOutput: {
+            preview: "TRANSIENT_LIVE_CHECKPOINT_OUTPUT",
+            omittedBytes: 7,
+            liveLimitReached: false,
+          },
+        }
+      : input.projection === "interrupted"
+      ? {
+          ...basePart,
+          state: "interrupted",
+          endedAt: 1300,
+        }
+      : {
+          ...basePart,
+          state: input.isError ? "error" : "completed",
+          endedAt: input.projectedSettledAt ?? settledAt,
+          result: input.projectedResult ?? result,
+        };
+    const message: SessionMessage = {
+      id: "assistant-checkpoint",
+      role: "assistant",
+      parts: [part],
+      createdAt: 1000,
+      completedAt: 1300,
+      executionId: "execution-checkpoint",
+      runOrdinal: 0,
+    };
+    const batch: SessionToolBatch = {
+      batchId: "batch-checkpoint",
+      executionId: "execution-checkpoint",
+      runOrdinal: 0,
+      assistantMessageId: message.id,
+      step: 0,
+      agentName: "lead",
+      allowedTools: ["read_tool"],
+      agentSkills: [],
+      partitions: [{ type: "serial", callIds: ["call-checkpoint"] }],
+      calls: [{
+        ordinal: 0,
+        partitionIndex: 0,
+        toolCallId: "call-checkpoint",
+        toolName: "read_tool",
+        input: { value: "checkpoint" },
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        state: input.isError ? "failed" : "completed",
+        attempt: 1,
+        checkpointAt: settledAt,
+        result,
+        settledAt,
+      }],
+      createdAt: new Date(1000).toISOString(),
+      updatedAt: new Date(settledAt).toISOString(),
+    };
+    const emptyStats = createEmptySessionStats();
+    const projectionAlreadySettled = input.projection === "settled";
+    return persistedSession(input.id, {
+      messages: [message],
+      stats: {
+        ...emptyStats,
+        tools: {
+          calls: 1,
+          completed: projectionAlreadySettled && !input.isError ? 1 : 0,
+          failed: projectionAlreadySettled && input.isError ? 1 : 0,
+        },
+      },
+      steps: [{
+        id: "step-checkpoint",
+        executionId: "execution-checkpoint",
+        runOrdinal: 0,
+        step: 0,
+        startedAt: 1000,
+        completedAt: 1100,
+        finishReason: "tool-calls",
+      }],
+      executions: [interruptedExecution(input.id, "execution-checkpoint")],
+      toolBatches: [batch],
+    });
   }
 
   test("createSessionFile does not publish a Session before its initial snapshot is durable", async () => {
@@ -206,6 +360,65 @@ describe("SessionStoreManager", () => {
       await mutation;
       expect(received).toEqual(["system-notice", "text-delta"]);
       expect(store.getState().publishableNextEventId).toBe(2);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+      releaseSave();
+    }
+  });
+
+  test("retains every unpublished event beyond the ring cap and trims immediately after the persistence barrier", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, id);
+    const store = manager.get(id, TMP_DIR)!;
+    const receivedIds: number[] = [];
+    manager.subscribeToSessionEvents(({ envelope }) => receivedIds.push(envelope.id));
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let releaseSave!: () => void;
+    const saveReleased = new Promise<void>((resolve) => { releaseSave = resolve; });
+    let markSaveStarted!: () => void;
+    const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve; });
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      markSaveStarted();
+      await saveReleased;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const mutation = manager.commitDurableSessionMutation(id, TMP_DIR, () => ({
+        result: undefined,
+        events: [{ type: "system-notice", message: "durable barrier" }],
+      }));
+      await saveStarted;
+
+      for (let index = 0; index < MAX_EVENTS; index += 1) {
+        store.getState().append({
+          type: "reminder-consumed",
+          reminderIds: [`missing-${index}`],
+        });
+      }
+
+      const withheld = store.getState();
+      expect(withheld.events).toHaveLength(MAX_EVENTS + 1);
+      expect(withheld.eventOffset).toBe(0);
+      expect(withheld.publishableNextEventId).toBe(0);
+      expect(withheld.events[0]?.id).toBe(0);
+      expect(withheld.events.at(-1)?.id).toBe(MAX_EVENTS);
+      expect(receivedIds).toEqual([]);
+
+      releaseSave();
+      await mutation;
+
+      const published = store.getState();
+      expect(receivedIds).toHaveLength(MAX_EVENTS + 1);
+      expect(receivedIds[0]).toBe(0);
+      expect(receivedIds.at(-1)).toBe(MAX_EVENTS);
+      expect(published.publishableNextEventId).toBe(MAX_EVENTS + 1);
+      expect(published.events).toHaveLength(MAX_EVENTS);
+      expect(published.eventOffset).toBe(1);
+      expect(published.events[0]?.id).toBe(1);
+      expect(published.events.at(-1)?.id).toBe(MAX_EVENTS);
     } finally {
       sessionFileInternals.saveSessionTranscript = originalSave;
       releaseSave();
@@ -477,6 +690,83 @@ describe("SessionStoreManager", () => {
     }));
   });
 
+  test("snapshot waits through a newly queued persistence revision and returns only its durable state", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, id);
+    const store = manager.get(id, TMP_DIR)!;
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let firstStarted!: () => void;
+    const firstSaveStarted = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let secondStarted!: () => void;
+    const secondSaveStarted = new Promise<void>((resolve) => {
+      secondStarted = resolve;
+    });
+    let releaseSecond!: () => void;
+    const secondSaveReleased = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const savedTitles: Array<string | null> = [];
+    let saveIndex = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      const index = saveIndex++;
+      savedTitles.push(state.title);
+      if (index === 0) {
+        firstStarted();
+        await originalSave(state, workspaceRoot);
+        store.getState().setTitle("second durable title");
+        return;
+      }
+      secondStarted();
+      await secondSaveReleased;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      store.getState().setTitle("first durable title");
+      let snapshotSettled = false;
+      const snapshotPromise = manager.getSessionReadSnapshot(TMP_DIR, id).finally(() => {
+        snapshotSettled = true;
+      });
+
+      await firstSaveStarted;
+      await secondSaveStarted;
+      await Promise.resolve();
+      expect(snapshotSettled).toBe(false);
+
+      releaseSecond();
+      const snapshot = await snapshotPromise;
+      expect(snapshot.file.title).toBe("second durable title");
+      expect(savedTitles).toEqual(["first durable title", "second durable title"]);
+      expect((await readSessionJson(canonicalSessionPath(id))).title).toBe("second durable title");
+    } finally {
+      releaseSecond();
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("snapshot propagates failure from the persistence revision it must observe", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, id);
+    const store = manager.get(id, TMP_DIR)!;
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const failure = new Error("simulated snapshot revision failure");
+    sessionFileInternals.saveSessionTranscript = async () => {
+      throw failure;
+    };
+
+    try {
+      store.getState().setTitle("must remain non-authoritative");
+      await expect(manager.getSessionReadSnapshot(TMP_DIR, id)).rejects.toBe(failure);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
   test("ensureSessionFile verifies an existing stable identity without overwriting it", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
@@ -638,11 +928,9 @@ describe("SessionStoreManager", () => {
       cwd: worktreeCwd,
     });
     expect((await manager.getSessionFile(TMP_DIR, id)).cwd).toBe(worktreeCwd);
-    expect((await manager.getSessionFile(TMP_DIR, id)).events?.at(-1)?.payload).toEqual({
-      type: "session.cwd_changed",
-      previousCwd: TMP_DIR,
-      cwd: worktreeCwd,
-    });
+    expect((await manager.getSessionFile(TMP_DIR, id)).eventCursor).toBe(
+      store.getState().nextEventId - 1,
+    );
     expect(await Bun.file(join(worktreeCwd, ".archcode", "runtime", "sessions", id, "session.json")).exists()).toBe(false);
     await expect(manager.updateCwd(id, TMP_DIR, "relative/path")).rejects.toMatchObject({ name: "InvalidSessionCwdError" });
   });
@@ -879,7 +1167,7 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().childSessionLinks).toEqual([link]);
   });
 
-  test("persists attempted tools without fabricating a result during load reconciliation", async () => {
+  test("pure store hydration preserves attempted tools for execution-manager recovery", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
@@ -912,6 +1200,51 @@ describe("SessionStoreManager", () => {
     expect(tool).not.toHaveProperty("result");
   });
 
+  test("persists a running Bash projection without its transient live output", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR, { agentName: "lead" });
+
+    store.getState().append(executionStart("run-live-output"));
+    store.getState().append({
+      type: "tool-call",
+      toolCallId: "bash-live",
+      toolName: "bash",
+      input: { command: "printf live", description: "Emit live output" },
+    });
+    store.getState().append({
+      type: "tool-output-delta",
+      toolCallId: "bash-live",
+      toolName: "bash",
+      delta: "LIVE_ONLY_SENTINEL",
+      omittedBytes: 0,
+      liveLimitReached: false,
+    });
+    expect(store.getState().messages[0]?.parts[0]).toMatchObject({
+      state: "running",
+      liveOutput: { preview: "LIVE_ONLY_SENTINEL" },
+    });
+
+    store.getState().append({
+      type: "tool-attempt",
+      toolCallId: "bash-live",
+      toolName: "bash",
+      attemptId: "attempt-live",
+      timestamp: 123,
+      destructive: true,
+    });
+    await manager.flushSession(id, TMP_DIR);
+
+    const persisted = await readSessionJson(canonicalSessionPath(id));
+    const persistedPart = (persisted.messages as Array<{ parts: Array<Record<string, unknown>> }>)[0]?.parts[0];
+    expect(persistedPart).toMatchObject({
+      state: "running",
+      toolCallId: "bash-live",
+      attemptId: "attempt-live",
+    });
+    expect(persistedPart).not.toHaveProperty("liveOutput");
+  });
+
   test("persists and reloads partial tool input for Registry recovery", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
@@ -931,18 +1264,18 @@ describe("SessionStoreManager", () => {
     const rawMessages = raw.messages as Array<{ parts: Array<Record<string, unknown>> }>;
     expect(rawMessages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "pending",
+      state: "interrupted",
     });
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
     expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "pending",
+      state: "interrupted",
     });
   });
 
-  test("canonicalizes undefined tool-call input in both messages and the durable event log", async () => {
+  test("canonicalizes undefined tool-call input in the durable message and restores the runtime cursor", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
@@ -960,17 +1293,193 @@ describe("SessionStoreManager", () => {
     await manager.flushSession(id, TMP_DIR);
     const raw = await readSessionJson(filePath);
     const rawMessages = raw.messages as Array<{ parts: Array<Record<string, unknown>> }>;
-    const rawEvents = raw.events as Array<{ payload: Record<string, unknown> }>;
     expect(rawMessages[0]?.parts[0]?.input).toBeNull();
-    expect(rawEvents.find((event) => event.payload.type === "tool-call")?.payload.input).toBeNull();
+    expect(raw.eventCursor).toBe(store.getState().nextEventId - 1);
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
     expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
       type: "tool",
-      state: "running",
+      state: "interrupted",
       input: null,
     });
+    expect(loaded.getState().events).toEqual([]);
+    expect(loaded.getState().nextEventId).toBe(Number(raw.eventCursor) + 1);
+  });
+
+  test("load reconciliation marks interrupted partial text visible but excluded from model context", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(
+      persistedSession(id, {
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "text",
+                id: "text-1",
+                text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
+                createdAt: 1001,
+              },
+            ],
+            createdAt: 1001,
+            executionId: "run-1",
+            runOrdinal: 0,
+          },
+        ],
+        executions: [runningExecution("run-1")],
+      }),
+      TMP_DIR,
+    );
+
+    const loaded = await manager.getOrLoad(id, TMP_DIR);
+    const text = loaded.getState().messages[0]?.parts[0];
+    expect(text).toMatchObject({
+      type: "text",
+      text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(JSON.stringify(loaded.getState().toModelMessages())).toContain("previous assistant response was interrupted");
+    expect(JSON.stringify(loaded.getState().toModelMessages())).not.toContain("PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT");
+    expect(loaded.getState().executions[0]).toMatchObject({ status: "running" });
+  });
+
+  test("load reconciliation makes an unfinished command outcome indeterminate", async () => {
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(persistedSession(id, {
+      inputRequestReceipts: [{
+        kind: "command",
+        clientRequestId: "interrupted-command",
+        requestFingerprint: "user-command",
+        status: "executing",
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+      }],
+    }), TMP_DIR);
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    expect((await restarted.getOrLoad(id, TMP_DIR)).getState().inputRequestReceipts).toEqual([
+      expect.objectContaining({
+        kind: "command",
+        clientRequestId: "interrupted-command",
+        status: "indeterminate",
+        error: expect.stringContaining("unknown"),
+      }),
+    ]);
+  });
+
+  test("load repairs interrupted tool projections from the durable checkpoint exactly once", async () => {
+    const scenarios = [
+      { id: sessionId(), isError: false, projection: "running", state: "completed", counter: "completed" },
+      { id: sessionId(), isError: true, projection: "interrupted", state: "error", counter: "failed" },
+    ] as const;
+    for (const scenario of scenarios) {
+      await sessionFileInternals.saveSessionTranscript(persistedCheckpointSession({
+        id: scenario.id,
+        isError: scenario.isError,
+        projection: scenario.projection,
+      }), TMP_DIR);
+    }
+    const runningCheckpointFile = await readSessionJson(canonicalSessionPath(scenarios[0].id));
+    const runningCheckpointPart = (
+      runningCheckpointFile.messages as Array<{ parts: Array<Record<string, unknown>> }>
+    )[0]?.parts[0];
+    expect(runningCheckpointPart).toMatchObject({
+      state: "running",
+      toolCallId: "call-checkpoint",
+    });
+    expect(runningCheckpointPart).not.toHaveProperty("liveOutput");
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let repairSaveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      repairSaveCount += 1;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      for (const [index, scenario] of scenarios.entries()) {
+        const manager = new SessionStoreManager({ logger: silentLogger });
+        const loaded = await manager.getOrLoad(scenario.id, TMP_DIR);
+        const part = loaded.getState().messages[0]?.parts[0];
+        expect(part).toMatchObject({
+          type: "tool",
+          state: scenario.state,
+          endedAt: 1400,
+          result: { isError: scenario.isError },
+        });
+        expect(loaded.getState().stats.tools[scenario.counter]).toBe(1);
+
+        const persisted = await readSessionJson(canonicalSessionPath(scenario.id));
+        const persistedPart = (persisted.messages as Array<{ parts: Array<Record<string, unknown>> }>)[0]?.parts[0];
+        expect(persistedPart).toMatchObject({
+          state: scenario.state,
+          endedAt: 1400,
+          result: { isError: scenario.isError },
+        });
+
+        const restarted = new SessionStoreManager({ logger: silentLogger });
+        const reloaded = await restarted.getOrLoad(scenario.id, TMP_DIR);
+        expect(reloaded.getState().stats.tools[scenario.counter]).toBe(1);
+        expect(repairSaveCount).toBe(index + 1);
+      }
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("load treats an identical settled checkpoint as a no-op", async () => {
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(persistedCheckpointSession({
+      id,
+      isError: false,
+      projection: "settled",
+    }), TMP_DIR);
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let saveCount = 0;
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      saveCount += 1;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const manager = new SessionStoreManager({ logger: silentLogger });
+      const loaded = await manager.getOrLoad(id, TMP_DIR);
+      expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
+        state: "completed",
+        endedAt: 1400,
+      });
+      expect(loaded.getState().stats.tools.completed).toBe(1);
+      expect(saveCount).toBe(0);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("load strictly rejects settled projection timestamp and result conflicts", async () => {
+    const timestampConflictId = sessionId();
+    await sessionFileInternals.saveSessionTranscript(persistedCheckpointSession({
+      id: timestampConflictId,
+      isError: false,
+      projection: "settled",
+      projectedSettledAt: 1399,
+    }), TMP_DIR);
+    const resultConflictId = sessionId();
+    await sessionFileInternals.saveSessionTranscript(persistedCheckpointSession({
+      id: resultConflictId,
+      isError: false,
+      projection: "settled",
+      projectedResult: finalizedResult("conflicting projection"),
+    }), TMP_DIR);
+
+    await expect(
+      new SessionStoreManager({ logger: silentLogger }).getOrLoad(timestampConflictId, TMP_DIR),
+    ).rejects.toThrow("conflicts with its settled ToolPart projection");
+    await expect(
+      new SessionStoreManager({ logger: silentLogger }).getOrLoad(resultConflictId, TMP_DIR),
+    ).rejects.toThrow("conflicts with its settled ToolPart projection");
   });
 
   test("persists completed tool results and does not downgrade them on restart", async () => {
@@ -988,7 +1497,8 @@ describe("SessionStoreManager", () => {
       timestamp: 123,
       destructive: true,
     });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", result: finalizedResult("written") });
+    const settledAt = 456;
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", settledAt, result: finalizedResult("written") });
 
     const filePath = canonicalSessionPath(id);
     await manager.flushSession(id, TMP_DIR);
@@ -1002,6 +1512,7 @@ describe("SessionStoreManager", () => {
       toolCallId: "call-1",
       result: { output: { preview: "written" } },
       attemptId: "attempt-1",
+      endedAt: settledAt,
     });
     expect(JSON.stringify(tool)).not.toContain("unknownResult");
   });
@@ -1042,7 +1553,7 @@ describe("SessionStoreManager", () => {
     expect(stepWithError!.error).toBe(errorMsg);
   });
 
-  test("persists and reloads dedicated Prompt trace events", async () => {
+  test("persists Prompt traces independently and reloads an empty runtime ring", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     const store = manager.create(id, TMP_DIR, { agentName: "lead" });
@@ -1061,11 +1572,14 @@ describe("SessionStoreManager", () => {
 
     store.getState().append({ type: "prompt-trace", trace });
     await manager.flushSession(id, TMP_DIR);
+    const persisted = await readSessionJson(canonicalSessionPath(id));
+    expect(persisted.promptTraces).toEqual([trace]);
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
     const loaded = await restarted.getOrLoad(id, TMP_DIR);
     expect(loaded.getState().promptTraces).toEqual([trace]);
-    expect(loaded.getState().events.some((event) => event.payload.type === "prompt-trace")).toBe(true);
+    expect(loaded.getState().events).toEqual([]);
+    expect(loaded.getState().nextEventId).toBe(Number(persisted.eventCursor) + 1);
   });
 
   test("recovery-notice part with statusCode reloads correctly", async () => {
@@ -1318,18 +1832,18 @@ describe("SessionStoreManager", () => {
     await writeSessionFile({ sessionId: validChildId, rootSessionId, parentSessionId: rootSessionId, title: "valid" });
     await writeSessionFile({ sessionId: missingParentId, rootSessionId, parentSessionId: absentParentId, title: "orphan" });
 
-    await writeRawSessionFile(rootMismatchId, JSON.stringify(persistedSession(rootMismatchId, {
+    await writeRawSessionFile(rootMismatchId, JSON.stringify(sessionFileInternals.toSessionFile(persistedSession(rootMismatchId, {
       agentName: "explore",
       title: "bad-root",
       rootSessionId: otherRootId,
       parentSessionId: rootSessionId,
-    })));
-    await writeRawSessionFile(mismatchFileId, JSON.stringify(persistedSession(mismatchJsonId, {
+    }))));
+    await writeRawSessionFile(mismatchFileId, JSON.stringify(sessionFileInternals.toSessionFile(persistedSession(mismatchJsonId, {
       agentName: "explore",
       title: "mismatch",
       rootSessionId,
       parentSessionId: rootSessionId,
-    })));
+    }))));
     await writeRawSessionFile(invalidJsonId, "not json");
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toBeInstanceOf(SessionTreeIntegrityError);
@@ -1341,13 +1855,13 @@ describe("SessionStoreManager", () => {
     const fileSessionId = sessionId();
     const jsonSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    await writeRawSessionFile(fileSessionId, JSON.stringify(persistedSession(jsonSessionId, {
+    await writeRawSessionFile(fileSessionId, JSON.stringify(sessionFileInternals.toSessionFile(persistedSession(jsonSessionId, {
       agentName: "explore",
       title: "invalid-node",
       todos: [{ id: "a", content: "first", status: "in_progress" }, { id: "b", content: "second", status: "in_progress" }],
       rootSessionId,
       parentSessionId: rootSessionId,
-    })));
+    }))));
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
       name: "SessionTreeIntegrityError",
@@ -1360,12 +1874,12 @@ describe("SessionStoreManager", () => {
     const rootSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
     const duplicateDirSessionId = sessionId();
-    await writeRawSessionFile(duplicateDirSessionId, JSON.stringify(persistedSession(rootSessionId, {
+    await writeRawSessionFile(duplicateDirSessionId, JSON.stringify(sessionFileInternals.toSessionFile(persistedSession(rootSessionId, {
       agentName: "explore",
       title: "duplicate-root",
       rootSessionId,
       parentSessionId: rootSessionId,
-    })));
+    }))));
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
       name: "SessionTreeIntegrityError",
@@ -1393,10 +1907,10 @@ describe("SessionStoreManager", () => {
     const rootSessionId = sessionId();
     const childSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    await writeRawSessionFile(childSessionId, JSON.stringify({ ...persistedSession(childSessionId, {
+    await writeRawSessionFile(childSessionId, JSON.stringify({ ...sessionFileInternals.toSessionFile(persistedSession(childSessionId, {
       rootSessionId,
       parentSessionId: rootSessionId,
-    }), unexpectedField: true }));
+    })), unexpectedField: true }));
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
       name: "SessionTreeIntegrityError",

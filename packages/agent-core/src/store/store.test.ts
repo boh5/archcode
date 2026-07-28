@@ -357,13 +357,13 @@ describe("SessionStoreManager", () => {
     appendUserMessage(store, "collect stats");
     state.append({ type: "step-start", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-ok", toolName: "read", input: { path: "a.ts" } });
-    state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", result: finalizedResult("ok") });
+    state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", result: finalizedResult("ok"), settledAt: Date.now() });
     state.append({ type: "step-end", step: 0, finishReason: "tool-calls", usage: { inputTokens: 2, outputTokens: 3 } });
     state.append(executionEnd(store, "completed"));
     state.append(executionStart("run-two"));
     state.append({ type: "step-start", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-fail", toolName: "bash", input: "false" });
-    state.append({ type: "tool-result", toolCallId: "tool-fail", toolName: "bash", result: finalizedResult("failed", true) });
+    state.append({ type: "tool-result", toolCallId: "tool-fail", toolName: "bash", result: finalizedResult("failed", true), settledAt: Date.now() });
     state.append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } });
     state.append(executionEnd(store, "failed", "child failed"));
 
@@ -962,7 +962,7 @@ describe("tool streaming", () => {
   test("successful tool-result completes the part with a finalized result", () => {
     const store = createFreshStore("tool-result-success");
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("content") });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("content"), settledAt: Date.now() });
 
     const state = store.getState();
     const part = toolPart(onlyMessage(state.messages));
@@ -975,7 +975,7 @@ describe("tool streaming", () => {
   test("error tool-result records a finalized error result and endedAt", () => {
     const store = createFreshStore("tool-result-error");
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "bad" });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "bash", result: finalizedResult("failed", true) });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "bash", result: finalizedResult("failed", true), settledAt: Date.now() });
 
     const part = toolPart(onlyMessage(store.getState().messages));
     expect(part.state).toBe("error");
@@ -987,7 +987,7 @@ describe("tool streaming", () => {
   test("tool-result updates the stored tool part when it already exists", () => {
     const store = createFreshStore("tool-result-existing-part");
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: "input" });
-    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("ok") });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", result: finalizedResult("ok"), settledAt: Date.now() });
 
     const part = toolPart(onlyMessage(store.getState().messages));
     expect(part.state).toBe("completed");
@@ -998,7 +998,7 @@ describe("tool streaming", () => {
     store.getState().append({ type: "tool-input-start", toolCallId: "a", toolName: "first" });
     store.getState().append({ type: "tool-input-start", toolCallId: "b", toolName: "second" });
     store.getState().append({ type: "tool-call", toolCallId: "b", toolName: "second", input: 2 });
-    store.getState().append({ type: "tool-result", toolCallId: "b", toolName: "second", result: finalizedResult("two") });
+    store.getState().append({ type: "tool-result", toolCallId: "b", toolName: "second", result: finalizedResult("two"), settledAt: Date.now() });
 
     const message = onlyMessage(store.getState().messages);
     const first = toolPart(message, 0);
@@ -1031,7 +1031,7 @@ describe("settleIncompleteState behavior", () => {
     expect(message.completedAt).toBeGreaterThan(0);
   });
 
-  test("interrupted execution leaves an attempted tool unfinalized for the Registry recovery lane", () => {
+  test("interrupted execution marks an attempted tool interrupted without fabricating a result", () => {
     const store = createFreshStore("unknown-result-store");
     store.getState().append(executionStart("run"));
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { filePath: "a.ts" } });
@@ -1047,8 +1047,8 @@ describe("settleIncompleteState behavior", () => {
     store.getState().append(executionEnd(store, "interrupted"));
 
     const tool = toolPart(onlyMessage(store.getState().messages));
-    expect(tool.state).toBe("running");
-    if (tool.state !== "running") throw new Error("Expected running tool");
+    expect(tool.state).toBe("interrupted");
+    if (tool.state !== "interrupted") throw new Error("Expected interrupted tool");
     expect(tool.attemptId).toBe("attempt-1");
     expect(JSON.parse(JSON.stringify(tool))).not.toHaveProperty("result");
   });
@@ -1182,7 +1182,7 @@ describe("Oracle regression tests", () => {
     store.getState().append({ type: "tool-call", toolCallId: "tc-1", toolName: "bash", input: "ls" });
     store.getState().append({ type: "step-end", step: 0, finishReason: "tool-calls" });
 
-    store.getState().append({ type: "tool-result", toolCallId: "tc-1", toolName: "bash", result: finalizedResult("file.txt") });
+    store.getState().append({ type: "tool-result", toolCallId: "tc-1", toolName: "bash", result: finalizedResult("file.txt"), settledAt: Date.now() });
 
     // Step 1: should create a NEW assistant message (not merge into step 0's)
     store.getState().append({ type: "step-start", step: 1 });
@@ -1283,7 +1283,7 @@ describe("Oracle regression tests", () => {
     expect(textParts[0]!.completedAt).toBeDefined();
   });
 
-  test("failed execution leaves a running tool unfinalized for the Registry recovery lane", () => {
+  test("failed execution marks its unfinalized tool interrupted without fabricating a result", () => {
     const store = createFreshStore("failed-execution-tools");
     store.getState().append(executionStart());
     appendUserMessage(store, "use tool");
@@ -1300,7 +1300,7 @@ describe("Oracle regression tests", () => {
     expect(assistantMsg).toBeDefined();
     const toolParts = assistantMsg!.parts.filter(p => p.type === "tool");
     expect(toolParts.length).toBe(1);
-    expect(toolParts[0]!.state).toBe("running");
+    expect(toolParts[0]!.state).toBe("interrupted");
     expect(JSON.parse(JSON.stringify(toolParts[0]))).not.toHaveProperty("result");
   });
 });
@@ -1314,6 +1314,7 @@ describe("strict details propagation through tool-result event", () => {
       toolCallId: "call-meta-1",
       toolName: "bash",
       result: finalizedResult("file.txt", false, 0),
+      settledAt: Date.now(),
     });
 
     const part = toolPart(onlyMessage(store.getState().messages));
@@ -1330,6 +1331,7 @@ describe("strict details propagation through tool-result event", () => {
       toolCallId: "call-meta-2",
       toolName: "bash",
       result: finalizedResult("command not found", true, 127),
+      settledAt: Date.now(),
     });
 
     const part = toolPart(onlyMessage(store.getState().messages));
@@ -1346,6 +1348,7 @@ describe("strict details propagation through tool-result event", () => {
       toolCallId: "call-no-meta",
       toolName: "read",
       result: finalizedResult("ok"),
+      settledAt: Date.now(),
     });
 
     const part = toolPart(onlyMessage(store.getState().messages));

@@ -459,6 +459,36 @@ describe("query loop LLM stream recovery", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "text-delta", text: "Recovered continuation" }));
   });
 
+  test("tool-input-start without tool-call before EOF becomes non-final interrupted state", async () => {
+    const store = createStore();
+    const executor = mock(async () => createTextToolResult("should not run"));
+    const registry = createTestRegistry([
+      defineTool({
+        name: "echo",
+        description: "Echo",
+        inputSchema,
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
+        execute: executor,
+      }),
+    ]);
+    createMockStreamText([
+      { chunks: [{ type: "tool-input-start", id: "tc-pending", toolName: "echo" }], fullStreamError: retryableEof("tool input only", 0.001) },
+      { text: "Recovered" },
+    ]);
+
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"] }), "Use tool");
+
+    expect(executor).not.toHaveBeenCalled();
+    const tool = assistantMessages(store).flatMap((message) => message.parts).find((part) => part.type === "tool");
+    expect(tool).toMatchObject({ type: "tool", state: "interrupted" });
+    expect(tool).not.toHaveProperty("result");
+    const modelMessages = store.getState().toModelMessages();
+    expect(modelMessages[0]).toEqual({ role: "user", content: wrappedMessage("m0001", "Use tool") });
+    expect(JSON.stringify(modelMessages)).toContain("Recovered");
+    expect(JSON.stringify(modelMessages)).not.toContain("tc-pending");
+  });
+
   test("effectful tool attempt without result becomes unknown-result warning and is not replayed", async () => {
     const store = createStore();
     const executor = mock(async (_input: z.infer<typeof inputSchema>, ctx: ToolExecutionContext) => {

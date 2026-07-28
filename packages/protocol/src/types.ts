@@ -475,7 +475,17 @@ export interface ToolResultEvent {
   type: "tool-result";
   toolCallId: string;
   toolName: string;
+  settledAt: number;
   result: FinalizedToolResult;
+}
+
+export interface ToolOutputDeltaEvent {
+  type: "tool-output-delta";
+  toolCallId: string;
+  toolName: "bash";
+  delta: string;
+  omittedBytes: number;
+  liveLimitReached: boolean;
 }
 
 export type ToolChildSessionLinkStatus =
@@ -753,6 +763,7 @@ export type StreamEvent =
   | ToolCallEvent
   | ToolInputResolvedEvent
   | ToolAttemptEvent
+  | ToolOutputDeltaEvent
   | ToolResultEvent
   | ToolChildSessionLinkEvent
   | TodoWriteEvent
@@ -1087,6 +1098,28 @@ export interface RunningToolPart {
   input: unknown;
   createdAt: number;
   startedAt: number;
+  liveOutput?: ToolLiveOutput;
+  attemptId?: string;
+  attemptTimestamp?: number;
+  attemptDestructive?: boolean;
+}
+
+export interface ToolLiveOutput {
+  preview: string;
+  omittedBytes: number;
+  liveLimitReached: boolean;
+}
+
+export interface InterruptedToolPart {
+  type: "tool";
+  id: string;
+  state: "interrupted";
+  toolCallId: string;
+  toolName: string;
+  input?: unknown;
+  createdAt: number;
+  startedAt?: number;
+  endedAt: number;
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
@@ -1124,7 +1157,12 @@ export interface ErrorToolPart {
   attemptDestructive?: boolean;
 }
 
-export type ToolPart = PendingToolPart | RunningToolPart | CompletedToolPart | ErrorToolPart;
+export type ToolPart =
+  | PendingToolPart
+  | RunningToolPart
+  | InterruptedToolPart
+  | CompletedToolPart
+  | ErrorToolPart;
 
 export interface CompactionPart {
   type: "compaction";
@@ -1339,10 +1377,9 @@ export interface Session {
   isStreamingModel: boolean;
   currentExecutionId: string | undefined;
   currentAssistantMessageId: string | undefined;
-  events?: SessionEventEnvelope[];
   parentSessionId?: string;
   delegationRequest?: DelegationRequest;
-  eventCursor?: number;
+  eventCursor: number;
   modelSelection: SessionModelSelection;
   nextModelSelection: SessionNextModelSelection;
   activeModelBinding?: ExecutionModelBindingSummary;

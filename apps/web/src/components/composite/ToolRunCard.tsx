@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { ToolPart } from "@archcode/protocol";
 import type { ToolRunItem } from "../../lib/tool-runs";
@@ -33,10 +33,21 @@ export function ToolRunCard({
   projectSlug,
   sessionId,
 }: ToolRunCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const hasLiveOutput = tools.some((tool) =>
+    tool.state === "running" && tool.liveOutput !== undefined
+  );
+  const [expanded, setExpanded] = useState(hasLiveOutput);
+  const manuallyCollapsed = useRef(false);
+  useEffect(() => {
+    if (hasLiveOutput && !manuallyCollapsed.current) setExpanded(true);
+  }, [hasLiveOutput]);
+
   const running = tools.some((tool) => tool.state === "pending" || tool.state === "running");
   const representative = running ? latestActiveTool(tools) : tools.at(-1);
   const failed = !running && tools.some((tool) => tool.state === "error");
+  const interruptedCount = running
+    ? 0
+    : tools.filter((tool) => tool.state === "interrupted").length;
   const isUnknownResult = !running && tools.some((tool) =>
     isSettled(tool) && tool.result.details?.unknownResult === true
   );
@@ -44,9 +55,11 @@ export function ToolRunCard({
     ? "loading"
     : failed
       ? "failed"
-      : isUnknownResult
-        ? "warning"
-        : "completed";
+      : interruptedCount > 0
+        ? "stopped"
+        : isUnknownResult
+          ? "warning"
+          : "completed";
 
   if (!representative) return null;
 
@@ -58,10 +71,14 @@ export function ToolRunCard({
   const statusLabel = running
     ? "Running"
     : failed
-      ? "Error"
-      : isUnknownResult
-        ? "Unknown"
-        : "Completed";
+      ? interruptedCount > 0
+        ? `Error, ${interruptedCount} Interrupted`
+        : "Error"
+      : interruptedCount > 0
+        ? `${interruptedCount} Interrupted`
+        : isUnknownResult
+          ? "Unknown"
+          : "Completed";
   const bodyId = `${id}-body`;
   const accessibleName = running
     ? [
@@ -77,7 +94,11 @@ export function ToolRunCard({
       <button
         type="button"
         className={`tool-run-summary-control grid min-h-8 cursor-pointer select-none grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border-0 bg-transparent py-1 pl-0 pr-1.5 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => setExpanded((value) => {
+          const next = !value;
+          if (!next) manuallyCollapsed.current = true;
+          return next;
+        })}
         aria-expanded={expanded}
         aria-controls={bodyId}
         aria-label={accessibleName}
@@ -117,7 +138,12 @@ export function ToolRunCard({
           </span>
         )}
         {!running && failed && <span className="shrink-0 text-[10px] font-semibold text-error">Error</span>}
-        {!running && !failed && isUnknownResult && <span className="shrink-0 text-[10px] font-semibold text-warning">Unknown</span>}
+        {!running && interruptedCount > 0 && (
+          <span className="shrink-0 text-[10px] font-semibold text-warning">
+            {interruptedCount === 1 ? "Interrupted" : `${interruptedCount} Interrupted`}
+          </span>
+        )}
+        {!running && !failed && interruptedCount === 0 && isUnknownResult && <span className="shrink-0 text-[10px] font-semibold text-warning">Unknown</span>}
       </button>
       {expanded && (
         <div

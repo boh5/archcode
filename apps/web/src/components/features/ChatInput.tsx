@@ -4,7 +4,10 @@ import type { RequestedModelSelection, SessionFamilyActivity } from "@archcode/p
 import { ApiError } from "../../api/client";
 import { usePatchSessionModelSelection, usePostMessage, useStopSessionFamily } from "../../api/mutations";
 import { useModelRuntime } from "../../api/queries";
-import { getWebSessionStore, useSessionStore } from "../../store/session-store";
+import {
+  getWebSessionStore,
+  useSessionStore,
+} from "../../store/session-store";
 import { useSettingsModal } from "../../context/settings-modal";
 import { ModelPicker } from "./ModelPicker";
 import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
@@ -179,7 +182,9 @@ export function ChatInput({
       expectedRevision: modelSelection.revision,
       requestedModelSelection,
     }, {
-      onSuccess: (state) => getWebSessionStore(sessionId, slug).getState().applyModelState(state),
+      onSuccess: (state) => {
+        getWebSessionStore(sessionId, slug).getState().applyModelStatePatch(state);
+      },
     });
   }, [modelSelection.revision, patchModelSelection, sessionId, slug]);
 

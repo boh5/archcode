@@ -1,4 +1,4 @@
-import type { FinalizedToolResult, HitlResponse } from "@archcode/protocol";
+import type { HitlResponse } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { ChildExecutionOutcome } from "../delegation/types";
 
@@ -190,7 +190,6 @@ export class SessionToolBatchScheduler {
     if (batch === undefined) return undefined;
 
     await this.#repairBlockerHitlIds(batch.batchId);
-    await this.#repairMissingToolResults();
     batch = this.#requireActiveBatch();
 
     const unknownEffectful = batch.calls.find((call) => call.state === "running" && !call.traits.readOnly);
@@ -470,16 +469,6 @@ export class SessionToolBatchScheduler {
     });
   }
 
-  async #repairMissingToolResults(): Promise<void> {
-    let appended = false;
-    for (const call of this.#requireActiveBatch().calls) {
-      if (call.result === undefined || hasSettledToolPart(this.#options.store.getState(), call.toolCallId)) continue;
-      this.#appendResult(call, call.result);
-      appended = true;
-    }
-    if (appended) await this.#flush();
-  }
-
   async #failCallsAfterControlBoundary(
     batchId: string,
     partitionIndex: number,
@@ -551,30 +540,17 @@ export class SessionToolBatchScheduler {
     recoveryFailure?: SessionToolBatchCall["recoveryFailure"],
     markBlockerApplied = false,
   ): Promise<void> {
-    const checkpointAt = Date.now();
-    const now = new Date(checkpointAt).toISOString();
-    await this.#updateBatch(batchId, (batch) => ({
-      ...batch,
-      calls: batch.calls.map((candidate) => {
-        if (candidate.toolCallId !== call.toolCallId) return candidate;
-        const { childDependency: _childDependency, ...terminalCall } = candidate;
-        return {
-          ...terminalCall,
-          state: outcome.result.isError ? "failed" : "completed",
-          checkpointAt,
-          result: outcome.result,
-          ...(outcome.sidecar?.executionCompleted === true && !outcome.result.isError
-            ? { executionCompleted: true as const }
-            : {}),
-          ...(recoveryFailure === undefined ? {} : { recoveryFailure }),
-          ...(markBlockerApplied && candidate.blocker !== undefined
-            ? { blocker: { ...candidate.blocker, responseAppliedAt: candidate.blocker.responseAppliedAt ?? now, response: candidate.blocker.response ?? { type: "cancel", reason: "Tool batch stopped" } } }
-            : {}),
-        };
-      }),
-    }));
-    this.#appendResult(call, outcome.result);
-    await this.#flush();
+    await commitSessionToolResult({
+      store: this.#options.store,
+      storeManager: this.#options.storeManager,
+      sessionId: this.#options.store.getState().sessionId,
+      workspaceRoot: this.#options.workspaceRoot,
+      batchId,
+      call,
+      outcome,
+      recoveryFailure,
+      markBlockerApplied,
+    });
   }
 
   async #updateBatch(batchId: string, update: (batch: SessionToolBatch) => SessionToolBatch): Promise<void> {
@@ -591,18 +567,6 @@ export class SessionToolBatchScheduler {
     return batch;
   }
 
-  #appendResult(call: Pick<SessionToolBatchCall, "toolCallId" | "toolName">, result: FinalizedToolResult): void {
-    this.#options.store.getState().append({
-      type: "tool-result",
-      toolCallId: call.toolCallId,
-      toolName: call.toolName,
-      result,
-    });
-  }
-
-  async #flush(): Promise<void> {
-    await this.#options.storeManager.flushSession(this.#options.store.getState().sessionId, this.#options.workspaceRoot);
-  }
 }
 
 /** Repairs the durable blocked-call -> Project HITL link before lifecycle recovery. */
@@ -843,42 +807,29 @@ export async function cancelSessionToolBatch(input: {
         ...raw,
         details: { ...raw.details, unknownResult: true },
       });
-      const checkpointAt = Date.now();
-      await updateSingleCall(input.storeManager, input.sessionId, input.workspaceRoot, batch.batchId, call.toolCallId, (current) => ({
-        ...current,
-        state: "failed",
-        checkpointAt,
-        result: outcome.result,
+      await commitSessionToolResult({
+        store,
+        storeManager: input.storeManager,
+        sessionId: input.sessionId,
+        workspaceRoot: input.workspaceRoot,
+        batchId: batch.batchId,
+        call,
+        outcome,
         recoveryFailure: { kind: "effectful_cancelled_unknown" },
-      }));
-      store.getState().append({
-        type: "tool-result",
-        toolCallId: call.toolCallId,
-        toolName: call.toolName,
-        result: outcome.result,
       });
       continue;
     }
     const outcome = await input.settleSystem(toToolCall(call), batch.step, createToolErrorResult({ kind: "cancelled", message: input.reason }));
-    const checkpointAt = Date.now();
-    const settledAt = new Date(checkpointAt).toISOString();
-    await updateSingleCall(input.storeManager, input.sessionId, input.workspaceRoot, batch.batchId, call.toolCallId, (current) => {
-      const { childDependency: _childDependency, ...terminalCall } = current;
-      return {
-        ...terminalCall,
-        state: "failed",
-        checkpointAt,
-        result: outcome.result,
-        ...(current.blocker === undefined ? {} : {
-          blocker: {
-            ...current.blocker,
-            responseAppliedAt: current.blocker.responseAppliedAt ?? settledAt,
-            response: current.blocker.response ?? { type: "cancel", reason: "Session tool batch cancelled" },
-          },
-        }),
-      };
+    await commitSessionToolResult({
+      store,
+      storeManager: input.storeManager,
+      sessionId: input.sessionId,
+      workspaceRoot: input.workspaceRoot,
+      batchId: batch.batchId,
+      call,
+      outcome,
+      markBlockerApplied: true,
     });
-    store.getState().append({ type: "tool-result", toolCallId: call.toolCallId, toolName: call.toolName, result: outcome.result });
   }
   const now = new Date().toISOString();
   await input.storeManager.updateToolBatches(input.sessionId, input.workspaceRoot, (batches) => batches.map((candidate) => candidate.batchId !== batch!.batchId ? candidate : {
@@ -983,12 +934,6 @@ function manualReasonFromCall(call: SessionToolBatchCall): SessionToolManualInsp
   };
 }
 
-function hasSettledToolPart(state: Pick<SessionStoreState, "messages">, toolCallId: string): boolean {
-  return state.messages.some((message) => message.parts.some((part) => (
-    part.type === "tool" && part.toolCallId === toolCallId && (part.state === "completed" || part.state === "error")
-  )));
-}
-
 async function updateSingleCall(
   storeManager: SessionStoreManager,
   sessionId: string,
@@ -1002,4 +947,62 @@ async function updateSingleCall(
     updatedAt: new Date().toISOString(),
     calls: batch.calls.map((call) => call.toolCallId === toolCallId ? update(call) : call),
   }));
+}
+
+async function commitSessionToolResult(input: {
+  readonly store: StoreApi<SessionStoreState>;
+  readonly storeManager: SessionStoreManager;
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+  readonly batchId: string;
+  readonly call: Pick<SessionToolBatchCall, "toolCallId" | "toolName">;
+  readonly outcome: Extract<RegistryExecutionOutcome, { kind: "settled" }>;
+  readonly recoveryFailure?: SessionToolBatchCall["recoveryFailure"];
+  readonly markBlockerApplied?: boolean;
+}): Promise<void> {
+  const settledAt = Date.now();
+  const updatedAt = new Date(settledAt).toISOString();
+  await input.storeManager.updateToolBatches(
+    input.sessionId,
+    input.workspaceRoot,
+    (batches) => batches.map((batch) => batch.batchId !== input.batchId ? batch : {
+      ...batch,
+      updatedAt,
+      calls: batch.calls.map((candidate) => {
+        if (candidate.toolCallId !== input.call.toolCallId) return candidate;
+        const { childDependency: _childDependency, ...terminalCall } = candidate;
+        return {
+          ...terminalCall,
+          state: input.outcome.result.isError ? "failed" : "completed",
+          checkpointAt: settledAt,
+          result: input.outcome.result,
+          settledAt,
+          ...(input.outcome.sidecar?.executionCompleted === true && !input.outcome.result.isError
+            ? { executionCompleted: true as const }
+            : {}),
+          ...(input.recoveryFailure === undefined ? {} : { recoveryFailure: input.recoveryFailure }),
+          ...(input.markBlockerApplied === true && candidate.blocker !== undefined
+            ? {
+                blocker: {
+                  ...candidate.blocker,
+                  responseAppliedAt: candidate.blocker.responseAppliedAt ?? updatedAt,
+                  response: candidate.blocker.response ?? {
+                    type: "cancel" as const,
+                    reason: "Tool batch stopped",
+                  },
+                },
+              }
+            : {}),
+        };
+      }),
+    }),
+  );
+  input.store.getState().append({
+    type: "tool-result",
+    toolCallId: input.call.toolCallId,
+    toolName: input.call.toolName,
+    settledAt,
+    result: input.outcome.result,
+  });
+  await input.storeManager.flushSession(input.sessionId, input.workspaceRoot);
 }

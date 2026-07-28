@@ -13,7 +13,22 @@ import { sessionRuntimeStore } from "../../store/session-runtime-store";
 import {
   __resetWebSessionStoresForTest,
   createWebSessionStore,
+  currentSessionSnapshotGeneration,
 } from "../../store/session-store";
+import {
+  sessionAuthoritativeSnapshot,
+  type SessionAuthoritativeSnapshotFixture,
+} from "../../test-support/session-authoritative-snapshot";
+
+function applySnapshot(
+  store: ReturnType<typeof createWebSessionStore>,
+  snapshot: SessionAuthoritativeSnapshotFixture,
+) {
+  return store.getState().applyAuthoritativeSnapshot(
+    sessionAuthoritativeSnapshot(store.getState().sessionId, snapshot),
+    currentSessionSnapshotGeneration(),
+  );
+}
 import { SessionComposerDock } from "./SessionComposerDock";
 import { SettingsModalProvider } from "../../context/settings-modal";
 import type { SessionGoalView } from "../../api/types";
@@ -180,8 +195,7 @@ afterEach(() => {
 describe("SessionComposerDock", () => {
   test("keeps HITL first at natural height, then Goal, Queue, and collapsed Input", async () => {
     const store = createWebSessionStore("session-1", "project-1");
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       rootSessionId: "session-1",
       eventCursor: -1,
       agentName: "lead",
@@ -403,8 +417,7 @@ describe("SessionComposerDock", () => {
 
   test("steps through multi-question Ask User and submits only from Confirm", async () => {
     const store = createWebSessionStore("session-2", "project-1");
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       rootSessionId: "session-2",
       eventCursor: -1,
       agentName: "lead",
@@ -590,8 +603,7 @@ describe("SessionComposerDock", () => {
 
   test("shows one active request at a time and navigates the pending request queue", async () => {
     const store = createWebSessionStore("session-3", "project-1");
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       rootSessionId: "session-3",
       eventCursor: -1,
       agentName: "lead",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { reduceStreamEvent } from "./reduce";
+import { interruptIncompleteToolParts, reduceStreamEvent } from "./reduce";
 import type { ReduceContext } from "./reduce";
 import { createEmptySessionStats } from "./usage";
 import {
@@ -235,6 +235,79 @@ function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {})
 }
 
 describe("reduceStreamEvent", () => {
+  test("interruptIncompleteToolParts is a pure, idempotent projection with no synthetic results", () => {
+    const messages: SessionMessage[] = [{
+      id: "message-tools",
+      role: "assistant",
+      createdAt: 1,
+      parts: [
+        {
+          type: "tool",
+          id: "pending",
+          state: "pending",
+          toolCallId: "pending-call",
+          toolName: "bash",
+          createdAt: 1,
+        },
+        {
+          type: "tool",
+          id: "running",
+          state: "running",
+          toolCallId: "running-call",
+          toolName: "bash",
+          input: "run",
+          createdAt: 2,
+          startedAt: 3,
+          liveOutput: {
+            preview: "partial",
+            omittedBytes: 4,
+            liveLimitReached: true,
+          },
+          attemptId: "attempt-1",
+          attemptTimestamp: 4,
+          attemptDestructive: true,
+        },
+        {
+          type: "tool",
+          id: "completed",
+          state: "completed",
+          toolCallId: "completed-call",
+          toolName: "bash",
+          input: "done",
+          result: makeFinalizedResult("done"),
+          createdAt: 5,
+          startedAt: 6,
+          endedAt: 7,
+        },
+      ],
+    }];
+
+    const interrupted = interruptIncompleteToolParts(messages, 10);
+    expect(interrupted).not.toBe(messages);
+    expect(messages[0]!.parts.map((part) => part.type === "tool" ? part.state : part.type))
+      .toEqual(["pending", "running", "completed"]);
+    expect(interrupted[0]!.parts[0]).toMatchObject({
+      state: "interrupted",
+      toolCallId: "pending-call",
+      endedAt: 10,
+    });
+    expect(interrupted[0]!.parts[1]).toMatchObject({
+      state: "interrupted",
+      toolCallId: "running-call",
+      input: "run",
+      startedAt: 3,
+      endedAt: 10,
+      attemptId: "attempt-1",
+      attemptTimestamp: 4,
+      attemptDestructive: true,
+    });
+    expect(interrupted[0]!.parts[1]).not.toHaveProperty("liveOutput");
+    expect(interrupted[0]!.parts[0]).not.toHaveProperty("result");
+    expect(interrupted[0]!.parts[1]).not.toHaveProperty("result");
+    expect(interrupted[0]!.parts[2]).toBe(messages[0]!.parts[2]);
+    expect(interruptIncompleteToolParts(interrupted, 11)).toBe(interrupted);
+  });
+
   test("projects a formal Session cwd transition", () => {
     const state = createProjection({ cwd: "/repo" });
 
@@ -325,6 +398,7 @@ describe("reduceStreamEvent", () => {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "read",
+        settledAt: 123456700,
         result: makeFinalizedResult("content"),
       },
       { type: "step-end", step: 0, finishReason: "stop" },
@@ -359,6 +433,7 @@ describe("reduceStreamEvent", () => {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "read",
+        settledAt: 123456700,
         result: makeFinalizedResult("content", false, {
           process: { exitCode: 0, signal: null, timedOut: false, aborted: false, durationMs: 1 },
         }),
@@ -371,7 +446,194 @@ describe("reduceStreamEvent", () => {
     expect(tool.input).toBe(input);
     expect(tool.result.output.preview).toBe("content");
     expect(tool.result.details?.process?.exitCode).toBe(0);
+    expect(tool.endedAt).toBe(123456700);
     expect(state.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
+  });
+
+  test("projects bounded live Bash output and clears it when the durable result settles", () => {
+    const running = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-live", toolName: "bash", input: "run" },
+      {
+        type: "tool-output-delta",
+        toolCallId: "call-live",
+        toolName: "bash",
+        delta: "first",
+        omittedBytes: 3,
+        liveLimitReached: true,
+      },
+      {
+        type: "tool-output-delta",
+        toolCallId: "call-live",
+        toolName: "bash",
+        delta: "-second",
+        omittedBytes: 2,
+        liveLimitReached: false,
+      },
+    ]);
+
+    const liveTool = partOfType(onlyMessage(running.messages), "tool");
+    expect(liveTool).toMatchObject({
+      state: "running",
+      liveOutput: {
+        preview: "first-second",
+        omittedBytes: 5,
+        liveLimitReached: true,
+      },
+    });
+
+    const settled = applyEvents(running, [{
+      type: "tool-result",
+      toolCallId: "call-live",
+      toolName: "bash",
+      settledAt: 123456700,
+      result: makeFinalizedResult("final only"),
+    }]);
+    const finalTool = partOfType(onlyMessage(settled.messages), "tool");
+    expect(finalTool).toMatchObject({
+      state: "completed",
+      endedAt: 123456700,
+      result: { output: { preview: "final only" } },
+    });
+    expect(finalTool).not.toHaveProperty("liveOutput");
+  });
+
+  test("keeps the latest 50 KiB UTF-8 suffix without splitting a multibyte character", () => {
+    const deltas: StreamEvent[] = [
+      { type: "tool-call", toolCallId: "call-utf8", toolName: "bash", input: "run" },
+      {
+        type: "tool-output-delta",
+        toolCallId: "call-utf8",
+        toolName: "bash",
+        delta: `🙂${"a".repeat(4092)}`,
+        omittedBytes: 0,
+        liveLimitReached: false,
+      },
+      ...Array.from({ length: 11 }, (): StreamEvent => ({
+        type: "tool-output-delta",
+        toolCallId: "call-utf8",
+        toolName: "bash",
+        delta: "a".repeat(4096),
+        omittedBytes: 0,
+        liveLimitReached: false,
+      })),
+      {
+        type: "tool-output-delta",
+        toolCallId: "call-utf8",
+        toolName: "bash",
+        delta: `${"b".repeat(2046)}🙂`,
+        omittedBytes: 7,
+        liveLimitReached: false,
+      },
+    ];
+
+    const state = applyEvents(createProjection(), deltas);
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("running");
+    if (tool.state !== "running") throw new Error("Expected running tool");
+    expect(new TextEncoder().encode(tool.liveOutput?.preview).byteLength).toBeLessThanOrEqual(50 * 1024);
+    expect(tool.liveOutput?.preview).not.toContain("\uFFFD");
+    expect(tool.liveOutput?.preview.endsWith(`${"b".repeat(2046)}🙂`)).toBe(true);
+    expect(tool.liveOutput?.omittedBytes).toBe(11);
+  });
+
+  test("ignores live deltas for unknown, pending, non-Bash, interrupted, and settled tools", () => {
+    const pending = applyEvents(createProjection(), [
+      { type: "tool-input-start", toolCallId: "pending", toolName: "bash" },
+    ]);
+    const pendingAfterDelta = applyEvents(pending, [{
+      type: "tool-output-delta",
+      toolCallId: "pending",
+      toolName: "bash",
+      delta: "ignored",
+      omittedBytes: 0,
+      liveLimitReached: false,
+    }]);
+    expect(pendingAfterDelta.messages).toEqual(pending.messages);
+
+    const nonBash = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "read", toolName: "file_read", input: {} },
+      {
+        type: "tool-output-delta",
+        toolCallId: "read",
+        toolName: "bash",
+        delta: "ignored",
+        omittedBytes: 0,
+        liveLimitReached: false,
+      },
+    ]);
+    expect(partOfType(onlyMessage(nonBash.messages), "tool")).not.toHaveProperty("liveOutput");
+
+    const interrupted = applyEvents(createProjection(), [
+      executionStart("run-interrupted-tool"),
+      { type: "tool-call", toolCallId: "interrupted", toolName: "bash", input: "run" },
+      executionEnd("run-interrupted-tool", "aborted"),
+      {
+        type: "tool-output-delta",
+        toolCallId: "interrupted",
+        toolName: "bash",
+        delta: "late",
+        omittedBytes: 0,
+        liveLimitReached: false,
+      },
+    ]);
+    expect(partOfType(onlyMessage(interrupted.messages), "tool")).not.toHaveProperty("liveOutput");
+
+    const settled = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "settled", toolName: "bash", input: "run" },
+      {
+        type: "tool-result",
+        toolCallId: "settled",
+        toolName: "bash",
+        settledAt: 123456700,
+        result: makeFinalizedResult("done"),
+      },
+      {
+        type: "tool-output-delta",
+        toolCallId: "settled",
+        toolName: "bash",
+        delta: "late",
+        omittedBytes: 0,
+        liveLimitReached: false,
+      },
+    ]);
+    expect(partOfType(onlyMessage(settled.messages), "tool")).not.toHaveProperty("liveOutput");
+
+    expect(applyEvents(createProjection(), [{
+      type: "tool-output-delta",
+      toolCallId: "missing",
+      toolName: "bash",
+      delta: "ignored",
+      omittedBytes: 0,
+      liveLimitReached: false,
+    }]).messages).toEqual([]);
+  });
+
+  test("waiting_for_human preserves a running tool and its transient live output", () => {
+    const state = applyEvents(createProjection(), [
+      executionStart("run-waiting"),
+      { type: "tool-call", toolCallId: "waiting", toolName: "bash", input: "run" },
+      {
+        type: "tool-output-delta",
+        toolCallId: "waiting",
+        toolName: "bash",
+        delta: "still live",
+        omittedBytes: 0,
+        liveLimitReached: false,
+      },
+      {
+        type: "execution-suspended",
+        executionId: "run-waiting",
+        suspension: { kind: "hitl", toolBatchId: "batch-waiting", blockerIds: ["hitl-waiting"] },
+        runEndedAt: 123456789,
+        runUsageDelta: createEmptySessionStats().usage,
+        runSettlement: { key: "run:session-test:run-waiting:0", goalInstanceId: null },
+      },
+    ]);
+
+    expect(partOfType(onlyMessage(state.messages), "tool")).toMatchObject({
+      state: "running",
+      liveOutput: { preview: "still live" },
+    });
   });
 
   test("settles a persisted tool after transient message focus is cleared", () => {
@@ -384,6 +646,7 @@ describe("reduceStreamEvent", () => {
       type: "tool-result",
       toolCallId: "call-before-restart",
       toolName: "ask_user",
+      settledAt: 123456700,
       result: makeFinalizedResult("answered after restart"),
     }]);
 
@@ -400,11 +663,11 @@ describe("reduceStreamEvent", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-reuse"),
       { type: "tool-call", toolCallId: "reused-call", toolName: "read", input: { path: "first.ts" } },
-      { type: "tool-result", toolCallId: "reused-call", toolName: "read", result: makeFinalizedResult("first") },
+      { type: "tool-result", toolCallId: "reused-call", toolName: "read", settledAt: 123456700, result: makeFinalizedResult("first") },
       { type: "step-start", step: 1 },
       { type: "tool-input-start", toolCallId: "reused-call", toolName: "read" },
       { type: "tool-call", toolCallId: "reused-call", toolName: "read", input: { path: "second.ts" } },
-      { type: "tool-result", toolCallId: "reused-call", toolName: "read", result: makeFinalizedResult("second") },
+      { type: "tool-result", toolCallId: "reused-call", toolName: "read", settledAt: 123456701, result: makeFinalizedResult("second") },
     ]);
 
     expect(state.messages).toHaveLength(2);
@@ -431,8 +694,8 @@ describe("reduceStreamEvent", () => {
       { type: "tool-call", toolCallId: "reused-running", toolName: "read", input: { path: "old.ts" } },
       { type: "step-start", step: 1 },
       { type: "tool-call", toolCallId: "reused-running", toolName: "read", input: { path: "current.ts" } },
-      { type: "tool-result", toolCallId: "reused-running", toolName: "read", result: makeFinalizedResult("current") },
-      { type: "tool-result", toolCallId: "reused-running", toolName: "read", result: makeFinalizedResult("duplicate") },
+      { type: "tool-result", toolCallId: "reused-running", toolName: "read", settledAt: 123456700, result: makeFinalizedResult("current") },
+      { type: "tool-result", toolCallId: "reused-running", toolName: "read", settledAt: 123456701, result: makeFinalizedResult("duplicate") },
     ]);
 
     const oldTool = partOfType(state.messages[0]!, "tool");
@@ -462,7 +725,7 @@ describe("reduceStreamEvent", () => {
     expect(tool.attemptDestructive).toBe(true);
   });
 
-  test("execution-end leaves an attempted tool unfinalized for the Registry recovery lane", () => {
+  test("execution-end marks an attempted tool interrupted without a synthetic result", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-unknown"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
@@ -478,12 +741,52 @@ describe("reduceStreamEvent", () => {
     ]);
 
     const tool = partOfType(onlyMessage(state.messages), "tool");
-    expect(tool.state).toBe("running");
-    if (tool.state !== "running") throw new Error("Expected running tool");
+    expect(tool.state).toBe("interrupted");
+    if (tool.state !== "interrupted") throw new Error("Expected interrupted tool");
     expect(tool.attemptId).toBe("attempt-1");
+    expect(tool.endedAt).toBe(123456789);
+    expect(tool).not.toHaveProperty("result");
+    expect(tool).not.toHaveProperty("liveOutput");
   });
 
-  test("execution-end leaves partial tool input pending for the Registry recovery lane", () => {
+  test("a retry attempt resumes an interrupted Bash tool so live output can continue", () => {
+    const state = applyEvents(createProjection(), [
+      executionStart("run-read-retry"),
+      { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "pwd" } },
+      executionEnd("run-read-retry", "interrupted"),
+      {
+        type: "tool-attempt",
+        toolCallId: "call-1",
+        toolName: "bash",
+        attemptId: "attempt-2",
+        timestamp: 123456790,
+        destructive: false,
+      },
+      {
+        type: "tool-output-delta",
+        toolCallId: "call-1",
+        toolName: "bash",
+        delta: "/workspace\n",
+        omittedBytes: 0,
+        liveLimitReached: false,
+      },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool).toMatchObject({
+      state: "running",
+      attemptId: "attempt-2",
+      attemptTimestamp: 123456790,
+      liveOutput: {
+        preview: "/workspace\n",
+        omittedBytes: 0,
+        liveLimitReached: false,
+      },
+    });
+    expect(tool).not.toHaveProperty("endedAt");
+  });
+
+  test("execution-end marks partial tool input interrupted without counting a terminal result", () => {
     const state = applyEvents(createProjection(), [
       executionStart("run-partial-input"),
       { type: "tool-input-start", toolCallId: "call-partial", toolName: "file_write" },
@@ -491,8 +794,9 @@ describe("reduceStreamEvent", () => {
     ]);
 
     const tool = partOfType(onlyMessage(state.messages), "tool");
-    expect(tool.state).toBe("pending");
+    expect(tool.state).toBe("interrupted");
     expect(JSON.parse(JSON.stringify(state)).messages[0].parts[0]).not.toHaveProperty("result");
+    expect(state.stats.tools).toEqual({ calls: 0, completed: 0, failed: 0 });
   });
 
   test("resolved undefined tool input is canonicalized to null", () => {
@@ -518,7 +822,7 @@ describe("reduceStreamEvent", () => {
     expect(tool.input).toBeNull();
   });
 
-  test("a Registry result can settle an unfinalized tool after execution-end", () => {
+  test("a durable result can settle an interrupted projection after execution-end", () => {
     const interrupted = applyEvents(createProjection(), [
       executionStart("run-unknown-late"),
       { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
@@ -534,7 +838,7 @@ describe("reduceStreamEvent", () => {
     ]);
 
     const afterLateResult = applyEvents(interrupted, [
-      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", result: makeFinalizedResult("late write") },
+      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", settledAt: 123456700, result: makeFinalizedResult("late write") },
     ]);
 
     const tool = partOfType(onlyMessage(afterLateResult.messages), "tool");
@@ -556,7 +860,7 @@ describe("reduceStreamEvent", () => {
         timestamp: 99,
         destructive: true,
       },
-      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", result: makeFinalizedResult("written") },
+      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", settledAt: 123456700, result: makeFinalizedResult("written") },
       executionEnd("run-completed", "interrupted"),
       executionEnd("run-completed", "interrupted"),
     ]);
@@ -716,6 +1020,7 @@ describe("reduceStreamEvent", () => {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "file_edit",
+        settledAt: 123456700,
         result: makeFinalizedResult("updated", false, {
           presentations: [{ kind: "diff", files: diffs.files }],
         }),
@@ -736,6 +1041,7 @@ describe("reduceStreamEvent", () => {
         type: "tool-result",
         toolCallId: "call-1",
         toolName: "bash",
+        settledAt: 123456700,
         result: makeFinalizedResult("failed", true),
       },
     ]);
@@ -992,7 +1298,7 @@ describe("reduceStreamEvent", () => {
     const state = applyEvents(createProjection(), [
       { type: "step-start", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "exit 1" },
-      { type: "tool-result", toolCallId: "call-1", toolName: "bash", result: makeFinalizedResult("boom", true) },
+      { type: "tool-result", toolCallId: "call-1", toolName: "bash", settledAt: 123456700, result: makeFinalizedResult("boom", true) },
     ]);
 
     expect(state.stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
@@ -1003,8 +1309,8 @@ describe("reduceStreamEvent", () => {
       { type: "tool-input-start", toolCallId: "call-1", toolName: "read" },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } },
-      { type: "tool-result", toolCallId: "call-1", toolName: "read", result: makeFinalizedResult("ok") },
-      { type: "tool-result", toolCallId: "call-1", toolName: "read", result: makeFinalizedResult("ok") },
+      { type: "tool-result", toolCallId: "call-1", toolName: "read", settledAt: 123456700, result: makeFinalizedResult("ok") },
+      { type: "tool-result", toolCallId: "call-1", toolName: "read", settledAt: 123456700, result: makeFinalizedResult("ok") },
     ]);
 
     expect(state.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
@@ -1127,7 +1433,7 @@ describe("reduceStreamEvent", () => {
       committedUserEvent("old"),
       { type: "step-start", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: {} },
-      { type: "tool-result", toolCallId: "call-1", toolName: "read", result: makeFinalizedResult("ok") },
+      { type: "tool-result", toolCallId: "call-1", toolName: "read", settledAt: 123456700, result: makeFinalizedResult("ok") },
       { type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 3, outputTokens: 4 } },
     ]);
     const stats = before.stats;
@@ -1252,7 +1558,7 @@ describe("reduceStreamEvent", () => {
   test("tool-input-resolved updates completed tool part input", () => {
     const state = applyEvents(createProjection(), [
       { type: "tool-call", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc" } },
-      { type: "tool-result", toolCallId: "call-1", toolName: "background_output", result: makeFinalizedResult("done") },
+      { type: "tool-result", toolCallId: "call-1", toolName: "background_output", settledAt: 123456700, result: makeFinalizedResult("done") },
       { type: "tool-input-resolved", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc", block: false } },
     ]);
 

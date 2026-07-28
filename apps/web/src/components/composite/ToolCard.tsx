@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   ToolAskUserPresentation,
   ToolDiffPresentation,
@@ -21,6 +21,7 @@ import { ToolOutputViewer } from "./ToolOutputViewer";
 const STATUS_LABEL: Record<ToolPart["state"], string> = {
   pending: "Pending",
   running: "Running",
+  interrupted: "Interrupted",
   completed: "Completed",
   error: "Error",
 };
@@ -35,8 +36,14 @@ export interface ToolCardProps {
 }
 
 export function ToolCard({ part, projectSlug, sessionId, grouped = false }: ToolCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const liveOutput = part.state === "running" ? part.liveOutput : undefined;
+  const [expanded, setExpanded] = useState(liveOutput !== undefined);
+  const manuallyCollapsed = useRef(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  useEffect(() => {
+    if (liveOutput !== undefined && !manuallyCollapsed.current) setExpanded(true);
+  }, [liveOutput]);
+
   const settled = part.state === "completed" || part.state === "error" ? part.result : undefined;
   const details = settled?.details;
   const isUnknownResult = details?.unknownResult === true;
@@ -67,16 +74,19 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
     || isUnknownResult
     || details?.error !== undefined
     || artifactRecovery !== undefined
+    || liveOutput !== undefined
     || (isShell && settled !== undefined)
     || (!isShell && part.state === "error" && (settled?.output.preview.length ?? 0) > 0);
   const statusLabel = isUnknownResult ? "Unknown" : STATUS_LABEL[part.state];
   const statusClass = part.state === "running"
     ? "text-signal-foreground"
-    : part.state === "error"
-      ? "text-error"
-      : isUnknownResult
-        ? "text-warning"
-        : "text-text-tertiary";
+    : part.state === "interrupted"
+      ? "text-warning"
+      : part.state === "error"
+        ? "text-error"
+        : isUnknownResult
+          ? "text-warning"
+          : "text-text-tertiary";
   const detailsId = `${part.id}-details`;
   const summaryBorderClass = grouped
     ? "border-x-0 border-t-0 border-b border-border-subtle"
@@ -126,7 +136,11 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
           aria-expanded={expanded}
           aria-controls={detailsId}
           className={`${summaryClass} cursor-pointer transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand`}
-          onClick={() => setExpanded((value) => !value)}
+          onClick={() => setExpanded((value) => {
+            const next = !value;
+            if (!next) manuallyCollapsed.current = true;
+            return next;
+          })}
         >
           {summaryContent}
         </button>
@@ -181,6 +195,10 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
             <ToolErrorOutput preview={settled.output.preview} />
           )}
 
+          {isShell && liveOutput && (
+            <LiveShellOutput liveOutput={liveOutput} />
+          )}
+
           {isShell && settled && (
             <ShellOutput output={settled.output} process={details?.process} />
           )}
@@ -202,6 +220,38 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
           {viewerOpen && artifactRecovery && (
             <ToolOutputViewer projectSlug={projectSlug} sessionId={sessionId} outputRef={artifactRecovery.outputRef} />
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LiveShellOutput({
+  liveOutput,
+}: {
+  liveOutput: NonNullable<Extract<ToolPart, { state: "running" }>["liveOutput"]>;
+}) {
+  return (
+    <div
+      className="ml-[18px] mt-0.5 overflow-hidden rounded-md bg-[var(--terminal-bg)] text-[var(--terminal-text)]"
+      data-testid="tool-live-output"
+    >
+      {liveOutput.preview.length > 0 && (
+        <pre className="overflow-x-auto whitespace-pre-wrap break-all px-3 py-2.5 font-mono text-[12px] leading-[1.65]">
+          {liveOutput.preview}
+        </pre>
+      )}
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[var(--terminal-border)] px-3 py-1.5 font-mono text-[11px] text-[var(--terminal-muted)]">
+        <span className="text-[var(--terminal-success)]">Live</span>
+        <span>
+          {liveOutput.omittedBytes > 0
+            ? `${liveOutput.omittedBytes.toLocaleString()} B earlier output omitted`
+            : "collecting output"}
+        </span>
+      </div>
+      {liveOutput.liveLimitReached && (
+        <div className="border-t border-[var(--terminal-border)] px-3 py-2 font-mono text-[11px] text-warning">
+          Live preview paused at its safety limit. Final output is still being collected.
         </div>
       )}
     </div>

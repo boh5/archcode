@@ -7,7 +7,12 @@ import { JSDOM } from "jsdom";
 import type { SessionTreeNode, SessionTreeResponse, ToolChildSessionLink } from "@archcode/protocol";
 import type { Session } from "../../../api/types";
 import { queryKeys } from "../../../api/queries";
-import { __resetWebSessionStoresForTest, getWebSessionStore } from "../../../store/session-store";
+import {
+  __resetWebSessionStoresForTest,
+  currentSessionSnapshotGeneration,
+  getWebSessionStore,
+} from "../../../store/session-store";
+import { sessionAuthoritativeSnapshot } from "../../../test-support/session-authoritative-snapshot";
 import { SessionAgentsInspector } from "./SessionAgentsInspector";
 
 const originals = new Map<string, PropertyDescriptor | undefined>();
@@ -143,14 +148,10 @@ describe("SessionAgentsInspector", () => {
       sessionId: "child",
       childSessionLinks: [grandchildLink],
     } as Session);
-    getWebSessionStore("root", "demo").getState().initializeFromSnapshot({
-      executionCount: 0,
-      isRunning: false,
-      isStreamingModel: false,
-      currentExecutionId: undefined,
-      currentAssistantMessageId: undefined,
+    getWebSessionStore("root", "demo").getState().applyAuthoritativeSnapshot(sessionAuthoritativeSnapshot("root", {
       childSessionLinks: [rootLink],
-    });
+      eventCursor: -1,
+    }), currentSessionSnapshotGeneration());
 
     await act(async () => root.render(
       <QueryClientProvider client={queryClient}>

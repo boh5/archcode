@@ -63,7 +63,10 @@ export async function runBashCommand(
       message: "bash requires a Registry-owned output capture",
     });
   }
-  const adapter = new BashCanonicalOutputSink(capture.write.bind(capture));
+  const adapter = new BashCanonicalOutputSink(
+    (chunk) => capture.write(chunk, { source: "bash-live" }),
+    capture.write.bind(capture),
+  );
   const result = await processRunner.run({
     argv: ["bash", "-c", input.command],
     cwd,
@@ -140,17 +143,20 @@ class BashCanonicalOutputSink implements ProcessOutputSink {
   #seenStreams = new Set<ProcessOutputStream>();
   #tail: Promise<void> = Promise.resolve();
 
-  constructor(private readonly writeCapture: (chunk: string | Uint8Array) => Promise<"accepted" | "discarded">) {}
+  constructor(
+    private readonly writeLiveCapture: (chunk: string | Uint8Array) => Promise<"accepted" | "discarded">,
+    private readonly writeDiscardCapture: (chunk: string | Uint8Array) => Promise<"accepted" | "discarded">,
+  ) {}
 
   write(stream: ProcessOutputStream, chunk: Uint8Array): Promise<void> {
     this.#tail = this.#tail.then(async () => {
       const writes: Array<Promise<"accepted" | "discarded">> = [];
       if (this.#lastStream !== stream) {
-        writes.push(this.writeCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`));
+        writes.push(this.writeLiveCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`));
         this.#lastStream = stream;
       }
       this.#seenStreams.add(stream);
-      writes.push(this.writeCapture(chunk));
+      writes.push(this.writeLiveCapture(chunk));
       for (const write of writes) await write;
     });
     return this.#tail;
@@ -158,22 +164,22 @@ class BashCanonicalOutputSink implements ProcessOutputSink {
 
   discard(stream: ProcessOutputStream, chunk: Uint8Array): void {
     if (this.#lastStream !== stream) {
-      void this.writeCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`).catch(() => undefined);
+      void this.writeDiscardCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`).catch(() => undefined);
       this.#lastStream = stream;
     }
     this.#seenStreams.add(stream);
-    void this.writeCapture(chunk).catch(() => undefined);
+    void this.writeDiscardCapture(chunk).catch(() => undefined);
   }
 
   async finish(exitCode: number | null): Promise<void> {
     await this.#tail;
     for (const stream of ["stdout", "stderr"] as const) {
       if (!this.#seenStreams.has(stream)) {
-        await this.writeCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`);
+        await this.writeLiveCapture(`${this.#lastStream === undefined ? "" : "\n"}${stream.toUpperCase()}:\n`);
         this.#lastStream = stream;
       }
     }
-    await this.writeCapture(`\nEXIT_CODE: ${exitCode === null ? "unknown" : exitCode}\n`);
+    await this.writeLiveCapture(`\nEXIT_CODE: ${exitCode === null ? "unknown" : exitCode}\n`);
   }
 }
 

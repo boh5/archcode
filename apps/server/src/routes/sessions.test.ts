@@ -27,7 +27,7 @@ interface SessionFileBody {
   title?: string | null;
   messages: unknown[];
   steps?: unknown[];
-  eventCursor?: number;
+  eventCursor: number;
 }
 
 type StoredSessionBody = SessionFileBody & {
@@ -57,6 +57,7 @@ function createStoredSession(input: {
     title: input.title ?? null,
     messages: [],
     steps: [],
+    eventCursor: -1,
     todos: [],
     reminders: [],
     rootSessionId: input.rootSessionId ?? sessionId,

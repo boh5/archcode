@@ -10,12 +10,29 @@ import {
   type SessionMessage,
 } from "@archcode/protocol";
 import {
+  beginSessionSnapshotRecovery,
+  currentSessionSnapshotGeneration,
   createWebSessionStore,
   evictIdleSessionStores,
   findWebSessionStore,
   markSessionForeground,
   __resetWebSessionStoresForTest,
 } from "./session-store";
+import {
+  sessionAuthoritativeSnapshot,
+  type SessionAuthoritativeSnapshotFixture,
+} from "../test-support/session-authoritative-snapshot";
+
+function applySnapshot(
+  store: ReturnType<typeof createWebSessionStore>,
+  snapshot: SessionAuthoritativeSnapshotFixture,
+  generation = currentSessionSnapshotGeneration(),
+) {
+  return store.getState().applyAuthoritativeSnapshot(
+    sessionAuthoritativeSnapshot(store.getState().sessionId, snapshot),
+    generation,
+  );
+}
 
 function compressionSummary(
   currentObjective: string,
@@ -152,8 +169,7 @@ describe("web session store registry", () => {
     const rootStore = createWebSessionStore("root-session", "identity");
     const childStore = createWebSessionStore("child-session", "identity");
 
-    childStore.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(childStore, {
       rootSessionId: "root-session",
       parentSessionId: "root-session",
       eventCursor: -1,
@@ -167,8 +183,7 @@ describe("web session store registry", () => {
 
   test("hydrates durable selection state and tracks the active execution binding", () => {
     const store = createWebSessionStore("model-state", "demo");
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       modelSelection: { revision: 2 },
       nextModelSelection: {
         requested: requestedModelSelection,
@@ -275,13 +290,7 @@ describe("web session store registry", () => {
 
   test("tracks Session cwd from snapshots and formal cwd transition events", () => {
     const store = createWebSessionStore("session-1", "demo");
-    store
-      .getState()
-      .initializeFromSnapshot({
-        ...idleRuntimeSnapshot,
-        cwd: "/repo",
-        eventCursor: -1,
-      });
+    applySnapshot(store, { cwd: "/repo", eventCursor: -1 });
     expect(store.getState().cwd).toBe("/repo");
 
     store.getState().applyRemoteEnvelope(
@@ -297,19 +306,14 @@ describe("web session store registry", () => {
 
   test("does not infer Session cwd from worktree tool-result metadata", () => {
     const store = createWebSessionStore("session-cwd-meta", "demo");
-    store
-      .getState()
-      .initializeFromSnapshot({
-        ...idleRuntimeSnapshot,
-        cwd: "/repo",
-        eventCursor: -1,
-      });
+    applySnapshot(store, { cwd: "/repo", eventCursor: -1 });
 
     store.getState().applyRemoteEnvelope({
       ...event(0, {
         type: "tool-result",
         toolCallId: "worktree-enter-1",
         toolName: "worktree_enter",
+        settledAt: 3,
         result: {
           isError: false,
           output: {
@@ -365,8 +369,7 @@ describe("web session store registry", () => {
 
     expect(store.getState().childSessionLinks).toEqual([completed]);
 
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       childSessionLinks: [link],
       eventCursor: 1,
     });
@@ -531,30 +534,15 @@ describe("applyRemoteEnvelope", () => {
     expect(store.getState().goal).toBeUndefined();
   });
 
-  test("buffers gaps and drains only contiguous remote envelopes", () => {
+  test("reports an event gap without reducing either side of it", () => {
     const store = createWebSessionStore("gap", "demo");
 
-    store.getState().applyRemoteEnvelope({
+    expect(store.getState().applyRemoteEnvelope({
       ...event(1, committedMessage("second", "second")),
       sessionId: "gap",
-    });
+    })).toBe("gap");
     expect(store.getState().events).toEqual([]);
     expect(store.getState().nextEventId).toBe(0);
-
-    store.getState().applyRemoteEnvelope({
-      ...event(0, committedMessage("first", "first")),
-      sessionId: "gap",
-    });
-
-    expect(store.getState().events.map((item) => item.id)).toEqual([0, 1]);
-    expect(
-      store
-        .getState()
-        .messages.map((message) =>
-          message.parts[0]?.type === "text" ? message.parts[0].text : "",
-        ),
-    ).toEqual(["first", "second"]);
-    expect(store.getState().nextEventId).toBe(2);
   });
 
   test("keeps one optimistic sending bubble until its durable client request arrives", () => {
@@ -601,30 +589,29 @@ describe("applyRemoteEnvelope", () => {
 
 });
 
-describe("initializeFromSnapshot", () => {
+describe("authoritative snapshot", () => {
   beforeEach(() => {
     __resetWebSessionStoresForTest();
   });
 
-  test("hydrates and explicitly clears the Session Goal from a current snapshot", () => {
-    const store = createWebSessionStore("goal-snapshot", "demo");
+  test("absence in a current full snapshot clears optional authoritative fields", () => {
+    const store = createWebSessionStore("optional-snapshot-fields", "demo");
 
-    store
-      .getState()
-      .initializeFromSnapshot({
-        ...idleRuntimeSnapshot,
-        goal: sessionGoal,
-        eventCursor: -1,
-      });
-    expect(store.getState().goal).toEqual(sessionGoal);
+    applySnapshot(store, {
+      parentSessionId: "root-session",
+      activeModelBinding: binding,
+      goal: sessionGoal,
+      eventCursor: -1,
+    });
+    expect(store.getState()).toMatchObject({
+      parentSessionId: "root-session",
+      activeModelBinding: binding,
+      goal: sessionGoal,
+    });
 
-    store
-      .getState()
-      .initializeFromSnapshot({
-        ...idleRuntimeSnapshot,
-        goal: undefined,
-        eventCursor: -1,
-      });
+    applySnapshot(store, { eventCursor: -1 });
+    expect(store.getState().parentSessionId).toBeUndefined();
+    expect(store.getState().activeModelBinding).toBeUndefined();
     expect(store.getState().goal).toBeUndefined();
   });
 
@@ -637,21 +624,18 @@ describe("initializeFromSnapshot", () => {
       createdAt: 1,
     });
 
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
-      pendingMessages: [
-        {
-          id: "message-1",
-          clientRequestId: "request-1",
-          content: "hello",
-          source: "user",
-          state: "queued",
-          revision: 1,
-          acceptedAt: 2,
-          updatedAt: 2,
-          requestedModelSelection,
-        },
-      ],
+    applySnapshot(store, {
+      pendingMessages: [{
+        id: "message-1",
+        clientRequestId: "request-1",
+        content: "hello",
+        source: "user",
+        state: "queued",
+        revision: 1,
+        acceptedAt: 2,
+        updatedAt: 2,
+        requestedModelSelection,
+      }],
       eventCursor: -1,
     });
 
@@ -662,20 +646,15 @@ describe("initializeFromSnapshot", () => {
   test("authoritatively overwrites fields with empty arrays, null title, and event cursor", () => {
     const store = createWebSessionStore("snapshot", "demo");
 
-    store.getState().applyRemoteEnvelope({
-      ...event(0, committedMessage("old", "old")),
-      sessionId: "snapshot",
-    });
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("old", "old")), sessionId: "snapshot" });
+    applySnapshot(store, {
       title: "Existing",
       todos: [{ id: "todo-1", content: "todo", status: "pending" }],
       rootSessionId: "root-session-id",
       eventCursor: 0,
     });
 
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       messages: [],
       steps: [],
       todos: [],
@@ -699,27 +678,107 @@ describe("initializeFromSnapshot", () => {
     expect(state.events).toEqual([]);
   });
 
-  test("replays contiguous buffered remote events after snapshot cursor", () => {
+  test("accepts a lower-cursor snapshot only inside the current recovery generation", () => {
     const store = createWebSessionStore("snapshot-buffer", "demo");
+    store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("old", "old")),
+      sessionId: "snapshot-buffer",
+    });
+    expect(store.getState().nextEventId).toBe(1);
 
+    const generation = beginSessionSnapshotRecovery();
+    expect(store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("new", "new")),
+      sessionId: "snapshot-buffer",
+    })).toBe("ignored");
+
+    expect(applySnapshot(store, {
+      messages: [],
+      eventCursor: -1,
+    }, generation - 1)).toBe("stale-generation");
+    expect(store.getState().nextEventId).toBe(1);
+
+    expect(applySnapshot(store, {
+      messages: [],
+      eventCursor: -1,
+    }, generation)).toBe("applied");
+    expect(store.getState().snapshotRecoveryStatus).toBe("live");
+    expect(store.getState().events.map((item) => item.id)).toEqual([0]);
+    expect(store.getState().nextEventId).toBe(1);
+    expect(store.getState().messages.map((message) =>
+      message.parts[0]?.type === "text" ? message.parts[0].text : ""
+    )).toEqual(["new"]);
+  });
+
+  test("keeps the gate closed when buffered events are not contiguous after the snapshot", () => {
+    const store = createWebSessionStore("snapshot-gap", "demo");
+    const generation = beginSessionSnapshotRecovery();
     store.getState().applyRemoteEnvelope({
       ...event(6, committedMessage("six", "six")),
-      sessionId: "snapshot-buffer",
+      sessionId: "snapshot-gap",
     });
     store.getState().applyRemoteEnvelope({
       ...event(8, committedMessage("eight", "eight")),
-      sessionId: "snapshot-buffer",
+      sessionId: "snapshot-gap",
     });
-    store
-      .getState()
-      .initializeFromSnapshot({
-        ...idleRuntimeSnapshot,
-        messages: [],
-        eventCursor: 5,
-      });
 
-    expect(store.getState().events.map((item) => item.id)).toEqual([6]);
-    expect(store.getState().nextEventId).toBe(7);
+    expect(applySnapshot(store, {
+      messages: [],
+      eventCursor: 5,
+    }, generation)).toBe("refresh-required");
+    expect(store.getState().snapshotRecoveryStatus).toBe("awaiting");
+    expect(store.getState().events).toEqual([]);
+    expect(store.getState().nextEventId).toBe(6);
+  });
+
+  test("clears an overflowing recovery buffer and requests a newer snapshot", () => {
+    const store = createWebSessionStore("snapshot-overflow", "demo");
+    beginSessionSnapshotRecovery();
+    let result = store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("zero", "zero")),
+      sessionId: "snapshot-overflow",
+    });
+    for (let eventId = 1; eventId <= 1000; eventId += 1) {
+      result = store.getState().applyRemoteEnvelope({
+        ...event(eventId, committedMessage(String(eventId), String(eventId))),
+        sessionId: "snapshot-overflow",
+      });
+    }
+
+    expect(result).toBe("refresh-required");
+    expect(store.getState().snapshotRecoveryStatus).toBe("awaiting");
+    expect(store.getState().events).toEqual([]);
+  });
+
+  test("metadata patches never unlock an authoritative snapshot gate", () => {
+    const store = createWebSessionStore("metadata-gate", "demo");
+    const generation = beginSessionSnapshotRecovery();
+    store.getState().applyMetadataPatch({ title: "Updated title" });
+
+    expect(store.getState().title).toBe("Updated title");
+    expect(store.getState().snapshotRecoveryStatus).toBe("awaiting");
+    expect(store.getState().snapshotRecoveryGeneration).toBe(generation);
+  });
+
+  test("model-state patches are revision-monotonic and never unlock the snapshot gate", () => {
+    const store = createWebSessionStore("model-patch-gate", "demo");
+    const generation = beginSessionSnapshotRecovery();
+    store.getState().applyModelStatePatch({
+      modelSelection: { revision: 2 },
+      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+    });
+    store.getState().applyModelStatePatch({
+      modelSelection: { revision: 1 },
+      nextModelSelection: {
+        requested: requestedModelSelection,
+        resolved: { ...binding, modelId: "stale" },
+      },
+    });
+
+    expect(store.getState().modelSelection.revision).toBe(2);
+    expect(store.getState().nextModelSelection?.resolved.modelId).toBe("model");
+    expect(store.getState().snapshotRecoveryStatus).toBe("awaiting");
+    expect(store.getState().snapshotRecoveryGeneration).toBe(generation);
   });
 
   test("does not overwrite reducer-managed state when SSE is ahead of snapshot", () => {
@@ -775,8 +834,7 @@ describe("initializeFromSnapshot", () => {
     const statsBeforeSnapshot = store.getState().stats;
 
     // Simulate a stale snapshot from server with eventCursor=2 (behind SSE's nextEventId=5)
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       messages: [],
       steps: [],
       stats: {
@@ -805,12 +863,8 @@ describe("initializeFromSnapshot", () => {
 
   test("does not roll model selection back when a stale snapshot follows selection SSE", () => {
     const store = createWebSessionStore("stale-model-selection", "demo");
-    const latestSelection = {
-      revision: 3,
-      override: { model: "test:new-model" },
-    };
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    const latestSelection = { revision: 3, override: { model: "test:new-model" } };
+    applySnapshot(store, {
       modelSelection: { revision: 1 },
       nextModelSelection: {
         requested: requestedModelSelection,
@@ -826,8 +880,7 @@ describe("initializeFromSnapshot", () => {
       sessionId: "stale-model-selection",
     });
 
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       modelSelection: { revision: 1 },
       nextModelSelection: {
         requested: requestedModelSelection,
@@ -853,36 +906,9 @@ describe("initializeFromSnapshot", () => {
       sessionId: "stale-active-binding",
     });
 
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
-      activeModelBinding: undefined,
-      eventCursor: -1,
-    });
+    applySnapshot(store, { activeModelBinding: undefined, eventCursor: -1 });
 
     expect(store.getState().activeModelBinding).toEqual(binding);
-  });
-
-  test("does not rewind the event log or cursor when a stale snapshot contains events", () => {
-    const store = createWebSessionStore("stale-events", "demo");
-    store.getState().applyRemoteEnvelope({
-      ...event(0, committedMessage("first", "first")),
-      sessionId: "stale-events",
-    });
-    store.getState().applyRemoteEnvelope({
-      ...event(1, committedMessage("second", "second")),
-      sessionId: "stale-events",
-    });
-    const eventsBeforeSnapshot = store.getState().events;
-
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
-      events: [eventsBeforeSnapshot[0]!],
-      eventCursor: 0,
-    });
-
-    expect(store.getState().events).toEqual(eventsBeforeSnapshot);
-    expect(store.getState().nextEventId).toBe(2);
-    expect(store.getState().eventOffset).toBe(0);
   });
 
   test("overwrites reducer-managed state when snapshot is current or ahead", () => {
@@ -903,11 +929,8 @@ describe("initializeFromSnapshot", () => {
     expect(store.getState().nextEventId).toBe(2);
 
     // Snapshot from server has up-to-date data (eventCursor matches)
-    const snapshotMessages: SessionMessage[] = [
-      { id: "msg-1", role: "assistant", parts: [], createdAt: 1000 },
-    ];
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    const snapshotMessages: SessionMessage[] = [{ id: "msg-1", role: "assistant", parts: [], createdAt: 1000 }];
+    applySnapshot(store, {
       messages: snapshotMessages,
       steps: [],
       stats: {
@@ -932,7 +955,7 @@ describe("initializeFromSnapshot", () => {
 
   test("does not infer runtime ownership from execution records", () => {
     const store = createWebSessionStore("authoritative-runtime", "demo");
-    store.getState().initializeFromSnapshot({
+    applySnapshot(store, {
       ...idleRuntimeSnapshot,
       executions: [
         {
@@ -969,7 +992,7 @@ describe("initializeFromSnapshot", () => {
   test("restores live reducer ownership before applying post-snapshot tool events", () => {
     const store = createWebSessionStore("session-1", "demo");
     const executionId = "running-execution";
-    store.getState().initializeFromSnapshot({
+    applySnapshot(store, {
       messages: [],
       steps: [
         {
@@ -1048,7 +1071,7 @@ describe("initializeFromSnapshot", () => {
         },
       ],
     };
-    store.getState().initializeFromSnapshot({
+    applySnapshot(store, {
       messages: [assistant],
       steps: [],
       executions: [
@@ -1107,7 +1130,7 @@ describe("initializeFromSnapshot", () => {
         },
       ],
     };
-    store.getState().initializeFromSnapshot({
+    applySnapshot(store, {
       messages: [assistant],
       steps: [
         {
@@ -1184,30 +1207,26 @@ describe("initializeFromSnapshot", () => {
 
     expect(store.getState().pendingMessages).toHaveLength(1);
 
-    store.getState().initializeFromSnapshot({
-      messages: [
-        {
-          id: "first-message",
-          clientRequestId: "first-request",
-          role: "user",
-          executionId,
+    applySnapshot(store, {
+      messages: [{
+        id: "first-message",
+        clientRequestId: "first-request",
+        role: "user",
+        executionId,
+        createdAt: 1,
+        completedAt: 2,
+        modelAudit: {
+          requested: requestedModelSelection,
+          actual: requestedModelSelection.selection,
+        },
+        parts: [{
+          type: "text",
+          id: "first-message:text",
+          text: "Start the first task",
           createdAt: 1,
           completedAt: 2,
-          modelAudit: {
-            requested: requestedModelSelection,
-            actual: requestedModelSelection.selection,
-          },
-          parts: [
-            {
-              type: "text",
-              id: "first-message:text",
-              text: "Start the first task",
-              createdAt: 1,
-              completedAt: 2,
-            },
-          ],
-        },
-      ],
+        }],
+      }],
       pendingMessages: [],
       steps: [],
       executions: [
@@ -1257,8 +1276,7 @@ describe("initializeFromSnapshot", () => {
       sessionId: "stale-metadata",
     });
 
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       title: "New Title",
       createdAt: 9999,
       rootSessionId: "root-session-id",
@@ -1448,13 +1466,12 @@ describe("compression events and snapshot hydration", () => {
     );
   });
 
-  test("initializeFromSnapshot hydrates only the authoritative compression snapshot", () => {
+  test("authoritative snapshot hydrates only the authoritative compression snapshot", () => {
     const store = createWebSessionStore("compress-snap", "demo");
     const block = makeCompressionBlock();
     const compression = makeCompressionState(block);
 
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       compression,
       eventCursor: 0,
     });
@@ -1486,8 +1503,7 @@ describe("compression events and snapshot hydration", () => {
     expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
 
     const staleBlock = makeCompressionBlock({ ref: "b2", id: "block-2" });
-    store.getState().initializeFromSnapshot({
-      ...idleRuntimeSnapshot,
+    applySnapshot(store, {
       compression: makeCompressionState(staleBlock),
       eventCursor: 0,
     });

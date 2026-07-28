@@ -13,6 +13,9 @@ import type {
   SessionTreeResponse,
   ProjectTodo,
 } from "./types";
+import {
+  currentSessionSnapshotGeneration,
+} from "../store/session-store";
 
 export const queryKeys = {
   agents: ["agents"] as const,
@@ -80,9 +83,11 @@ export function sessionQueryOptions(slug: string, sessionId: string) {
   return queryOptions({
     queryKey: queryKeys.session(slug, sessionId),
     queryFn: async () => {
-      return await apiFetch<Session>(
+      const generation = currentSessionSnapshotGeneration();
+      const snapshot = await apiFetch<Session>(
         `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}`,
       );
+      return { ...snapshot, snapshotGeneration: generation };
     },
     enabled: slug.length > 0 && sessionId.length > 0,
   });
@@ -92,9 +97,11 @@ export function focusedSessionQueryOptions(slug: string, focusSessionId: string 
   return queryOptions({
     queryKey: queryKeys.session(slug, focusSessionId ?? ""),
     queryFn: async () => {
-      return await apiFetch<Session>(
+      const generation = currentSessionSnapshotGeneration();
+      const snapshot = await apiFetch<Session>(
         `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(focusSessionId!)}`,
       );
+      return { ...snapshot, snapshotGeneration: generation };
     },
     enabled: slug.length > 0 && focusSessionId !== null && focusSessionId.length > 0,
   });

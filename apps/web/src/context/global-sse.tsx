@@ -1,7 +1,11 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, createElement, type ReactNode } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { connectSSE } from "../lib/sse-client";
-import { createWebSessionStore, findWebSessionStore } from "../store/session-store";
+import {
+  beginSessionSnapshotRecovery,
+  createWebSessionStore,
+  findWebSessionStore,
+} from "../store/session-store";
 import { hitlAttentionPath, hitlStore, scopedHitlIdentity, type ScopedHitlView } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
 import { sessionRuntimeStore } from "../store/session-runtime-store";
@@ -368,17 +372,16 @@ export function handleSSEEvent(
       const envelope = parsed as GlobalSessionEventEnvelope;
       const store = deps.findStore(envelope.sessionId, envelope.slug)
         ?? deps.createStore(envelope.sessionId, envelope.slug);
-      const outcome = store.getState().applyRemoteEnvelope(envelope);
-
-      // A lifecycle edge that cannot follow the current local projection is
-      // not a harmless replay. Keep the cursor parked and replace the local
-      // projection from the authoritative Session snapshot.
-      if (outcome === "invalid") {
-        deps.invalidateQueries({
-          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
-        });
-        break;
+      let applyResult = store.getState().applyRemoteEnvelope(envelope);
+      if (applyResult === "gap") {
+        beginSessionSnapshotRecovery();
+        applyResult = store.getState().applyRemoteEnvelope(envelope);
+        deps.refreshSessionSnapshots();
+      } else if (applyResult === "refresh-required" || applyResult === "invalid") {
+        beginSessionSnapshotRecovery();
+        deps.refreshSessionSnapshots();
       }
+      if (applyResult !== "applied") break;
 
       if (envelope.payload.type === "tool-child-session-link") {
         const { link } = envelope.payload;
@@ -387,7 +390,7 @@ export function handleSSEEvent(
         deps.invalidateQueries({ queryKey: queryKeys.tree(envelope.slug, store.getState().rootSessionId) });
         const childStore = deps.findStore(link.childSessionId, envelope.slug)
           ?? deps.createStore(link.childSessionId, envelope.slug);
-        childStore.getState().initializeMetadata({
+        childStore.getState().applyMetadataPatch({
           rootSessionId: store.getState().rootSessionId,
           parentSessionId: link.parentSessionId,
           agentName: link.childAgentName,
@@ -448,6 +451,7 @@ export function handleSSEEvent(
     }
     case "lagged": {
       invalidateControlPlaneReadiness();
+      beginSessionSnapshotRecovery();
       deps.refreshSessionSnapshots();
       deps.invalidateQueries({ queryKey: ["dashboard"] });
       deps.requestReconnect();
@@ -455,6 +459,7 @@ export function handleSSEEvent(
     }
     case "shutdown": {
       invalidateControlPlaneReadiness();
+      beginSessionSnapshotRecovery();
       deps.refreshSessionSnapshots();
       deps.onShutdown();
       break;
@@ -664,6 +669,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
       onConnectionLost: () => {
         watchdogRef.current?.stop();
         invalidateControlPlaneReadiness();
+        beginSessionSnapshotRecovery();
         refreshSessionSnapshots();
         setConnectionState("reconnecting");
       },

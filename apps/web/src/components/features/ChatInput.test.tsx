@@ -115,7 +115,12 @@ mock.module("../../context/settings-modal", () => ({ useSettingsModal: () => ({ 
 
 mock.module("../../store/session-store", () => ({
   getWebSessionStore: () => ({
-    getState: () => ({ addLocalSendingMessage, removeLocalSendingMessage, setLocalSendingMessageStatus }),
+    getState: () => ({
+      addLocalSendingMessage,
+      applyModelStatePatch: () => {},
+      removeLocalSendingMessage,
+      setLocalSendingMessageStatus,
+    }),
   }),
   useSessionStore: (_sessionId: string, selector: (state: Record<string, unknown>) => unknown) =>
     selector({

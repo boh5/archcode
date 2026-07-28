@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CompletedToolPart } from "@archcode/protocol";
+import type { CompletedToolPart, RunningToolPart } from "@archcode/protocol";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
@@ -96,6 +96,83 @@ afterEach(() => {
 });
 
 describe("ToolCard output viewer", () => {
+  test("auto-expands the first live Bash output, respects manual collapse, and switches in place to final", async () => {
+    const livePart: RunningToolPart = {
+      type: "tool",
+      id: "tool-live",
+      state: "running",
+      toolCallId: "call-live",
+      toolName: "bash",
+      input: { command: "printf live", description: "Print live output" },
+      liveOutput: {
+        preview: "FIRST_SENTINEL",
+        omittedBytes: 12,
+        liveLimitReached: true,
+      },
+      createdAt: 1,
+      startedAt: 2,
+    };
+    await act(async () => {
+      root.render(<ToolCard part={livePart} projectSlug="demo" sessionId="root-1" />);
+      await flush();
+    });
+
+    const summary = requiredButton(":scope > div > button");
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
+    expect(container.textContent).toContain("FIRST_SENTINEL");
+    expect(container.textContent).toContain("Live");
+    expect(container.textContent).toContain("12 B earlier output omitted");
+    expect(container.textContent).toContain("Live preview paused");
+
+    await act(async () => {
+      summary.click();
+      await flush();
+      root.render(<ToolCard
+        part={{ ...livePart, liveOutput: { ...livePart.liveOutput!, preview: "SECOND_SENTINEL" } }}
+        projectSlug="demo"
+        sessionId="root-1"
+      />);
+      await flush();
+    });
+    expect(requiredButton(":scope > div > button").getAttribute("aria-expanded")).toBe("false");
+    expect(container.textContent).not.toContain("SECOND_SENTINEL");
+
+    const { liveOutput: _liveOutput, ...liveBase } = livePart;
+    const finalPart: CompletedToolPart = {
+      ...liveBase,
+      state: "completed",
+      result: {
+        isError: false,
+        output: {
+          preview: "FINAL_SENTINEL",
+          completeness: "complete",
+          observed: { bytes: 14, lines: 1 },
+          canonical: { bytes: 14, lines: 1 },
+          stored: { bytes: 14, lines: 1 },
+          omitted: { bytes: 0, lines: 0 },
+          recovery: { kind: "none" },
+        },
+        details: {
+          process: { exitCode: 0, signal: null, timedOut: false, aborted: false, durationMs: 20 },
+        },
+      },
+      endedAt: 3,
+    };
+    await act(async () => {
+      root.render(<ToolCard part={finalPart} projectSlug="demo" sessionId="root-1" />);
+      await flush();
+    });
+    const finalSummary = requiredButton(":scope > div > button");
+    expect(finalSummary).toBe(summary);
+    await act(async () => {
+      finalSummary.click();
+      await flush();
+    });
+    expect(container.textContent).toContain("FINAL_SENTINEL");
+    expect(container.textContent).not.toContain("SECOND_SENTINEL");
+    expect(container.querySelector("[data-testid='tool-live-output']")).toBeNull();
+  });
+
   test("reveals a mutation diff hunk with the first ToolCard expansion", async () => {
     await renderExpandedCard();
 

@@ -1307,7 +1307,7 @@ describe("createRuntime", () => {
     const durableTool = seedStore.getState().messages
       .flatMap((message) => message.parts)
       .find((part) => part.type === "tool" && part.toolCallId === "repair-question");
-    if (durableTool?.type !== "tool" || !("startedAt" in durableTool)) {
+    if (durableTool?.type !== "tool" || durableTool.state !== "running") {
       throw new Error("Expected durable tool checkpoint");
     }
     const durableToolStartedAt = durableTool.startedAt;

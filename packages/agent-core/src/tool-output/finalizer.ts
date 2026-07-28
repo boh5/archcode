@@ -59,14 +59,19 @@ export class ToolOutputFinalizer {
   ): Promise<ToolOutputCapture | undefined> {
     if (descriptor.outputPolicy.kind !== "artifact") return undefined;
     const state = context.store.getState();
-    return this.#artifactStore.beginCapture({
-      owner: {
-        projectIdentity: await this.#projectIdentity(context.projectContext.project.workspaceRoot),
-        rootSessionId: state.rootSessionId,
-        producerSessionId: state.sessionId,
+    return this.#artifactStore.beginCapture(
+      {
+        owner: {
+          projectIdentity: await this.#projectIdentity(context.projectContext.project.workspaceRoot),
+          rootSessionId: state.rootSessionId,
+          producerSessionId: state.sessionId,
+        },
+        previewDirection: descriptor.outputPolicy.previewDirection,
       },
-      previewDirection: descriptor.outputPolicy.previewDirection,
-    });
+      context.liveToolOutput === undefined
+        ? undefined
+        : { onLiveCanonicalChunk: (bytes) => context.liveToolOutput?.pushCanonical(bytes) },
+    );
   }
 
   async finalize(input: FinalizeRawToolResultInput): Promise<FinalizedToolResult> {

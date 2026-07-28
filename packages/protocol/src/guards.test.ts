@@ -184,6 +184,7 @@ const validPayloads = [
     type: "tool-result",
     toolCallId: "call-1",
     toolName: "file_edit",
+    settledAt: 2,
     result: {
       ...finalizedResult,
       details: {
@@ -196,6 +197,7 @@ const validPayloads = [
     },
   },
   { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childExecutionId: "child-execution", childAgentName: "explore", childProfile: "fast", childSkillNames: [], title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
+  { type: "tool-output-delta", toolCallId: "call-2", toolName: "bash", delta: "live", omittedBytes: 0, liveLimitReached: false },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
   {
     type: "reminder",
@@ -279,6 +281,7 @@ describe("protocol event guards", () => {
       "tool-child-session-link",
       "tool-input-resolved",
       "tool-input-start",
+      "tool-output-delta",
       "tool-result",
     ]);
   });
@@ -344,9 +347,49 @@ describe("protocol event guards", () => {
     expect(isSessionEventPayload({ type: "text-delta" })).toBe(false);
     expect(isSessionEventPayload({ type: "text-delta", text: 1 })).toBe(false);
     expect(isSessionEventPayload({
+      type: "tool-output-delta",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      delta: "live",
+      omittedBytes: 0,
+      liveLimitReached: false,
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-output-delta",
+      toolCallId: "call-1",
+      toolName: "bash",
+      delta: "🙂".repeat(1025),
+      omittedBytes: 0,
+      liveLimitReached: false,
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-output-delta",
+      toolCallId: "call-1",
+      toolName: "bash",
+      delta: "live",
+      omittedBytes: -1,
+      liveLimitReached: false,
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-output-delta",
+      toolCallId: "call-1",
+      toolName: "bash",
+      delta: "live",
+      omittedBytes: 0,
+      liveLimitReached: false,
+      extra: true,
+    })).toBe(false);
+    expect(isSessionEventPayload({
       type: "tool-result",
       toolCallId: "call-1",
       toolName: "file_read",
+      result: finalizedResult,
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-result",
+      toolCallId: "call-1",
+      toolName: "file_read",
+      settledAt: 2,
       result: {
         ...finalizedResult,
         output: {
@@ -363,6 +406,7 @@ describe("protocol event guards", () => {
       type: "tool-result",
       toolCallId: "call-1",
       toolName: "git_diff",
+      settledAt: 2,
       result: {
         ...finalizedResult,
         details: {
@@ -388,6 +432,7 @@ describe("protocol event guards", () => {
       type: "tool-result",
       toolCallId: "call-1",
       toolName: "git_diff",
+      settledAt: 2,
       result: {
         ...finalizedResult,
         details: {
@@ -403,12 +448,14 @@ describe("protocol event guards", () => {
       type: "tool-result",
       toolCallId: "call-1",
       toolName: "file_read",
+      settledAt: 2,
       result: { ...finalizedResult, meta: {} },
     })).toBe(false);
     expect(isSessionEventPayload({
       type: "tool-result",
       toolCallId: "call-1",
       toolName: "file_read",
+      settledAt: 2,
       result: {
         ...finalizedResult,
         output: { ...finalizedResult.output, recovery: { kind: "source", toolName: "file_read", nextInput: { bad: undefined } } },
@@ -418,6 +465,7 @@ describe("protocol event guards", () => {
       type: "tool-result",
       toolCallId: "call-1",
       toolName: "file_read",
+      settledAt: 2,
       result: {
         ...finalizedResult,
         output: {
@@ -430,6 +478,7 @@ describe("protocol event guards", () => {
       type: "tool-result",
       toolCallId: "call-1",
       toolName: "file_read",
+      settledAt: 2,
       result: { ...finalizedResult, details: { arbitrary: "metadata escape" } },
     })).toBe(false);
     expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[23]!.link, unexpectedField: true } })).toBe(false);

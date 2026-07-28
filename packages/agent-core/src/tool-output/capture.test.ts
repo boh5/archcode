@@ -49,6 +49,28 @@ afterEach(async () => {
 });
 
 describe("StreamingToolOutputCapture", () => {
+  test("publishes only explicitly marked post-policy canonical chunks", async () => {
+    const tempDir = join(ROOT, "live-canonical");
+    await mkdir(tempDir);
+    const live: string[] = [];
+    const capture = new StreamingToolOutputCapture({
+      tempDir,
+      input: { owner: OWNER },
+      beforePersist: async () => {},
+      onLiveCanonicalChunk: (bytes) => live.push(new TextDecoder().decode(bytes)),
+      committer: { async commit(draft) { return fakeCreated(draft); } },
+    });
+
+    await capture.write(new Uint8Array([0xf0, 0x9f]), { source: "bash-live" });
+    await capture.write(new Uint8Array([0x98, 0x80]), { source: "bash-live" });
+    await capture.write(" ordinary finalizer appendix");
+    const completed = await capture.complete();
+
+    expect(live.join("")).toBe("😀");
+    expect(completed.projection.preview).toBe("😀 ordinary finalizer appendix");
+    await capture.discard(completed);
+  });
+
   test("completes a small result inline without returning a second full string", async () => {
     const store = new ToolOutputArtifactStore({ rootDir: join(ROOT, "inline") });
     const capture = await store.beginCapture({ owner: OWNER });

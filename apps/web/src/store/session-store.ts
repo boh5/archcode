@@ -11,42 +11,48 @@ import {
 import type {
   CompressionStateSnapshot,
   GlobalSessionEventEnvelope,
-  Reminder,
-  ToolChildSessionLink,
   SessionEventEnvelope,
   SessionEventPayload,
-  SessionMessage,
+  Session as ProtocolSession,
   PendingSessionMessage,
   ExecutionModelBindingSummary,
   RequestedModelSelection,
-  SessionModelSelection,
   SessionModelState,
   SessionNextModelSelection,
   SessionProjection,
-  SessionExecutionRecord,
   ExecutionLifecycleEvent,
-  SessionStats,
-  SessionStep,
-  SessionTodo,
-  SessionGoal,
 } from "@archcode/protocol";
 import { createClientUuid } from "../lib/client-uuid";
 
 const MAX_IDLE_SESSION_STORES = 20;
 const MAX_PENDING_REMOTE_EVENTS = 1000;
 
-/** The authoritative SSE event was accepted, buffered, ignored, or rejected. */
-export type RemoteEnvelopeApplyOutcome =
+export type SessionSnapshotApplyResult =
+  | "applied"
+  | "ignored"
+  | "stale-generation"
+  | "refresh-required";
+export type RemoteEnvelopeApplyResult =
   | "applied"
   | "duplicate"
-  | "buffered"
   | "ignored"
-  | "invalid";
+  | "gap"
+  | "invalid"
+  | "refresh-required";
 
-export interface WebSessionStoreState extends Omit<
-  SessionProjection,
-  "cwd" | "agentName"
-> {
+export interface SessionMetadataPatch {
+  title?: string | null;
+  createdAt?: number;
+  rootSessionId?: string;
+  parentSessionId?: string;
+  agentName?: string | null;
+}
+
+export type SessionAuthoritativeSnapshot =
+  & ProtocolSession
+  & Pick<SessionProjection, "compression">;
+
+export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "agentName"> {
   [key: string]: unknown;
   hydrationStatus: "pending" | "hydrated";
   /** Source-window-only optimistic projection. It is replaced by durable message events. */
@@ -74,6 +80,8 @@ export interface WebSessionStoreState extends Omit<
   events: SessionEventEnvelope[];
   eventOffset: number;
   nextEventId: number;
+  snapshotRecoveryStatus: "live" | "awaiting";
+  snapshotRecoveryGeneration: number;
   setFocusSessionId: (id: string | null) => void;
   append: (event: SessionEventPayload) => void;
   addLocalSendingMessage: (input: {
@@ -88,47 +96,15 @@ export interface WebSessionStoreState extends Omit<
   ) => void;
   removeLocalSendingMessage: (clientRequestId: string) => void;
   reconcileLocalSendingMessage: (clientRequestId: string) => void;
-  applyRemoteEnvelope: (
-    envelope: GlobalSessionEventEnvelope,
-  ) => RemoteEnvelopeApplyOutcome;
+  applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => RemoteEnvelopeApplyResult;
+  beginSnapshotRecovery: (generation: number) => void;
+  applyMetadataPatch: (patch: SessionMetadataPatch) => void;
+  applyModelStatePatch: (patch: SessionModelState) => void;
+  applyAuthoritativeSnapshot: (
+    data: SessionAuthoritativeSnapshot,
+    generation: number,
+  ) => SessionSnapshotApplyResult;
   resetTransientState: () => void;
-  initializeMetadata: (data: {
-    title?: string | null;
-    createdAt?: number;
-    rootSessionId?: string;
-    parentSessionId?: string;
-    agentName?: string | null;
-  }) => void;
-  applyModelState: (data: SessionModelState) => void;
-  initializeFromSnapshot: (data: {
-    messages?: SessionMessage[];
-    pendingMessages?: PendingSessionMessage[];
-    steps?: SessionStep[];
-    todos?: SessionTodo[];
-    reminders?: Reminder[];
-    childSessionLinks?: ToolChildSessionLink[];
-    title?: string | null;
-    createdAt?: number;
-    cwd?: string;
-    rootSessionId?: string;
-    parentSessionId?: string;
-    agentName?: string | null;
-    stats?: SessionStats;
-    executions?: SessionExecutionRecord[];
-    executionCount: number;
-    isRunning: boolean;
-    isStreamingModel: boolean;
-    currentExecutionId: string | undefined;
-    currentAssistantMessageId: string | undefined;
-    eventCursor?: number;
-    events?: SessionEventEnvelope[];
-    modelSelection?: SessionModelSelection;
-    nextModelSelection?: SessionNextModelSelection;
-    activeModelBinding?: ExecutionModelBindingSummary;
-    compression?: CompressionStateSnapshot;
-    /** `undefined` is a legitimate clear from the authoritative Session snapshot. */
-    goal?: SessionGoal | undefined;
-  }) => void;
 }
 
 interface SessionRegistryEntry {
@@ -140,10 +116,24 @@ interface SessionRegistryEntry {
 }
 
 const sessionRegistry = new Map<string, SessionRegistryEntry>();
-const pendingRemoteEvents = new WeakMap<
-  StoreApi<WebSessionStoreState>,
-  Map<number, GlobalSessionEventEnvelope>
->();
+interface BufferedRemoteEnvelope {
+  generation: number;
+  envelope: GlobalSessionEventEnvelope;
+}
+const pendingRemoteEvents = new WeakMap<StoreApi<WebSessionStoreState>, Map<number, BufferedRemoteEnvelope>>();
+let sessionSnapshotGeneration = 0;
+
+export function currentSessionSnapshotGeneration(): number {
+  return sessionSnapshotGeneration;
+}
+
+export function beginSessionSnapshotRecovery(): number {
+  sessionSnapshotGeneration += 1;
+  for (const entry of sessionRegistry.values()) {
+    entry.store.getState().beginSnapshotRecovery(sessionSnapshotGeneration);
+  }
+  return sessionSnapshotGeneration;
+}
 
 function scopedWebKey(slug: string, sessionId: string): string {
   return `${slug}\0${sessionId}`;
@@ -266,8 +256,8 @@ function executionLifecycleEvent(
 function applyContiguousRemoteEnvelope(
   store: StoreApi<WebSessionStoreState>,
   envelope: GlobalSessionEventEnvelope,
-): RemoteEnvelopeApplyOutcome {
-  let outcome: RemoteEnvelopeApplyOutcome = "applied";
+): RemoteEnvelopeApplyResult {
+  let outcome: RemoteEnvelopeApplyResult = "applied";
   store.setState((state) => {
     const lifecycleEvent = executionLifecycleEvent(envelope.payload);
     const transition = lifecycleEvent === undefined
@@ -309,51 +299,134 @@ function toLocalEnvelope(
 function bufferRemoteEnvelope(
   store: StoreApi<WebSessionStoreState>,
   envelope: GlobalSessionEventEnvelope,
-): void {
+  generation: number,
+): boolean {
   let buffer = pendingRemoteEvents.get(store);
   if (!buffer) {
     buffer = new Map();
     pendingRemoteEvents.set(store, buffer);
   }
-  buffer.set(envelope.eventId, envelope);
-  if (buffer.size <= MAX_PENDING_REMOTE_EVENTS) return;
-
-  const oldest = Math.min(...buffer.keys());
-  buffer.delete(oldest);
+  buffer.set(envelope.eventId, { generation, envelope });
+  if (buffer.size <= MAX_PENDING_REMOTE_EVENTS) return true;
+  buffer.clear();
+  return false;
 }
 
-function pruneBufferedRemoteEvents(
+function discardBufferedRemoteEventsThrough(
   store: StoreApi<WebSessionStoreState>,
-  minimumEventId: number,
+  maximumEventId: number,
 ): void {
   const buffer = pendingRemoteEvents.get(store);
   if (!buffer) return;
   for (const eventId of buffer.keys()) {
-    if (eventId < minimumEventId) buffer.delete(eventId);
+    if (eventId <= maximumEventId) buffer.delete(eventId);
   }
 }
 
-function drainBufferedRemoteEvents(
+function drainRecoveryBuffer(
   store: StoreApi<WebSessionStoreState>,
-): RemoteEnvelopeApplyOutcome | undefined {
+  generation: number,
+): boolean {
   const buffer = pendingRemoteEvents.get(store);
-  if (!buffer) return undefined;
+  if (!buffer || buffer.size === 0) return true;
+
+  for (const [eventId, item] of buffer) {
+    if (item.generation !== generation) buffer.delete(eventId);
+  }
+
+  if (buffer.size === 0) return true;
+  const eventIds = [...buffer.keys()].sort((left, right) => left - right);
+  let expectedEventId = store.getState().nextEventId;
+  for (const eventId of eventIds) {
+    if (eventId !== expectedEventId) {
+      buffer.clear();
+      return false;
+    }
+    expectedEventId += 1;
+  }
 
   while (true) {
     const state = store.getState();
-    const envelope = buffer.get(state.nextEventId);
-    if (!envelope) break;
+    const item = buffer.get(state.nextEventId);
+    if (!item) break;
     buffer.delete(state.nextEventId);
-    const outcome = applyContiguousRemoteEnvelope(store, envelope);
-    if (outcome === "invalid") return outcome;
+    const outcome = applyContiguousRemoteEnvelope(store, item.envelope);
+    if (outcome === "invalid") {
+      buffer.clear();
+      return false;
+    }
   }
-
-  return undefined;
+  return buffer.size === 0;
 }
 
 function isPinned(entry: SessionRegistryEntry): boolean {
   const state = entry.store.getState();
   return entry.foreground || state.isRunning || state.isStreamingModel;
+}
+
+function metadataPatchUpdates(
+  state: WebSessionStoreState,
+  patch: SessionMetadataPatch,
+): Partial<WebSessionStoreState> {
+  const updates: Partial<WebSessionStoreState> = {};
+  if ("title" in patch) updates.title = patch.title ?? null;
+  if (patch.createdAt !== undefined && patch.createdAt > 0) updates.createdAt = patch.createdAt;
+  if (patch.rootSessionId !== undefined) updates.rootSessionId = patch.rootSessionId;
+  if ("parentSessionId" in patch) updates.parentSessionId = patch.parentSessionId;
+  if ("agentName" in patch) updates.agentName = patch.agentName ?? null;
+  return updates;
+}
+
+function authoritativeSnapshotUpdates(
+  state: WebSessionStoreState,
+  data: SessionAuthoritativeSnapshot,
+  replaceReducerProjection: boolean,
+): Partial<WebSessionStoreState> {
+  const updates = metadataPatchUpdates(state, data);
+  if (replaceReducerProjection || state.cwd === null) {
+    updates.cwd = data.cwd;
+    updates.hydrationStatus = "hydrated";
+  }
+
+  if (!replaceReducerProjection) return updates;
+
+  updates.messages = data.messages;
+  updates.pendingMessages = data.pendingMessages;
+  updates.steps = data.steps;
+  updates.todos = data.todos;
+  updates.reminders = data.reminders;
+  updates.childSessionLinks = data.childSessionLinks;
+  updates.parentSessionId = data.parentSessionId;
+  updates.stats = data.stats;
+  updates.executions = data.executions;
+  Object.assign(updates, runtimeStateFromSnapshot({
+    executionCount: data.executionCount,
+    isRunning: data.isRunning,
+    isStreamingModel: data.isStreamingModel,
+    currentExecutionId: data.currentExecutionId,
+    currentAssistantMessageId: data.currentAssistantMessageId,
+  }));
+  updates.modelSelection = data.modelSelection;
+  updates.nextModelSelection = data.nextModelSelection;
+  updates.activeModelBinding = data.activeModelBinding;
+  updates.compression = data.compression;
+  updates.goal = data.goal;
+
+  const nextEventId = data.eventCursor + 1;
+  updates.events = [];
+  updates.nextEventId = nextEventId;
+  updates.eventOffset = nextEventId;
+
+  const durableRequestIds = new Set<string>();
+  for (const message of data.messages) {
+    if (message.clientRequestId) durableRequestIds.add(message.clientRequestId);
+  }
+  for (const message of data.pendingMessages) durableRequestIds.add(message.clientRequestId);
+  updates.localSendingMessages = state.localSendingMessages.filter(
+    (message) => !durableRequestIds.has(message.clientRequestId),
+  );
+
+  return updates;
 }
 
 export function createWebSessionStore(
@@ -406,6 +479,8 @@ export function createWebSessionStore(
     events: [],
     eventOffset: 0,
     nextEventId: 0,
+    snapshotRecoveryStatus: sessionSnapshotGeneration === 0 ? "live" : "awaiting",
+    snapshotRecoveryGeneration: sessionSnapshotGeneration,
     setFocusSessionId: (id: string | null) => set({ focusSessionId: id }),
     append: (event: SessionEventPayload) => {
       set((state) => {
@@ -466,169 +541,70 @@ export function createWebSessionStore(
       }));
     },
     applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => {
-      if (envelope.slug !== slug || envelope.sessionId !== sessionId) {
-        return "ignored";
-      }
+      if (envelope.slug !== slug || envelope.sessionId !== sessionId) return "ignored";
       const state = store.getState();
-      if (envelope.eventId < state.eventOffset || envelope.eventId < state.nextEventId) {
-        return "ignored";
+      if (state.snapshotRecoveryStatus === "awaiting") {
+        const result = bufferRemoteEnvelope(
+          store,
+          envelope,
+          state.snapshotRecoveryGeneration,
+        ) ? "ignored" : "refresh-required";
+        touchRegistryEntry(key);
+        return result;
       }
-      if (envelope.eventId > state.nextEventId) {
-        bufferRemoteEnvelope(store, envelope);
-        return "buffered";
-      }
-      const outcome = applyContiguousRemoteEnvelope(store, envelope);
-      pruneBufferedRemoteEvents(store, store.getState().nextEventId);
-      const drainedOutcome = outcome === "invalid"
-        ? undefined
-        : drainBufferedRemoteEvents(store);
+      if (envelope.eventId < state.nextEventId) return "ignored";
+      if (envelope.eventId > state.nextEventId) return "gap";
+      const result = applyContiguousRemoteEnvelope(store, envelope);
       touchRegistryEntry(key);
-      return drainedOutcome === "invalid" ? "invalid" : outcome;
+      return result;
+    },
+    beginSnapshotRecovery: (generation) => {
+      pendingRemoteEvents.delete(store);
+      set({
+        snapshotRecoveryStatus: "awaiting",
+        snapshotRecoveryGeneration: generation,
+      });
+      touchRegistryEntry(key);
+    },
+    applyMetadataPatch: (patch) => {
+      set((state) => metadataPatchUpdates(state, patch));
+      touchRegistryEntry(key);
+    },
+    applyModelStatePatch: (patch) => {
+      set((state) => patch.modelSelection.revision < state.modelSelection.revision
+        ? {}
+        : {
+            modelSelection: patch.modelSelection,
+            nextModelSelection: patch.nextModelSelection,
+            activeModelBinding: patch.activeModelBinding,
+          });
+      touchRegistryEntry(key);
     },
     toModelMessages: () => [],
     resetTransientState: () => {},
-    initializeMetadata: (data) => {
-      set(() => ({
-        ...(data.title === undefined ? {} : { title: data.title }),
-        ...(data.createdAt === undefined || data.createdAt <= 0
-          ? {}
-          : { createdAt: data.createdAt }),
-        ...(data.rootSessionId === undefined
-          ? {}
-          : { rootSessionId: data.rootSessionId }),
-        ...(!("parentSessionId" in data)
-          ? {}
-          : { parentSessionId: data.parentSessionId }),
-        ...(data.agentName === undefined ? {} : { agentName: data.agentName }),
-      }));
-    },
-    applyModelState: (data) => {
-      set({
-        modelSelection: data.modelSelection,
-        nextModelSelection: data.nextModelSelection,
-        activeModelBinding: data.activeModelBinding,
-      });
-    },
-    initializeFromSnapshot: (data) => {
-      set((state) => {
-        const snapshotNextEventId =
-          data.eventCursor !== undefined
-            ? data.eventCursor + 1
-            : data.events && data.events.length > 0
-              ? data.events[data.events.length - 1]!.id + 1
-              : 0;
-        // If SSE has already processed events beyond the snapshot, keep local
-        // reducer-managed state (messages, steps, etc.) and only update scalar
-        // metadata fields (title, createdAt, etc.) that don't lose information
-        // from missing SSE events like tool-input-resolved.
-        const stale = state.nextEventId > snapshotNextEventId;
+    applyAuthoritativeSnapshot: (data, generation) => {
+      const before = store.getState();
+      if (generation !== before.snapshotRecoveryGeneration) return "stale-generation";
 
-        const updates: Partial<WebSessionStoreState> = {};
-        if (data.messages !== undefined && !stale) {
-          updates.messages = data.messages as SessionMessage[];
-        }
-        if (data.pendingMessages !== undefined && !stale) {
-          updates.pendingMessages =
-            data.pendingMessages as PendingSessionMessage[];
-        }
-        if (data.steps !== undefined && !stale) {
-          updates.steps = data.steps as SessionStep[];
-        }
-        if (data.todos !== undefined) {
-          updates.todos = data.todos as SessionTodo[];
-        }
-        if (data.reminders !== undefined && !stale) {
-          updates.reminders = data.reminders as Reminder[];
-        }
-        if (data.childSessionLinks !== undefined && !stale) {
-          updates.childSessionLinks = data.childSessionLinks;
-        }
-        if (data.title !== undefined) {
-          updates.title = data.title;
-        }
-        if (data.createdAt !== undefined && data.createdAt > 0) {
-          updates.createdAt = data.createdAt;
-        }
-        if (data.cwd !== undefined && (!stale || state.cwd === null)) {
-          updates.cwd = data.cwd;
-          updates.hydrationStatus = "hydrated";
-        }
-        if (data.stats !== undefined && !stale) {
-          updates.stats = data.stats;
-        }
-        if (data.executions !== undefined && !stale) {
-          updates.executions = data.executions;
-        }
-        if (!stale) {
-          Object.assign(
-            updates,
-            runtimeStateFromSnapshot({
-              executionCount: data.executionCount,
-              isRunning: data.isRunning,
-              isStreamingModel: data.isStreamingModel,
-              currentExecutionId: data.currentExecutionId,
-              currentAssistantMessageId: data.currentAssistantMessageId,
-            }),
-          );
-        }
-        if (data.rootSessionId !== undefined) {
-          updates.rootSessionId = data.rootSessionId;
-        }
-        if (data.parentSessionId !== undefined) {
-          updates.parentSessionId = data.parentSessionId;
-        }
-        if (data.agentName !== undefined) {
-          updates.agentName = data.agentName;
-        }
-        if (data.modelSelection !== undefined && !stale) {
-          updates.modelSelection = data.modelSelection;
-        }
-        if (data.nextModelSelection !== undefined && !stale) {
-          updates.nextModelSelection = data.nextModelSelection;
-        }
-        if ("activeModelBinding" in data && !stale) {
-          updates.activeModelBinding = data.activeModelBinding;
-        }
-        if (data.compression !== undefined && !stale) {
-          updates.compression = data.compression;
-        }
-        if ("goal" in data && !stale) {
-          updates.goal = data.goal;
-        }
-        if (data.events !== undefined && !stale) {
-          updates.events = data.events;
-          updates.nextEventId =
-            data.events.length > 0
-              ? data.events[data.events.length - 1]!.id + 1
-              : 0;
-          updates.eventOffset = data.events.length > 0 ? data.events[0]!.id : 0;
-        } else if (data.eventCursor !== undefined && !stale) {
-          const nextEventId = data.eventCursor + 1;
-          updates.events = [];
-          updates.nextEventId = nextEventId;
-          updates.eventOffset = Math.max(0, nextEventId - state.events.length);
-        }
-        if (
-          !stale &&
-          (data.messages !== undefined || data.pendingMessages !== undefined)
-        ) {
-          const durableRequestIds = new Set<string>();
-          for (const message of data.messages ?? state.messages) {
-            if (message.clientRequestId)
-              durableRequestIds.add(message.clientRequestId);
-          }
-          for (const message of data.pendingMessages ?? state.pendingMessages) {
-            durableRequestIds.add(message.clientRequestId);
-          }
-          updates.localSendingMessages = state.localSendingMessages.filter(
-            (message) => !durableRequestIds.has(message.clientRequestId),
-          );
-        }
-        return updates;
-      });
-      pruneBufferedRemoteEvents(store, store.getState().nextEventId);
-      drainBufferedRemoteEvents(store);
+      const recovering = before.snapshotRecoveryStatus === "awaiting";
+      const snapshotNextEventId = data.eventCursor + 1;
+      const staleWhileLive = !recovering && before.nextEventId > snapshotNextEventId;
+      set((state) => authoritativeSnapshotUpdates(state, data, !staleWhileLive));
+
+      if (staleWhileLive) {
+        touchRegistryEntry(key);
+        return "ignored";
+      }
+
+      discardBufferedRemoteEventsThrough(store, data.eventCursor);
+      if (recovering && !drainRecoveryBuffer(store, generation)) {
+        set({ snapshotRecoveryStatus: "awaiting" });
+        touchRegistryEntry(key);
+        return "refresh-required";
+      }
+      set({ snapshotRecoveryStatus: "live" });
       touchRegistryEntry(key);
+      return "applied";
     },
   }));
 
@@ -681,6 +657,7 @@ export function evictIdleSessionStores(): void {
 
 export function __resetWebSessionStoresForTest(): void {
   sessionRegistry.clear();
+  sessionSnapshotGeneration = 0;
 }
 
 export function getWebSessionStore(
