@@ -46,6 +46,7 @@ interface ModelAttemptOptions {
   agentName: string;
   projectContext: QueryLoopOptions["projectContext"];
   storeManager: QueryLoopOptions["storeManager"];
+  attachmentProjector: QueryLoopOptions["attachmentProjector"];
   beforeModelBuild: HookList<BeforeModelBuildContext>;
   beforeModelCall: HookList<BeforeModelCallContext>;
   consumeSteers?: () => Promise<void>;
@@ -154,6 +155,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     agentName,
     projectContext,
     storeManager,
+    attachmentProjector,
     beforeModelBuild,
     beforeModelCall,
     consumeSteers,
@@ -175,8 +177,16 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       : await resolveSystemPrompt();
     await runHooks("beforeModelBuild", beforeModelBuild, { store, binding, logger, abort, systemPrompt }, logger, { sessionId, agentName });
     await prepareModelContext?.();
-    messages = store.getState().toModelMessages();
+    const projection = store.getState().toModelMessagesProjection();
+    messages = projection.messages;
     await runHooks("beforeModelCall", beforeModelCall, { store, binding, logger, abort, messages, projectContext }, logger, { sessionId, agentName });
+    await attachmentProjector.project({
+      messages,
+      attachmentSlots: projection.attachmentSlots,
+      workspaceRoot: projectContext.project.workspaceRoot,
+      rootSessionId: store.getState().rootSessionId,
+      supportsImages: binding.modelInfo.modalities.input.includes("image"),
+    });
     const resolved = toolRegistry.resolveForAgent(allowedTools);
     tools = resolved.descriptors.length > 0 ? resolved.toAITools() : undefined;
     store.getState().append({ type: "step-start", step });
@@ -316,6 +326,7 @@ export async function runQueryLoop(
   let lastRecoveryAttempt = 0;
   const doomTracker = new DoomTracker();
   const createContext = async (toolCall: ToolCallLike, step: number): Promise<ToolExecutionContext> => {
+    const attachmentReadPaths = await options.resolveAttachmentReadPaths();
     const batch = toolBatchScheduler.activeBatch()
       ?? (() => { throw new Error("Tool execution has no active Tool Batch"); })();
     const persistedAllowedTools = new Set(batch.allowedTools);
@@ -338,6 +349,7 @@ export async function runQueryLoop(
       projectContext: options.projectContext,
       ...(options.sessionGoalService === undefined ? {} : { sessionGoalService: options.sessionGoalService }),
       cwd: executionCwd,
+      attachmentReadPaths,
       agentSkills: options.agentSkills.filter((skill) => persistedSkills.has(skill)),
       skillService: options.skillService,
       storeManager: options.storeManager,
@@ -446,6 +458,7 @@ export async function runQueryLoop(
         agentName,
         projectContext: options.projectContext,
         storeManager: options.storeManager,
+        attachmentProjector: options.attachmentProjector,
         beforeModelBuild,
         beforeModelCall,
         consumeSteers: options.consumeSteers,

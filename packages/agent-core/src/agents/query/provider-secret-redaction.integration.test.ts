@@ -113,6 +113,8 @@ describe("Provider secret redaction integration", () => {
         agentSkills: [],
         skillService: new SkillService({ builtinSkills: {} }),
         storeManager,
+        attachmentProjector: { async project() {} },
+        resolveAttachmentReadPaths: async () => new Set(),
         projectContext: createTestProjectContext(testRoot.path),
         toolOutputAccess: toolFixture.createToolOutputAccess(testRoot.path, store.getState().rootSessionId),
         cwd: testRoot.path,

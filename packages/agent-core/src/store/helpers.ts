@@ -3,9 +3,16 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionStoreState, StoredMessage } from "./types";
 import {
+  isSessionEventPayload,
+  isValidAttachmentMediaType,
+  isValidAttachmentName,
   type FinalizedToolResult,
   type JsonObject,
   type SessionModelSelection,
+} from "@archcode/protocol";
+import {
+  MAX_ATTACHMENT_SIZE_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
 } from "@archcode/protocol";
 import { getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
@@ -312,10 +319,29 @@ const SessionExecutionRecordSchema = z.discriminatedUnion("status", [
   }
 });
 
+const AttachmentDescriptorSchema = z.strictObject({
+  id: z.uuid(),
+  name: z.string().refine(isValidAttachmentName, "Invalid attachment display name"),
+  mediaType: z.string().refine(
+    isValidAttachmentMediaType,
+    "Invalid attachment display media type",
+  ),
+  sizeBytes: z.number().int().nonnegative().max(MAX_ATTACHMENT_SIZE_BYTES),
+  kind: z.enum(["image", "file"]),
+});
+
+const AttachmentDescriptorListSchema = z.array(AttachmentDescriptorSchema)
+  .max(MAX_ATTACHMENTS_PER_MESSAGE)
+  .refine(
+    (attachments) => new Set(attachments.map((attachment) => attachment.id)).size === attachments.length,
+    "attachments must not contain duplicate ids",
+  );
+
 const PendingSessionMessageSchema = z.strictObject({
   id: z.string().trim().min(1),
   clientRequestId: z.string().trim().min(1),
   content: z.string(),
+  attachments: AttachmentDescriptorListSchema,
   source: z.enum(["user", "automation"]),
   state: z.enum(["queued", "steering"]),
   revision: z.number().int().nonnegative(),
@@ -327,6 +353,13 @@ const PendingSessionMessageSchema = z.strictObject({
   claimedAt: z.number().int().nonnegative().optional(),
   requestedModelSelection: RequestedModelSelectionSchema,
 }).superRefine((message, ctx) => {
+  if (message.content.trim().length === 0 && message.attachments.length === 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["content"],
+      message: "Pending message requires text or attachments",
+    });
+  }
   const targetFieldsPresent = message.targetExecutionId !== undefined
     && message.targetRunOrdinal !== undefined
     && message.targetModelAudit !== undefined
@@ -606,6 +639,14 @@ const RecoveryNoticePartSchema = z.strictObject({
   completedAt: z.number().optional(),
 });
 
+const AttachmentPartSchema = z.strictObject({
+  type: z.literal("attachment"),
+  id: z.string(),
+  attachment: AttachmentDescriptorSchema,
+  createdAt: z.number(),
+  completedAt: z.number().optional(),
+});
+
 const StoredPartSchema = z.discriminatedUnion("type", [
   TextPartSchema,
   ReasoningPartSchema,
@@ -613,6 +654,7 @@ const StoredPartSchema = z.discriminatedUnion("type", [
   CompactionPartSchema,
   SystemNoticePartSchema,
   RecoveryNoticePartSchema,
+  AttachmentPartSchema,
   GoalNoticePartSchema,
 ]);
 
@@ -638,20 +680,38 @@ const StoredMessageSchema = z.strictObject({
   if (message.role === "assistant" && message.modelAudit !== undefined) {
     ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Assistant messages cannot carry modelAudit" });
   }
-  if (message.role === "user" && message.parts.some((part) => part.type === "text")) {
+  const attachmentParts = message.parts.filter((part) => part.type === "attachment");
+  if (attachmentParts.length > 0) {
+    if (message.role !== "user") {
+      ctx.addIssue({ code: "custom", path: ["parts"], message: "Assistant messages cannot carry attachments" });
+    }
+    if (attachmentParts.length > MAX_ATTACHMENTS_PER_MESSAGE
+      || new Set(attachmentParts.map((part) => part.attachment.id)).size !== attachmentParts.length) {
+      ctx.addIssue({ code: "custom", path: ["parts"], message: "Canonical attachment ids must be unique and within the message limit" });
+    }
+  }
+  const hasCanonicalUserInput = message.role === "user"
+    && message.parts.some((part) => part.type === "text" || part.type === "attachment");
+  if (hasCanonicalUserInput) {
     if (message.executionId === undefined || message.runOrdinal === undefined) {
       ctx.addIssue({
         code: "custom",
         path: ["executionId"],
-        message: "Canonical user text must carry execution provenance",
+        message: "Canonical user input must carry execution provenance",
       });
     }
     if (message.modelAudit === undefined) {
       ctx.addIssue({
         code: "custom",
         path: ["modelAudit"],
-        message: "Canonical user text must carry modelAudit",
+        message: "Canonical user input must carry modelAudit",
       });
+    }
+  }
+  if (message.role === "user" && message.clientRequestId !== undefined) {
+    const hasText = message.parts.some((part) => part.type === "text" && part.text.trim().length > 0);
+    if (!hasText && attachmentParts.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["parts"], message: "Canonical user input requires text or attachments" });
     }
   }
   const goalNotices = message.parts.filter((part) => part.type === "goal-notice");

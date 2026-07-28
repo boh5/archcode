@@ -50,6 +50,7 @@ describe("SessionEventBridge", () => {
         id: "message-1",
         clientRequestId: "request-1",
         content: "queued while idle",
+        attachments: [],
         source: "user",
         state: "queued",
         revision: 0,

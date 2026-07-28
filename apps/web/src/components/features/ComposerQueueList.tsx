@@ -22,6 +22,7 @@ import { getWebSessionStore, useSessionStore, type WebSessionStoreState } from "
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
 import { ActivityArc } from "../primitives/ActivityArc";
 import { StatusGlyph } from "../primitives/StatusGlyph";
+import { AttachmentChip } from "../primitives/AttachmentChip";
 
 type LocalSendingMessage = WebSessionStoreState["localSendingMessages"][number];
 
@@ -139,7 +140,10 @@ function DurableQueueRow({
           <StatusGlyph kind="pending" label="Queued" size={12} /> Queued
         </span>
       )}
-      <span className="min-w-0 truncate text-[12px] leading-5 text-text-secondary" title={message.content}>{message.content}</span>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[12px] leading-5 text-text-secondary">
+        {message.content && <span className="min-w-0 truncate" title={message.content}>{message.content}</span>}
+        {message.attachments.map((attachment) => <AttachmentChip key={attachment.id} attachment={attachment} />)}
+      </div>
       <span
         className={`max-w-[240px] truncate text-[11px] text-text-tertiary max-[560px]:max-w-16 ${invalidationLabel ? "text-warning" : ""}`}
         data-testid={invalidationLabel ? `pending-model-invalidation-${message.id}` : `pending-requested-model-${message.id}`}
@@ -203,7 +207,7 @@ function DurableQueueRow({
               <DialogButton disabled={editMessage.isPending} onClick={() => setEditing(false)}>Cancel</DialogButton>
               <DialogButton
                 primary
-                disabled={!nextDraft || nextDraft === message.content || editMessage.isPending}
+                disabled={(!nextDraft && message.attachments.length === 0) || nextDraft === message.content || editMessage.isPending}
                 onClick={() => editMessage.mutate({
                   slug,
                   sessionId,
@@ -232,6 +236,7 @@ function LocalQueueRow({ message, slug, sessionId }: { message: LocalSendingMess
         slug,
         sessionId,
         content: message.content,
+        attachmentIds: message.attachments.map((attachment) => attachment.id),
         clientRequestId: message.clientRequestId,
         requestedModelSelection: message.requestedModelSelection,
       },
@@ -269,7 +274,10 @@ function LocalQueueRow({ message, slug, sessionId }: { message: LocalSendingMess
           <LoaderCircle aria-hidden="true" className="animate-activity" size={12} /> Sending
         </span>
       )}
-      <span className="min-w-0 truncate text-xs text-text-secondary" title={message.content}>{message.content}</span>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-text-secondary">
+        {message.content && <span className="min-w-0 truncate" title={message.content}>{message.content}</span>}
+        {message.attachments.map((attachment) => <AttachmentChip key={attachment.id} attachment={attachment} />)}
+      </div>
       <span className="max-w-[240px] truncate text-[11px] text-text-tertiary max-[560px]:max-w-16" data-testid={`local-requested-model-${message.clientRequestId}`} title={selectionLabel(message.requestedModelSelection.selection)}>
         {selectionLabel(message.requestedModelSelection.selection)}
       </span>

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  AttachmentDescriptor,
   SessionCommandInputReceipt,
   SessionInputReceipt,
   SessionMessageInputReceipt,
@@ -11,6 +12,7 @@ import type {
   RequestedModelSelection,
   SessionExecutionOrigin,
 } from "@archcode/protocol";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "@archcode/protocol";
 import type { SessionStoreState } from "../store/types";
 
 export interface SessionInputDurableMutation<T> {
@@ -29,6 +31,14 @@ export interface SessionInputStorePort {
     workspaceRoot: string,
     mutate: (state: Readonly<SessionStoreState>) => SessionInputDurableMutation<T>,
   ): Promise<T>;
+}
+
+export interface SessionAttachmentDescriptorResolver {
+  resolveDescriptors(input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly attachmentIds: readonly string[];
+  }): Promise<readonly AttachmentDescriptor[]>;
 }
 
 export type SessionInputConflictReason =
@@ -99,9 +109,14 @@ export interface ResolvedSessionInputSnapshot {
 
 export class SessionInputService {
   readonly #store: SessionInputStorePort;
+  readonly #attachments: SessionAttachmentDescriptorResolver;
 
-  constructor(store: SessionInputStorePort) {
+  constructor(
+    store: SessionInputStorePort,
+    attachments: SessionAttachmentDescriptorResolver,
+  ) {
     this.#store = store;
+    this.#attachments = attachments;
   }
 
   async getPendingMessages(sessionId: string, workspaceRoot: string): Promise<PendingSessionMessage[]> {
@@ -142,7 +157,7 @@ export class SessionInputService {
     );
     return receipt === undefined
       ? undefined
-      : replayForReceipt(state, receipt, sessionInputFingerprint(input.source, input.text, input.requestedModelSelection));
+      : replayForReceipt(state, receipt, sessionInputFingerprint(input.source, input.text, [], input.requestedModelSelection));
   }
 
   async claimCommand(input: {
@@ -155,7 +170,7 @@ export class SessionInputService {
   }): Promise<CommandRequestClaim> {
     assertNonEmpty(input.text, "command text");
     assertNonEmpty(input.clientRequestId, "clientRequestId");
-    const requestFingerprint = sessionInputFingerprint(input.source, input.text, input.requestedModelSelection);
+    const requestFingerprint = sessionInputFingerprint(input.source, input.text, [], input.requestedModelSelection);
     return await this.#store.commitDurableSessionMutation<CommandRequestClaim>(input.sessionId, input.workspaceRoot, (state) => {
       assertRootSession(state);
       const existing = state.inputRequestReceipts.find(
@@ -221,6 +236,7 @@ export class SessionInputService {
         id: messageId,
         clientRequestId: input.clientRequestId,
         content: input.text,
+        attachments: [],
         source: input.source,
         state: "queued",
         revision: 0,
@@ -279,14 +295,50 @@ export class SessionInputService {
     sessionId: string;
     workspaceRoot: string;
     text: string;
+    attachmentIds: readonly string[];
     clientRequestId: string;
     source: SessionMessageSource;
     messageId?: string;
     requestedModelSelection: RequestedModelSelection;
   }): Promise<MessageAcceptance> {
-    assertNonEmpty(input.text, "message text");
+    assertAttachmentIds(input.attachmentIds);
+    assertMessageContent(input.text, input.attachmentIds);
     assertNonEmpty(input.clientRequestId, "clientRequestId");
-    const requestFingerprint = sessionInputFingerprint(input.source, input.text, input.requestedModelSelection);
+    const requestFingerprint = sessionInputFingerprint(
+      input.source,
+      input.text,
+      input.attachmentIds,
+      input.requestedModelSelection,
+    );
+
+    const replay = await this.#store.commitDurableSessionMutation<MessageAcceptance | undefined>(
+      input.sessionId,
+      input.workspaceRoot,
+      (state) => {
+        assertRootSession(state);
+        const existingReceipt = state.inputRequestReceipts.find(
+          (receipt) => receipt.clientRequestId === input.clientRequestId,
+        );
+        if (existingReceipt === undefined) return { result: undefined };
+        if (existingReceipt.requestFingerprint !== requestFingerprint || existingReceipt.kind !== "message") {
+          throw new SessionInputConflictError(
+            "idempotency",
+            `clientRequestId ${input.clientRequestId} was already used for different input`,
+          );
+        }
+        return { result: acceptanceForMessageReceipt(state, existingReceipt) };
+      },
+    );
+    if (replay !== undefined) return replay;
+
+    const attachments = copyAndValidateResolvedAttachments(
+      input.attachmentIds,
+      await this.#attachments.resolveDescriptors({
+        workspaceRoot: input.workspaceRoot,
+        rootSessionId: input.sessionId,
+        attachmentIds: input.attachmentIds,
+      }),
+    );
 
     return await this.#store.commitDurableSessionMutation(
       input.sessionId,
@@ -319,6 +371,7 @@ export class SessionInputService {
           id: messageId,
           clientRequestId: input.clientRequestId,
           content: input.text,
+          attachments,
           source: input.source,
           state: "queued",
           revision: 0,
@@ -355,10 +408,16 @@ export class SessionInputService {
     expectedRevision: number;
     text: string;
   }): Promise<PendingSessionMessage> {
-    assertNonEmpty(input.text, "message text");
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
       assertRootSession(state);
       const current = requireQueuedMessage(state, input.messageId, input.expectedRevision);
+      if (input.text.trim().length === 0 && current.attachments.length === 0) {
+        throw new SessionInputConflictError(
+          "state",
+          `Message ${current.id} requires text because it has no attachments`,
+          pendingConflictProjection(current),
+        );
+      }
       const updatedAt = nextSessionTimestamp(state);
       const message: PendingSessionMessage = {
         ...current,
@@ -514,6 +573,7 @@ export class SessionInputService {
         id: messageId,
         clientRequestId: clientRequestId ?? `direct:${messageId}`,
         content: input.text,
+        attachments: [],
         source: input.source ?? "user",
         state: "queued",
         revision: 0,
@@ -534,7 +594,7 @@ export class SessionInputService {
         kind: "message",
         clientRequestId,
         messageId,
-        requestFingerprint: sessionInputFingerprint(input.source ?? "user", input.text, input.requestedModelSelection),
+        requestFingerprint: sessionInputFingerprint(input.source ?? "user", input.text, [], input.requestedModelSelection),
         status: "canonical" as const,
         requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
       };
@@ -778,13 +838,22 @@ function toCanonicalMessage(
   return {
     id: pending.id,
     role: "user",
-    parts: [{
-      type: "text",
-      id: `${pending.id}:text`,
-      text: pending.content,
-      createdAt: pending.acceptedAt,
-      completedAt,
-    }],
+    parts: [
+      {
+        type: "text",
+        id: `${pending.id}:text`,
+        text: pending.content,
+        createdAt: pending.acceptedAt,
+        completedAt,
+      },
+      ...pending.attachments.map((attachment) => ({
+        type: "attachment" as const,
+        id: `${pending.id}:attachment:${attachment.id}`,
+        attachment: { ...attachment },
+        createdAt: pending.acceptedAt,
+        completedAt,
+      })),
+    ],
     createdAt: pending.acceptedAt,
     completedAt,
     executionId,
@@ -912,12 +981,13 @@ function replaceExecutingCommandReceipt(
   return receipts.map((receipt) => receipt === current ? replace(current) : receipt);
 }
 
-function sessionInputFingerprint(
+export function sessionInputFingerprint(
   source: SessionMessageSource,
   text: string,
+  attachmentIds: readonly string[],
   requested: RequestedModelSelection,
 ): string {
-  return createHash("sha256")
+  const hash = createHash("sha256")
     .update(source)
     .update("\0")
     .update(text)
@@ -927,16 +997,55 @@ function sessionInputFingerprint(
     .update(requested.selection.model)
     .update("\0")
     .update(requested.selection.variant ?? "")
-    .digest("hex");
+    .update("\0");
+  for (const attachmentId of attachmentIds) {
+    hash.update(attachmentId).update("\0");
+  }
+  return hash.digest("hex");
 }
 
 function assertNonEmpty(value: string, field: string): void {
   if (value.trim().length === 0) throw new TypeError(`${field} must not be empty`);
 }
 
+function assertMessageContent(
+  text: string,
+  attachments: readonly unknown[],
+): void {
+  if (text.trim().length === 0 && attachments.length === 0) {
+    throw new TypeError("message requires text or attachments");
+  }
+}
+
+function assertAttachmentIds(attachmentIds: readonly string[]): void {
+  if (attachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    throw new TypeError(`attachmentIds must contain at most ${MAX_ATTACHMENTS_PER_MESSAGE} ids`);
+  }
+  if (new Set(attachmentIds).size !== attachmentIds.length) {
+    throw new TypeError("attachmentIds must not contain duplicates");
+  }
+  for (const id of attachmentIds) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      throw new TypeError(`Invalid attachment id: ${id}`);
+    }
+  }
+}
+
+function copyAndValidateResolvedAttachments(
+  attachmentIds: readonly string[],
+  descriptors: readonly AttachmentDescriptor[],
+): AttachmentDescriptor[] {
+  if (descriptors.length !== attachmentIds.length
+    || descriptors.some((descriptor, index) => descriptor.id !== attachmentIds[index])) {
+    throw new Error("Attachment resolver returned descriptors that do not match the requested order");
+  }
+  return descriptors.map((descriptor) => ({ ...descriptor }));
+}
+
 function copyPendingMessage(message: PendingSessionMessage): PendingSessionMessage {
   return {
     ...message,
+    attachments: message.attachments.map((attachment) => ({ ...attachment })),
     requestedModelSelection: copyRequestedSelection(message.requestedModelSelection),
     ...(message.targetModelAudit === undefined
       ? {}
@@ -947,7 +1056,9 @@ function copyPendingMessage(message: PendingSessionMessage): PendingSessionMessa
 function copySessionMessage(message: SessionMessage): SessionMessage {
   return {
     ...message,
-    parts: message.parts.map((part) => ({ ...part })),
+    parts: message.parts.map((part) => part.type === "attachment"
+      ? { ...part, attachment: { ...part.attachment } }
+      : { ...part }),
     ...(message.modelAudit === undefined ? {} : { modelAudit: copyModelAudit(message.modelAudit) }),
   };
 }

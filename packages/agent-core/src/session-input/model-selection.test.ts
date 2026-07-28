@@ -14,6 +14,7 @@ import {
   SessionModelSelectionService,
 } from "./model-selection-service";
 import { SessionInputService } from "./service";
+import { EMPTY_SESSION_ATTACHMENT_RESOLVER } from "./test-helpers";
 
 const WORKSPACE = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const SESSION_ID = "00000000-0000-4000-8000-000000000101";
@@ -45,7 +46,7 @@ describe("Session model selection protocol", () => {
   beforeEach(async () => {
     await mkdir(WORKSPACE, { recursive: true });
     manager = new SessionStoreManager({ logger: silentLogger });
-    input = new SessionInputService(manager);
+    input = new SessionInputService(manager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     selections = new SessionModelSelectionService(manager);
     await manager.createSessionFile(WORKSPACE, { agentName: "lead" }, SESSION_ID);
   });
@@ -171,6 +172,7 @@ describe("Session model selection protocol", () => {
         sessionId: SESSION_ID,
         workspaceRoot: WORKSPACE,
         text,
+        attachmentIds: [],
         clientRequestId,
         source: "user",
         requestedModelSelection: requested,
@@ -180,6 +182,7 @@ describe("Session model selection protocol", () => {
       sessionId: SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "A",
+      attachmentIds: [],
       clientRequestId: "request-a",
       source: "user",
       requestedModelSelection: overrideRequested,
@@ -210,6 +213,7 @@ describe("Session model selection protocol", () => {
       sessionId: SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "A",
+      attachmentIds: [],
       clientRequestId: "request-a",
       source: "user",
       requestedModelSelection: requested,

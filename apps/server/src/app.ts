@@ -16,6 +16,7 @@ import { createFilesRoutes } from "./routes/files";
 import { createGlobalEventsRoutes } from "./routes/global-events";
 import { createHitlRoutes } from "./routes/hitl";
 import { createAutomationsRoutes } from "./routes/automations";
+import { createAttachmentsRoutes } from "./routes/attachments";
 import { createMessagesRoutes } from "./routes/messages";
 import { createMcpRoutes } from "./routes/mcp";
 import { createProjectsRoutes } from "./routes/projects";
@@ -65,6 +66,7 @@ export function createRuntimeApp(
   const todos = createTodosRoutes(serverRuntime);
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
+  const attachments = createAttachmentsRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus, {
     streamLease: options.globalEventStreamLease,
     initialEvents: async () => {
@@ -90,6 +92,7 @@ export function createRuntimeApp(
   app.route("/api/projects", projectHitl);
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
+  app.route("/api/projects/:slug/sessions/:sessionId/attachments", attachments);
   app.route("/api/projects/:slug/sessions/:sessionId/compression", compression);
   app.route("/api/projects/:slug/sessions/:sessionId/tool-outputs", toolOutputs);
   app.route("/api/events", globalEvents);

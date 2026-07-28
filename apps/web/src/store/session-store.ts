@@ -21,6 +21,7 @@ import type {
   SessionNextModelSelection,
   SessionProjection,
   ExecutionLifecycleEvent,
+  AttachmentDescriptor,
 } from "@archcode/protocol";
 import { createClientUuid } from "../lib/client-uuid";
 
@@ -59,6 +60,7 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
   localSendingMessages: Array<{
     clientRequestId: string;
     content: string;
+    attachments: AttachmentDescriptor[];
     createdAt: number;
     status: "sending" | "retryable";
     requestedModelSelection: RequestedModelSelection;
@@ -87,6 +89,7 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
   addLocalSendingMessage: (input: {
     clientRequestId: string;
     content: string;
+    attachments: AttachmentDescriptor[];
     requestedModelSelection: RequestedModelSelection;
     createdAt?: number;
   }) => void;
@@ -496,6 +499,7 @@ export function createWebSessionStore(
     addLocalSendingMessage: ({
       clientRequestId,
       content,
+      attachments,
       requestedModelSelection,
       createdAt = Date.now(),
     }) => {
@@ -510,6 +514,7 @@ export function createWebSessionStore(
                 {
                   clientRequestId,
                   content,
+                  attachments,
                   requestedModelSelection,
                   createdAt,
                   status: "sending",

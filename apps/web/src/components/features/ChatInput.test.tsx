@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ModelRuntimeCatalog, SessionFamilyActivity, SessionNextModelSelection } from "@archcode/protocol";
+import { ApiError } from "../../api/client";
 
 globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
   callback(0);
@@ -53,7 +54,17 @@ const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?:
 const setState = mock((_value: unknown) => {});
 let hookCursor = 0;
 const stateValues: unknown[] = [];
+let refCursor = 0;
+const refValues: Array<{ current: unknown }> = [];
 const postMessageMutate = mock((_variables: unknown, _options?: unknown) => {});
+let uploadHandler = async (input: { attachmentId: string; file: File }) => ({
+  id: input.attachmentId,
+  name: input.file.name,
+  mediaType: input.file.type || "application/octet-stream",
+  sizeBytes: input.file.size,
+  kind: input.file.type.startsWith("image/") ? "image" as const : "file" as const,
+});
+const uploadSessionAttachment = mock((input: { attachmentId: string; file: File }) => uploadHandler(input));
 const patchModelSelectionMutate = mock((_variables: unknown, _options?: unknown) => {});
 const stopSessionMutate = mock((_variables: unknown) => {});
 const addLocalSendingMessage = mock((_input: unknown) => {});
@@ -70,7 +81,11 @@ mock.module("react", () => ({
   useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
   useEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
   useMemo: <T,>(factory: () => T) => factory(),
-  useRef: <T,>(initial: T) => ({ current: initial }),
+  useRef: <T,>(initial: T) => {
+    const index = refCursor++;
+    if (!(index in refValues)) refValues[index] = { current: initial };
+    return refValues[index] as { current: T };
+  },
   useState: <T,>(initial: T): [T, (value: T | ((previous: T) => T)) => void] => {
     const index = hookCursor++;
     if (!(index in stateValues)) stateValues[index] = initial;
@@ -91,13 +106,14 @@ mock.module("react/jsx-dev-runtime", () => ({ Fragment, jsxDEV, jsx: jsxDEV, jsx
 
 const Icon = (props: Record<string, unknown>) => jsxDEV("svg", props);
 mock.module("lucide-react", () => ({
-  ArrowUp: Icon, Ban: Icon, Calendar: Icon, Check: Icon, ChevronDown: Icon, Circle: Icon,
+  ArrowUp: Icon, Ban: Icon, Calendar: Icon, Check: Icon, ChevronDown: Icon, Circle: Icon, File: Icon, FilePlus: Icon, Image: Icon,
   CircleAlert: Icon, CircleCheck: Icon, CircleDashed: Icon,
   CirclePause: Icon, CircleStop: Icon, CircleX: Icon, Clock3: Icon, Gauge: Icon,
-  Loader2: Icon, LoaderCircle: Icon, MessageCircleQuestion: Icon, Search: Icon, Square: Icon, TriangleAlert: Icon,
+  Loader2: Icon, LoaderCircle: Icon, MessageCircleQuestion: Icon, Search: Icon, Square: Icon, TriangleAlert: Icon, X: Icon,
 }));
 
 mock.module("../../api/mutations", () => ({
+  uploadSessionAttachment,
   usePostMessage: () => ({ mutate: postMessageMutate, isPending: false }),
   usePatchSessionModelSelection: () => ({ mutate: patchModelSelectionMutate, isPending: false }),
   useStopSessionFamily: () => ({ mutate: stopSessionMutate, isPending: stopPending }),
@@ -134,6 +150,7 @@ mock.module("../../store/session-store", () => ({
 const { ChatInput } = await import("./ChatInput");
 
 function renderChatInput() {
+  refCursor = 0;
   return ChatInput({
     slug: "proj",
     sessionId: "root-1",
@@ -141,6 +158,24 @@ function renderChatInput() {
     hitlReady,
     hasPendingHitl: pendingHitlCount > 0,
   });
+}
+
+function rerenderChatInput() {
+  hookCursor = 0;
+  return renderChatInput();
+}
+
+function fileInputOf(tree: unknown): ElementLike {
+  return findAll(tree, (element) => element.props?.["data-testid"] === "composer-file-input")[0]!;
+}
+
+function selectFiles(tree: unknown, files: File[]): void {
+  const target = { files, value: "selected" };
+  (fileInputOf(tree).props?.onChange as (event: { target: typeof target }) => void)({ target });
+}
+
+function composerCardOf(tree: unknown): ElementLike {
+  return findAll(tree, (element) => element.props?.["data-testid"] === "composer-card")[0]!;
 }
 
 describe("ChatInput runtime controls", () => {
@@ -154,6 +189,16 @@ describe("ChatInput runtime controls", () => {
     modelCatalog = { revision: "m1", providers: [], profileDefaults: { principal: { model: "test:model" }, deep: { model: "test:model" }, fast: { model: "test:model" } } };
     hookCursor = 0;
     stateValues.length = 0;
+    refCursor = 0;
+    refValues.length = 0;
+    uploadHandler = async (input) => ({
+      id: input.attachmentId,
+      name: input.file.name,
+      mediaType: input.file.type || "application/octet-stream",
+      sizeBytes: input.file.size,
+      kind: input.file.type.startsWith("image/") ? "image" : "file",
+    });
+    uploadSessionAttachment.mockClear();
     setState.mockClear();
     postMessageMutate.mockClear();
     patchModelSelectionMutate.mockClear();
@@ -163,7 +208,7 @@ describe("ChatInput runtime controls", () => {
     setLocalSendingMessageStatus.mockClear();
   });
 
-  test("renders one unified composer card without a fake attachment control", () => {
+  test("renders one unified composer card with a real attachment control", () => {
     const tree = renderChatInput();
     const card = findAll(tree, (element) => element.props?.["data-testid"] === "composer-card")[0];
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
@@ -174,8 +219,215 @@ describe("ChatInput runtime controls", () => {
     expect(card?.props?.className).toContain("focus-within:border-brand");
     expect(textarea?.props?.className).toContain("border-0");
     expect(textarea?.props?.className).toContain("bg-transparent");
-    expect(findAll(tree, (element) => element.props?.title === "Attach file")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.props?.title === "Attach file")).toHaveLength(1);
+    expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-file-input")).toHaveLength(1);
     expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(1);
+  });
+
+  test("accepts a selected file and enables an attachment-only send", () => {
+    activity = "idle";
+    hitlReady = true;
+    let tree = renderChatInput();
+    const input = findAll(tree, (element) => element.props?.["data-testid"] === "composer-file-input")[0];
+    const target = { files: [new File(["draft"], "draft.txt", { type: "text/plain" })], value: "selected" };
+
+    (input?.props?.onChange as (event: { target: typeof target }) => void)({ target });
+    hookCursor = 0;
+    tree = renderChatInput();
+
+    expect(target.value).toBe("");
+    expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-attachments")).toHaveLength(1);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")[0]?.props?.disabled).toBe(false);
+  });
+
+  test("rejects a dropped folder without adding any of its files", () => {
+    activity = "idle";
+    hitlReady = true;
+    let tree = renderChatInput();
+    const preventDefault = mock(() => {});
+
+    (composerCardOf(tree).props?.onDrop as (event: unknown) => void)({
+      preventDefault,
+      dataTransfer: {
+        items: [{ webkitGetAsEntry: () => ({ isDirectory: true }) }],
+        files: [new File(["nested"], "nested.txt")],
+      },
+    });
+    tree = rerenderChatInput();
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-attachments")).toHaveLength(0);
+    expect(textContent(findAll(tree, (element) => element.props?.role === "alert")[0])).toContain("Folders are not supported");
+  });
+
+  test("adds ordinary multi-file drops in browser order", () => {
+    activity = "idle";
+    hitlReady = true;
+    let tree = renderChatInput();
+    const files = [new File(["a"], "a.txt"), new File(["bb"], "b.txt")];
+
+    (composerCardOf(tree).props?.onDrop as (event: unknown) => void)({
+      preventDefault: mock(() => {}),
+      dataTransfer: {
+        items: files.map(() => ({ webkitGetAsEntry: () => ({ isDirectory: false }) })),
+        files,
+      },
+    });
+    tree = rerenderChatInput();
+
+    const removeLabels = findAll(tree, (element) => String(element.props?.["aria-label"] ?? "").startsWith("Remove "))
+      .map((element) => element.props?.["aria-label"]);
+    expect(removeLabels).toEqual(["Remove a.txt", "Remove b.txt"]);
+  });
+
+  test("adds clipboard images and prevents the browser paste fallback", () => {
+    activity = "idle";
+    hitlReady = true;
+    let tree = renderChatInput();
+    const preventDefault = mock(() => {});
+    const image = new File(["png"], "clipboard.png", { type: "image/png" });
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0]!;
+
+    (textarea.props?.onPaste as (event: unknown) => void)({
+      preventDefault,
+      clipboardData: { files: [image] },
+    });
+    tree = rerenderChatInput();
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(findAll(tree, (element) => element.type === "img")).toHaveLength(1);
+    expect(findAll(tree, (element) => element.props?.["aria-label"] === "Remove clipboard.png")).toHaveLength(1);
+  });
+
+  test("reorders and removes draft attachments before upload", () => {
+    activity = "idle";
+    hitlReady = true;
+    let tree = renderChatInput();
+    selectFiles(tree, [
+      new File(["a"], "a.txt"),
+      new File(["b"], "b.txt"),
+      new File(["c"], "c.txt"),
+    ]);
+    tree = rerenderChatInput();
+
+    (findAll(tree, (element) => element.props?.["aria-label"] === "Move c.txt earlier")[0]?.props?.onClick as () => void)();
+    tree = rerenderChatInput();
+    (findAll(tree, (element) => element.props?.["aria-label"] === "Remove a.txt")[0]?.props?.onClick as () => void)();
+    tree = rerenderChatInput();
+
+    const removeLabels = findAll(tree, (element) => String(element.props?.["aria-label"] ?? "").startsWith("Remove "))
+      .map((element) => element.props?.["aria-label"]);
+    expect(removeLabels).toEqual(["Remove c.txt", "Remove b.txt"]);
+  });
+
+  test("uploads sequentially in draft order, then posts the ordered ids once", async () => {
+    activity = "idle";
+    hitlReady = true;
+    const uploadOrder: string[] = [];
+    uploadHandler = async (input) => {
+      uploadOrder.push(input.file.name);
+      return {
+        id: input.attachmentId,
+        name: input.file.name,
+        mediaType: "text/plain",
+        sizeBytes: input.file.size,
+        kind: "file",
+      };
+    };
+    let tree = renderChatInput();
+    selectFiles(tree, [new File(["first"], "first.txt"), new File(["second"], "second.txt")]);
+    tree = rerenderChatInput();
+
+    await (findAll(tree, (element) => element.props?.title === "Send message")[0]?.props?.onClick as () => Promise<void>)();
+
+    expect(uploadOrder).toEqual(["first.txt", "second.txt"]);
+    expect(uploadSessionAttachment).toHaveBeenCalledTimes(2);
+    const uploadedIds = uploadSessionAttachment.mock.calls.map(([input]) => input.attachmentId);
+    expect(postMessageMutate).toHaveBeenCalledTimes(1);
+    expect(postMessageMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "", attachmentIds: uploadedIds }),
+      expect.any(Object),
+    );
+  });
+
+  test("retries a failed upload from the full File with the same attachment id", async () => {
+    activity = "idle";
+    hitlReady = true;
+    let attempts = 0;
+    uploadHandler = async (input) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("connection reset");
+      return {
+        id: input.attachmentId,
+        name: input.file.name,
+        mediaType: "application/octet-stream",
+        sizeBytes: input.file.size,
+        kind: "file",
+      };
+    };
+    const file = new File(["complete-body"], "retry.bin");
+    let tree = renderChatInput();
+    selectFiles(tree, [file]);
+    tree = rerenderChatInput();
+    await (findAll(tree, (element) => element.props?.title === "Send message")[0]?.props?.onClick as () => Promise<void>)();
+    tree = rerenderChatInput();
+
+    (findAll(tree, (element) => element.type === "button" && textContent(element) === "Retry")[0]?.props?.onClick as () => void)();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(uploadSessionAttachment).toHaveBeenCalledTimes(2);
+    const [first, second] = uploadSessionAttachment.mock.calls.map(([input]) => input);
+    expect(second.attachmentId).toBe(first.attachmentId);
+    expect(first.file).toBe(file);
+    expect(second.file).toBe(file);
+  });
+
+  test("shows all three recovery options for a server 413", async () => {
+    activity = "idle";
+    hitlReady = true;
+    uploadHandler = async () => {
+      throw new ApiError({ code: "ATTACHMENT_TOO_LARGE", message: "too large", status: 413 });
+    };
+    let tree = renderChatInput();
+    selectFiles(tree, [new File(["small-client-file"], "server-rejected.bin")]);
+    tree = rerenderChatInput();
+    await (findAll(tree, (element) => element.props?.title === "Send message")[0]?.props?.onClick as () => Promise<void>)();
+    tree = rerenderChatInput();
+    const notice = textContent(findAll(tree, (element) => element.props?.role === "alert")[0]);
+
+    expect(notice).toContain("Compress");
+    expect(notice).toContain("split");
+    expect(notice).toContain("workspace");
+    expect(notice).toContain("path");
+  });
+
+  test("blocks attachment plus slash command from menu click and Enter", async () => {
+    activity = "idle";
+    hitlReady = true;
+    let tree = renderChatInput();
+    selectFiles(tree, [new File(["data"], "context.txt")]);
+    tree = rerenderChatInput();
+    let textarea = findAll(tree, (element) => element.type === "textarea")[0]!;
+    (textarea.props?.onChange as (event: unknown) => void)({ target: { value: "/compact" } });
+    tree = rerenderChatInput();
+
+    const command = findAll(tree, (element) => element.type === "button" && textContent(element).includes("/compact"))[0]!;
+    (command.props?.onClick as () => void)();
+    tree = rerenderChatInput();
+    textarea = findAll(tree, (element) => element.type === "textarea")[0]!;
+    (textarea.props?.onKeyDown as (event: unknown) => void)({
+      key: "Enter",
+      shiftKey: false,
+      nativeEvent: { isComposing: false },
+      preventDefault: mock(() => {}),
+    });
+    await Promise.resolve();
+    tree = rerenderChatInput();
+
+    expect(uploadSessionAttachment).not.toHaveBeenCalled();
+    expect(postMessageMutate).not.toHaveBeenCalled();
+    expect(textContent(findAll(tree, (element) => element.props?.role === "alert")[0])).toContain("Slash commands can only be sent as plain text");
   });
 
   test("shows the resolved Agent default before first send and separates running from next", () => {

@@ -81,6 +81,11 @@ export interface ToolExecutionContext {
   sessionGoalService?: SessionGoalService;
   /** Current Session execution directory. This may be a worktree and is independent of the canonical project context. */
   readonly cwd: string;
+  /**
+   * Canonical content files for attachments already committed by this root Session family.
+   * Only file_read and finite Bash read analysis may use this exact-path exception.
+   */
+  readonly attachmentReadPaths?: ReadonlySet<string>;
   /** Registry-owned capture for artifact-policy tools. Descriptors may only write; Registry owns finalize/abort. */
   outputCapture?: ToolOutputCapture;
   /** Bash-only transient projection. Registry always disposes it before returning a terminal outcome. */

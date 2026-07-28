@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { toModelMessagesFromStoredMessages } from "./projection";
+import {
+  projectModelMessagesFromStoredMessages,
+  renderAttachmentMarker,
+  toModelMessagesFromStoredMessages,
+} from "./projection";
 import type { CompactionPart, StoredMessage, StoredPart, SystemNoticePart } from "./types";
 import {
   SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH,
@@ -36,6 +40,25 @@ function reasoningPart(text: string, completed = true): StoredPart {
     text,
     createdAt: idCounter,
     ...(completed ? { completedAt: idCounter + 1 } : {}),
+  };
+}
+
+function attachmentPart(
+  name = "diagram<&>.png",
+  id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+): StoredPart {
+  return {
+    type: "attachment",
+    id: nextId("attachment"),
+    attachment: {
+      id,
+      name,
+      mediaType: "image/png",
+      sizeBytes: 8,
+      kind: "image",
+    },
+    createdAt: idCounter,
+    completedAt: idCounter + 1,
   };
 }
 
@@ -280,6 +303,73 @@ describe("toModelMessagesFromStoredMessages", () => {
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([
       { role: "user", content: "hello" },
     ]);
+  });
+
+  test("projects escaped attachment markers with non-forgeable object-reference sidecars", () => {
+    const attachment = attachmentPart();
+    const projection = projectModelMessagesFromStoredMessages([
+      storedMessage("user", [
+        textPart("inspect"),
+        attachment,
+        textPart(" carefully"),
+      ]),
+    ]);
+
+    expect(projection.messages).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "inspect" },
+        {
+          type: "text",
+          text: [
+            "<attachment>",
+            "<id>aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa</id>",
+            "<name>diagram&lt;&amp;&gt;.png</name>",
+            "<media-type>image/png</media-type>",
+            "<size-bytes>8</size-bytes>",
+            "<kind>image</kind>",
+            "</attachment>",
+          ].join("\n"),
+        },
+        { type: "text", text: " carefully" },
+      ],
+    }]);
+    expect(projection.attachmentSlots).toHaveLength(1);
+    expect(projection.attachmentSlots[0]?.descriptor).toEqual(
+      (attachment as Extract<StoredPart, { type: "attachment" }>).attachment,
+    );
+    const content = projection.messages[0]?.content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(projection.attachmentSlots[0]?.markerPart as unknown).toBe(
+      Array.isArray(content) ? content[1] : undefined,
+    );
+    expect(renderAttachmentMarker(
+      (attachment as Extract<StoredPart, { type: "attachment" }>).attachment,
+      "/project/<private>/content",
+    )).toContain("<path>/project/&lt;private&gt;/content</path>");
+  });
+
+  test("does not produce attachment slots for compacted or DCP-covered messages", () => {
+    const compacted = storedMessage("user", [attachmentPart()], true);
+    expect(projectModelMessagesFromStoredMessages([compacted]).attachmentSlots).toEqual([]);
+
+    const oldUser: StoredMessage = {
+      ...storedMessage("user", [attachmentPart()]),
+      id: "msg-old-user",
+    };
+    const oldAssistant: StoredMessage = {
+      ...storedMessage("assistant", [textPart("old")]),
+      id: "msg-old-assistant",
+    };
+    const tail: StoredMessage = {
+      ...storedMessage("user", [textPart("tail")]),
+      id: "msg-tail",
+    };
+    const projection = projectModelMessagesFromStoredMessages(
+      [oldUser, oldAssistant, tail],
+      { compression: compressionStateForProjection() },
+    );
+    expect(projection.attachmentSlots).toEqual([]);
   });
 
   test("concatenates multiple completed user text parts in order without a separator", () => {

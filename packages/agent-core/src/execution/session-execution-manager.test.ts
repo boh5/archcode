@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   createEmptySessionStats,
   isTerminalChildSessionStatus,
+  type AttachmentDescriptor,
   type DelegationRequest,
   type SessionExecutionSuspension,
   type SessionExecutionTerminalStatus,
@@ -14,6 +15,10 @@ import type { StoreApi } from "zustand";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
 import type { AgentName } from "../agents/names";
 import { ConfiguredAgent } from "../agents/configured-agent";
+import {
+  EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+  resolveEmptyAttachmentReadPaths,
+} from "../attachments/test-helpers";
 import { buildAgentDefinition, leadAgentDefinition, exploreAgentDefinition } from "../agents/definitions";
 import { ProviderRegistry } from "../provider";
 import { ModelInfo } from "../provider/model";
@@ -47,6 +52,7 @@ import type { AgentFactory } from "../agents/factory";
 import type { AgentDefinition } from "../agents/factory-types";
 import { createEmptyCompressionState } from "../compression";
 import { SessionInputConflictError, SessionInputService } from "../session-input/service";
+import { EMPTY_SESSION_ATTACHMENT_RESOLVER } from "../session-input/test-helpers";
 import type { ArchCodeConfig, ModelConfig } from "../config";
 import type { ExecutionModelBinding } from "../models";
 import { ModelRuntime, ModelRuntimeSnapshot, ModelSelectionResolver } from "../models";
@@ -606,7 +612,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     trackSession,
     untrackSession,
     executionScopeValidator: options.executionScopeValidator ?? allowExecutionScope,
-    sessionInputService: options.sessionInputService ?? new SessionInputService(executionStoreManager),
+    sessionInputService: options.sessionInputService ?? new SessionInputService(executionStoreManager, EMPTY_SESSION_ATTACHMENT_RESOLVER),
     ...(options.deletionLifecycle === undefined ? {} : { deletionLifecycle: options.deletionLifecycle }),
     ...(options.sessionFamilyStopTimeoutMs === undefined ? {} : { sessionFamilyStopTimeoutMs: options.sessionFamilyStopTimeoutMs }),
     applyChildDependencyOutcome: options.applyChildDependencyOutcome ?? (async () => undefined),
@@ -754,7 +760,7 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "done", steps: 1 }), workspaceRoot);
     const { manager } = createManager({ [rootId]: rootAgent });
-    const service = new SessionInputService(storeManager);
+    const service = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const defaultRequest = { mode: "profile_default" as const, selection: { model: "test:model" } };
     const otherRequest = { mode: "session_override" as const, selection: { model: "test:other" } };
 
@@ -762,6 +768,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       workspaceRoot,
       text: "first",
+      attachmentIds: [],
       clientRequestId: "request-first",
       source: "user",
       requestedModelSelection: defaultRequest,
@@ -770,6 +777,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       workspaceRoot,
       text: "second",
+      attachmentIds: [],
       clientRequestId: "request-second",
       source: "user",
       requestedModelSelection: otherRequest,
@@ -908,12 +916,13 @@ describe("SessionExecutionManager", () => {
       const rootId = crypto.randomUUID();
       const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "done", steps: 1 }), workspaceRoot);
       const { manager } = createManager({ [rootId]: rootAgent });
-      const service = new SessionInputService(storeManager);
+      const service = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
       for (const [index, model] of sequence.entries()) {
         await service.acceptMessage({
           sessionId: rootId,
           workspaceRoot,
           text: `message-${index}`,
+          attachmentIds: [],
           clientRequestId: `sequence-${rootId}-${index}`,
           source: "user",
           requestedModelSelection: {
@@ -955,7 +964,7 @@ describe("SessionExecutionManager", () => {
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "done", steps: 1 }), workspaceRoot);
     const modelRuntime = makeModelRuntime(false, "test:model", "runtime-z");
     const { manager } = createManager({ [rootId]: rootAgent }, { modelRuntime });
-    const service = new SessionInputService(storeManager);
+    const service = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const requests = [
       { mode: "profile_default" as const, selection: { model: "removed:x" } },
       { mode: "session_override" as const, selection: { model: "removed:y", variant: "deep" } },
@@ -965,6 +974,7 @@ describe("SessionExecutionManager", () => {
         sessionId: rootId,
         workspaceRoot,
         text: `invalid-${index}`,
+        attachmentIds: [],
         clientRequestId: `invalid-${index}`,
         source: "user",
         requestedModelSelection,
@@ -1019,7 +1029,7 @@ describe("SessionExecutionManager", () => {
     const rootAgent = new MockAgent(rootId, gate.promise, workspaceRoot);
     const modelRuntime = makeModelRuntime(false);
     const { manager } = createManager({ [rootId]: rootAgent }, { modelRuntime });
-    const service = new SessionInputService(storeManager);
+    const service = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
@@ -1041,6 +1051,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       workspaceRoot,
       text: "different model",
+      attachmentIds: [],
       clientRequestId: "steer-other",
       source: "user",
       requestedModelSelection: {
@@ -1065,7 +1076,7 @@ describe("SessionExecutionManager", () => {
     const commandGate = deferred<void>();
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
     const { manager } = createManager({ [rootId]: rootAgent });
-    const service = new SessionInputService(storeManager);
+    const service = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     let commandCalls = 0;
 
     const first = manager.runSessionCommand({
@@ -1100,6 +1111,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       workspaceRoot,
       text: "queued during command",
+      attachmentIds: [],
       clientRequestId: "queued-during-command",
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1153,7 +1165,7 @@ describe("SessionExecutionManager", () => {
     const store = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
     const { manager } = createManager({ [rootId]: rootAgent });
-    const service = new SessionInputService(storeManager);
+    const service = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const commandStarted = deferred<void>();
     let commandSignal: AbortSignal | undefined;
     const command = manager.runSessionCommand({
@@ -1175,6 +1187,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       workspaceRoot,
       text: "B before Stop",
+      attachmentIds: [],
       clientRequestId: "queued-before-command-stop",
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1198,7 +1211,7 @@ describe("SessionExecutionManager", () => {
       coldStores,
     );
     const { manager: coldManager } = createManager({ [rootId]: coldAgent }, { storeManager: coldStores });
-    const coldService = new SessionInputService(coldStores);
+    const coldService = new SessionInputService(coldStores, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     expect(await coldManager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId: rootId }))
       .toBeUndefined();
 
@@ -1206,6 +1219,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       workspaceRoot,
       text: "D after Stop",
+      attachmentIds: [],
       clientRequestId: "queued-after-command-stop",
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1234,7 +1248,7 @@ describe("SessionExecutionManager", () => {
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
     const childAgent = new MockAgent(childId, childRun.promise, workspaceRoot);
     const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent });
-    const service = new SessionInputService(storeManager);
+    const service = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const activities: string[] = [];
     manager.subscribeSessionRuntimeChanges((change) => activities.push(change.activity));
     const childExecution = await manager.startCheckedExecution({
@@ -1249,6 +1263,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       workspaceRoot,
       text: "queued before descendant-only Stop",
+      attachmentIds: [],
       clientRequestId: "queued-before-descendant-stop",
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1413,7 +1428,7 @@ describe("SessionExecutionManager", () => {
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, firstRun.promise);
     const { manager } = createManager({ [sessionId]: agent });
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
 
     const first = await manager.startCheckedExecution({
       slug: "project",
@@ -1426,6 +1441,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "B",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1434,6 +1450,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "C",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1467,7 +1484,7 @@ describe("SessionExecutionManager", () => {
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, firstRun.promise);
     const { manager } = createManager({ [sessionId]: agent });
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
 
     const first = await manager.startCheckedExecution({
       slug: "project",
@@ -1481,6 +1498,7 @@ describe("SessionExecutionManager", () => {
         sessionId,
         workspaceRoot,
         text,
+        attachmentIds: [],
         clientRequestId: crypto.randomUUID(),
         source: "user",
         requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1500,6 +1518,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "D",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1519,7 +1538,7 @@ describe("SessionExecutionManager", () => {
   test("Stop before Queue canonicalization preserves the entire claimed batch", async () => {
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, Promise.resolve({ text: "must not run", steps: 1 }));
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const beginEntered = deferred<void>();
     const releaseBegin = deferred<void>();
     const port = inputServicePort(inputs);
@@ -1538,6 +1557,7 @@ describe("SessionExecutionManager", () => {
         sessionId,
         workspaceRoot,
         text,
+        attachmentIds: [],
         clientRequestId: crypto.randomUUID(),
         source: "user",
         requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1568,7 +1588,7 @@ describe("SessionExecutionManager", () => {
   test("captures the exact Queue prefix at the final synchronous claim", async () => {
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const validationEntered = deferred<void>();
     const releaseValidation = deferred<void>();
     const beginEntered = deferred<void>();
@@ -1599,6 +1619,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "B",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1610,6 +1631,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "C",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1620,6 +1642,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "D",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1661,7 +1684,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({ [sessionId]: agent as unknown as MockAgent }, {
       getAgent: () => agent,
     });
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
 
     const execution = await manager.startCheckedExecution({
       slug: "project",
@@ -1680,6 +1703,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "B",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1742,7 +1766,7 @@ describe("SessionExecutionManager", () => {
     const { manager } = createManager({ [sessionId]: agent as unknown as MockAgent }, {
       getAgent: () => agent,
     });
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
 
     const execution = await manager.startCheckedExecution({
       slug: "project",
@@ -1755,6 +1779,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "B",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1803,7 +1828,7 @@ describe("SessionExecutionManager", () => {
     const releaseHitlBoundary = deferred<void>();
     const commitEntered = deferred<void>();
     const releaseCommit = deferred<void>();
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const port = inputServicePort(inputs);
     const agent: Agent = {
       store,
@@ -1854,6 +1879,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "B",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1883,7 +1909,7 @@ describe("SessionExecutionManager", () => {
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, run.promise);
     const { manager } = createManager({ [sessionId]: agent });
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const execution = await manager.startCheckedExecution({
       slug: "project",
       workspaceRoot,
@@ -1895,6 +1921,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "B",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -1928,7 +1955,7 @@ describe("SessionExecutionManager", () => {
     const releaseSafePoint = deferred<void>();
     const commitEntered = deferred<void>();
     const releaseCommit = deferred<void>();
-    const inputs = new SessionInputService(storeManager);
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     const port = inputServicePort(inputs);
     const agent: Agent = {
       store,
@@ -1965,6 +1992,7 @@ describe("SessionExecutionManager", () => {
       sessionId,
       workspaceRoot,
       text: "B",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -2044,6 +2072,8 @@ describe("SessionExecutionManager", () => {
       storeManager,
       store,
       toolOutputAccess: toolRegistryFixture.createToolOutputAccess(workspaceRoot, store.getState().rootSessionId),
+      attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+      resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
       projectRoot: workspaceRoot,
       cwd: workspaceRoot,
       projectContextResolver: createTestProjectContextResolver(storeManager),
@@ -2898,7 +2928,7 @@ describe("SessionExecutionManager", () => {
       onContinuationAdmissionReleased: async () => undefined,
       resolveGoalInstanceId: async () => null,
       onExecutionSettlement: async () => undefined,
-      sessionInputService: new SessionInputService(storeManager),
+      sessionInputService: new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
       executionScopeValidator: allowExecutionScope,
@@ -2954,7 +2984,7 @@ describe("SessionExecutionManager", () => {
       onContinuationAdmissionReleased: async () => undefined,
       resolveGoalInstanceId: async () => null,
       onExecutionSettlement: async () => undefined,
-      sessionInputService: new SessionInputService(storeManager),
+      sessionInputService: new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
       executionScopeValidator: allowExecutionScope,
@@ -4350,7 +4380,19 @@ describe("SessionExecutionManager", () => {
     const executionId = "execution-steer-recovery";
     const restarted = new SessionStoreManager({ logger: silentLogger });
     const store = restarted.create(rootId, workspaceRoot, { agentName: "lead" });
-    const inputs = new SessionInputService(restarted);
+    const attachment: AttachmentDescriptor = {
+      id: crypto.randomUUID(),
+      name: "steer-recovery.txt",
+      mediaType: "text/plain",
+      sizeBytes: 17,
+      kind: "file",
+    };
+    const inputs = new SessionInputService(restarted, {
+      async resolveDescriptors({ attachmentIds }) {
+        expect(attachmentIds).toEqual([attachment.id]);
+        return [attachment];
+      },
+    });
     store.getState().append(testExecutionStart(executionId));
     const recoveryBinding = store.getState().executions[0]!.runs[0]!.binding;
     const recoveryAudit = {
@@ -4374,6 +4416,7 @@ describe("SessionExecutionManager", () => {
       sessionId: rootId,
       workspaceRoot,
       text: "Steer",
+      attachmentIds: [attachment.id],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
@@ -4470,6 +4513,12 @@ describe("SessionExecutionManager", () => {
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join(""))).toEqual(["Initial", "", "Steer"]);
+    expect(recovered.messages.at(-1)?.parts).toContainEqual(expect.objectContaining({
+      type: "attachment",
+      id: `${accepted.messageId}:attachment:${attachment.id}`,
+      attachment,
+      completedAt: settledAt,
+    }));
     expect(recovered.messages.at(-1)?.completedAt).toBe(settledAt);
     expect(recovered.executions[0]).toMatchObject({
       id: executionId,
@@ -5121,7 +5170,7 @@ describe("SessionExecutionManager", () => {
       onContinuationAdmissionReleased: async () => undefined,
       resolveGoalInstanceId: async () => null,
       onExecutionSettlement: async () => undefined,
-      sessionInputService: new SessionInputService(storeManager),
+      sessionInputService: new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER),
       loadSessionStore: async (sessionId, root) => {
         if (sessionId === rootId) {
           rootLoadEntered.resolve(undefined);

@@ -65,14 +65,44 @@ describe("file_read source pages", () => {
     expect(page.draft.kind === "source" && page.draft.nextInput).toBeUndefined();
   });
 
-  test("returns bounded structured errors and source text for binary files", async () => {
+  test("returns bounded structured errors and rejects files containing NUL anywhere", async () => {
     const missing = await fileReadTool.execute({ path: "missing.txt" }, ctx());
     expect(missing.isError).toBe(true);
     expect(inferToolErrorKindFromResult(missing)).toBe("file-not-found");
 
-    await write("binary.bin", new Uint8Array([65, 0, 66]));
+    const bytes = new Uint8Array(9 * 1024);
+    bytes.fill(65);
+    bytes[bytes.length - 1] = 0;
+    await write("binary.bin", bytes);
     const binary = await fileReadTool.execute({ path: "binary.bin" }, ctx());
-    expect(sourceDraftText(binary)).toBe("Binary file, cannot display");
+    expect(binary.isError).toBe(true);
+    expect(binary.draft.kind).toBe("text");
+    if (binary.draft.kind !== "text") throw new Error("Expected text error");
+    expect(binary.draft.text).toContain("contains a NUL byte");
+  });
+
+  test("rejects invalid UTF-8 without a NUL byte", async () => {
+    await write("invalid-utf8.txt", new Uint8Array([0x66, 0x6f, 0x80, 0x6f]));
+    const result = await fileReadTool.execute({ path: "invalid-utf8.txt" }, ctx());
+    expect(result.isError).toBe(true);
+    expect(result.draft.kind).toBe("text");
+    if (result.draft.kind !== "text") throw new Error("Expected text error");
+    expect(result.draft.text).toContain("not valid UTF-8 text");
+  });
+
+  test("accepts exactly 10 MiB and rejects one byte more", async () => {
+    const atLimitBytes = new Uint8Array(10 * 1024 * 1024).fill(65);
+    for (let index = 100; index < atLimitBytes.length; index += 101) atLimitBytes[index] = 10;
+    await write("limit.txt", atLimitBytes);
+    const atLimit = await fileReadTool.execute({ path: "limit.txt" }, ctx());
+    expect(atLimit.isError).toBe(false);
+
+    const overLimitBytes = new Uint8Array(10 * 1024 * 1024 + 1).fill(65);
+    for (let index = 100; index < overLimitBytes.length; index += 101) overLimitBytes[index] = 10;
+    await write("over-limit.txt", overLimitBytes);
+    const overLimit = await fileReadTool.execute({ path: "over-limit.txt" }, ctx());
+    expect(overLimit.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(overLimit)).toBe("file-too-large");
   });
 
   test("keeps workspace and sensitive-file permissions", async () => {

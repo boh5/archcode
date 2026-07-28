@@ -21,6 +21,7 @@ import type {
 } from "../../api/compression";
 import { RelativeTime } from "../primitives/TemporalText";
 import { isWebVisibleSessionPart } from "../../lib/execution-workstream";
+import { AttachmentChip } from "../primitives/AttachmentChip";
 
 const STRATEGY_LABEL: Record<CompressionStrategy, string> = {
   "dynamic-range": "Dynamic Range",
@@ -269,6 +270,8 @@ function OriginalRangePartView({
   childSessionLinks: ToolChildSessionLink[];
 }) {
   switch (part.type) {
+    case "attachment":
+      return <AttachmentChip attachment={part.attachment} />;
     case "text":
       return (
         <div className="flex items-start gap-2 text-[13px] leading-5 text-text-secondary">

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { JsonObject, ToolResultDetails } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState, StoredMessage, StoredPart, ToolPart } from "../../store/types";
+import { renderAttachmentMarker } from "../../store/projection";
 import { finalOutputForExecution, latestExecution } from "../../delegation/final-output";
 import { sliceUtf8Head, utf8ByteLength } from "../../tool-output/utf8";
 import { defineTool } from "../define-tool";
@@ -397,6 +398,8 @@ function renderPartUnits(part: StoredPart, input: BackgroundOutputInput): Output
       return [{ text: "### Recovery notice" }, { text: part.message }];
     case "goal-notice":
       return [];
+    case "attachment":
+      return [{ text: renderAttachmentMarker(part.attachment) }];
   }
 }
 

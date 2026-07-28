@@ -37,6 +37,23 @@ Project runtime authority state lives under `.archcode/runtime`. Agent mutation
 tools deny writes to that tree and to Git metadata; system services use their
 own writers.
 
+Browser-uploaded Session attachments live separately under:
+
+```text
+.archcode/attachments/{rootSessionId}/{attachmentId}/
+├── metadata.json
+└── content
+```
+
+This attachment tree is ordinary workspace data, not runtime authority or an
+operating-system isolation boundary. It is excluded by the existing
+project-wide `.archcode` Git ignore rule. Attachments are scoped to a root
+Session, and a configured model provider receives attachment bytes only when a
+referenced file is recognized as a supported image and the frozen Execution
+model declares image input. Other referenced files are exposed to the Agent as
+local paths and metadata; shell-capable Agents may still modify them like other
+workspace files.
+
 ## Worktrees are not sandboxes
 
 A Session can work in the canonical checkout or an explicitly registered Git

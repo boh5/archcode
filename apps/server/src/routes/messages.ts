@@ -5,15 +5,25 @@ import {
   SessionSteerUnavailableError,
   type AgentRuntime,
 } from "@archcode/agent-core";
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  type AttachmentDescriptor,
+} from "@archcode/protocol";
 import { Hono } from "hono";
 import { z } from "zod/v4";
 import { ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 import { zValidator } from "../validation";
+import { mapAttachmentHttpError } from "./attachment-http-error";
 
 const MessageBodySchema = z.strictObject({
-  text: z.string({ error: "text is required" })
-    .refine((value) => value.trim().length > 0, { message: "text is required" }),
+  text: z.string({ error: "text is required" }),
+  attachmentIds: z.array(z.uuid())
+    .max(MAX_ATTACHMENTS_PER_MESSAGE)
+    .refine(
+      (ids) => new Set(ids).size === ids.length,
+      { message: "attachmentIds must not contain duplicates" },
+    ),
   clientRequestId: z.uuid(),
   requestedModelSelection: z.strictObject({
     mode: z.enum(["profile_default", "session_override"]),
@@ -22,11 +32,17 @@ const MessageBodySchema = z.strictObject({
       variant: z.string().trim().min(1).optional(),
     }),
   }),
+}).superRefine((body, ctx) => {
+  if (body.text.trim().length === 0 && body.attachmentIds.length === 0) {
+    ctx.addIssue({ code: "custom", path: ["text"], message: "text or attachmentIds is required" });
+  }
+  if (body.attachmentIds.length > 0 && body.text.trimStart().startsWith("/")) {
+    ctx.addIssue({ code: "custom", path: ["attachmentIds"], message: "Slash commands cannot include attachments" });
+  }
 });
 
 const EditMessageBodySchema = z.strictObject({
-  text: z.string({ error: "text is required" })
-    .refine((value) => value.trim().length > 0, { message: "text is required" }),
+  text: z.string({ error: "text is required" }),
   expectedRevision: z.number().int().nonnegative(),
 });
 
@@ -53,7 +69,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
 
   app.post("/messages", zValidator("param", MessageParamsSchema), zValidator("json", MessageBodySchema), async (c) => {
     const { slug, sessionId } = c.req.valid("param");
-    const { text, clientRequestId, requestedModelSelection } = c.req.valid("json");
+    const { text, attachmentIds, clientRequestId, requestedModelSelection } = c.req.valid("json");
     const project = await resolveProject(runtime, slug);
 
     try {
@@ -62,6 +78,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
         sessionId,
         workspaceRoot: project.workspaceRoot,
         text,
+        attachmentIds,
         clientRequestId,
         source: "user",
         requestedModelSelection,
@@ -82,7 +99,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
         status: accepted.status === "pending" ? "queued" as const : "canonical" as const,
       }, 202);
     } catch (error) {
-      throw mapMessageMutationError(error);
+      throw mapMessageMutationError(error, sessionId);
     }
   });
 
@@ -104,7 +121,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
         });
         return c.json(toPendingMessageResult(message));
       } catch (error) {
-        throw mapMessageMutationError(error);
+        throw mapMessageMutationError(error, sessionId);
       }
     },
   );
@@ -126,7 +143,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
         });
         return c.json({ ...deleted, status: "deleted" as const });
       } catch (error) {
-        throw mapMessageMutationError(error);
+        throw mapMessageMutationError(error, sessionId);
       }
     },
   );
@@ -149,7 +166,7 @@ export function createMessagesRoutes(runtime: AgentRuntime): Hono {
         });
         return c.json(toPendingMessageResult(message));
       } catch (error) {
-        throw mapMessageMutationError(error);
+        throw mapMessageMutationError(error, sessionId);
       }
     },
   );
@@ -161,6 +178,7 @@ function toPendingMessageResult(message: {
   readonly id: string;
   readonly clientRequestId: string;
   readonly content: string;
+  readonly attachments: readonly AttachmentDescriptor[];
   readonly state: "queued" | "steering";
   readonly revision: number;
 }) {
@@ -168,13 +186,16 @@ function toPendingMessageResult(message: {
     messageId: message.id,
     clientRequestId: message.clientRequestId,
     content: message.content,
+    attachments: message.attachments,
     status: message.state,
     revision: message.revision,
   };
 }
 
-function mapMessageMutationError(error: unknown): unknown {
+function mapMessageMutationError(error: unknown, sessionId: string): unknown {
   if (error instanceof ServerError) return error;
+  const attachmentError = mapAttachmentHttpError(error, sessionId);
+  if (attachmentError !== undefined) return attachmentError;
   if (error instanceof SessionInputConflictError) {
     return new ServerError("BAD_REQUEST", error.message, 409, {
       scopeCode: "SESSION_INPUT_CONFLICT",

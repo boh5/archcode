@@ -43,6 +43,7 @@ import {
   WORK_ACTIVITY_LANE_CLASS,
 } from "../primitives/ConversationRail";
 import { RelativeTime, useElapsedTime } from "../primitives/TemporalText";
+import { AttachmentChip } from "../primitives/AttachmentChip";
 import { CompressionBlock } from "./CompressionBlock";
 import { DelegationCard } from "./DelegationCard";
 import { ReasoningBlock, ReasoningUsageSummary } from "./ReasoningBlock";
@@ -237,6 +238,13 @@ export function MsgUser({
               >
                 {part.text}
               </div>
+            </div>
+          );
+        }
+        if (part.type === "attachment") {
+          return (
+            <div key={part.id} className="flex w-full justify-end" data-user-message-row="attachment">
+              <AttachmentChip attachment={part.attachment} />
             </div>
           );
         }

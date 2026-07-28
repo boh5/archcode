@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { StreamTextResult, ToolSet } from "ai";
+import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
 import { z } from "zod/v4";
 
 import { applySessionToolBatchResponse } from "../../execution/session-tool-batch-scheduler";
@@ -26,6 +26,14 @@ import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { createTestModelInfo } from "../../testing/test-execution-fixtures";
 import { SessionGoalService } from "../../session-goal";
 import type { SessionToolBatch } from "../../store/types";
+import type { AttachmentDescriptor } from "@archcode/protocol";
+import {
+  getAttachmentContentPath,
+  SessionAttachmentModelProjector,
+  SessionAttachmentService,
+  type AttachmentModelProjector,
+} from "../../attachments";
+import { ModelInfo } from "../../provider";
 
 const ROOT = join("/tmp", "archcode-query-loop", crypto.randomUUID());
 const skillService = new SkillService({ builtinSkills: {} });
@@ -49,6 +57,46 @@ const dummyBinding: ExecutionModelBinding = {
     modelRuntimeRevision: "test-revision",
   },
 };
+const noAttachmentProjector: AttachmentModelProjector = {
+  async project() {},
+};
+
+function bindingWithInputModalities(
+  input: Array<"text" | "image">,
+): ExecutionModelBinding {
+  const modelInfo = new ModelInfo({
+    model: { modelId: "mock", provider: "mock" } as never,
+    config: {
+      name: "Mock",
+      limit: { context: 100_000, output: 10_000 },
+      modalities: { input, output: ["text"] },
+    },
+    providerId: "mock",
+    modelId: "mock",
+  });
+  return {
+    modelInfo,
+    options: undefined,
+    summary: {
+      selection: { model: modelInfo.qualifiedId },
+      providerId: modelInfo.providerId,
+      modelId: modelInfo.modelId,
+      providerDisplayName: modelInfo.providerDisplayName,
+      modelDisplayName: modelInfo.displayName,
+      resolution: "profile_default",
+      modelRuntimeRevision: "test-revision",
+    },
+  };
+}
+
+function byteStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
 
 type StreamPart = StreamTextResult<ToolSet, never>["fullStream"] extends AsyncIterable<infer Part> ? Part : never;
 interface Round {
@@ -115,6 +163,8 @@ async function createHarness() {
     agentSkills: [],
     skillService,
     storeManager,
+    attachmentProjector: noAttachmentProjector,
+    resolveAttachmentReadPaths: async () => new Set(),
     cwd: workspaceRoot,
     projectContext,
     toolOutputAccess,
@@ -144,7 +194,39 @@ async function createHarness() {
       }],
     });
   };
-  return { workspaceRoot, sessionId, storeManager, store, registry, options, appendUser, toolOutputAccess };
+  const appendAttachment = (attachment: AttachmentDescriptor) => {
+    const id = crypto.randomUUID();
+    store.getState().append({
+      type: "session.messages_committed",
+      executionId: id,
+      messages: [{
+        id,
+        role: "user",
+        parts: [{
+          type: "attachment",
+          id: `${id}:attachment`,
+          attachment,
+          createdAt: 1,
+          completedAt: 1,
+        }],
+        createdAt: 1,
+        completedAt: 1,
+        executionId: id,
+        clientRequestId: `request-${id}`,
+      }],
+    });
+  };
+  return {
+    workspaceRoot,
+    sessionId,
+    storeManager,
+    store,
+    registry,
+    options,
+    appendUser,
+    appendAttachment,
+    toolOutputAccess,
+  };
 }
 
 function registerInline(
@@ -337,6 +419,34 @@ describe("QueryLoop Tool Output Plane", () => {
     expect(Object.keys(received!)).toEqual(["countRecoverable", "read", "search"]);
   });
 
+  test("resolves and injects the current attachment read paths for each tool execution", async () => {
+    const harness = await createHarness();
+    const allowedPath = join(harness.workspaceRoot, ".archcode", "attachments", "content");
+    let resolutions = 0;
+    let received: ReadonlySet<string> | undefined;
+    harness.options.resolveAttachmentReadPaths = async () => {
+      resolutions += 1;
+      return new Set([allowedPath]);
+    };
+    registerInline(harness, "inspect_attachment_paths", async (_input, context) => {
+      received = context.attachmentReadPaths;
+      return createTextToolResult("ok");
+    });
+    harness.appendUser("inspect");
+    installRounds([
+      {
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: "inspect-1", toolName: "inspect_attachment_paths", input: {} }],
+      },
+      { finishReason: "stop", text: "done" },
+    ]);
+
+    await runQueryLoop(harness.options);
+
+    expect(resolutions).toBe(1);
+    expect(received).toEqual(new Set([allowedPath]));
+  });
+
   test("keeps blocked ask_user at zero results and resumes only after the exact response", async () => {
     const harness = await createHarness();
     harness.registry.register(askUserTool);
@@ -430,6 +540,170 @@ describe("QueryLoop Tool Output Plane", () => {
 
     expect(order).toEqual(["steer", "prepare", "build", "prepare", "call", "step-end", "loop-end"]);
     expect(projected).toContain("steered");
+  });
+
+  test("projects the same signed image from the frozen binding only when image input is declared", async () => {
+    const pngBytes = Uint8Array.of(
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01,
+    );
+
+    for (const supportsImages of [true, false]) {
+      const harness = await createHarness();
+      const service = new SessionAttachmentService({
+        validateRootSession: async () => {},
+      });
+      const uploaded = await service.upload({
+        workspaceRoot: harness.workspaceRoot,
+        rootSessionId: harness.store.getState().rootSessionId,
+        attachmentId: crypto.randomUUID(),
+        name: "diagram.png",
+        sizeBytes: pngBytes.byteLength,
+        mediaType: "application/octet-stream",
+        body: byteStream(pngBytes),
+      });
+      harness.appendAttachment(uploaded.descriptor);
+      harness.options.attachmentProjector = new SessionAttachmentModelProjector(service);
+      harness.options.binding = bindingWithInputModalities(
+        supportsImages ? ["text", "image"] : ["text"],
+      );
+      let call: { messages: ModelMessage[] } | undefined;
+      installRounds(
+        [{ finishReason: "stop", text: "done" }],
+        (options) => { call = options as { messages: ModelMessage[] }; },
+      );
+
+      await runQueryLoop(harness.options);
+
+      const serialized = JSON.stringify(call!.messages);
+      expect(serialized).toContain(
+        getAttachmentContentPath(
+          harness.workspaceRoot,
+          harness.store.getState().rootSessionId,
+          uploaded.descriptor.id,
+        ),
+      );
+      const parts = call!.messages.flatMap((message) =>
+        message.role === "user" && typeof message.content !== "string"
+          ? message.content
+          : []
+      );
+      const imageParts = parts.filter((part) => part.type === "image");
+      expect(imageParts).toHaveLength(supportsImages ? 1 : 0);
+      if (supportsImages) {
+        const imagePart = imageParts[0] as { image: Uint8Array; mediaType?: string };
+        expect(Array.from(imagePart.image)).toEqual(Array.from(pngBytes));
+        expect(imagePart.mediaType).toBe("image/png");
+      }
+    }
+  });
+
+  test("projects after beforeModelCall reordering and skips a marker removed by that hook", async () => {
+    for (const hookAction of ["reorder", "remove"] as const) {
+      const harness = await createHarness();
+      const attachment: AttachmentDescriptor = {
+        id: crypto.randomUUID(),
+        name: "diagram.png",
+        mediaType: "image/png",
+        sizeBytes: 3,
+        kind: "image",
+      };
+      harness.appendAttachment(attachment);
+      const readVerified = mock(async () => ({
+        descriptor: attachment,
+        contentPath: getAttachmentContentPath(
+          harness.workspaceRoot,
+          harness.store.getState().rootSessionId,
+          attachment.id,
+        ),
+        bytes: Uint8Array.of(1, 2, 3),
+      }));
+      harness.options.attachmentProjector = new SessionAttachmentModelProjector({
+        resolveReadPath: async () => getAttachmentContentPath(
+          harness.workspaceRoot,
+          harness.store.getState().rootSessionId,
+          attachment.id,
+        ),
+        readVerified,
+      });
+      harness.options.binding = bindingWithInputModalities(["text", "image"]);
+      harness.options.hooks = {
+        beforeModelCall: [async ({ messages }) => {
+          const message = messages.find((candidate) =>
+            candidate.role === "user" && typeof candidate.content !== "string"
+          );
+          if (message?.role !== "user" || typeof message.content === "string") {
+            throw new Error("Expected attachment array content");
+          }
+          if (hookAction === "reorder") {
+            message.content.unshift({ type: "text", text: "hook-prefix" });
+          } else {
+            message.content.splice(0);
+          }
+        }],
+      };
+      let call: { messages: ModelMessage[] } | undefined;
+      installRounds(
+        [{ finishReason: "stop", text: "done" }],
+        (options) => { call = options as { messages: ModelMessage[] }; },
+      );
+
+      await runQueryLoop(harness.options);
+
+      expect(readVerified).toHaveBeenCalledTimes(hookAction === "reorder" ? 1 : 0);
+      const serialized = JSON.stringify(call!.messages);
+      expect(serialized.includes('"type":"image"')).toBe(hookAction === "reorder");
+      expect(serialized.includes("<path>")).toBe(hookAction === "reorder");
+    }
+  });
+
+  test("does not call the provider when verified image content has drifted or become a symlink", async () => {
+    for (const corruption of ["digest", "symlink"] as const) {
+      const harness = await createHarness();
+      const service = new SessionAttachmentService({
+        validateRootSession: async () => {},
+      });
+      const bytes = Uint8Array.of(
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      );
+      const uploaded = await service.upload({
+        workspaceRoot: harness.workspaceRoot,
+        rootSessionId: harness.store.getState().rootSessionId,
+        attachmentId: crypto.randomUUID(),
+        name: "diagram.png",
+        sizeBytes: bytes.byteLength,
+        body: byteStream(bytes),
+      });
+      harness.appendAttachment(uploaded.descriptor);
+      harness.options.attachmentProjector = new SessionAttachmentModelProjector(service);
+      harness.options.binding = bindingWithInputModalities(["text", "image"]);
+      const contentPath = getAttachmentContentPath(
+        harness.workspaceRoot,
+        harness.store.getState().rootSessionId,
+        uploaded.descriptor.id,
+      );
+      if (corruption === "digest") {
+        await Bun.write(contentPath, Uint8Array.of(
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0b,
+        ));
+      } else {
+        const outside = join(harness.workspaceRoot, "outside-image");
+        await Bun.write(outside, bytes);
+        await rm(contentPath);
+        await symlink(outside, contentPath);
+      }
+      let providerCalls = 0;
+      installRounds(
+        [{ finishReason: "stop", text: "must not run" }],
+        () => { providerCalls += 1; },
+      );
+
+      const result = await runQueryLoop(harness.options);
+
+      expect(result.outcome).toBe("terminal");
+      if (result.outcome !== "terminal") throw new Error("Expected terminal attachment projection failure");
+      expect(result.status).toBe("failed");
+      expect(providerCalls).toBe(0);
+    }
   });
 
   test("phase two materializes a Goal edit completed inside beforeModelBuild before projection", async () => {

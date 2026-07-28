@@ -550,6 +550,7 @@ describe("applyRemoteEnvelope", () => {
     store.getState().addLocalSendingMessage({
       clientRequestId: "request-1",
       content: "hello",
+      attachments: [],
       requestedModelSelection,
       createdAt: 42,
     });
@@ -557,6 +558,7 @@ describe("applyRemoteEnvelope", () => {
       {
         clientRequestId: "request-1",
         content: "hello",
+        attachments: [],
         createdAt: 42,
         status: "sending",
         requestedModelSelection,
@@ -572,6 +574,7 @@ describe("applyRemoteEnvelope", () => {
           id: "message-1",
           clientRequestId: "request-1",
           content: "hello",
+          attachments: [],
           source: "user",
           state: "queued",
           revision: 1,
@@ -585,6 +588,76 @@ describe("applyRemoteEnvelope", () => {
 
     expect(store.getState().localSendingMessages).toEqual([]);
     expect(store.getState().pendingMessages).toHaveLength(1);
+  });
+
+  test("projects edit, steer, rollback, delete, and commit events in the ordinary timeline", () => {
+    const store = createWebSessionStore("queue-lifecycle", "demo");
+    const queued = {
+      id: "message-1",
+      clientRequestId: "request-1",
+      content: "first",
+      attachments: [],
+      source: "user" as const,
+      state: "queued" as const,
+      revision: 1,
+      acceptedAt: 10,
+      updatedAt: 10,
+      requestedModelSelection,
+    };
+
+    const apply = (eventId: number, payload: SessionEventPayload) => store.getState().applyRemoteEnvelope({
+      ...event(eventId, payload),
+      sessionId: "queue-lifecycle",
+    });
+
+    apply(0, { type: "session.message_accepted", message: queued });
+    apply(1, { type: "session.message_edited", message: { ...queued, content: "edited", revision: 2, updatedAt: 11 } });
+    apply(2, {
+      type: "session.message_steer_claimed",
+      message: {
+        ...queued,
+        content: "edited",
+        state: "steering",
+        revision: 3,
+        updatedAt: 12,
+        targetExecutionId: "execution-1",
+        targetRunOrdinal: 0,
+        targetModelAudit: {
+          requested: requestedModelSelection,
+          actual: requestedModelSelection.selection,
+        },
+        claimedAt: 12,
+      },
+    });
+    expect(store.getState().pendingMessages[0]).toMatchObject({ state: "steering", targetExecutionId: "execution-1" });
+
+    apply(3, {
+      type: "session.message_steer_rolled_back",
+      message: { ...queued, content: "edited", revision: 4, updatedAt: 13 },
+    });
+    expect(store.getState().pendingMessages[0]).toMatchObject({ state: "queued", revision: 4 });
+
+    apply(4, {
+      type: "session.messages_committed",
+      executionId: "execution-2",
+      messages: [{
+        id: "message-1",
+        clientRequestId: "request-1",
+        role: "user",
+        parts: [{ type: "text", id: "part-1", text: "edited", createdAt: 14, completedAt: 14 }],
+        createdAt: 14,
+        completedAt: 14,
+        executionId: "execution-2",
+        runOrdinal: 0,
+        modelAudit: { requested: requestedModelSelection, actual: requestedModelSelection.selection },
+      }],
+    });
+    expect(store.getState().pendingMessages).toEqual([]);
+    expect(store.getState().messages[0]).toMatchObject({ id: "message-1", clientRequestId: "request-1" });
+
+    apply(5, { type: "session.message_accepted", message: { ...queued, id: "message-2", clientRequestId: "request-2" } });
+    apply(6, { type: "session.message_deleted", messageId: "message-2", clientRequestId: "request-2", revision: 2, deletedAt: 15 });
+    expect(store.getState().pendingMessages).toEqual([]);
   });
 
 });
@@ -620,6 +693,7 @@ describe("authoritative snapshot", () => {
     store.getState().addLocalSendingMessage({
       clientRequestId: "request-1",
       content: "hello",
+      attachments: [],
       requestedModelSelection,
       createdAt: 1,
     });
@@ -629,6 +703,7 @@ describe("authoritative snapshot", () => {
         id: "message-1",
         clientRequestId: "request-1",
         content: "hello",
+        attachments: [],
         source: "user",
         state: "queued",
         revision: 1,
@@ -1185,6 +1260,7 @@ describe("authoritative snapshot", () => {
     store.getState().addLocalSendingMessage({
       clientRequestId: "first-request",
       content: "Start the first task",
+      attachments: [],
       requestedModelSelection,
       createdAt: 1,
     });
@@ -1195,6 +1271,7 @@ describe("authoritative snapshot", () => {
           id: "first-message",
           clientRequestId: "first-request",
           content: "Start the first task",
+          attachments: [],
           source: "user",
           state: "queued",
           revision: 0,

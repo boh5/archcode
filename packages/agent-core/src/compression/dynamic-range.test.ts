@@ -90,6 +90,7 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
     setCwd: () => {},
     setTitle: () => {},
     setParentSessionId: () => {},
+    toModelMessagesProjection: () => ({ messages: [], attachmentSlots: [] }),
     toModelMessages: () => [],
   };
 }

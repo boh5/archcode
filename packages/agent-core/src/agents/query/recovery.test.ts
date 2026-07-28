@@ -23,6 +23,7 @@ import { sessionFileInternals } from "../../store/helpers";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 import { createTestTempRoot } from "../../testing/test-temp-root";
 import { createTestModelInfo } from "../../testing/test-execution-fixtures";
+import type { AttachmentModelProjector } from "../../attachments";
 
 const testTempRoot = createTestTempRoot("query-recovery");
 const TEST_WORKSPACE_ROOT = testTempRoot.path;
@@ -84,6 +85,9 @@ const dummyBinding: ExecutionModelBinding = {
 };
 
 const testSkillService = new SkillService({ builtinSkills: {} });
+const noAttachmentProjector: AttachmentModelProjector = {
+  async project() {},
+};
 const inputSchema = z.object({ message: z.string().optional() }).strict();
 
 function createStore() {
@@ -119,6 +123,8 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     agentSkills: [],
     skillService: testSkillService,
     storeManager,
+    attachmentProjector: noAttachmentProjector,
+    resolveAttachmentReadPaths: async () => new Set(),
     projectContext: createTestProjectContext(workspaceRoot),
     cwd: workspaceRoot,
     toolOutputAccess: outputAccessFixture.createToolOutputAccess(workspaceRoot, "test-root"),

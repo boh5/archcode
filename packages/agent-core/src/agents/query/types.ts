@@ -14,6 +14,7 @@ import type { SkillService } from "../../skills";
 import type { QueryLoopHooks } from "./loop-hooks";
 import type { Logger } from "../../logger";
 import type { SessionGoalService } from "../../session-goal";
+import type { AttachmentModelProjector } from "../../attachments";
 
 export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
 
@@ -28,6 +29,10 @@ export interface QueryLoopOptions {
   agentSkills: readonly string[];
   skillService: SkillService;
   storeManager: SessionStoreManager;
+  /** Required model-boundary attachment projection; never inferred from provider identity. */
+  attachmentProjector: AttachmentModelProjector;
+  /** Resolves the exact canonical attachment paths authorized for each tool execution. */
+  resolveAttachmentReadPaths: () => Promise<ReadonlySet<string>>;
   /** Current Session execution directory, independent of the canonical project context. */
   cwd: string;
   projectContext: ProjectContext;

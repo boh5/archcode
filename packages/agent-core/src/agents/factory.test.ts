@@ -20,6 +20,10 @@ import { leadRoleContract } from "./definitions/role-contracts";
 import { silentLogger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import { createTestTempRoot } from "../testing/test-temp-root";
+import {
+  EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+  resolveEmptyAttachmentReadPaths,
+} from "../attachments/test-helpers";
 
 const testTempRoot = createTestTempRoot("agent-factory");
 const TEST_WORKSPACE_ROOT = testTempRoot.path;
@@ -97,6 +101,8 @@ function makeFactory(
   projectContextResolver: createTestProjectContextResolver(storeManager),
   workspaceRoot: TEST_WORKSPACE_ROOT,
   createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
+  attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+  resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
   logger: silentLogger });
 }
 
@@ -171,6 +177,8 @@ describe("createAgentFactory", () => {
     projectContextResolver: createTestProjectContextResolver(storeManager),
     workspaceRoot: TEST_WORKSPACE_ROOT,
     createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
+    attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+    resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
     logger: silentLogger });
 
     const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
@@ -300,6 +308,8 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       projectContextResolver: createTestProjectContextResolver(storeManager),
       workspaceRoot: TEST_WORKSPACE_ROOT,
       createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
+      attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+      resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
       logger: silentLogger,
     });
   }
@@ -353,6 +363,8 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       projectContextResolver: createTestProjectContextResolver(storeManager),
       workspaceRoot: TEST_WORKSPACE_ROOT,
       createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
+      attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+      resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
       logger: silentLogger,
     });
 

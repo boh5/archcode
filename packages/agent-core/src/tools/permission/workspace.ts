@@ -31,6 +31,9 @@ export function createWorkspacePermission(
       );
 
       if (!isWithinWorkspace) {
+        if (ctx.toolName === "file_read" && ctx.attachmentReadPaths?.has(resolved) === true) {
+          return { outcome: "allow" };
+        }
         return {
           outcome: "ask",
           reason: `"${resolved}" is outside workspace "${ctx.cwd}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,

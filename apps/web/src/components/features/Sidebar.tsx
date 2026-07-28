@@ -408,6 +408,7 @@ export function Sidebar({
           slug,
           sessionId: session.sessionId,
           content: `/skill use ${skill}`,
+          attachmentIds: [],
           requestedModelSelection: session.nextModelSelection.requested,
         });
       },

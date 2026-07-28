@@ -304,7 +304,7 @@ function compareSortableItems(left: SortableItem, right: SortableItem): number {
 function isCanonicalUserMessage(message: SessionMessage): boolean {
   return (
     message.role === "user" &&
-    message.parts.some((part) => part.type === "text")
+    message.parts.some((part) => part.type === "text" || part.type === "attachment")
   );
 }
 
@@ -314,6 +314,7 @@ export function isWebVisibleSessionPart(part: SessionPart): boolean {
     case "goal-notice":
       return false;
     case "text":
+    case "attachment":
     case "reasoning":
     case "tool":
     case "compaction":

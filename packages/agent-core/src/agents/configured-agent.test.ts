@@ -29,6 +29,10 @@ import { createTestProjectContextResolver } from "./test-project-context-resolve
 import type { AgentRunOptions } from "./types";
 import { SessionGoalService } from "../session-goal";
 import type { ProjectContextResolver } from "../projects/context-resolver";
+import {
+  EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+  resolveEmptyAttachmentReadPaths,
+} from "../attachments/test-helpers";
 
 const tmpRoot = join(tmpdir(), "archcode-configured-agent", crypto.randomUUID());
 const worktreeRoot = join(tmpdir(), "archcode-configured-agent-worktree", crypto.randomUUID());
@@ -246,6 +250,8 @@ function createAgent(options: {
     backgroundTaskManager: options.btm as never,
     memoryConfig: options.memoryConfig,
     toolOutputAccess: outputAccessFixture.createToolOutputAccess(projectRoot, store.getState().rootSessionId),
+    attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+    resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
     logger: silentLogger,
     resolveAllowedTools: (definition, depth) => {
       const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];

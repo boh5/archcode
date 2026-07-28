@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { AttachmentDescriptor } from "@archcode/protocol";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { silentLogger } from "../logger";
@@ -16,6 +17,20 @@ const BINDING = {
   resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
 const MODEL_AUDIT = { requested: REQUESTED_MODEL_SELECTION, actual: BINDING.selection };
+const ATTACHMENT_A: AttachmentDescriptor = {
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  name: "alpha<&>.png",
+  mediaType: "image/png",
+  sizeBytes: 8,
+  kind: "image",
+};
+const ATTACHMENT_B: AttachmentDescriptor = {
+  id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  name: "notes.txt",
+  mediaType: "text/plain",
+  sizeBytes: 12,
+  kind: "file",
+};
 
 function controlNextSessionSave(failure?: Error) {
   const originalSave = sessionFileInternals.saveSessionTranscript;
@@ -89,11 +104,19 @@ async function observeConcurrentReplay<T>(
 describe("SessionInputService", () => {
   let manager: SessionStoreManager;
   let service: SessionInputService;
+  const resolveDescriptors = mock(async (input: { attachmentIds: readonly string[] }) => (
+    input.attachmentIds.map((id) => {
+      const descriptor = [ATTACHMENT_A, ATTACHMENT_B].find((candidate) => candidate.id === id);
+      if (descriptor === undefined) throw new Error(`Missing attachment ${id}`);
+      return descriptor;
+    })
+  ));
 
   beforeEach(async () => {
     await mkdir(WORKSPACE, { recursive: true });
     manager = new SessionStoreManager({ logger: silentLogger });
-    service = new SessionInputService(manager);
+    resolveDescriptors.mockClear();
+    service = new SessionInputService(manager, { resolveDescriptors });
     await manager.createSessionFile(WORKSPACE, { agentName: "lead" }, ROOT_SESSION_ID);
   });
 
@@ -106,6 +129,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "B",
+      attachmentIds: [],
       clientRequestId: "request-b",
       source: "user",
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -114,6 +138,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "B",
+      attachmentIds: [],
       clientRequestId: "request-b",
       source: "user",
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -122,6 +147,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "C",
+      attachmentIds: [],
       clientRequestId: "request-c",
       source: "user",
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -137,6 +163,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "durable concurrent message",
+      attachmentIds: [],
       clientRequestId: "concurrent-message",
       source: "user" as const,
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -152,6 +179,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "failing concurrent message",
+      attachmentIds: [],
       clientRequestId: "failing-message",
       source: "user" as const,
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -162,6 +190,154 @@ describe("SessionInputService", () => {
         { status: "rejected", reason: failure },
         { status: "rejected", reason: failure },
       ]);
+  });
+
+  test("persists ordered attachment-only input through edit, Steer rollback, and Queue commit", async () => {
+    const input = {
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "",
+      attachmentIds: [ATTACHMENT_A.id, ATTACHMENT_B.id],
+      clientRequestId: "attachment-only",
+      source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    };
+    const accepted = await service.acceptMessage(input);
+    expect(accepted.message).toMatchObject({
+      content: "",
+      attachments: [ATTACHMENT_A, ATTACHMENT_B],
+    });
+    expect(await service.acceptMessage(input)).toEqual(accepted);
+    expect(resolveDescriptors).toHaveBeenCalledTimes(1);
+
+    await expect(service.acceptMessage({
+      ...input,
+      attachmentIds: [ATTACHMENT_B.id, ATTACHMENT_A.id],
+    })).rejects.toMatchObject({ reason: "idempotency" });
+
+    const edited = await service.editMessage({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      text: "",
+    });
+    expect(edited.attachments).toEqual([ATTACHMENT_A, ATTACHMENT_B]);
+    const steering = await service.claimSteer({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      messageId: accepted.messageId,
+      expectedRevision: 1,
+      expectedExecutionId: "execution-a",
+      runOrdinal: 0,
+      modelAudit: MODEL_AUDIT,
+    });
+    expect(steering.attachments).toEqual([ATTACHMENT_A, ATTACHMENT_B]);
+    const [rolledBack] = await service.rollbackSteers({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      executionId: "execution-a",
+    });
+    expect(rolledBack?.attachments).toEqual([ATTACHMENT_A, ATTACHMENT_B]);
+
+    manager.get(ROOT_SESSION_ID, WORKSPACE)!.getState().append({
+      type: "execution-start",
+      executionId: "execution-attachments",
+      binding: BINDING,
+      origin: "user_message",
+      maxSteps: 50,
+    });
+    const batch = await service.beginQueueExecution({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      executionId: "execution-attachments",
+      runOrdinal: 0,
+      snapshots: [{ pending: rolledBack!, modelAudit: MODEL_AUDIT }],
+      binding: BINDING,
+      origin: "user_message",
+    });
+    expect(batch.messages[0]?.parts).toEqual([
+      expect.objectContaining({ type: "text", text: "" }),
+      expect.objectContaining({ type: "attachment", attachment: ATTACHMENT_A }),
+      expect.objectContaining({ type: "attachment", attachment: ATTACHMENT_B }),
+    ]);
+
+    manager.delete(ROOT_SESSION_ID, WORKSPACE);
+    expect((await manager.getSessionFile(WORKSPACE, ROOT_SESSION_ID)).messages[0]?.parts)
+      .toEqual(batch.messages[0]?.parts);
+  });
+
+  test("rejects editing a text-only queued message to empty with a domain conflict", async () => {
+    const accepted = await service.acceptMessage({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "required text",
+      attachmentIds: [],
+      clientRequestId: "text-only-edit",
+      source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    });
+
+    await expect(service.editMessage({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      text: "",
+    })).rejects.toMatchObject({
+      reason: "state",
+      current: { messageId: accepted.messageId, content: "required text" },
+    });
+  });
+
+  test("rejects empty, duplicate, and oversized attachment reference lists before resolution", async () => {
+    const base = {
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "",
+      clientRequestId: "invalid-attachments",
+      source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    };
+    await expect(service.acceptMessage({ ...base, attachmentIds: [] })).rejects.toBeInstanceOf(TypeError);
+    await expect(service.acceptMessage({
+      ...base,
+      attachmentIds: [ATTACHMENT_A.id, ATTACHMENT_A.id],
+    })).rejects.toBeInstanceOf(TypeError);
+    await expect(service.acceptMessage({
+      ...base,
+      attachmentIds: Array.from({ length: 11 }, (_, index) =>
+        `${index.toString(16).padStart(8, "0")}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`),
+    })).rejects.toBeInstanceOf(TypeError);
+    expect(resolveDescriptors).not.toHaveBeenCalled();
+  });
+
+  test("accepts exactly ten ordered attachment references in one durable message", async () => {
+    const attachmentIds = Array.from(
+      { length: 10 },
+      (_, index) => `${index.toString(16).padStart(8, "0")}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
+    );
+    resolveDescriptors.mockImplementationOnce(async ({ attachmentIds: ids }) =>
+      ids.map((id, index) => ({
+        id,
+        name: `attachment-${index}.bin`,
+        mediaType: "application/octet-stream",
+        sizeBytes: index,
+        kind: "file" as const,
+      })));
+
+    await service.acceptMessage({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "",
+      attachmentIds,
+      clientRequestId: "ten-attachments",
+      source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    });
+
+    expect((await manager.getSessionFile(WORKSPACE, ROOT_SESSION_ID)).pendingMessages[0]
+      ?.attachments.map(({ id }) => id)).toEqual(attachmentIds);
   });
 
   test("claims command requests before side effects and replays the durable result", async () => {
@@ -305,6 +481,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "B",
+      attachmentIds: [],
       clientRequestId: "same-request",
       source: "user",
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -314,6 +491,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "different",
+      attachmentIds: [],
       clientRequestId: "same-request",
       source: "user",
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -326,6 +504,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: content,
+      attachmentIds: [],
       clientRequestId: "digest-only-request",
       source: "user",
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -352,6 +531,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       text: "before",
+      attachmentIds: [],
       clientRequestId: "request-edit",
       source: "user",
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
@@ -408,8 +588,8 @@ describe("SessionInputService", () => {
   });
 
   test("moves all queued messages in one cutoff into one execution without joining bodies", async () => {
-    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
-    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "C", clientRequestId: "c", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
+    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", attachmentIds: [], clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
+    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "C", attachmentIds: [], clientRequestId: "c", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
     const pending = await service.getPendingMessages(ROOT_SESSION_ID, WORKSPACE);
 
     const batch = await service.beginQueueExecution({
@@ -452,8 +632,8 @@ describe("SessionInputService", () => {
   });
 
   test("commits a claimed Steer from its full snapshot and leaves other Queue input untouched", async () => {
-    const acceptedB = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
-    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "C", clientRequestId: "c", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
+    const acceptedB = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", attachmentIds: [], clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
+    await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "C", attachmentIds: [], clientRequestId: "c", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
     const claimed = await service.claimSteer({
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
@@ -503,7 +683,7 @@ describe("SessionInputService", () => {
   });
 
   test("rolls an exact steering claim back to queued with a new revision", async () => {
-    const accepted = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
+    const accepted = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", attachmentIds: [], clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
     await service.claimSteer({
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
@@ -536,6 +716,7 @@ describe("SessionInputService", () => {
         sessionId: CHILD_SESSION_ID,
         workspaceRoot: WORKSPACE,
         text: "not allowed",
+      attachmentIds: [],
         clientRequestId: "child-request",
         source: "user",
         requestedModelSelection: REQUESTED_MODEL_SELECTION,

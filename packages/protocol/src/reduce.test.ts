@@ -1480,6 +1480,7 @@ describe("reduceStreamEvent", () => {
       id: "message-b",
       clientRequestId: "request-b",
       content: "B",
+      attachments: [],
       source: "user" as const,
       state: "queued" as const,
       revision: 0,

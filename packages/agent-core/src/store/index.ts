@@ -57,6 +57,16 @@ export type {
 } from "./types";
 export { BusyError, InvalidExecutionTransitionError } from "./types";
 export { getAssistantText } from "./helpers";
-export { toModelMessagesFromStoredMessages } from "./projection";
+export {
+  projectModelMessagesFromStoredMessages,
+  renderAttachmentMarker,
+  toModelMessagesFromStoredMessages,
+} from "./projection";
 export { assertValidSessionCwd, resolveValidSessionCwd } from "./session-cwd";
-export type { ProjectionMode, ProjectionOptions } from "./projection";
+export type {
+  AttachmentMarkerPart,
+  AttachmentProjectionSlot,
+  ModelMessagesProjection,
+  ProjectionMode,
+  ProjectionOptions,
+} from "./projection";

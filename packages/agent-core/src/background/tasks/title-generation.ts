@@ -1,6 +1,7 @@
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
-import type { SessionStoreState, TextPart } from "../../store/types";
+import type { SessionStoreState } from "../../store/types";
+import { renderAttachmentMarker } from "../../store/projection";
 import { generateTitle } from "../../title-generation";
 
 export function createTitleGenerationTask(
@@ -15,8 +16,11 @@ export function createTitleGenerationTask(
       const text = state.messages
         .filter((message) => message.role === "user")
         .map((message) => message.parts
-          .filter((part): part is TextPart => part.type === "text")
-          .map((part) => part.text)
+          .flatMap((part) => {
+            if (part.type === "text") return [part.text];
+            if (part.type === "attachment") return [renderAttachmentMarker(part.attachment)];
+            return [];
+          })
           .join(" ")
           .trim())
         .find((messageText) => messageText.length > 0);

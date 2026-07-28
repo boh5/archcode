@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createSession, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, setSessionGoalBudget, stopSessionFamily } from "./mutations";
+import { createSession, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, setSessionGoalBudget, stopSessionFamily, uploadSessionAttachment } from "./mutations";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -67,11 +67,31 @@ describe("web session runtime mutation API calls", () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/root-session/messages`);
-      expect(JSON.parse(String(init?.body))).toEqual({ text: "Build it", clientRequestId: "11111111-1111-4111-8111-111111111111", requestedModelSelection });
+      expect(JSON.parse(String(init?.body))).toEqual({ text: "Build it", attachmentIds: [], clientRequestId: "11111111-1111-4111-8111-111111111111", requestedModelSelection });
       return jsonResponse({ clientRequestId: "11111111-1111-4111-8111-111111111111", messageId: "message-1", status: "queued" }, { status: 202 });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    await postMessage({ slug: TEST_PROJECT_SLUG, sessionId: "root-session", content: "Build it", clientRequestId: "11111111-1111-4111-8111-111111111111", requestedModelSelection });
+    await postMessage({ slug: TEST_PROJECT_SLUG, sessionId: "root-session", content: "Build it", attachmentIds: [], clientRequestId: "11111111-1111-4111-8111-111111111111", requestedModelSelection });
+  });
+
+  test("uploads one raw file with its stable attachment id and metadata query", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/root-session/attachments/11111111-1111-4111-8111-111111111111?name=notes.txt&sizeBytes=5`);
+      expect(init?.method).toBe("PUT");
+      expect(init?.body).toBe(file);
+      expect(new Headers(init?.headers).get("Content-Type")).toBe(file.type);
+      return jsonResponse({ id: "11111111-1111-4111-8111-111111111111", name: "notes.txt", mediaType: "text/plain", sizeBytes: 5, kind: "file" });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(uploadSessionAttachment({
+      slug: TEST_PROJECT_SLUG,
+      sessionId: "root-session",
+      attachmentId: "11111111-1111-4111-8111-111111111111",
+      file,
+    })).resolves.toMatchObject({ id: "11111111-1111-4111-8111-111111111111", kind: "file" });
   });
 
   test("PATCH model selection sends optimistic revision and returns complete model state", async () => {

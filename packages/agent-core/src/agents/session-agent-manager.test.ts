@@ -21,6 +21,10 @@ import { DELEGATION_CORE_TOOLS } from "./constants";
 import type { AgentDefinition } from "./factory-types";
 import type { ToolExecutionContext } from "../tools/types";
 import type { DelegationRequest } from "@archcode/protocol";
+import {
+  EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+  resolveEmptyAttachmentReadPaths,
+} from "../attachments/test-helpers";
 
 const TEST_WORKSPACE_ROOT = join(import.meta.dir, "__test_tmp__", `session-agent-manager-${crypto.randomUUID()}`);
 const registryFixtures: TestToolRegistryFixture[] = [];
@@ -90,6 +94,8 @@ function createManager(
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
     createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
+    attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+    resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     logger: silentLogger,
     ...(tombstoneTtlMs === undefined ? {} : { tombstoneTtlMs }),
@@ -184,6 +190,8 @@ function createIdentityManager(
     skillService,
     storeManager,
     createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
+    attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+    resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     logger: silentLogger,
   });

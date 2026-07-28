@@ -22,6 +22,7 @@ export function AutomationsRoute() {
           slug,
           sessionId: session.sessionId,
           content: "/skill use automation-create",
+          attachmentIds: [],
           requestedModelSelection: session.nextModelSelection.requested,
         });
       },

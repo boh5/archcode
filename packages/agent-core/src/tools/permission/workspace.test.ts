@@ -82,6 +82,23 @@ describe("createWorkspacePermission", () => {
     });
   });
 
+  test("allows only file_read for an exact canonical committed attachment path", async () => {
+    const outsideFile = join(testDir, "committed-attachment.txt");
+    writeFileSync(outsideFile, "content", "utf-8");
+    const canonical = realpathSync(outsideFile);
+    const permission = createWorkspacePermission();
+
+    expect(await permission(
+      { path: outsideFile },
+      makeCtx({ toolName: "file_read", attachmentReadPaths: new Set([canonical]) }),
+    )).toEqual({ outcome: "allow" });
+
+    expect((await permission(
+      { path: outsideFile },
+      makeCtx({ toolName: "file_write", attachmentReadPaths: new Set([canonical]) }),
+    )).outcome).toBe("ask");
+  });
+
   test("allows when path is missing from input", async () => {
     const permission = createWorkspacePermission();
     const decision = await permission({ content: "no path" }, makeCtx({ cwd: workspaceDir }));

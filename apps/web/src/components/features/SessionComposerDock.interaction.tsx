@@ -206,6 +206,7 @@ describe("SessionComposerDock", () => {
           id: "queued-user",
           clientRequestId: "queued-request",
           content: "Queued request",
+          attachments: [],
           source: "user",
           state: "queued",
           revision: 1,
@@ -217,6 +218,7 @@ describe("SessionComposerDock", () => {
           id: "steering-user",
           clientRequestId: "steering-request",
           content: "Steering request",
+          attachments: [],
           source: "user",
           state: "steering",
           revision: 2,
@@ -230,6 +232,7 @@ describe("SessionComposerDock", () => {
     store.getState().addLocalSendingMessage({
       clientRequestId: "request-retry",
       content: "Retry this exact request",
+      attachments: [],
       requestedModelSelection,
       createdAt: 4,
     });
@@ -237,6 +240,7 @@ describe("SessionComposerDock", () => {
     store.getState().addLocalSendingMessage({
       clientRequestId: "request-sending",
       content: "Sending this request",
+      attachments: [],
       requestedModelSelection,
       createdAt: 6,
     });

@@ -39,6 +39,7 @@ beforeAll(() => {
   writeFileSync(join(workspace, ".git", "config"), "[core]\n");
   writeFileSync(join(workspace, ".env"), "SECRET=x");
   writeFileSync(join(outside, ".env"), "SECRET=x");
+  writeFileSync(join(outside, "target", "attachment-content"), "attachment");
   symlinkSync(join(outside, "target"), join(workspace, "outside-link"));
   symlinkSync(join(outside, ".env"), join(workspace, "credential-link"));
   symlinkSync(join(workspace, ".archcode", "runtime"), join(workspace, "control-link"));
@@ -957,6 +958,23 @@ describe("createBashPermission", () => {
       outcome: "ask",
       ruleId: "ask-privilege",
       approval: { eligible: true },
+    });
+  });
+
+  test("allows only finite exact reads of committed attachment paths outside a worktree", async () => {
+    const attachment = realpathSync.native(join(outside, "target", "attachment-content"));
+    const permission = createBashPermission();
+    const attachmentCtx = { ...ctx(), attachmentReadPaths: new Set([attachment]) };
+
+    expect(await permission({ command: `cat ${attachment}` }, attachmentCtx)).toMatchObject({ outcome: "allow" });
+    expect(await permission({ command: `wc -c ${attachment}` }, attachmentCtx)).toMatchObject({ outcome: "allow" });
+    expect(await permission({ command: `printf changed > ${attachment}` }, attachmentCtx)).toMatchObject({
+      outcome: "ask",
+      ruleId: "ask-outside-workspace",
+    });
+    expect(await permission({ command: `cat ${join(outside, "target", "other")}` }, attachmentCtx)).toMatchObject({
+      outcome: "ask",
+      ruleId: "ask-outside-workspace",
     });
   });
 

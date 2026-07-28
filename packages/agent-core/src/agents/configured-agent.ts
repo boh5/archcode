@@ -23,6 +23,7 @@ import type { Logger } from "../logger";
 import type { ToolRegistry } from "../tools/index";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
+import type { AttachmentModelProjector } from "../attachments";
 import { TOOL_PROJECT_TODO_UPDATE, TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
@@ -65,6 +66,11 @@ export interface ConfiguredAgentOptions {
   readonly storeManager: SessionStoreManager;
   readonly store: StoreApi<SessionStoreState>;
   readonly toolOutputAccess: ToolOutputAccessService;
+  readonly attachmentProjector: AttachmentModelProjector;
+  readonly resolveAttachmentReadPaths: (
+    workspaceRoot: string,
+    rootSessionId: string,
+  ) => Promise<ReadonlySet<string>>;
   /** Canonical project root used for persistent project/session state. */
   readonly projectRoot: string;
   /** Current Session execution directory used by prompts and filesystem tools. */
@@ -138,6 +144,8 @@ export class ConfiguredAgent implements Agent {
   private readonly skillService: SkillService;
   private readonly storeManager: SessionStoreManager;
   private readonly toolOutputAccess: ToolOutputAccessService;
+  private readonly attachmentProjector: AttachmentModelProjector;
+  private readonly resolveAttachmentReadPaths: ConfiguredAgentOptions["resolveAttachmentReadPaths"];
   private readonly projectRoot: string;
   readonly cwd: string;
   private readonly projectContextResolver: ProjectContextResolver;
@@ -174,6 +182,8 @@ export class ConfiguredAgent implements Agent {
     this.skillService = options.skillService;
     this.storeManager = options.storeManager;
     this.toolOutputAccess = options.toolOutputAccess;
+    this.attachmentProjector = options.attachmentProjector;
+    this.resolveAttachmentReadPaths = options.resolveAttachmentReadPaths;
     if (!options.store) throw new Error("ConfiguredAgent requires an explicit store");
     this.store = options.store;
     this.projectRoot = options.projectRoot;
@@ -387,6 +397,11 @@ export class ConfiguredAgent implements Agent {
             ...(this.sessionGoalService === undefined ? {} : { sessionGoalService: this.sessionGoalService }),
             cwd: this.cwd,
             toolOutputAccess: this.toolOutputAccess,
+            attachmentProjector: this.attachmentProjector,
+            resolveAttachmentReadPaths: () => this.resolveAttachmentReadPaths(
+              this.projectRoot,
+              this.store.getState().rootSessionId,
+            ),
             abort,
             resolveSystemPrompt,
             store: this.store,

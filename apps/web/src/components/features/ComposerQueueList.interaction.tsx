@@ -57,6 +57,13 @@ const modelRuntime = {
     fast: { model: "test:model" },
   },
 };
+const retryAttachment = {
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  name: "retry.txt",
+  mediaType: "text/plain",
+  sizeBytes: 5,
+  kind: "file" as const,
+};
 
 function change(element: HTMLTextAreaElement, value: string): void {
   act(() => {
@@ -139,6 +146,7 @@ describe("ComposerQueueList", () => {
         id: "queued-row",
         clientRequestId: "queued-client",
         content: "Original queued instruction",
+        attachments: [],
         source: "user",
         state: "queued",
         revision: 7,
@@ -149,6 +157,7 @@ describe("ComposerQueueList", () => {
         id: "steering-row",
         clientRequestId: "steering-client",
         content: "Steering instruction",
+        attachments: [],
         source: "user",
         state: "steering",
         revision: 3,
@@ -161,18 +170,21 @@ describe("ComposerQueueList", () => {
     store.getState().addLocalSendingMessage({
       clientRequestId: "queued-client",
       content: "Duplicate optimistic instruction",
+      attachments: [],
       requestedModelSelection,
       createdAt: 0,
     });
     store.getState().addLocalSendingMessage({
       clientRequestId: "sending-client",
       content: "Sending instruction",
+      attachments: [],
       requestedModelSelection,
       createdAt: 3,
     });
     store.getState().addLocalSendingMessage({
       clientRequestId: "retry-client",
       content: "Retry without duplication",
+      attachments: [retryAttachment],
       requestedModelSelection,
       createdAt: 4,
     });
@@ -265,6 +277,7 @@ describe("ComposerQueueList", () => {
     expect(JSON.parse(String(steered?.init?.body))).toEqual({ expectedRevision: 7, expectedExecutionId: "execution-current" });
     expect(JSON.parse(String(retried?.init?.body))).toEqual({
       text: "Retry without duplication",
+      attachmentIds: [retryAttachment.id],
       clientRequestId: "retry-client",
       requestedModelSelection,
     });

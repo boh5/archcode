@@ -773,6 +773,11 @@ function isOutsideWorkspace(access: BashAccess, workspaceRoot: string): boolean 
   return !isAtOrBelow(access.path, root);
 }
 
+function isAllowedAttachmentRead(access: BashAccess, ctx: ToolExecutionContext): boolean {
+  return access.operation === "read"
+    && ctx.attachmentReadPaths?.has(real(access.path)) === true;
+}
+
 function sensitive(access: BashAccess): boolean {
   return classifySensitivePath({ inputBasename: path.basename(access.path), effectiveCanonicalPath: access.path }).bashCredential;
 }
@@ -795,7 +800,10 @@ function askReason(analysis: BashAnalysis, ctx: ToolExecutionContext): { reason:
   if (analysis.accesses.some((access) => access.operation !== "execute" && sensitive(access))) {
     return { reason: "Credential path access requires confirmation", ruleId: "ask-credential-path", persistent: true };
   }
-  if (analysis.accesses.some((access) => isOutsideWorkspace(access, ctx.cwd))) return { reason: "Bash path access outside the workspace requires confirmation", ruleId: "ask-outside-workspace", persistent: true };
+  if (analysis.accesses.some((access) => (
+    isOutsideWorkspace(access, ctx.cwd)
+    && !isAllowedAttachmentRead(access, ctx)
+  ))) return { reason: "Bash path access outside the workspace requires confirmation", ruleId: "ask-outside-workspace", persistent: true };
   return undefined;
 }
 

@@ -224,6 +224,7 @@ describe("Lead architecture full-runtime flows", () => {
         workspaceRoot: fixture.workspaceRoot,
         sessionId: root.sessionId,
         text: "Propose durable execution for the migration, but ask me before starting it.",
+        attachmentIds: [],
         clientRequestId: crypto.randomUUID(),
         source: "user",
         requestedModelSelection: {

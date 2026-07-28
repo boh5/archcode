@@ -20,6 +20,7 @@ import type { Agent } from "./types";
 import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
+import type { AttachmentModelProjector } from "../attachments";
 
 export type { ChildExecutionHandle, ChildExecutionRequest } from "./factory-types";
 
@@ -29,6 +30,11 @@ export interface AgentFactoryConfig {
   readonly skillService: SkillService;
   readonly storeManager: SessionStoreManager;
   readonly createToolOutputAccess: (workspaceRoot: string, rootSessionId: string) => ToolOutputAccessService;
+  readonly attachmentProjector: AttachmentModelProjector;
+  readonly resolveAttachmentReadPaths: (
+    workspaceRoot: string,
+    rootSessionId: string,
+  ) => Promise<ReadonlySet<string>>;
   readonly workspaceRoot: string;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
@@ -182,6 +188,8 @@ function createConfiguredAgent(
       config.workspaceRoot,
       store.getState().rootSessionId,
     ),
+    attachmentProjector: config.attachmentProjector,
+    resolveAttachmentReadPaths: config.resolveAttachmentReadPaths,
     projectRoot: config.workspaceRoot,
     cwd: store.getState().cwd,
     store,

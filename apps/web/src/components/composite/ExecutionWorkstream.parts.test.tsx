@@ -10,6 +10,7 @@ import {
   type SessionMessage,
   type TextPart,
   type ReasoningPart,
+  type AttachmentPart,
 } from "@archcode/protocol";
 import {
   MsgUser as MsgUserComponent,
@@ -253,6 +254,21 @@ describe("MsgUser", () => {
     };
 
     expect(textContent(MsgUser({ message }))).toContain("No safe range to compact");
+  });
+
+  test("keeps attachment-only user input visible as a read-only descriptor chip", () => {
+    const attachment: AttachmentPart = {
+      type: "attachment",
+      id: "attachment-part-1",
+      attachment: { id: "attachment-1", name: "design.png", mediaType: "image/png", sizeBytes: 1536, kind: "image" },
+      createdAt: 1,
+      completedAt: 1,
+    };
+    const message: SessionMessage = { id: "attachment-message", role: "user", parts: [attachment], createdAt: 1, completedAt: 1 };
+
+    const rendered = MsgUser({ message });
+    expect(textContent(rendered)).toContain("design.png");
+    expect(textContent(rendered)).toContain("1.5 KiB");
   });
 });
 

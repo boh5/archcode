@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, Loader2, Square } from "lucide-react";
-import type { RequestedModelSelection, SessionFamilyActivity } from "@archcode/protocol";
+import { ArrowUp, FilePlus, Loader2, Square, X } from "lucide-react";
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_ATTACHMENT_SIZE_BYTES,
+  type AttachmentDescriptor,
+  type RequestedModelSelection,
+  type SessionFamilyActivity,
+} from "@archcode/protocol";
 import { ApiError } from "../../api/client";
-import { usePatchSessionModelSelection, usePostMessage, useStopSessionFamily } from "../../api/mutations";
+import { uploadSessionAttachment, usePatchSessionModelSelection, usePostMessage, useStopSessionFamily } from "../../api/mutations";
 import { useModelRuntime } from "../../api/queries";
 import {
   getWebSessionStore,
@@ -15,12 +21,38 @@ import { createClientUuid } from "../../lib/client-uuid";
 import { sessionFamilyActivityLabel } from "../../lib/session-family-presentation";
 import type { StatusTone, VisualStatusKind } from "../../lib/status-visuals";
 import { StatusGlyph } from "../primitives/StatusGlyph";
+import { formatAttachmentSize } from "../primitives/AttachmentChip";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
 ] as const;
 
 type SlashCommand = (typeof SLASH_COMMANDS)[number];
+
+type DraftAttachment = {
+  id: string;
+  file: File;
+  status: "ready" | "uploading" | "uploaded" | "error";
+  descriptor?: AttachmentDescriptor;
+  error?: string;
+  previewUrl?: string;
+};
+
+const UPLOAD_LIMIT_GUIDANCE = "Files are limited to 50 MiB. Compress or split it, or place it in the workspace and send its path.";
+const SLASH_ATTACHMENT_GUIDANCE = "Slash commands can only be sent as plain text. Remove the attachment first.";
+
+function isSlashInput(text: string): boolean {
+  return text.trimStart().startsWith("/");
+}
+
+function uploadErrorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 413) return UPLOAD_LIMIT_GUIDANCE;
+  return error instanceof Error ? error.message : "Upload failed. Retry from the beginning.";
+}
+
+function releasePreview(attachment: DraftAttachment): void {
+  if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+}
 
 export interface ChatInputProps {
   slug: string;
@@ -60,8 +92,12 @@ export function ChatInput({
   const [slashFilter, setSlashFilter] = useState("");
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [hitlComposerExpanded, setHitlComposerExpanded] = useState(false);
+  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  const [attachmentNotice, setAttachmentNotice] = useState<string>();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachmentsRef = useRef<DraftAttachment[]>([]);
 
   const modelSelection = useSessionStore(sessionId, (state) => state.modelSelection, slug);
   const nextModelSelection = useSessionStore(sessionId, (state) => state.nextModelSelection, slug);
@@ -84,7 +120,14 @@ export function ChatInput({
   const runtimeReady = activity !== undefined;
   const modelControlsReady = coherentCatalog !== undefined && agentName !== null;
   const canCompose = runtimeReady && hitlReady && modelControlsReady && !isStopping && !isPending && nextModelSelection !== undefined;
-  const canSubmit = canCompose && value.trim().length > 0;
+  const hasAttachments = attachments.length > 0;
+  const hasAttachmentError = attachments.some((attachment) => attachment.status === "error");
+  const attachmentUploadInProgress = attachments.some((attachment) => attachment.status === "uploading");
+  const canSubmit = canCompose
+    && (value.trim().length > 0 || hasAttachments)
+    && !hasAttachmentError
+    && !attachmentUploadInProgress
+    && !(hasAttachments && isSlashInput(value));
   const status = composerStatus(activity, hitlReady, hasPendingHitl);
   const filteredCommands = SLASH_COMMANDS.filter((command) =>
     command.name.startsWith(`/ ${slashFilter}`.replace(/\s/g, "")),
@@ -100,6 +143,14 @@ export function ChatInput({
   useEffect(() => {
     adjustHeight();
   }, [value, adjustHeight]);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => () => {
+    for (const attachment of attachmentsRef.current) releasePreview(attachment);
+  }, []);
 
   useEffect(() => {
     if (!hasPendingHitl) setHitlComposerExpanded(false);
@@ -122,18 +173,78 @@ export function ChatInput({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showSlashMenu]);
 
-  const submitMessage = useCallback((content: string, requestedModelSelection: RequestedModelSelection) => {
+  const replaceAttachments = useCallback((next: DraftAttachment[]) => {
+    const retained = new Set(next.map((attachment) => attachment.id));
+    for (const attachment of attachmentsRef.current) {
+      if (!retained.has(attachment.id)) releasePreview(attachment);
+    }
+    attachmentsRef.current = next;
+    setAttachments(next);
+  }, []);
+
+  const updateAttachment = useCallback((id: string, update: (attachment: DraftAttachment) => DraftAttachment) => {
+    const next = attachmentsRef.current.map((attachment) => attachment.id === id ? update(attachment) : attachment);
+    attachmentsRef.current = next;
+    setAttachments(next);
+  }, []);
+
+  const addFiles = useCallback((files: readonly File[]) => {
+    if (files.length === 0) return;
+    if (attachmentsRef.current.some((attachment) => attachment.status === "uploading")) return;
+    if (attachmentsRef.current.length + files.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+      setAttachmentNotice(`A message can include at most ${MAX_ATTACHMENTS_PER_MESSAGE} attachments.`);
+      return;
+    }
+    const oversized = files.find((file) => file.size > MAX_ATTACHMENT_SIZE_BYTES);
+    if (oversized) {
+      setAttachmentNotice(`${oversized.name}: ${UPLOAD_LIMIT_GUIDANCE}`);
+      return;
+    }
+    const added = files.map((file) => ({
+      id: createClientUuid(),
+      file,
+      status: "ready" as const,
+      previewUrl: file.type.startsWith("image/") && typeof URL.createObjectURL === "function"
+        ? URL.createObjectURL(file)
+        : undefined,
+    }));
+    setAttachmentNotice(undefined);
+    replaceAttachments([...attachmentsRef.current, ...added]);
+  }, [replaceAttachments]);
+
+  const uploadAttachment = useCallback(async (attachment: DraftAttachment): Promise<AttachmentDescriptor | undefined> => {
+    updateAttachment(attachment.id, (current) => ({ ...current, status: "uploading", error: undefined }));
+    try {
+      const descriptor = await uploadSessionAttachment({
+        slug,
+        sessionId,
+        attachmentId: attachment.id,
+        file: attachment.file,
+      });
+      updateAttachment(attachment.id, (current) => ({ ...current, status: "uploaded", descriptor, error: undefined }));
+      return descriptor;
+    } catch (error) {
+      const message = uploadErrorMessage(error);
+      updateAttachment(attachment.id, (current) => ({ ...current, status: "error", error: message }));
+      setAttachmentNotice(message);
+      return undefined;
+    }
+  }, [sessionId, slug, updateAttachment]);
+
+  const submitMessage = useCallback((content: string, descriptors: AttachmentDescriptor[], requestedModelSelection: RequestedModelSelection) => {
     const clientRequestId = createClientUuid();
     getWebSessionStore(sessionId, slug).getState().addLocalSendingMessage({
       clientRequestId,
       content,
+      attachments: descriptors,
       requestedModelSelection,
     });
 
     postMessage.mutate(
-      { slug, sessionId, content, clientRequestId, requestedModelSelection },
+      { slug, sessionId, content, attachmentIds: descriptors.map((attachment) => attachment.id), clientRequestId, requestedModelSelection },
       {
         onSuccess: (acceptance) => {
+          replaceAttachments([]);
           // Commands have no canonical message event to replace this optimistic record.
           if (acceptance.status === "command") {
             getWebSessionStore(sessionId, slug).getState().removeLocalSendingMessage(clientRequestId);
@@ -149,6 +260,7 @@ export function ChatInput({
             return;
           }
           store.setLocalSendingMessageStatus(clientRequestId, "retryable");
+          replaceAttachments([]);
         },
       },
     );
@@ -157,18 +269,38 @@ export function ChatInput({
     requestAnimationFrame(() => {
       if (textareaRef.current) textareaRef.current.style.height = "auto";
     });
-  }, [postMessage, sessionId, slug]);
+  }, [postMessage, replaceAttachments, sessionId, slug]);
 
-  const sendMessage = useCallback(() => {
+  const sendMessage = useCallback(async () => {
     const content = value.trim();
-    if (!content || !canCompose || !nextModelSelection) return;
-    submitMessage(content, nextModelSelection.requested);
-  }, [canCompose, nextModelSelection, submitMessage, value]);
+    if ((!content && !hasAttachments) || !canCompose || !nextModelSelection) return;
+    if (hasAttachments && isSlashInput(content)) {
+      setAttachmentNotice(SLASH_ATTACHMENT_GUIDANCE);
+      return;
+    }
+
+    const descriptors: AttachmentDescriptor[] = [];
+    for (const attachment of attachmentsRef.current) {
+      if (attachment.status === "uploaded" && attachment.descriptor) {
+        descriptors.push(attachment.descriptor);
+        continue;
+      }
+      if (attachment.status !== "ready") return;
+      const descriptor = await uploadAttachment(attachment);
+      if (!descriptor) return;
+      descriptors.push(descriptor);
+    }
+    submitMessage(content, descriptors, nextModelSelection.requested);
+  }, [canCompose, hasAttachments, nextModelSelection, submitMessage, uploadAttachment, value]);
 
   const selectSlashCommand = useCallback((command: SlashCommand) => {
     if (!canCompose || isQueueing || hasPendingHitl) return;
     if (!nextModelSelection) return;
-    submitMessage(command.name, nextModelSelection.requested);
+    if (attachmentsRef.current.length > 0) {
+      setAttachmentNotice(SLASH_ATTACHMENT_GUIDANCE);
+      return;
+    }
+    submitMessage(command.name, [], nextModelSelection.requested);
     setShowSlashMenu(false);
     setSlashFilter("");
     setSlashActiveIndex(0);
@@ -249,6 +381,44 @@ export function ChatInput({
     setSlashFilter("");
   }, []);
 
+  const removeAttachment = useCallback((id: string) => {
+    replaceAttachments(attachmentsRef.current.filter((attachment) => attachment.id !== id));
+  }, [replaceAttachments]);
+
+  const moveAttachment = useCallback((id: string, direction: -1 | 1) => {
+    const index = attachmentsRef.current.findIndex((attachment) => attachment.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= attachmentsRef.current.length) return;
+    const next = [...attachmentsRef.current];
+    [next[index], next[target]] = [next[target], next[index]];
+    replaceAttachments(next);
+  }, [replaceAttachments]);
+
+  const handleFileSelection = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    addFiles(Array.from(event.target.files ?? []));
+    // Permit retrying the same file after removal or an upload error.
+    event.target.value = "";
+  }, [addFiles]);
+
+  const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const entries = Array.from(event.dataTransfer.items).map((item) => (
+      (item as DataTransferItem & { webkitGetAsEntry?: () => FileSystemEntry | null }).webkitGetAsEntry?.()
+    ));
+    if (entries.some((entry) => entry?.isDirectory)) {
+      setAttachmentNotice("Folders are not supported. Choose files instead.");
+      return;
+    }
+    addFiles(Array.from(event.dataTransfer.files));
+  }, [addFiles]);
+
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+    if (images.length === 0) return;
+    event.preventDefault();
+    addFiles(images);
+  }, [addFiles]);
+
   if (hasPendingHitl && !hitlComposerExpanded) {
     return (
       <div className="relative" data-testid="conversation-composer">
@@ -317,12 +487,39 @@ export function ChatInput({
       <div
         className="overflow-visible rounded-xl border border-border-control bg-bg-elevated shadow-sm transition-[border-color,box-shadow] duration-[var(--motion-hover)] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand"
         data-testid="composer-card"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
       >
+        {attachments.length > 0 && (
+          <ul className="mx-3 mt-3 flex max-h-40 flex-col gap-1 overflow-y-auto" aria-label="Message attachments" data-testid="composer-attachments">
+            {attachments.map((attachment, index) => (
+              <li key={attachment.id} className="flex min-w-0 items-center gap-2 rounded-sm border border-border-subtle bg-bg-base px-2 py-1.5">
+                {attachment.previewUrl && (
+                  <img src={attachment.previewUrl} alt="" className="h-8 w-8 shrink-0 rounded-sm object-cover" />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] text-text-primary">{attachment.file.name}</span>
+                  <span className="block text-[11px] text-text-tertiary">{formatAttachmentSize(attachment.file.size)} · {attachment.status}</span>
+                  {attachment.error && <span className="block text-[11px] text-error" role="alert">{attachment.error}</span>}
+                </span>
+                <div className="flex shrink-0 items-center gap-1">
+                  {attachment.status === "error" && (
+                    <button className="rounded-sm px-1.5 py-1 text-[11px] text-brand hover:bg-bg-hover" disabled={attachmentUploadInProgress} type="button" onClick={() => void uploadAttachment(attachment)}>Retry</button>
+                  )}
+                  <button aria-label={`Move ${attachment.file.name} earlier`} className="rounded-sm px-1 py-1 text-[11px] text-text-tertiary hover:bg-bg-hover disabled:opacity-30" disabled={index === 0 || attachmentUploadInProgress} type="button" onClick={() => moveAttachment(attachment.id, -1)}>↑</button>
+                  <button aria-label={`Move ${attachment.file.name} later`} className="rounded-sm px-1 py-1 text-[11px] text-text-tertiary hover:bg-bg-hover disabled:opacity-30" disabled={index === attachments.length - 1 || attachmentUploadInProgress} type="button" onClick={() => moveAttachment(attachment.id, 1)}>↓</button>
+                  <button aria-label={`Remove ${attachment.file.name}`} className="rounded-sm p-1 text-text-tertiary hover:bg-bg-hover hover:text-error disabled:opacity-30" disabled={attachmentUploadInProgress} type="button" onClick={() => removeAttachment(attachment.id)}><X size={13} /></button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
           ref={textareaRef}
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           disabled={!canCompose}
           placeholder={
             !runtimeReady
@@ -340,6 +537,8 @@ export function ChatInput({
           rows={1}
           className="block min-h-[56px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-2 pt-3.5 font-sans text-[16px] leading-6 text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary sm:text-[15px] sm:leading-6"
         />
+
+        {attachmentNotice && <p className="mx-3 mt-1 text-[11px] leading-4 text-warning" role="alert">{attachmentNotice}</p>}
 
         <div className="flex min-h-[38px] items-center justify-between gap-3 px-3 pb-2">
           <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-tertiary" data-testid="composer-model">
@@ -369,6 +568,27 @@ export function ChatInput({
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="sr-only"
+              data-testid="composer-file-input"
+              onChange={handleFileSelection}
+            />
+            <button
+              type="button"
+              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!canCompose || attachmentUploadInProgress}
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach file"
+              aria-label="Attach file"
+            >
+              <FilePlus size={16} />
+            </button>
+            <span className="max-w-40 truncate text-[10px] text-text-tertiary max-[720px]:hidden">
+              Images may be sent to the selected model provider.
+            </span>
             <span className="mr-1 text-[11px] text-text-tertiary max-[720px]:hidden">
               {isQueueing ? "Enter to queue" : "Shift+Enter for newline"}
             </span>

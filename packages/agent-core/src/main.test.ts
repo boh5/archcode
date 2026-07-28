@@ -24,6 +24,7 @@ import {
 } from "./runtime";
 import { SessionStoreManager } from "./store/session-store-manager";
 import { SessionInputService } from "./session-input/service";
+import { EMPTY_SESSION_ATTACHMENT_RESOLVER } from "./session-input/test-helpers";
 import type { SessionToolBatch } from "./store/types";
 import { createTestProjectContext } from "./tools/test-project-context";
 import { createInMemoryLogger, silentLogger } from "./logger";
@@ -32,6 +33,8 @@ import { setLlmAdapterForTest } from "./llm";
 import { getLspClientPool } from "./lsp/client-pool";
 import { SessionGoalService } from "./session-goal";
 import { testExecutionEnd, testExecutionStart, testExecutionSuspended } from "./testing/test-execution-fixtures";
+import { getAttachmentContentPath } from "./attachments";
+import { getSessionPath } from "./store/sessions-dir";
 
 const tmpRoots: string[] = [];
 const requestedModelSelection: RequestedModelSelection = {
@@ -261,6 +264,7 @@ describe("createRuntime", () => {
         workspaceRoot,
         sessionId: session.sessionId,
         text: "Inspect the project",
+        attachmentIds: [],
         clientRequestId,
         source: "user",
         requestedModelSelection,
@@ -311,6 +315,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "Ask before continuing",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection,
@@ -338,6 +343,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "Continue after the failed question",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection,
@@ -379,6 +385,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "Run after retry",
+      attachmentIds: [],
       clientRequestId,
       source: "automation",
       requestedModelSelection,
@@ -436,6 +443,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: parent.sessionId,
       text: "Start a background child",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection,
@@ -447,10 +455,11 @@ describe("createRuntime", () => {
     externalStoreManager.create(queuedSessionId, workspaceRoot, { agentName: "lead" });
     await externalStoreManager.flushSession(queuedSessionId, workspaceRoot);
     const queuedClientRequestId = crypto.randomUUID();
-    await new SessionInputService(externalStoreManager).acceptMessage({
+    await new SessionInputService(externalStoreManager, EMPTY_SESSION_ATTACHMENT_RESOLVER).acceptMessage({
       sessionId: queuedSessionId,
       workspaceRoot,
       text: "Continue from the child-slot retry",
+      attachmentIds: [],
       clientRequestId: queuedClientRequestId,
       source: "automation",
       requestedModelSelection,
@@ -481,6 +490,134 @@ describe("createRuntime", () => {
     }));
     expect(entries.some((entry) => entry.event === "project.runtime.reconcile_failed")).toBe(true);
     await runtime.shutdown();
+  });
+  test("persists the upload media-type domain through message commit and restart", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({
+      workspaceRoot,
+      name: "Attachment media type persistence",
+    });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const attachmentId = crypto.randomUUID();
+    const upload = await runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: session.sessionId,
+      attachmentId,
+      name: "extended-token.bin",
+      mediaType: "application/x~foo",
+      sizeBytes: 0,
+      body: null,
+    });
+    expect(upload.descriptor.mediaType).toBe("application/x~foo");
+
+    installTestLlmAdapter();
+    try {
+      const familyIdle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
+      await runtime.acceptSessionMessage({
+        slug: project.slug,
+        workspaceRoot,
+        sessionId: session.sessionId,
+        text: "",
+        attachmentIds: [attachmentId],
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+        requestedModelSelection,
+      });
+      await familyIdle;
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+      setLlmAdapterForTest(undefined);
+    }
+
+    const restartedManager = new SessionStoreManager({ logger: silentLogger });
+    const restarted = await restartedManager.getOrLoad(session.sessionId, workspaceRoot);
+    expect(restarted.getState().messages).toContainEqual(expect.objectContaining({
+      role: "user",
+      parts: expect.arrayContaining([expect.objectContaining({
+        type: "attachment",
+        attachment: expect.objectContaining({
+          id: attachmentId,
+          mediaType: "application/x~foo",
+        }),
+      })]),
+    }));
+  });
+  test("accepts attachment input through a Todo Discussion root Lead", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({
+      workspaceRoot,
+      name: "Todo Discussion attachments",
+    });
+    const context = await runtime.contextResolver.resolve(workspaceRoot);
+    const todo = await context.todos.createTodo({
+      title: "Discuss attachment evidence",
+      body: "Confirm the attachment before work starts.",
+    });
+
+    installTestLlmAdapter();
+    try {
+      const discussion = await runtime.createSession(workspaceRoot, {
+        agentName: "lead",
+        title: todo.title,
+        projectTodo: { todoId: todo.id, entry: "discussion" },
+      });
+      const attachmentId = crypto.randomUUID();
+      await runtime.uploadSessionAttachment({
+        workspaceRoot,
+        rootSessionId: discussion.sessionId,
+        attachmentId,
+        name: "discussion.txt",
+        mediaType: "text/plain",
+        sizeBytes: 0,
+        body: null,
+      });
+
+      const familyIdle = nextFamilyActivity(
+        runtime,
+        project.slug,
+        discussion.sessionId,
+        "idle",
+      );
+      await runtime.acceptSessionMessage({
+        slug: project.slug,
+        workspaceRoot,
+        sessionId: discussion.sessionId,
+        text: "",
+        attachmentIds: [attachmentId],
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+        requestedModelSelection,
+      });
+      await familyIdle;
+
+      const stored = await runtime.getSessionFile(workspaceRoot, discussion.sessionId);
+      expect(stored).toMatchObject({
+        sessionId: discussion.sessionId,
+        rootSessionId: discussion.sessionId,
+        agentName: "lead",
+        projectTodo: { todoId: todo.id, entry: "discussion" },
+      });
+      expect(stored.messages).toContainEqual(expect.objectContaining({
+        role: "user",
+        parts: expect.arrayContaining([expect.objectContaining({
+          type: "attachment",
+          attachment: expect.objectContaining({ id: attachmentId }),
+        })]),
+      }));
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+      setLlmAdapterForTest(undefined);
+    }
   });
   test("integrates Analyst and Build results through the ordinary Lead delegation path", async () => {
     const workspaceRoot = await makeTempRoot();
@@ -589,6 +726,7 @@ describe("createRuntime", () => {
         workspaceRoot,
         sessionId: session.sessionId,
         text: "Analyze and implement the requested change.",
+        attachmentIds: [],
         clientRequestId,
         source: "user",
         requestedModelSelection,
@@ -634,6 +772,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "/unknown-command",
+      attachmentIds: [],
       clientRequestId,
       source: "user" as const,
       requestedModelSelection,
@@ -664,6 +803,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "/unknown-command",
+      attachmentIds: [],
       clientRequestId,
       source: "user" as const,
       requestedModelSelection,
@@ -684,6 +824,31 @@ describe("createRuntime", () => {
     expect(file.messages.flatMap((message) => message.parts)
       .filter((part) => part.type === "system-notice" && part.notice.includes("Unknown command")))
       .toHaveLength(1);
+  });
+
+  test("rejects slash commands with attachments before command side effects", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Command attachments" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    await expect(runtime.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "/unknown-command",
+      attachmentIds: [crypto.randomUUID()],
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    })).rejects.toMatchObject({
+      name: "SessionInputConflictError",
+      reason: "state",
+    });
+    expect((await runtime.getSessionFile(workspaceRoot, session.sessionId)).inputRequestReceipts)
+      .toEqual([]);
   });
   test("publishes provider and model settings to the live runtime", async () => {
     const configService = await writeConfig(makeConfig({ servers: {} }));
@@ -863,6 +1028,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "Ask before continuing.",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection,
@@ -1002,6 +1168,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "Keep working through the authentication migration until every test passes.",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection,
@@ -1148,6 +1315,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "Keep working until the migration is complete.",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection,
@@ -1197,6 +1365,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       sessionId: session.sessionId,
       text: "Keep working until the migration is complete.",
+      attachmentIds: [],
       clientRequestId: crypto.randomUUID(),
       source: "user",
       requestedModelSelection,
@@ -1763,6 +1932,251 @@ describe("createRuntime", () => {
     expect(resolved?.status).toBe("resolved");
     expect(resolved?.delivery).toBeUndefined();
     await runtime2.abortAllSessionExecutions();
+  });
+
+  test("root deletion waits for upload completion and removes its attachment directory", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment deletion" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const attachmentId = crypto.randomUUID();
+    let releaseBody!: () => void;
+    let bodyRead!: () => void;
+    const bodyReadPromise = new Promise<void>((resolve) => {
+      bodyRead = resolve;
+    });
+    const releaseBodyPromise = new Promise<void>((resolve) => {
+      releaseBody = resolve;
+    });
+    const upload = runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: session.sessionId,
+      attachmentId,
+      name: "pending.bin",
+      sizeBytes: 1,
+      body: new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          bodyRead();
+          await releaseBodyPromise;
+          controller.enqueue(Uint8Array.of(1));
+          controller.close();
+        },
+      }),
+    });
+    await bodyReadPromise;
+
+    let deleted = false;
+    const deletion = runtime.deleteSession(workspaceRoot, session.sessionId).then(() => {
+      deleted = true;
+    });
+    await Promise.resolve();
+    expect(deleted).toBe(false);
+    releaseBody();
+    await upload;
+    await deletion;
+
+    expect(await Bun.file(
+      getAttachmentContentPath(workspaceRoot, session.sessionId, attachmentId),
+    ).exists()).toBe(false);
+    await expect(runtime.getSessionFile(workspaceRoot, session.sessionId)).rejects.toThrow();
+  });
+
+  test("attachment cleanup failure warns once without changing successful root deletion", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const { logger, entries } = createInMemoryLogger();
+    const cleanup = mock(async () => {
+      throw new Error(`cleanup failed at ${workspaceRoot}`);
+    });
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+      logger,
+      attachmentRootRemover: cleanup,
+    } as RuntimeTestOptions);
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment cleanup warning" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const attachmentId = crypto.randomUUID();
+    await runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: session.sessionId,
+      attachmentId,
+      name: "orphan.bin",
+      sizeBytes: 0,
+      body: null,
+    });
+
+    await expect(runtime.deleteSession(workspaceRoot, session.sessionId)).resolves.toBeUndefined();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(await Bun.file(
+      getAttachmentContentPath(workspaceRoot, session.sessionId, attachmentId),
+    ).exists()).toBe(true);
+    const warnings = entries.filter(({ event }) => event === "session.attachments.cleanup_failed");
+    expect(warnings).toHaveLength(1);
+    expect(JSON.stringify(warnings[0])).not.toContain(workspaceRoot);
+  });
+
+  test("child deletion neither takes the root attachment gate nor cleans root attachments", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment child deletion" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const retainedId = crypto.randomUUID();
+    await runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: root.sessionId,
+      attachmentId: retainedId,
+      name: "retained.bin",
+      sizeBytes: 0,
+      body: null,
+    });
+    const childId = crypto.randomUUID();
+    const seed = new SessionStoreManager({ logger: silentLogger });
+    await seed.createSessionFile(workspaceRoot, {
+      agentName: "explore",
+      rootSessionId: root.sessionId,
+      parentSessionId: root.sessionId,
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Child",
+        objective: "Inspect",
+        skills: [],
+        background: true,
+      },
+    }, childId);
+
+    let releaseUpload!: () => void;
+    let uploadRead!: () => void;
+    const uploadReadPromise = new Promise<void>((resolve) => {
+      uploadRead = resolve;
+    });
+    const releaseUploadPromise = new Promise<void>((resolve) => {
+      releaseUpload = resolve;
+    });
+    const upload = runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: root.sessionId,
+      attachmentId: crypto.randomUUID(),
+      name: "blocked.bin",
+      sizeBytes: 1,
+      body: new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          uploadRead();
+          await releaseUploadPromise;
+          controller.enqueue(Uint8Array.of(1));
+          controller.close();
+        },
+      }),
+    });
+    await uploadReadPromise;
+    const childDelete = runtime.deleteSession(workspaceRoot, childId);
+    const outcome = await Promise.race([
+      childDelete.then(() => "deleted" as const),
+      Bun.sleep(200).then(() => "timeout" as const),
+    ]);
+    releaseUpload();
+    await upload;
+    expect(outcome).toBe("deleted");
+    await childDelete;
+    expect(await Bun.file(
+      getAttachmentContentPath(workspaceRoot, root.sessionId, retainedId),
+    ).exists()).toBe(true);
+  });
+
+  test("Session Manager deletion failure skips attachment cleanup and releases the gate", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment failed deletion" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const attachmentId = crypto.randomUUID();
+    await runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: root.sessionId,
+      attachmentId,
+      name: "survives.bin",
+      sizeBytes: 0,
+      body: null,
+    });
+    const malformedChildId = crypto.randomUUID();
+    const malformedPath = getSessionPath(workspaceRoot, malformedChildId);
+    await mkdir(join(malformedPath, ".."), { recursive: true });
+    await Bun.write(malformedPath, "{}");
+
+    await expect(runtime.deleteSession(workspaceRoot, root.sessionId)).rejects.toThrow();
+    expect(await Bun.file(
+      getAttachmentContentPath(workspaceRoot, root.sessionId, attachmentId),
+    ).exists()).toBe(true);
+    await expect(runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: root.sessionId,
+      attachmentId: crypto.randomUUID(),
+      name: "after-failure.bin",
+      sizeBytes: 0,
+      body: null,
+    })).resolves.toMatchObject({ created: true });
+  });
+
+  test("delete-first ordering blocks a late upload until root revalidation rejects it", async () => {
+    const workspaceRoot = await makeTempRoot();
+    let cleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStartedPromise = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    const releaseCleanupPromise = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+      attachmentRootRemover: async (path: string) => {
+        cleanupStarted();
+        await releaseCleanupPromise;
+        await rm(path, { recursive: true, force: true });
+      },
+    } as RuntimeTestOptions);
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment delete first" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    await runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: root.sessionId,
+      attachmentId: crypto.randomUUID(),
+      name: "existing.bin",
+      sizeBytes: 0,
+      body: null,
+    });
+
+    const deletion = runtime.deleteSession(workspaceRoot, root.sessionId);
+    await cleanupStartedPromise;
+    const lateId = crypto.randomUUID();
+    let lateSettled = false;
+    const late = runtime.uploadSessionAttachment({
+      workspaceRoot,
+      rootSessionId: root.sessionId,
+      attachmentId: lateId,
+      name: "late.bin",
+      sizeBytes: 0,
+      body: null,
+    }).finally(() => {
+      lateSettled = true;
+    });
+    await Promise.resolve();
+    expect(lateSettled).toBe(false);
+    releaseCleanup();
+    await deletion;
+    await expect(late).rejects.toThrow();
+    expect(await Bun.file(
+      getAttachmentContentPath(workspaceRoot, root.sessionId, lateId),
+    ).exists()).toBe(false);
   });
 });
 

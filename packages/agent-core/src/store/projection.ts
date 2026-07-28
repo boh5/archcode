@@ -1,6 +1,10 @@
 import type { ModelMessage } from "ai";
 import type { StoredMessage, StoredPart } from "./types";
-import type { FinalizedToolResult, GoalNoticePart } from "@archcode/protocol";
+import type {
+  AttachmentDescriptor,
+  FinalizedToolResult,
+  GoalNoticePart,
+} from "@archcode/protocol";
 import { TOOL_OUTPUT_PREVIEW_MAX_BYTES, TOOL_OUTPUT_PREVIEW_MAX_LINES } from "../tool-output/constants";
 import { projectCanonicalText } from "../tool-output/projection";
 import { utf8ByteLength } from "../tool-output/utf8";
@@ -23,6 +27,16 @@ export interface ProjectionOptions {
 export interface ModelMessagesProjection {
   readonly messages: ModelMessage[];
   readonly refMap?: CompressionRefMap;
+  readonly attachmentSlots: AttachmentProjectionSlot[];
+}
+
+type UserMessageContent = Extract<ModelMessage, { role: "user" }>["content"];
+type UserArrayContent = Exclude<UserMessageContent, string>;
+export type AttachmentMarkerPart = Extract<UserArrayContent[number], { type: "text" }>;
+
+export interface AttachmentProjectionSlot {
+  readonly markerPart: AttachmentMarkerPart;
+  readonly descriptor: AttachmentDescriptor;
 }
 
 type AssistantMessageContent = Extract<ModelMessage, { role: "assistant" }>["content"];
@@ -48,6 +62,7 @@ export function projectModelMessagesFromStoredMessages(
     ? createCompressionProjection(messages, options.compression)
     : undefined;
   const modelMessages: ModelMessage[] = [];
+  const attachmentSlots: AttachmentProjectionSlot[] = [];
   const latestGoalNotice = mode === "model" ? findLatestGoalNotice(messages) : undefined;
   let latestGoalNoticeProjected = false;
 
@@ -68,6 +83,13 @@ export function projectModelMessagesFromStoredMessages(
 
     if (message.role === "user") {
       let content = "";
+      const contentParts: UserArrayContent = [];
+      let usesArrayContent = false;
+      const flushText = () => {
+        if (content.length === 0) return;
+        contentParts.push({ type: "text", text: content });
+        content = "";
+      };
 
       for (const part of message.parts) {
         if (mode === "full-history" && part.type === "compaction") {
@@ -87,13 +109,42 @@ export function projectModelMessagesFromStoredMessages(
           content += `<compact-summary>\n${part.summary}\n</compact-summary>`;
           continue;
         }
+        if (part.type === "attachment" && part.completedAt !== undefined) {
+          usesArrayContent = true;
+          flushText();
+          const markerPart: AttachmentMarkerPart = {
+            type: "text",
+            text: renderAttachmentMarker(part.attachment),
+          };
+          contentParts.push(markerPart);
+          attachmentSlots.push({
+            markerPart,
+            descriptor: { ...part.attachment },
+          });
+          continue;
+        }
         if (part.type === "text" && part.completedAt !== undefined && !isDiscardedFromContext(part)) {
           content += part.text;
         }
       }
+      if (usesArrayContent) flushText();
 
-      if (content.length > 0) {
-        modelMessages.push({ role: "user", content: wrapUserContent(content, messageRefFor(message, index, compressionProjection)) });
+      if (usesArrayContent && contentParts.length > 0) {
+        modelMessages.push({
+          role: "user",
+          content: wrapUserContent(
+            contentParts,
+            messageRefFor(message, index, compressionProjection),
+          ),
+        });
+      } else if (content.length > 0) {
+        modelMessages.push({
+          role: "user",
+          content: wrapUserText(
+            content,
+            messageRefFor(message, index, compressionProjection),
+          ),
+        });
       }
 
       continue;
@@ -104,7 +155,7 @@ export function projectModelMessagesFromStoredMessages(
       const toolContent: Extract<ModelMessage, { role: "tool" }>["content"] = [];
 
       for (const part of message.parts) {
-        if (part.type === "system-notice" || part.type === "recovery-notice" || part.type === "goal-notice") continue;
+        if (part.type === "attachment" || part.type === "system-notice" || part.type === "recovery-notice" || part.type === "goal-notice") continue;
 
         if (part.type === "text") {
           if (isDiscardedFromContext(part)) {
@@ -175,6 +226,7 @@ export function projectModelMessagesFromStoredMessages(
     const toolContent: Extract<ModelMessage, { role: "tool" }>["content"] = [];
 
     for (const part of message.parts) {
+      if (part.type === "attachment") continue;
       if (part.type === "text") {
         if (isDiscardedFromContext(part)) {
           pushRecoveryMarker(modelMessages);
@@ -248,6 +300,7 @@ export function projectModelMessagesFromStoredMessages(
 
   return {
     messages: modelMessages,
+    attachmentSlots,
     ...(compressionProjection === undefined ? {} : { refMap: compressionProjection.refMap }),
   };
 }
@@ -298,6 +351,22 @@ function renderGoalNotice(notice: GoalNoticePart): string {
 
   lines.push("</goal-notice>");
   return lines.join("\n");
+}
+
+export function renderAttachmentMarker(
+  descriptor: AttachmentDescriptor,
+  contentPath?: string,
+): string {
+  return [
+    "<attachment>",
+    `<id>${escapeXml(descriptor.id)}</id>`,
+    `<name>${escapeXml(descriptor.name)}</name>`,
+    `<media-type>${escapeXml(descriptor.mediaType)}</media-type>`,
+    `<size-bytes>${descriptor.sizeBytes}</size-bytes>`,
+    `<kind>${descriptor.kind}</kind>`,
+    ...(contentPath === undefined ? [] : [`<path>${escapeXml(contentPath)}</path>`]),
+    "</attachment>",
+  ].join("\n");
 }
 
 function escapeXml(value: string): string {
@@ -356,7 +425,16 @@ function messageRefFor(
   return projection.refsByMessageId.get(message.id) ?? formatProjectionMessageRef(index + 1);
 }
 
-function wrapUserContent(content: string, ref: MessageRef | undefined): string {
+function wrapUserContent(content: UserArrayContent, ref: MessageRef | undefined): UserArrayContent {
+  if (ref === undefined) return content;
+  return [
+    { type: "text", text: `<message ref="${ref}">` },
+    ...content,
+    { type: "text", text: "</message>" },
+  ];
+}
+
+function wrapUserText(content: string, ref: MessageRef | undefined): string {
   if (ref === undefined) return content;
   return `<message ref="${ref}">\n${content}\n</message>`;
 }

@@ -1,5 +1,6 @@
 export { createRuntime, ProjectRuntimeActiveError, SessionCommandConflictError, SessionCommandOutcomeError } from "./runtime";
 export type { AcceptSessionMessageInput, AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ProjectControlPlaneSnapshot, ProjectRemovalResult, SessionMessageAcceptance } from "./runtime";
+export * from "./attachments";
 export * from "./automations";
 export type { CompressionOriginalRangeResult } from "./compression";
 export {

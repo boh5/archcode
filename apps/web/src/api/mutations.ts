@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { queryKeys } from "./queries";
-import type { RequestedModelSelection, SessionModelState } from "@archcode/protocol";
+import type { AttachmentDescriptor, RequestedModelSelection, SessionModelState } from "@archcode/protocol";
 import {
   removeProjectControlPlane,
 } from "../store/control-plane-readiness";
@@ -84,6 +84,7 @@ export interface PostMessageInput {
   slug: string;
   sessionId: string;
   content: string;
+  attachmentIds: readonly string[];
   clientRequestId?: string;
   requestedModelSelection: RequestedModelSelection;
 }
@@ -92,13 +93,41 @@ export type MessageAcceptance =
   | { clientRequestId: string; status: "command" }
   | { clientRequestId: string; messageId: string; status: "queued" | "canonical" };
 
-export function postMessage({ slug, sessionId, content, clientRequestId, requestedModelSelection }: PostMessageInput): Promise<MessageAcceptance> {
+export function postMessage({ slug, sessionId, content, attachmentIds, clientRequestId, requestedModelSelection }: PostMessageInput): Promise<MessageAcceptance> {
   const requestId = clientRequestId ?? createClientUuid();
   return apiFetch<MessageAcceptance>(
     `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages`,
     {
       method: "POST",
-      body: { text: content, clientRequestId: requestId, requestedModelSelection },
+      body: { text: content, attachmentIds, clientRequestId: requestId, requestedModelSelection },
+    },
+  );
+}
+
+export interface UploadSessionAttachmentInput {
+  slug: string;
+  sessionId: string;
+  attachmentId: string;
+  file: File;
+}
+
+/**
+ * Sends exactly one raw file stream. The generated attachment id is deliberately
+ * stable across retries so the server can make an uncertain upload idempotent.
+ */
+export function uploadSessionAttachment({
+  slug,
+  sessionId,
+  attachmentId,
+  file,
+}: UploadSessionAttachmentInput): Promise<AttachmentDescriptor> {
+  const query = new URLSearchParams({ name: file.name, sizeBytes: String(file.size) });
+  return apiFetch<AttachmentDescriptor>(
+    `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}?${query}`,
+    {
+      method: "PUT",
+      headers: file.type ? { "Content-Type": file.type } : undefined,
+      body: file,
     },
   );
 }

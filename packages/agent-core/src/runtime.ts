@@ -107,7 +107,12 @@ import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gat
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
-import { SessionInputService, type CommandRequestReplay, type MessageAcceptance } from "./session-input/service";
+import {
+  SessionInputConflictError,
+  SessionInputService,
+  type CommandRequestReplay,
+  type MessageAcceptance,
+} from "./session-input/service";
 import {
   SessionModelSelectionInvalidError,
   SessionModelSelectionService,
@@ -126,6 +131,15 @@ import { ToolOutputArtifactStore, computeProjectIdentity } from "./tool-output/a
 import { ToolOutputFinalizer } from "./tool-output/finalizer";
 import { createRuntimeLogSafetyBoundary, SecretRedactionPolicy } from "./security";
 import { USER_DATA_DIR_NAME } from "@archcode/protocol";
+import {
+  resolveCommittedAttachmentReadPaths,
+  SessionAttachmentModelProjector,
+  SessionAttachmentService,
+  type OpenSessionAttachmentInput,
+  type OpenSessionAttachmentResult,
+  type UploadSessionAttachmentInput,
+  type UploadSessionAttachmentResult,
+} from "./attachments";
 
 interface ActiveGoalReconciliationSnapshot {
   readonly isRootLead: boolean;
@@ -177,6 +191,7 @@ export interface AcceptSessionMessageInput {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly text: string;
+  readonly attachmentIds: readonly string[];
   readonly clientRequestId: string;
   readonly source: "user" | "automation";
   readonly requestedModelSelection: RequestedModelSelection;
@@ -231,6 +246,8 @@ export interface AgentRuntimeOptions {
 interface AgentRuntimeInternalOptions extends AgentRuntimeOptions {
   /** Test-only seam kept out of the package contract. */
   toolOutputStoreFactory?: (rootDir: string) => ToolOutputArtifactStore;
+  /** Test-only seam for best-effort attachment cleanup failures. */
+  attachmentRootRemover?: (path: string) => Promise<void>;
 }
 
 export interface CreateRuntimeSessionOptions {
@@ -311,6 +328,8 @@ export interface AgentRuntime {
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
+  uploadSessionAttachment(input: UploadSessionAttachmentInput): Promise<UploadSessionAttachmentResult>;
+  openSessionAttachment(input: OpenSessionAttachmentInput): Promise<OpenSessionAttachmentResult>;
   createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<RuntimeSessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<RuntimeSessionFile>;
   updateSessionGoalControl(input: {
@@ -547,6 +566,25 @@ export async function createRuntime(
       if (project !== undefined) projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
     };
     const sessionStoreManager = new SessionStoreManager({ logger: runtimeLogger.child({ module: "sessions.store" }) });
+    const sessionAttachmentService = new SessionAttachmentService({
+      validateRootSession: async (workspaceRoot, rootSessionId) => {
+        const file = await sessionStoreManager.getSessionFile(workspaceRoot, rootSessionId);
+        if (
+          file.parentSessionId !== undefined
+          || file.rootSessionId !== rootSessionId
+          || file.agentName !== "lead"
+        ) {
+          throw new NotRootSessionError(
+            rootSessionId,
+            file.parentSessionId ?? file.rootSessionId,
+          );
+        }
+      },
+      removeRootDirectory: internalOptions.attachmentRootRemover,
+    });
+    const attachmentProjector = new SessionAttachmentModelProjector(
+      sessionAttachmentService,
+    );
     const readProjectedSessionModels = async (
       workspaceRoot: string,
       sessionId: string,
@@ -555,7 +593,10 @@ export async function createRuntime(
       return projectSessionModels(snapshot.file, snapshot.liveState);
     };
     const sessionGoalService = new SessionGoalService(sessionStoreManager);
-    const sessionInputService = new SessionInputService(sessionStoreManager);
+    const sessionInputService = new SessionInputService(
+      sessionStoreManager,
+      sessionAttachmentService,
+    );
     const sessionEventBridge = new SessionEventBridge({
       source: sessionStoreManager,
       resolveProjectSlug: (workspaceRoot) => projectSlugsByWorkspace.get(workspaceRoot),
@@ -683,6 +724,7 @@ export async function createRuntime(
               workspaceRoot: input.workspaceRoot,
               sessionId: input.sessionId,
               text: input.text,
+              attachmentIds: [],
               clientRequestId: input.clientRequestId,
               source: "user",
               requestedModelSelection: session.nextModelSelection.requested,
@@ -711,6 +753,15 @@ export async function createRuntime(
       createToolOutputAccess: (workspaceRoot, rootSessionId) => createScopeBoundToolOutputAccess(
         toolOutputArtifactStore,
         { workspaceRoot, rootSessionId },
+      ),
+      attachmentProjector,
+      resolveAttachmentReadPaths: (workspaceRoot, rootSessionId) => (
+        resolveCommittedAttachmentReadPaths({
+          workspaceRoot,
+          rootSessionId,
+          storeManager: sessionStoreManager,
+          attachments: sessionAttachmentService,
+        })
       ),
       logger: runtimeLogger.child({ module: "sessions.agents" }),
     });
@@ -1193,6 +1244,12 @@ export async function createRuntime(
           const agent = await sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
           const command = agent.classifyCommand(input.text);
           if (command !== null) {
+            if (input.attachmentIds.length > 0) {
+              throw new SessionInputConflictError(
+                "state",
+                "Slash commands cannot include attachments",
+              );
+            }
             const replayInput = {
               sessionId: input.sessionId,
               workspaceRoot: input.workspaceRoot,
@@ -1306,6 +1363,7 @@ export async function createRuntime(
           sessionId: input.sessionId,
           workspaceRoot: input.workspaceRoot,
           text: input.text,
+          attachmentIds: input.attachmentIds,
           clientRequestId: input.clientRequestId,
           source: input.source,
           requestedModelSelection: input.requestedModelSelection,
@@ -1420,6 +1478,7 @@ export async function createRuntime(
             );
             const accepted = await acceptSessionMessage({
               ...input,
+              attachmentIds: [],
               requestedModelSelection: session.nextModelSelection.requested,
             });
             if (accepted.status === "command") {
@@ -1956,6 +2015,8 @@ export async function createRuntime(
       },
       subscribeMcpStatusChanges: (listener) => activeMcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => activeMcpManager.getStatus(),
+      uploadSessionAttachment: (input) => sessionAttachmentService.upload(input),
+      openSessionAttachment: (input) => sessionAttachmentService.openDownload(input),
       createSession: async (workspaceRoot, createOptions) => {
         assertRuntimeSessionAgentScope(createOptions);
         return await executionManager.runRuntimeMutation(
@@ -2080,7 +2141,38 @@ export async function createRuntime(
       abortAllSessionExecutions,
       getSessionExecution: (workspaceRoot, sessionId) => executionManager.getExecution(workspaceRoot, sessionId),
       subscribeSessionEvents: (listener) => sessionEventBridge.subscribe(listener),
-      deleteSession: (workspaceRoot, sessionId) => executionManager.deleteSession(workspaceRoot, sessionId),
+      deleteSession: async (workspaceRoot, sessionId) => {
+        let file: SessionFile;
+        try {
+          file = await sessionStoreManager.getSessionFile(workspaceRoot, sessionId);
+        } catch {
+          // SessionExecutionManager remains the deletion/error owner.
+          await executionManager.deleteSession(workspaceRoot, sessionId);
+          return;
+        }
+        if (file.parentSessionId !== undefined || file.rootSessionId !== sessionId) {
+          await executionManager.deleteSession(workspaceRoot, sessionId);
+          return;
+        }
+
+        await sessionAttachmentService.withRootDeletionLease(
+          workspaceRoot,
+          sessionId,
+          async () => {
+            await executionManager.deleteSession(workspaceRoot, sessionId);
+            try {
+              await sessionAttachmentService.cleanupRootAttachments(workspaceRoot, sessionId);
+            } catch (error) {
+              runtimeLogger.warn("session.attachments.cleanup_failed", {
+                context: { rootSessionId: sessionId },
+                meta: {
+                  errorName: error instanceof Error ? error.name : "UnknownError",
+                },
+              });
+            }
+          },
+        );
+      },
       listSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
       disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),

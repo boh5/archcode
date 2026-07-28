@@ -2,7 +2,6 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { getSystemErrorCode } from "../../utils";
-import { createSourceToolResult } from "../results";
 import type { RawToolResult } from "../types";
 import { createSensitiveFilePermission, createWorkspacePermission } from "../permission";
 import { createReadSnapshotAfterHook } from "../hooks";
@@ -11,7 +10,6 @@ import { createLineSourcePage } from "./source-page";
 
 // ─── Constants ───
 
-const BINARY_DETECTION_BYTES = 8 * 1024;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 // ─── Input Schema ───
@@ -41,16 +39,25 @@ function createFileTooLargeResult(size: number): RawToolResult {
   });
 }
 
+function createNonTextResult(message: string): RawToolResult {
+  return createToolErrorResult({
+    kind: "execution",
+    code: "TOOL_FILE_NOT_UTF8_TEXT",
+    message,
+    hint: "Use Bash with an installed CLI that supports this file format. Existing Bash permissions still apply; if no suitable parser is installed, report that limitation.",
+  });
+}
+
 // ─── Tool Definition ───
 
 export const fileReadTool = defineTool({
   name: "file_read",
   description: [
-    "Read a UTF-8 text file and return `N: content` line-numbered output.",
+    "Read a strictly valid UTF-8 text file without NUL bytes and return `N: content` line-numbered output.",
     "",
     "Use it when the file path is known. If the path is unknown, find it with glob; if the relevant lines are unknown, locate them with grep; then read a bounded range. Example workflow: `glob({\"pattern\":\"**/*.ts\"})` -> `grep({\"pattern\":\"createRuntime\",\"include\":\"*.ts\"})` -> `file_read({\"path\":\"packages/agent-core/src/runtime.ts\",\"offset\":120,\"limit\":160})`. When several known files are independent, issue their file_read calls together.",
     "",
-    "offset is 1-based. The selected offset/limit range is chosen before the 50KB source window. Avoid tiny repeated slices when one larger bounded range would provide the needed context. Files larger than 10MB are rejected, and binary files are not displayed. If a selected range exceeds 50KB, the result is truncated with a notice; because offset is line-based, it cannot continue within a single line longer than 50KB. Relative paths resolve from the current Session cwd, and paths outside the workspace may require approval.",
+    "offset is 1-based. The selected offset/limit range is chosen before the 50KB source window. Avoid tiny repeated slices when one larger bounded range would provide the needed context. Files larger than 10MB, invalid UTF-8, and any file containing a NUL byte are rejected. Images, PDF, DOCX/XLSX/PPTX, ZIP, audio, video, and other binary or container formats are not decoded by file_read; use Bash with an installed appropriate CLI for those paths. Existing Bash permissions still apply, and when no suitable parser is installed you must report that limitation rather than claiming generic support. If a selected range exceeds 50KB, the result is truncated with a notice; because offset is line-based, it cannot continue within a single line longer than 50KB. Relative paths resolve from the current Session cwd, and paths outside the workspace may require approval.",
   ].join("\n"),
   inputSchema: FileReadInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
@@ -77,12 +84,17 @@ export const fileReadTool = defineTool({
       if (buffer.length > MAX_FILE_BYTES) {
         return createFileTooLargeResult(buffer.length);
       }
-      if (containsNullByte(buffer.subarray(0, Math.min(buffer.length, BINARY_DETECTION_BYTES)))) {
-        return createSourceToolResult("Binary file, cannot display");
+      if (containsNullByte(buffer)) {
+        return createNonTextResult("File contains a NUL byte and is not supported by file_read.");
       }
 
       const startLine = input.offset ?? 1;
-      const decoded = new TextDecoder().decode(buffer);
+      let decoded: string;
+      try {
+        decoded = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+      } catch {
+        return createNonTextResult("File is not valid UTF-8 text and is not supported by file_read.");
+      }
       const fileLines = decoded.split("\n");
       if (fileLines.at(-1) === "") fileLines.pop();
       const available = fileLines.slice(startLine - 1, input.limit === undefined ? undefined : startLine - 1 + input.limit);

@@ -37,7 +37,10 @@ import {
   SessionTreeIntegrityError,
 } from "./errors";
 import { SessionFileSchema, sessionFileInternals, type HydratedSessionFile, type SessionSummary } from "./helpers";
-import { projectModelMessagesFromStoredMessages } from "./projection";
+import {
+  projectModelMessagesFromStoredMessages,
+  type ModelMessagesProjection,
+} from "./projection";
 import { reduceStreamEvent } from "./reduce";
 import { toDurableSessionEvent } from "./durable-tool-input";
 import { assertSafeSessionId, getSessionPath, getSessionsDir } from "./sessions-dir";
@@ -359,7 +362,7 @@ export class SessionStoreManager {
         set({ parentSessionId });
         persist();
       },
-      toModelMessages: (): ModelMessage[] => {
+      toModelMessagesProjection: (): ModelMessagesProjection => {
         const state = get();
         const compression = state.compression;
         const projection = projectModelMessagesFromStoredMessages(state.messages, { compression });
@@ -367,7 +370,10 @@ export class SessionStoreManager {
           set({ compression: { ...compression, refMap: projection.refMap, updatedAt: Date.now() } });
           persist();
         }
-        return projection.messages;
+        return projection;
+      },
+      toModelMessages: (): ModelMessage[] => {
+        return get().toModelMessagesProjection().messages;
       },
     }));
 

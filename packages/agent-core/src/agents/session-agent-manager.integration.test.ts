@@ -14,6 +14,10 @@ import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../
 import { leadAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
+import {
+  EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+  resolveEmptyAttachmentReadPaths,
+} from "../attachments/test-helpers";
 
 const testTempRoot = createTestTempRoot("session-agent-manager");
 const registryFixtures: TestToolRegistryFixture[] = [];
@@ -75,6 +79,8 @@ function createManager(storeManager: SessionStoreManager): SessionAgentManager {
     skillService: new SkillService({ builtinSkills: {} }),
     storeManager,
     createToolOutputAccess: outputAccessFixture.createToolOutputAccess,
+    attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+    resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
     projectContextResolver: createTestProjectContextResolver(storeManager),
     logger: silentLogger,
   });

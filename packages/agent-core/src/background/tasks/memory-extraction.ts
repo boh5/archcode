@@ -5,7 +5,10 @@ import type { MemoryRoots } from "../../memory/types";
 import type { MemoryExtractionResult } from "../../memory/schemas";
 import { MemoryExtractionResultSchema } from "../../memory/schemas";
 import { MemoryFileManager } from "../../memory/file-manager";
-import { toModelMessagesFromStoredMessages } from "../../store/projection";
+import {
+  renderAttachmentMarker,
+  toModelMessagesFromStoredMessages,
+} from "../../store/projection";
 import { runLlmObject, LlmSchemaValidationError, LlmObjectError } from "../../llm";
 import {
   MIN_MESSAGES_FOR_EXTRACTION,
@@ -46,6 +49,14 @@ export function filterMessagesForExtraction(messages: StoredMessage[]): StoredMe
           ...part,
           text: bounded.text,
         } as TextPart);
+        continue;
+      }
+
+      if (part.type === "attachment") {
+        if (message.role === "user") parts.push({
+          ...part,
+          attachment: { ...part.attachment },
+        });
         continue;
       }
 
@@ -110,7 +121,7 @@ export function createMemoryExtractionTask(
       const filteredMessages = filterMessagesForExtraction(messages);
       const userMessages = filteredMessages.filter((message) =>
         message.role === "user"
-        && message.parts.some((part) => part.type === "text")
+        && message.parts.some((part) => part.type === "text" || part.type === "attachment")
       );
       if (userMessages.length < effectiveMinMessages) return;
 
@@ -118,8 +129,13 @@ export function createMemoryExtractionTask(
         return (
           sum +
           m.parts
-            .filter((p): p is TextPart => p.type === "text")
-            .reduce((s, p) => s + p.text.length, 0)
+            .reduce((length, part) => {
+              if (part.type === "text") return length + part.text.length;
+              if (part.type === "attachment") {
+                return length + renderAttachmentMarker(part.attachment).length;
+              }
+              return length;
+            }, 0)
         );
       }, 0);
       if (totalContentLength < effectiveMinContentLength) return;

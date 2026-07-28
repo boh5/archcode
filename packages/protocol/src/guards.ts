@@ -14,6 +14,12 @@ import {
   SESSION_GOAL_OBJECTIVE_MAX_LENGTH,
   type SessionGoalChangedEvent,
 } from "./session-goal";
+import {
+  isValidAttachmentMediaType,
+  isValidAttachmentName,
+  MAX_ATTACHMENT_SIZE_BYTES,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+} from "./attachments";
 
 const TERMINAL_CHILD_SESSION_STATUSES = new Set<ToolChildSessionLinkStatus>([
   "completed", "failed", "timed_out", "cancelled", "interrupted",
@@ -238,12 +244,13 @@ function isPendingSessionMessage(value: unknown): boolean {
   if (message === undefined
     || !exact(
       message,
-      ["id", "clientRequestId", "content", "source", "state", "revision", "acceptedAt", "updatedAt", "requestedModelSelection"],
+      ["id", "clientRequestId", "content", "attachments", "source", "state", "revision", "acceptedAt", "updatedAt", "requestedModelSelection"],
       ["targetExecutionId", "targetRunOrdinal", "targetModelAudit", "claimedAt"],
     )
     || !isString(message.id)
     || !isString(message.clientRequestId)
     || !isString(message.content)
+    || !isAttachmentDescriptorArray(message.attachments)
     || !oneOf(message.source, ["user", "automation"])
     || !oneOf(message.state, ["queued", "steering"])
     || !isNonNegativeInteger(message.revision)
@@ -253,7 +260,8 @@ function isPendingSessionMessage(value: unknown): boolean {
     || !optionalString(message.targetExecutionId)
     || (message.targetRunOrdinal !== undefined && !isNonNegativeSafeInteger(message.targetRunOrdinal))
     || (message.targetModelAudit !== undefined && !isMessageModelAudit(message.targetModelAudit))
-    || !optionalFiniteNumber(message.claimedAt)) return false;
+    || !optionalFiniteNumber(message.claimedAt)
+    || ((message.content as string).trim().length === 0 && (message.attachments as unknown[]).length === 0)) return false;
 
   return message.state === "steering"
     ? typeof message.targetExecutionId === "string"
@@ -278,8 +286,9 @@ function isCommittedUserMessage(value: unknown, executionId: string): boolean {
     && isString(message.id)
     && message.role === "user"
     && Array.isArray(parts)
-    && arrayOf(parts, isCommittedUserTextPart)
+    && arrayOf(parts, (part) => isCommittedUserTextPart(part) || isCommittedUserAttachmentPart(part))
     && parts.length > 0
+    && hasValidCommittedUserContent(parts)
     && isFiniteNumber(message.createdAt)
     && optionalFiniteNumber(message.completedAt)
     && message.executionId === executionId
@@ -287,6 +296,55 @@ function isCommittedUserMessage(value: unknown, executionId: string): boolean {
     && optionalString(message.clientRequestId)
     && isMessageModelAudit(message.modelAudit)
     && (message.compacted === undefined || typeof message.compacted === "boolean");
+}
+
+function isCommittedUserAttachmentPart(value: unknown): boolean {
+  const part = record(value);
+  return part !== undefined
+    && exact(part, ["type", "id", "attachment", "createdAt"], ["completedAt"])
+    && part.type === "attachment"
+    && isString(part.id)
+    && isAttachmentDescriptor(part.attachment)
+    && isFiniteNumber(part.createdAt)
+    && optionalFiniteNumber(part.completedAt);
+}
+
+function hasValidCommittedUserContent(parts: readonly unknown[]): boolean {
+  const attachmentIds: string[] = [];
+  let hasText = false;
+  for (const value of parts) {
+    const part = record(value);
+    if (part?.type === "text") {
+      hasText ||= typeof part.text === "string" && part.text.trim().length > 0;
+      continue;
+    }
+    if (part?.type === "attachment") {
+      const attachment = record(part.attachment);
+      if (typeof attachment?.id === "string") attachmentIds.push(attachment.id);
+    }
+  }
+  return (hasText || attachmentIds.length > 0)
+    && attachmentIds.length <= MAX_ATTACHMENTS_PER_MESSAGE
+    && new Set(attachmentIds).size === attachmentIds.length;
+}
+
+function isAttachmentDescriptorArray(value: unknown): boolean {
+  return Array.isArray(value)
+    && value.length <= MAX_ATTACHMENTS_PER_MESSAGE
+    && value.every(isAttachmentDescriptor)
+    && new Set(value.map((item) => (item as UnknownRecord).id)).size === value.length;
+}
+
+function isAttachmentDescriptor(value: unknown): boolean {
+  const descriptor = record(value);
+  return descriptor !== undefined
+    && exact(descriptor, ["id", "name", "mediaType", "sizeBytes", "kind"])
+    && isUuid(descriptor.id)
+    && isValidAttachmentName(descriptor.name)
+    && isValidAttachmentMediaType(descriptor.mediaType)
+    && isNonNegativeInteger(descriptor.sizeBytes)
+    && (descriptor.sizeBytes as number) <= MAX_ATTACHMENT_SIZE_BYTES
+    && oneOf(descriptor.kind, ["image", "file"]);
 }
 
 function isModelSelectionRef(value: unknown): boolean {

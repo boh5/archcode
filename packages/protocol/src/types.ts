@@ -11,6 +11,7 @@ import type {
 } from "./model-runtime";
 import type { GlobalSSEUpdateChangedEvent } from "./update";
 import type { ProjectTodoSessionSource } from "./project-todos";
+import type { AttachmentDescriptor } from "./attachments";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -205,6 +206,7 @@ export interface PendingSessionMessage {
   id: string;
   clientRequestId: string;
   content: string;
+  attachments: AttachmentDescriptor[];
   source: SessionMessageSource;
   state: "queued" | "steering";
   revision: number;
@@ -1067,6 +1069,14 @@ export interface TextPart {
   meta?: Record<string, unknown>;
 }
 
+export interface AttachmentPart {
+  type: "attachment";
+  id: string;
+  attachment: AttachmentDescriptor;
+  createdAt: number;
+  completedAt?: number;
+}
+
 export interface ReasoningPart {
   type: "reasoning";
   id: string;
@@ -1209,6 +1219,7 @@ export interface RecoveryNoticePart {
 
 export type SessionPart =
   | TextPart
+  | AttachmentPart
   | ReasoningPart
   | ToolPart
   | CompactionPart

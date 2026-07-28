@@ -161,6 +161,7 @@ function compressedSession(): SessionFile {
     setCwd: () => undefined,
     setTitle: () => undefined,
     setParentSessionId: () => undefined,
+    toModelMessagesProjection: () => ({ messages: [], attachmentSlots: [] }),
     toModelMessages: () => [],
   };
   const compression = prepareDynamicRangeCompression(
@@ -216,6 +217,7 @@ function nestedCompressedSession(): SessionFile {
     setCwd: () => undefined,
     setTitle: () => undefined,
     setParentSessionId: () => undefined,
+    toModelMessagesProjection: () => ({ messages: [], attachmentSlots: [] }),
     toModelMessages: () => [],
   };
   const child = prepareDynamicRangeCompression(

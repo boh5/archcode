@@ -79,12 +79,20 @@ const pendingMessage = {
   id: "message-queued",
   clientRequestId: "request-queued",
   content: "queued",
+  attachments: [],
   source: "user" as const,
   state: "queued" as const,
   revision: 0,
   acceptedAt: 1,
   updatedAt: 1,
   requestedModelSelection,
+};
+const attachment = {
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  name: "report<&>.pdf",
+  mediaType: "application/pdf",
+  sizeBytes: 123,
+  kind: "file" as const,
 };
 const steeringMessage = {
   ...pendingMessage,
@@ -237,6 +245,51 @@ const validPayloads = [
 ] satisfies SessionEventPayload[];
 
 describe("protocol event guards", () => {
+  test("accepts strict attachment-only pending and canonical messages", () => {
+    expect(isSessionEventPayload({
+      type: "session.message_accepted",
+      message: { ...pendingMessage, content: "", attachments: [attachment] },
+    })).toBe(true);
+    expect(isSessionEventPayload({
+      type: "session.messages_committed",
+      executionId: "execution-1",
+      messages: [{
+        ...canonicalMessage,
+        parts: [{
+          type: "text",
+          id: "part-1",
+          text: "",
+          createdAt: 1,
+          completedAt: 2,
+        }, {
+          type: "attachment",
+          id: "attachment-part-1",
+          attachment,
+          createdAt: 1,
+          completedAt: 2,
+        }],
+      }],
+    })).toBe(true);
+  });
+
+  test("rejects empty attachment input, duplicate ids, and descriptor extensions", () => {
+    expect(isSessionEventPayload({
+      type: "session.message_accepted",
+      message: { ...pendingMessage, content: "", attachments: [] },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "session.message_accepted",
+      message: { ...pendingMessage, attachments: [attachment, attachment] },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "session.message_accepted",
+      message: {
+        ...pendingMessage,
+        attachments: [{ ...attachment, absolutePath: "/private/content" }],
+      },
+    })).toBe(false);
+  });
+
   test("keeps one valid fixture for every current Session event payload type", () => {
     expect(validPayloads.map((event) => event.type).sort()).toEqual([
       "compact",

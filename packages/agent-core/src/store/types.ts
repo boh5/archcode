@@ -21,6 +21,7 @@ import type {
 import type { CompressionState } from "../compression";
 import type { AgentName } from "../agents/names";
 import type { PersistedSessionToolCallBlocker } from "../hitl/boundary-codec";
+import type { ModelMessagesProjection } from "./projection";
 
 export type {
   StreamEvent,
@@ -282,6 +283,7 @@ export interface SessionStoreState {
   setCwd: (cwd: string) => void;
   setTitle: (title: string | null) => void;
   setParentSessionId: (parentSessionId: string | undefined) => void;
+  toModelMessagesProjection: () => ModelMessagesProjection;
   toModelMessages: () => ModelMessage[];
 }
 

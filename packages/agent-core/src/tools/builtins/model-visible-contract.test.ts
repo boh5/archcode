@@ -36,7 +36,10 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
       /several known files are independent/i,
       /Avoid tiny repeated slices/,
       /larger than 10MB.*rejected/i,
-      /binary files.*not displayed/i,
+      /invalid UTF-8.*NUL byte.*rejected/i,
+      /Images, PDF, DOCX\/XLSX\/PPTX, ZIP, audio, video.*not decoded/i,
+      /Bash with an installed appropriate CLI/i,
+      /no suitable parser.*report that limitation/i,
       /relative paths resolve from the current Session cwd/i,
     ],
     schema: [
