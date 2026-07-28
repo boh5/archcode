@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+tone_instructions: "Be concise. Focus on correctness, security, regressions, and missing tests. Avoid style-only comments."
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  review_details: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  poem: false
+
+  path_filters:
+    - "!bun.lock"
+    - "!**/dist/**"
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    labels:
+      - "!skip-ai-review"
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
+chat:
+  auto_reply: true
