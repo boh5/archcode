@@ -385,6 +385,38 @@ describe("reduceStreamEvent", () => {
     expect(state.stats.messages).toEqual({ user: 0, assistant: 1, total: 1 });
   });
 
+  test("unwraps a complete echoed message-ref envelope when Assistant text ends", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "text-start" },
+      { type: "text-delta", text: "<message ref=\"m0006\">\n" },
+      { type: "text-delta", text: "Visible response" },
+      { type: "text-delta", text: "\n</message>" },
+      { type: "text-end" },
+    ]);
+
+    const text = partOfType(onlyMessage(state.messages), "text");
+    expect(text.text).toBe("Visible response");
+    expect(text.completedAt).toBeGreaterThan(0);
+  });
+
+  test("preserves message-ref syntax that is not the complete Assistant envelope", () => {
+    const examples = [
+      "Before <message ref=\"m0001\">literal</message> after",
+      "```xml\n<message ref=\"m0001\">literal</message>\n```",
+      "<message ref=\"invalid\">literal</message>",
+      "<message ref=\"m0001\">incomplete",
+    ];
+
+    for (const example of examples) {
+      const state = applyEvents(createProjection(), [
+        { type: "text-start" },
+        { type: "text-delta", text: example },
+        { type: "text-end" },
+      ]);
+      expect(partOfType(onlyMessage(state.messages), "text").text).toBe(example);
+    }
+  });
+
   test("produces identical projections with the same events and deterministic context", () => {
     const events: StreamEvent[] = [
       executionStart("run-identical"),

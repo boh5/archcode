@@ -15,32 +15,57 @@ const TOOLTIP_GAP_PX = 8;
 const VIEWPORT_GUTTER_PX = 8;
 const RAIL_VISIBLE_PADDING_PX = 12;
 const REQUEST_SUMMARY_MAX_CHARACTERS = 120;
+const RESPONSE_SUMMARY_MAX_CHARACTERS = 280;
 const RAIL_MAX_HEIGHT = "min(70vh, 40rem, calc(100% - 16px))";
 
-function firstText(parts: readonly SessionPart[]): string | undefined {
+function summarizeText(
+  parts: readonly SessionPart[],
+  maximumCharacters: number,
+): string | undefined {
+  const values: string[] = [];
   for (const part of parts) {
     if (part.type !== "text") continue;
     const value = part.text.trim();
-    if (value) return value;
+    if (value) values.push(value);
   }
-  return undefined;
+  const normalized = values.join(" ").replace(/\s+/g, " ");
+  if (!normalized) return undefined;
+  return normalized.length <= maximumCharacters
+    ? normalized
+    : `${normalized.slice(0, maximumCharacters - 1).trimEnd()}…`;
 }
 
 function segmentRequest(segment: ExecutionWorkstreamSegment): string {
   for (const message of segment.inputMessages) {
-    const value = firstText(message.parts);
-    if (!value) continue;
-    const normalized = value.replace(/\s+/g, " ");
-    return normalized.length <= REQUEST_SUMMARY_MAX_CHARACTERS
-      ? normalized
-      : `${normalized.slice(0, REQUEST_SUMMARY_MAX_CHARACTERS - 1).trimEnd()}…`;
+    const value = summarizeText(
+      message.parts,
+      REQUEST_SUMMARY_MAX_CHARACTERS,
+    );
+    if (value) return value;
+    const attachment = message.parts.find(
+      (part) => part.type === "attachment",
+    );
+    if (attachment?.type === "attachment") return attachment.attachment.name;
   }
   return "Work in progress";
 }
 
+function segmentResponse(
+  segment: ExecutionWorkstreamSegment,
+): string | undefined {
+  const finalResponse = summarizeText(
+    segment.finalResponse?.textParts ?? [],
+    RESPONSE_SUMMARY_MAX_CHARACTERS,
+  );
+  if (finalResponse) return finalResponse;
+  return summarizeText(
+    segment.outputMessages.flatMap((message) => message.parts),
+    RESPONSE_SUMMARY_MAX_CHARACTERS,
+  );
+}
+
 function SegmentMarker({
   segment,
-  ordinal,
   current,
   live,
   tabIndex,
@@ -55,7 +80,6 @@ function SegmentMarker({
   onTooltipLeave,
 }: {
   segment: ExecutionWorkstreamSegment;
-  ordinal: number;
   current: boolean;
   live: boolean;
   tabIndex: number;
@@ -76,10 +100,12 @@ function SegmentMarker({
     durationUpdatedAt: segment.windowEndedAt,
     endedAt: segment.windowEndedAt,
   });
+  const request = segmentRequest(segment);
+  const response = segmentResponse(segment);
   const label = [
-    `Message ${ordinal}`,
-    segmentRequest(segment),
-    duration,
+    request,
+    response,
+    `${live ? "Working for" : "Worked for"} ${duration}`,
   ]
     .filter(Boolean)
     .join(", ");
@@ -130,11 +156,9 @@ function SegmentMarker({
 
 function SegmentTooltip({
   segment,
-  ordinal,
   active,
 }: {
   segment: ExecutionWorkstreamSegment;
-  ordinal: number;
   active: boolean;
 }) {
   const duration = useElapsedTime({
@@ -144,15 +168,27 @@ function SegmentTooltip({
     durationUpdatedAt: segment.windowEndedAt,
     endedAt: segment.windowEndedAt,
   });
+  const response = segmentResponse(segment);
   return (
     <>
-      <strong className="block font-semibold">
-        Message {ordinal}
-      </strong>
-      <span className="mt-1 block line-clamp-3 text-text-secondary">
+      <strong
+        className="block truncate font-semibold text-text-primary"
+        data-execution-tooltip-row="request"
+      >
         {segmentRequest(segment)}
-      </span>
-      <span className="mt-1 block text-text-tertiary">
+      </strong>
+      {response && (
+        <span
+          className="mt-1.5 block max-h-12 line-clamp-3 text-text-secondary"
+          data-execution-tooltip-row="response"
+        >
+          {response}
+        </span>
+      )}
+      <span
+        className="mt-1.5 block truncate text-text-tertiary"
+        data-execution-tooltip-row="duration"
+      >
         {active ? "Working for" : "Worked for"} {duration}
       </span>
     </>
@@ -310,7 +346,6 @@ export function ExecutionNavigationRail({
           <SegmentMarker
             key={segment.id}
             segment={segment}
-            ordinal={index + 1}
             current={segment.id === currentSegmentId}
             live={running && index === segments.length - 1}
             tabIndex={index === currentIndex ? 0 : -1}
@@ -342,7 +377,7 @@ export function ExecutionNavigationRail({
             ref={tooltipRef}
             id={tooltipId}
             role="tooltip"
-            className="pointer-events-none fixed z-[100] max-w-[320px] rounded-md border border-border-default bg-bg-overlay px-3 py-2 text-[11px] leading-4 text-text-primary shadow-md animate-overlay-enter"
+            className="pointer-events-none fixed z-[100] max-w-[320px] overflow-hidden rounded-md border border-border-default bg-bg-overlay px-3 py-2 text-[11px] leading-4 text-text-primary shadow-md animate-overlay-enter"
             style={
               tooltipPosition === null
                 ? { left: 0, top: 0, visibility: "hidden" }
@@ -354,11 +389,6 @@ export function ExecutionNavigationRail({
               active={
                 running
                 && tooltipSegment.id === segments.at(-1)?.id
-              }
-              ordinal={
-                segments.findIndex(
-                  (segment) => segment.id === tooltipSegment.id,
-                ) + 1
               }
             />
           </div>,

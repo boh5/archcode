@@ -348,11 +348,14 @@ describe("ExecutionWorkstream", () => {
     );
     expect(markers).toHaveLength(4);
     expect(markers.map((marker) => marker.getAttribute("aria-label"))).toEqual([
-      expect.stringContaining("Message 1, Initial request"),
-      expect.stringContaining("Message 2, First steer"),
-      expect.stringContaining("Message 3, Second steer"),
-      expect.stringContaining("Message 4, Third steer"),
+      expect.stringContaining("Initial request"),
+      expect.stringContaining("First steer"),
+      expect.stringContaining("Second steer"),
+      expect.stringContaining("Third steer"),
     ]);
+    expect(markers.every((marker) =>
+      !marker.getAttribute("aria-label")?.includes("Message ")
+    )).toBe(true);
 
     await act(async () => markers[2]!.click());
     expect(requestedTop).toBe(464);

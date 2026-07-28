@@ -32,6 +32,8 @@ import { validateExecutionTransition } from "./execution";
 
 const LIVE_TOOL_OUTPUT_PREVIEW_MAX_BYTES = 50 * 1024;
 const UTF8_ENCODER = new TextEncoder();
+const ASSISTANT_PROJECTION_ENVELOPE =
+  /^\s*<message ref="m\d{4,}">(?:\r?\n)?([\s\S]*?)(?:\r?\n)?<\/message>\s*$/;
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
   "pending",
@@ -49,6 +51,15 @@ interface AssistantMessageResult {
 interface PartLocation {
   messageId: string;
   partId: string;
+}
+
+/**
+ * Message refs are model-facing projection metadata, not canonical Assistant
+ * content. Some providers echo the complete envelope around an otherwise valid
+ * response, so remove only that exact outer shape once streaming completes.
+ */
+function unwrapAssistantProjectionEnvelope(text: string): string {
+  return ASSISTANT_PROJECTION_ENVELOPE.exec(text)?.[1] ?? text;
 }
 
 export interface ReduceContext {
@@ -294,7 +305,14 @@ export function reduceStreamEvent(
           state.messages,
           location.messageId,
           location.partId,
-          (part) => (part.type === "text" ? { ...part, completedAt: timestamp } : part),
+          (part) =>
+            part.type === "text"
+              ? {
+                  ...part,
+                  text: unwrapAssistantProjectionEnvelope(part.text),
+                  completedAt: timestamp,
+                }
+              : part,
         ),
       };
     }

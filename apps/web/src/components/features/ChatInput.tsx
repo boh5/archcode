@@ -540,34 +540,8 @@ export function ChatInput({
 
         {attachmentNotice && <p className="mx-3 mt-1 text-[11px] leading-4 text-warning" role="alert">{attachmentNotice}</p>}
 
-        <div className="flex min-h-[38px] items-center justify-between gap-3 px-3 pb-2">
-          <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-tertiary" data-testid="composer-model">
-            {coherentCatalog && nextModelSelection && agentName ? <ModelPicker
-              catalog={coherentCatalog}
-              next={nextModelSelection}
-              active={activeModelBinding}
-              onSelect={selectModel}
-              onManageModels={() => openSettingsModal("models")}
-              disabled={patchModelSelection.isPending}
-            /> : <span className="max-w-[180px] truncate">Loading model…</span>}
-            <span className="h-3 w-px shrink-0 bg-border-default" aria-hidden="true" />
-            <span className="flex shrink-0 items-center gap-2" aria-live="polite">
-              <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
-              {status.label}
-            </span>
-            {hasPendingHitl && (
-              <button
-                type="button"
-                className="shrink-0 rounded-sm px-1.5 py-1 text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                aria-label="Collapse queued-message composer"
-                onClick={() => setHitlComposerExpanded(false)}
-              >
-                Hide
-              </button>
-            )}
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-h-[38px] items-center justify-between gap-3 px-3 pb-2" data-testid="composer-toolbar">
+          <div className="flex shrink-0 items-center gap-2 text-[11px] text-text-tertiary" data-testid="composer-left-controls">
             <input
               ref={fileInputRef}
               type="file"
@@ -586,9 +560,33 @@ export function ChatInput({
             >
               <FilePlus size={16} />
             </button>
-            <span className="max-w-40 truncate text-[10px] text-text-tertiary max-[720px]:hidden">
-              Images may be sent to the selected model provider.
+            <span className="flex shrink-0 items-center gap-2 max-[520px]:gap-0" aria-live="polite">
+              <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
+              <span className="max-[520px]:sr-only">{status.label}</span>
             </span>
+            {hasPendingHitl && (
+              <button
+                type="button"
+                className="shrink-0 rounded-sm px-1.5 py-1 text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                aria-label="Collapse queued-message composer"
+                onClick={() => setHitlComposerExpanded(false)}
+              >
+                Hide
+              </button>
+            )}
+          </div>
+
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+            <div className="min-w-0 text-[11px] text-text-tertiary" data-testid="composer-model">
+              {coherentCatalog && nextModelSelection && agentName ? <ModelPicker
+                catalog={coherentCatalog}
+                next={nextModelSelection}
+                active={activeModelBinding}
+                onSelect={selectModel}
+                onManageModels={() => openSettingsModal("models")}
+                disabled={patchModelSelection.isPending}
+              /> : <span className="block max-w-[180px] truncate">Loading model…</span>}
+            </div>
             <span className="mr-1 text-[11px] text-text-tertiary max-[720px]:hidden">
               {isQueueing ? "Enter to queue" : "Shift+Enter for newline"}
             </span>

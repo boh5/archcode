@@ -119,7 +119,7 @@ export function ModelPicker({
         aria-controls="model-picker-popover"
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
-        className="flex max-w-[260px] min-w-0 items-center gap-1 rounded-sm px-2 py-1 text-left text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50 max-[390px]:max-w-[190px]"
+        className="flex max-w-[260px] min-w-0 items-center gap-1 rounded-sm px-2 py-1 text-left text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50 max-[520px]:max-w-[150px] max-[420px]:max-w-[130px]"
         data-testid="model-picker-trigger"
       >
         <span className="truncate">{runningDifferentModel ? `Next: ${nextLabel}` : nextLabel}</span>
@@ -131,7 +131,7 @@ export function ModelPicker({
           id="model-picker-popover"
           role="dialog"
           aria-label="Choose model"
-          className="absolute bottom-[calc(100%+8px)] left-0 z-50 flex max-h-[min(70vh,480px)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-lg border border-border-default bg-bg-overlay shadow-md max-[390px]:fixed max-[390px]:bottom-[72px] max-[390px]:left-3 max-[390px]:right-3 max-[390px]:w-auto"
+          className="absolute bottom-[calc(100%+8px)] right-0 z-50 flex max-h-[min(70vh,480px)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-lg border border-border-default bg-bg-overlay shadow-md max-[520px]:fixed max-[520px]:bottom-[72px] max-[520px]:right-3 max-[520px]:w-[min(360px,calc(100vw-72px))]"
           data-testid="model-picker-popover"
         >
           <div className="grid gap-1 border-b border-border-subtle bg-bg-surface px-3 py-3 text-[11px]">

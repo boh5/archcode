@@ -128,8 +128,11 @@ describe("ModelPicker", () => {
     openPicker();
     const popover = container.querySelector('[data-testid="model-picker-popover"]');
     expect(popover?.className).toContain("bottom-[calc(100%+8px)]");
-    expect(popover?.className).toContain("max-[390px]:fixed");
-    expect(popover?.className).toContain("max-[390px]:left-3");
+    expect(popover?.className).toContain("max-[520px]:fixed");
+    expect(popover?.className).toContain("max-[520px]:right-3");
+    expect(popover?.className).toContain(
+      "max-[520px]:w-[min(360px,calc(100vw-72px))]",
+    );
     expect(container.textContent).toContain("Running withGPT-5");
     expect(container.textContent).toContain("NextClaude Sonnet · deep");
     expect(container.querySelector('[data-testid="model-picker-next-mode"]')?.textContent).toBe("· Override");

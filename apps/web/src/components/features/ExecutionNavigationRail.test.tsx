@@ -66,11 +66,32 @@ function inputMessage(id: string, text: string): SessionMessage {
   };
 }
 
+function outputMessage(id: string, text: string): SessionMessage {
+  return {
+    id,
+    role: "assistant",
+    executionId: "execution",
+    createdAt: 2_000,
+    completedAt: 2_000,
+    parts: [{
+      id: `${id}:text`,
+      type: "text",
+      text,
+      createdAt: 2_000,
+      completedAt: 2_000,
+    }],
+  };
+}
+
 function createSegment(
   ordinal: number,
   request = `Request ${ordinal}`,
+  response?: string,
 ): ExecutionWorkstreamSegment {
   const input = inputMessage(`input-${ordinal}`, request);
+  const output = response
+    ? outputMessage(`output-${ordinal}`, response)
+    : undefined;
   return {
     id: `segment-${ordinal}`,
     executionId: "execution",
@@ -78,7 +99,7 @@ function createSegment(
     inputMessages: [input],
     inputMessageIds: [input.id],
     workMessages: [],
-    outputMessages: [],
+    outputMessages: output ? [{ message: output, parts: output.parts }] : [],
     windowStartedAt: 1_000 + ordinal * 3_000,
     windowEndedAt: 3_000 + ordinal * 3_000,
     activeDurationMs: 2_000,
@@ -128,9 +149,9 @@ describe("ExecutionNavigationRail", () => {
   test("uses one accessible marker per input segment for jump, tooltip, and keyboard navigation", async () => {
     installDom();
     const segments = [
-      createSegment(1, "Initial request"),
-      createSegment(2, "First steer"),
-      createSegment(3, "Second steer"),
+      createSegment(1, "Initial request", "Initial response"),
+      createSegment(2, "First steer", "First steer response"),
+      createSegment(3, "Second steer", "Second steer response"),
     ];
     const navigations: Array<[string, ScrollBehavior]> = [];
     await act(async () => root.render(
@@ -151,10 +172,13 @@ describe("ExecutionNavigationRail", () => {
     );
     expect(markers).toHaveLength(3);
     expect(markers.map((marker) => marker.getAttribute("aria-label"))).toEqual([
-      expect.stringContaining("Message 1, Initial request"),
-      expect.stringContaining("Message 2, First steer"),
-      expect.stringContaining("Message 3, Second steer"),
+      expect.stringContaining("Initial request, Initial response"),
+      expect.stringContaining("First steer, First steer response"),
+      expect.stringContaining("Second steer, Second steer response"),
     ]);
+    expect(markers.every((marker) =>
+      !marker.getAttribute("aria-label")?.includes("Message ")
+    )).toBe(true);
     expect(markers[1]!.getAttribute("aria-current")).toBe("location");
     expect(markers.map((marker) => marker.tabIndex)).toEqual([-1, 0, -1]);
 
@@ -164,6 +188,10 @@ describe("ExecutionNavigationRail", () => {
     await act(async () => markers[0]!.focus());
     expect(document.body.querySelector('[role="tooltip"]')?.textContent)
       .toContain("Initial request");
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent)
+      .toContain("Initial response");
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent)
+      .not.toContain("Message 1");
     expect(markers[0]!.getAttribute("aria-describedby")).not.toBeNull();
 
     await act(async () => {
@@ -175,6 +203,50 @@ describe("ExecutionNavigationRail", () => {
     });
     expect(navigations.at(-1)).toEqual([segments[1]!.id, "smooth"]);
     expect(document.activeElement).toBe(markers[1]);
+  });
+
+  test("caps the tooltip at one request line, three response lines, and one duration line", async () => {
+    installDom();
+    const segment = createSegment(
+      1,
+      "A user request long enough that it would otherwise wrap onto another visual line",
+      "An Assistant response long enough that it would otherwise occupy several visual lines in the navigation tooltip",
+    );
+    await act(async () => root.render(
+      <ExecutionNavigationRail
+        segments={[segment]}
+        currentSegmentId={segment.id}
+        running={false}
+        left={12}
+        visible
+        onNavigate={() => {}}
+      />,
+    ));
+
+    const marker = container.querySelector<HTMLButtonElement>(
+      "[data-execution-navigation-id]",
+    );
+    if (!marker) throw new Error("Missing execution navigation marker");
+    await act(async () =>
+      marker.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }))
+    );
+
+    const tooltip = document.body.querySelector<HTMLElement>('[role="tooltip"]');
+    const rows = Array.from(
+      tooltip?.querySelectorAll<HTMLElement>("[data-execution-tooltip-row]")
+        ?? [],
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.dataset.executionTooltipRow)).toEqual([
+      "request",
+      "response",
+      "duration",
+    ]);
+    expect(rows[0]!.classList.contains("truncate")).toBe(true);
+    expect(rows[1]!.classList.contains("line-clamp-3")).toBe(true);
+    expect(rows[1]!.classList.contains("max-h-12")).toBe(true);
+    expect(rows[2]!.classList.contains("truncate")).toBe(true);
+    expect(tooltip?.classList.contains("overflow-hidden")).toBe(true);
   });
 
   test("keeps the current marker visible when a long rail is resized", async () => {

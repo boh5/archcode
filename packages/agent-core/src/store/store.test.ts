@@ -831,7 +831,7 @@ describe("text streaming", () => {
     expect(textPart(onlyMessage(state.messages)).text).toBe("hello");
   });
 
-  test("text-end completes the text part without altering its text", () => {
+  test("text-end completes ordinary text without altering it", () => {
     const store = createFreshStore("text-end");
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "done" });
@@ -840,6 +840,20 @@ describe("text streaming", () => {
     const state = store.getState();
     const part = textPart(onlyMessage(state.messages));
     expect(part.text).toBe("done");
+    expect(part.completedAt).toBeGreaterThan(0);
+  });
+
+  test("text-end removes a complete echoed message-ref envelope", () => {
+    const store = createFreshStore("text-end-message-ref");
+    store.getState().append({ type: "text-start" });
+    store.getState().append({
+      type: "text-delta",
+      text: "<message ref=\"m0014\">Created the file.</message>",
+    });
+    store.getState().append({ type: "text-end" });
+
+    const part = textPart(onlyMessage(store.getState().messages));
+    expect(part.text).toBe("Created the file.");
     expect(part.completedAt).toBeGreaterThan(0);
   });
 

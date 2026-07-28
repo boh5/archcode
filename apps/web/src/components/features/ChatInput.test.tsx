@@ -219,9 +219,18 @@ describe("ChatInput runtime controls", () => {
     expect(card?.props?.className).toContain("focus-within:border-brand");
     expect(textarea?.props?.className).toContain("border-0");
     expect(textarea?.props?.className).toContain("bg-transparent");
+    const toolbar = findAll(tree, (element) => element.props?.["data-testid"] === "composer-toolbar")[0];
+    const toolbarChildren = childrenOf(toolbar);
+    expect(toolbarChildren[0] && isElement(toolbarChildren[0])
+      ? toolbarChildren[0].props?.["data-testid"]
+      : undefined).toBe("composer-left-controls");
+    expect(toolbarChildren[1] && isElement(toolbarChildren[1])
+      ? findAll(toolbarChildren[1], (element) => element.props?.["data-testid"] === "composer-model")
+      : []).toHaveLength(1);
     expect(findAll(tree, (element) => element.props?.title === "Attach file")).toHaveLength(1);
     expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-file-input")).toHaveLength(1);
     expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(1);
+    expect(textContent(tree)).not.toContain("Images may be sent to the selected model provider.");
   });
 
   test("accepts a selected file and enables an attachment-only send", () => {
