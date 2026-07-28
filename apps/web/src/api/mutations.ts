@@ -4,14 +4,17 @@ import { queryKeys } from "./queries";
 import type { AttachmentDescriptor, RequestedModelSelection, SessionModelState } from "@archcode/protocol";
 import {
   removeProjectControlPlane,
+  removeSessionControlPlane,
 } from "../store/control-plane-readiness";
 import { hitlStore } from "../store/hitl-store";
+import { removeWebSessionStores } from "../store/session-store";
 import type {
   HitlResponse,
   HitlStatus,
   HitlView,
   Project,
   Session,
+  SessionSummary,
   UpdateAutomationPayload,
   ProjectTodo,
   ProjectTodoCreateInput,
@@ -76,6 +79,63 @@ export function useCreateSession() {
     mutationFn: createSession,
     onSuccess: async (_session, variables) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.sessions(variables.slug) });
+    },
+  });
+}
+
+export interface DeleteSessionInput {
+  slug: string;
+  sessionId: string;
+  rootSessionId: string;
+  sessionIds: readonly string[];
+}
+
+export function deleteSession({
+  slug,
+  sessionId,
+}: Pick<DeleteSessionInput, "slug" | "sessionId">): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(
+    `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function useDeleteSession() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: DeleteSessionInput) => deleteSession(input),
+    onSuccess: (_data, variables) => {
+      queryClient.setQueryData<SessionSummary[]>(
+        queryKeys.sessions(variables.slug),
+        (sessions) => sessions?.filter((session) => session.sessionId !== variables.rootSessionId),
+      );
+      for (const deletedSessionId of new Set(variables.sessionIds)) {
+        queryClient.removeQueries({
+          queryKey: queryKeys.session(variables.slug, deletedSessionId),
+          exact: true,
+        });
+      }
+      queryClient.removeQueries({
+        queryKey: queryKeys.tree(variables.slug, variables.rootSessionId),
+        exact: true,
+      });
+      removeSessionControlPlane(variables.slug, variables.rootSessionId);
+      removeWebSessionStores(variables.slug, variables.sessionIds);
+
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.sessions(variables.slug) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.projectTodos(variables.slug) }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.dashboardProjection({ kind: "global" }),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.dashboardProjection({
+            kind: "project",
+            projectSlug: variables.slug,
+          }),
+        }),
+      ]);
     },
   });
 }

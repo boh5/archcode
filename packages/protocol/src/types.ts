@@ -1056,7 +1056,7 @@ export type GlobalSSEResourceChangedEvent =
   {
     type: "resource.changed";
     projectSlug: string;
-    resourceType: "automation" | "todo";
+    resourceType: "automation" | "session" | "todo";
     resourceId: string;
     createdAt: number;
   };

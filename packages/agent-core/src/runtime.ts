@@ -82,6 +82,7 @@ import {
   SessionFamilyActiveError,
 } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput } from "./execution";
+import { collectSessionTreeIds } from "./execution/session-tree";
 import { SessionEventBridge } from "./events";
 import {
   MAX_HITL_DELIVERY_ATTEMPTS,
@@ -293,6 +294,23 @@ export class ResourceCreationSourceError extends Error {
   ) {
     super(message, { cause });
     this.name = "ResourceCreationSourceError";
+  }
+}
+
+export class SessionAutomationReferenceConflictError extends Error {
+  readonly code = "SESSION_AUTOMATION_REFERENCE_CONFLICT";
+
+  constructor(
+    public readonly sessionId: string,
+    public readonly automations: ReadonlyArray<{
+      readonly id: string;
+      readonly name: string;
+    }>,
+  ) {
+    super(
+      `Session "${sessionId}" is targeted by ${automations.length} Automation${automations.length === 1 ? "" : "s"}`,
+    );
+    this.name = "SessionAutomationReferenceConflictError";
   }
 }
 
@@ -624,6 +642,28 @@ export async function createRuntime(
           });
         }
       }
+    };
+    const publishSessionResourceChanged = async (
+      workspaceRoot: string,
+      rootSessionId: string,
+    ): Promise<void> => {
+      const projectSlug = projectSlugsByWorkspace.get(workspaceRoot)
+        ?? (await projectRegistry.getByWorkspace(workspaceRoot))?.slug;
+      if (projectSlug === undefined) {
+        runtimeLogger.warn("session.changed.project_missing", {
+          context: { rootSessionId },
+          meta: { workspaceRoot },
+        });
+        return;
+      }
+      projectSlugsByWorkspace.set(workspaceRoot, projectSlug);
+      publishResourceChanged({
+        type: "resource.changed",
+        projectSlug,
+        resourceType: "session",
+        resourceId: rootSessionId,
+        createdAt: Date.now(),
+      });
     };
     const publishProjectHitlEvent = (workspaceRoot: string, event: ProjectHitlQueueEvent): Promise<void> => {
       const previous = hitlProjectionDispatches.get(workspaceRoot) ?? Promise.resolve();
@@ -2150,6 +2190,20 @@ export async function createRuntime(
           await executionManager.deleteSession(workspaceRoot, sessionId);
           return;
         }
+        const rootSessionId = file.rootSessionId;
+        const tree = await sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId);
+        const deletedSessionIds = new Set(collectSessionTreeIds(tree.root, sessionId));
+        const automationReferences = (await listAutomations(workspaceRoot))
+          .filter((automation) => (
+            automation.action.kind === "send_message"
+            && deletedSessionIds.has(automation.action.sessionId)
+          ))
+          .map(({ id, name }) => ({ id, name }))
+          .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+        if (automationReferences.length > 0) {
+          throw new SessionAutomationReferenceConflictError(sessionId, automationReferences);
+        }
+
         if (file.parentSessionId !== undefined || file.rootSessionId !== sessionId) {
           await executionManager.deleteSession(workspaceRoot, sessionId);
           return;
@@ -2172,6 +2226,7 @@ export async function createRuntime(
             }
           },
         );
+        await publishSessionResourceChanged(workspaceRoot, rootSessionId);
       },
       listSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
       disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),

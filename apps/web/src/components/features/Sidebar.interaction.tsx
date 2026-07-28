@@ -53,12 +53,16 @@ mock.module("lucide-react", () => ({
   Focus: Icon,
   LayoutDashboard: Icon,
   ListTodo: ListTodoIcon,
+  MoreHorizontal: Icon,
   PanelLeftClose: Icon,
   Plus: Icon,
+  Trash2: Icon,
+  TriangleAlert: Icon,
 }));
 
 mock.module("../../api/mutations", () => ({
   useCreateSession: () => createSession,
+  useDeleteSession: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   usePostMessage: () => postMessage,
 }));
 
@@ -72,6 +76,7 @@ const project: Project = {
 mock.module("../../api/queries", () => ({
   useProjects: () => ({ data: [project] }),
   useSessions: () => ({ data: sessions }),
+  useSessionTree: () => ({ data: undefined, isLoading: false, error: null }),
   useAutomations: () => ({ data: automations }),
   useProjectTodos: () => ({ data: projectTodos }),
 }));
@@ -388,6 +393,11 @@ describe("Sidebar Session list", () => {
     expect(permission.getAttribute("title")).toBeNull();
     expect(permission.className).toContain("h-9");
     expect(permission.className).toContain("[@media(pointer:coarse)]:min-h-11");
+    expect(
+      container.querySelector(
+        'button[aria-label="Actions for Tighten workbench hierarchy"]',
+      ),
+    ).not.toBeNull();
 
     await act(async () => permission.click());
     expect(navigationCalls).toEqual(["/projects/demo/sessions/permission"]);

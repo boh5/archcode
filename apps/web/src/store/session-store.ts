@@ -646,6 +646,19 @@ export function markSessionForeground(
   if (!foreground) evictIdleSessionStores();
 }
 
+export function removeWebSessionStores(
+  slug: string,
+  sessionIds: readonly string[],
+): void {
+  for (const sessionId of new Set(sessionIds)) {
+    const key = scopedWebKey(slug, sessionId);
+    const entry = sessionRegistry.get(key);
+    if (!entry) continue;
+    pendingRemoteEvents.delete(entry.store);
+    sessionRegistry.delete(key);
+  }
+}
+
 export function evictIdleSessionStores(): void {
   if (sessionRegistry.size <= MAX_IDLE_SESSION_STORES) return;
 

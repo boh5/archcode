@@ -5,11 +5,15 @@ import {
   beginSessionSnapshotRecovery,
   createWebSessionStore,
   findWebSessionStore,
+  removeWebSessionStores,
 } from "../store/session-store";
 import { hitlAttentionPath, hitlStore, scopedHitlIdentity, type ScopedHitlView } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
 import { sessionRuntimeStore } from "../store/session-runtime-store";
-import { invalidateControlPlaneReadiness } from "../store/control-plane-readiness";
+import {
+  invalidateControlPlaneReadiness,
+  removeSessionControlPlane,
+} from "../store/control-plane-readiness";
 import { getMcpStatus } from "../api/mcp";
 import { queryKeys } from "../api/queries";
 import {
@@ -524,7 +528,16 @@ function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSERe
 
   if (event.resourceType === "todo") {
     deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
+    return;
   }
+
+  removeSessionControlPlane(event.projectSlug, event.resourceId);
+  removeWebSessionStores(event.projectSlug, [event.resourceId]);
+  deps.invalidateQueries({ queryKey: queryKeys.session(event.projectSlug, event.resourceId) });
+  deps.invalidateQueries({ queryKey: queryKeys.sessions(event.projectSlug) });
+  deps.invalidateQueries({ queryKey: queryKeys.tree(event.projectSlug, event.resourceId) });
+  deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
+  invalidateDashboardProjectionQueries(deps, event.projectSlug);
 }
 
 function invalidateAutomationQueries(

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { GlobalSessionEventEnvelope } from "@archcode/protocol";
+import type { GlobalSessionEventEnvelope, GlobalSSEResourceChangedEvent } from "@archcode/protocol";
 
 import type { McpManager } from "./mcp";
 import { setLlmAdapterForTest } from "./llm";
@@ -325,6 +325,50 @@ describe("AgentRuntime Automation wiring", () => {
 
     expect(await fixture.runtime.readAutomation(fixture.workspaceRoot, automation.id))
       .toMatchObject({ createdFromSessionId: fixture.sourceSessionId });
+  });
+
+  test("blocks deletion of an Automation target and publishes deletion after unlinking", async () => {
+    const fixture = await runtimeFixture();
+    const target = await fixture.runtime.createSession(fixture.workspaceRoot, {
+      agentName: "lead",
+    });
+    const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      name: "Continue target",
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: {
+        kind: "send_message",
+        sessionId: target.sessionId,
+        message: "Continue",
+      },
+      createdFromSessionId: fixture.sourceSessionId,
+    });
+    const changes: GlobalSSEResourceChangedEvent[] = [];
+    const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => {
+      changes.push(event);
+    });
+
+    await expect(
+      fixture.runtime.deleteSession(fixture.workspaceRoot, target.sessionId),
+    ).rejects.toMatchObject({
+      name: "SessionAutomationReferenceConflictError",
+      sessionId: target.sessionId,
+      automations: [{ id: automation.id, name: automation.name }],
+    });
+    await expect(
+      fixture.runtime.getSessionFile(fixture.workspaceRoot, target.sessionId),
+    ).resolves.toMatchObject({ sessionId: target.sessionId });
+
+    await fixture.runtime.deleteAutomation(fixture.workspaceRoot, automation.id);
+    await fixture.runtime.deleteSession(fixture.workspaceRoot, target.sessionId);
+
+    expect(changes).toContainEqual({
+      resourceType: "session",
+      resourceId: target.sessionId,
+      type: "resource.changed",
+      projectSlug: expect.any(String),
+      createdAt: expect.any(Number),
+    });
+    unsubscribe?.();
   });
 });
 

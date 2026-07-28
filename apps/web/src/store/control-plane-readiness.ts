@@ -6,6 +6,14 @@ export function removeProjectControlPlane(projectSlug: string): void {
   hitlStore.getState().removeProject(projectSlug);
 }
 
+export function removeSessionControlPlane(
+  projectSlug: string,
+  rootSessionId: string,
+): void {
+  sessionRuntimeStore.getState().removeFamily(projectSlug, rootSessionId);
+  hitlStore.getState().removeSessionFamily(projectSlug, rootSessionId);
+}
+
 export function invalidateControlPlaneReadiness(): void {
   sessionRuntimeStore.getState().invalidateSnapshots();
   hitlStore.getState().invalidateSnapshots();

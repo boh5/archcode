@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, SessionDeleteInProgressError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionModelSelectionNotAllowedError, silentLogger } from "@archcode/agent-core";
+import { NotRootSessionError, ProjectRegistry, SessionAutomationReferenceConflictError, SessionDeleteConflictError, SessionDeleteInProgressError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionModelSelectionNotAllowedError, silentLogger } from "@archcode/agent-core";
 import { createRuntimeApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -212,6 +212,12 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       }
       if (sessionId === "stopping-session") {
         throw new SessionFamilyStopInProgressError(sessionId, "root-session");
+      }
+      if (sessionId === "automation-target") {
+        throw new SessionAutomationReferenceConflictError(sessionId, [{
+          id: "11111111-1111-4111-8111-111111111111",
+          name: "Continue target",
+        }]);
       }
       const key = `${workspaceRoot}\0${sessionId}`;
       if (!sessions.has(key)) throw new MissingSessionFileError();
@@ -745,6 +751,30 @@ describe("sessions routes", () => {
           sessionIds: ["stopping-session"],
           scopeCode: "SESSION_FAMILY_STOP_IN_PROGRESS",
           rootSessionId: "root-session",
+        },
+      },
+    });
+  });
+
+  test("DELETE returns the Automation references that block Session removal", async () => {
+    const { app, project } = await createTestApp("automation-reference");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/automation-target`, {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "DELETE_CONFLICT",
+        message: 'Session "automation-target" is targeted by 1 Automation',
+        details: {
+          sessionIds: ["automation-target"],
+          scopeCode: "SESSION_AUTOMATION_REFERENCE_CONFLICT",
+          automations: [{
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "Continue target",
+          }],
         },
       },
     });

@@ -3,6 +3,7 @@ import {
   NotRootSessionError,
   SessionDeleteConflictError,
   SessionDeleteInProgressError,
+  SessionAutomationReferenceConflictError,
   SessionFamilyStopConflictError,
   SessionFamilyStopInProgressError,
   SessionFileNotFoundError,
@@ -243,6 +244,12 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
       await runtime.deleteSession(project.workspaceRoot, sessionId);
       return c.json({ ok: true });
     } catch (error) {
+      if (error instanceof SessionAutomationReferenceConflictError) {
+        throw new ConflictError([sessionId], error.message, {
+          scopeCode: error.code,
+          automations: error.automations,
+        });
+      }
       if (error instanceof SessionDeleteConflictError) {
         throw new ConflictError(error.sessionIds);
       }

@@ -68,6 +68,7 @@ mock.module("../api/mutations", () => ({
 mock.module("../components/features/ProjectActionMenu", () => ({ ProjectActionDropdown: () => null }));
 mock.module("../components/features/EditProjectDialog", () => ({ EditProjectDialog: () => null }));
 mock.module("../components/features/CloseProjectDialog", () => ({ CloseProjectDialog: () => null }));
+mock.module("../components/features/DeleteSessionDialog", () => ({ DeleteSessionDialog: () => null }));
 
 const { RootLayout } = await import("./root-layout");
 

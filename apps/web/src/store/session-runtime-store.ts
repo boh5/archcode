@@ -12,6 +12,7 @@ export interface SessionRuntimeStoreState {
   initializedProjects: Record<string, true>;
   applySnapshot: (event: GlobalSSESessionRuntimeSnapshotEvent) => void;
   applyChange: (event: GlobalSSESessionRuntimeChangedEvent) => void;
+  removeFamily: (projectSlug: string, rootSessionId: string) => void;
   removeProject: (projectSlug: string) => void;
   invalidateSnapshots: () => void;
   isProjectInitialized: (projectSlug: string) => boolean;
@@ -62,6 +63,12 @@ export const sessionRuntimeStore = createStore<SessionRuntimeStoreState>((set, g
           : {}),
       };
     }
+    return { families };
+  }),
+
+  removeFamily: (projectSlug, rootSessionId) => set((state) => {
+    const families = { ...state.families };
+    delete families[runtimeFamilyKey(projectSlug, rootSessionId)];
     return { families };
   }),
 

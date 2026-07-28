@@ -2,8 +2,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useAutomationInvocations, useAutomations } from "../api/queries";
 import { useCreateSession, usePostMessage } from "../api/mutations";
-import type { Automation, AutomationTrigger } from "../api/types";
+import type { Automation } from "../api/types";
 import { automationHitlSessionCount, deriveAutomationHitlAttention } from "../lib/automation-hitl-attention";
+import { formatAutomationTrigger } from "../lib/automation-trigger-presentation";
 import { hitlAttentionPath, useAttentionVisibleScopedHitl } from "../store/hitl-store";
 import { StatusGlyph } from "../components/primitives/StatusGlyph";
 import { automationStatusLabel, automationVisualKind } from "../lib/automation-status-presentation";
@@ -55,7 +56,7 @@ function AutomationRow({ slug, automation }: { slug: string; automation: Automat
         </span>
       </div>
       <div className="mt-1 text-[11px] leading-4 text-text-tertiary">
-        {formatTrigger(automation.trigger)} · {automation.action.kind === "start_session" ? "Start Session" : "Send message"}
+        {formatAutomationTrigger(automation.trigger)} · {automation.action.kind === "start_session" ? "Start Session" : "Send message"}
         {automation.nextFireAt ? ` · next ${new Date(automation.nextFireAt).toLocaleString()}` : ""}
       </div>
       {attentionCount > 0 && firstEntry ? (
@@ -65,10 +66,4 @@ function AutomationRow({ slug, automation }: { slug: string; automation: Automat
       ) : null}
     </div>
   );
-}
-
-export function formatTrigger(trigger: AutomationTrigger): string {
-  if (trigger.kind === "once") return `Once ${new Date(trigger.at).toLocaleString()}`;
-  if (trigger.kind === "interval") return `Every ${trigger.everyMs} ms`;
-  return `Cron ${trigger.expression} (${trigger.timezone})`;
 }

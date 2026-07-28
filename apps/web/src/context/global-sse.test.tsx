@@ -7,6 +7,7 @@ import type {
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEMcpStatusEvent,
   GlobalSSEModelRuntimeChangedEvent,
+  GlobalSSEResourceChangedEvent,
   GlobalSSEResetEvent,
   GlobalSSELaggedEvent,
   GlobalSSESessionRuntimeChangedEvent,
@@ -20,6 +21,7 @@ import type {
 import {
   __resetWebSessionStoresForTest,
   createWebSessionStore,
+  findWebSessionStore,
   type RemoteEnvelopeApplyResult,
   type WebSessionStoreState,
 } from "../store/session-store";
@@ -806,6 +808,46 @@ describe("handleSSEEvent", () => {
       createdAt: 123,
     });
   });
+
+  test("purges deleted Session state and invalidates every Session consumer", () => {
+    createWebSessionStore("root-session", "proj");
+    sessionRuntimeStore.getState().applyChange({
+      type: "session.runtime_changed",
+      projectSlug: "proj",
+      rootSessionId: "root-session",
+      activity: "running",
+      createdAt: 1,
+    });
+    const hitl = hitlRealtimeEvent({
+      projectSlug: "proj",
+      hitlId: "hitl-1",
+    });
+    hitlStore.getState().applyRealtimeEvent(hitl);
+    const event: GlobalSSEResourceChangedEvent = {
+      type: "resource.changed",
+      projectSlug: "proj",
+      resourceType: "session",
+      resourceId: "root-session",
+      createdAt: 2,
+    };
+
+    handleSSEEvent({ event: event.type, data: JSON.stringify(event) }, deps);
+
+    expect(findWebSessionStore("root-session", "proj")).toBeUndefined();
+    expect(sessionRuntimeStore.getState().families).toEqual({});
+    expect(hitlStore.getState().views).toEqual({});
+    expect(
+      mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey),
+    ).toEqual([
+      queryKeys.session("proj", "root-session"),
+      queryKeys.sessions("proj"),
+      queryKeys.tree("proj", "root-session"),
+      queryKeys.projectTodos("proj"),
+      queryKeys.dashboardProjection({ kind: "global" }),
+      queryKeys.dashboardProjection({ kind: "project", projectSlug: "proj" }),
+    ]);
+  });
+
   test("stores the scoped hitl.event view without touching query caches", () => {
     const event = hitlRealtimeEvent({
       projectSlug: "proj",

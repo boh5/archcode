@@ -25,6 +25,7 @@ interface HitlStoreState {
   applySnapshot: (event: GlobalSSEHitlSnapshotEvent) => void;
   /** Reconcile a response against the already-known scoped owner; never infer a root. */
   reconcileView: (projectSlug: string, view: HitlView) => void;
+  removeSessionFamily: (projectSlug: string, rootSessionId: string) => void;
   removeProject: (projectSlug: string) => void;
   invalidateSnapshots: () => void;
   isProjectInitialized: (projectSlug: string) => boolean;
@@ -93,6 +94,11 @@ export const hitlStore = createStore<HitlStoreState>((set, get) => ({
       views: writeScopedView(state.views, { ...previous, view }),
     };
   }),
+  removeSessionFamily: (projectSlug, rootSessionId) => set((state) => ({
+    views: Object.fromEntries(Object.entries(state.views).filter(([, entry]) => (
+      entry.projectSlug !== projectSlug || entry.rootSessionId !== rootSessionId
+    ))),
+  })),
   removeProject: (projectSlug) => set((state) => {
     const initializedProjects = { ...state.initializedProjects };
     delete initializedProjects[projectSlug];

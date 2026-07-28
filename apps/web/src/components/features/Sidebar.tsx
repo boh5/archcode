@@ -5,8 +5,10 @@ import {
   Focus,
   LayoutDashboard,
   ListTodo,
+  MoreHorizontal,
   PanelLeftClose,
   Plus,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { useCreateSession, usePostMessage } from "../../api/mutations";
@@ -21,6 +23,7 @@ import type { SessionFamilyActivity } from "@archcode/protocol";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
+import { DeleteSessionDialog } from "./DeleteSessionDialog";
 import { useWorkbenchLayout } from "../../context/workbench-layout";
 import {
   runtimeFamilyKey,
@@ -41,6 +44,12 @@ import {
   RelativeTimeValue,
   useRelativeTimePresentation,
 } from "../primitives/TemporalText";
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+} from "../ui/DropdownMenu";
 
 // Helpers
 
@@ -149,12 +158,14 @@ function SessionItem({
   attention,
   isActive,
   onClick,
+  onDelete,
 }: {
   session: SessionSummaryWithGoal;
   activity: SessionFamilyActivity | undefined;
   attention?: SessionAttention;
   isActive: boolean;
   onClick: () => void;
+  onDelete: () => void;
 }) {
   const updatedAt = session.updatedAt;
   const goalLabel = session.goal ? presentSessionGoalStatus(session.goal.status).label : undefined;
@@ -174,44 +185,68 @@ function SessionItem({
   ].filter((part): part is string => part !== undefined).join(" · ");
 
   return (
-    <button
-      type="button"
-      aria-current={isActive ? "page" : undefined}
-      aria-label={accessibleName}
-      className={`relative flex h-9 min-h-9 w-full items-center gap-2 px-4 text-left transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
+    <div
+      className={`group relative flex h-9 min-h-9 w-full items-center transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
         isActive ? "bg-selection-field" : "hover:bg-bg-hover"
       }`}
-      data-testid={`sidebar-session-${session.sessionId}`}
-      onClick={onClick}
     >
       {isActive && (
         <div className="absolute inset-y-1 left-0 w-0.5 rounded-r-sm bg-brand" aria-hidden="true" />
       )}
-      <SessionStatusGlyph activity={activity} attention={attention} />
-      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary" data-testid={`sidebar-session-title-${session.sessionId}`}>
-        {session.title || "Untitled"}
-      </span>
-      <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-text-tertiary">
-        {session.goal && (
-          <span title={`Goal ${goalLabel}`} data-testid={`sidebar-session-goal-${session.sessionId}`}>
-            <GoalStatusMark identity={session.goal.instanceId} status={session.goal.status} size={11} label={`Goal ${goalLabel}`} />
-          </span>
-        )}
-        {attention && (
-          <span
-            className="inline-flex items-center gap-1 font-medium text-warning"
-            data-testid={`sidebar-session-attention-${session.sessionId}`}
-            title={attention.label === "Requests"
-              ? `${attention.count} mixed requests need attention`
-              : `${attention.count} ${attention.label.toLowerCase()} request${attention.count === 1 ? "" : "s"} need attention`}
+      <button
+        type="button"
+        aria-current={isActive ? "page" : undefined}
+        aria-label={accessibleName}
+        className="flex h-9 min-h-9 min-w-0 flex-1 items-center gap-2 py-0 pl-4 pr-10 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11"
+        data-testid={`sidebar-session-${session.sessionId}`}
+        onClick={onClick}
+      >
+        <SessionStatusGlyph activity={activity} attention={attention} />
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary" data-testid={`sidebar-session-title-${session.sessionId}`}>
+          {session.title || "Untitled"}
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-text-tertiary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(pointer:coarse)]:hidden">
+          {session.goal && (
+            <span title={`Goal ${goalLabel}`} data-testid={`sidebar-session-goal-${session.sessionId}`}>
+              <GoalStatusMark identity={session.goal.instanceId} status={session.goal.status} size={11} label={`Goal ${goalLabel}`} />
+            </span>
+          )}
+          {attention && (
+            <span
+              className="inline-flex items-center gap-1 font-medium text-warning"
+              data-testid={`sidebar-session-attention-${session.sessionId}`}
+              title={attention.label === "Requests"
+                ? `${attention.count} mixed requests need attention`
+                : `${attention.count} ${attention.label.toLowerCase()} request${attention.count === 1 ? "" : "s"} need attention`}
+            >
+              <StatusGlyph kind="needs_you" tone="warning" size={11} />
+              <span>{visibleAttentionLabel}</span>
+            </span>
+          )}
+          <RelativeTimeValue timestamp={updatedAt} text={relativeUpdatedAt.short} />
+        </span>
+      </button>
+      <DropdownMenuRoot>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Actions for ${session.title || "Untitled Session"}`}
+            className="absolute right-2 flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary opacity-0 transition-[color,background-color,opacity] duration-[var(--motion-hover)] hover:bg-bg-active hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand group-hover:opacity-100 group-focus-within:opacity-100 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9 [@media(pointer:coarse)]:opacity-100"
           >
-            <StatusGlyph kind="needs_you" tone="warning" size={11} />
-            <span>{visibleAttentionLabel}</span>
-          </span>
-        )}
-        <RelativeTimeValue timestamp={updatedAt} text={relativeUpdatedAt.short} />
-      </span>
-    </button>
+            <MoreHorizontal size={14} aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[168px]">
+          <DropdownMenuItem
+            className="text-error focus:bg-error-muted focus:text-error data-[highlighted]:bg-error-muted"
+            onSelect={onDelete}
+          >
+            <Trash2 size={13} aria-hidden="true" />
+            Delete Session
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenuRoot>
+    </div>
   );
 }
 
@@ -364,6 +399,7 @@ export function Sidebar({
 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [closingProject, setClosingProject] = useState<Project | null>(null);
+  const [deletingSession, setDeletingSession] = useState<SessionSummaryWithGoal | null>(null);
 
   const [sessionsSearch, setSessionsSearch] = useState("");
   const [automationsSearch, setAutomationsSearch] = useState("");
@@ -599,6 +635,7 @@ export function Sidebar({
                   attention={attention}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
+                  onDelete={() => setDeletingSession(session)}
                 />
               ))}
             </div>
@@ -615,6 +652,7 @@ export function Sidebar({
                   attention={attention}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
+                  onDelete={() => setDeletingSession(session)}
                 />
               ))}
             </div>
@@ -631,6 +669,7 @@ export function Sidebar({
                   attention={attention}
                   isActive={session.sessionId === sessionId}
                   onClick={() => handleSessionClick(session.sessionId)}
+                  onDelete={() => setDeletingSession(session)}
                 />
               ))}
             </div>
@@ -696,6 +735,22 @@ export function Sidebar({
           open
           onClose={() => setEditingProject(null)}
           project={editingProject}
+        />
+      )}
+
+      {deletingSession && activeProject && (
+        <DeleteSessionDialog
+          automations={automations ?? []}
+          onClose={() => setDeletingSession(null)}
+          onDeleted={(deleted) => {
+            setDeletingSession(null);
+            if (sessionId === deleted.rootSessionId) {
+              navigate(`/projects/${slug}`, { replace: true });
+            }
+          }}
+          open
+          project={activeProject}
+          session={deletingSession}
         />
       )}
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createSession, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, setSessionGoalBudget, stopSessionFamily, uploadSessionAttachment } from "./mutations";
+import { createSession, deleteSession, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, setSessionGoalBudget, stopSessionFamily, uploadSessionAttachment } from "./mutations";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -45,6 +45,21 @@ describe("web session runtime mutation API calls", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await stopSessionFamily({ slug: TEST_PROJECT_SLUG, rootSessionId: "root-session" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("deleteSession calls the bodyless Session endpoint", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/root-session`);
+      expect(init?.method).toBe("DELETE");
+      expect(init?.body).toBeUndefined();
+      return jsonResponse({ ok: true });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await deleteSession({ slug: TEST_PROJECT_SLUG, sessionId: "root-session" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

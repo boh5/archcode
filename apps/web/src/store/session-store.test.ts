@@ -15,6 +15,7 @@ import {
   createWebSessionStore,
   evictIdleSessionStores,
   findWebSessionStore,
+  removeWebSessionStores,
   markSessionForeground,
   __resetWebSessionStoresForTest,
 } from "./session-store";
@@ -163,6 +164,18 @@ describe("web session store registry", () => {
     expect(
       findWebSessionStore("registry-session", "other-slug"),
     ).toBeUndefined();
+  });
+
+  test("removeWebSessionStores evicts only the selected project Sessions", () => {
+    createWebSessionStore("root", "demo");
+    createWebSessionStore("child", "demo");
+    const retained = createWebSessionStore("root", "other");
+
+    removeWebSessionStores("demo", ["root", "child", "root"]);
+
+    expect(findWebSessionStore("root", "demo")).toBeUndefined();
+    expect(findWebSessionStore("child", "demo")).toBeUndefined();
+    expect(findWebSessionStore("root", "other")).toBe(retained);
   });
 
   test("new session stores hydrate canonical root and child identity", () => {

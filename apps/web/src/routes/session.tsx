@@ -22,6 +22,7 @@ import {
   type SessionSnapshotRecoveryRetry,
   type SessionSnapshotRequestState,
 } from "../lib/session-snapshot-recovery-retry";
+import { ApiError } from "../api/client";
 
 export function hasSessionSnapshotRecoveryOwner(
   slug: string,
@@ -239,6 +240,26 @@ export function SessionRoute() {
     });
     return unsub;
   }, [rootSessionId, session, sessionId, slug, navigate]);
+
+  const sessionMissing = sessionError instanceof ApiError
+    && sessionError.code === "SESSION_NOT_FOUND";
+  useEffect(() => {
+    if (!sessionMissing) return;
+    navigate(`/projects/${encodeURIComponent(slug)}`, { replace: true });
+  }, [navigate, sessionMissing, slug]);
+
+  if (sessionMissing) {
+    return (
+      <div className="flex h-full items-center justify-center gap-2 text-sm text-text-secondary">
+        <LoaderCircle
+          size={14}
+          className="animate-activity text-text-muted"
+          aria-hidden="true"
+        />
+        Returning to project…
+      </div>
+    );
+  }
 
   if (sessionError) {
     return (

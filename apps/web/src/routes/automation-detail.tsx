@@ -2,28 +2,29 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Pause, Play, Settings2, Trash2 } from "lucide-react";
 import { useAutomation, useAutomationInvocations, useSession } from "../api/queries";
-import { useDeleteAutomation, usePauseAutomation, useResumeAutomation, useRunAutomationNow } from "../api/mutations";
+import { usePauseAutomation, useResumeAutomation, useRunAutomationNow } from "../api/mutations";
 import type { Automation, AutomationInvocation } from "../api/types";
 import { EditAutomationDialog } from "../components/features/EditAutomationDialog";
 import { deriveAutomationHitlAttention, type AutomationHitlAttention } from "../lib/automation-hitl-attention";
 import { hitlAttentionPath, useAttentionVisibleScopedHitl } from "../store/hitl-store";
-import { formatTrigger } from "./automations";
+import { formatAutomationTrigger } from "../lib/automation-trigger-presentation";
 import { StatusGlyph } from "../components/primitives/StatusGlyph";
 import { IconAction } from "../components/primitives/IconAction";
 import { automationInvocationStatusLabel, automationStatusLabel, automationVisualKind } from "../lib/automation-status-presentation";
+import { DeleteAutomationDialog } from "../components/features/DeleteAutomationDialog";
 
 export function AutomationDetailRoute() {
   const { slug = "", automationId = "" } = useParams<{ slug: string; automationId: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const automation = useAutomation(slug, automationId);
   const invocations = useAutomationInvocations(slug, automationId);
   const scopedHitl = useAttentionVisibleScopedHitl([slug]);
   const runNow = useRunAutomationNow();
   const pause = usePauseAutomation();
   const resume = useResumeAutomation();
-  const remove = useDeleteAutomation();
 
   if (automation.isLoading) return <div className="p-4 text-text-tertiary">Loading automation…</div>;
   if (!automation.data) return <div className="p-4 text-error">Automation not found</div>;
@@ -39,7 +40,7 @@ export function AutomationDetailRoute() {
       <AutomationHeader
         automation={value}
         isRunningNow={runNow.isPending}
-        onDelete={() => remove.mutate({ slug, automationId }, { onSuccess: () => navigate(`/projects/${slug}/automations`) })}
+        onDelete={() => setDeleting(true)}
         onEdit={() => setEditing(true)}
         onPause={() => pause.mutate({ slug, automationId })}
         onResume={() => resume.mutate({ slug, automationId })}
@@ -58,6 +59,13 @@ export function AutomationDetailRoute() {
         />
       </main>
       <EditAutomationDialog automation={value} onClose={() => setEditing(false)} open={editing} slug={slug} />
+      <DeleteAutomationDialog
+        automation={value}
+        onClose={() => setDeleting(false)}
+        onDeleted={() => navigate(`/projects/${slug}/automations`)}
+        open={deleting}
+        slug={slug}
+      />
     </div>
   );
 }
@@ -139,7 +147,7 @@ function AutomationConfiguration({ automation }: { automation: Automation }) {
     <section className="border-t border-border-subtle py-4">
       <h2 className="text-[13px] font-semibold text-text-primary">Configuration</h2>
       <dl className="mt-3 grid gap-2 text-sm">
-        <AutomationDefinition label="Schedule">{formatTrigger(automation.trigger)}</AutomationDefinition>
+        <AutomationDefinition label="Schedule">{formatAutomationTrigger(automation.trigger)}</AutomationDefinition>
         <AutomationDefinition label="Action">{action}</AutomationDefinition>
         <AutomationDefinition label="Message"><span className="whitespace-pre-wrap">{automation.action.message}</span></AutomationDefinition>
       </dl>

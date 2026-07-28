@@ -148,7 +148,7 @@ describe("current tool and config wire types", () => {
 });
 
 describe("global SSE wire protocol types", () => {
-  test("uses an unreasoned resource.changed contract for Automations and Project Todos", () => {
+  test("uses an unreasoned resource.changed contract for project resources", () => {
     const events: GlobalSSEResourceChangedEvent[] = [{
       type: "resource.changed",
       projectSlug: "project-a",
@@ -164,8 +164,8 @@ describe("global SSE wire protocol types", () => {
     }, {
       type: "resource.changed",
       projectSlug: "project-a",
-      resourceType: "todo",
-      resourceId: "todo-1",
+      resourceType: "session",
+      resourceId: "session-1",
       createdAt: 3,
     }];
 

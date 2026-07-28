@@ -622,6 +622,7 @@ describe("protocol event guards", () => {
     expect(isGlobalSSEHitlSnapshotEvent({ ...hitlSnapshot, entries: [{ projectSlug: "project", view }] })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent(resourceEvent)).toBe(true);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "todo", resourceId: "todo-1" })).toBe(true);
+    expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "session", resourceId: "session-1" })).toBe(true);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "goal", resourceId: "goal-1" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, reason: "created" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ type: "resource.changed" })).toBe(false);
