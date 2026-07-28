@@ -57,8 +57,7 @@ reviews:
         Ensure raw tool outputs cannot bypass Registry finalization,
         redaction, bounded artifact storage, or workspace security guards.
       include:
-        - packages/agent-core/src/tools/**
-        - packages/agent-core/src/tool-output/**
+        - packages/agent-core/src/**
 
 pr_descriptions:
   generate: false
