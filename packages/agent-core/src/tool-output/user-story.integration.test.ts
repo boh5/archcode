@@ -116,13 +116,13 @@ describe("Tool Output Plane real user stories", () => {
     ].join("\n");
     const input = { description: "Emit output that must survive hard compact", command };
     const toolCallId = crypto.randomUUID();
-    beginUserRound(harness.rootStore, "Run the diagnostic command");
-    const context = executionContext(harness.rootStore, access, "bash", toolCallId);
+    const executionId = beginUserRound(harness.rootStore, "Run the diagnostic command");
+    const context = executionContext(harness.rootStore, access, "bash", toolCallId, executionId);
 
     harness.rootStore.getState().append({ type: "tool-call", toolCallId, toolName: "bash", input });
     const result = await executeRegistered(plane.registry, "bash", input, context);
     harness.rootStore.getState().append({ type: "tool-result", toolCallId, toolName: "bash", result });
-    harness.rootStore.getState().append({ type: "execution-end", status: "completed" });
+    endExecution(harness.rootStore, executionId);
 
     expect(result.output.recovery.kind).toBe("artifact");
     if (result.output.recovery.kind !== "artifact") throw new Error("Expected compact recovery artifact");
@@ -203,7 +203,7 @@ describe("Tool Output Plane real user stories", () => {
       plane.registry,
       "output_search",
       { pattern: "COMPACT_FAMILY_SENTINEL" },
-      executionContext(harness.rootStore, access, "output_search", crypto.randomUUID()),
+      executionContext(harness.rootStore, access, "output_search", crypto.randomUUID(), crypto.randomUUID()),
     );
     expect(searchResult.isError).toBe(false);
     expect(searchResult.output.preview).toContain("COMPACT_FAMILY_SENTINEL");
@@ -226,7 +226,9 @@ describe("Tool Output Plane real user stories", () => {
     ].join("\n");
     const input = { description: "Emit a recoverable mixed-stream artifact", command };
     const toolCallId = crypto.randomUUID();
-    const context = executionContext(harness.childStore, childAccess, "bash", toolCallId);
+    const childExecutionId = crypto.randomUUID();
+    harness.childStore.getState().append(testExecutionStart(childExecutionId));
+    const context = executionContext(harness.childStore, childAccess, "bash", toolCallId, childExecutionId);
 
     harness.childStore.getState().append({ type: "tool-call", toolCallId, toolName: "bash", input });
     const result = await executeRegistered(plane.registry, "bash", input, context);
@@ -267,7 +269,7 @@ describe("Tool Output Plane real user stories", () => {
       plane.registry,
       "output_search",
       { pattern: "ERROR_SENTINEL nearby-diagnostic" },
-      executionContext(harness.rootStore, childAccess, "output_search", crypto.randomUUID()),
+      executionContext(harness.rootStore, childAccess, "output_search", crypto.randomUUID(), crypto.randomUUID()),
     );
     expect(searchResult.isError).toBe(false);
     expect(searchResult.output.preview).toContain("ERROR_SENTINEL nearby-diagnostic");
@@ -277,7 +279,7 @@ describe("Tool Output Plane real user stories", () => {
       plane.registry,
       "output_read",
       { outputRef, limit: 3 },
-      executionContext(harness.rootStore, childAccess, "output_read", crypto.randomUUID()),
+      executionContext(harness.rootStore, childAccess, "output_read", crypto.randomUUID(), crypto.randomUUID()),
     );
     expect(firstRead.isError).toBe(false);
     expect(firstRead.output.preview).toContain("HEAD_SENTINEL");
@@ -348,6 +350,7 @@ function executionContext(
   outputArtifacts: ToolOutputAccessService,
   toolName: string,
   toolCallId: string,
+  executionId: string,
 ): ToolExecutionContext {
   return {
     store,
@@ -356,6 +359,9 @@ function executionContext(
     toolCallId,
     input: {},
     step: 1,
+    executionId,
+    runOrdinal: 0,
+    toolBatchId: "tool-output-batch",
     abort: new AbortController().signal,
     agentName: store.getState().agentName,
     startedAt: Date.now(),
@@ -367,7 +373,7 @@ function executionContext(
   };
 }
 
-function beginUserRound(store: StoryHarness["rootStore"], text: string): void {
+function beginUserRound(store: StoryHarness["rootStore"], text: string): string {
   const executionId = crypto.randomUUID();
   const messageId = crypto.randomUUID();
   store.getState().append(testExecutionStart(executionId, "user_message"));
@@ -384,14 +390,32 @@ function beginUserRound(store: StoryHarness["rootStore"], text: string): void {
       clientRequestId: `request-${messageId}`,
     }],
   });
+  return executionId;
 }
 
 function appendCompletedRound(store: StoryHarness["rootStore"], userText: string, assistantText: string): void {
-  beginUserRound(store, userText);
+  const executionId = beginUserRound(store, userText);
   store.getState().append({ type: "text-start" });
   store.getState().append({ type: "text-delta", text: assistantText });
   store.getState().append({ type: "text-end" });
-  store.getState().append({ type: "execution-end", status: "completed" });
+  endExecution(store, executionId);
+}
+
+function endExecution(store: StoryHarness["rootStore"], executionId: string): void {
+  const state = store.getState();
+  const run = state.executions.find((execution) => execution.id === executionId)?.runs.at(-1);
+  if (run === undefined) throw new Error(`Missing active run for ${executionId}`);
+  const endedAt = Date.now();
+  state.append({
+    type: "execution-end",
+    executionId,
+    terminalStatus: "completed",
+    endedAt,
+    runEndedAt: endedAt,
+    runUsageDelta: state.stats.usage,
+    runSettlement: { key: `run:${state.sessionId}:${executionId}:${run.ordinal}`, goalInstanceId: null },
+    terminalSettlement: { key: `terminal:${state.sessionId}:${executionId}`, goalInstanceId: null },
+  });
 }
 
 async function executeRegistered(

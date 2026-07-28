@@ -107,4 +107,7 @@ async function writeWorkspaceFile(relativePath: string, content: string): Promis
   const filePath = path.join(testDir, relativePath); await mkdir(path.dirname(filePath), { recursive: true }); await Bun.write(filePath, content);
 }
 function location(relativePath: string, line: number, character: number) { return { uri: pathToFileUri(path.join(testDir, relativePath)), range: { start: { line, character }, end: { line, character: character + 1 } } }; }
-function makeCtx(): ToolExecutionContext { return { store: createMockStore(), toolName: "lsp_find_references", toolCallId: "call-1", input: {}, step: 1, abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["lsp_find_references"]), cwd: testDir, storeManager, projectContext: createTestProjectContext(testDir) }; }
+function makeCtx(): ToolExecutionContext { return { store: createMockStore(), toolName: "lsp_find_references", toolCallId: "call-1", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch", abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["lsp_find_references"]), cwd: testDir, storeManager, projectContext: createTestProjectContext(testDir) }; }

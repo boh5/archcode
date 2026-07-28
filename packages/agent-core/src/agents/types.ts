@@ -1,6 +1,7 @@
 import type { StoreApi } from "zustand";
-import type { ExecutionEndEvent, SessionStoreState } from "../store/types";
+import type { SessionStoreState } from "../store/types";
 import type { ExecutionModelBinding } from "../models";
+import type { QueryLoopResult } from "./query";
 
 export interface AgentCommand {
   readonly name: string;
@@ -13,6 +14,12 @@ export type AgentCommandResult =
 
 export interface AgentRunOptions {
   abort?: AbortSignal;
+  /** Logical Execution owning this live run. */
+  executionId: string;
+  /** Stable zero-based ordinal of this live run within the logical Execution. */
+  runOrdinal: number;
+  /** First canonical step index available to this run. */
+  initialStep: number;
   maxSteps?: number;
   extraTools?: readonly string[];
   /** Runtime-owned strict subset of the role's normal tool projection. */
@@ -39,13 +46,4 @@ export interface Agent {
   dispose(): void;
 }
 
-export interface AgentResult {
-  readonly text: string;
-  readonly steps: number;
-  readonly status: ExecutionEndEvent["status"];
-  readonly error?: string;
-  readonly cwdChanged?: {
-    readonly previousCwd: string;
-    readonly cwd: string;
-  };
-}
+export type AgentResult = QueryLoopResult;

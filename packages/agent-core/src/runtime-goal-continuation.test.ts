@@ -93,7 +93,6 @@ describe("stateless active Goal continuation", () => {
       "aborted",
       "cancelled",
       "interrupted",
-      "waiting_for_human",
     ] as const;
     for (const executionStatus of statuses) {
       const terminal = harness({ executionStatus });

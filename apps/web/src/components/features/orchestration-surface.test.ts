@@ -58,6 +58,7 @@ describe("orchestration workbench surface", () => {
     const base = {
       parentToolCallId: "delegate",
       toolName: "delegate",
+      childExecutionId: "child-execution",
       childAgentName: "build",
       childProfile: "deep",
       childSkillNames: [] as string[],

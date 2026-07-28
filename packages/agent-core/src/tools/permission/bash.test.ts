@@ -64,6 +64,9 @@ afterAll(async () => {
 function ctx(): ToolExecutionContext {
   return {
     store: createMockStore(), storeManager, toolName: "bash", toolCallId: "call-1", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch",
     abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["bash"]), cwd: workspace,
     projectContext: createTestProjectContext(workspace),
   };

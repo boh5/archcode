@@ -6,7 +6,10 @@ import { createTestProjectContext } from "../test-project-context";
 
 function context(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   const workspaceRoot = import.meta.dir;
-  return { store: {} as never, toolName: "web_fetch", toolCallId: "call", input: {}, step: 1, abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["web_fetch"]), cwd: workspaceRoot, storeManager, projectContext: createTestProjectContext(workspaceRoot), ...overrides };
+  return { store: {} as never, toolName: "web_fetch", toolCallId: "call", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch", abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["web_fetch"]), cwd: workspaceRoot, storeManager, projectContext: createTestProjectContext(workspaceRoot), ...overrides };
 }
 
 function text(result: Awaited<ReturnType<typeof runWebFetch>>): string {

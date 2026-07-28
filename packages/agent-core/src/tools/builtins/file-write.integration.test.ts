@@ -54,6 +54,9 @@ describe("fileWriteTool integration", () => {
 function makeCtx(): ToolExecutionContext {
   return {
     store: createMockStore(), toolName: "file_write", toolCallId: "call-1", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch",
     abort: new AbortController().signal, startedAt: Date.now(),
     allowedTools: new Set(["file_write", "lsp_diagnostics"]), cwd: testDir, storeManager,
     projectContext: createTestProjectContext(testDir),

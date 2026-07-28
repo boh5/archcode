@@ -111,6 +111,11 @@ describe("ComposerQueueList", () => {
   test("owns every Queue state and preserves Edit, Delete, Steer, Retry, and model invalidation", async () => {
     const store = createWebSessionStore("session-queue", "project-1");
     store.getState().initializeFromSnapshot({
+      executionCount: 0,
+      isRunning: false,
+      isStreamingModel: false,
+      currentExecutionId: undefined,
+      currentAssistantMessageId: undefined,
       rootSessionId: "session-queue",
       eventCursor: -1,
       agentName: "lead",

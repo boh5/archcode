@@ -9,6 +9,7 @@ import { useSettingsModal } from "../../context/settings-modal";
 import { ModelPicker } from "./ModelPicker";
 import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
 import { createClientUuid } from "../../lib/client-uuid";
+import { sessionFamilyActivityLabel } from "../../lib/session-family-presentation";
 import type { StatusTone, VisualStatusKind } from "../../lib/status-visuals";
 import { StatusGlyph } from "../primitives/StatusGlyph";
 
@@ -34,8 +35,13 @@ function composerStatus(
   if (activity === undefined) return { label: "Connecting", kind: "running", tone: "neutral" };
   if (!hitlReady) return { label: "Syncing", kind: "running", tone: "info" };
   if (activity === "stopping") return { label: "Stopping", kind: "running", tone: "warning" };
-  if (hasPendingHitl) return { label: "Waiting for input", kind: "needs_you" };
-  if (activity === "running") return { label: "Running", kind: "running" };
+  if (hasPendingHitl) return { label: "Needs attention", kind: "needs_you" };
+  if (activity === "running" || activity === "resuming") {
+    return { label: sessionFamilyActivityLabel(activity), kind: "running" };
+  }
+  if (activity === "waiting_for_human") {
+    return { label: sessionFamilyActivityLabel(activity), kind: "pending" };
+  }
   return { label: "Ready", kind: "idle" };
 }
 
@@ -70,8 +76,8 @@ export function ChatInput({
   const stopSession = useStopSessionFamily();
 
   const isPending = postMessage.isPending || patchModelSelection.isPending || stopSession.isPending;
-  const isRunning = activity === "running";
   const isStopping = activity === "stopping";
+  const isQueueing = activity !== undefined && activity !== "idle" && !isStopping;
   const runtimeReady = activity !== undefined;
   const modelControlsReady = coherentCatalog !== undefined && agentName !== null;
   const canCompose = runtimeReady && hitlReady && modelControlsReady && !isStopping && !isPending && nextModelSelection !== undefined;
@@ -157,14 +163,14 @@ export function ChatInput({
   }, [canCompose, nextModelSelection, submitMessage, value]);
 
   const selectSlashCommand = useCallback((command: SlashCommand) => {
-    if (!canCompose || isRunning || hasPendingHitl) return;
+    if (!canCompose || isQueueing || hasPendingHitl) return;
     if (!nextModelSelection) return;
     submitMessage(command.name, nextModelSelection.requested);
     setShowSlashMenu(false);
     setSlashFilter("");
     setSlashActiveIndex(0);
     textareaRef.current?.focus();
-  }, [canCompose, hasPendingHitl, isRunning, nextModelSelection, submitMessage]);
+  }, [canCompose, hasPendingHitl, isQueueing, nextModelSelection, submitMessage]);
 
   const selectModel = useCallback((requestedModelSelection: RequestedModelSelection) => {
     patchModelSelection.mutate({
@@ -173,7 +179,7 @@ export function ChatInput({
       expectedRevision: modelSelection.revision,
       requestedModelSelection,
     }, {
-      onSuccess: (state) => getWebSessionStore(sessionId, slug).getState().initializeFromSnapshot(state),
+      onSuccess: (state) => getWebSessionStore(sessionId, slug).getState().applyModelState(state),
     });
   }, [modelSelection.revision, patchModelSelection, sessionId, slug]);
 
@@ -209,13 +215,13 @@ export function ChatInput({
       return;
     }
 
-    if (event.key === "Escape" && isRunning && !stopSession.isPending) {
+    if (event.key === "Escape" && isQueueing && !stopSession.isPending) {
       event.preventDefault();
       stopSession.mutate({ slug, rootSessionId: sessionId });
     }
   }, [
     filteredCommands,
-    isRunning,
+    isQueueing,
     selectSlashCommand,
     sendMessage,
     sessionId,
@@ -259,7 +265,7 @@ export function ChatInput({
               {status.label}
             </span>
           </button>
-          {isRunning && (
+          {isQueueing && (
             <button
               type="button"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-text-primary text-bg-base transition-colors duration-[var(--motion-hover)] hover:bg-error hover:text-bg-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted"
@@ -280,7 +286,7 @@ export function ChatInput({
 
   return (
     <div className="relative" data-testid="conversation-composer">
-      {showSlashMenu && filteredCommands.length > 0 && canCompose && !isRunning && !hasPendingHitl && (
+      {showSlashMenu && filteredCommands.length > 0 && canCompose && !isQueueing && !hasPendingHitl && (
         <div
           ref={slashMenuRef}
           className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20 max-h-[200px] overflow-y-auto rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md"
@@ -320,7 +326,7 @@ export function ChatInput({
                 ? "Syncing pending requests…"
                 : !modelControlsReady
                   ? "Refreshing model configuration…"
-                  : hasPendingHitl || isRunning
+                : hasPendingHitl || isQueueing
                   ? "Queue a message…"
                   : isStopping
                     ? "Stopping…"
@@ -359,9 +365,9 @@ export function ChatInput({
 
           <div className="flex shrink-0 items-center gap-2">
             <span className="mr-1 text-[11px] text-text-tertiary max-[720px]:hidden">
-              {isRunning ? "Enter to queue" : "Shift+Enter for newline"}
+              {isQueueing ? "Enter to queue" : "Shift+Enter for newline"}
             </span>
-            {isRunning && (
+            {isQueueing && (
               <button
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-sm bg-text-primary text-bg-base transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover hover:text-bg-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted"
@@ -377,18 +383,18 @@ export function ChatInput({
             )}
             <button
               type="button"
-              className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted ${isRunning
+              className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted ${isQueueing
                 ? "bg-text-primary text-bg-base hover:bg-error hover:text-bg-overlay"
                 : "bg-text-primary text-bg-base hover:bg-brand-hover hover:text-bg-overlay"
               }`}
-              disabled={isRunning ? stopSession.isPending : !canSubmit}
-              onClick={isRunning
+              disabled={isQueueing ? stopSession.isPending : isStopping || !canSubmit}
+              onClick={isQueueing
                 ? () => stopSession.mutate({ slug, rootSessionId: sessionId })
                 : sendMessage}
-              title={isRunning ? "Stop" : hasPendingHitl ? "Queue message" : "Send message"}
-              aria-label={isRunning ? "Stop session" : hasPendingHitl ? "Queue message" : "Send message"}
+              title={isQueueing ? "Stop" : isStopping ? "Stopping" : hasPendingHitl ? "Queue message" : "Send message"}
+              aria-label={isQueueing ? "Stop session" : isStopping ? "Session stopping" : hasPendingHitl ? "Queue message" : "Send message"}
             >
-              {isRunning
+              {isQueueing
                 ? stopSession.isPending
                   ? <Loader2 size={14} className="animate-activity" />
                   : <Square size={11} fill="currentColor" />

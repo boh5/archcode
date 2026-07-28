@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats, type CompressionBlockSnapshot, type FinalizedToolResult } from "@archcode/protocol";
-import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
+import { InvalidExecutionTransitionError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
 import { silentLogger } from "../logger";
@@ -33,7 +33,42 @@ const TEST_MODEL_AUDIT = {
 };
 
 function executionStart(executionId: string = crypto.randomUUID()) {
-  return { type: "execution-start" as const, executionId, binding: TEST_BINDING, origin: "user_message" as const };
+  return {
+    type: "execution-start" as const,
+    executionId,
+    binding: TEST_BINDING,
+    origin: "user_message" as const,
+    maxSteps: 50,
+  };
+}
+
+function executionEnd(
+  store: ReturnType<typeof createFreshStore> | ReturnType<typeof createSessionStore>,
+  terminalStatus: "completed" | "failed" | "aborted" | "cancelled" | "timed_out" | "interrupted",
+  error?: string,
+) {
+  const state = store.getState();
+  const execution = state.executions.find((candidate) => candidate.id === state.currentExecutionId);
+  if (execution === undefined || execution.status !== "running") throw new Error("Expected running Execution");
+  const run = execution.runs.at(-1)!;
+  const endedAt = Math.max(Date.now(), run.startedAt);
+  return {
+    type: "execution-end" as const,
+    executionId: execution.id,
+    terminalStatus,
+    endedAt,
+    runEndedAt: endedAt,
+    runUsageDelta: createEmptySessionStats().usage,
+    runSettlement: {
+      key: `run:${state.sessionId}:${execution.id}:${run.ordinal}`,
+      goalInstanceId: null,
+    },
+    terminalSettlement: {
+      key: `terminal:${state.sessionId}:${execution.id}`,
+      goalInstanceId: null,
+    },
+    ...(error === undefined ? {} : { error }),
+  };
 }
 
 beforeEach(async () => {
@@ -164,6 +199,8 @@ function appendUserMessage(
   const sequence = store.getState().messages.length;
   const id = `user-${sequence}-${crypto.randomUUID()}`;
   const executionId = store.getState().currentExecutionId ?? `direct-${id}`;
+  const execution = store.getState().executions.find((candidate) => candidate.id === executionId);
+  const runOrdinal = execution?.runs.at(-1)?.ordinal;
   store.getState().append({
     type: "session.messages_committed",
     executionId,
@@ -173,7 +210,7 @@ function appendUserMessage(
       parts: [{ type: "text", id: `${id}:text`, text: content, createdAt: 1, completedAt: 1 }],
       createdAt: 1,
       completedAt: 1,
-      executionId,
+      ...(runOrdinal === undefined ? {} : { executionId, runOrdinal }),
       clientRequestId: `request-${id}`,
       modelAudit: TEST_MODEL_AUDIT,
     }],
@@ -253,7 +290,7 @@ describe("SessionStoreManager", () => {
     state.append({ type: "text-delta", text: "hel" });
     state.append({ type: "text-delta", text: "lo" });
     state.append({ type: "text-end" });
-    state.append({ type: "execution-end", status: "completed" });
+    state.append(executionEnd(store, "completed"));
 
     const persisted = await readFlushedSession(sessionId);
     expect(persisted.messages).toEqual(store.getState().messages);
@@ -288,7 +325,7 @@ describe("SessionStoreManager", () => {
     state.append(executionStart("run-1"));
     state.append({ type: "text-start" });
     state.append({ type: "text-delta", text: "final answer" });
-    state.append({ type: "execution-end", status: "completed" });
+    state.append(executionEnd(store, "completed"));
 
     const persisted = await readFlushedSession(sessionId);
     expect(persisted.messages).toEqual(store.getState().messages);
@@ -322,13 +359,13 @@ describe("SessionStoreManager", () => {
     state.append({ type: "tool-call", toolCallId: "tool-ok", toolName: "read", input: { path: "a.ts" } });
     state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", result: finalizedResult("ok") });
     state.append({ type: "step-end", step: 0, finishReason: "tool-calls", usage: { inputTokens: 2, outputTokens: 3 } });
-    state.append({ type: "execution-end", status: "completed" });
+    state.append(executionEnd(store, "completed"));
     state.append(executionStart("run-two"));
     state.append({ type: "step-start", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-fail", toolName: "bash", input: "false" });
     state.append({ type: "tool-result", toolCallId: "tool-fail", toolName: "bash", result: finalizedResult("failed", true) });
     state.append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } });
-    state.append({ type: "execution-end", status: "failed", error: "child failed" });
+    state.append(executionEnd(store, "failed", "child failed"));
 
     const expectedStats = store.getState().stats;
     const expectedExecutions = store.getState().executions;
@@ -479,7 +516,7 @@ describe("executionCount", () => {
   test("after two execution-start events (with execution-end between), executionCount is 2", () => {
     const store = createFreshStore("executionCount-two-executions");
     store.getState().append(executionStart());
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(executionEnd(store, "completed"));
     store.getState().append(executionStart());
     expect(store.getState().executionCount).toBe(2);
     expect(store.getState().executionCount).toBe(store.getState().executions.length);
@@ -671,12 +708,12 @@ describe("execution lifecycle", () => {
     expect(store.getState().currentExecutionId).toBe("run-123");
   });
 
-  test("execution-start while running throws BusyError without mutating state", () => {
+  test("execution-start while running rejects the invalid transition without mutating state", () => {
     const store = createFreshStore("busy");
     store.getState().append(executionStart("first"));
     const before = store.getState();
 
-    expect(() => store.getState().append(executionStart("second"))).toThrow(BusyError);
+    expect(() => store.getState().append(executionStart("second"))).toThrow(InvalidExecutionTransitionError);
     const after = store.getState();
     expect(after.currentExecutionId).toBe("first");
     expect(after.isRunning).toBe(true);
@@ -693,7 +730,7 @@ describe("execution lifecycle", () => {
     store.getState().append({ type: "reasoning-start" });
     store.getState().append({ type: "tool-input-start", toolCallId: "tool", toolName: "read" });
     store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(executionEnd(store, "completed"));
 
     const state = store.getState();
     expect(state.isRunning).toBe(false);
@@ -709,7 +746,7 @@ describe("execution lifecycle", () => {
     store.getState().append(executionStart("run"));
     appendUserMessage(store, "keep me");
     const messages = store.getState().messages;
-    store.getState().append({ type: "execution-end", status: "failed", error: "boom" });
+    store.getState().append(executionEnd(store, "failed", "boom"));
 
     const state = store.getState();
     expect(state.isRunning).toBe(false);
@@ -726,7 +763,7 @@ describe("execution lifecycle", () => {
 
     for (const status of ["cancelled", "aborted", "timed_out"] as const) {
       store.getState().append(executionStart(`run-${status}`));
-      store.getState().append({ type: "execution-end", status, error: `${status} error` });
+      store.getState().append(executionEnd(store, status, `${status} error`));
     }
 
     expect(store.getState().executions.map((execution) => execution.status)).toEqual(["cancelled", "aborted", "timed_out"]);
@@ -737,7 +774,7 @@ describe("execution lifecycle", () => {
     const store = createFreshStore("command-handled-execution");
 
     store.getState().append(executionStart("command-run"));
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(executionEnd(store, "completed"));
 
     expect(store.getState().messages).toEqual([]);
     expect(store.getState().executions).toHaveLength(1);
@@ -982,7 +1019,7 @@ describe("settleIncompleteState behavior", () => {
     store.getState().append({ type: "reasoning-start" });
     store.getState().append({ type: "reasoning-delta", text: "why" });
 
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(executionEnd(store, "completed"));
 
     const message = onlyMessage(store.getState().messages);
     const text = textPart(message, 0);
@@ -1007,7 +1044,7 @@ describe("settleIncompleteState behavior", () => {
       destructive: true,
     });
 
-    store.getState().append({ type: "execution-end", status: "interrupted" });
+    store.getState().append(executionEnd(store, "interrupted"));
 
     const tool = toolPart(onlyMessage(store.getState().messages));
     expect(tool.state).toBe("running");
@@ -1034,6 +1071,7 @@ describe("steps and errors", () => {
   test("step-end stops streaming and records finishReason, usage, and completedAt", () => {
     const store = createFreshStore("step-end");
     const usage = { inputTokens: 1, outputTokens: 2 };
+    store.getState().append(executionStart("run-step-end"));
     store.getState().append({ type: "step-start", step: 1 });
     store.getState().append({ type: "step-end", step: 1, finishReason: "stop", usage });
 
@@ -1047,6 +1085,7 @@ describe("steps and errors", () => {
 
   test("multiple steps are appended in order", () => {
     const store = createFreshStore("multi-steps");
+    store.getState().append(executionStart("run-multi-steps"));
     store.getState().append({ type: "step-start", step: 1 });
     store.getState().append({ type: "step-start", step: 2 });
     expect(store.getState().steps.map((step) => step.step)).toEqual([1, 2]);
@@ -1054,6 +1093,7 @@ describe("steps and errors", () => {
 
   test("execution-error records error on a matching step", () => {
     const store = createFreshStore("execution-error-match");
+    store.getState().append(executionStart("run-error-match"));
     store.getState().append({ type: "step-start", step: 3 });
     store.getState().append({ type: "execution-error", step: 3, error: "bad execution" });
     expect(onlyStep(store.getState().steps).error).toBe("bad execution");
@@ -1154,7 +1194,7 @@ describe("Oracle regression tests", () => {
     store.getState().append({ type: "text-delta", text: "Here's the result" });
     store.getState().append({ type: "text-end" });
     store.getState().append({ type: "step-end", step: 1, finishReason: "stop" });
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(executionEnd(store, "completed"));
 
     // Two distinct assistant messages — tool-call in one, final text in another
     const messages = store.getState().messages;
@@ -1180,14 +1220,14 @@ describe("Oracle regression tests", () => {
     store.getState().append({ type: "text-delta", text: "first response" });
     store.getState().append({ type: "text-end" });
     store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(executionEnd(store, "completed"));
 
     // Execution 2 with same step number
     store.getState().append(executionStart());
     appendUserMessage(store, "second");
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(executionEnd(store, "completed"));
 
     const run2Steps = store.getState().steps;
     // Both executions' step 0 should still have their original data
@@ -1209,7 +1249,7 @@ describe("Oracle regression tests", () => {
     // then execution-error records the failure, then execution-end settles incomplete state
     store.getState().append({ type: "text-end" }); // flushed by try/finally
     store.getState().append({ type: "execution-error", step: 0, error: "stream failed" });
-    store.getState().append({ type: "execution-end", status: "failed" });
+    store.getState().append(executionEnd(store, "failed"));
 
     // Partial text should be persisted (not lost)
     const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
@@ -1254,7 +1294,7 @@ describe("Oracle regression tests", () => {
 
     // Execution ends before tool-result arrives
     store.getState().append({ type: "execution-error", step: 0, error: "model crashed" });
-    store.getState().append({ type: "execution-end", status: "failed" });
+    store.getState().append(executionEnd(store, "failed"));
 
     const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
     expect(assistantMsg).toBeDefined();

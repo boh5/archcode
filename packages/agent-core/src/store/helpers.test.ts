@@ -27,8 +27,24 @@ const TEST_BINDING = {
   providerDisplayName: "Test", modelDisplayName: "Model",
   resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
+const TEST_MODEL_AUDIT = {
+  requested: {
+    mode: "profile_default" as const,
+    selection: { model: "test:model" },
+  },
+  actual: { model: "test:model" },
+};
+const TEST_USER_PROVENANCE = {
+  executionId: "run-1",
+  runOrdinal: 0,
+  modelAudit: TEST_MODEL_AUDIT,
+};
 const executionStart = (executionId: string) => ({
-  type: "execution-start" as const, executionId, binding: TEST_BINDING, origin: "user_message" as const,
+  type: "execution-start" as const,
+  executionId,
+  binding: TEST_BINDING,
+  origin: "user_message" as const,
+  maxSteps: 50,
 });
 const sessionIds = new Set<string>();
 
@@ -123,6 +139,8 @@ function sampleMessages(): StoredMessage[] {
       createdAt: 100,
       completedAt: 101,
       executionId: "run-1",
+      runOrdinal: 0,
+      modelAudit: TEST_MODEL_AUDIT,
     },
     {
       id: "assistant-1",
@@ -131,6 +149,7 @@ function sampleMessages(): StoredMessage[] {
       createdAt: 102,
       completedAt: 104,
       executionId: "run-1",
+      runOrdinal: 0,
     },
   ];
 }
@@ -142,6 +161,7 @@ function allPartVariantsMessage(): StoredMessage {
     createdAt: 200,
     completedAt: 220,
     executionId: "run-all",
+    runOrdinal: 0,
     parts: [
       { type: "text", id: "text-complete", text: "done", createdAt: 201, completedAt: 202 },
       { type: "text", id: "text-incomplete", text: "streaming", createdAt: 203, meta: { interrupted: true, discardedFromContext: true } },
@@ -160,6 +180,7 @@ function sampleSteps(): StepInfo[] {
       id: "step-1",
       step: 1,
       executionId: "run-1",
+      runOrdinal: 0,
       startedAt: 300,
       completedAt: 310,
       finishReason: "stop",
@@ -210,6 +231,7 @@ function sampleChildSessionLinks(): ToolChildSessionLink[] {
       parentToolCallId: "tool-call-1",
       toolName: "delegate",
       childSessionId: "child-session",
+      childExecutionId: "child-execution",
       childAgentName: "explore",
       childProfile: "fast",
       childSkillNames: [],
@@ -221,6 +243,7 @@ function sampleChildSessionLinks(): ToolChildSessionLink[] {
       startedAt: 710,
       endedAt: 760,
       durationMs: 50,
+      durationUpdatedAt: 760,
     },
   ];
 }
@@ -272,6 +295,50 @@ function persistedState(
     skills: [],
     background: false,
   };
+  const executionRefs = new Map<string, Set<number>>();
+  for (const message of messages) {
+    if (message.executionId !== undefined && message.runOrdinal !== undefined) {
+      const ordinals = executionRefs.get(message.executionId) ?? new Set<number>();
+      ordinals.add(message.runOrdinal);
+      executionRefs.set(message.executionId, ordinals);
+    }
+  }
+  for (const step of steps) {
+    const ordinals = executionRefs.get(step.executionId) ?? new Set<number>();
+    ordinals.add(step.runOrdinal);
+    executionRefs.set(step.executionId, ordinals);
+  }
+  const coherentExecutions = executions.length > 0
+    ? executions
+    : [...executionRefs].map(([executionId, ordinals]): SessionExecutionRecord => {
+      const runOrdinals = [...ordinals].sort((left, right) => left - right);
+      const runs = runOrdinals.map((ordinal) => ({
+        ordinal,
+        startedAt: 100 + ordinal * 100,
+        endedAt: 200 + ordinal * 100,
+        durationMs: 100,
+        binding: TEST_BINDING,
+        usageDelta: createEmptySessionStats().usage,
+        settlement: {
+          key: `run:${sessionId}:${executionId}:${ordinal}`,
+          goalInstanceId: null,
+        },
+      }));
+      return {
+        id: executionId,
+        startedAt: runs[0]?.startedAt ?? 100,
+        origin: "user_message",
+        maxSteps: 50,
+        durationMs: runs.length * 100,
+        runs,
+        status: "completed",
+        endedAt: runs.at(-1)?.endedAt ?? 200,
+        terminalSettlement: {
+          key: `terminal:${sessionId}:${executionId}`,
+          goalInstanceId: null,
+        },
+      };
+    });
   return {
     sessionId,
     createdAt: 99,
@@ -286,7 +353,7 @@ function persistedState(
     inputRequestReceipts: [],
     steps,
     stats,
-    executions,
+    executions: coherentExecutions,
     compression,
     todos,
     reminders,
@@ -309,6 +376,7 @@ function persistedToolBatch(
     batchId: "batch-1",
     executionId: "execution-1",
     step: 0,
+    runOrdinal: 0,
     agentName: "lead",
     allowedTools: ["ask_user", "bash"],
     agentSkills: [],
@@ -322,6 +390,7 @@ function persistedToolBatch(
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
       state,
       attempt: 1,
+      checkpointAt: Date.parse("2026-07-18T00:00:00.000Z"),
       ...(blocker === undefined ? {} : { blocker }),
       ...(result === undefined ? {} : { result }),
     }],
@@ -343,7 +412,9 @@ function appendCanonicalUserMessage(store: { getState(): SessionStoreState }, co
       createdAt: 1,
       completedAt: 1,
       executionId,
+      runOrdinal: 0,
       clientRequestId: `request-${id}`,
+      modelAudit: TEST_MODEL_AUDIT,
     }],
   });
 }
@@ -434,7 +505,21 @@ function richCompressionState(): CompressionState {
 describe("session transcript serialization", () => {
   test("SessionFileSchema reuses the strict HITL boundary for every durable blocker state", () => {
     const sessionId = uniqueSessionId("strict-hitl-blocker");
-    const base = persistedState(sessionId, [], []);
+    const base = persistedState(sessionId, [{
+      id: "batch-user",
+      role: "user",
+      parts: [],
+      createdAt: 100,
+      completedAt: 101,
+      executionId: "execution-1",
+      runOrdinal: 0,
+    }], [{
+      id: "batch-step",
+      step: 0,
+      executionId: "execution-1",
+      runOrdinal: 0,
+      startedAt: 100,
+    }]);
     const askBlocker: SessionToolCallBlocker = {
       requestKey: "tool:ask-1",
       hitlId: "hitl-ask-1",
@@ -453,6 +538,14 @@ describe("session transcript serialization", () => {
     const parse = (batch: SessionToolBatch) => SessionFileSchema.safeParse({ ...base, toolBatches: [batch] }).success;
 
     expect(parse(persistedToolBatch("queued"))).toBe(true);
+    const withoutCheckpoint = persistedToolBatch("queued");
+    expect(SessionFileSchema.safeParse({
+      ...base,
+      toolBatches: [{
+        ...withoutCheckpoint,
+        calls: withoutCheckpoint.calls.map(({ checkpointAt: _checkpointAt, ...call }) => call),
+      }],
+    }).success).toBe(false);
     expect(parse(persistedToolBatch("blocked", askBlocker))).toBe(true);
     expect(parse(persistedToolBatch("blocked", permissionBlocker))).toBe(true);
     expect(parse(persistedToolBatch("blocked", {
@@ -516,10 +609,117 @@ describe("session transcript serialization", () => {
     expect(parse(persistedToolBatch("blocked", oversizedBlockedRequest))).toBe(false);
   });
 
+  test("SessionFileSchema rejects corrupt cross-run cursors and Tool Batch step links", () => {
+    const sessionId = uniqueSessionId("execution-cursors");
+    const messages: StoredMessage[] = [0, 1].map((runOrdinal) => ({
+      id: `execution-message-${runOrdinal}`,
+      role: "user",
+      parts: [],
+      createdAt: 100 + runOrdinal * 100,
+      completedAt: 100 + runOrdinal * 100,
+      executionId: "execution-1",
+      runOrdinal,
+    }));
+    const steps: StepInfo[] = [0, 1].map((runOrdinal) => ({
+      id: `execution-step-${runOrdinal}`,
+      step: runOrdinal,
+      executionId: "execution-1",
+      runOrdinal,
+      startedAt: 101 + runOrdinal * 100,
+    }));
+    const base = persistedState(sessionId, messages, steps);
+
+    expect(SessionFileSchema.safeParse(base).success).toBe(true);
+    expect(SessionFileSchema.safeParse({
+      ...base,
+      steps: [...steps, { ...steps[1]!, id: "cross-run-cursor", runOrdinal: 0 }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...base,
+      steps: [{ ...steps[0]!, step: 50 }, steps[1]!],
+    }).success).toBe(false);
+
+    const matchingBatch = {
+      ...persistedToolBatch("queued"),
+      step: 1,
+      runOrdinal: 1,
+    };
+    expect(SessionFileSchema.safeParse({ ...base, toolBatches: [matchingBatch] }).success).toBe(true);
+    expect(SessionFileSchema.safeParse({
+      ...base,
+      toolBatches: [{ ...matchingBatch, step: 0 }],
+    }).success).toBe(false);
+  });
+
+  test("SessionFileSchema requires canonical user text provenance and matches its run binding", () => {
+    const sessionId = uniqueSessionId("canonical-user-provenance");
+    const canonical = sampleMessages()[0]!;
+    const base = persistedState(sessionId, [canonical], []);
+    expect(SessionFileSchema.safeParse(base).success).toBe(true);
+
+    const { modelAudit: _modelAudit, ...withoutAudit } = canonical;
+    expect(SessionFileSchema.safeParse(
+      persistedState(sessionId, [withoutAudit], []),
+    ).success).toBe(false);
+
+    const execution = base.executions[0]!;
+    const mismatchedBinding = {
+      ...TEST_BINDING,
+      selection: { model: "test:other-model" },
+      modelId: "other-model",
+    };
+    expect(SessionFileSchema.safeParse({
+      ...base,
+      executions: [{
+        ...execution,
+        runs: execution.runs.map((run) => ({ ...run, binding: mismatchedBinding })),
+      }],
+    }).success).toBe(false);
+  });
+
+  test("SessionFileSchema keeps provenance-free internal system notices legal", () => {
+    const sessionId = uniqueSessionId("internal-system-notice");
+    const notice: StoredMessage = {
+      id: "notice-message",
+      role: "user",
+      parts: [{
+        type: "system-notice",
+        id: "notice-part",
+        notice: "Internal command result",
+        createdAt: 1,
+        completedAt: 1,
+      }],
+      createdAt: 1,
+      completedAt: 1,
+    };
+
+    expect(SessionFileSchema.safeParse(
+      persistedState(sessionId, [notice], []),
+    ).success).toBe(true);
+  });
+
   test("save/load roundtrips sessionId, createdAt, messages, steps, stats, executions, and todos", async () => {
     const sessionId = uniqueSessionId("roundtrip");
     const stats = { ...createEmptySessionStats(), messages: { user: 1, assistant: 1, total: 2 } };
-    const executions: SessionExecutionRecord[] = [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 3, durationMs: 2, binding: TEST_BINDING, origin: "user_message" }];
+    const executions: SessionExecutionRecord[] = [{
+      id: "run-1",
+      startedAt: 1,
+      status: "completed",
+      endedAt: 3,
+      durationMs: 2,
+      maxSteps: 50,
+      origin: "user_message",
+      runs: [{
+        ordinal: 0,
+        startedAt: 1,
+        endedAt: 3,
+        durationMs: 2,
+        binding: TEST_BINDING,
+        usageDelta: createEmptySessionStats().usage,
+        settlement: { key: `run:${sessionId}:run-1:0`, goalInstanceId: null },
+      }],
+      terminalSettlement: { key: `terminal:${sessionId}:run-1`, goalInstanceId: null },
+    }];
     const state = persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), stats, executions);
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
@@ -840,13 +1040,9 @@ describe("session transcript serialization", () => {
       id: "text-incomplete",
       text: "streaming",
       createdAt: 203,
-      completedAt: expect.any(Number),
       meta: { interrupted: true, discardedFromContext: true },
     });
-    expect({ ...loadedMessage, parts: [loadedMessage!.parts[0], ...loadedMessage!.parts.slice(2)] }).toEqual({
-      ...messages[0],
-      parts: [messages[0]!.parts[0], ...messages[0]!.parts.slice(2)],
-    });
+    expect(loadedMessage).toEqual(messages[0]);
   });
 
   test("loaded store resets transient state to safe defaults", async () => {
@@ -1186,6 +1382,7 @@ describe("session transcript serialization", () => {
       {
         id: "user",
         role: "user",
+        ...TEST_USER_PROVENANCE,
         createdAt: 1,
         completedAt: 2,
         parts: [{ type: "text", id: "user-text", text: "hello", createdAt: 1, completedAt: 2 }],
@@ -1214,8 +1411,9 @@ describe("session transcript serialization", () => {
 
   test("save writes the new session file shape", async () => {
     const sessionId = uniqueSessionId("shape");
+    const state = persistedState(sessionId);
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
     const raw = await Bun.file(sessionFilePath(sessionId)).text();
     const parsed: Record<string, unknown> = JSON.parse(raw);
 
@@ -1244,7 +1442,7 @@ describe("session transcript serialization", () => {
     expect("events" in parsed).toBe(false);
     expect("executionCount" in parsed).toBe(false);
     expect(parsed.stats).toEqual(createEmptySessionStats());
-    expect(parsed.executions).toEqual([]);
+    expect(parsed.executions).toEqual(state.executions);
     expect(parsed.todos).toEqual(sampleTodos());
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);
@@ -1271,8 +1469,9 @@ describe("session transcript serialization", () => {
     const originalMessages = sampleMessages();
     const originalSteps = sampleSteps();
     const originalTodos = sampleTodos();
+    const persisted = persistedState(sessionId, originalMessages, originalSteps, originalTodos);
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, originalMessages, originalSteps, originalTodos), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persisted, TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
     const loadedState = loaded.getState();
 
@@ -1281,8 +1480,8 @@ describe("session transcript serialization", () => {
     expect(loadedState.messages).toEqual(originalMessages);
     expect(loadedState.steps).toEqual(originalSteps);
     expect(loadedState.stats).toEqual(createEmptySessionStats());
-    expect(loadedState.executions).toEqual([]);
-    expect(loadedState.executionCount).toBe(0);
+    expect(loadedState.executions).toEqual(persisted.executions);
+    expect(loadedState.executionCount).toBe(persisted.executions.length);
     expect(loadedState.todos).toEqual(originalTodos);
   });
 
@@ -1478,9 +1677,9 @@ describe("compaction and meta transcript round-trip", () => {
   test("compression state roundtrip preserves refs, blocks, protected refs, and token estimates", async () => {
     const sessionId = uniqueSessionId("compression-state-roundtrip");
     const messages: StoredMessage[] = [
-      { id: "msg-1", role: "user", parts: [textPart("part-1", "old user", 1)], createdAt: 1, completedAt: 1 },
+      { id: "msg-1", role: "user", ...TEST_USER_PROVENANCE, parts: [textPart("part-1", "old user", 1)], createdAt: 1, completedAt: 1 },
       { id: "msg-2", role: "assistant", parts: [textPart("part-2", "old assistant", 2)], createdAt: 2, completedAt: 2 },
-      { id: "msg-3", role: "user", parts: [textPart("part-3", "tail", 3)], createdAt: 3, completedAt: 3 },
+      { id: "msg-3", role: "user", ...TEST_USER_PROVENANCE, parts: [textPart("part-3", "tail", 3)], createdAt: 3, completedAt: 3 },
     ];
     const compression = richCompressionState();
 
@@ -1511,8 +1710,8 @@ describe("compaction and meta transcript round-trip", () => {
   test("roundtrips compacted messages with compacted flag", async () => {
     const sessionId = uniqueSessionId("compacted-roundtrip");
     const messages: StoredMessage[] = [
-      { id: "msg-1", role: "user", parts: [textPart("t1", "old", 1)], createdAt: 1, compacted: true },
-      { id: "msg-2", role: "user", parts: [textPart("t2", "new", 2)], createdAt: 2, completedAt: 3 },
+      { id: "msg-1", role: "user", ...TEST_USER_PROVENANCE, parts: [textPart("t1", "old", 1)], createdAt: 1, compacted: true },
+      { id: "msg-2", role: "user", ...TEST_USER_PROVENANCE, parts: [textPart("t2", "new", 2)], createdAt: 2, completedAt: 3 },
     ];
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
@@ -1532,7 +1731,7 @@ describe("compaction and meta transcript round-trip", () => {
     };
     const messages: StoredMessage[] = [
       { id: "msg-synthetic", role: "user", parts: [compactionPart], createdAt: 12345, completedAt: 12346 },
-      { id: "msg-tail", role: "user", parts: [textPart("t-tail", "tail content", 12350)], createdAt: 12350, completedAt: 12351 },
+      { id: "msg-tail", role: "user", ...TEST_USER_PROVENANCE, parts: [textPart("t-tail", "tail content", 12350)], createdAt: 12350, completedAt: 12351 },
     ];
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
@@ -1551,7 +1750,7 @@ describe("compaction and meta transcript round-trip", () => {
       completedAt: 1000,
     };
     const messages: StoredMessage[] = [
-      { id: "msg-notice", role: "user", parts: [noticePart, textPart("t-1", "hello", 1001)], createdAt: 999, completedAt: 1002 },
+      { id: "msg-notice", role: "user", ...TEST_USER_PROVENANCE, parts: [noticePart, textPart("t-1", "hello", 1001)], createdAt: 999, completedAt: 1002 },
     ];
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
@@ -1671,6 +1870,7 @@ describe("compaction and meta transcript round-trip", () => {
       {
         id: "msg-old-user",
         role: "user",
+        ...TEST_USER_PROVENANCE,
         parts: [textPart("t-old", "old question", 10)],
         createdAt: 10,
         compacted: true,
@@ -1691,6 +1891,7 @@ describe("compaction and meta transcript round-trip", () => {
       {
         id: "msg-tail",
         role: "user",
+        ...TEST_USER_PROVENANCE,
         parts: [textPart("t-new", "new question", 60)],
         createdAt: 60,
         completedAt: 61,

@@ -1,11 +1,18 @@
 import { z } from "zod/v4";
-import type { SessionExecutionRecord } from "@archcode/protocol";
+import type {
+  SessionExecutionRecord,
+  SessionExecutionTerminalStatus,
+} from "@archcode/protocol";
 import { DelegationRequestSchema } from "../../delegation/schema";
 import type { ChildExecutionHandle, ChildExecutionOutcome } from "../../delegation/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
-import type { RawToolResult, ToolExecutionContext } from "../types";
+import type {
+  ChildDeferredToolResult,
+  ToolDescriptorExecutionResult,
+  ToolExecutionContext,
+} from "../types";
 
 export const DelegateInputSchema = DelegationRequestSchema;
 
@@ -20,7 +27,10 @@ export interface DelegateErrorOutput {
   allowed_skills?: readonly string[];
 }
 
-export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext): Promise<RawToolResult> {
+export async function executeDelegate(
+  input: DelegateInput,
+  ctx: ToolExecutionContext,
+): Promise<ToolDescriptorExecutionResult> {
   if (ctx.startChildExecution === undefined) {
     return createToolErrorResult({
       kind: "execution",
@@ -32,10 +42,16 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
 
   let handle: ChildExecutionHandle;
   try {
+    const childSessionId = crypto.randomUUID();
     handle = await ctx.startChildExecution({
       parentStore: ctx.store,
       parentSessionId: ctx.store.getState().sessionId,
+      parentExecutionId: ctx.executionId,
+      parentRunOrdinal: ctx.runOrdinal,
+      parentToolBatchId: ctx.toolBatchId,
       parentToolCallId: ctx.toolCallId,
+      childSessionId,
+      childExecutionId: crypto.randomUUID(),
       toolName: "delegate",
       request: input,
       parentAbort: ctx.abort,
@@ -56,7 +72,11 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
   }
 
   const outcome = await waitForChildOutcome(handle);
-  return createTextToolResult(formatSyncChildOutput(handle, outcome));
+  if (outcome.outcome === "suspended") return childDeferredResult(ctx, handle);
+  return createTextToolResult(formatSyncChildOutput({
+    sessionId: handle.sessionId,
+    agentName: handle.store.getState().agentName,
+  }, outcome));
 }
 
 export function formatAsyncChildOutput(handle: ChildExecutionHandle): string {
@@ -68,12 +88,12 @@ export function formatAsyncChildOutput(handle: ChildExecutionHandle): string {
 }
 
 export function formatSyncChildOutput(
-  handle: ChildExecutionHandle,
-  outcome: ChildExecutionOutcome,
+  child: { readonly sessionId: string; readonly agentName: string },
+  outcome: Extract<ChildExecutionOutcome, { outcome: "terminal" }>,
 ): string {
   return JSON.stringify({
-    session_id: handle.sessionId,
-    agent_type: handle.store.getState().agentName,
+    session_id: child.sessionId,
+    agent_type: child.agentName,
     execution_status: outcome.executionStatus,
     ...(outcome.output === undefined ? {} : { output: outcome.output }),
     ...(errorMessage(outcome.terminalError) === undefined ? {} : { error: errorMessage(outcome.terminalError) }),
@@ -87,6 +107,8 @@ export async function waitForChildOutcome(handle: ChildExecutionHandle): Promise
     const state = handle.store.getState();
     const run = state.executions.at(-1);
     return {
+      outcome: "terminal",
+      executionId: handle.executionId,
       executionStatus: terminalStatus(run, error),
       terminalError: error,
     };
@@ -96,14 +118,31 @@ export async function waitForChildOutcome(handle: ChildExecutionHandle): Promise
 function terminalStatus(
   run: SessionExecutionRecord | undefined,
   terminalError: unknown,
-): SessionExecutionRecord["status"] {
-  if (run !== undefined && run.status !== "running") return run.status;
+): SessionExecutionTerminalStatus {
+  if (run !== undefined && run.status !== "running" && run.status !== "suspended") return run.status;
   const message = terminalError instanceof Error ? terminalError.message : String(terminalError);
   if (/timed out/i.test(message)) return "timed_out";
   if (/aborted/i.test(message)) return "aborted";
   if (/cancelled|canceled/i.test(message)) return "cancelled";
   if (/max steps/i.test(message)) return "max_steps";
   return "failed";
+}
+
+export function childDeferredResult(
+  ctx: ToolExecutionContext,
+  handle: ChildExecutionHandle,
+): ChildDeferredToolResult {
+  return {
+    kind: "child_deferred",
+    dependency: {
+      parentExecutionId: ctx.executionId,
+      runOrdinal: ctx.runOrdinal,
+      toolBatchId: ctx.toolBatchId,
+      toolCallId: ctx.toolCallId,
+      childSessionId: handle.sessionId,
+      childExecutionId: handle.executionId,
+    },
+  };
 }
 
 function errorMessage(error: unknown): string | undefined {
@@ -126,4 +165,14 @@ export const delegateTool = defineTool({
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   execute: executeDelegate,
+  resumeChildDependency: async (_input, dependency, outcome, ctx) => {
+    const child = await ctx.storeManager.getOrLoad(
+      dependency.childSessionId,
+      ctx.projectContext.project.workspaceRoot,
+    );
+    return createTextToolResult(formatSyncChildOutput({
+      sessionId: dependency.childSessionId,
+      agentName: child.getState().agentName,
+    }, outcome));
+  },
 });

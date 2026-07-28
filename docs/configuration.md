@@ -76,4 +76,12 @@ Saving in **Settings → Models / Profiles** validates the complete document, pr
 
 Editing `~/.archcode/config.json` outside Settings has no watcher. Restart ArchCode, or make a Settings save against the current disk revision, to load it.
 
-A root Lead Session or Composer selection affects its next Execution. Each started Execution retains its selected model, merged options, Profile identity, and model-runtime revision for its full lifetime. When a queued Execution starts with an invalid requested selection, ArchCode tries a valid Session override and then the current validated Profile default. Child Sessions retain the Profile chosen in their immutable delegation request. ArchCode never automatically substitutes another model after a model call fails.
+A root Lead Session or Composer selection affects its next Execution. Each active
+run span retains its selected model, merged options, Profile identity, and
+model-runtime revision for that span's full lifetime. If the same logical
+Execution suspends and resumes, its next run span may resolve the current
+Session/Profile selection again; it does not create a new Execution. When a new
+Execution starts with an invalid requested selection, ArchCode tries a valid
+Session override and then the current validated Profile default. Child Sessions
+retain the Profile chosen in their immutable delegation request. ArchCode never
+automatically substitutes another model after a model call fails.

@@ -25,6 +25,9 @@ import type { PersistedSessionToolCallBlocker } from "../hitl/boundary-codec";
 export type {
   StreamEvent,
   ExecutionStartEvent,
+  ExecutionSuspendedEvent,
+  ExecutionSuspensionUpdatedEvent,
+  ExecutionResumedEvent,
   ExecutionEndEvent,
   SessionMessageAcceptedEvent,
   SessionMessageEditedEvent,
@@ -99,11 +102,46 @@ export type SessionToolCallState =
   | "queued"
   | "running"
   | "blocked"
+  | "child_launch"
+  | "child_dependency"
   | "completed"
   | "failed"
   | "manual_inspection_required";
 
 export type SessionToolCallBlocker = PersistedSessionToolCallBlocker;
+
+export interface SessionToolChildTerminalOutcome {
+  readonly executionStatus:
+    | "completed"
+    | "max_steps"
+    | "failed"
+    | "aborted"
+    | "cancelled"
+    | "timed_out"
+    | "interrupted";
+  readonly output?: string;
+  readonly terminalError?: string;
+  readonly resolvedAt: number;
+}
+
+interface SessionToolChildCorrelation {
+  readonly parentExecutionId: string;
+  readonly runOrdinal: number;
+  readonly toolCallId: string;
+  readonly childSessionId: string;
+  readonly childExecutionId: string;
+  readonly createdAt: number;
+}
+
+export type SessionToolChildDependency =
+  | (SessionToolChildCorrelation & {
+      readonly kind: "child_launch";
+    })
+  | (SessionToolChildCorrelation & {
+      readonly kind: "child_dependency";
+      readonly dependencyStartedAt: number;
+      readonly outcome?: SessionToolChildTerminalOutcome;
+    });
 
 export type SessionToolRecoveryFailure =
   | { readonly kind: "read_retry_exhausted" }
@@ -111,8 +149,7 @@ export type SessionToolRecoveryFailure =
   | { readonly kind: "effectful_cancelled_unknown" };
 
 export type SessionToolManualInspectionReason =
-  | { readonly kind: "continuation_interrupted"; readonly batchId: string }
-  | {
+  {
       readonly kind: "effectful_outcome_unknown" | "effectful_cancelled_unknown";
       readonly toolCallId: string;
       readonly toolName: string;
@@ -131,10 +168,13 @@ export interface SessionToolBatchCall {
   };
   readonly state: SessionToolCallState;
   readonly attempt: number;
+  /** Canonical time of the latest execution-relevant call state transition. Metadata-only repair preserves it. */
+  readonly checkpointAt: number;
   readonly result?: FinalizedToolResult;
   /** Durable marker that this successful call ended its owning Execution. */
   readonly executionCompleted?: true;
   readonly blocker?: SessionToolCallBlocker;
+  readonly childDependency?: SessionToolChildDependency;
   readonly recoveryFailure?: SessionToolRecoveryFailure;
 }
 
@@ -149,6 +189,7 @@ export interface SessionToolBatch {
   readonly executionId: string;
   readonly assistantMessageId?: string;
   readonly step: number;
+  readonly runOrdinal: number;
   readonly agentName: AgentName;
   readonly allowedTools: string[];
   readonly agentSkills: string[];
@@ -156,8 +197,6 @@ export interface SessionToolBatch {
   readonly calls: SessionToolBatchCall[];
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly continuationStartedAt?: string;
-  readonly continuationCompletedAt?: string;
   readonly archivedAt?: string;
   readonly manualInspectionReason?: SessionToolManualInspectionReason;
 }
@@ -245,6 +284,13 @@ export class BusyError extends Error {
   constructor(sessionId: string) {
     super(`Session "${sessionId}" is already running`);
     this.name = "BusyError";
+  }
+}
+
+export class InvalidExecutionTransitionError extends Error {
+  constructor(public readonly reason: string) {
+    super(`Invalid Execution transition: ${reason}`);
+    this.name = "InvalidExecutionTransitionError";
   }
 }
 

@@ -18,7 +18,7 @@ import {
   createToolExecutionContext,
   DestructiveToolPermissionError,
   DuplicateToolError,
-  type ToolDescriptor,
+  type AnyToolDescriptor,
   type ToolExecutionContext,
 } from "./types";
 
@@ -53,6 +53,9 @@ function context(
     toolCallId: `${toolName}-${crypto.randomUUID()}`,
     input: {},
     step: 0,
+    executionId: "execution-1",
+    runOrdinal: 0,
+    toolBatchId: "batch-1",
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set([toolName]),
@@ -64,7 +67,7 @@ function context(
   });
 }
 
-function descriptor(overrides: Partial<ToolDescriptor> = {}): ToolDescriptor {
+function descriptor(overrides: Partial<AnyToolDescriptor> = {}): AnyToolDescriptor {
   return {
     name: "echo",
     description: "echo",
@@ -77,6 +80,48 @@ function descriptor(overrides: Partial<ToolDescriptor> = {}): ToolDescriptor {
 }
 
 describe("ToolRegistry lifecycle", () => {
+  test("defers a synchronous child without finalization and settles it once after terminal", async () => {
+    const ctx = context("delegate");
+    const dependency = {
+      parentExecutionId: ctx.executionId,
+      runOrdinal: ctx.runOrdinal,
+      toolBatchId: ctx.toolBatchId,
+      toolCallId: ctx.toolCallId,
+      childSessionId: "child-session",
+      childExecutionId: "child-execution",
+    };
+    const created = fixture({
+      descriptors: [descriptor({
+        name: "delegate",
+        execute: async () => ({ kind: "child_deferred" as const, dependency }),
+        resumeChildDependency: async () => createTextToolResult("child done"),
+      })],
+    });
+    const finalized = mock(async () => undefined);
+    created.registry.globalHooks.finalized.push(finalized);
+    const toolCall = { toolName: "delegate", toolCallId: ctx.toolCallId, input: {} };
+
+    expect(await created.registry.execute(toolCall, ctx)).toEqual({
+      kind: "child_deferred",
+      dependency,
+    });
+    expect(finalized).toHaveBeenCalledTimes(0);
+
+    const resumed = await created.registry.resumeChildDependency({
+      toolCall,
+      dependency,
+      outcome: {
+        outcome: "terminal",
+        executionId: dependency.childExecutionId,
+        executionStatus: "completed",
+        output: "child done",
+      },
+      context: { ...ctx, runOrdinal: ctx.runOrdinal + 1 },
+    });
+    expect(expectSettledResult(resumed).output.preview).toContain("child done");
+    expect(finalized).toHaveBeenCalledTimes(1);
+  });
+
   test("blocked permission calls execute/finalize zero times", async () => {
     const execute = mock(async () => ({ isError: false, draft: { kind: "text" as const, text: "forbidden" } }));
     const created = fixture({

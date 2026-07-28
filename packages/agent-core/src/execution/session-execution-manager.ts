@@ -2,13 +2,14 @@ import { rm } from "node:fs/promises";
 import {
   isTerminalChildSessionStatus,
   type DelegationRequest,
-  type ExecutionEndEvent,
   type MessageModelAudit,
   type ModelSelectionRef,
   type PendingSessionMessage,
   type RequestedModelSelection,
   type SessionExecutionOrigin,
   type SessionExecutionRecord,
+  type SessionExecutionSuspension,
+  type SessionExecutionTerminalStatus,
   type SessionFamilyActivity,
   type SessionMessageSource,
   type NormalizedUsage,
@@ -39,16 +40,18 @@ import {
   SessionToolBatchActiveError,
 } from "../agents/errors";
 import { finalOutputForExecution } from "../delegation/final-output";
+import { DelegationRequestSchema } from "../delegation/schema";
 import type {
   ChildExecutionHandle,
   ChildExecutionOutcome,
   ChildExecutionRequest,
   ResumeChildRequest,
 } from "../delegation/types";
+import { ResumeSessionInputSchema } from "../tools/builtins/resume-session";
 import { getSessionDir } from "../store/sessions-dir";
-import { NotRootSessionError, SessionDeleteConflictError } from "../store/errors";
+import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "../store/errors";
 import { scopedKey } from "../store/key";
-import type { Reminder, SessionStoreState } from "../store/types";
+import type { Reminder, SessionStoreState, SessionToolBatch } from "../store/types";
 import type { AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
 import type { Logger } from "../logger";
@@ -81,6 +84,7 @@ import { collectSessionTreeIds } from "./session-tree";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
+const DEFAULT_EXECUTION_MAX_STEPS = 50;
 export interface ActiveSessionExecution {
   readonly sessionId: string;
   readonly rootSessionId: string;
@@ -90,9 +94,11 @@ export interface ActiveSessionExecution {
   readonly abortController: AbortController;
   readonly promise: Promise<void>;
   readonly executionToken: symbol;
-  readonly startedAt: number;
   /** Durable id shared with the Session execution-start record. */
   readonly executionId: string;
+  readonly runOrdinal: number;
+  readonly initialStep: number;
+  readonly maxSteps: number;
   /** Full immutable binding used by every model call in this Execution. */
   readonly binding: ExecutionModelBinding;
   /** Settles once input plus execution-start are durable, before model work. */
@@ -101,7 +107,7 @@ export interface ActiveSessionExecution {
 
 // Session execution lifecycle:
 //   active execution: starting -> running -> cancelling -> completed | failed | cancelled | timed_out | interrupted
-//   parent link:      linked   -> running -> waiting_for_human -> running -> terminal
+//   parent link:      linked   -> running -> suspended -> running -> terminal
 // `executionToken` is the generation guard for every manager-owned completion path:
 // stale promises may resolve after abort/restart, but must not write terminal execution
 // events, child links, reminders, or deferred-request cleanup for a newer generation.
@@ -116,7 +122,8 @@ export type SessionExecutionInput =
     readonly clientRequestId?: string;
     readonly requestedModelSelection?: RequestedModelSelection;
   }
-  | { readonly kind: "continuation" };
+  | { readonly kind: "goal" }
+  | { readonly kind: "resume" };
 
 export interface StartSessionExecutionInput {
   readonly slug: string;
@@ -125,6 +132,7 @@ export interface StartSessionExecutionInput {
   readonly input: SessionExecutionInput;
   readonly origin?: SessionExecutionOrigin;
   readonly maxSteps?: number;
+  readonly activeTimeoutMs?: number;
   readonly extraTools?: readonly string[];
   /** Caller-supplied durable attempt id when an owner must checkpoint before start. */
   readonly executionId?: string;
@@ -285,6 +293,11 @@ interface SessionExecutionManagerConfig {
   readonly resolveSessionDepth: (workspaceRoot: string, sessionId: string) => Promise<number>;
   readonly buildSessionTree: (workspaceRoot: string, rootSessionId: string) => Promise<SessionTreeResponse>;
   readonly listSessionFamilyToolBatchHitlIds: (workspaceRoot: string, rootSessionId: string) => Promise<readonly string[]>;
+  readonly cancelSessionToolBatch: (
+    sessionId: string,
+    workspaceRoot: string,
+    reason: string,
+  ) => Promise<void>;
   readonly isDiscussionSession: (workspaceRoot: string, sessionId: string) => Promise<boolean>;
   readonly sessionInputService: Pick<
     SessionInputService,
@@ -298,16 +311,52 @@ interface SessionExecutionManagerConfig {
   readonly sessionFamilyStopTimeoutMs?: number;
   readonly deadlineScheduler?: SessionExecutionDeadlineScheduler;
   /** Wakes an idle-family owner after its last durable input mutation settles. */
-  readonly onSessionInputMutationReleased?: (input: {
+  readonly onSessionInputMutationReleased: (input: {
     readonly workspaceRoot: string;
     readonly rootSessionId: string;
   }) => void | Promise<void>;
-  readonly onExecutionUsage?: (input: {
+  /** Retries durable resume-pending work after a child concurrency slot is released. */
+  readonly onContinuationAdmissionReleased: (input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+  }) => void | Promise<void>;
+  readonly applyChildDependencyOutcome: (input: {
+    readonly workspaceRoot: string;
+    readonly parentSessionId: string;
+    readonly parentExecutionId: string;
+    readonly parentToolBatchId: string;
+    readonly parentToolCallId: string;
+    readonly childSessionId: string;
+    readonly childExecutionId: string;
+    readonly outcome: Extract<ChildExecutionOutcome, { outcome: "terminal" }>;
+  }) => Promise<void>;
+  readonly resolveGoalInstanceId: (input: {
     readonly workspaceRoot: string;
     readonly rootSessionId: string;
-    readonly usage: NormalizedUsage;
-    readonly executionTimeMs: number;
-    readonly outcome: ExecutionEndEvent["status"];
+  }) => Promise<string | null>;
+  readonly onExecutionSettlement: (input: {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly sessionId: string;
+    readonly executionId: string;
+    readonly settlements: readonly (
+      | {
+          readonly key: string;
+          readonly kind: "run";
+          readonly runOrdinal: number;
+          readonly usage: NormalizedUsage;
+          readonly executionTimeMs: number;
+          readonly goalInstanceId: string | null;
+        }
+      | {
+          readonly key: string;
+          readonly kind: "terminal";
+          readonly usage: NormalizedUsage;
+          readonly executionTimeMs: 0;
+          readonly goalInstanceId: string | null;
+          readonly terminalStatus: SessionExecutionTerminalStatus;
+        }
+    )[];
   }) => Promise<void>;
   readonly logger: Logger;
 }
@@ -380,6 +429,12 @@ export class SessionExecutionManager {
   readonly #runtimeMutations = new Set<symbol>();
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
   readonly #publishedRuntime = new Map<string, Pick<SessionRuntimeChange, "activity" | "steerTargetExecutionId">>();
+  readonly #durableNonterminal = new Map<string, {
+    readonly workspaceRoot: string;
+    readonly rootSessionId: string;
+    readonly sessionId: string;
+    readonly suspension: SessionExecutionSuspension;
+  }>();
   readonly #config: SessionExecutionManagerConfig;
   readonly #deadlineScheduler: SessionExecutionDeadlineScheduler;
   readonly #logger: Logger;
@@ -404,7 +459,24 @@ export class SessionExecutionManager {
     const sessionState = this.#config.getSessionStore(input.sessionId, input.workspaceRoot)?.getState();
     if (sessionState === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
     this.#assertDurableChildDelegationIdentity(sessionState);
-    this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, sessionState, input.origin === "tool_batch");
+    const resumedRecord = input.input.kind === "resume"
+      ? sessionState.executions.find((candidate) => candidate.id === input.executionId)
+      : undefined;
+    if (input.input.kind === "resume") {
+      if (
+        input.executionId === undefined
+        || resumedRecord?.status !== "suspended"
+        || resumedRecord.suspension.kind !== "resume_pending"
+      ) {
+        throw new Error(`Session "${input.sessionId}" has no resume-pending Execution "${input.executionId ?? "none"}"`);
+      }
+    }
+    this.#assertSessionStartAllowed(
+      input.workspaceRoot,
+      input.sessionId,
+      sessionState,
+      input.input.kind === "resume",
+    );
     this.#assertExecutionOriginReady(input, sessionState);
     const queuedAtClaim = input.input.kind === "queue"
       ? sessionState.pendingMessages.filter((message) => message.state === "queued")
@@ -448,11 +520,13 @@ export class SessionExecutionManager {
       rootSessionId,
       workspaceRoot: input.workspaceRoot,
       agentName: sessionState.agentName,
-      origin: sessionExecutionOrigin(input.origin),
+      origin: resumedRecord?.origin ?? sessionExecutionOrigin(input.origin),
       abortController,
       executionToken,
-      startedAt: Date.now(),
-      executionId: input.executionId ?? crypto.randomUUID(),
+      executionId: resumedRecord?.id ?? input.executionId ?? crypto.randomUUID(),
+      runOrdinal: resumedRecord?.runs.length ?? 0,
+      initialStep: nextExecutionStep(sessionState, resumedRecord?.id),
+      maxSteps: resumedRecord?.maxSteps ?? input.maxSteps ?? DEFAULT_EXECUTION_MAX_STEPS,
       binding: resolved.binding,
       initialUsage: { ...sessionState.stats.usage },
       ...(input.input.kind === "queue" ? { queueSnapshots: resolved.snapshots } : {}),
@@ -467,6 +541,7 @@ export class SessionExecutionManager {
       ...(newlyActivatedAgent === undefined ? {} : { newlyActivatedAgent }),
     };
 
+    if (input.input.kind === "resume") this.#durableNonterminal.delete(key);
     this.#active.set(key, pending);
     this.#config.trackSession(input.workspaceRoot, input.sessionId);
     pending.promise = this.#runExecution(input, pending).finally(() => {
@@ -605,21 +680,61 @@ export class SessionExecutionManager {
     }
   }
 
-  /** Wakes an already-persisted batch through the ordinary execution claim and abort path. */
-  async startSessionToolBatchExecution(input: Omit<StartSessionExecutionInput, "input" | "origin">): Promise<ActiveSessionExecution> {
-    const childStore = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
-    const childState = childStore.getState();
-    const activeBatch = childState.toolBatches.find((batch) => batch.archivedAt === undefined);
-    if (activeBatch === undefined) {
-      throw new Error(`Session "${input.sessionId}" has no canonical active tool batch to resume`);
+  /** Claims one durable resume-pending logical Execution without creating a second record. */
+  async resumeSessionExecution(
+    input: Omit<StartSessionExecutionInput, "input" | "origin" | "executionId">,
+  ): Promise<ActiveSessionExecution> {
+    const sessionStore = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
+    const initialState = sessionStore.getState();
+    if (this.getSessionFamilyActivity(input.workspaceRoot, initialState.rootSessionId) === "stopping") {
+      throw new SessionFamilyStopInProgressError(input.sessionId, initialState.rootSessionId);
     }
-    const execution = await this.#startCheckedExecution({
-      ...input,
-      input: { kind: "continuation" },
-      origin: "tool_batch",
-    });
+    const record = initialState.executions.find((candidate) =>
+      candidate.status === "suspended" && candidate.suspension.kind === "resume_pending"
+    );
+    if (record === undefined) {
+      throw new Error(`Session "${input.sessionId}" has no resume-pending Execution`);
+    }
+    const childState = sessionStore.getState();
+    const childAdmission = childState.parentSessionId === undefined
+      ? undefined
+      : await this.#validateExistingChildActivation(input.workspaceRoot, sessionStore);
+    let childSlotReserved = false;
+    let execution: ActiveSessionExecution;
+    try {
+      if (childAdmission !== undefined) {
+        this.#reserveChildSlot(
+          input.workspaceRoot,
+          childAdmission.parentState.sessionId,
+          childAdmission.childPolicy.maxConcurrent,
+        );
+        childSlotReserved = true;
+      }
+      execution = await this.#startCheckedExecution({
+        ...input,
+        executionId: record.id,
+        input: { kind: "resume" },
+      });
+      if (childAdmission !== undefined) {
+        this.#attachChildSlotOwnership(execution, childAdmission.parentState.sessionId);
+        childSlotReserved = false;
+      }
+    } catch (error) {
+      if (childSlotReserved && childAdmission !== undefined) {
+        await this.#releaseChildSlot(input.workspaceRoot, childAdmission.parentState.sessionId);
+      }
+      throw error;
+    }
+    await execution.started;
+    const timeout = scheduleActiveExecutionTimeout(
+      sessionStore.getState(),
+      execution,
+      this.#deadlineScheduler,
+    );
     await this.#updateChildSessionLinkForExecution(input.workspaceRoot, input.sessionId, "running");
     void execution.promise.finally(async () => {
+      if (timeout !== undefined) this.#deadlineScheduler.cancel(timeout);
+      await this.#releaseExecutionChildSlot(execution);
       const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
       const status = childTerminalStatus(store.getState().executions.at(-1), execution.abortController.signal);
       await this.#updateChildSessionLinkForExecution(input.workspaceRoot, input.sessionId, status);
@@ -635,6 +750,514 @@ export class SessionExecutionManager {
 
   async listSessionFamilyToolBatchHitlIds(workspaceRoot: string, rootSessionId: string): Promise<readonly string[]> {
     return await this.#config.listSessionFamilyToolBatchHitlIds(workspaceRoot, rootSessionId);
+  }
+
+  /** Waits only for the exact live run to persist its suspend/terminal boundary. */
+  async awaitExactRunBoundary(
+    workspaceRoot: string,
+    sessionId: string,
+    executionId: string,
+  ): Promise<void> {
+    const active = this.#active.get(scopedKey(workspaceRoot, sessionId));
+    if (active?.executionId !== executionId) return;
+    await active.promise;
+  }
+
+  /**
+   * Reconciles one strict current-format logical Execution. This is the only
+   * cold-start path allowed to write lifecycle repair events.
+   */
+  async reconcileDurableSession(input: {
+    readonly slug: string;
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+  }): Promise<ActiveSessionExecution | undefined> {
+    const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
+    const state = store.getState();
+    let record: SessionExecutionRecord | undefined = state.executions.find((candidate) =>
+      candidate.status === "running" || candidate.status === "suspended"
+    );
+    const key = scopedKey(input.workspaceRoot, input.sessionId);
+    if (record === undefined) {
+      const orphanedBatch = state.toolBatches.find((batch) => batch.archivedAt === undefined);
+      if (orphanedBatch !== undefined) {
+        await this.#config.cancelSessionToolBatch(
+          input.sessionId,
+          input.workspaceRoot,
+          "Terminal Session cannot retain an active Tool Batch",
+        );
+        if (store.getState().toolBatches.some((batch) => batch.archivedAt === undefined)) {
+          throw new Error(`Terminal Session ${input.sessionId} still has an active Tool Batch`);
+        }
+      }
+      this.#durableNonterminal.delete(key);
+      return undefined;
+    }
+
+    let activeBatch = state.toolBatches.find((batch) =>
+      batch.archivedAt === undefined && batch.executionId === record!.id
+    );
+    if (record.status === "running" && this.#active.get(key)?.executionId !== record.id) {
+      const run = record.runs.at(-1);
+      if (run === undefined || run.endedAt !== undefined) {
+        throw new Error(`Running Execution ${record.id} has no open run`);
+      }
+      const blockerIds = activeBatch?.calls.flatMap((call) =>
+        call.state === "blocked" && call.blocker?.hitlId !== undefined
+          ? [call.blocker.hitlId]
+          : []
+      ).sort() ?? [];
+      const childCall = activeBatch?.calls.find((call) =>
+        call.state === "child_launch" || call.state === "child_dependency"
+      );
+      const runEndedAt = recoveryRunEndedAt(state, record, activeBatch);
+      const claimedSteers = state.pendingMessages.filter((message) =>
+        message.state === "steering"
+        && message.targetExecutionId === record!.id
+        && message.targetRunOrdinal === run.ordinal
+      );
+      const recoverableSuspension = activeBatch !== undefined
+        && (blockerIds.length > 0 || childCall?.childDependency !== undefined);
+      if (claimedSteers.length > 0) {
+        if (recoverableSuspension) {
+          await this.#config.sessionInputService.commitSteers({
+            sessionId: input.sessionId,
+            workspaceRoot: input.workspaceRoot,
+            executionId: record.id,
+            runOrdinal: run.ordinal,
+            snapshots: claimedSteers.map((pending) => {
+              if (pending.targetModelAudit === undefined) {
+                throw new Error(`Steering message ${pending.id} has no durable model audit`);
+              }
+              return { pending, modelAudit: pending.targetModelAudit };
+            }),
+            binding: run.binding,
+            committedAt: runEndedAt,
+          });
+        } else {
+          await this.#config.sessionInputService.rollbackSteers({
+            sessionId: input.sessionId,
+            workspaceRoot: input.workspaceRoot,
+            executionId: record.id,
+            messageIds: claimedSteers.map((message) => message.id),
+          });
+        }
+      }
+      const runUsageDelta = recoveredRunUsage(state, record);
+      const goalInstanceId = await this.#config.resolveGoalInstanceId({
+        workspaceRoot: input.workspaceRoot,
+        rootSessionId: state.rootSessionId,
+      });
+      const runSettlement = {
+        key: `run:${state.sessionId}:${record.id}:${run.ordinal}`,
+        goalInstanceId,
+      };
+      if (activeBatch !== undefined && childCall?.childDependency !== undefined) {
+        store.getState().append({
+          type: "execution-suspended",
+          executionId: record.id,
+          suspension: {
+            kind: "child_dependency",
+            toolBatchId: activeBatch.batchId,
+            toolCallId: childCall.toolCallId,
+            childSessionId: childCall.childDependency.childSessionId,
+            childExecutionId: childCall.childDependency.childExecutionId,
+          },
+          runEndedAt,
+          runUsageDelta,
+          runSettlement,
+        });
+        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+        await this.#applySettlements({
+          workspaceRoot: input.workspaceRoot,
+          rootSessionId: state.rootSessionId,
+          sessionId: state.sessionId,
+          executionId: record.id,
+          settlements: [{
+            ...runSettlement,
+            kind: "run",
+            runOrdinal: run.ordinal,
+            usage: runUsageDelta,
+            executionTimeMs: Math.max(0, runEndedAt - run.startedAt),
+          }],
+        });
+      } else if (activeBatch !== undefined && blockerIds.length > 0) {
+        store.getState().append({
+          type: "execution-suspended",
+          executionId: record.id,
+          suspension: {
+            kind: "hitl",
+            toolBatchId: activeBatch.batchId,
+            blockerIds,
+          },
+          runEndedAt,
+          runUsageDelta,
+          runSettlement,
+        });
+        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+        await this.#applySettlements({
+          workspaceRoot: input.workspaceRoot,
+          rootSessionId: state.rootSessionId,
+          sessionId: state.sessionId,
+          executionId: record.id,
+          settlements: [{
+            ...runSettlement,
+            kind: "run",
+            runOrdinal: run.ordinal,
+            usage: runUsageDelta,
+            executionTimeMs: Math.max(0, runEndedAt - run.startedAt),
+          }],
+        });
+      } else {
+        if (activeBatch !== undefined) {
+          await this.#config.cancelSessionToolBatch(
+            input.sessionId,
+            input.workspaceRoot,
+            "Execution lost its live tool continuation and requires manual inspection",
+          );
+        }
+        const terminalSettlement = {
+          key: `terminal:${state.sessionId}:${record.id}`,
+          goalInstanceId,
+        };
+        store.getState().append({
+          type: "execution-end",
+          executionId: record.id,
+          terminalStatus: "interrupted",
+          endedAt: runEndedAt,
+          runEndedAt,
+          runUsageDelta,
+          runSettlement,
+          terminalSettlement,
+          error: "Execution lost its live model/tool continuation and requires manual inspection",
+        });
+        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+        await this.#applySettlements({
+          workspaceRoot: input.workspaceRoot,
+          rootSessionId: state.rootSessionId,
+          sessionId: state.sessionId,
+          executionId: record.id,
+          settlements: [
+            {
+              ...runSettlement,
+              kind: "run",
+              runOrdinal: run.ordinal,
+              usage: runUsageDelta,
+              executionTimeMs: Math.max(0, runEndedAt - run.startedAt),
+            },
+            {
+              ...terminalSettlement,
+              kind: "terminal",
+              usage: zeroUsage(),
+              executionTimeMs: 0,
+              terminalStatus: "interrupted",
+            },
+          ],
+        });
+      }
+      record = store.getState().executions.find((candidate) => candidate.id === record!.id);
+    }
+
+    if (record?.status !== "suspended") {
+      const childStatus = childLinkStatusFromExecution(record);
+      if (childStatus !== undefined) {
+        await this.#updateChildSessionLinkForExecution(input.workspaceRoot, input.sessionId, childStatus);
+      }
+      this.#durableNonterminal.delete(key);
+      this.#publishSessionRuntimeChange(input.workspaceRoot, state.rootSessionId);
+      return undefined;
+    }
+
+    if (activeBatch === undefined || activeBatch.batchId !== record.suspension.toolBatchId) {
+      await this.#terminalizeSuspendedForInspection(
+        input.workspaceRoot,
+        state.rootSessionId,
+        state.sessionId,
+        record,
+        "Suspended Execution has no exact active Tool Batch",
+      );
+      return undefined;
+    }
+
+    if (record.suspension.kind === "child_dependency") {
+      await this.#reconcileExactChildDependency(input, store, record, activeBatch);
+      activeBatch = store.getState().toolBatches.find((batch) =>
+        batch.archivedAt === undefined && batch.executionId === record!.id
+      );
+      if (activeBatch === undefined) return undefined;
+    }
+
+    const blockerIds = activeBatch.calls.flatMap((call) =>
+      call.state === "blocked" && call.blocker?.hitlId !== undefined
+        ? [call.blocker.hitlId]
+        : []
+    ).sort();
+    if (record.suspension.kind === "hitl") {
+      const nextSuspension: SessionExecutionSuspension = blockerIds.length > 0
+        ? { ...record.suspension, blockerIds }
+        : {
+            kind: "resume_pending",
+            toolBatchId: activeBatch.batchId,
+            readyAt: Date.parse(activeBatch.updatedAt),
+          };
+      store.getState().append({
+        type: "execution-suspension-updated",
+        executionId: record.id,
+        suspension: nextSuspension,
+      });
+      await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+      record = store.getState().executions.find((candidate) => candidate.id === record!.id);
+    } else if (record.suspension.kind === "child_dependency") {
+      const childSuspension = record.suspension;
+      const call = activeBatch.calls.find((candidate) =>
+        candidate.toolCallId === childSuspension.toolCallId
+      );
+      const dependency = call?.childDependency;
+      if (
+        call?.state === "queued"
+        && dependency?.kind === "child_dependency"
+        && dependency.outcome !== undefined
+      ) {
+        store.getState().append({
+          type: "execution-suspension-updated",
+          executionId: record.id,
+          suspension: {
+            kind: "resume_pending",
+            toolBatchId: activeBatch.batchId,
+            readyAt: dependency.outcome.resolvedAt,
+          },
+        });
+        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+        record = store.getState().executions.find((candidate) => candidate.id === record!.id);
+      }
+    }
+
+    if (record?.status !== "suspended") return undefined;
+    this.#durableNonterminal.set(key, {
+      workspaceRoot: input.workspaceRoot,
+      rootSessionId: state.rootSessionId,
+      sessionId: state.sessionId,
+      suspension: record.suspension,
+    });
+    await this.#updateChildSessionLinkForExecution(
+      input.workspaceRoot,
+      input.sessionId,
+      "waiting_for_human",
+    );
+    this.#publishSessionRuntimeChange(input.workspaceRoot, state.rootSessionId);
+    if (record.suspension.kind !== "resume_pending") return undefined;
+    try {
+      return await this.resumeSessionExecution(input);
+    } catch (error) {
+      if (
+        error instanceof AgentRunningError
+        || error instanceof SessionFamilyActiveError
+        || error instanceof ConcurrentLimitError
+        || error instanceof SessionFamilyStopInProgressError
+        || error instanceof SessionDeleteInProgressError
+        || error instanceof SessionWorkspaceClosingError
+      ) return undefined;
+      throw error;
+    }
+  }
+
+  async #reconcileExactChildDependency(
+    input: { readonly slug: string; readonly workspaceRoot: string; readonly sessionId: string },
+    parentStore: StoreApi<SessionStoreState>,
+    record: Extract<SessionExecutionRecord, { status: "suspended" }>,
+    batch: SessionToolBatch,
+  ): Promise<void> {
+    if (record.suspension.kind !== "child_dependency") return;
+    const suspension = record.suspension;
+    let call = batch.calls.find((candidate) => candidate.toolCallId === suspension.toolCallId);
+    let dependency = call?.childDependency;
+    if (
+      call === undefined
+      || dependency === undefined
+      || dependency.parentExecutionId !== record.id
+      || dependency.runOrdinal !== batch.runOrdinal
+      || dependency.toolCallId !== call.toolCallId
+      || dependency.childSessionId !== suspension.childSessionId
+      || dependency.childExecutionId !== suspension.childExecutionId
+    ) {
+      await this.#terminalizeSuspendedForInspection(
+        input.workspaceRoot,
+        parentStore.getState().rootSessionId,
+        input.sessionId,
+        record,
+        "Suspended child dependency has no exact durable child intent",
+      );
+      return;
+    }
+    if (dependency.kind === "child_launch") {
+      const dependencyStartedAt = record.runs.at(-1)?.endedAt ?? record.startedAt;
+      parentStore.setState((state) => ({
+        toolBatches: state.toolBatches.map((candidate) =>
+          candidate.batchId !== batch.batchId
+            ? candidate
+            : {
+                ...candidate,
+                calls: candidate.calls.map((candidateCall) =>
+                  candidateCall.toolCallId !== call!.toolCallId
+                    ? candidateCall
+                    : {
+                        ...candidateCall,
+                        state: "child_dependency",
+                        childDependency: {
+                          ...dependency!,
+                          kind: "child_dependency",
+                          dependencyStartedAt,
+                        },
+                      }
+                ),
+              }
+        ),
+      }));
+      await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+      const refreshedBatch = parentStore.getState().toolBatches.find((candidate) => candidate.batchId === batch.batchId)!;
+      call = refreshedBatch.calls.find((candidate) => candidate.toolCallId === suspension.toolCallId);
+      dependency = call?.childDependency;
+    }
+    if (call === undefined || dependency?.kind !== "child_dependency" || dependency.outcome !== undefined) return;
+
+    let childStore = this.#config.getSessionStore(dependency.childSessionId, input.workspaceRoot);
+    if (childStore === undefined) {
+      childStore = await this.#config.loadSessionStore(dependency.childSessionId, input.workspaceRoot).catch((error) => {
+        if (isMissingSessionError(error)) return undefined;
+        throw error;
+      });
+    }
+
+    if (childStore === undefined) {
+      if (call.toolName === "resume_session") {
+        await this.#config.applyChildDependencyOutcome({
+          workspaceRoot: input.workspaceRoot,
+          parentSessionId: input.sessionId,
+          parentExecutionId: record.id,
+          parentToolBatchId: batch.batchId,
+          parentToolCallId: call.toolCallId,
+          childSessionId: dependency.childSessionId,
+          childExecutionId: dependency.childExecutionId,
+          outcome: {
+            outcome: "terminal",
+            executionId: dependency.childExecutionId,
+            executionStatus: "failed",
+            terminalError: `Child Session "${dependency.childSessionId}" does not exist`,
+          },
+        });
+        return;
+      }
+      if (call.toolName !== "delegate") {
+        throw new Error(`Unsupported child intent tool "${call.toolName}"`);
+      }
+      const request = DelegationRequestSchema.parse(call.input);
+      const handle = await this.#startChildExecution(input.workspaceRoot, {
+        parentStore,
+        parentSessionId: input.sessionId,
+        parentExecutionId: record.id,
+        parentRunOrdinal: batch.runOrdinal,
+        parentToolBatchId: batch.batchId,
+        parentToolCallId: call.toolCallId,
+        childSessionId: dependency.childSessionId,
+        childExecutionId: dependency.childExecutionId,
+        toolName: "delegate",
+        request,
+      });
+      void handle.result.catch((error) => {
+        this.#logger.warn("session.child_dependency.recovered_launch_failed", {
+          error,
+          context: { sessionId: dependency!.childSessionId },
+          meta: { workspaceRoot: input.workspaceRoot },
+        });
+      });
+      return;
+    }
+
+    let childExecution = childStore.getState().executions.find((candidate) =>
+      candidate.id === dependency!.childExecutionId
+    );
+    if (childExecution === undefined) {
+      if (call.toolName === "delegate") {
+        const request = DelegationRequestSchema.parse(call.input);
+        const handle = await this.#startChildExecution(input.workspaceRoot, {
+          parentStore,
+          parentSessionId: input.sessionId,
+          parentExecutionId: record.id,
+          parentRunOrdinal: batch.runOrdinal,
+          parentToolBatchId: batch.batchId,
+          parentToolCallId: call.toolCallId,
+          childSessionId: dependency.childSessionId,
+          childExecutionId: dependency.childExecutionId,
+          toolName: "delegate",
+          request,
+        });
+        void handle.result.catch((error) => {
+          this.#logger.warn("session.child_dependency.recovered_start_failed", {
+            error,
+            context: { sessionId: dependency!.childSessionId },
+            meta: { workspaceRoot: input.workspaceRoot },
+          });
+        });
+        return;
+      }
+      if (call.toolName === "resume_session") {
+        const resume = ResumeSessionInputSchema.parse(call.input);
+        const handle = await this.#resumeChildExecution(input.workspaceRoot, {
+          parentStore,
+          parentSessionId: input.sessionId,
+          parentExecutionId: record.id,
+          parentRunOrdinal: batch.runOrdinal,
+          parentToolBatchId: batch.batchId,
+          parentToolCallId: call.toolCallId,
+          toolName: "resume_session",
+          sessionId: dependency.childSessionId,
+          childExecutionId: dependency.childExecutionId,
+          instruction: resume.instruction,
+          background: resume.background,
+        });
+        void handle.result.catch((error) => {
+          this.#logger.warn("session.child_dependency.recovered_resume_failed", {
+            error,
+            context: { sessionId: dependency!.childSessionId },
+            meta: { workspaceRoot: input.workspaceRoot },
+          });
+        });
+        return;
+      }
+      throw new Error(`Unsupported child intent tool "${call.toolName}"`);
+    }
+
+    if (childExecution.status === "running" || childExecution.status === "suspended") {
+      await this.reconcileDurableSession({
+        slug: input.slug,
+        workspaceRoot: input.workspaceRoot,
+        sessionId: dependency.childSessionId,
+      });
+      childExecution = childStore.getState().executions.find((candidate) =>
+        candidate.id === dependency!.childExecutionId
+      );
+    }
+    if (childExecution === undefined || childExecution.status === "running" || childExecution.status === "suspended") return;
+    const childLinkStatus = childLinkStatusFromExecution(childExecution);
+    if (childLinkStatus !== undefined) {
+      await this.#updateChildSessionLinkForExecution(
+        input.workspaceRoot,
+        dependency.childSessionId,
+        childLinkStatus,
+      );
+    }
+    const outcome = toChildExecutionOutcome(childStore, dependency.childExecutionId);
+    if (outcome.outcome !== "terminal") return;
+    await this.#config.applyChildDependencyOutcome({
+      workspaceRoot: input.workspaceRoot,
+      parentSessionId: input.sessionId,
+      parentExecutionId: record.id,
+      parentToolBatchId: batch.batchId,
+      parentToolCallId: call.toolCallId,
+      childSessionId: dependency.childSessionId,
+      childExecutionId: dependency.childExecutionId,
+      outcome,
+    });
   }
 
   async #startCheckedExecution(input: InternalStartSessionExecutionInput): Promise<ActiveSessionExecution> {
@@ -653,6 +1276,9 @@ export class SessionExecutionManager {
     try {
       const store = await this.#config.loadSessionStore(input.sessionId, input.workspaceRoot);
       const loadedState = store.getState();
+      if (this.getSessionFamilyActivity(input.workspaceRoot, loadedState.rootSessionId) === "stopping") {
+        throw new SessionFamilyStopInProgressError(input.sessionId, loadedState.rootSessionId);
+      }
       this.#assertExecutionOriginReady(input, loadedState);
       if (loadedState.parentSessionId !== undefined) {
         await this.#validateExistingChildActivation(input.workspaceRoot, store);
@@ -678,10 +1304,11 @@ export class SessionExecutionManager {
           if (activity === "stopping") {
             throw new SessionFamilyStopInProgressError(input.sessionId, currentState.rootSessionId);
           }
-          if (activity === "running") {
+          const isResume = input.input.kind === "resume";
+          if (activity === "running" && !isResume) {
             throw new SessionFamilyActiveError(input.sessionId, currentState.rootSessionId, activity);
           }
-          if (input.origin !== "tool_batch") {
+          if (!isResume) {
             const toolBatchHitlIds = await this.#config.listSessionFamilyToolBatchHitlIds(input.workspaceRoot, currentState.rootSessionId);
             if (toolBatchHitlIds.length > 0) {
               throw new SessionToolBatchActiveError(input.sessionId, [...toolBatchHitlIds]);
@@ -808,6 +1435,13 @@ export class SessionExecutionManager {
           ...(queueBarrierPersistence === undefined ? [] : [queueBarrierPersistence]),
         ]);
         if (input.exemptSessionId === undefined) {
+          await this.#terminalizeSuspendedFamily(
+            input.workspaceRoot,
+            input.rootSessionId,
+            "Session family cancelled",
+          );
+        }
+        if (input.exemptSessionId === undefined) {
           await this.#config.sessionInputService.rollbackSteers({
             sessionId: input.rootSessionId,
             workspaceRoot: input.workspaceRoot,
@@ -859,7 +1493,7 @@ export class SessionExecutionManager {
     readonly workspaceRoot: string;
     readonly rootSessionId: string;
   }, mutate: () => Promise<T>): Promise<T> {
-    let release: () => void;
+    let release: () => Promise<void>;
     while (true) {
       const admission = this.#tryAcquireSessionInputMutation(input.workspaceRoot, input.rootSessionId);
       if (admission.kind === "acquired") {
@@ -871,7 +1505,7 @@ export class SessionExecutionManager {
     try {
       return await mutate();
     } finally {
-      release();
+      await release();
     }
   }
 
@@ -995,12 +1629,17 @@ export class SessionExecutionManager {
   getSessionFamilyActivity(workspaceRoot: string, rootSessionId: string): SessionFamilyActivity {
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#familyStops.has(key)) return "stopping";
+    const durable = [...this.#durableNonterminal.values()].filter((entry) =>
+      entry.workspaceRoot === workspaceRoot && entry.rootSessionId === rootSessionId
+    );
+    if (durable.some((entry) => entry.suspension.kind !== "resume_pending")) return "waiting_for_human";
     if ((this.#pendingChildLaunches.get(key)?.launches.size ?? 0) > 0) return "running";
     if (this.#familyControls.has(key)) return "running";
     if (this.#activeCommands.has(key)) return "running";
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot === workspaceRoot && execution.rootSessionId === rootSessionId) return "running";
     }
+    if (durable.length > 0) return "resuming";
     return "idle";
   }
 
@@ -1025,6 +1664,13 @@ export class SessionExecutionManager {
     }
     for (const [key, control] of this.#familyControls) {
       families.set(key, { workspaceRoot: control.workspaceRoot, rootSessionId: control.rootSessionId });
+    }
+    for (const durable of this.#durableNonterminal.values()) {
+      const key = scopedKey(durable.workspaceRoot, durable.rootSessionId);
+      families.set(key, {
+        workspaceRoot: durable.workspaceRoot,
+        rootSessionId: durable.rootSessionId,
+      });
     }
     return [...families.values()]
       .map(({ workspaceRoot, rootSessionId }) => ({
@@ -1110,7 +1756,12 @@ export class SessionExecutionManager {
       if (!sameModelSelection(steerBinding.summary.selection, execution.binding.summary.selection)) {
         throw new SessionSteerUnavailableError(input.sessionId, input.expectedExecutionId);
       }
-      claimed = await this.#config.sessionInputService.claimSteer(input);
+      claimed = await this.#config.sessionInputService.claimSteer({
+        ...input,
+        runOrdinal: execution.runOrdinal,
+        modelAudit: modelAuditFor(pending.requestedModelSelection, execution.binding),
+        claimedAt: Date.now(),
+      });
       const current = this.#active.get(key);
       if (
         current?.executionToken !== execution.executionToken
@@ -1275,7 +1926,7 @@ export class SessionExecutionManager {
         `${targetDefinition.displayName} does not allow Profile "${validatedRequest.profile}"`,
       );
     }
-    const childSessionId = crypto.randomUUID();
+    const childSessionId = request.childSessionId;
     const releaseChildLaunch = this.#reserveChildLaunch(
       workspaceRoot,
       parentState.rootSessionId,
@@ -1314,15 +1965,36 @@ export class SessionExecutionManager {
     try {
       this.#reserveChildSlot(workspaceRoot, request.parentSessionId, childPolicy.maxConcurrent);
       childSlotReserved = true;
-      childStore = this.#config.createSessionStore(childSessionId, workspaceRoot, {
-        cwd: parentState.cwd,
-        rootSessionId: parentState.rootSessionId,
-        parentSessionId: request.parentSessionId,
-        agentName: targetDefinition.name,
-        title: childTitle,
-        activeSkillNames,
-        delegationRequest: validatedRequest,
-      });
+      childStore = this.#config.getSessionStore(childSessionId, workspaceRoot);
+      if (childStore === undefined) {
+        childStore = this.#config.createSessionStore(childSessionId, workspaceRoot, {
+          cwd: parentState.cwd,
+          rootSessionId: parentState.rootSessionId,
+          parentSessionId: request.parentSessionId,
+          agentName: targetDefinition.name,
+          title: childTitle,
+          activeSkillNames,
+          delegationRequest: validatedRequest,
+        });
+      } else {
+        const existing = childStore.getState();
+        if (
+          existing.executions.length > 0
+          || existing.parentSessionId !== request.parentSessionId
+          || existing.rootSessionId !== parentState.rootSessionId
+          || existing.cwd !== parentState.cwd
+          || existing.agentName !== targetDefinition.name
+          || existing.title !== childTitle
+          || JSON.stringify(existing.delegationRequest) !== JSON.stringify(validatedRequest)
+          || JSON.stringify(existing.activeSkillNames) !== JSON.stringify(activeSkillNames)
+        ) {
+          throw new DelegationExecutionAdmissionError(
+            "DELEGATION_IDENTITY_REQUIRED",
+            `Precreated child Session "${childSessionId}" does not match its durable launch intent`,
+          );
+        }
+        await this.#validateExistingChildActivation(workspaceRoot, childStore);
+      }
       await this.#config.flushSessionStore(childSessionId, workspaceRoot);
 
       const cachedAgent = this.#config.sessionAgentManager.get(workspaceRoot, childSessionId);
@@ -1344,6 +2016,8 @@ export class SessionExecutionManager {
           text: childPrompt,
         },
         origin: "tool_call",
+        executionId: request.childExecutionId,
+        activeTimeoutMs: childPolicy.timeoutMs > 0 ? childPolicy.timeoutMs : undefined,
       }, newlyActivatedAgent);
       newlyActivatedAgent = undefined;
       this.#attachChildSlotOwnership(execution, request.parentSessionId);
@@ -1365,8 +2039,8 @@ export class SessionExecutionManager {
         this.#config.sessionAgentManager.releaseAgent(workspaceRoot, childSessionId);
       }
       if (childLaunchReserved) releaseChildLaunch();
-      if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
-      if (execution !== undefined) this.#releaseExecutionChildSlot(execution);
+      if (childSlotReserved) await this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
+      if (execution !== undefined) await this.#releaseExecutionChildSlot(execution);
       if (childStore !== undefined) {
         if (childLinked) {
           this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "failed", childTitle, createdAt, background);
@@ -1381,22 +2055,47 @@ export class SessionExecutionManager {
 
     if (execution === undefined) throw new Error(`Child Session "${childSessionId}" did not claim execution`);
 
-    const timeout = childPolicy.timeoutMs > 0
-      ? this.#deadlineScheduler.schedule(
-        childPolicy.timeoutMs,
-        () => execution.abortController.abort(new Error("Sub-agent timed out")),
-      )
-      : undefined;
+    const timeout = scheduleActiveExecutionTimeout(
+      childStore.getState(),
+      execution,
+      this.#deadlineScheduler,
+    );
     const removeParentAbort = childPolicy.abortCascade
       ? wireAbortCascade(request.parentAbort, execution.abortController)
       : () => {};
 
     const result = execution.promise
       .then(() => toChildExecutionOutcome(childStore, execution.executionId))
-      .finally(() => {
+      .then(async (outcome) => {
+        if (
+          !background
+          && outcome.outcome === "terminal"
+          && hasExactChildDependency(request.parentStore.getState(), {
+            parentExecutionId: request.parentExecutionId,
+            parentRunOrdinal: request.parentRunOrdinal,
+            parentToolBatchId: request.parentToolBatchId,
+            parentToolCallId: request.parentToolCallId,
+            childSessionId,
+            childExecutionId: request.childExecutionId,
+          })
+        ) {
+          await this.#config.applyChildDependencyOutcome({
+            workspaceRoot,
+            parentSessionId: request.parentSessionId,
+            parentExecutionId: request.parentExecutionId,
+            parentToolBatchId: request.parentToolBatchId,
+            parentToolCallId: request.parentToolCallId,
+            childSessionId,
+            childExecutionId: request.childExecutionId,
+            outcome,
+          });
+        }
+        return outcome;
+      })
+      .finally(async () => {
         if (timeout !== undefined) this.#deadlineScheduler.cancel(timeout);
         removeParentAbort();
-        this.#releaseExecutionChildSlot(execution);
+        await this.#releaseExecutionChildSlot(execution);
         const current = this.#active.get(scopedKey(workspaceRoot, childSessionId));
         if (current !== undefined && current.executionToken !== execution.executionToken) return;
         if (this.#isParentChildLinkTerminal(workspaceRoot, childSessionId)) return;
@@ -1409,6 +2108,7 @@ export class SessionExecutionManager {
 
     return {
       sessionId: childSessionId,
+      executionId: execution.executionId,
       store: childStore,
       result,
       abort: () => this.#cancelExecution(execution, "Sub-agent aborted"),
@@ -1425,39 +2125,114 @@ export class SessionExecutionManager {
     const childState = childStore.getState();
     const parentSessionId = childState.parentSessionId;
     if (parentSessionId === undefined) return;
+    const currentExecution = childState.executions.at(-1);
+    if (currentExecution === undefined) return;
 
     const parentStore = await this.#config.loadSessionStore(parentSessionId, workspaceRoot);
     const existing = [...parentStore.getState().childSessionLinks]
       .reverse()
-      .find((link) => link.childSessionId === childSessionId);
+      .find((link) =>
+        link.childSessionId === childSessionId
+        && link.childExecutionId === currentExecution.id
+      );
     if (existing === undefined) {
-      this.#logger.warn("session.child_link.batch_missing", {
-        context: { sessionId: childSessionId, parentSessionId },
-        meta: { workspaceRoot, status },
+      const exactBatchCall = parentStore.getState().toolBatches
+        .flatMap((batch) => batch.calls.map((call) => ({ batch, call })))
+        .find(({ call }) =>
+          call.childDependency?.childSessionId === childSessionId
+          && call.childDependency.childExecutionId === currentExecution.id
+        );
+      const dependency = exactBatchCall?.call.childDependency;
+      const delegation = childState.delegationRequest;
+      if (
+        exactBatchCall === undefined
+        || dependency === undefined
+        || delegation === undefined
+        || childState.title == null
+        || (exactBatchCall.call.toolName !== "delegate" && exactBatchCall.call.toolName !== "resume_session")
+      ) {
+        this.#logger.warn("session.child_link.batch_missing", {
+          context: { sessionId: childSessionId, parentSessionId },
+          meta: { workspaceRoot, status },
+        });
+        return;
+      }
+      const background = exactBatchCall.call.toolName === "delegate"
+        ? DelegationRequestSchema.parse(exactBatchCall.call.input).background
+        : ResumeSessionInputSchema.parse(exactBatchCall.call.input).background;
+      const depth = await this.#config.resolveSessionDepth(workspaceRoot, childSessionId);
+      const durationUpdatedAt = Date.now();
+      parentStore.getState().append({
+        type: "tool-child-session-link",
+        link: {
+          parentSessionId,
+          parentToolCallId: exactBatchCall.call.toolCallId,
+          toolName: exactBatchCall.call.toolName,
+          childSessionId,
+          childExecutionId: currentExecution.id,
+          childAgentName: childState.agentName,
+          childProfile: delegation.profile,
+          childSkillNames: [...childState.activeSkillNames],
+          title: childState.title,
+          depth,
+          background,
+          status,
+          createdAt: dependency.createdAt,
+          startedAt: currentExecution.startedAt,
+          ...(currentExecution.endedAt === undefined ? {} : { endedAt: currentExecution.endedAt }),
+          ...(currentExecution.durationMs === undefined ? {} : {
+            durationMs: currentExecution.durationMs,
+            durationUpdatedAt,
+          }),
+          ...(currentExecution.error === undefined ? {} : { error: currentExecution.error }),
+        },
       });
+      await this.#config.flushSessionStore(parentSessionId, workspaceRoot);
+      return;
+    }
+    if (isTerminalChildSessionStatus(existing.status)) {
+      if (existing.status !== status) {
+        throw new Error(
+          `Child link ${existing.childExecutionId} is already ${existing.status}, not ${status}`,
+        );
+      }
       return;
     }
 
     const now = Date.now();
-    const run = childState.executions.at(-1);
+    const run = currentExecution;
     const {
       startedAt: _startedAt,
       endedAt: _endedAt,
       durationMs: _durationMs,
+      durationUpdatedAt: _durationUpdatedAt,
       error: _error,
       ...base
     } = existing;
     const isTerminal = isTerminalChildSessionStatus(status);
     const runMatchesStatus = childLinkStatusFromExecution(run) === status;
-    const startedAt = status === "running"
-      ? now
-      : runMatchesStatus ? run?.startedAt : existing.startedAt ?? now;
-    const endedAt = isTerminal || status === "waiting_for_human"
+    const startedAt = run?.startedAt ?? existing.startedAt;
+    const endedAt = isTerminal
       ? runMatchesStatus ? run?.endedAt ?? now : now
       : undefined;
-    const durationMs = endedAt === undefined || startedAt === undefined
-      ? undefined
-      : Math.max(0, endedAt - startedAt);
+    const openRun = run?.status === "running" ? run.runs.at(-1) : undefined;
+    const durationMs = run === undefined
+      ? existing.durationMs
+      : run.durationMs + (
+          openRun !== undefined && openRun.endedAt === undefined
+            ? Math.max(0, now - openRun.startedAt)
+            : 0
+        );
+    const durationUpdatedAt = durationMs === undefined ? undefined : now;
+    const error = isTerminal && runMatchesStatus ? run?.error : undefined;
+    if (
+      existing.status === status
+      && existing.startedAt === startedAt
+      && existing.endedAt === endedAt
+      && existing.durationMs === durationMs
+      && existing.durationUpdatedAt === durationUpdatedAt
+      && existing.error === error
+    ) return;
     parentStore.getState().append({
       type: "tool-child-session-link",
       link: {
@@ -1465,8 +2240,8 @@ export class SessionExecutionManager {
         status,
         ...(startedAt === undefined ? {} : { startedAt }),
         ...(endedAt === undefined ? {} : { endedAt }),
-        ...(durationMs === undefined ? {} : { durationMs }),
-        ...(isTerminal && runMatchesStatus && run?.error !== undefined ? { error: run.error } : {}),
+        ...(durationMs === undefined ? {} : { durationMs, durationUpdatedAt }),
+        ...(error === undefined ? {} : { error }),
       },
     });
     if (isTerminal && existing.background) {
@@ -1571,6 +2346,8 @@ export class SessionExecutionManager {
             text: request.instruction,
           },
           origin: "tool_call",
+          executionId: request.childExecutionId,
+          activeTimeoutMs: childPolicy.timeoutMs > 0 ? childPolicy.timeoutMs : undefined,
         }, newlyActivatedAgent);
         newlyActivatedAgent = undefined;
         this.#attachChildSlotOwnership(execution, request.parentSessionId);
@@ -1597,30 +2374,55 @@ export class SessionExecutionManager {
         this.#config.sessionAgentManager.releaseAgent(workspaceRoot, request.sessionId);
       }
       if (childLaunchReserved) releaseChildLaunch();
-      if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
-      if (execution !== undefined) this.#releaseExecutionChildSlot(execution);
+      if (childSlotReserved) await this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
+      if (execution !== undefined) await this.#releaseExecutionChildSlot(execution);
       throw error;
     }
 
     if (execution === undefined) throw new Error(`Child Session "${request.sessionId}" did not claim execution`);
     const claimedExecution = execution;
 
-    const timeout = childPolicy.timeoutMs > 0
-      ? this.#deadlineScheduler.schedule(
-        childPolicy.timeoutMs,
-        () => claimedExecution.abortController.abort(new Error("Sub-agent timed out")),
-      )
-      : undefined;
+    const timeout = scheduleActiveExecutionTimeout(
+      childStore.getState(),
+      claimedExecution,
+      this.#deadlineScheduler,
+    );
     const removeParentAbort = childPolicy.abortCascade
       ? wireAbortCascade(request.parentAbort, claimedExecution.abortController)
       : () => {};
 
     const result = claimedExecution.promise
       .then(() => toChildExecutionOutcome(childStore, claimedExecution.executionId))
-      .finally(() => {
+      .then(async (outcome) => {
+        if (
+          !background
+          && outcome.outcome === "terminal"
+          && hasExactChildDependency(request.parentStore.getState(), {
+            parentExecutionId: request.parentExecutionId,
+            parentRunOrdinal: request.parentRunOrdinal,
+            parentToolBatchId: request.parentToolBatchId,
+            parentToolCallId: request.parentToolCallId,
+            childSessionId: request.sessionId,
+            childExecutionId: request.childExecutionId,
+          })
+        ) {
+          await this.#config.applyChildDependencyOutcome({
+            workspaceRoot,
+            parentSessionId: request.parentSessionId,
+            parentExecutionId: request.parentExecutionId,
+            parentToolBatchId: request.parentToolBatchId,
+            parentToolCallId: request.parentToolCallId,
+            childSessionId: request.sessionId,
+            childExecutionId: request.childExecutionId,
+            outcome,
+          });
+        }
+        return outcome;
+      })
+      .finally(async () => {
         if (timeout !== undefined) this.#deadlineScheduler.cancel(timeout);
         removeParentAbort();
-        this.#releaseExecutionChildSlot(claimedExecution);
+        await this.#releaseExecutionChildSlot(claimedExecution);
         const current = this.#active.get(scopedKey(workspaceRoot, request.sessionId));
         if (current !== undefined && current.executionToken !== claimedExecution.executionToken) return;
         if (this.#isParentChildLinkTerminal(workspaceRoot, request.sessionId)) return;
@@ -1642,6 +2444,7 @@ export class SessionExecutionManager {
 
     return {
       sessionId: request.sessionId,
+      executionId: claimedExecution.executionId,
       store: childStore,
       result,
       abort: () => this.#cancelExecution(claimedExecution, "Sub-agent aborted"),
@@ -1683,13 +2486,85 @@ export class SessionExecutionManager {
     }
   }
 
+  async #applySettlements(
+    input: Parameters<SessionExecutionManagerConfig["onExecutionSettlement"]>[0],
+  ): Promise<void> {
+    await this.#config.onExecutionSettlement(input);
+  }
+
+  async #terminalizeSuspendedForInspection(
+    workspaceRoot: string,
+    rootSessionId: string,
+    sessionId: string,
+    record: Extract<SessionExecutionRecord, { status: "suspended" }>,
+    error: string,
+  ): Promise<void> {
+    const store = await this.#config.loadSessionStore(sessionId, workspaceRoot);
+    const lastRunEndedAt = record.runs.at(-1)?.endedAt ?? record.startedAt;
+    const endedAt = Math.max(Date.now(), lastRunEndedAt);
+    const goalInstanceId = await this.#config.resolveGoalInstanceId({
+      workspaceRoot,
+      rootSessionId,
+    });
+    const terminalSettlement = {
+      key: `terminal:${sessionId}:${record.id}`,
+      goalInstanceId,
+    };
+    store.getState().append({
+      type: "execution-end",
+      executionId: record.id,
+      terminalStatus: "interrupted",
+      endedAt,
+      terminalSettlement,
+      error,
+    });
+    await this.#config.flushSessionStore(sessionId, workspaceRoot);
+    this.#durableNonterminal.delete(scopedKey(workspaceRoot, sessionId));
+    this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId);
+    await this.#applySettlements({
+      workspaceRoot,
+      rootSessionId,
+      sessionId,
+      executionId: record.id,
+      settlements: [{
+        ...terminalSettlement,
+        kind: "terminal",
+        usage: zeroUsage(),
+        executionTimeMs: 0,
+        terminalStatus: "interrupted",
+      }],
+    });
+    await this.#updateChildSessionLinkForExecution(workspaceRoot, sessionId, "interrupted");
+  }
+
   async #runExecution(input: InternalStartSessionExecutionInput, execution: PendingSessionExecution): Promise<void> {
     const key = scopedKey(input.workspaceRoot, input.sessionId);
     let store = this.#config.getSessionStore(input.sessionId, input.workspaceRoot);
-    let terminalStatus: ExecutionEndEvent["status"] = "completed";
+    let terminalStatus: SessionExecutionTerminalStatus = "completed";
     let terminalError: string | undefined;
+    let suspension: Exclude<SessionExecutionSuspension, { kind: "resume_pending" }> | undefined;
+    let runEndedAt: number | undefined;
     try {
       if (store === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
+      if (input.input.kind !== "resume") {
+        store.getState().append({
+          type: "execution-start",
+          executionId: execution.executionId,
+          binding: execution.binding.summary,
+          origin: execution.origin,
+          maxSteps: execution.maxSteps,
+          ...(input.activeTimeoutMs === undefined ? {} : { activeTimeoutMs: input.activeTimeoutMs }),
+        });
+        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+      } else {
+        store.getState().append({
+          type: "execution-resumed",
+          executionId: execution.executionId,
+          runOrdinal: execution.runOrdinal,
+          binding: execution.binding.summary,
+        });
+        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+      }
       if (input.input.kind === "queue") {
         if (execution.queueSnapshots === undefined || execution.queueSnapshots.length === 0) {
           throw new Error(`Queue execution ${execution.executionId} has no resolved input prefix`);
@@ -1698,6 +2573,7 @@ export class SessionExecutionManager {
           sessionId: input.sessionId,
           workspaceRoot: input.workspaceRoot,
           executionId: execution.executionId,
+          runOrdinal: execution.runOrdinal,
           snapshots: execution.queueSnapshots,
           binding: execution.binding.summary,
           origin: execution.origin,
@@ -1711,6 +2587,7 @@ export class SessionExecutionManager {
           sessionId: input.sessionId,
           workspaceRoot: input.workspaceRoot,
           executionId: execution.executionId,
+          runOrdinal: execution.runOrdinal,
           text: input.input.text,
           ...(input.input.source === undefined ? {} : { source: input.input.source }),
           ...(input.input.messageId === undefined ? {} : { messageId: input.input.messageId }),
@@ -1721,14 +2598,6 @@ export class SessionExecutionManager {
           origin: execution.origin,
           signal: execution.abortController.signal,
         });
-      } else {
-        store.getState().append({
-          type: "execution-start",
-          executionId: execution.executionId,
-          binding: execution.binding.summary,
-          origin: execution.origin,
-        });
-        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
       }
 
       execution.ready = true;
@@ -1750,7 +2619,12 @@ export class SessionExecutionManager {
           execution.newlyActivatedAgent = agent;
         }
         store = agent.store;
-        this.#assertSessionStartAllowed(input.workspaceRoot, input.sessionId, agent.store.getState(), input.origin === "tool_batch");
+        this.#assertSessionStartAllowed(
+          input.workspaceRoot,
+          input.sessionId,
+          agent.store.getState(),
+          input.input.kind === "resume",
+        );
         if (execution.abortController.signal.aborted) {
           terminalStatus = abortExecutionStatus(execution.abortController.signal);
           return;
@@ -1761,17 +2635,25 @@ export class SessionExecutionManager {
 
         const result = await agent.run(execution.binding, {
           abort: execution.abortController.signal,
-          ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+          executionId: execution.executionId,
+          runOrdinal: execution.runOrdinal,
+          initialStep: execution.initialStep,
+          maxSteps: execution.maxSteps,
           ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
           ...(input.toolProjection === undefined ? {} : { toolProjection: input.toolProjection }),
           consumeSteers: async () => await this.#consumeSteers(execution),
         });
+        runEndedAt = Date.now();
         execution.newlyActivatedAgent = undefined;
         if (result.cwdChanged === undefined) {
-          terminalStatus = result.status;
-          terminalError = result.error === undefined
-            ? undefined
-            : execution.binding.modelInfo.redactSensitiveText(result.error);
+          if (result.outcome === "suspended") {
+            suspension = result.suspension;
+          } else {
+            terminalStatus = result.status;
+            terminalError = result.error === undefined
+              ? undefined
+              : execution.binding.modelInfo.redactSensitiveText(result.error);
+          }
           return;
         }
         if (transitionCount === MAX_CWD_TRANSITIONS_PER_EXECUTION) {
@@ -1786,6 +2668,7 @@ export class SessionExecutionManager {
         ? abortExecutionStatus(execution.abortController.signal)
         : "failed";
       terminalError = safeError.message;
+      runEndedAt ??= Date.now();
       if (!execution.abortController.signal.aborted) {
         const current = this.#active.get(key);
         if (current?.executionToken !== execution.executionToken) return;
@@ -1798,28 +2681,117 @@ export class SessionExecutionManager {
     } finally {
       this.#releaseNewlyActivatedAgent(execution);
       this.#closeSteerGate(execution);
-      await this.#settleSteers(execution, terminalStatus === "waiting_for_human");
+      await this.#settleSteers(execution, suspension !== undefined);
       if (execution.abortController.signal.aborted) {
+        suspension = undefined;
         terminalStatus = abortExecutionStatus(execution.abortController.signal);
       }
       const current = this.#active.get(key);
       if (current?.executionToken === execution.executionToken) {
         store = this.#config.getSessionStore(input.sessionId, input.workspaceRoot) ?? store;
         if (store?.getState().isRunning && store.getState().currentExecutionId === execution.executionId) {
-          store.getState().append({
-            type: "execution-end",
-            status: terminalStatus,
-            ...(terminalError === undefined ? {} : { error: terminalError }),
-          });
-          await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+          const canonicalExecution = store.getState().executions.find((candidate) =>
+            candidate.id === execution.executionId
+          );
+          const canonicalRun = canonicalExecution?.runs[execution.runOrdinal];
+          if (
+            canonicalExecution?.status !== "running"
+            || canonicalRun === undefined
+            || canonicalRun.endedAt !== undefined
+          ) {
+            throw new Error(
+              `Execution ${execution.executionId} run ${execution.runOrdinal} has no canonical open run`,
+            );
+          }
+          const effectiveRunEndedAt = Math.max(runEndedAt ?? Date.now(), canonicalRun.startedAt);
           const finalUsage = store.getState().stats.usage;
-          await this.#config.onExecutionUsage?.({
+          const runUsageDelta = subtractUsage(finalUsage, execution.initialUsage);
+          const goalInstanceId = await this.#config.resolveGoalInstanceId({
             workspaceRoot: input.workspaceRoot,
             rootSessionId: execution.rootSessionId,
-            usage: subtractUsage(finalUsage, execution.initialUsage),
-            executionTimeMs: Math.max(0, Date.now() - execution.startedAt),
-            outcome: terminalStatus,
           });
+          const runSettlement = {
+            key: `run:${input.sessionId}:${execution.executionId}:${execution.runOrdinal}`,
+            kind: "run" as const,
+            runOrdinal: execution.runOrdinal,
+            usage: runUsageDelta,
+            executionTimeMs: effectiveRunEndedAt - canonicalRun.startedAt,
+            goalInstanceId,
+          };
+          if (suspension === undefined) {
+            if (store.getState().toolBatches.some((batch) =>
+              batch.archivedAt === undefined
+              && batch.executionId === execution.executionId
+            )) {
+              await this.#config.cancelSessionToolBatch(
+                input.sessionId,
+                input.workspaceRoot,
+                "Execution terminated before its active Tool Batch settled",
+              );
+            }
+            store.getState().append({
+              type: "execution-end",
+              executionId: execution.executionId,
+              terminalStatus,
+              endedAt: effectiveRunEndedAt,
+              runEndedAt: effectiveRunEndedAt,
+              runUsageDelta,
+              runSettlement: {
+                key: runSettlement.key,
+                goalInstanceId,
+              },
+              terminalSettlement: {
+                key: `terminal:${input.sessionId}:${execution.executionId}`,
+                goalInstanceId,
+              },
+              ...(terminalError === undefined ? {} : { error: terminalError }),
+            });
+          } else {
+            store.getState().append({
+              type: "execution-suspended",
+              executionId: execution.executionId,
+              suspension,
+              runEndedAt: effectiveRunEndedAt,
+              runUsageDelta,
+              runSettlement: {
+                key: runSettlement.key,
+                goalInstanceId,
+              },
+            });
+          }
+          await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+          if (suspension === undefined) {
+            this.#durableNonterminal.delete(key);
+          } else {
+            this.#durableNonterminal.set(key, {
+              workspaceRoot: input.workspaceRoot,
+              rootSessionId: execution.rootSessionId,
+              sessionId: input.sessionId,
+              suspension,
+            });
+          }
+          await this.#config.onExecutionSettlement({
+            workspaceRoot: input.workspaceRoot,
+            rootSessionId: execution.rootSessionId,
+            sessionId: input.sessionId,
+            executionId: execution.executionId,
+            settlements: suspension === undefined
+              ? [
+                  runSettlement,
+                  {
+                    key: `terminal:${input.sessionId}:${execution.executionId}`,
+                    kind: "terminal",
+                    usage: zeroUsage(),
+                    executionTimeMs: 0,
+                    goalInstanceId,
+                    terminalStatus,
+                  },
+                ]
+              : [runSettlement],
+          });
+          if (suspension !== undefined) {
+            this.#config.sessionAgentManager.releaseAgent(input.workspaceRoot, input.sessionId);
+          }
         }
       }
     }
@@ -1844,6 +2816,7 @@ export class SessionExecutionManager {
       sessionId: execution.sessionId,
       workspaceRoot: execution.workspaceRoot,
       executionId: execution.executionId,
+      runOrdinal: execution.runOrdinal,
       snapshots: messages,
       binding: execution.binding.summary,
       signal: execution.abortController.signal,
@@ -1946,15 +2919,7 @@ export class SessionExecutionManager {
     const state = store?.getState();
     const executionId = active?.executionId ?? state?.executions.at(-1)?.id;
     if (store === undefined || state === undefined || executionId === undefined) return undefined;
-    if (!state.executions.some((execution) => execution.id === executionId)) {
-      if (active === undefined) return undefined;
-      store.getState().append({
-        type: "execution-start",
-        executionId,
-        binding: active.binding.summary,
-        origin: active.origin,
-      });
-    }
+    if (!state.executions.some((execution) => execution.id === executionId)) return undefined;
     const stopState = store.getState();
     store.getState().append({
       type: "execution-stop-requested",
@@ -1993,7 +2958,7 @@ export class SessionExecutionManager {
 
       const remainingMs = deadline - this.#deadlineScheduler.now();
       if (remainingMs <= 0) {
-        this.#forceTerminalizeStuckFamily({
+        await this.#forceTerminalizeStuckFamily({
           workspaceRoot,
           rootSessionId,
           executions,
@@ -2018,13 +2983,81 @@ export class SessionExecutionManager {
     }
   }
 
-  #forceTerminalizeStuckFamily(input: {
+  async #terminalizeSuspendedFamily(
+    workspaceRoot: string,
+    rootSessionId: string,
+    reason: string,
+  ): Promise<void> {
+    const suspendedSessionIds = new Set(
+      [...this.#durableNonterminal.values()]
+        .filter((entry) => entry.workspaceRoot === workspaceRoot && entry.rootSessionId === rootSessionId)
+        .map((entry) => entry.sessionId),
+    );
+    const loadedRoot = this.#config.getSessionStore(rootSessionId, workspaceRoot);
+    if (loadedRoot?.getState().executions.some((execution) => execution.status === "suspended")) {
+      suspendedSessionIds.add(rootSessionId);
+    }
+    if (suspendedSessionIds.size === 0) return;
+    const tree = await this.#config.buildSessionTree(workspaceRoot, rootSessionId);
+    const sessionIds = collectSessionTreeIds(tree.root).reverse();
+    for (const sessionId of sessionIds) {
+      if (!suspendedSessionIds.has(sessionId)) continue;
+      const store = await this.#config.loadSessionStore(sessionId, workspaceRoot);
+      const state = store.getState();
+      const record = state.executions.find((candidate) => candidate.status === "suspended");
+      if (record === undefined) {
+        this.#durableNonterminal.delete(scopedKey(workspaceRoot, sessionId));
+        this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId);
+        continue;
+      }
+      await this.#config.cancelSessionToolBatch(sessionId, workspaceRoot, reason);
+      const goalInstanceId = await this.#config.resolveGoalInstanceId({
+        workspaceRoot,
+        rootSessionId,
+      });
+      const terminalSettlement = {
+        key: `terminal:${sessionId}:${record.id}`,
+        goalInstanceId,
+      };
+      const endedAt = Math.max(
+        Date.now(),
+        record.runs.at(-1)?.endedAt ?? record.startedAt,
+      );
+      store.getState().append({
+        type: "execution-end",
+        executionId: record.id,
+        terminalStatus: "cancelled",
+        endedAt,
+        terminalSettlement,
+        error: reason,
+      });
+      await this.#config.flushSessionStore(sessionId, workspaceRoot);
+      this.#durableNonterminal.delete(scopedKey(workspaceRoot, sessionId));
+      this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId);
+      await this.#applySettlements({
+        workspaceRoot,
+        rootSessionId,
+        sessionId,
+        executionId: record.id,
+        settlements: [{
+          ...terminalSettlement,
+          kind: "terminal",
+          usage: zeroUsage(),
+          executionTimeMs: 0,
+          terminalStatus: "cancelled",
+        }],
+      });
+      await this.#updateChildSessionLinkForExecution(workspaceRoot, sessionId, "cancelled");
+    }
+  }
+
+  async #forceTerminalizeStuckFamily(input: {
     readonly workspaceRoot: string;
     readonly rootSessionId: string;
     readonly executions: readonly PendingSessionExecution[];
     readonly command: ActiveSessionCommand | undefined;
     readonly pendingChildSessionIds: readonly string[];
-  }): void {
+  }): Promise<void> {
     const stuckSessionIds = [...new Set([
       ...input.executions.map((execution) => execution.sessionId),
       ...input.pendingChildSessionIds,
@@ -2040,7 +3073,7 @@ export class SessionExecutionManager {
     });
 
     for (const execution of input.executions) {
-      this.#forceTerminalizeExecution(execution, "Session family cancelled");
+      await this.#forceTerminalizeExecution(execution, "Session family cancelled");
     }
 
     if (input.command !== undefined) {
@@ -2065,7 +3098,7 @@ export class SessionExecutionManager {
     command.rejectCompletion(new Error(reason));
   }
 
-  #forceTerminalizeExecution(execution: PendingSessionExecution, reason: string): void {
+  async #forceTerminalizeExecution(execution: PendingSessionExecution, reason: string): Promise<void> {
     const key = scopedKey(execution.workspaceRoot, execution.sessionId);
     const current = this.#active.get(key);
     if (current?.executionToken !== execution.executionToken) return;
@@ -2075,6 +3108,9 @@ export class SessionExecutionManager {
     if (!execution.ready) {
       execution.rejectStarted(new Error(reason));
     }
+    // The live run may unwind as soon as cancellation is observed. Transfer
+    // lifecycle ownership before this force path awaits durable teardown.
+    this.#active.delete(key);
 
     const store = this.#config.getSessionStore(execution.sessionId, execution.workspaceRoot);
     if (
@@ -2082,25 +3118,75 @@ export class SessionExecutionManager {
       && store.getState().isRunning
       && store.getState().currentExecutionId === execution.executionId
     ) {
+      if (store.getState().toolBatches.some((batch) =>
+        batch.archivedAt === undefined && batch.executionId === execution.executionId
+      )) {
+        await this.#config.cancelSessionToolBatch(
+          execution.sessionId,
+          execution.workspaceRoot,
+          reason,
+        );
+      }
+      const currentState = store.getState();
+      const record = currentState.executions.find((candidate) => candidate.id === execution.executionId);
+      const run = record?.runs[execution.runOrdinal];
+      if (record?.status !== "running" || run === undefined || run.endedAt !== undefined) {
+        throw new Error(`Execution ${execution.executionId} run ${execution.runOrdinal} has no canonical open run`);
+      }
       const status = abortExecutionStatus(execution.abortController.signal);
+      const endedAt = Math.max(Date.now(), run.startedAt);
+      const goalInstanceId = await this.#config.resolveGoalInstanceId({
+        workspaceRoot: execution.workspaceRoot,
+        rootSessionId: execution.rootSessionId,
+      });
+      const runUsageDelta = subtractUsage(currentState.stats.usage, execution.initialUsage);
+      const runSettlement = {
+        key: `run:${execution.sessionId}:${execution.executionId}:${execution.runOrdinal}`,
+        kind: "run" as const,
+        runOrdinal: execution.runOrdinal,
+        usage: runUsageDelta,
+        executionTimeMs: endedAt - run.startedAt,
+        goalInstanceId,
+      };
+      const terminalSettlement = {
+        key: `terminal:${execution.sessionId}:${execution.executionId}`,
+        goalInstanceId,
+      };
       store.getState().append({
         type: "execution-end",
-        status,
+        executionId: execution.executionId,
+        terminalStatus: status,
+        endedAt,
+        runEndedAt: endedAt,
+        runUsageDelta,
+        runSettlement: {
+          key: runSettlement.key,
+          goalInstanceId,
+        },
+        terminalSettlement,
         error: reason,
       });
-      void this.#config.flushSessionStore(execution.sessionId, execution.workspaceRoot).catch((error) => {
-        this.#logger.error("session.family_stop.force_terminalize_flush_failed", {
-          error,
-          context: { sessionId: execution.sessionId, rootSessionId: execution.rootSessionId },
-          meta: { workspaceRoot: execution.workspaceRoot },
-        });
+      await this.#config.flushSessionStore(execution.sessionId, execution.workspaceRoot);
+      await this.#applySettlements({
+        workspaceRoot: execution.workspaceRoot,
+        rootSessionId: execution.rootSessionId,
+        sessionId: execution.sessionId,
+        executionId: execution.executionId,
+        settlements: [
+          runSettlement,
+          {
+            ...terminalSettlement,
+            kind: "terminal",
+            usage: zeroUsage(),
+            executionTimeMs: 0,
+            terminalStatus: status,
+          },
+        ],
       });
     }
 
-    this.#forceTerminalizeParentChildLink(execution, reason);
-    this.#releaseExecutionChildSlot(execution);
-
-    this.#active.delete(key);
+    await this.#forceTerminalizeParentChildLink(execution, reason);
+    await this.#releaseExecutionChildSlot(execution);
   }
 
   #attachChildSlotOwnership(
@@ -2112,12 +3198,14 @@ export class SessionExecutionManager {
     pending.childSlotReleased = false;
   }
 
-  #releaseExecutionChildSlot(execution: ActiveSessionExecution | PendingSessionExecution): void {
+  async #releaseExecutionChildSlot(
+    execution: ActiveSessionExecution | PendingSessionExecution,
+  ): Promise<void> {
     const pending = execution as PendingSessionExecution;
     const parentSessionId = pending.childSlotParentSessionId;
     if (parentSessionId === undefined || pending.childSlotReleased) return;
     pending.childSlotReleased = true;
-    this.#releaseChildSlot(execution.workspaceRoot, parentSessionId);
+    await this.#releaseChildSlot(execution.workspaceRoot, parentSessionId);
   }
 
   #isParentChildLinkTerminal(workspaceRoot: string, childSessionId: string): boolean {
@@ -2135,7 +3223,7 @@ export class SessionExecutionManager {
     return false;
   }
 
-  #forceTerminalizeParentChildLink(execution: PendingSessionExecution, reason: string): void {
+  async #forceTerminalizeParentChildLink(execution: PendingSessionExecution, reason: string): Promise<void> {
     const childStore = this.#config.getSessionStore(execution.sessionId, execution.workspaceRoot);
     const childState = childStore?.getState();
     const parentSessionId = childState?.parentSessionId;
@@ -2158,6 +3246,7 @@ export class SessionExecutionManager {
     const run = childState?.executions.at(-1);
     const status = childTerminalStatus(run, execution.abortController.signal);
     if (status === "waiting_for_human") return;
+    const durationUpdatedAt = Date.now();
 
     parentStore.getState().append({
       type: "tool-child-session-link",
@@ -2166,7 +3255,10 @@ export class SessionExecutionManager {
         status,
         ...(run?.startedAt === undefined ? {} : { startedAt: run.startedAt }),
         ...(run?.endedAt === undefined ? {} : { endedAt: run.endedAt }),
-        ...(run?.durationMs === undefined ? {} : { durationMs: run.durationMs }),
+        ...(run?.durationMs === undefined ? {} : {
+          durationMs: run.durationMs,
+          durationUpdatedAt,
+        }),
         error: run?.error ?? reason,
       },
     });
@@ -2175,17 +3267,7 @@ export class SessionExecutionManager {
       appendTerminalReminder(parentStore, execution.sessionId, status);
     }
 
-    void this.#config.flushSessionStore(parentSessionId, execution.workspaceRoot).catch((error) => {
-      this.#logger.error("session.family_stop.force_child_link_flush_failed", {
-        error,
-        context: {
-          sessionId: execution.sessionId,
-          parentSessionId,
-          rootSessionId: execution.rootSessionId,
-        },
-        meta: { workspaceRoot: execution.workspaceRoot },
-      });
-    });
+    await this.#config.flushSessionStore(parentSessionId, execution.workspaceRoot);
   }
 
   #ancestorSessionIds(workspaceRoot: string, sessionId: string | undefined): Set<string> {
@@ -2314,10 +3396,12 @@ export class SessionExecutionManager {
         `Session continuation cannot bypass ${state.pendingMessages.length} pending input message(s)`,
       );
     }
-    if (input.origin !== "tool_batch") return;
-    const activeBatch = state.toolBatches.find((batch) => batch.archivedAt === undefined);
+    if (input.input.kind !== "resume") return;
+    const activeBatch = state.toolBatches.find((batch) =>
+      batch.archivedAt === undefined && batch.executionId === input.executionId
+    );
     if (activeBatch === undefined) {
-      throw new Error(`Session "${input.sessionId}" has no canonical active tool batch to resume`);
+      throw new Error(`Session "${input.sessionId}" has no canonical active Tool Batch for Execution "${input.executionId ?? "none"}"`);
     }
     if (activeBatch.agentName !== state.agentName) {
       throw new Error(
@@ -2461,7 +3545,7 @@ export class SessionExecutionManager {
   #tryAcquireSessionInputMutation(
     workspaceRoot: string,
     rootSessionId: string,
-  ): { readonly kind: "acquired"; readonly release: () => void } | { readonly kind: "wait"; readonly control: SessionFamilyControlState } {
+  ): { readonly kind: "acquired"; readonly release: () => Promise<void> } | { readonly kind: "wait"; readonly control: SessionFamilyControlState } {
     this.#assertWorkspaceOpen(workspaceRoot);
     const key = scopedKey(workspaceRoot, rootSessionId);
     if (this.#deletions.has(key)) {
@@ -2480,21 +3564,17 @@ export class SessionExecutionManager {
     this.#pendingSessionInputMutations.set(key, pending);
 
     let released = false;
-    return { kind: "acquired", release: () => {
+    return { kind: "acquired", release: async () => {
       if (released) return;
       released = true;
       const current = this.#pendingSessionInputMutations.get(key);
       current?.mutations.delete(token);
       if (current?.mutations.size !== 0) return;
       this.#pendingSessionInputMutations.delete(key);
-      void Promise.resolve(this.#config.onSessionInputMutationReleased?.({ workspaceRoot, rootSessionId }))
-        .catch((error) => {
-          this.#logger.warn("session.input-mutation.release-notify_failed", {
-            error,
-            context: { rootSessionId },
-            meta: { workspaceRoot },
-          });
-        });
+      await this.#config.onSessionInputMutationReleased({
+        workspaceRoot,
+        rootSessionId,
+      });
     } };
   }
 
@@ -2507,11 +3587,18 @@ export class SessionExecutionManager {
     this.#childSlots.set(key, reservedChildren + 1);
   }
 
-  #releaseChildSlot(workspaceRoot: string, parentSessionId: string): void {
+  async #releaseChildSlot(
+    workspaceRoot: string,
+    parentSessionId: string,
+  ): Promise<void> {
     const key = scopedKey(workspaceRoot, parentSessionId);
     const reservedChildren = this.#childSlots.get(key) ?? 0;
     if (reservedChildren <= 1) this.#childSlots.delete(key);
     else this.#childSlots.set(key, reservedChildren - 1);
+    await this.#config.onContinuationAdmissionReleased({
+      workspaceRoot,
+      sessionId: parentSessionId,
+    });
   }
 
   #appendChildLinkStatus(
@@ -2534,6 +3621,7 @@ export class SessionExecutionManager {
       );
     }
     const run = childState.executions.at(-1);
+    const durationUpdatedAt = Date.now();
     request.parentStore.getState().append({
       type: "tool-child-session-link",
       link: {
@@ -2541,6 +3629,7 @@ export class SessionExecutionManager {
         parentToolCallId: request.parentToolCallId,
         toolName: request.toolName,
         childSessionId,
+        childExecutionId: request.childExecutionId,
         childAgentName,
         childProfile: delegation.profile,
         childSkillNames: [...childState.activeSkillNames],
@@ -2548,10 +3637,13 @@ export class SessionExecutionManager {
         depth,
         background: background ?? request.request.background,
         status,
-        createdAt: createdAt ?? Date.now(),
+        createdAt: createdAt ?? durationUpdatedAt,
         ...(run?.startedAt === undefined ? {} : { startedAt: run.startedAt }),
         ...(run?.endedAt === undefined ? {} : { endedAt: run.endedAt }),
-        ...(run?.durationMs === undefined ? {} : { durationMs: run.durationMs }),
+        ...(run?.durationMs === undefined ? {} : {
+          durationMs: run.durationMs,
+          durationUpdatedAt,
+        }),
         ...(run?.error === undefined ? {} : { error: run.error }),
       },
     });
@@ -2576,7 +3668,22 @@ export class SessionExecutionManager {
       );
     }
     const run = childState.executions.at(-1);
-    const includeRunMetadata = isTerminalChildSessionStatus(status);
+    const now = Date.now();
+    const isTerminal = isTerminalChildSessionStatus(status);
+    const runMatchesStatus = childLinkStatusFromExecution(run) === status;
+    const openRun = run?.status === "running" ? run.runs.at(-1) : undefined;
+    const durationMs = run === undefined
+      ? undefined
+      : run.durationMs + (
+          openRun !== undefined && openRun.endedAt === undefined
+            ? Math.max(0, now - openRun.startedAt)
+            : 0
+        );
+    const durationUpdatedAt = durationMs === undefined ? undefined : now;
+    const endedAt = isTerminal
+      ? runMatchesStatus ? run?.endedAt ?? now : now
+      : undefined;
+    const error = isTerminal && runMatchesStatus ? run?.error : undefined;
     request.parentStore.getState().append({
       type: "tool-child-session-link",
       link: {
@@ -2584,6 +3691,7 @@ export class SessionExecutionManager {
         parentToolCallId: request.parentToolCallId,
         toolName: request.toolName,
         childSessionId: request.sessionId,
+        childExecutionId: request.childExecutionId,
         childAgentName,
         childProfile: delegation.profile,
         childSkillNames: [...childState.activeSkillNames],
@@ -2592,10 +3700,10 @@ export class SessionExecutionManager {
         background: request.background,
         status,
         createdAt,
-        ...(includeRunMetadata && run?.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
-        ...(includeRunMetadata && run?.endedAt !== undefined ? { endedAt: run.endedAt } : {}),
-        ...(includeRunMetadata && run?.durationMs !== undefined ? { durationMs: run.durationMs } : {}),
-        ...(includeRunMetadata && run?.error !== undefined ? { error: run.error } : {}),
+        ...(run?.startedAt === undefined ? {} : { startedAt: run.startedAt }),
+        ...(endedAt === undefined ? {} : { endedAt }),
+        ...(durationMs === undefined ? {} : { durationMs, durationUpdatedAt }),
+        ...(error === undefined ? {} : { error }),
       },
     });
   }
@@ -2985,7 +4093,7 @@ type SubAgentExecutionStatus = SubAgentTerminalStatus | "waiting_for_human";
 
 function childLinkStatusFromExecution(run: SessionExecutionRecord | undefined): SubAgentExecutionStatus | undefined {
   if (run?.status === "completed") return "completed";
-  if (run?.status === "waiting_for_human") return "waiting_for_human";
+  if (run?.status === "suspended") return "waiting_for_human";
   if (run?.status === "timed_out") return "timed_out";
   if (run?.status === "cancelled" || run?.status === "aborted") return "cancelled";
   if (run?.status === "interrupted") return "interrupted";
@@ -3018,7 +4126,6 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
 function sessionExecutionOrigin(origin: SessionExecutionOrigin | undefined): SessionExecutionOrigin {
   if (
     origin === "tool_call"
-    || origin === "tool_batch"
     || origin === "goal_continuation"
   ) return origin;
   return "user_message";
@@ -3031,6 +4138,115 @@ function subtractUsage(current: NormalizedUsage, initial: NormalizedUsage): Norm
     totalTokens: Math.max(0, current.totalTokens - initial.totalTokens),
     reasoningTokens: Math.max(0, current.reasoningTokens - initial.reasoningTokens),
     cachedInputTokens: Math.max(0, current.cachedInputTokens - initial.cachedInputTokens),
+  };
+}
+
+function zeroUsage(): NormalizedUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    reasoningTokens: 0,
+    cachedInputTokens: 0,
+  };
+}
+
+function nextExecutionStep(state: SessionStoreState, executionId: string | undefined): number {
+  if (executionId === undefined) return 0;
+  let next = 0;
+  for (const step of state.steps) {
+    if (step.executionId === executionId) next = Math.max(next, step.step + 1);
+  }
+  return next;
+}
+
+function recoveryRunEndedAt(
+  state: SessionStoreState,
+  record: SessionExecutionRecord,
+  batch: SessionStoreState["toolBatches"][number] | undefined,
+): number {
+  const run = record.runs.at(-1);
+  if (run === undefined) return record.startedAt;
+  let checkpoint = run.startedAt;
+  if (
+    batch?.executionId === record.id
+    && batch.runOrdinal === run.ordinal
+  ) {
+    for (const call of batch.calls) {
+      checkpoint = Math.max(checkpoint, call.checkpointAt);
+    }
+  }
+  for (const step of state.steps) {
+    if (
+      step.executionId === record.id
+      && step.runOrdinal === run.ordinal
+      && step.completedAt !== undefined
+    ) checkpoint = Math.max(checkpoint, step.completedAt);
+  }
+  for (const message of state.messages) {
+    if (
+      message.executionId === record.id
+      && message.runOrdinal === run.ordinal
+    ) {
+      if (message.completedAt !== undefined) checkpoint = Math.max(checkpoint, message.completedAt);
+      for (const part of message.parts) {
+        if ("completedAt" in part && part.completedAt !== undefined) {
+          checkpoint = Math.max(checkpoint, part.completedAt);
+        }
+        if (part.type !== "tool") continue;
+        checkpoint = Math.max(
+          checkpoint,
+          part.state === "pending"
+            ? part.createdAt
+            : part.state === "running"
+              ? part.startedAt
+              : part.endedAt,
+        );
+      }
+    }
+  }
+  return Math.min(Date.now(), checkpoint);
+}
+
+function recoveredRunUsage(
+  state: SessionStoreState,
+  record: SessionExecutionRecord,
+): NormalizedUsage {
+  const run = record.runs.at(-1);
+  if (run === undefined) return zeroUsage();
+  let usage = zeroUsage();
+  for (const step of state.steps) {
+    if (step.executionId !== record.id || step.runOrdinal !== run.ordinal) continue;
+    usage = addUsage(usage, normalizedStepUsage(step.usage));
+  }
+  return usage;
+}
+
+function normalizedStepUsage(value: unknown): NormalizedUsage {
+  if (typeof value !== "object" || value === null) return zeroUsage();
+  const record = value as Record<string, unknown>;
+  const number = (key: keyof NormalizedUsage): number => {
+    const candidate = record[key];
+    return typeof candidate === "number" && Number.isFinite(candidate)
+      ? Math.max(0, candidate)
+      : 0;
+  };
+  return {
+    inputTokens: number("inputTokens"),
+    outputTokens: number("outputTokens"),
+    totalTokens: number("totalTokens"),
+    reasoningTokens: number("reasoningTokens"),
+    cachedInputTokens: number("cachedInputTokens"),
+  };
+}
+
+function addUsage(left: NormalizedUsage, right: NormalizedUsage): NormalizedUsage {
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    totalTokens: left.totalTokens + right.totalTokens,
+    reasoningTokens: left.reasoningTokens + right.reasoningTokens,
+    cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
   };
 }
 
@@ -3119,13 +4335,52 @@ function queueDispatchEligible(
     return pendingMessages.some((message) => message.acceptedAt > queueDispatchBarrierAt);
   }
   if (lastExecution === undefined) return true;
-  if (lastExecution.status === "running" || lastExecution.status === "waiting_for_human") return false;
+  if (lastExecution.status === "running" || lastExecution.status === "suspended") return false;
+  const terminalExecution = lastExecution;
   if (lastExecution.status === "completed" && lastExecution.stopRequestedAt === undefined) return true;
   const dispatchBarrier = Math.max(
-    lastExecution.endedAt ?? lastExecution.startedAt,
-    lastExecution.stopRequestedAt ?? 0,
+    terminalExecution.endedAt,
+    terminalExecution.stopRequestedAt ?? 0,
   );
   return pendingMessages.some((message) => message.acceptedAt > dispatchBarrier);
+}
+
+function hasExactChildDependency(
+  state: Pick<SessionStoreState, "toolBatches">,
+  input: {
+    readonly parentExecutionId: string;
+    readonly parentRunOrdinal: number;
+    readonly parentToolBatchId: string;
+    readonly parentToolCallId: string;
+    readonly childSessionId: string;
+    readonly childExecutionId: string;
+  },
+): boolean {
+  const batch = state.toolBatches.find((candidate) =>
+    candidate.archivedAt === undefined
+    && candidate.batchId === input.parentToolBatchId
+    && candidate.executionId === input.parentExecutionId
+    && candidate.runOrdinal === input.parentRunOrdinal
+  );
+  const call = batch?.calls.find((candidate) => candidate.toolCallId === input.parentToolCallId);
+  const dependency = call?.childDependency;
+  return call?.state === "child_dependency"
+    && dependency?.kind === "child_dependency"
+    && dependency.parentExecutionId === input.parentExecutionId
+    && dependency.runOrdinal === input.parentRunOrdinal
+    && dependency.toolCallId === input.parentToolCallId
+    && dependency.childSessionId === input.childSessionId
+    && dependency.childExecutionId === input.childExecutionId;
+}
+
+function isMissingSessionError(error: unknown): boolean {
+  return error instanceof SessionFileNotFoundError
+    || (
+      typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "ENOENT"
+    );
 }
 
 function abortExecutionStatus(signal: AbortSignal): "aborted" | "cancelled" | "timed_out" {
@@ -3174,14 +4429,51 @@ function toChildExecutionOutcome(
   const state = store.getState();
   const execution = state.executions.find((candidate) => candidate.id === executionId);
   if (execution === undefined || execution.status === "running") {
-    throw new Error(`Session "${state.sessionId}" has no terminal execution outcome for "${executionId}"`);
+    throw new Error(`Session "${state.sessionId}" has no stopped execution outcome for "${executionId}"`);
+  }
+  if (execution.status === "suspended") {
+    if (execution.suspension.kind === "resume_pending") {
+      throw new Error(`Session "${state.sessionId}" stopped after its dependency became resume-pending`);
+    }
+    return {
+      outcome: "suspended",
+      executionId,
+      suspension: execution.suspension,
+    };
   }
   const output = finalOutputForExecution(state, executionId);
   return {
+    outcome: "terminal",
+    executionId,
     executionStatus: execution.status,
     ...(output === undefined ? {} : { output }),
     ...(execution.error === undefined ? {} : { terminalError: execution.error }),
   };
+}
+
+function scheduleActiveExecutionTimeout(
+  state: Readonly<SessionStoreState>,
+  execution: ActiveSessionExecution,
+  deadlineScheduler: SessionExecutionDeadlineScheduler,
+): SessionExecutionDeadlineHandle | undefined {
+  const record = state.executions.find((candidate) => candidate.id === execution.executionId);
+  const run = record?.runs[execution.runOrdinal];
+  if (
+    record?.status !== "running"
+    || record.activeTimeoutMs === undefined
+    || run === undefined
+    || run.endedAt !== undefined
+  ) return undefined;
+  const currentRunDurationMs = Math.max(0, Date.now() - run.startedAt);
+  const remainingMs = record.activeTimeoutMs - record.durationMs - currentRunDurationMs;
+  if (remainingMs <= 0) {
+    execution.abortController.abort(new Error("Sub-agent timed out"));
+    return undefined;
+  }
+  return deadlineScheduler.schedule(
+    remainingMs,
+    () => execution.abortController.abort(new Error("Sub-agent timed out")),
+  );
 }
 
 async function waitForExecutionToStop(

@@ -10,12 +10,18 @@ import type {
   AfterHook,
   ToolPermission,
   RawToolResult,
+  ChildToolDependency,
+  ToolDescriptorExecutionResult,
   ToolOutputPolicy,
 } from "./types";
+import type { ChildExecutionOutcome } from "../delegation/types";
 
 export type { ToolDescriptor } from "./types";
 
-interface DefineToolConfig<T extends z.ZodTypeAny> {
+interface DefineToolConfig<
+  T extends z.ZodTypeAny,
+  O extends ToolDescriptorExecutionResult,
+> {
   name: string;
   description: string;
   inputSchema: T;
@@ -36,13 +42,31 @@ interface DefineToolConfig<T extends z.ZodTypeAny> {
     response: HitlResponse,
     ctx: ToolExecutionContext,
   ) => MaybePromise<RawToolResult>;
+  resumeChildDependency?: (
+    input: z.infer<T>,
+    dependency: ChildToolDependency,
+    outcome: Extract<ChildExecutionOutcome, { outcome: "terminal" }>,
+    ctx: ToolExecutionContext,
+  ) => MaybePromise<RawToolResult>;
   permissions?: ToolPermission[];
-  execute: (input: z.infer<T>, ctx: ToolExecutionContext) => MaybePromise<RawToolResult>;
+  execute: (input: z.infer<T>, ctx: ToolExecutionContext) => MaybePromise<O>;
 }
 
 export function defineTool<T extends z.ZodTypeAny>(
-  config: DefineToolConfig<T>,
-): ToolDescriptor<z.infer<T>> {
+  config: DefineToolConfig<T, RawToolResult>,
+): ToolDescriptor<z.infer<T>, RawToolResult>;
+export function defineTool<
+  T extends z.ZodTypeAny,
+  O extends ToolDescriptorExecutionResult,
+>(
+  config: DefineToolConfig<T, O>,
+): ToolDescriptor<z.infer<T>, O>;
+export function defineTool<
+  T extends z.ZodTypeAny,
+  O extends ToolDescriptorExecutionResult,
+>(
+  config: DefineToolConfig<T, O>,
+): ToolDescriptor<z.infer<T>, O> {
   return {
     name: config.name,
     description: config.description,
@@ -54,6 +78,7 @@ export function defineTool<T extends z.ZodTypeAny>(
     prepareInput: config.prepareInput,
     prepareBlock: config.prepareBlock,
     resume: config.resume,
+    resumeChildDependency: config.resumeChildDependency,
     permissions: config.permissions,
     execute: config.execute,
   };

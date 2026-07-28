@@ -94,7 +94,7 @@ function binding(context = 1000): ExecutionModelBinding {
 }
 
 function buildCtx(store: ReturnType<typeof createStore>, inputTokens: number): BeforeModelBuildContext {
-  store.setState({ steps: [{ id: "step-1", step: 1, startedAt: 1, usage: { inputTokens, outputTokens: 1, totalTokens: inputTokens + 1 } }] });
+  store.setState({ steps: [{ id: "step-1", executionId: "execution-1", runOrdinal: 0, step: 1, startedAt: 1, usage: { inputTokens, outputTokens: 1, totalTokens: inputTokens + 1 } }] });
   return { store, binding: binding(), logger: silentLogger };
 }
 

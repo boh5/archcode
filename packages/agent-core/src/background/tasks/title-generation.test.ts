@@ -132,11 +132,31 @@ describe("createTitleGenerationTask", () => {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
     const store = createStore(sessionId);
-    store.setState({
-      messages: [
-        {
+    const executionId = crypto.randomUUID();
+    const binding = makeBinding();
+    store.getState().append({
+      type: "execution-start",
+      executionId,
+      binding: binding.summary,
+      origin: "user_message",
+      maxSteps: 50,
+    });
+    store.getState().append({
+      type: "session.messages_committed",
+      executionId,
+      messages: [{
           id: crypto.randomUUID(),
           role: "user",
+          executionId,
+          runOrdinal: 0,
+          clientRequestId: crypto.randomUUID(),
+          modelAudit: {
+            requested: {
+              mode: "profile_default",
+              selection: binding.summary.selection,
+            },
+            actual: binding.summary.selection,
+          },
           parts: [
             {
               type: "text",
@@ -148,12 +168,11 @@ describe("createTitleGenerationTask", () => {
           ],
           createdAt: now,
           completedAt: now,
-        },
-      ],
+        }],
     });
 
     const task = createTitleGenerationTask(store);
-    await task.run(makeTaskContext(store));
+    await task.run(makeTaskContext(store, { binding }));
 
     await storeManager.flushSession(sessionId, WORKSPACE_ROOT);
     const loaded = await new SessionStoreManager({ logger: silentLogger }).getOrLoad(sessionId, WORKSPACE_ROOT);

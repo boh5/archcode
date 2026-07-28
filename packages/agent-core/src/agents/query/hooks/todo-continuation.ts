@@ -35,10 +35,11 @@ function createTodoReminderHook(
 function createTodoLoopContinuationHook(
 ): (ctx: AfterLoopEndContext) => Promise<void> {
   return async (ctx: AfterLoopEndContext) => {
+    if (ctx.loopOutcome.kind !== "terminal") return;
     const state = ctx.store.getState();
     const checkResult = shouldContinueAfterLoop(
       state,
-      ctx.loopEndStatus,
+      ctx.loopOutcome.status,
       Date.now(),
     );
 

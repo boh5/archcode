@@ -20,12 +20,15 @@ import type {
   ToolChildSessionLink,
   TextPart,
   ToolPart,
-  ExecutionEndEvent,
   FinalizedToolResult,
+  ExecutionLifecycleEvent,
+  ExecutionEndEvent,
+  SessionExecutionRecord,
 } from "./types";
 import type { SessionGoalChangedEvent } from "./session-goal";
 import { renderCompressionSummarySnapshot } from "./compression";
 import { addUsage, createEmptySessionStats, normalizeUsage } from "./usage";
+import { validateExecutionTransition } from "./execution";
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
   "pending",
@@ -56,13 +59,26 @@ export function reduceStreamEvent(
   ctx: ReduceContext,
 ): Partial<SessionProjection> {
   const timestamp = ctx.timestamp;
+  if (isExecutionLifecycleEvent(event)) {
+    const transition = validateExecutionTransition(state.executions, event);
+    if (transition.outcome !== "valid") return {};
+  }
 
   switch (event.type) {
     case "execution-start": {
       const executionId = event.executionId;
       const executions = [
         ...(state.executions ?? []),
-        { id: executionId, startedAt: timestamp, status: "running" as const, binding: event.binding, origin: event.origin },
+        {
+          id: executionId,
+          startedAt: timestamp,
+          status: "running" as const,
+          origin: event.origin,
+          maxSteps: event.maxSteps,
+          ...(event.activeTimeoutMs === undefined ? {} : { activeTimeoutMs: event.activeTimeoutMs }),
+          durationMs: 0,
+          runs: [{ ordinal: 0, startedAt: timestamp, binding: event.binding }],
+        },
       ];
 
       return {
@@ -75,17 +91,73 @@ export function reduceStreamEvent(
       };
     }
 
+    case "execution-suspended": {
+      const executions = state.executions.map((execution): SessionExecutionRecord => {
+        if (execution.id !== event.executionId || execution.status !== "running") return execution;
+        const run = execution.runs.at(-1)!;
+        const durationMs = Math.max(0, event.runEndedAt - run.startedAt);
+        return {
+          ...execution,
+          status: "suspended",
+          durationMs: execution.durationMs + durationMs,
+          runs: [
+            ...execution.runs.slice(0, -1),
+            {
+              ...run,
+              endedAt: event.runEndedAt,
+              durationMs,
+              usageDelta: event.runUsageDelta,
+              settlement: event.runSettlement,
+            },
+          ],
+          suspension: event.suspension,
+        };
+      });
+      return {
+        executions,
+        isRunning: false,
+        isStreamingModel: false,
+        currentExecutionId: event.executionId,
+      };
+    }
+
+    case "execution-suspension-updated":
+      return {
+        executions: state.executions.map((execution): SessionExecutionRecord =>
+          execution.id === event.executionId && execution.status === "suspended"
+            ? { ...execution, suspension: event.suspension }
+            : execution
+        ),
+      };
+
+    case "execution-resumed":
+      return {
+        executions: state.executions.map((execution): SessionExecutionRecord =>
+          execution.id === event.executionId && execution.status === "suspended"
+            ? resumeExecution(execution, event.runOrdinal, event.binding, timestamp)
+            : execution
+        ),
+        isRunning: true,
+        isStreamingModel: false,
+        currentExecutionId: event.executionId,
+      };
+
     case "execution-end": {
-      const executions = settleCurrentExecution(state.executions ?? [], state.currentExecutionId, event, timestamp);
+      const executions = endExecution(state, event);
 
       return {
-        messages: settleIncompleteState(state.messages, state.currentAssistantMessageId, timestamp, event.status),
+        messages: settleIncompleteState(
+          state.messages,
+          state.currentAssistantMessageId,
+          event.endedAt,
+          event.terminalStatus,
+        ),
         executions,
         executionCount: executions.length,
         isRunning: false,
         isStreamingModel: false,
         currentExecutionId: undefined,
-        currentAssistantMessageId: event.status === "waiting_for_human" ? state.currentAssistantMessageId : undefined,
+        currentAssistantMessageId: undefined,
       };
     }
 
@@ -153,7 +225,7 @@ export function reduceStreamEvent(
         parts: [part],
         createdAt: timestamp,
         completedAt: timestamp,
-        executionId: state.currentExecutionId,
+        ...currentMessageExecution(state),
       };
 
       return { messages: [...state.messages, message] };
@@ -494,6 +566,9 @@ export function reduceStreamEvent(
     }
 
     case "step-start": {
+      const executionId = state.currentExecutionId;
+      const runOrdinal = currentRunOrdinal(state);
+      if (executionId === undefined || runOrdinal === undefined) return {};
       const resetAssistantMessage = event.step > 0 ? undefined : state.currentAssistantMessageId;
 
       return {
@@ -504,7 +579,8 @@ export function reduceStreamEvent(
           {
             id: ctx.generateId(),
             step: event.step,
-            executionId: state.currentExecutionId,
+            executionId,
+            runOrdinal,
             startedAt: timestamp,
           },
         ],
@@ -513,9 +589,15 @@ export function reduceStreamEvent(
     }
 
     case "step-end": {
+      const executionId = state.currentExecutionId;
+      const runOrdinal = currentRunOrdinal(state);
+      if (executionId === undefined || runOrdinal === undefined) return {};
       const usage = normalizeUsage(event.usage);
       const hasOpenStep = state.steps.some(
-        (step) => step.step === event.step && step.executionId === state.currentExecutionId && !step.completedAt,
+        (step) => step.step === event.step
+          && step.executionId === executionId
+          && step.runOrdinal === runOrdinal
+          && !step.completedAt,
       );
       const messages = event.finishReason === "interrupted"
         ? markCurrentAssistantModelOutputInterrupted(state.messages, state.currentAssistantMessageId, timestamp)
@@ -523,7 +605,10 @@ export function reduceStreamEvent(
       return {
         isStreamingModel: false,
         steps: state.steps.map((step) =>
-          step.step === event.step && step.executionId === state.currentExecutionId && !step.completedAt
+          step.step === event.step
+            && step.executionId === executionId
+            && step.runOrdinal === runOrdinal
+            && !step.completedAt
             ? {
                 ...step,
                 completedAt: timestamp,
@@ -541,10 +626,15 @@ export function reduceStreamEvent(
       // Preparation can fail before a model Step exists. Keep the durable error
       // event without fabricating a Step that never started.
       if (event.step === undefined) return {};
+      const executionId = state.currentExecutionId;
+      const runOrdinal = currentRunOrdinal(state);
+      if (executionId === undefined || runOrdinal === undefined) return {};
 
       const matchingStep =
         state.steps.find(
-          (step) => step.step === event.step && step.executionId === state.currentExecutionId,
+          (step) => step.step === event.step
+            && step.executionId === executionId
+            && step.runOrdinal === runOrdinal,
         );
 
       if (matchingStep) {
@@ -561,7 +651,8 @@ export function reduceStreamEvent(
           {
             id: ctx.generateId(),
             step: event.step,
-            executionId: state.currentExecutionId,
+            executionId,
+            runOrdinal,
             startedAt: timestamp,
             error: event.error,
           },
@@ -840,7 +931,8 @@ function upsertChildSessionLink(
   const existingIndex = links.findIndex((link) =>
     link.parentSessionId === nextLink.parentSessionId &&
     link.parentToolCallId === nextLink.parentToolCallId &&
-    link.childSessionId === nextLink.childSessionId
+    link.childSessionId === nextLink.childSessionId &&
+    link.childExecutionId === nextLink.childExecutionId
   );
 
   if (existingIndex === -1) return [...links, nextLink];
@@ -918,35 +1010,99 @@ function incrementStepCompleted(stats: SessionStats, usage: ReturnType<typeof no
   };
 }
 
-function settleCurrentExecution(
-  executions: SessionProjection["executions"],
-  currentExecutionId: string | undefined,
-  event: ExecutionEndEvent,
-  timestamp: number,
-): SessionProjection["executions"] {
-  if (!currentExecutionId) return executions;
+function isExecutionLifecycleEvent(
+  event: StreamEvent | SessionGoalChangedEvent,
+): event is ExecutionLifecycleEvent {
+  return event.type === "execution-start"
+    || event.type === "execution-suspended"
+    || event.type === "execution-suspension-updated"
+    || event.type === "execution-resumed"
+    || event.type === "execution-end";
+}
 
-  let changed = false;
-  const updated = executions.map((run) => {
-    if (run.id !== currentExecutionId || run.status !== "running") return run;
-    changed = true;
+function endExecution(
+  state: SessionProjection,
+  event: ExecutionEndEvent,
+): SessionExecutionRecord[] {
+  return state.executions.map((execution): SessionExecutionRecord => {
+    if (execution.id !== event.executionId
+      || (execution.status !== "running" && execution.status !== "suspended")) {
+      return execution;
+    }
+
+    const { status: _status, ...record } = execution;
+    let runs = execution.runs;
+    let durationMs = execution.durationMs;
+    if (execution.status === "running") {
+      const run = execution.runs.at(-1)!;
+      const runDurationMs = Math.max(0, event.runEndedAt! - run.startedAt);
+      durationMs += runDurationMs;
+      runs = [
+        ...execution.runs.slice(0, -1),
+        {
+          ...run,
+          endedAt: event.runEndedAt!,
+          durationMs: runDurationMs,
+          usageDelta: event.runUsageDelta!,
+          settlement: event.runSettlement!,
+        },
+      ];
+    }
+
+    const { suspension: _suspension, ...terminalBase } = record;
     return {
-      ...run,
-      status: event.status,
-      endedAt: timestamp,
-      durationMs: timestamp - run.startedAt,
-      ...(event.error ? { error: event.error } : {}),
+      ...terminalBase,
+      status: event.terminalStatus,
+      durationMs,
+      runs,
+      endedAt: event.endedAt,
+      ...(event.error === undefined ? {} : { error: event.error }),
+      terminalSettlement: event.terminalSettlement,
     };
   });
+}
 
-  return changed ? updated : executions;
+function resumeExecution(
+  execution: Extract<SessionExecutionRecord, { status: "suspended" }>,
+  runOrdinal: number,
+  binding: Extract<ExecutionLifecycleEvent, { type: "execution-resumed" }>["binding"],
+  startedAt: number,
+): SessionExecutionRecord {
+  const { status: _status, suspension: _suspension, ...record } = execution;
+  return {
+    ...record,
+    status: "running",
+    runs: [
+      ...execution.runs,
+      {
+        ordinal: runOrdinal,
+        startedAt,
+        binding,
+      },
+    ],
+  };
+}
+
+function currentRunOrdinal(state: SessionProjection): number | undefined {
+  if (state.currentExecutionId === undefined) return undefined;
+  return state.executions.find((execution) => execution.id === state.currentExecutionId)?.runs.at(-1)?.ordinal;
+}
+
+function currentMessageExecution(
+  state: SessionProjection,
+): Pick<SessionMessage, "executionId" | "runOrdinal"> | Record<string, never> {
+  const executionId = state.currentExecutionId;
+  const runOrdinal = currentRunOrdinal(state);
+  return executionId === undefined || runOrdinal === undefined
+    ? {}
+    : { executionId, runOrdinal };
 }
 
 function settleIncompleteState(
   messages: SessionMessage[],
   currentAssistantMessageId: string | undefined,
   timestamp: number,
-  executionStatus: ExecutionEndEvent["status"],
+  executionStatus: ExecutionEndEvent["terminalStatus"],
 ): SessionMessage[] {
   const shouldDiscardPartialModelOutput = executionStatus === "interrupted" || executionStatus === "failed";
   return messages.map((message) => {
@@ -1058,7 +1214,7 @@ function ensureCurrentAssistantMessage(
     role: "assistant",
     parts: [],
     createdAt: timestamp,
-    executionId: state.currentExecutionId,
+    ...currentMessageExecution(state),
   };
 
   return {

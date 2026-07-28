@@ -60,6 +60,8 @@ export interface SessionGoal {
   status: SessionGoalStatus;
   tokenBudget?: number;
   usage: SessionGoalUsage;
+  /** Deterministic run/terminal settlement keys already applied to this Goal instance. */
+  settlementReceipts: string[];
   /** Retained while a higher-priority budget gate is visible. */
   blockedReason?: string;
   createdAt: number;

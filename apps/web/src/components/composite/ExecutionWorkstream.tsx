@@ -10,17 +10,11 @@ import {
   type TouchEvent as ReactTouchEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
-import {
-  ChevronDown,
-  CircleAlert,
-  Info,
-  TriangleAlert,
-} from "lucide-react";
+import { ChevronDown, CircleAlert, Info, TriangleAlert } from "lucide-react";
 import {
   TOOL_DELEGATE,
   type AgentDescriptor,
   type ProfileName,
-  type SessionExecutionInputCheckpoint,
   type SessionExecutionRecord,
   type SessionMessage,
   type SessionPart,
@@ -33,6 +27,7 @@ import {
   buildExecutionWorkstream,
   type ExecutionWorkstreamDiagnostic,
   type ExecutionWorkstreamExecution,
+  type ExecutionWorkstreamSegment,
   type ExecutionWorkstreamProjection,
   stabilizeExecutionWorkstreamProjection,
 } from "../../lib/execution-workstream";
@@ -80,7 +75,8 @@ interface WorkstreamUiSnapshot {
 
 const workstreamUiBySession = new Map<string, WorkstreamUiSnapshot>();
 const workstreamRouteLifecycleGeneration = new Map<string, number>();
-let executionTurnRenderObserverForTest: ((executionId: string) => void) | undefined;
+let executionTurnRenderObserverForTest:
+  ((executionId: string) => void) | undefined;
 
 /** Test-only render isolation probe; production leaves it undefined. */
 export function __setExecutionTurnRenderObserverForTest(
@@ -89,7 +85,11 @@ export function __setExecutionTurnRenderObserverForTest(
   executionTurnRenderObserverForTest = observer;
 }
 
-function workstreamUiKey(slug: string, routeScopeId: string, sessionId: string): string {
+function workstreamUiKey(
+  slug: string,
+  routeScopeId: string,
+  sessionId: string,
+): string {
   return `${slug}\u0000${routeScopeId}\u0000${sessionId}`;
 }
 
@@ -105,7 +105,10 @@ function createWorkstreamUiSnapshot(): WorkstreamUiSnapshot {
 }
 
 function distanceFromBottom(element: HTMLElement): number {
-  return Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
+  return Math.max(
+    0,
+    element.scrollHeight - element.scrollTop - element.clientHeight,
+  );
 }
 
 function scrollElementTo(
@@ -121,18 +124,28 @@ function scrollElementTo(
 }
 
 function prefersReducedMotion(): boolean {
-  return typeof window !== "undefined"
-    && typeof window.matchMedia === "function"
-    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement
-    && (target.matches("input, textarea, select, [contenteditable='true']")
-      || target.closest("[data-testid='session-composer-dock'], [data-inspector-surface]") !== null);
+  return (
+    target instanceof HTMLElement &&
+    (target.matches("input, textarea, select, [contenteditable='true']") ||
+      target.closest(
+        "[data-testid='session-composer-dock'], [data-inspector-surface]",
+      ) !== null)
+  );
 }
 
-function getWorkstreamUiSnapshot(slug: string, routeScopeId: string, sessionId: string): WorkstreamUiSnapshot {
+function getWorkstreamUiSnapshot(
+  slug: string,
+  routeScopeId: string,
+  sessionId: string,
+): WorkstreamUiSnapshot {
   const key = workstreamUiKey(slug, routeScopeId, sessionId);
   const existing = workstreamUiBySession.get(key);
   if (existing) return existing;
@@ -142,10 +155,14 @@ function getWorkstreamUiSnapshot(slug: string, routeScopeId: string, sessionId: 
 }
 
 /** Route cleanup boundary: UI-only state never survives a Session route lifecycle. */
-export function clearExecutionWorkstreamUiState(slug: string, routeScopeId?: string): void {
-  const prefix = routeScopeId === undefined
-    ? `${slug}\u0000`
-    : `${slug}\u0000${routeScopeId}\u0000`;
+export function clearExecutionWorkstreamUiState(
+  slug: string,
+  routeScopeId?: string,
+): void {
+  const prefix =
+    routeScopeId === undefined
+      ? `${slug}\u0000`
+      : `${slug}\u0000${routeScopeId}\u0000`;
   for (const key of workstreamUiBySession.keys()) {
     if (key.startsWith(prefix)) workstreamUiBySession.delete(key);
   }
@@ -161,20 +178,27 @@ export function retainExecutionWorkstreamUiState(
   routeScopeId: string,
 ): () => void {
   const lifecycleKey = `${slug}\u0000${routeScopeId}`;
-  const generation = (workstreamRouteLifecycleGeneration.get(lifecycleKey) ?? 0) + 1;
+  const generation =
+    (workstreamRouteLifecycleGeneration.get(lifecycleKey) ?? 0) + 1;
   workstreamRouteLifecycleGeneration.set(lifecycleKey, generation);
 
   return () => {
     queueMicrotask(() => {
-      if (workstreamRouteLifecycleGeneration.get(lifecycleKey) !== generation) return;
+      if (workstreamRouteLifecycleGeneration.get(lifecycleKey) !== generation)
+        return;
       workstreamRouteLifecycleGeneration.delete(lifecycleKey);
       clearExecutionWorkstreamUiState(slug, routeScopeId);
     });
   };
 }
 
-function selectionLabel(selection: { model: string; variant?: string }): string {
-  return selection.variant ? `${selection.model} · ${selection.variant}` : selection.model;
+function selectionLabel(selection: {
+  model: string;
+  variant?: string;
+}): string {
+  return selection.variant
+    ? `${selection.model} · ${selection.variant}`
+    : selection.model;
 }
 
 export function MsgUser({
@@ -202,7 +226,11 @@ export function MsgUser({
       {parts.map((part) => {
         if (part.type === "text") {
           return (
-            <div key={part.id} className="flex w-full justify-end" data-user-message-row="">
+            <div
+              key={part.id}
+              className="flex w-full justify-end"
+              data-user-message-row=""
+            >
               <div
                 className="min-w-0 max-w-[660px] whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-border-subtle bg-bg-muted px-4 py-3.5 text-[15px] leading-[1.66] text-text-primary"
                 data-user-message-surface=""
@@ -213,7 +241,11 @@ export function MsgUser({
           );
         }
         return (
-          <div key={part.id} className="conversation-part" data-conversation-part={part.type === "tool" ? "tool" : "content"}>
+          <div
+            key={part.id}
+            className="conversation-part"
+            data-conversation-part={part.type === "tool" ? "tool" : "content"}
+          >
             <PartRenderer
               part={part}
               projectSlug={projectSlug}
@@ -225,8 +257,13 @@ export function MsgUser({
       })}
       <div className="flex flex-wrap items-center justify-end gap-x-2 text-[12px] text-text-tertiary">
         {modelChanged && message.modelAudit && (
-          <span className="text-warning" data-testid={`message-model-change-${message.id}`}>
-            Model changed: {selectionLabel(message.modelAudit.requested.selection)} → {selectionLabel(message.modelAudit.actual)}
+          <span
+            className="text-warning"
+            data-testid={`message-model-change-${message.id}`}
+          >
+            Model changed:{" "}
+            {selectionLabel(message.modelAudit.requested.selection)} →{" "}
+            {selectionLabel(message.modelAudit.actual)}
           </span>
         )}
         {modelChanged && onInspectModelAudit && (
@@ -255,13 +292,26 @@ function SystemNoticeBlock({ part }: { part: SystemNoticePart }) {
   );
 }
 
-function CompactionBlock({ part }: { part: Extract<SessionPart, { type: "compaction" }> }) {
+function CompactionBlock({
+  part,
+}: {
+  part: Extract<SessionPart, { type: "compaction" }>;
+}) {
   return (
     <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
       <div className="flex items-center gap-2 border-b border-border-subtle bg-transparent px-3 py-2">
-        <Info size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
-        <span className="text-[11px] font-medium text-text-tertiary">Hard context compaction</span>
-        <RelativeTime timestamp={part.compactedAt} className="ml-auto text-[11px] text-text-tertiary" />
+        <Info
+          size={12}
+          className="shrink-0 text-text-muted"
+          aria-hidden="true"
+        />
+        <span className="text-[11px] font-medium text-text-tertiary">
+          Hard context compaction
+        </span>
+        <RelativeTime
+          timestamp={part.compactedAt}
+          className="ml-auto text-[11px] text-text-tertiary"
+        />
       </div>
       <div className="whitespace-pre-wrap px-3 py-2 text-[12px] leading-4 text-text-secondary">
         {part.summary}
@@ -291,16 +341,22 @@ export function PartRenderer({
 }) {
   switch (part.type) {
     case "text": {
-      const interrupted = (part.meta as Record<string, unknown> | undefined)?.interrupted === true;
+      const interrupted =
+        (part.meta as Record<string, unknown> | undefined)?.interrupted ===
+        true;
       return (
         <div className="max-w-[72ch] text-[13px] leading-[1.7] text-text-secondary">
           {interrupted && <InterruptedBadge />}
-          <MarkdownContent isStreaming={!part.completedAt}>{part.text}</MarkdownContent>
+          <MarkdownContent isStreaming={!part.completedAt}>
+            {part.text}
+          </MarkdownContent>
         </div>
       );
     }
     case "reasoning": {
-      const interrupted = (part.meta as Record<string, unknown> | undefined)?.interrupted === true;
+      const interrupted =
+        (part.meta as Record<string, unknown> | undefined)?.interrupted ===
+        true;
       return (
         <div>
           {interrupted && <InterruptedBadge />}
@@ -321,7 +377,13 @@ export function PartRenderer({
           />
         );
       }
-      return <ToolCard part={part} projectSlug={projectSlug} sessionId={focusStoreSessionId} />;
+      return (
+        <ToolCard
+          part={part}
+          projectSlug={projectSlug}
+          sessionId={focusStoreSessionId}
+        />
+      );
     case "system-notice":
       return <SystemNoticeBlock part={part} />;
     case "compaction":
@@ -352,7 +414,11 @@ function MsgAgent({
         {parts.map((entry) => {
           const partKind = entry.type === "tool" ? "tool" : "content";
           return (
-            <div key={entry.id} className="conversation-part" data-conversation-part={partKind}>
+            <div
+              key={entry.id}
+              className="conversation-part"
+              data-conversation-part={partKind}
+            >
               <PartRenderer
                 part={entry}
                 projectSlug={projectSlug}
@@ -405,8 +471,10 @@ function SessionMessageView({
   );
 }
 
-function currentExecutionActivity(execution: ExecutionWorkstreamExecution): string | undefined {
-  const parts = execution.workMessages.flatMap((slice) => slice.parts);
+function currentExecutionActivity(
+  segment: ExecutionWorkstreamSegment,
+): string | undefined {
+  const parts = segment.workMessages.flatMap((slice) => slice.parts);
   let latestActiveTool: Extract<SessionPart, { type: "tool" }> | undefined;
   for (let index = parts.length - 1; index >= 0; index -= 1) {
     const part = parts[index];
@@ -452,75 +520,79 @@ function FinalAgentResponse({
 
 function WorkDisclosure({
   execution,
+  segment,
   expanded,
   projectSlug,
   focusStoreSessionId,
   onToggle,
   onInspectModelAudit,
-  checkpoint,
-  continuationExecutionNumber,
   buttonRef,
+  current,
 }: {
   execution: ExecutionWorkstreamExecution;
+  segment: ExecutionWorkstreamSegment;
   expanded: boolean;
   projectSlug: string;
   focusStoreSessionId: string;
   onToggle: (button: HTMLButtonElement) => void;
   onInspectModelAudit?: (messageId: string) => void;
-  checkpoint?: SessionExecutionInputCheckpoint;
-  continuationExecutionNumber?: number;
   buttonRef: (button: HTMLButtonElement | null) => void;
+  current: boolean;
 }) {
   const timeline = useMemo(
-    () => buildToolRunTimeline(execution.workMessages),
-    [execution.workMessages],
+    () => buildToolRunTimeline(segment.workMessages),
+    [segment.workMessages],
   );
   const hasReasoningText = useMemo(
-    () => execution.workMessages.some(({ parts }) =>
-      parts.some((part) => part.type === "reasoning" && part.text.trim().length > 0)
-    ),
-    [execution.workMessages],
+    () =>
+      segment.workMessages.some(({ parts }) =>
+        parts.some(
+          (part) => part.type === "reasoning" && part.text.trim().length > 0,
+        ),
+      ),
+    [segment.workMessages],
   );
-  const status = presentExecutionStatus(execution.record.status, checkpoint);
+  const status = presentExecutionStatus(execution.record);
+  const active = current && execution.record.status === "running";
   const duration = useElapsedTime({
-    startedAt: execution.record.startedAt,
-    active: execution.record.status === "running",
-    durationMs: execution.record.durationMs,
-    endedAt: execution.record.endedAt,
+    startedAt: segment.windowStartedAt,
+    active,
+    durationMs: segment.activeDurationMs,
+    ...(active ? { durationUpdatedAt: segment.windowEndedAt } : {}),
+    endedAt: segment.windowEndedAt,
   });
-  const currentActivity = execution.record.status === "running"
-    ? currentExecutionActivity(execution)
-    : undefined;
-  const primaryLabel = execution.record.status === "running"
-    ? `Working · ${duration}`
-    : execution.record.status === "completed"
-      ? `Worked for ${duration}`
-      : status.productStatus === "stopped" && status.detail
-        ? `${status.label} · ${status.detail}`
-        : status.label;
-  const accessibleState = execution.record.status === "completed"
-    ? "completed"
-    : execution.record.status === "running"
-      ? "running"
-      : status.label.toLowerCase();
+  const currentActivity =
+    active
+      ? currentExecutionActivity(segment)
+      : undefined;
+  const primaryLabel =
+    active
+      ? `Working for ${duration}`
+      : current && execution.record.status === "suspended"
+        ? `${status.label} · Worked for ${duration}`
+        : `Worked for ${duration}`;
+  const accessibleState =
+    active ? "running" : current && execution.record.status === "suspended"
+      ? status.productStatus
+      : "closed";
   const accessibleName = [
-    `Execution ${execution.number}`,
+    "Work segment",
     accessibleState,
-    execution.record.status === "completed" ? `worked for ${duration}` : `elapsed ${duration}`,
+    `worked for ${duration}`,
     currentActivity,
-    status.detail,
-    continuationExecutionNumber === undefined
-      ? undefined
-      : `continued in Execution ${continuationExecutionNumber}`,
-  ].filter(Boolean).join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <section
       className="w-full min-w-0"
-      data-testid={`work-disclosure-${execution.id}`}
+      data-testid={`work-disclosure-${segment.id}`}
       data-work-expanded={expanded ? "true" : "false"}
-      data-product-status={status.productStatus}
-      title={status.detail ? `${status.label} · ${status.detail}` : status.label}
+      data-product-status={current ? status.productStatus : "completed"}
+      title={
+        status.detail ? `${status.label} · ${status.detail}` : status.label
+      }
     >
       <button
         ref={buttonRef}
@@ -528,9 +600,9 @@ function WorkDisclosure({
         className={`work-summary-control group relative flex min-h-8 cursor-pointer items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${WORK_ACTIVITY_LANE_CLASS}`}
         onClick={(event) => onToggle(event.currentTarget)}
         aria-expanded={expanded}
-        aria-controls={`work-body-${execution.id}`}
+        aria-controls={`work-body-${segment.id}`}
         aria-label={accessibleName}
-        data-testid={`work-summary-${execution.id}`}
+        data-testid={`work-summary-${segment.id}`}
       >
         <ChevronDown
           size={13}
@@ -540,32 +612,40 @@ function WorkDisclosure({
         <strong className="shrink-0 text-[13px] font-semibold leading-5 text-inherit">
           <span className="tabular-nums">{primaryLabel}</span>
         </strong>
-        {execution.record.status === "running" && (
-          <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-signal" aria-hidden="true" />
+        {active && (
+          <span
+            className="h-[7px] w-[7px] shrink-0 rounded-full bg-signal"
+            aria-hidden="true"
+          />
         )}
         {currentActivity && (
           <span className="min-w-0 truncate text-[12px] leading-4 text-text-tertiary">
-            <span aria-hidden="true" className="mr-2 text-border-strong">—</span>
+            <span aria-hidden="true" className="mr-2 text-border-strong">
+              —
+            </span>
             {currentActivity}
           </span>
         )}
         <span
           className="h-px min-w-6 flex-1 bg-border-subtle transition-colors duration-[var(--motion-hover)] group-hover:bg-border-default"
-          data-testid={`work-divider-${execution.id}`}
+          data-testid={`work-divider-${segment.id}`}
           aria-hidden="true"
         />
       </button>
       {expanded && (
         <div
-          id={`work-body-${execution.id}`}
+          id={`work-body-${segment.id}`}
           className="ml-1 flex w-[calc(100%-4px)] min-w-0 flex-col gap-3 border-l border-border-subtle pb-2 pl-5 pt-2"
           data-testid={`work-body-${execution.id}`}
         >
-          {execution.reasoningTokens > 0 && !hasReasoningText && (
-            <ReasoningUsageSummary tokens={execution.reasoningTokens} />
-          )}
-          {timeline.map((entry) => entry.kind === "tool-run"
-            ? (
+          {current &&
+            execution.reasoningTokens > 0 &&
+            !hasReasoningText &&
+            segment.workMessages.length > 0 && (
+              <ReasoningUsageSummary tokens={execution.reasoningTokens} />
+            )}
+          {timeline.map((entry) =>
+            entry.kind === "tool-run" ? (
               <div
                 key={entry.id}
                 className="conversation-part"
@@ -579,8 +659,7 @@ function WorkDisclosure({
                   sessionId={focusStoreSessionId}
                 />
               </div>
-            )
-            : (
+            ) : (
               <SessionMessageView
                 key={entry.id}
                 message={entry.message}
@@ -590,24 +669,25 @@ function WorkDisclosure({
                 childSessionLinks={execution.childSessionLinks}
                 onInspectModelAudit={onInspectModelAudit}
               />
-            ))}
-          {status.productStatus === "stopped" && status.detail && (
-            <div
-              className={`rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[11px] text-text-secondary ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
-              data-testid={`execution-stop-detail-${execution.id}`}
-            >
-              <span className="font-medium">Stop reason · {status.detail}</span>
-              {execution.record.error && <span className="mt-1 block text-error">{execution.record.error}</span>}
-            </div>
+            ),
           )}
-          {continuationExecutionNumber !== undefined && (
-            <div
-              className="rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[11px] text-text-secondary"
-              data-testid={`execution-continuation-${execution.id}`}
-            >
-              Input received · Continued in Execution {continuationExecutionNumber}
-            </div>
-          )}
+          {segment === execution.segments.at(-1) &&
+            status.productStatus === "stopped" &&
+            status.detail && (
+              <div
+                className={`rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[11px] text-text-secondary ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
+                data-testid={`execution-stop-detail-${segment.id}`}
+              >
+                <span className="font-medium">
+                  Stop reason · {status.detail}
+                </span>
+                {execution.record.error && (
+                  <span className="mt-1 block text-error">
+                    {execution.record.error}
+                  </span>
+                )}
+              </div>
+            )}
         </div>
       )}
     </section>
@@ -616,26 +696,22 @@ function WorkDisclosure({
 
 interface ExecutionTurnProps {
   execution: ExecutionWorkstreamExecution;
-  expanded: boolean;
+  expandedIds: ReadonlySet<string>;
   projectSlug: string;
   focusStoreSessionId: string;
-  onToggle: (executionId: string, button: HTMLButtonElement) => void;
-  onButtonRef: (executionId: string, button: HTMLButtonElement | null) => void;
-  onArticleRef: (executionId: string, article: HTMLElement | null) => void;
+  onToggle: (segmentId: string, button: HTMLButtonElement) => void;
+  onButtonRef: (segmentId: string, button: HTMLButtonElement | null) => void;
+  onArticleRef: (segmentId: string, article: HTMLElement | null) => void;
   onInspectModelAudit?: (messageId: string) => void;
-  checkpoint?: SessionExecutionInputCheckpoint;
-  continuationExecutionNumber?: number;
 }
 
 const ExecutionTurn = memo(function ExecutionTurn({
   execution,
-  expanded,
+  expandedIds,
   projectSlug,
   focusStoreSessionId,
   onToggle,
   onInspectModelAudit,
-  checkpoint,
-  continuationExecutionNumber,
   onButtonRef,
   onArticleRef,
 }: ExecutionTurnProps) {
@@ -643,38 +719,57 @@ const ExecutionTurn = memo(function ExecutionTurn({
 
   return (
     <article
-      ref={(article) => onArticleRef(execution.id, article)}
       className="flex min-w-0 scroll-mt-4 flex-col gap-3"
       data-testid={`execution-turn-${execution.id}`}
-      data-execution-navigation-target={execution.id}
     >
-      {execution.userMessages.map((message) => (
-        <MsgUser
-          key={message.id}
-          message={message}
-          projectSlug={projectSlug}
-          focusStoreSessionId={focusStoreSessionId}
-          childSessionLinks={execution.childSessionLinks}
-          onInspectModelAudit={onInspectModelAudit}
-        />
+      {execution.segments.map((segment, index) => (
+        <section
+          key={segment.id}
+          ref={(section) => onArticleRef(segment.id, section)}
+          className="flex min-w-0 scroll-mt-4 flex-col gap-3"
+          data-execution-navigation-target={segment.id}
+          data-work-segment={segment.id}
+        >
+          {segment.inputMessages.map((message) => (
+            <MsgUser
+              key={message.id}
+              message={message}
+              projectSlug={projectSlug}
+              focusStoreSessionId={focusStoreSessionId}
+              childSessionLinks={execution.childSessionLinks}
+              onInspectModelAudit={onInspectModelAudit}
+            />
+          ))}
+          <WorkDisclosure
+            execution={execution}
+            segment={segment}
+            expanded={expandedIds.has(segment.id)}
+            projectSlug={projectSlug}
+            focusStoreSessionId={focusStoreSessionId}
+            onToggle={(button) => onToggle(segment.id, button)}
+            onInspectModelAudit={onInspectModelAudit}
+            buttonRef={(button) => onButtonRef(segment.id, button)}
+            current={index === execution.segments.length - 1}
+          />
+          {segment.outputMessages.map(({ message, parts }) => (
+            <SessionMessageView
+              key={`${message.id}:output`}
+              message={message}
+              parts={parts}
+              projectSlug={projectSlug}
+              focusStoreSessionId={focusStoreSessionId}
+              childSessionLinks={execution.childSessionLinks}
+              onInspectModelAudit={onInspectModelAudit}
+            />
+          ))}
+          {segment.finalResponse && (
+            <FinalAgentResponse
+              message={segment.finalResponse.message}
+              textParts={segment.finalResponse.textParts}
+            />
+          )}
+        </section>
       ))}
-      <WorkDisclosure
-        execution={execution}
-        expanded={expanded}
-        projectSlug={projectSlug}
-        focusStoreSessionId={focusStoreSessionId}
-        checkpoint={checkpoint}
-        continuationExecutionNumber={continuationExecutionNumber}
-        onToggle={(button) => onToggle(execution.id, button)}
-        onInspectModelAudit={onInspectModelAudit}
-        buttonRef={(button) => onButtonRef(execution.id, button)}
-      />
-      {execution.finalResponse && (
-        <FinalAgentResponse
-          message={execution.finalResponse.message}
-          textParts={execution.finalResponse.textParts}
-        />
-      )}
     </article>
   );
 });
@@ -690,15 +785,22 @@ function DiagnosticBlock({
   focusStoreSessionId: string;
   onInspectModelAudit?: (messageId: string) => void;
 }) {
-  const messages = diagnostic.code === "duplicate_execution" ? diagnostic.messages : [diagnostic.message];
-  const title = diagnostic.code === "orphan_message"
-    ? "Message is missing an Execution reference"
-    : diagnostic.code === "unknown_execution"
-      ? `Message references unknown Execution ${diagnostic.executionId}`
-      : `Duplicate Execution id ${diagnostic.executionId}`;
+  const messages =
+    diagnostic.code === "duplicate_execution"
+      ? diagnostic.messages
+      : [diagnostic.message];
+  const title =
+    diagnostic.code === "orphan_message"
+      ? "Message is missing an Execution reference"
+      : diagnostic.code === "unknown_execution"
+        ? `Message references unknown Execution ${diagnostic.executionId}`
+        : `Duplicate Execution id ${diagnostic.executionId}`;
 
   return (
-    <section className="overflow-hidden rounded-md border border-error/40 bg-error-muted" data-testid={`workstream-diagnostic-${diagnostic.code}`}>
+    <section
+      className="overflow-hidden rounded-md border border-error/40 bg-error-muted"
+      data-testid={`workstream-diagnostic-${diagnostic.code}`}
+    >
       <div className="flex items-center gap-2 border-b border-error/20 px-3 py-2 text-xs font-medium text-error">
         <CircleAlert size={14} />
         <span>{title}</span>
@@ -739,62 +841,83 @@ export function ExecutionWorkstream({
   onInspectModelAudit,
 }: ExecutionWorkstreamProps) {
   const messages = useSessionStore(sessionId, (state) => state.messages, slug);
-  const executions = useSessionStore(sessionId, (state) => state.executions, slug);
+  const executions = useSessionStore(
+    sessionId,
+    (state) => state.executions,
+    slug,
+  );
   const steps = useSessionStore(sessionId, (state) => state.steps, slug);
-  const executionInputCheckpoints = useSessionStore(sessionId, (state) => state.executionInputCheckpoints ?? [], slug);
-  const childSessionLinks = useSessionStore(sessionId, (state) => state.childSessionLinks, slug);
-  const compression = useSessionStore(sessionId, (state) => state.compression, slug);
-  const focusStoreSessionId = useSessionStore(sessionId, (state) => state.rootSessionId, slug);
+  const childSessionLinks = useSessionStore(
+    sessionId,
+    (state) => state.childSessionLinks,
+    slug,
+  );
+  const compression = useSessionStore(
+    sessionId,
+    (state) => state.compression,
+    slug,
+  );
+  const focusStoreSessionId = useSessionStore(
+    sessionId,
+    (state) => state.rootSessionId,
+    slug,
+  );
+  const isRunning = useSessionStore(sessionId, (state) => state.isRunning, slug);
 
-  const previousProjectionRef = useRef<ExecutionWorkstreamProjection | undefined>(undefined);
-  const projection = useMemo(() => stabilizeExecutionWorkstreamProjection(
-    previousProjectionRef.current,
-    buildExecutionWorkstream({
-      messages,
-      executions,
-      steps,
+  const previousProjectionRef = useRef<
+    ExecutionWorkstreamProjection | undefined
+  >(undefined);
+  const projection = useMemo(
+    () =>
+      stabilizeExecutionWorkstreamProjection(
+        previousProjectionRef.current,
+        buildExecutionWorkstream({
+          messages,
+          executions,
+          steps,
+          childSessionLinks,
+          compression,
+          session: sessionIdentity,
+          agentDescriptors: agents,
+        }),
+      ),
+    [
+      agents,
       childSessionLinks,
       compression,
-      session: sessionIdentity,
-      agentDescriptors: agents,
-    }),
-  ), [
-    agents,
-    childSessionLinks,
-    compression,
-    executions,
-    messages,
-    steps,
-    sessionIdentity.agentName,
-    sessionIdentity.profile,
-  ]);
+      executions,
+      messages,
+      steps,
+      sessionIdentity.agentName,
+      sessionIdentity.profile,
+    ],
+  );
   useLayoutEffect(() => {
     previousProjectionRef.current = projection;
   }, [projection]);
-  const checkpointByExecutionId = useMemo(
-    () => new Map(executionInputCheckpoints.map((checkpoint) => [checkpoint.executionId, checkpoint])),
-    [executionInputCheckpoints],
-  );
-  const executionNumberById = useMemo(
-    () => new Map(projection.executions.map((execution) => [execution.id, execution.number])),
+  const segments = useMemo(
+    () => projection.executions.flatMap((execution) => execution.segments),
     [projection.executions],
   );
 
-  const uiSnapshotRef = useRef(getWorkstreamUiSnapshot(slug, routeScopeId, sessionId));
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(
-    () => {
-      const snapshot = uiSnapshotRef.current;
-      const initial = new Set(snapshot.expandedIds);
-      for (const execution of projection.executions) {
-        if (!snapshot.manualOverrideIds.has(execution.id)
-          && !snapshot.statusByExecutionId.has(execution.id)
-          && execution.record.status === "running") {
-          initial.add(execution.id);
-        }
-      }
-      return initial;
-    },
+  const uiSnapshotRef = useRef(
+    getWorkstreamUiSnapshot(slug, routeScopeId, sessionId),
   );
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
+    const snapshot = uiSnapshotRef.current;
+    const initial = new Set(snapshot.expandedIds);
+    for (const execution of projection.executions) {
+      const segment = execution.segments.at(-1);
+      if (
+        segment &&
+        !snapshot.manualOverrideIds.has(segment.id) &&
+        execution.record.status === "running"
+      ) {
+        initial.add(segment.id);
+      }
+    }
+    return initial;
+  });
   const expandedIdsRef = useRef(expandedIds);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(uiSnapshotRef.current.followLatest);
@@ -802,26 +925,38 @@ export function ExecutionWorkstream({
   const pointerScrollingRef = useRef(false);
   const touchYRef = useRef<number | null>(null);
   const touchMomentumDirectionRef = useRef<"up" | "down" | null>(null);
-  const touchMomentumTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchMomentumTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const inputDirectionRef = useRef<"up" | "down" | null>(null);
   const inputDirectionClearFrameRef = useRef<number | null>(null);
   const inputDirectionGenerationRef = useRef(0);
   const jumpingToBottomRef = useRef(false);
   const navigationFrameRef = useRef<number | null>(null);
-  const navigationSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigationSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const executionNavigationTargetRef = useRef<{
     executionId: string;
     targetTop: number;
   } | null>(null);
-  const workButtonByExecutionIdRef = useRef(new Map<string, HTMLButtonElement>());
+  const workButtonByExecutionIdRef = useRef(
+    new Map<string, HTMLButtonElement>(),
+  );
   const articleByExecutionIdRef = useRef(new Map<string, HTMLElement>());
-  const pendingDisclosureAnchorRef = useRef<{ executionId: string; viewportTop: number } | null>(null);
+  const pendingDisclosureAnchorRef = useRef<{
+    executionId: string;
+    viewportTop: number;
+  } | null>(null);
   const pendingAutoCollapseRef = useRef(false);
   const [jumpToLatestVisible, setJumpToLatestVisible] = useState(false);
-  const [currentExecutionId, setCurrentExecutionId] = useState<string | null>(
-    projection.executions[0]?.id ?? null,
+  const [currentSegmentId, setCurrentSegmentId] = useState<string | null>(
+    segments[0]?.id ?? null,
   );
-  const [navigationLayout, setNavigationLayout] = useState({ visible: false, left: 0 });
+  const [navigationLayout, setNavigationLayout] = useState({
+    visible: false,
+    left: 0,
+  });
 
   const setFollowLatest = useCallback((followLatest: boolean) => {
     followLatestRef.current = followLatest;
@@ -838,18 +973,19 @@ export function ExecutionWorkstream({
     inputDirectionRef.current = null;
   }, []);
 
-  const markInputDirection = useCallback((
-    direction: "up" | "down",
-  ) => {
-    clearPendingInputDirection();
-    inputDirectionRef.current = direction;
-    const generation = inputDirectionGenerationRef.current;
-    inputDirectionClearFrameRef.current = requestAnimationFrame(() => {
-      if (inputDirectionGenerationRef.current !== generation) return;
-      inputDirectionClearFrameRef.current = null;
-      inputDirectionRef.current = null;
-    });
-  }, [clearPendingInputDirection]);
+  const markInputDirection = useCallback(
+    (direction: "up" | "down") => {
+      clearPendingInputDirection();
+      inputDirectionRef.current = direction;
+      const generation = inputDirectionGenerationRef.current;
+      inputDirectionClearFrameRef.current = requestAnimationFrame(() => {
+        if (inputDirectionGenerationRef.current !== generation) return;
+        inputDirectionClearFrameRef.current = null;
+        inputDirectionRef.current = null;
+      });
+    },
+    [clearPendingInputDirection],
+  );
 
   const clearTouchMomentum = useCallback(() => {
     if (touchMomentumTimerRef.current !== null) {
@@ -892,31 +1028,31 @@ export function ExecutionWorkstream({
     const atBottom = distanceFromBottom(scroller) <= AT_BOTTOM_THRESHOLD_PX;
     const pendingNavigation = executionNavigationTargetRef.current;
     const pendingExecutionExists = pendingNavigation
-      ? projection.executions.some((execution) => execution.id === pendingNavigation.executionId)
+      ? segments.some((segment) => segment.id === pendingNavigation.executionId)
       : false;
-    const pendingTargetTop = pendingNavigation && pendingExecutionExists
-      ? Math.min(
-        Math.max(0, pendingNavigation.targetTop),
-        Math.max(0, scroller.scrollHeight - scroller.clientHeight),
-      )
-      : null;
+    const pendingTargetTop =
+      pendingNavigation && pendingExecutionExists
+        ? Math.min(
+            Math.max(0, pendingNavigation.targetTop),
+            Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+          )
+        : null;
     if (
-      pendingNavigation
-      && (
-        !pendingExecutionExists
-        || (pendingTargetTop !== null && Math.abs(scroller.scrollTop - pendingTargetTop) <= 1)
-      )
+      pendingNavigation &&
+      (!pendingExecutionExists ||
+        (pendingTargetTop !== null &&
+          Math.abs(scroller.scrollTop - pendingTargetTop) <= 1))
     ) {
       executionNavigationTargetRef.current = null;
     }
     let low = 0;
-    let high = projection.executions.length - 1;
+    let high = segments.length - 1;
     let currentIndex = -1;
     while (low <= high) {
       const middle = Math.floor((low + high) / 2);
-      const execution = projection.executions[middle];
-      if (!execution) break;
-      const article = articleByExecutionIdRef.current.get(execution.id);
+      const segment = segments[middle];
+      if (!segment) break;
+      const article = articleByExecutionIdRef.current.get(segment.id);
       if (!article) {
         currentIndex = -1;
         break;
@@ -928,29 +1064,34 @@ export function ExecutionWorkstream({
         high = middle - 1;
       }
     }
-    const current = pendingNavigation && pendingExecutionExists
-      ? pendingNavigation.executionId
-      : atBottom
-        ? projection.executions.at(-1)?.id ?? null
-        : currentIndex >= 0
-          ? projection.executions[currentIndex]?.id ?? null
-          : projection.executions[0]?.id ?? null;
-    const fallback = projection.executions[0]?.id ?? null;
-    setCurrentExecutionId((previous) => {
+    const current =
+      pendingNavigation && pendingExecutionExists
+        ? pendingNavigation.executionId
+        : atBottom
+          ? (segments.at(-1)?.id ?? null)
+          : currentIndex >= 0
+            ? (segments[currentIndex]?.id ?? null)
+            : (segments[0]?.id ?? null);
+    const fallback = segments[0]?.id ?? null;
+    setCurrentSegmentId((previous) => {
       const next = current ?? fallback;
       return previous === next ? previous : next;
     });
 
-    const thread = scroller.querySelector<HTMLElement>("[data-session-thread-column]");
-    const finePointer = typeof window.matchMedia !== "function"
-      || window.matchMedia("(pointer: fine)").matches;
+    const thread = scroller.querySelector<HTMLElement>(
+      "[data-session-thread-column]",
+    );
+    const finePointer =
+      typeof window.matchMedia !== "function" ||
+      window.matchMedia("(pointer: fine)").matches;
     const gutter = thread
       ? thread.getBoundingClientRect().left - scrollerRect.left
       : 0;
-    const visible = projection.executions.length >= EXECUTION_NAVIGATION_MINIMUM_ITEMS
-      && scroller.scrollHeight > scroller.clientHeight + 1
-      && gutter >= EXECUTION_NAVIGATION_MINIMUM_GUTTER_PX
-      && finePointer;
+    const visible =
+      segments.length >= EXECUTION_NAVIGATION_MINIMUM_ITEMS &&
+      scroller.scrollHeight > scroller.clientHeight + 1 &&
+      gutter >= EXECUTION_NAVIGATION_MINIMUM_GUTTER_PX &&
+      finePointer;
     const left = Math.max(
       EXECUTION_NAVIGATION_MINIMUM_LEFT_PX,
       Math.min(
@@ -958,10 +1099,12 @@ export function ExecutionWorkstream({
         gutter - EXECUTION_NAVIGATION_HITBOX_WIDTH_PX,
       ),
     );
-    setNavigationLayout((previous) => previous.visible === visible && previous.left === left
-      ? previous
-      : { visible, left });
-  }, [projection.executions]);
+    setNavigationLayout((previous) =>
+      previous.visible === visible && previous.left === left
+        ? previous
+        : { visible, left },
+    );
+  }, [segments]);
 
   const scheduleExecutionNavigationSync = useCallback(() => {
     if (navigationFrameRef.current !== null) return;
@@ -984,20 +1127,28 @@ export function ExecutionWorkstream({
 
   useLayoutEffect(() => {
     const element = scrollerRef.current;
-    const transcriptSurface = element?.closest<HTMLElement>("[data-session-transcript-surface]")
-      ?? element?.parentElement;
+    const transcriptSurface =
+      element?.closest<HTMLElement>("[data-session-transcript-surface]") ??
+      element?.parentElement;
     if (!element || !transcriptSurface) return;
 
     const syncScrollbarGutter = () => {
-      const symmetricGutter = Math.max(0, (element.offsetWidth - element.clientWidth) / 2);
-      transcriptSurface.style.setProperty(SESSION_SCROLLBAR_GUTTER_PROPERTY, `${symmetricGutter}px`);
+      const symmetricGutter = Math.max(
+        0,
+        (element.offsetWidth - element.clientWidth) / 2,
+      );
+      transcriptSurface.style.setProperty(
+        SESSION_SCROLLBAR_GUTTER_PROPERTY,
+        `${symmetricGutter}px`,
+      );
       syncExecutionNavigation();
     };
     syncScrollbarGutter();
 
-    const resizeObserver = typeof ResizeObserver === "undefined"
-      ? undefined
-      : new ResizeObserver(syncScrollbarGutter);
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(syncScrollbarGutter);
     resizeObserver?.observe(element);
 
     return () => {
@@ -1008,7 +1159,9 @@ export function ExecutionWorkstream({
 
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
-    const thread = scroller?.querySelector<HTMLElement>("[data-session-thread-column]");
+    const thread = scroller?.querySelector<HTMLElement>(
+      "[data-session-thread-column]",
+    );
     if (!scroller) return;
     syncExecutionNavigation();
     if (typeof ResizeObserver === "undefined") return;
@@ -1016,22 +1169,29 @@ export function ExecutionWorkstream({
     observer.observe(scroller);
     if (thread) observer.observe(thread);
     return () => observer.disconnect();
-  }, [projection.executions, syncExecutionNavigation]);
+  }, [segments, syncExecutionNavigation]);
 
-  useEffect(() => () => {
-    if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current);
-    if (navigationSettleTimerRef.current !== null) {
-      clearTimeout(navigationSettleTimerRef.current);
-    }
-    clearPendingInputDirection();
-    clearTouchMomentum();
-  }, [clearPendingInputDirection, clearTouchMomentum]);
+  useEffect(
+    () => () => {
+      if (navigationFrameRef.current !== null)
+        cancelAnimationFrame(navigationFrameRef.current);
+      if (navigationSettleTimerRef.current !== null) {
+        clearTimeout(navigationSettleTimerRef.current);
+      }
+      clearPendingInputDirection();
+      clearTouchMomentum();
+    },
+    [clearPendingInputDirection, clearTouchMomentum],
+  );
 
   useLayoutEffect(() => {
     const snapshot = uiSnapshotRef.current;
     const next = new Set(expandedIdsRef.current);
     let changed = false;
-    const currentIds = new Set(projection.executions.map((execution) => execution.id));
+    const currentIds = new Set(segments.map((segment) => segment.id));
+    const currentExecutionIds = new Set(
+      projection.executions.map((execution) => execution.id),
+    );
 
     for (const id of next) {
       if (!currentIds.has(id)) {
@@ -1041,22 +1201,28 @@ export function ExecutionWorkstream({
     }
 
     for (const execution of projection.executions) {
+      const segment = execution.segments.at(-1);
+      if (!segment) continue;
       const previousStatus = snapshot.statusByExecutionId.get(execution.id);
-      const manuallyOverridden = snapshot.manualOverrideIds.has(execution.id);
+      const manuallyOverridden = snapshot.manualOverrideIds.has(segment.id);
 
-      if (previousStatus === undefined && execution.record.status === "running" && !manuallyOverridden) {
-        if (!next.has(execution.id)) {
-          next.add(execution.id);
+      if (
+        previousStatus === undefined &&
+        execution.record.status === "running" &&
+        !manuallyOverridden
+      ) {
+        if (!next.has(segment.id)) {
+          next.add(segment.id);
           changed = true;
         }
       } else if (
-        previousStatus === "running"
-        && execution.record.status === "completed"
-        && followLatestRef.current
-        && !manuallyOverridden
-        && next.has(execution.id)
+        previousStatus === "running" &&
+        execution.record.status === "completed" &&
+        followLatestRef.current &&
+        !manuallyOverridden &&
+        next.has(segment.id)
       ) {
-        next.delete(execution.id);
+        next.delete(segment.id);
         pendingAutoCollapseRef.current = true;
         changed = true;
       }
@@ -1065,7 +1231,7 @@ export function ExecutionWorkstream({
     }
 
     for (const id of snapshot.statusByExecutionId.keys()) {
-      if (!currentIds.has(id)) snapshot.statusByExecutionId.delete(id);
+      if (!currentExecutionIds.has(id)) snapshot.statusByExecutionId.delete(id);
     }
     for (const id of snapshot.manualOverrideIds) {
       if (!currentIds.has(id)) snapshot.manualOverrideIds.delete(id);
@@ -1078,7 +1244,7 @@ export function ExecutionWorkstream({
     } else {
       snapshot.expandedIds = new Set(expandedIdsRef.current);
     }
-  }, [projection.executions]);
+  }, [projection.executions, segments]);
 
   useLayoutEffect(() => {
     const element = scrollerRef.current;
@@ -1111,9 +1277,12 @@ export function ExecutionWorkstream({
     if (!element) return;
     const pendingAnchor = pendingDisclosureAnchorRef.current;
     if (pendingAnchor) {
-      const button = workButtonByExecutionIdRef.current.get(pendingAnchor.executionId);
+      const button = workButtonByExecutionIdRef.current.get(
+        pendingAnchor.executionId,
+      );
       if (button) {
-        const delta = button.getBoundingClientRect().top - pendingAnchor.viewportTop;
+        const delta =
+          button.getBoundingClientRect().top - pendingAnchor.viewportTop;
         if (Math.abs(delta) > 0.5) element.scrollTop += delta;
       }
       pendingDisclosureAnchorRef.current = null;
@@ -1155,7 +1324,6 @@ export function ExecutionWorkstream({
   }, [
     childSessionLinks,
     compression,
-    executionInputCheckpoints,
     executions,
     expandedIds,
     messages,
@@ -1170,9 +1338,12 @@ export function ExecutionWorkstream({
     if (!element) return;
     const previousScrollTop = lastScrollTopRef.current;
     const { atBottom } = syncScrollGeometry(element);
-    const direction = inputDirectionRef.current
-      ?? (pointerScrollingRef.current
-        ? element.scrollTop < previousScrollTop ? "up" : "down"
+    const direction =
+      inputDirectionRef.current ??
+      (pointerScrollingRef.current
+        ? element.scrollTop < previousScrollTop
+          ? "up"
+          : "down"
         : touchMomentumDirectionRef.current);
     clearPendingInputDirection();
     if (direction === "up") {
@@ -1188,7 +1359,10 @@ export function ExecutionWorkstream({
     } else if (jumpingToBottomRef.current && atBottom) {
       jumpingToBottomRef.current = false;
     }
-    if (touchYRef.current === null && touchMomentumDirectionRef.current !== null) {
+    if (
+      touchYRef.current === null &&
+      touchMomentumDirectionRef.current !== null
+    ) {
       scheduleTouchMomentumClear();
     }
     lastScrollTopRef.current = element.scrollTop;
@@ -1204,19 +1378,22 @@ export function ExecutionWorkstream({
     syncScrollGeometry,
   ]);
 
-  const handleWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
-    if (event.deltaY === 0) return;
-    executionNavigationTargetRef.current = null;
-    clearTouchMomentum();
-    markInputDirection(event.deltaY < 0 ? "up" : "down");
-    if (event.deltaY < 0) {
-      if (jumpingToBottomRef.current && scrollerRef.current) {
-        jumpingToBottomRef.current = false;
-        scrollElementTo(scrollerRef.current, scrollerRef.current.scrollTop);
+  const handleWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      if (event.deltaY === 0) return;
+      executionNavigationTargetRef.current = null;
+      clearTouchMomentum();
+      markInputDirection(event.deltaY < 0 ? "up" : "down");
+      if (event.deltaY < 0) {
+        if (jumpingToBottomRef.current && scrollerRef.current) {
+          jumpingToBottomRef.current = false;
+          scrollElementTo(scrollerRef.current, scrollerRef.current.scrollTop);
+        }
+        setFollowLatest(false);
       }
-      setFollowLatest(false);
-    }
-  }, [clearTouchMomentum, markInputDirection, setFollowLatest]);
+    },
+    [clearTouchMomentum, markInputDirection, setFollowLatest],
+  );
 
   const handlePointerDown = useCallback(() => {
     executionNavigationTargetRef.current = null;
@@ -1238,133 +1415,166 @@ export function ExecutionWorkstream({
     };
   }, [handlePointerEnd]);
 
-  const handleTouchStart = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
-    executionNavigationTargetRef.current = null;
-    clearTouchMomentum();
-    touchYRef.current = event.touches[0]?.clientY ?? null;
-  }, [clearTouchMomentum]);
+  const handleTouchStart = useCallback(
+    (event: ReactTouchEvent<HTMLDivElement>) => {
+      executionNavigationTargetRef.current = null;
+      clearTouchMomentum();
+      touchYRef.current = event.touches[0]?.clientY ?? null;
+    },
+    [clearTouchMomentum],
+  );
 
-  const handleTouchMove = useCallback((event: ReactTouchEvent<HTMLDivElement>) => {
-    const previousY = touchYRef.current;
-    const nextY = event.touches[0]?.clientY;
-    if (previousY === null || nextY === undefined || nextY === previousY) return;
-    const direction = nextY > previousY ? "up" : "down";
-    markInputDirection(direction);
-    touchMomentumDirectionRef.current = direction;
-    touchYRef.current = nextY;
-    if (direction === "up") setFollowLatest(false);
-  }, [markInputDirection, setFollowLatest]);
+  const handleTouchMove = useCallback(
+    (event: ReactTouchEvent<HTMLDivElement>) => {
+      const previousY = touchYRef.current;
+      const nextY = event.touches[0]?.clientY;
+      if (previousY === null || nextY === undefined || nextY === previousY)
+        return;
+      const direction = nextY > previousY ? "up" : "down";
+      markInputDirection(direction);
+      touchMomentumDirectionRef.current = direction;
+      touchYRef.current = nextY;
+      if (direction === "up") setFollowLatest(false);
+    },
+    [markInputDirection, setFollowLatest],
+  );
 
   const handleTouchEnd = useCallback(() => {
     touchYRef.current = null;
-    if (touchMomentumDirectionRef.current !== null) scheduleTouchMomentumClear();
+    if (touchMomentumDirectionRef.current !== null)
+      scheduleTouchMomentumClear();
   }, [scheduleTouchMomentumClear]);
 
-  const navigateRelativeExecution = useCallback((direction: -1 | 1) => {
-    const index = projection.executions.findIndex((execution) => execution.id === currentExecutionId);
-    const next = projection.executions[Math.min(
-      projection.executions.length - 1,
-      Math.max(0, (index < 0 ? 0 : index) + direction),
-    )];
-    if (!next) return;
-    const element = scrollerRef.current;
-    const article = articleByExecutionIdRef.current.get(next.id);
-    if (!element || !article) return;
-    clearPendingInputDirection();
-    clearTouchMomentum();
-    jumpingToBottomRef.current = false;
-    setFollowLatest(false);
-    const targetTop = article.getBoundingClientRect().top
-      - element.getBoundingClientRect().top
-      + element.scrollTop
-      - EXECUTION_READING_LINE_PX;
-    executionNavigationTargetRef.current = { executionId: next.id, targetTop };
-    scrollElementTo(element, targetTop, prefersReducedMotion() ? "auto" : "smooth");
-    setCurrentExecutionId(next.id);
-  }, [
-    clearPendingInputDirection,
-    clearTouchMomentum,
-    currentExecutionId,
-    projection.executions,
-    setFollowLatest,
-  ]);
-
-  const handleScrollerKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (isEditableTarget(event.target)) return;
-    if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-      event.preventDefault();
-      navigateRelativeExecution(event.key === "ArrowUp" ? -1 : 1);
-      return;
-    }
-    executionNavigationTargetRef.current = null;
-    if (
-      event.key === "ArrowUp"
-      || event.key === "PageUp"
-      || event.key === "Home"
-      || (event.key === " " && event.shiftKey)
-    ) {
+  const navigateRelativeExecution = useCallback(
+    (direction: -1 | 1) => {
+      const index = segments.findIndex(
+        (segment) => segment.id === currentSegmentId,
+      );
+      const next =
+        segments[
+          Math.min(
+            segments.length - 1,
+            Math.max(0, (index < 0 ? 0 : index) + direction),
+          )
+        ];
+      if (!next) return;
+      const element = scrollerRef.current;
+      const article = articleByExecutionIdRef.current.get(next.id);
+      if (!element || !article) return;
+      clearPendingInputDirection();
       clearTouchMomentum();
-      markInputDirection("up");
+      jumpingToBottomRef.current = false;
       setFollowLatest(false);
-    } else if (
-      event.key === "ArrowDown"
-      || event.key === "PageDown"
-      || event.key === "End"
-      || (event.key === " " && !event.shiftKey)
-    ) {
+      const targetTop =
+        article.getBoundingClientRect().top -
+        element.getBoundingClientRect().top +
+        element.scrollTop -
+        EXECUTION_READING_LINE_PX;
+      executionNavigationTargetRef.current = {
+        executionId: next.id,
+        targetTop,
+      };
+      scrollElementTo(
+        element,
+        targetTop,
+        prefersReducedMotion() ? "auto" : "smooth",
+      );
+      setCurrentSegmentId(next.id);
+    },
+    [
+      clearPendingInputDirection,
+      clearTouchMomentum,
+      currentSegmentId,
+      segments,
+      setFollowLatest,
+    ],
+  );
+
+  const handleScrollerKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (isEditableTarget(event.target)) return;
+      if (
+        event.altKey &&
+        (event.key === "ArrowUp" || event.key === "ArrowDown")
+      ) {
+        event.preventDefault();
+        navigateRelativeExecution(event.key === "ArrowUp" ? -1 : 1);
+        return;
+      }
+      executionNavigationTargetRef.current = null;
+      if (
+        event.key === "ArrowUp" ||
+        event.key === "PageUp" ||
+        event.key === "Home" ||
+        (event.key === " " && event.shiftKey)
+      ) {
+        clearTouchMomentum();
+        markInputDirection("up");
+        setFollowLatest(false);
+      } else if (
+        event.key === "ArrowDown" ||
+        event.key === "PageDown" ||
+        event.key === "End" ||
+        (event.key === " " && !event.shiftKey)
+      ) {
+        clearTouchMomentum();
+        markInputDirection("down");
+      }
+    },
+    [
+      clearTouchMomentum,
+      markInputDirection,
+      navigateRelativeExecution,
+      setFollowLatest,
+    ],
+  );
+
+  const toggleExecution = useCallback(
+    (executionId: string, button: HTMLButtonElement) => {
+      // A disclosure click is a reading action. Suspend follow immediately so a
+      // stream update batched with the expansion cannot pin before the anchor is
+      // restored; the layout effect resumes follow only if the anchor lands at
+      // the actual bottom.
+      const element = scrollerRef.current;
+      if (jumpingToBottomRef.current && element) {
+        scrollElementTo(element, element.scrollTop);
+      }
+      jumpingToBottomRef.current = false;
+      executionNavigationTargetRef.current = null;
+      clearPendingInputDirection();
       clearTouchMomentum();
-      markInputDirection("down");
-    }
-  }, [
-    clearTouchMomentum,
-    markInputDirection,
-    navigateRelativeExecution,
-    setFollowLatest,
-  ]);
+      setFollowLatest(false);
+      pendingDisclosureAnchorRef.current = {
+        executionId,
+        viewportTop: button.getBoundingClientRect().top,
+      };
+      const next = new Set(expandedIdsRef.current);
+      if (next.has(executionId)) next.delete(executionId);
+      else next.add(executionId);
+      const snapshot = uiSnapshotRef.current;
+      snapshot.manualOverrideIds.add(executionId);
+      snapshot.expandedIds = new Set(next);
+      expandedIdsRef.current = next;
+      setExpandedIds(next);
+    },
+    [clearPendingInputDirection, clearTouchMomentum, setFollowLatest],
+  );
 
-  const toggleExecution = useCallback((executionId: string, button: HTMLButtonElement) => {
-    // A disclosure click is a reading action. Suspend follow immediately so a
-    // stream update batched with the expansion cannot pin before the anchor is
-    // restored; the layout effect resumes follow only if the anchor lands at
-    // the actual bottom.
-    const element = scrollerRef.current;
-    if (jumpingToBottomRef.current && element) {
-      scrollElementTo(element, element.scrollTop);
-    }
-    jumpingToBottomRef.current = false;
-    executionNavigationTargetRef.current = null;
-    clearPendingInputDirection();
-    clearTouchMomentum();
-    setFollowLatest(false);
-    pendingDisclosureAnchorRef.current = {
-      executionId,
-      viewportTop: button.getBoundingClientRect().top,
-    };
-    const next = new Set(expandedIdsRef.current);
-    if (next.has(executionId)) next.delete(executionId);
-    else next.add(executionId);
-    const snapshot = uiSnapshotRef.current;
-    snapshot.manualOverrideIds.add(executionId);
-    snapshot.expandedIds = new Set(next);
-    expandedIdsRef.current = next;
-    setExpandedIds(next);
-  }, [clearPendingInputDirection, clearTouchMomentum, setFollowLatest]);
+  const registerWorkButton = useCallback(
+    (executionId: string, button: HTMLButtonElement | null) => {
+      if (button) workButtonByExecutionIdRef.current.set(executionId, button);
+      else workButtonByExecutionIdRef.current.delete(executionId);
+    },
+    [],
+  );
 
-  const registerWorkButton = useCallback((
-    executionId: string,
-    button: HTMLButtonElement | null,
-  ) => {
-    if (button) workButtonByExecutionIdRef.current.set(executionId, button);
-    else workButtonByExecutionIdRef.current.delete(executionId);
-  }, []);
-
-  const registerExecutionArticle = useCallback((
-    executionId: string,
-    article: HTMLElement | null,
-  ) => {
-    if (article) articleByExecutionIdRef.current.set(executionId, article);
-    else articleByExecutionIdRef.current.delete(executionId);
-  }, []);
+  const registerExecutionArticle = useCallback(
+    (executionId: string, article: HTMLElement | null) => {
+      if (article) articleByExecutionIdRef.current.set(executionId, article);
+      else articleByExecutionIdRef.current.delete(executionId);
+    },
+    [],
+  );
 
   const jumpToLatest = useCallback(() => {
     const element = scrollerRef.current;
@@ -1376,7 +1586,8 @@ export function ExecutionWorkstream({
     const hasRunningExecution = projection.executions.some(
       (execution) => execution.record.status === "running",
     );
-    const behavior = hasRunningExecution || prefersReducedMotion() ? "auto" : "smooth";
+    const behavior =
+      hasRunningExecution || prefersReducedMotion() ? "auto" : "smooth";
     jumpingToBottomRef.current = behavior === "smooth";
     scrollElementTo(element, element.scrollHeight, behavior);
     if (behavior === "auto") {
@@ -1394,31 +1605,33 @@ export function ExecutionWorkstream({
     syncScrollGeometry,
   ]);
 
-  const jumpToExecution = useCallback((
-    executionId: string,
-    behavior: ScrollBehavior,
-  ) => {
-    const element = scrollerRef.current;
-    const article = articleByExecutionIdRef.current.get(executionId);
-    if (!element || !article) return;
-    clearPendingInputDirection();
-    clearTouchMomentum();
-    jumpingToBottomRef.current = false;
-    setFollowLatest(false);
-    const targetTop = article.getBoundingClientRect().top
-      - element.getBoundingClientRect().top
-      + element.scrollTop
-      - EXECUTION_READING_LINE_PX;
-    executionNavigationTargetRef.current = { executionId, targetTop };
-    scrollElementTo(
-      element,
-      targetTop,
-      prefersReducedMotion() ? "auto" : behavior,
-    );
-    setCurrentExecutionId(executionId);
-  }, [clearPendingInputDirection, clearTouchMomentum, setFollowLatest]);
+  const jumpToExecution = useCallback(
+    (executionId: string, behavior: ScrollBehavior) => {
+      const element = scrollerRef.current;
+      const article = articleByExecutionIdRef.current.get(executionId);
+      if (!element || !article) return;
+      clearPendingInputDirection();
+      clearTouchMomentum();
+      jumpingToBottomRef.current = false;
+      setFollowLatest(false);
+      const targetTop =
+        article.getBoundingClientRect().top -
+        element.getBoundingClientRect().top +
+        element.scrollTop -
+        EXECUTION_READING_LINE_PX;
+      executionNavigationTargetRef.current = { executionId, targetTop };
+      scrollElementTo(
+        element,
+        targetTop,
+        prefersReducedMotion() ? "auto" : behavior,
+      );
+      setCurrentSegmentId(executionId);
+    },
+    [clearPendingInputDirection, clearTouchMomentum, setFollowLatest],
+  );
 
-  const isEmpty = projection.items.length === 0 && projection.diagnostics.length === 0;
+  const isEmpty =
+    projection.items.length === 0 && projection.diagnostics.length === 0;
 
   return (
     <div
@@ -1452,7 +1665,9 @@ export function ExecutionWorkstream({
             data-testid="execution-thread-column"
           >
             {isEmpty ? (
-              <div className="text-sm text-text-tertiary">No executions yet</div>
+              <div className="text-sm text-text-tertiary">
+                No executions yet
+              </div>
             ) : (
               <>
                 {projection.diagnostics.map((diagnostic, index) => (
@@ -1466,19 +1681,13 @@ export function ExecutionWorkstream({
                 ))}
                 {projection.items.map((item) => {
                   if (item.kind === "execution") {
-                    const checkpoint = checkpointByExecutionId.get(item.id);
-                    const continuationExecutionNumber = checkpoint?.continuationExecutionId === undefined
-                      ? undefined
-                      : executionNumberById.get(checkpoint.continuationExecutionId);
                     return (
                       <ExecutionTurn
                         key={`execution-${item.id}`}
                         execution={item}
-                        expanded={expandedIds.has(item.id)}
+                        expandedIds={expandedIds}
                         projectSlug={slug}
                         focusStoreSessionId={focusStoreSessionId}
-                        checkpoint={checkpoint}
-                        continuationExecutionNumber={continuationExecutionNumber}
                         onToggle={toggleExecution}
                         onButtonRef={registerWorkButton}
                         onArticleRef={registerExecutionArticle}
@@ -1500,7 +1709,10 @@ export function ExecutionWorkstream({
                     );
                   }
                   return (
-                    <section key={`activity-${item.id}`} className="border-l-2 border-warning px-3 py-2">
+                    <section
+                      key={`activity-${item.id}`}
+                      className="border-l-2 border-warning px-3 py-2"
+                    >
                       <SessionMessageView
                         message={item.message}
                         projectSlug={slug}
@@ -1517,8 +1729,9 @@ export function ExecutionWorkstream({
         </ConversationRail>
       </div>
       <ExecutionNavigationRail
-        executions={projection.executions}
-        currentExecutionId={currentExecutionId}
+        segments={segments}
+        currentSegmentId={currentSegmentId}
+        running={isRunning}
         left={navigationLayout.left}
         visible={navigationLayout.visible}
         onNavigate={jumpToExecution}

@@ -2,11 +2,19 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import type { Automation, Project, ProjectTodo, SessionSummaryWithGoal } from "../../api/types";
+import type {
+  Automation,
+  Project,
+  ProjectTodo,
+  SessionSummaryWithGoal,
+} from "../../api/types";
+import type { SessionFamilyActivity } from "@archcode/protocol";
 import type { ScopedHitlView } from "../../store/hitl-store";
 
 const navigationCalls: string[] = [];
-const navigate = mock((path: string) => { navigationCalls.push(path); });
+const navigate = mock((path: string) => {
+  navigationCalls.push(path);
+});
 const createSession = { isPending: false, mutate: mock(() => {}) };
 const postMessage = { mutate: mock(() => {}) };
 
@@ -18,14 +26,23 @@ let sessions: SessionSummaryWithGoal[] = [];
 let automations: Automation[] = [];
 let projectTodos: ProjectTodo[] = [];
 let runtimeInitialized = true;
-let runtimeFamilies: Record<string, { activity: "running" | "stopping" | "idle" }> = {};
+let runtimeFamilies: Record<
+  string,
+  { activity: SessionFamilyActivity }
+> = {};
 let attentionVisibleHitl: ScopedHitlView[] = [];
 
 const Icon = (props: Record<string, unknown>) => <svg {...props} />;
-const ListTodoIcon = (props: Record<string, unknown>) => <svg data-icon="list-todo" {...props} />;
+const ListTodoIcon = (props: Record<string, unknown>) => (
+  <svg data-icon="list-todo" {...props} />
+);
 
 mock.module("react-router-dom", () => ({
-  Link: ({ to, children, ...props }: { to: string; children?: ReactNode }) => <a href={to} {...props}>{children}</a>,
+  Link: ({ to, children, ...props }: { to: string; children?: ReactNode }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
   useLocation: () => ({ pathname: route.pathname }),
   useNavigate: () => navigate,
   useParams: () => route.params,
@@ -60,7 +77,10 @@ mock.module("../../api/queries", () => ({
 }));
 
 mock.module("../../context/workbench-layout", () => ({
-  useWorkbenchLayout: () => ({ toggleSidebar: mock(() => {}), toggleFocusMode: mock(() => {}) }),
+  useWorkbenchLayout: () => ({
+    toggleSidebar: mock(() => {}),
+    toggleFocusMode: mock(() => {}),
+  }),
 }));
 
 mock.module("../../store/session-runtime-store", () => ({
@@ -70,23 +90,38 @@ mock.module("../../store/session-runtime-store", () => ({
 }));
 
 mock.module("../../store/hitl-store", () => ({
-  selectSessionFamilyHitl: (entries: ScopedHitlView[], slug: string, rootSessionId: string) => entries
-    .filter((entry) => entry.projectSlug === slug && entry.rootSessionId === rootSessionId),
+  selectSessionFamilyHitl: (
+    entries: ScopedHitlView[],
+    slug: string,
+    rootSessionId: string,
+  ) =>
+    entries.filter(
+      (entry) =>
+        entry.projectSlug === slug && entry.rootSessionId === rootSessionId,
+    ),
   useAttentionVisibleScopedHitl: () => attentionVisibleHitl,
 }));
 
 mock.module("../primitives/StatusGlyph", () => ({
   StatusGlyph: ({ kind, label }: { kind: string; label?: string }) => (
-    <span aria-label={label} data-visual-kind={kind} role={label ? "img" : undefined} />
+    <span
+      aria-label={label}
+      data-visual-kind={kind}
+      role={label ? "img" : undefined}
+    />
   ),
 }));
 
 mock.module("./GoalStatusMark", () => ({
-  GoalStatusMark: ({ label }: { label?: string }) => <span aria-label={label} data-testid="goal-status-mark" role="img" />,
+  GoalStatusMark: ({ label }: { label?: string }) => (
+    <span aria-label={label} data-testid="goal-status-mark" role="img" />
+  ),
 }));
 
 mock.module("./ProjectActionMenu", () => ({
-  ProjectActionDropdown: ({ trigger }: { trigger: ReactNode }) => <>{trigger}</>,
+  ProjectActionDropdown: ({ trigger }: { trigger: ReactNode }) => (
+    <>{trigger}</>
+  ),
 }));
 
 mock.module("./EditProjectDialog", () => ({ EditProjectDialog: () => null }));
@@ -126,12 +161,14 @@ function attention(
     view: {
       hitlId: `${rootSessionId}-${source}`,
       owner: { type: "session", id: rootSessionId },
-      source: source === "tool_permission"
-        ? { type: "tool_permission", toolCallId: "tool-1", toolName: "bash" }
-        : { type: "ask_user", toolCallId: "tool-1" },
+      source:
+        source === "tool_permission"
+          ? { type: "tool_permission", toolCallId: "tool-1", toolName: "bash" }
+          : { type: "ask_user", toolCallId: "tool-1" },
       status: "pending",
       displayPayload: { title: "Needs a response", redacted: true },
-      allowedActions: source === "tool_permission" ? ["approve", "deny"] : ["answer"],
+      allowedActions:
+        source === "tool_permission" ? ["approve", "deny"] : ["answer"],
       createdAt: "2026-07-25T00:00:00.000Z",
       updatedAt: "2026-07-25T00:00:00.000Z",
     },
@@ -144,7 +181,11 @@ function automation(id: string, name: string): Automation {
     name,
     status: "active",
     trigger: { kind: "once", at: "2026-07-26T00:00:00.000Z" },
-    action: { kind: "send_message", sessionId: "recent", content: "Review status" },
+    action: {
+      kind: "send_message",
+      sessionId: "recent",
+      content: "Review status",
+    },
     createdAt: "2026-07-25T00:00:00.000Z",
     updatedAt: "2026-07-25T00:00:00.000Z",
   } as unknown as Automation;
@@ -173,7 +214,10 @@ let container: HTMLElement;
 const originals = new Map<string, PropertyDescriptor | undefined>();
 
 beforeEach(() => {
-  dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { url: "http://localhost" });
+  dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    { url: "http://localhost" },
+  );
   for (const [name, value] of Object.entries({
     window: dom.window,
     document: dom.window.document,
@@ -203,11 +247,18 @@ beforeEach(() => {
     session("running", "Rebuild execution surface", 1_753_000_002_000),
     session("recent", "Tighten workbench hierarchy", 1_753_000_003_000, {
       instanceId: "goal-1",
+      settlementReceipts: [],
       generation: 1,
       objective: "Ship the workbench",
       status: "active",
       usage: {
-        tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 },
+        tokens: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+        },
         executionTimeMs: 0,
         executionCount: 0,
       },
@@ -252,48 +303,88 @@ describe("Sidebar Session list", () => {
   test("gives Todos a distinct icon and counts only open active work", async () => {
     await renderSidebar();
 
-    const todoLink = container.querySelector('a[href="/projects/demo/todos"]') as HTMLAnchorElement;
+    const todoLink = container.querySelector(
+      'a[href="/projects/demo/todos"]',
+    ) as HTMLAnchorElement;
     expect(todoLink.querySelector('[data-icon="list-todo"]')).not.toBeNull();
-    expect(todoLink.querySelector('[data-testid="sidebar-todo-count"]')?.textContent).toBe("2");
+    expect(
+      todoLink.querySelector('[data-testid="sidebar-todo-count"]')?.textContent,
+    ).toBe("2");
     expect(todoLink.getAttribute("aria-label")).toBe("Todos, 2 open");
   });
 
   test("groups by attention, live work, then recency using one-line accessible Session rows", async () => {
     await renderSidebar();
 
-    const groupOrder = [...container.querySelectorAll("[data-testid^=sidebar-session-group-]")]
-      .map((group) => group.getAttribute("data-testid"));
+    const groupOrder = [
+      ...container.querySelectorAll("[data-testid^=sidebar-session-group-]"),
+    ].map((group) => group.getAttribute("data-testid"));
     expect(groupOrder).toEqual([
       "sidebar-session-group-needs-you",
       "sidebar-session-group-running",
       "sidebar-session-group-recent",
     ]);
 
-    const permission = container.querySelector('[data-testid="sidebar-session-permission"]') as HTMLButtonElement;
-    const question = container.querySelector('[data-testid="sidebar-session-question"]') as HTMLButtonElement;
-    const mixed = container.querySelector('[data-testid="sidebar-session-mixed"]') as HTMLButtonElement;
-    const running = container.querySelector('[data-testid="sidebar-session-running"]') as HTMLButtonElement;
-    const recent = container.querySelector('[data-testid="sidebar-session-recent"]') as HTMLButtonElement;
-    expect(permission.querySelector('[data-visual-kind="needs_you"]')).not.toBeNull();
-    expect(question.querySelector('[data-testid="sidebar-session-attention-question"]')?.textContent).toContain("Question");
-    expect(permission.querySelector('[data-testid="sidebar-session-attention-permission"]')?.textContent).toContain("Permission");
-    expect(mixed.querySelector('[data-testid="sidebar-session-attention-mixed"]')?.textContent).toContain("2 requests");
+    const permission = container.querySelector(
+      '[data-testid="sidebar-session-permission"]',
+    ) as HTMLButtonElement;
+    const question = container.querySelector(
+      '[data-testid="sidebar-session-question"]',
+    ) as HTMLButtonElement;
+    const mixed = container.querySelector(
+      '[data-testid="sidebar-session-mixed"]',
+    ) as HTMLButtonElement;
+    const running = container.querySelector(
+      '[data-testid="sidebar-session-running"]',
+    ) as HTMLButtonElement;
+    const recent = container.querySelector(
+      '[data-testid="sidebar-session-recent"]',
+    ) as HTMLButtonElement;
+    expect(
+      permission.querySelector('[data-visual-kind="needs_you"]'),
+    ).not.toBeNull();
+    expect(
+      question.querySelector(
+        '[data-testid="sidebar-session-attention-question"]',
+      )?.textContent,
+    ).toContain("Question");
+    expect(
+      permission.querySelector(
+        '[data-testid="sidebar-session-attention-permission"]',
+      )?.textContent,
+    ).toContain("Permission");
+    expect(
+      mixed.querySelector('[data-testid="sidebar-session-attention-mixed"]')
+        ?.textContent,
+    ).toContain("2 requests");
     expect(mixed.textContent).not.toContain("Permission");
     expect(mixed.textContent).not.toContain("Question");
     expect(mixed.getAttribute("aria-label")).toContain("2 requests waiting");
-    expect(running.querySelector('[data-visual-kind="running"]')).not.toBeNull();
+    expect(
+      running.querySelector('[data-visual-kind="running"]'),
+    ).not.toBeNull();
     expect(recent.querySelector('[data-visual-kind="idle"]')).not.toBeNull();
-    expect(recent.querySelector('[data-testid="sidebar-session-goal-recent"]')).not.toBeNull();
+    expect(
+      recent.querySelector('[data-testid="sidebar-session-goal-recent"]'),
+    ).not.toBeNull();
     expect(recent.getAttribute("aria-current")).toBe("page");
     expect(permission.getAttribute("aria-label")).toContain("Needs attention");
-    expect(permission.getAttribute("aria-label")).toContain("Permission waiting");
+    expect(permission.getAttribute("aria-label")).toContain(
+      "Permission waiting",
+    );
     expect(running.textContent).not.toContain("running ·");
     const relativeTime = permission.querySelector("time") as HTMLTimeElement;
     expect(relativeTime).not.toBeNull();
-    expect(relativeTime.dateTime).toBe(new Date(sessions[0]!.updatedAt).toISOString());
+    expect(relativeTime.dateTime).toBe(
+      new Date(sessions[0]!.updatedAt).toISOString(),
+    );
     expect(relativeTime.title).not.toBe("");
-    expect(relativeTime.getAttribute("aria-label")).toContain(relativeTime.textContent);
-    expect(permission.getAttribute("aria-label")).toContain(relativeTime.textContent);
+    expect(relativeTime.getAttribute("aria-label")).toContain(
+      relativeTime.textContent,
+    );
+    expect(permission.getAttribute("aria-label")).toContain(
+      relativeTime.textContent,
+    );
     expect(permission.getAttribute("title")).toBeNull();
     expect(permission.className).toContain("h-9");
     expect(permission.className).toContain("[@media(pointer:coarse)]:min-h-11");
@@ -307,16 +398,45 @@ describe("Sidebar Session list", () => {
     expect(recent.getAttribute("aria-current")).toBeNull();
   });
 
+  test("keeps waiting and resuming families in the live group without HITL", async () => {
+    runtimeFamilies = {
+      "demo:waiting": { activity: "waiting_for_human" },
+      "demo:resuming": { activity: "resuming" },
+    };
+    sessions = [
+      session("waiting", "Waiting on child", 2),
+      session("resuming", "Resuming work", 1),
+      session("idle", "Recent work", 0),
+    ];
+    attentionVisibleHitl = [];
+
+    await renderSidebar();
+
+    const liveGroup = container.querySelector('[data-testid="sidebar-session-group-running"]') as HTMLElement;
+    const waiting = container.querySelector('[data-testid="sidebar-session-waiting"]') as HTMLButtonElement;
+    const resuming = container.querySelector('[data-testid="sidebar-session-resuming"]') as HTMLButtonElement;
+    expect(liveGroup).not.toBeNull();
+    expect(waiting.getAttribute("aria-label")).toContain("Waiting");
+    expect(waiting.querySelector('[data-visual-kind="pending"]')).not.toBeNull();
+    expect(resuming.getAttribute("aria-label")).toContain("Resuming");
+    expect(resuming.querySelector('[data-visual-kind="running"]')).not.toBeNull();
+  });
+
   test("keeps Automation navigation and creation surface available from its tab", async () => {
     await renderSidebar();
 
-    const automationTab = [...container.querySelectorAll('[role="tab"]')]
-      .find((element) => element.textContent === "Automations") as HTMLButtonElement;
+    const automationTab = [...container.querySelectorAll('[role="tab"]')].find(
+      (element) => element.textContent === "Automations",
+    ) as HTMLButtonElement;
     await act(async () => automationTab.click());
 
-    const panel = container.querySelector("#sidebar-panel-automations") as HTMLElement;
+    const panel = container.querySelector(
+      "#sidebar-panel-automations",
+    ) as HTMLElement;
     expect(panel.hidden).toBe(false);
-    const row = container.querySelector('[data-testid="sidebar-automation-auto-1"]') as HTMLButtonElement;
+    const row = container.querySelector(
+      '[data-testid="sidebar-automation-auto-1"]',
+    ) as HTMLButtonElement;
     expect(row.textContent).toContain("Nightly review");
     expect(row.textContent).not.toContain("auto-1");
     expect(row.className).toContain("h-8");

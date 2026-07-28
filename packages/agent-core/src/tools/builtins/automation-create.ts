@@ -7,11 +7,11 @@ import { AutomationCreateSchema } from "../../automations/schema";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
-import type { AnyToolDescriptor, ToolExecutionContext } from "../types";
+import type { ToolExecutionContext } from "../types";
 
 type AutomationCreateInput = z.infer<typeof AutomationCreateSchema>;
 
-export const automationCreateTool: AnyToolDescriptor = defineTool({
+export const automationCreateTool = defineTool({
   name: TOOL_AUTOMATION_CREATE,
   description: "Commit and activate a durable project Automation for a user-requested one-time or recurring time-triggered action. Before calling this tool, use the automation-create Skill to clarify missing information, present a complete proposal, and receive the user's response; interpret that response in the conversation and call this tool only when it accepts the proposed typed values. Use for scheduled, recurring, reminder, or periodic-monitoring intent; do not use for work that should run immediately. This tool is available to ordinary Lead root Sessions, including Todo Work and Automation setup Sessions, but not Todo Discussion Sessions. Its creation source is derived from the current Session. Runtime authorization enforces the typed schema and Session boundary.",
   inputSchema: AutomationCreateSchema,

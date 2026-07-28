@@ -1,11 +1,15 @@
 import {
-  BusyError,
+  InvalidExecutionTransitionError,
   InvalidTodoStateError,
   type SessionStoreState,
   type SessionTodo,
   type StreamEvent,
 } from "./types";
-import type { SessionGoalChangedEvent } from "@archcode/protocol";
+import {
+  validateExecutionTransition,
+  type ExecutionLifecycleEvent,
+  type SessionGoalChangedEvent,
+} from "@archcode/protocol";
 import {
   reduceStreamEvent as protocolReduceStreamEvent,
   type CompressionBlockSnapshot,
@@ -32,7 +36,7 @@ const TODO_STATUSES = new Set<SessionTodo["status"]>([
  * Runtime-specific wrapper around the protocol reducer.
  *
  * Adds two runtime-only behaviours:
- * 1. `execution-start` — throws BusyError if already running (protocol doesn't enforce this)
+ * 1. Execution lifecycle — rejects invalid transitions before persistence
  * 2. `todo-write` — throws InvalidTodoStateError on invalid todos (protocol silently
  *    returns {}), and tracks `lastTodoWriteStepIndex`
  */
@@ -41,8 +45,12 @@ export function reduceStreamEvent(
   event: StreamEvent | SessionGoalChangedEvent,
 ): Partial<SessionStoreState> {
   // Runtime-specific guards
-  if (event.type === "execution-start" && state.isRunning) {
-    throw new BusyError(state.sessionId);
+  if (isExecutionLifecycleEvent(event)) {
+    const transition = validateExecutionTransition(state.executions, event);
+    if (transition.outcome === "invalid") {
+      throw new InvalidExecutionTransitionError(transition.reason);
+    }
+    if (transition.outcome === "duplicate") return {};
   }
 
   if (event.type === "todo-write") {
@@ -101,6 +109,16 @@ export function reduceStreamEvent(
   }
 
   return partial;
+}
+
+function isExecutionLifecycleEvent(
+  event: StreamEvent | SessionGoalChangedEvent,
+): event is ExecutionLifecycleEvent {
+  return event.type === "execution-start"
+    || event.type === "execution-suspended"
+    || event.type === "execution-suspension-updated"
+    || event.type === "execution-resumed"
+    || event.type === "execution-end";
 }
 
 function commitCompressionBlockSnapshot(

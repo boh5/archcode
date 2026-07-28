@@ -37,6 +37,12 @@ function findAll(value: unknown, predicate: (element: ElementLike) => boolean): 
   return matches;
 }
 
+function textContent(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(textContent).join("");
+  return isElement(value) ? textContent(value.props?.children) : "";
+}
+
 const Fragment = Symbol.for("react.fragment");
 const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?: unknown) => ({
   type,
@@ -264,6 +270,24 @@ describe("ChatInput runtime controls", () => {
     expect(stopSessionMutate).toHaveBeenCalledWith({ slug: "proj", rootSessionId: "root-1" });
   });
 
+  test("suspended and resuming families queue and stop instead of becoming ready", () => {
+    for (const familyActivity of ["waiting_for_human", "resuming"] as const) {
+      activity = familyActivity;
+      hitlReady = true;
+      hookCursor = 0;
+      const tree = renderChatInput();
+      const textarea = findAll(tree, (element) => element.type === "textarea")[0];
+      const stop = findAll(tree, (element) => element.props?.title === "Stop")[0];
+      const queue = findAll(tree, (element) => element.props?.title === "Queue message")[0];
+
+      expect(textarea?.props?.disabled).toBe(false);
+      expect(textarea?.props?.placeholder).toBe("Queue a message…");
+      expect(stop?.props?.disabled).not.toBe(true);
+      expect(queue).toBeDefined();
+      expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
+    }
+  });
+
   test("running family queues from Enter or the independent Queue action", () => {
     activity = "running";
     hitlReady = true;
@@ -320,9 +344,10 @@ describe("ChatInput runtime controls", () => {
     activity = "stopping";
     hitlReady = true;
     const tree = renderChatInput();
-    const submit = findAll(tree, (element) => element.props?.title === "Send message")[0];
+    const submit = findAll(tree, (element) => element.props?.title === "Stopping")[0];
 
     expect(submit?.props?.disabled).toBe(true);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
   });
 
@@ -369,6 +394,17 @@ describe("ChatInput runtime controls", () => {
     expect(textarea?.props?.placeholder).toBe("Queue a message…");
     expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(1);
     expect(findAll(tree, (element) => element.props?.["aria-label"] === "Collapse queued-message composer")).toHaveLength(1);
+  });
+
+  test("a suspended family with HITL keeps Stop and presents Needs attention", () => {
+    activity = "waiting_for_human";
+    hitlReady = true;
+    pendingHitlCount = 1;
+    const tree = renderChatInput();
+
+    expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(1);
+    expect(findAll(tree, (element) => textContent(element) === "Needs attention")).toHaveLength(1);
+    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
   });
 
   test("idle runtime remains non-composable until the HITL snapshot initializes", () => {

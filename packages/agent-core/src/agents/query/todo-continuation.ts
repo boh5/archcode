@@ -1,4 +1,5 @@
-import type { Reminder, ExecutionEndEvent, SessionStoreState, StoredTodo } from "../../store/types";
+import type { SessionExecutionTerminalStatus } from "@archcode/protocol";
+import type { Reminder, SessionStoreState, StoredTodo } from "../../store/types";
 
 export const TODO_REMINDER_STEP_INTERVAL = 10;
 export const TODO_REMINDER_COOLDOWN_MS = 30_000;
@@ -102,7 +103,7 @@ export function shouldInjectReminder(
 
 export function shouldContinueAfterLoop(
   state: SessionStoreState,
-  loopEndStatus: ExecutionEndEvent["status"],
+  loopEndStatus: SessionExecutionTerminalStatus,
   now: number,
 ): ContinuationCheckResult {
   if (!isLoopEndAllowed(loopEndStatus)) {

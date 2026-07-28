@@ -40,8 +40,8 @@ import {
   createTitleGenerationHook,
   createTodoContinuationHook,
 } from "./query/hooks";
-import type { QueryLoopHooks } from "./query/loop-hooks";
-import { runQueryLoop } from "./query/loop";
+import type { AfterLoopEndContext, QueryLoopHooks } from "./query/loop-hooks";
+import { DEFAULT_QUERY_MAX_STEPS, runQueryLoop } from "./query/loop";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./types";
 
 export class UnknownExtraToolError extends Error {
@@ -260,13 +260,16 @@ export class ConfiguredAgent implements Agent {
       : { kind: "message", content: result.continueAsMessage };
   }
 
-  async run(binding: ExecutionModelBinding, options: AgentRunOptions = {}): Promise<AgentResult> {
+  async run(binding: ExecutionModelBinding, options: AgentRunOptions): Promise<AgentResult> {
     if (this.disposed) {
       throw new Error("Agent has been disposed");
     }
 
     const {
       abort,
+      executionId,
+      runOrdinal,
+      initialStep,
       maxSteps,
       extraTools,
       toolProjection,
@@ -365,9 +368,14 @@ export class ConfiguredAgent implements Agent {
             });
           }
         : undefined;
+      const totalMaxSteps = maxSteps ?? DEFAULT_QUERY_MAX_STEPS;
+      let nextInitialStep = initialStep;
       while (true) {
         const result = await runQueryLoop(
           {
+            executionId,
+            runOrdinal,
+            initialStep: nextInitialStep,
             binding,
             logger: this.logger,
             toolRegistry: this.toolRegistry,
@@ -391,18 +399,20 @@ export class ConfiguredAgent implements Agent {
             agentName: this.definition.name,
             currentDepth: this.depth,
             hooks,
-            ...(maxSteps === undefined ? {} : { maxSteps }),
+            maxSteps: totalMaxSteps,
           },
         );
 
+        if (result.outcome === "suspended") return result;
         if (this.store.getState().toolBatches.some((batch) => batch.archivedAt === undefined && batch.calls.some((call) => call.state === "blocked"))) {
           return result;
         }
 
         if (result.cwdChanged !== undefined) return result;
-        if (!this.hasUnconsumedTodoContinuation() || abort?.aborted) {
+        if (result.steps >= totalMaxSteps || !this.hasUnconsumedTodoContinuation() || abort?.aborted) {
           return result;
         }
+        nextInitialStep = result.steps;
       }
     } catch (error) {
       if (!(error instanceof BusyError)) {
@@ -568,10 +578,16 @@ export class ConfiguredAgent implements Agent {
     const isRootAgent = this.depth === 0;
     const memoryEnabled = this.memoryConfig?.enabled ?? true;
     if (memoryEnabled && policy.memoryExtraction && isRootAgent) {
-      afterLoopEnd.push(createMemoryExtractionHook(btm, this.memoryRoots, isCancelled, this.memoryConfig));
+      const extractMemory = createMemoryExtractionHook(btm, this.memoryRoots, isCancelled, this.memoryConfig);
+      afterLoopEnd.push(async (context: AfterLoopEndContext) => {
+        if (context.loopOutcome.kind === "terminal") await extractMemory(context);
+      });
     }
     if (memoryEnabled && policy.memoryConsolidation && isRootAgent) {
-      afterLoopEnd.push(createMemoryConsolidationHook(btm, this.memoryRoots, isCancelled, this.memoryConfig));
+      const consolidateMemory = createMemoryConsolidationHook(btm, this.memoryRoots, isCancelled, this.memoryConfig);
+      afterLoopEnd.push(async (context: AfterLoopEndContext) => {
+        if (context.loopOutcome.kind === "terminal") await consolidateMemory(context);
+      });
     }
     if (afterLoopEnd.length > 0) {
       hooks.afterLoopEnd = afterLoopEnd;

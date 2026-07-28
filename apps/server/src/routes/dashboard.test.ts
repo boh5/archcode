@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Hono } from "hono";
-import type { Automation, AutomationInvocation, SessionExecutionRecord, SessionGoal, SessionSummary } from "@archcode/protocol";
+import type { Automation, AutomationInvocation, SessionExecutionRecord, SessionExecutionTerminalStatus, SessionGoal, SessionSummary } from "@archcode/protocol";
 import { createDashboardRoutes } from "./dashboard";
 
 const workspaceRoot = process.cwd();
@@ -9,6 +9,7 @@ function goal(status: SessionGoal["status"] = "blocked"): SessionGoal {
   return {
     instanceId: "goal", generation: 1, objective: "Finish the migration and run all tests.", status,
     usage: { tokens: { inputTokens: 10, outputTokens: 20, totalTokens: 30, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 90_000, executionCount: 2 },
+    settlementReceipts: [],
     createdAt: 1, activatedAt: 1, updatedAt: 2,
   };
 }
@@ -20,14 +21,23 @@ function rootSummary(sessionId = "root"): SessionSummary {
   };
 }
 
-function execution(status: SessionExecutionRecord["status"] = "failed"): SessionExecutionRecord {
+function execution(status: SessionExecutionTerminalStatus | "running" = "failed"): SessionExecutionRecord {
+  const binding = {
+    selection: { model: "test:model" }, providerId: "test", modelId: "model",
+    providerDisplayName: "Test", modelDisplayName: "Model", resolution: "profile_default" as const, modelRuntimeRevision: "test-revision",
+  };
+  const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 };
+  if (status === "running") {
+    return {
+      id: "execution-1", status, startedAt: 10, durationMs: 0, maxSteps: 50, origin: "user_message",
+      runs: [{ ordinal: 0, startedAt: 10, binding }],
+    };
+  }
   return {
     id: "execution-1", status, startedAt: 10, endedAt: 20,
-    binding: {
-      selection: { model: "test:model" }, providerId: "test", modelId: "model",
-      providerDisplayName: "Test", modelDisplayName: "Model", resolution: "profile_default", modelRuntimeRevision: "test-revision",
-    },
-    origin: "user_message",
+    durationMs: 10, maxSteps: 50, origin: "user_message",
+    runs: [{ ordinal: 0, startedAt: 10, endedAt: 20, durationMs: 10, binding, usageDelta: usage, settlement: { key: "run:root:execution-1:0", goalInstanceId: null } }],
+    terminalSettlement: { key: "terminal:root:execution-1", goalInstanceId: null },
   };
 }
 
@@ -113,7 +123,15 @@ describe("DashboardProjection routes", () => {
     const app = new Hono().route("/api", createDashboardRoutes(runtime({
       getSessionFile: mock(async () => ({
         ...rootSummary(),
-        executions: [execution("failed"), { ...execution("running"), id: "execution-2", startedAt: 30 }],
+        executions: [execution("failed"), {
+          ...execution("running"),
+          id: "execution-2",
+          startedAt: 30,
+          runs: [{ ordinal: 0, startedAt: 30, binding: {
+            selection: { model: "test:model" }, providerId: "test", modelId: "model",
+            providerDisplayName: "Test", modelDisplayName: "Model", resolution: "profile_default", modelRuntimeRevision: "test-revision",
+          } }],
+        }],
       })),
       listAutomationInvocations: mock(async () => [
         invocation(),

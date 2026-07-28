@@ -1,16 +1,23 @@
 import type { SessionExecutionRecord, SessionTodo } from "@archcode/protocol";
 
-export type TodoProgressState = "running" | "waiting" | "blocked" | "failed" | "completed" | "idle";
+export type TodoProgressState =
+  "running" | "waiting" | "blocked" | "failed" | "completed" | "idle";
 export type TodoPriority = "high" | "medium" | "low";
 
 const TODO_PRIORITY_PATTERN = /\b(P0|P1|P2)\b/i;
 
-export function presentTodoContent(content: string): { content: string; priority: TodoPriority | null } {
+export function presentTodoContent(content: string): {
+  content: string;
+  priority: TodoPriority | null;
+} {
   const match = TODO_PRIORITY_PATTERN.exec(content);
   if (!match) return { content, priority: null };
   const tag = match[1].toUpperCase();
   return {
-    content: content.replace(TODO_PRIORITY_PATTERN, "").replace(/\s{2,}/g, " ").trim(),
+    content: content
+      .replace(TODO_PRIORITY_PATTERN, "")
+      .replace(/\s{2,}/g, " ")
+      .trim(),
     priority: tag === "P0" ? "high" : tag === "P1" ? "medium" : "low",
   };
 }
@@ -42,8 +49,12 @@ export function deriveTodoProgress(
 
   if (completed === todos.length) state = "completed";
   else if ((execution.blockedByHitlIds?.length ?? 0) > 0) state = "blocked";
-  else if (execution.lastExecutionStatus === "waiting_for_human") state = "waiting";
-  else if (execution.lastExecutionStatus === "failed" || execution.lastExecutionStatus === "timed_out") state = "failed";
+  else if (execution.lastExecutionStatus === "suspended") state = "waiting";
+  else if (
+    execution.lastExecutionStatus === "failed" ||
+    execution.lastExecutionStatus === "timed_out"
+  )
+    state = "failed";
   else if (execution.isRunning || current > 0) state = "running";
 
   return {

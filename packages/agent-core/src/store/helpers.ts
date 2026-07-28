@@ -176,11 +176,11 @@ const MessageModelAuditSchema = z.strictObject({
 });
 
 const NormalizedUsageSchema = z.strictObject({
-  inputTokens: z.number(),
-  outputTokens: z.number(),
-  totalTokens: z.number(),
-  reasoningTokens: z.number(),
-  cachedInputTokens: z.number(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
 });
 
 const SessionStatsSchema = z.strictObject({
@@ -201,16 +201,117 @@ const SessionStatsSchema = z.strictObject({
   usage: NormalizedUsageSchema,
 });
 
-const SessionExecutionRecordSchema = z.strictObject({
-  id: z.string(),
-  startedAt: z.number(),
-  status: z.enum(["running", "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human"]),
-  endedAt: z.number().optional(),
-  durationMs: z.number().optional(),
-  error: z.string().optional(),
-  stopRequestedAt: z.number().optional(),
+const ExecutionSettlementSchema = z.strictObject({
+  key: z.string().trim().min(1),
+  goalInstanceId: z.string().trim().min(1).nullable(),
+  appliedAt: z.number().int().nonnegative().optional(),
+});
+
+const ExecutionOpenRunSchema = z.strictObject({
+  ordinal: z.number().int().nonnegative(),
+  startedAt: z.number().int().nonnegative(),
   binding: ExecutionModelBindingSchema,
-  origin: z.enum(["user_message", "tool_call", "tool_batch", "goal_continuation"]),
+});
+
+const ExecutionClosedRunSchema = z.strictObject({
+  ordinal: z.number().int().nonnegative(),
+  startedAt: z.number().int().nonnegative(),
+  endedAt: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative(),
+  binding: ExecutionModelBindingSchema,
+  usageDelta: NormalizedUsageSchema,
+  settlement: ExecutionSettlementSchema,
+}).superRefine((run, ctx) => {
+  if (run.endedAt < run.startedAt || run.durationMs !== run.endedAt - run.startedAt) {
+    ctx.addIssue({ code: "custom", path: ["durationMs"], message: "Run duration must match its active interval" });
+  }
+});
+
+const SessionExecutionRunSchema = z.union([ExecutionOpenRunSchema, ExecutionClosedRunSchema]);
+
+const HitlExecutionSuspensionSchema = z.strictObject({
+  kind: z.literal("hitl"),
+  toolBatchId: z.string().trim().min(1),
+  blockerIds: z.array(z.string().trim().min(1)).min(1),
+}).superRefine((suspension, ctx) => {
+  const sorted = [...suspension.blockerIds].sort();
+  if (new Set(suspension.blockerIds).size !== suspension.blockerIds.length
+    || sorted.some((id, index) => id !== suspension.blockerIds[index])) {
+    ctx.addIssue({ code: "custom", path: ["blockerIds"], message: "HITL blockerIds must be unique and sorted" });
+  }
+});
+
+const ExecutionSuspensionSchema = z.discriminatedUnion("kind", [
+  HitlExecutionSuspensionSchema,
+  z.strictObject({
+    kind: z.literal("child_dependency"),
+    toolBatchId: z.string().trim().min(1),
+    toolCallId: z.string().trim().min(1),
+    childSessionId: z.string().trim().min(1),
+    childExecutionId: z.string().trim().min(1),
+  }),
+  z.strictObject({
+    kind: z.literal("resume_pending"),
+    toolBatchId: z.string().trim().min(1),
+    readyAt: z.number().int().nonnegative(),
+  }),
+]);
+
+const SessionExecutionRecordBaseShape = {
+  id: z.string().trim().min(1),
+  startedAt: z.number().int().nonnegative(),
+  origin: z.enum(["user_message", "tool_call", "goal_continuation"]),
+  maxSteps: z.number().int().positive(),
+  activeTimeoutMs: z.number().int().positive().optional(),
+  durationMs: z.number().int().nonnegative(),
+  stopRequestedAt: z.number().int().nonnegative().optional(),
+  runs: z.array(SessionExecutionRunSchema).min(1),
+};
+
+const SessionExecutionRecordSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    ...SessionExecutionRecordBaseShape,
+    status: z.literal("running"),
+  }),
+  z.strictObject({
+    ...SessionExecutionRecordBaseShape,
+    status: z.literal("suspended"),
+    suspension: ExecutionSuspensionSchema,
+  }),
+  z.strictObject({
+    ...SessionExecutionRecordBaseShape,
+    status: z.enum(["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted"]),
+    endedAt: z.number().int().nonnegative(),
+    error: z.string().optional(),
+    terminalSettlement: ExecutionSettlementSchema,
+  }),
+]).superRefine((execution, ctx) => {
+  let durationMs = 0;
+  execution.runs.forEach((run, index) => {
+    if (run.ordinal !== index) {
+      ctx.addIssue({ code: "custom", path: ["runs", index, "ordinal"], message: "Run ordinals must be contiguous" });
+    }
+    if (index === 0 && run.startedAt !== execution.startedAt) {
+      ctx.addIssue({ code: "custom", path: ["runs", index, "startedAt"], message: "First run must start with its Execution" });
+    }
+    const previous = execution.runs[index - 1];
+    if (previous !== undefined && "endedAt" in previous && run.startedAt < previous.endedAt) {
+      ctx.addIssue({ code: "custom", path: ["runs", index, "startedAt"], message: "Run intervals cannot overlap" });
+    }
+    if ("endedAt" in run) durationMs += run.durationMs;
+  });
+  if (durationMs !== execution.durationMs) {
+    ctx.addIssue({ code: "custom", path: ["durationMs"], message: "Execution duration must equal its closed runs" });
+  }
+  const openRuns = execution.runs.filter((run) => !("endedAt" in run));
+  if (execution.status === "running") {
+    const lastRun = execution.runs.at(-1);
+    if (openRuns.length !== 1 || lastRun === undefined || "endedAt" in lastRun) {
+      ctx.addIssue({ code: "custom", path: ["runs"], message: "A running Execution must have exactly one trailing open run" });
+    }
+  } else if (openRuns.length !== 0) {
+    ctx.addIssue({ code: "custom", path: ["runs"], message: "A suspended or terminal Execution cannot have an open run" });
+  }
 });
 
 const PendingSessionMessageSchema = z.strictObject({
@@ -223,13 +324,25 @@ const PendingSessionMessageSchema = z.strictObject({
   acceptedAt: z.number(),
   updatedAt: z.number(),
   targetExecutionId: z.string().trim().min(1).optional(),
+  targetRunOrdinal: z.number().int().nonnegative().optional(),
+  targetModelAudit: MessageModelAuditSchema.optional(),
+  claimedAt: z.number().int().nonnegative().optional(),
   requestedModelSelection: RequestedModelSelectionSchema,
 }).superRefine((message, ctx) => {
-  if ((message.state === "steering") !== (message.targetExecutionId !== undefined)) {
+  const targetFieldsPresent = message.targetExecutionId !== undefined
+    && message.targetRunOrdinal !== undefined
+    && message.targetModelAudit !== undefined
+    && message.claimedAt !== undefined;
+  const targetFieldsAbsent = message.targetExecutionId === undefined
+    && message.targetRunOrdinal === undefined
+    && message.targetModelAudit === undefined
+    && message.claimedAt === undefined;
+  if ((message.state === "steering" && !targetFieldsPresent)
+    || (message.state === "queued" && !targetFieldsAbsent)) {
     ctx.addIssue({
       code: "custom",
       path: ["targetExecutionId"],
-      message: "targetExecutionId must exist exactly when state is steering",
+      message: "Steering target fields must exist exactly when state is steering",
     });
   }
 });
@@ -333,6 +446,7 @@ const ToolChildSessionLinkSchema = z.strictObject({
   parentToolCallId: z.string(),
   toolName: z.string(),
   childSessionId: z.string(),
+  childExecutionId: z.string(),
   childAgentName: z.string(),
   childProfile: z.enum(["deep", "fast"]),
   childSkillNames: z.array(z.string().trim().min(1)),
@@ -354,7 +468,16 @@ const ToolChildSessionLinkSchema = z.strictObject({
   startedAt: z.number().optional(),
   endedAt: z.number().optional(),
   durationMs: z.number().optional(),
+  durationUpdatedAt: z.number().optional(),
   error: z.string().optional(),
+}).superRefine((link, ctx) => {
+  if ((link.durationMs === undefined) !== (link.durationUpdatedAt === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["durationUpdatedAt"],
+      message: "Child link duration timestamp must be present exactly when duration is present",
+    });
+  }
 });
 
 const TextPartSchema = z.strictObject({
@@ -486,15 +609,36 @@ const StoredMessageSchema = z.strictObject({
   createdAt: z.number(),
   completedAt: z.number().optional(),
   executionId: z.string().optional(),
+  runOrdinal: z.number().int().nonnegative().optional(),
   clientRequestId: z.string().optional(),
   compacted: z.boolean().optional(),
   modelAudit: MessageModelAuditSchema.optional(),
 }).superRefine((message, ctx) => {
+  if ((message.executionId === undefined) !== (message.runOrdinal === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["runOrdinal"],
+      message: "executionId and runOrdinal must be present together",
+    });
+  }
   if (message.role === "assistant" && message.modelAudit !== undefined) {
     ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Assistant messages cannot carry modelAudit" });
   }
-  if (message.role === "user" && message.clientRequestId !== undefined && message.modelAudit === undefined) {
-    ctx.addIssue({ code: "custom", path: ["modelAudit"], message: "Canonical user input must carry modelAudit" });
+  if (message.role === "user" && message.parts.some((part) => part.type === "text")) {
+    if (message.executionId === undefined || message.runOrdinal === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executionId"],
+        message: "Canonical user text must carry execution provenance",
+      });
+    }
+    if (message.modelAudit === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["modelAudit"],
+        message: "Canonical user text must carry modelAudit",
+      });
+    }
   }
   const goalNotices = message.parts.filter((part) => part.type === "goal-notice");
   if (goalNotices.length > 0) {
@@ -506,7 +650,8 @@ const StoredMessageSchema = z.strictObject({
       || message.completedAt !== notice.createdAt
       || message.clientRequestId !== undefined
       || message.modelAudit !== undefined
-      || message.executionId !== undefined) {
+      || message.executionId !== undefined
+      || message.runOrdinal !== undefined) {
       ctx.addIssue({
         code: "custom",
         message: "Goal notice must be one provenance-free internal user message",
@@ -517,8 +662,9 @@ const StoredMessageSchema = z.strictObject({
 
 const StepInfoSchema = z.strictObject({
   id: z.string(),
-  step: z.number(),
-  executionId: z.string().optional(),
+  step: z.number().int().nonnegative(),
+  executionId: z.string().trim().min(1),
+  runOrdinal: z.number().int().nonnegative(),
   startedAt: z.number(),
   completedAt: z.number().optional(),
   finishReason: z.string().optional(),
@@ -626,9 +772,35 @@ const SessionToolRecoveryFailureSchema = z.discriminatedUnion("kind", [
 ]);
 
 const SessionToolManualInspectionReasonSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("continuation_interrupted"), batchId: ToolLifecycleIdSchema }),
   z.strictObject({ kind: z.literal("effectful_outcome_unknown"), toolCallId: ToolLifecycleIdSchema, toolName: ToolNameSchema }),
   z.strictObject({ kind: z.literal("effectful_cancelled_unknown"), toolCallId: ToolLifecycleIdSchema, toolName: ToolNameSchema }),
+]);
+
+const SessionToolChildCorrelationShape = {
+  parentExecutionId: ToolLifecycleIdSchema,
+  runOrdinal: z.number().int().nonnegative(),
+  toolCallId: ToolLifecycleIdSchema,
+  childSessionId: ToolLifecycleIdSchema,
+  childExecutionId: ToolLifecycleIdSchema,
+  createdAt: z.number().int().nonnegative(),
+};
+
+const SessionToolChildDependencySchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("child_launch"),
+    ...SessionToolChildCorrelationShape,
+  }),
+  z.strictObject({
+    kind: z.literal("child_dependency"),
+    ...SessionToolChildCorrelationShape,
+    dependencyStartedAt: z.number().int().nonnegative(),
+    outcome: z.strictObject({
+      executionStatus: z.enum(["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted"]),
+      output: z.string().optional(),
+      terminalError: z.string().optional(),
+      resolvedAt: z.number().int().nonnegative(),
+    }).optional(),
+  }),
 ]);
 
 const SessionToolBatchCallSchema = z.strictObject({
@@ -642,11 +814,13 @@ const SessionToolBatchCallSchema = z.strictObject({
     destructive: z.boolean(),
     concurrencySafe: z.boolean(),
   }),
-  state: z.enum(["queued", "running", "blocked", "completed", "failed", "manual_inspection_required"]),
+  state: z.enum(["queued", "running", "blocked", "child_launch", "child_dependency", "completed", "failed", "manual_inspection_required"]),
   attempt: z.number().int().nonnegative(),
+  checkpointAt: z.number().int().nonnegative(),
   result: FinalizedToolResultSchema.optional(),
   executionCompleted: z.literal(true).optional(),
   blocker: HitlBoundaryCodec.sessionToolCallBlockerSchema.optional(),
+  childDependency: SessionToolChildDependencySchema.optional(),
   recoveryFailure: SessionToolRecoveryFailureSchema.optional(),
 }).superRefine((call, ctx) => {
   const terminalResult = call.state === "completed" || call.state === "failed";
@@ -665,6 +839,24 @@ const SessionToolBatchCallSchema = z.strictObject({
   if ((call.state === "blocked") !== (call.blocker !== undefined && call.blocker.responseAppliedAt === undefined)) {
     ctx.addIssue({ code: "custom", path: ["blocker"], message: `${call.state} has invalid active blocker` });
   }
+  if ((call.state === "child_launch") !== (call.childDependency?.kind === "child_launch")) {
+    ctx.addIssue({ code: "custom", path: ["childDependency"], message: `${call.state} has invalid child launch intent` });
+  }
+  if ((call.state === "child_dependency") !== (call.childDependency?.kind === "child_dependency")) {
+    ctx.addIssue({ code: "custom", path: ["childDependency"], message: `${call.state} has invalid child dependency` });
+  }
+  if (call.blocker !== undefined && call.childDependency !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["childDependency"], message: "A call cannot have both human and child blockers" });
+  }
+  if (call.childDependency !== undefined) {
+    if (call.childDependency.toolCallId !== call.toolCallId) {
+      ctx.addIssue({ code: "custom", path: ["childDependency", "toolCallId"], message: "Child intent must correlate to its owning call" });
+    }
+    if (call.childDependency.kind === "child_dependency"
+      && call.childDependency.dependencyStartedAt < call.childDependency.createdAt) {
+      ctx.addIssue({ code: "custom", path: ["childDependency", "dependencyStartedAt"], message: "Child dependency cannot precede launch intent" });
+    }
+  }
 });
 
 const SessionToolBatchSchema = z.strictObject({
@@ -672,6 +864,7 @@ const SessionToolBatchSchema = z.strictObject({
   executionId: z.string().trim().min(1),
   assistantMessageId: z.string().optional(),
   step: z.number().int().nonnegative(),
+  runOrdinal: z.number().int().nonnegative(),
   agentName: AgentNameSchema,
   allowedTools: z.array(z.string()),
   agentSkills: z.array(z.string()),
@@ -679,8 +872,6 @@ const SessionToolBatchSchema = z.strictObject({
   calls: z.array(SessionToolBatchCallSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
-  continuationStartedAt: z.string().optional(),
-  continuationCompletedAt: z.string().optional(),
   archivedAt: z.string().optional(),
   manualInspectionReason: SessionToolManualInspectionReasonSchema.optional(),
 }).superRefine((batch, ctx) => {
@@ -699,6 +890,17 @@ const SessionToolBatchSchema = z.strictObject({
       if (call?.partitionIndex !== partitionIndex) ctx.addIssue({ code: "custom", path: ["partitions", partitionIndex], message: "Call partitionIndex mismatch" });
     }
   });
+  for (const call of batch.calls) {
+    if (call.childDependency !== undefined
+      && (call.childDependency.parentExecutionId !== batch.executionId
+        || call.childDependency.runOrdinal !== batch.runOrdinal)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["calls", call.ordinal, "childDependency"],
+        message: "Child intent must correlate to its owning Execution run",
+      });
+    }
+  }
 });
 
 export const SessionFileSchema = z.strictObject({
@@ -837,12 +1039,84 @@ export const SessionFileSchema = z.strictObject({
   }
 
   const executionById = new Map(session.executions.map((execution) => [execution.id, execution]));
+  if (executionById.size !== session.executions.length) {
+    ctx.addIssue({ code: "custom", path: ["executions"], message: "Execution ids must be unique" });
+  }
+  if (session.executions.filter((execution) =>
+    execution.status === "running" || execution.status === "suspended"
+  ).length > 1) {
+    ctx.addIssue({ code: "custom", path: ["executions"], message: "At most one Execution may be nonterminal" });
+  }
+  for (const execution of session.executions) {
+    for (const run of execution.runs) {
+      if ("endedAt" in run
+        && run.settlement.key !== `run:${session.sessionId}:${execution.id}:${run.ordinal}`) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["executions"],
+          message: `Execution ${execution.id} run ${run.ordinal} has an invalid settlement key`,
+        });
+      }
+    }
+    if (execution.status !== "running"
+      && execution.status !== "suspended"
+      && execution.terminalSettlement.key !== `terminal:${session.sessionId}:${execution.id}`) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executions"],
+        message: `Execution ${execution.id} has an invalid terminal settlement key`,
+      });
+    }
+  }
   for (const message of session.messages) {
     if (message.modelAudit === undefined || message.executionId === undefined) continue;
     const execution = executionById.get(message.executionId);
-    if (execution === undefined
-      || JSON.stringify(message.modelAudit.actual) !== JSON.stringify(execution.binding.selection)) {
+    const run = message.runOrdinal === undefined ? undefined : execution?.runs[message.runOrdinal];
+    if (run === undefined
+      || JSON.stringify(message.modelAudit.actual) !== JSON.stringify(run.binding.selection)) {
       ctx.addIssue({ code: "custom", path: ["messages"], message: `Message ${message.id} model audit has no matching execution binding` });
+    }
+  }
+  for (const step of session.steps) {
+    const execution = executionById.get(step.executionId);
+    if (execution?.runs[step.runOrdinal] === undefined) {
+      ctx.addIssue({ code: "custom", path: ["steps"], message: `Step ${step.id} has no matching Execution run` });
+    }
+    if (execution !== undefined && step.step >= execution.maxSteps) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["steps"],
+        message: `Step ${step.id} exceeds Execution ${step.executionId} maxSteps`,
+      });
+    }
+  }
+  const runOrdinalByStepCursor = new Map<string, number>();
+  for (const step of session.steps) {
+    const cursor = `${step.executionId}:${step.step}`;
+    const priorRunOrdinal = runOrdinalByStepCursor.get(cursor);
+    if (priorRunOrdinal !== undefined && priorRunOrdinal !== step.runOrdinal) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["steps"],
+        message: `Execution ${step.executionId} reuses step ${step.step} across runs`,
+      });
+    }
+    runOrdinalByStepCursor.set(cursor, step.runOrdinal);
+  }
+  for (const batch of session.toolBatches) {
+    if (executionById.get(batch.executionId)?.runs[batch.runOrdinal] === undefined) {
+      ctx.addIssue({ code: "custom", path: ["toolBatches"], message: `Tool Batch ${batch.batchId} has no matching Execution run` });
+    }
+    if (!session.steps.some((step) =>
+      step.executionId === batch.executionId
+      && step.step === batch.step
+      && step.runOrdinal === batch.runOrdinal
+    )) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["toolBatches"],
+        message: `Tool Batch ${batch.batchId} has no matching persisted Step`,
+      });
     }
   }
 });

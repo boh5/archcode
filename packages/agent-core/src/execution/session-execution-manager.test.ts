@@ -2,7 +2,13 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createEmptySessionStats, isTerminalChildSessionStatus, type DelegationRequest } from "@archcode/protocol";
+import {
+  createEmptySessionStats,
+  isTerminalChildSessionStatus,
+  type DelegationRequest,
+  type SessionExecutionSuspension,
+  type SessionExecutionTerminalStatus,
+} from "@archcode/protocol";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { StoreApi } from "zustand";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
@@ -14,7 +20,8 @@ import { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills";
 import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
 import { createTestToolRegistryFixture } from "../tools/test-registry";
-import { testExecutionRecord, testExecutionStart } from "../testing/test-execution-fixtures";
+import { testExecutionEnd, testExecutionRecord, testExecutionStart, testExecutionSuspended } from "../testing/test-execution-fixtures";
+import { applySessionToolBatchChildOutcome } from "./session-tool-batch-scheduler";
 import { setLlmAdapterForTest } from "../llm/adapter";
 import { AgentRunningError, ConcurrentLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
@@ -43,6 +50,7 @@ import { SessionInputConflictError, SessionInputService } from "../session-input
 import type { ArchCodeConfig, ModelConfig } from "../config";
 import type { ExecutionModelBinding } from "../models";
 import { ModelRuntime, ModelRuntimeSnapshot, ModelSelectionResolver } from "../models";
+import type { ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 
 const testRoot = join(
   tmpdir(),
@@ -98,12 +106,14 @@ function deferred<T>(): Deferred<T> {
 interface TestDeadlineScheduler extends SessionExecutionDeadlineScheduler {
   fireScheduled(): void;
   whenScheduled(): Promise<void>;
+  scheduledDelays(): readonly number[];
 }
 
 function createTestDeadlineScheduler(): TestDeadlineScheduler {
   let currentTime = 0;
   let nextId = 1;
   const scheduled = new Map<number, () => void>();
+  const scheduledDelayHistory: number[] = [];
   const scheduleWaiters = new Set<() => void>();
 
   return {
@@ -111,8 +121,9 @@ function createTestDeadlineScheduler(): TestDeadlineScheduler {
     sleep: async (delayMs) => {
       currentTime += delayMs;
     },
-    schedule: (_delayMs, callback) => {
+    schedule: (delayMs, callback) => {
       const id = nextId++;
+      scheduledDelayHistory.push(delayMs);
       scheduled.set(id, callback);
       for (const resolve of scheduleWaiters) resolve();
       scheduleWaiters.clear();
@@ -130,6 +141,7 @@ function createTestDeadlineScheduler(): TestDeadlineScheduler {
       if (scheduled.size > 0) return;
       await new Promise<void>((resolve) => scheduleWaiters.add(resolve));
     },
+    scheduledDelays: () => scheduledDelayHistory,
   };
 }
 
@@ -186,7 +198,36 @@ function createTestSession(
   });
 }
 
-type MockAgentResult = Partial<AgentResult> & Pick<AgentResult, "text" | "steps">;
+type MockAgentResult = {
+  readonly text: string;
+  readonly steps: number;
+  readonly outcome?: "terminal" | "suspended";
+  readonly status?: SessionExecutionTerminalStatus;
+  readonly suspension?: Exclude<SessionExecutionSuspension, { kind: "resume_pending" }>;
+  readonly error?: string;
+  readonly cwdChanged?: AgentResult["cwdChanged"];
+};
+
+function normalizeMockAgentResult(result: MockAgentResult): AgentResult {
+  if (result.outcome === "suspended") {
+    if (result.suspension === undefined) throw new Error("Suspended mock result requires a suspension");
+    return {
+      outcome: "suspended",
+      text: result.text,
+      steps: result.steps,
+      suspension: result.suspension,
+      ...(result.cwdChanged === undefined ? {} : { cwdChanged: result.cwdChanged }),
+    };
+  }
+  return {
+    outcome: "terminal",
+    text: result.text,
+    steps: result.steps,
+    status: result.status ?? "completed",
+    ...(result.error === undefined ? {} : { error: result.error }),
+    ...(result.cwdChanged === undefined ? {} : { cwdChanged: result.cwdChanged }),
+  };
+}
 
 class MockAgent implements Agent {
   readonly store;
@@ -194,14 +235,14 @@ class MockAgent implements Agent {
   readonly runStarted = deferred<void>();
   readonly disposeMock = mock(() => undefined);
   readonly runBindings: ExecutionModelBinding[] = [];
-  readonly runMock = mock(async (options: AgentRunOptions = {}): Promise<AgentResult> => {
+  readonly runMock = mock(async (options: AgentRunOptions): Promise<AgentResult> => {
     this.runStarted.resolve(undefined);
     const signal = options.abort;
     const result = await withAbort(this.result, signal);
     this.store.getState().append({ type: "text-start" });
     this.store.getState().append({ type: "text-delta", text: result.text });
     this.store.getState().append({ type: "text-end" });
-    return { ...result, status: result.status ?? "completed" };
+    return normalizeMockAgentResult(result);
   });
 
   constructor(
@@ -224,6 +265,7 @@ class MockAgent implements Agent {
 
   run(binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> {
     this.runBindings.push(binding);
+    if (options === undefined) throw new Error("Execution identity is required");
     return this.runMock(options);
   }
 
@@ -245,12 +287,18 @@ interface FakeManagerOptions {
   loadSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["loadSessionStore"];
   createSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["createSessionStore"];
   listSessionFamilyToolBatchHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyToolBatchHitlIds"];
+  cancelSessionToolBatch?: ConstructorParameters<typeof SessionExecutionManager>[0]["cancelSessionToolBatch"];
   isDiscussionSession?: ConstructorParameters<typeof SessionExecutionManager>[0]["isDiscussionSession"];
   resolveSessionDepth?: ConstructorParameters<typeof SessionExecutionManager>[0]["resolveSessionDepth"];
   sessionInputService?: ConstructorParameters<typeof SessionExecutionManager>[0]["sessionInputService"];
   sessionFamilyStopTimeoutMs?: number;
   deadlineScheduler?: TestDeadlineScheduler;
   modelRuntime?: ModelRuntime;
+  applyChildDependencyOutcome?: ConstructorParameters<typeof SessionExecutionManager>[0]["applyChildDependencyOutcome"];
+  resolveGoalInstanceId?: ConstructorParameters<typeof SessionExecutionManager>[0]["resolveGoalInstanceId"];
+  onExecutionSettlement?: ConstructorParameters<typeof SessionExecutionManager>[0]["onExecutionSettlement"];
+  onSessionInputMutationReleased?: ConstructorParameters<typeof SessionExecutionManager>[0]["onSessionInputMutationReleased"];
+  onContinuationAdmissionReleased?: ConstructorParameters<typeof SessionExecutionManager>[0]["onContinuationAdmissionReleased"];
   /**
    * Lets the small execution harness use a real ConfiguredAgent for a child
    * while retaining the rest of its intentionally narrow fake runtime.
@@ -266,6 +314,67 @@ interface FakeManagerOptions {
 const allowExecutionScope = { validate: async () => undefined };
 
 type SessionExecutionManagerConfigForTest = ConstructorParameters<typeof SessionExecutionManager>[0];
+type TestChildExecutionRequest = Omit<
+  ChildExecutionRequest,
+  "parentExecutionId" | "parentRunOrdinal" | "parentToolBatchId" | "childSessionId" | "childExecutionId"
+> & Partial<Pick<
+  ChildExecutionRequest,
+  "parentExecutionId" | "parentRunOrdinal" | "parentToolBatchId" | "childSessionId" | "childExecutionId"
+>>;
+type TestResumeChildRequest = Omit<
+  ResumeChildRequest,
+  "parentExecutionId" | "parentRunOrdinal" | "parentToolBatchId" | "childExecutionId"
+> & Partial<Pick<
+  ResumeChildRequest,
+  "parentExecutionId" | "parentRunOrdinal" | "parentToolBatchId" | "childExecutionId"
+>>;
+type TestSessionExecutionManager = Omit<
+  SessionExecutionManager,
+  "startChildExecution" | "resumeChildExecution"
+> & {
+  startChildExecution(
+    workspaceRoot: string,
+    request: TestChildExecutionRequest,
+  ): ReturnType<SessionExecutionManager["startChildExecution"]>;
+  resumeChildExecution(
+    workspaceRoot: string,
+    request: TestResumeChildRequest,
+  ): ReturnType<SessionExecutionManager["resumeChildExecution"]>;
+};
+
+function testManagerFacade(raw: SessionExecutionManager): TestSessionExecutionManager {
+  return new Proxy(raw, {
+    get(target, property) {
+      if (property === "startChildExecution") {
+        return (
+          root: string,
+          request: TestChildExecutionRequest,
+        ) => target.startChildExecution(root, {
+          parentExecutionId: "test-parent-execution",
+          parentRunOrdinal: 0,
+          parentToolBatchId: "test-parent-batch",
+          childSessionId: crypto.randomUUID(),
+          childExecutionId: crypto.randomUUID(),
+          ...request,
+        });
+      }
+      if (property === "resumeChildExecution") {
+        return (
+          root: string,
+          request: TestResumeChildRequest,
+        ) => target.resumeChildExecution(root, {
+          parentExecutionId: "test-parent-execution",
+          parentRunOrdinal: 0,
+          parentToolBatchId: "test-parent-batch",
+          childExecutionId: crypto.randomUUID(),
+          ...request,
+        });
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as TestSessionExecutionManager;
+}
 
 function storeCallbacks(manager: SessionStoreManager): Pick<
   SessionExecutionManagerConfigForTest,
@@ -325,7 +434,7 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
           input.store.getState().append({ type: "text-start" });
           input.store.getState().append({ type: "text-delta", text: result.text });
           input.store.getState().append({ type: "text-end" });
-          return { ...result, status: result.status ?? "completed" };
+          return normalizeMockAgentResult(result);
         }),
         dispose: mock(() => undefined),
       } as unknown as MockAgent;
@@ -482,7 +591,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
   const untrackSession = mock(() => undefined);
   const modelRuntime = options.modelRuntime ?? makeModelRuntime();
   const deadlineScheduler = options.deadlineScheduler ?? createTestDeadlineScheduler();
-  const manager = new SessionExecutionManager({
+  const rawManager = new SessionExecutionManager({
     sessionAgentManager,
     modelRuntime,
     modelSelectionResolver: new ModelSelectionResolver(),
@@ -492,6 +601,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     ...(options.loadSessionStore === undefined ? {} : { loadSessionStore: options.loadSessionStore }),
     flushSessionStore: options.flushSessionStore ?? (async () => undefined),
     listSessionFamilyToolBatchHitlIds: options.listSessionFamilyToolBatchHitlIds ?? (async () => []),
+    cancelSessionToolBatch: options.cancelSessionToolBatch ?? (async () => undefined),
     isDiscussionSession: options.isDiscussionSession ?? (async () => false),
     trackSession,
     untrackSession,
@@ -499,9 +609,15 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     sessionInputService: options.sessionInputService ?? new SessionInputService(executionStoreManager),
     ...(options.deletionLifecycle === undefined ? {} : { deletionLifecycle: options.deletionLifecycle }),
     ...(options.sessionFamilyStopTimeoutMs === undefined ? {} : { sessionFamilyStopTimeoutMs: options.sessionFamilyStopTimeoutMs }),
+    applyChildDependencyOutcome: options.applyChildDependencyOutcome ?? (async () => undefined),
+    onSessionInputMutationReleased: options.onSessionInputMutationReleased ?? (async () => undefined),
+    onContinuationAdmissionReleased: options.onContinuationAdmissionReleased ?? (async () => undefined),
+    resolveGoalInstanceId: options.resolveGoalInstanceId ?? (async () => null),
+    onExecutionSettlement: options.onExecutionSettlement ?? (async () => undefined),
     deadlineScheduler,
     logger: silentLogger,
   });
+  const manager = testManagerFacade(rawManager);
   return { manager, sessionAgentManager, trackSession, untrackSession, deadlineScheduler };
 }
 
@@ -524,6 +640,7 @@ async function writeSessionFile(input: {
   cwd?: string;
   title?: string;
   executions?: SessionFile["executions"];
+  steps?: SessionFile["steps"];
   childSessionLinks?: SessionFile["childSessionLinks"];
   toolBatches?: SessionFile["toolBatches"];
   agentName?: AgentName;
@@ -549,7 +666,7 @@ async function writeSessionFile(input: {
     messages: [],
     pendingMessages: [],
     inputRequestReceipts: [],
-    steps: [],
+    steps: input.steps ?? [],
     stats: createEmptySessionStats(),
     executions: input.executions ?? [],
     compression: createEmptyCompressionState(),
@@ -572,6 +689,7 @@ function blockedToolBatch(hitlId: string): SessionToolBatch {
   return {
     batchId: `batch-${hitlId}`,
     executionId: `execution-${hitlId}`,
+    runOrdinal: 0,
     step: 0,
     agentName: "lead",
     allowedTools: ["ask_user"],
@@ -586,6 +704,7 @@ function blockedToolBatch(hitlId: string): SessionToolBatch {
       traits: { readOnly: true, destructive: false, concurrencySafe: false },
       state: "blocked",
       attempt: 1,
+      checkpointAt: Date.parse(now),
       blocker: {
         requestKey: `request-${hitlId}`,
         hitlId,
@@ -604,6 +723,7 @@ function makeChildLink(parentSessionId: string, childSessionId: string, childAge
     parentToolCallId: `tool-${childSessionId}`,
     toolName: "delegate",
     childSessionId,
+    childExecutionId: `execution-${childSessionId}`,
     childAgentName,
     childProfile: "fast",
     childSkillNames: [],
@@ -664,9 +784,42 @@ describe("SessionExecutionManager", () => {
       requested: defaultRequest,
       actual: { model: "test:model" },
     });
-    expect(state.executions[0]?.binding.selection).toEqual({ model: "test:model" });
+    expect(state.executions[0]?.runs.at(-1)?.binding.selection).toEqual({ model: "test:model" });
     expect(state.executions[0]?.origin).toBe("user_message");
-    expect(rootAgent.runBindings[0]?.summary).toEqual(state.executions[0]?.binding);
+    expect(rootAgent.runBindings[0]!.summary).toEqual(state.executions[0]!.runs.at(-1)!.binding);
+  });
+
+  test("settles each run with the canonical persisted run duration", async () => {
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(
+      sessionId,
+      Promise.resolve({ text: "done", steps: 1 }),
+      workspaceRoot,
+    );
+    const settlements: Parameters<NonNullable<FakeManagerOptions["onExecutionSettlement"]>>[0][] = [];
+    const { manager } = createManager({ [sessionId]: agent }, {
+      flushSessionStore: (id, root) => storeManager.flushSession(id, root),
+      onExecutionSettlement: async (input) => { settlements.push(input); },
+    });
+
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "finish" },
+    });
+    await execution.promise;
+
+    const persisted = await storeManager.getSessionFile(workspaceRoot, sessionId);
+    const run = persisted.executions.find((record) => record.id === execution.executionId)!.runs[0]!;
+    if (!("endedAt" in run)) throw new Error("Expected completed persisted run");
+    const runSettlement = settlements.flatMap(({ settlements: entries }) => entries)
+      .find((entry) => entry.kind === "run");
+    expect(runSettlement).toBeDefined();
+    expect(runSettlement).toMatchObject({
+      runOrdinal: run.ordinal,
+      executionTimeMs: run.durationMs,
+    });
   });
 
   test("keeps an active binding on revision A and resolves the next execution from revision B", async () => {
@@ -711,6 +864,43 @@ describe("SessionExecutionManager", () => {
     });
   });
 
+  test("starts Goal continuation as a new logical Execution", async () => {
+    const rootId = crypto.randomUUID();
+    const rootAgent = new MockAgent(
+      rootId,
+      Promise.resolve({ text: "done", steps: 1 }),
+      workspaceRoot,
+    );
+    const { manager } = createManager({ [rootId]: rootAgent });
+
+    const first = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      input: { kind: "direct", text: "initial work" },
+      origin: "user_message",
+    });
+    await first.promise;
+    const goal = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      input: { kind: "goal" },
+      origin: "goal_continuation",
+    });
+    await goal.promise;
+
+    expect(goal.executionId).not.toBe(first.executionId);
+    expect(rootAgent.store.getState().executions.map((record) => ({
+      id: record.id,
+      origin: record.origin,
+    }))).toEqual([
+      { id: first.executionId, origin: "user_message" },
+      { id: goal.executionId, origin: "goal_continuation" },
+    ]);
+    expect(getUserMessageTexts(rootAgent.store.getState())).toEqual(["initial work"]);
+  });
+
   test("dispatches X,X,Y as two FIFO executions and X,Y,X as three", async () => {
     async function runSequence(sequence: readonly ("model" | "other")[]) {
       const rootId = crypto.randomUUID();
@@ -744,7 +934,7 @@ describe("SessionExecutionManager", () => {
     }
 
     const grouped = await runSequence(["model", "model", "other"]);
-    expect(grouped.store.getState().executions.map((execution) => execution.binding.selection.model))
+    expect(grouped.store.getState().executions.map((execution) => execution.runs.at(-1)!.binding.selection.model))
       .toEqual(["test:model", "test:other"]);
     expect(grouped.store.getState().messages.filter((message) => message.role === "user").map((message) => message.executionId))
       .toEqual([
@@ -754,7 +944,7 @@ describe("SessionExecutionManager", () => {
       ]);
 
     const alternating = await runSequence(["model", "other", "model"]);
-    expect(alternating.store.getState().executions.map((execution) => execution.binding.selection.model))
+    expect(alternating.store.getState().executions.map((execution) => execution.runs.at(-1)!.binding.selection.model))
       .toEqual(["test:model", "test:other", "test:model"]);
   });
 
@@ -788,7 +978,7 @@ describe("SessionExecutionManager", () => {
 
     const state = rootAgent.store.getState();
     expect(state.executions).toHaveLength(1);
-    expect(state.executions[0]!.binding).toMatchObject({
+    expect(state.executions[0]!.runs.at(-1)!.binding).toMatchObject({
       selection: { model: "test:model" },
       modelRuntimeRevision: "runtime-z",
     });
@@ -1210,7 +1400,7 @@ describe("SessionExecutionManager", () => {
     expect(getUserMessageTexts(agent.store.getState())).toEqual(["hello"]);
     const options = agent.runMock.mock.calls[0]?.[0];
     if (!options) throw new Error("Expected AgentRunOptions");
-    expect("maxSteps" in options).toBe(false);
+    expect(options.maxSteps).toBe(50);
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
@@ -1462,7 +1652,7 @@ describe("SessionExecutionManager", () => {
         enteredRun.resolve(undefined);
         await releaseSafePoint.promise;
         await options?.consumeSteers?.();
-        return { text: "done", steps: 1, status: "completed" };
+        return { outcome: "terminal", text: "done", steps: 1, status: "completed" };
       },
       dispose: () => undefined,
     };
@@ -1521,16 +1711,29 @@ describe("SessionExecutionManager", () => {
       cwd: workspaceRoot,
       classifyCommand: () => null,
       executeCommand: async () => ({ kind: "handled" }),
-      run: async () => {
+      run: async (_binding, options) => {
         invocation += 1;
         if (invocation > 1) {
           resumedUserMessages = getUserMessageTexts(store.getState());
-          return { text: "resumed", steps: 1, status: "completed" };
+          return { outcome: "terminal", text: "resumed", steps: 1, status: "completed" };
         }
         enteredRun.resolve(undefined);
         await releaseHitlBoundary.promise;
-        store.setState({ toolBatches: [blockedToolBatch("steer-before-hitl")] });
-        return { text: "waiting", steps: 1, status: "waiting_for_human" };
+        const batch = {
+          ...blockedToolBatch("steer-before-hitl"),
+          executionId: options!.executionId,
+        };
+        store.setState({ toolBatches: [batch] });
+        return {
+          outcome: "suspended",
+          text: "waiting",
+          steps: 1,
+          suspension: {
+            kind: "hitl",
+            toolBatchId: batch.batchId,
+            blockerIds: ["steer-before-hitl"],
+          },
+        };
       },
       dispose: () => undefined,
     };
@@ -1571,17 +1774,23 @@ describe("SessionExecutionManager", () => {
     expect(store.getState().pendingMessages).toEqual([]);
     expect(store.getState().executions.at(-1)).toMatchObject({
       id: execution.executionId,
-      status: "waiting_for_human",
+      status: "suspended",
     });
 
-    const resumed = await manager.startSessionToolBatchExecution({
+    store.setState((state) => ({
+      toolBatches: state.toolBatches.map((batch) => ({
+        ...batch,
+        calls: batch.calls.map((call) => ({ ...call, state: "completed" as const, blocker: undefined })),
+      })),
+    }));
+    const resumed = await manager.reconcileDurableSession({
       slug: "project",
       workspaceRoot,
       sessionId,
     });
-    await resumed.promise;
+    await resumed!.promise;
 
-    expect(resumed.executionId).not.toBe(execution.executionId);
+    expect(resumed!.executionId).toBe(execution.executionId);
     expect(resumedUserMessages).toEqual(["A", "B"]);
   });
 
@@ -1599,11 +1808,24 @@ describe("SessionExecutionManager", () => {
       cwd: workspaceRoot,
       classifyCommand: () => null,
       executeCommand: async () => ({ kind: "handled" }),
-      run: async () => {
+      run: async (_binding, options) => {
         enteredRun.resolve(undefined);
         await releaseHitlBoundary.promise;
-        store.setState({ toolBatches: [blockedToolBatch("stopped-steer-before-hitl")] });
-        return { text: "waiting", steps: 1, status: "waiting_for_human" };
+        const batch = {
+          ...blockedToolBatch("stopped-steer-before-hitl"),
+          executionId: options!.executionId,
+        };
+        store.setState({ toolBatches: [batch] });
+        return {
+          outcome: "suspended",
+          text: "waiting",
+          steps: 1,
+          suspension: {
+            kind: "hitl",
+            toolBatchId: batch.batchId,
+            blockerIds: ["stopped-steer-before-hitl"],
+          },
+        };
       },
       dispose: () => undefined,
     };
@@ -1715,7 +1937,7 @@ describe("SessionExecutionManager", () => {
         enteredRun.resolve(undefined);
         await releaseSafePoint.promise;
         await options?.consumeSteers?.();
-        return { text: "done", steps: 1, status: "completed" };
+        return { outcome: "terminal", text: "done", steps: 1, status: "completed" };
       },
       dispose: () => undefined,
     };
@@ -1844,8 +2066,17 @@ describe("SessionExecutionManager", () => {
       expect(modelRound).toBe(2);
       expect(store.getState().todos[0]?.status).toBe("completed");
       expect(lifecycleEvents).toEqual([
-        { type: "execution-start", executionId: execution.executionId, binding: execution.binding.summary, origin: "user_message" },
-        { type: "execution-end", status: "completed" },
+        expect.objectContaining({
+          type: "execution-start",
+          executionId: execution.executionId,
+          binding: execution.binding.summary,
+          origin: "user_message",
+        }),
+        expect.objectContaining({
+          type: "execution-end",
+          executionId: execution.executionId,
+          terminalStatus: "completed",
+        }),
       ]);
       expect(store.getState().executions).toEqual([
         expect.objectContaining({ id: execution.executionId, status: "completed" }),
@@ -1883,8 +2114,8 @@ describe("SessionExecutionManager", () => {
   });
 
   test("persists every Agent terminal status through one manager-owned lifecycle", async () => {
-    const statuses: AgentResult["status"][] = [
-      "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human",
+    const statuses: SessionExecutionTerminalStatus[] = [
+      "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted",
     ];
     for (const status of statuses) {
       const sessionId = crypto.randomUUID();
@@ -1941,7 +2172,7 @@ describe("SessionExecutionManager", () => {
     expect(durable).toContain("[REDACTED_PROVIDER_SECRET]");
   });
 
-  test("HITL ends one execution and tool_batch resumes with a new execution id", async () => {
+  test("HITL suspends and resumes the same logical Execution with a fresh run binding", async () => {
     const sessionId = crypto.randomUUID();
     const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
     const modelRuntime = makeModelRuntime(true, "test:model", "runtime-before-hitl");
@@ -1952,14 +2183,27 @@ describe("SessionExecutionManager", () => {
       cwd: workspaceRoot,
       classifyCommand: mock((_input: string) => null),
       executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
-      run: mock(async (binding: ExecutionModelBinding): Promise<AgentResult> => {
+      run: mock(async (binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> => {
         bindings.push(binding);
         invocation += 1;
         if (invocation === 1) {
-          store.setState({ toolBatches: [blockedToolBatch("resume-after-hitl")] });
-          return { text: "waiting", steps: 1, status: "waiting_for_human" };
+          const batch = {
+            ...blockedToolBatch("resume-after-hitl"),
+            executionId: options!.executionId,
+          };
+          store.setState({ toolBatches: [batch] });
+          return {
+            outcome: "suspended",
+            text: "waiting",
+            steps: 1,
+            suspension: {
+              kind: "hitl",
+              toolBatchId: batch.batchId,
+              blockerIds: ["resume-after-hitl"],
+            },
+          };
         }
-        return { text: "resumed", steps: 1, status: "completed" };
+        return { outcome: "terminal", text: "resumed", steps: 1, status: "completed" };
       }),
       dispose: mock(() => undefined),
     } as Agent;
@@ -1970,15 +2214,20 @@ describe("SessionExecutionManager", () => {
     });
     await waiting.promise;
     modelRuntime.publish(makeModelRuntime(true, "test:other", "runtime-after-hitl").current);
-    const resumed = await manager.startSessionToolBatchExecution({
+    store.setState((state) => ({
+      toolBatches: state.toolBatches.map((batch) => ({
+        ...batch,
+        calls: batch.calls.map((call) => ({ ...call, state: "completed" as const, blocker: undefined })),
+      })),
+    }));
+    const resumed = await manager.reconcileDurableSession({
       slug: "project", workspaceRoot, sessionId,
     });
-    await resumed.promise;
+    await resumed!.promise;
 
-    expect(waiting.executionId).not.toBe(resumed.executionId);
+    expect(waiting.executionId).toBe(resumed!.executionId);
     expect(store.getState().executions.map(({ id, status }) => ({ id, status }))).toEqual([
-      { id: waiting.executionId, status: "waiting_for_human" },
-      { id: resumed.executionId, status: "completed" },
+      { id: waiting.executionId, status: "completed" },
     ]);
     expect(bindings.map((binding) => binding.summary)).toEqual([
       expect.objectContaining({
@@ -1991,6 +2240,602 @@ describe("SessionExecutionManager", () => {
       }),
     ]);
   });
+
+  test("resumed child timeout uses remaining active duration and excludes suspended wait", async () => {
+    const parentId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const executionId = `execution-${childId}`;
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const originalLink = makeChildLink(parentId, childId, "explore");
+    parentStore.setState({
+      childSessionLinks: [{
+        ...originalLink,
+        childExecutionId: executionId,
+        status: "waiting_for_human",
+      }],
+    });
+    const childStore = createTestSession(storeManager, childId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Delegated child",
+    });
+    childStore.getState().append({
+      ...testExecutionStart(executionId),
+      activeTimeoutMs: 100,
+    });
+    const startedAt = childStore.getState().executions[0]!.startedAt;
+    const batch = blockedToolBatch("active-time");
+    childStore.setState({
+      toolBatches: [{
+        ...batch,
+        executionId,
+        agentName: "explore",
+        calls: batch.calls.map((call) => ({
+          ...call,
+          state: "completed" as const,
+          blocker: undefined,
+        })),
+      }],
+    });
+    childStore.getState().append(testExecutionSuspended(
+      executionId,
+      { kind: "hitl", toolBatchId: batch.batchId, blockerIds: ["already-answered"] },
+      { runEndedAt: startedAt + 40 },
+    ));
+
+    const resumedRun = deferred<MockAgentResult>();
+    const childAgent = {
+      store: childStore,
+      cwd: workspaceRoot,
+      classifyCommand: mock((_input: string) => null),
+      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+      run: mock(async (): Promise<AgentResult> => normalizeMockAgentResult(await resumedRun.promise)),
+      dispose: mock(() => undefined),
+    } as unknown as MockAgent;
+    const deadlineScheduler = createTestDeadlineScheduler();
+    const terminalLinkFlushed = deferred<void>();
+    const { manager } = createManager({ [childId]: childAgent }, {
+      factory: makeFactory(),
+      deadlineScheduler,
+      flushSessionStore: async (sessionId, root) => {
+        await storeManager.flushSession(sessionId, root);
+        if (
+          sessionId === parentId
+          && parentStore.getState().childSessionLinks.at(-1)?.status === "completed"
+        ) terminalLinkFlushed.resolve(undefined);
+      },
+    });
+
+    const resumed = await manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childId,
+    });
+    expect(resumed?.executionId).toBe(executionId);
+    const resumedDelay = deadlineScheduler.scheduledDelays().at(-1)!;
+    expect(resumedDelay).toBeGreaterThan(0);
+    expect(resumedDelay).toBeLessThanOrEqual(60);
+    expect(childStore.getState().executions[0]).toMatchObject({
+      id: executionId,
+      durationMs: 40,
+      status: "running",
+    });
+    const runningLink = parentStore.getState().childSessionLinks.at(-1)!;
+    expect(runningLink.createdAt).toBe(originalLink.createdAt);
+    expect(runningLink.startedAt).toBe(startedAt);
+    expect(runningLink.endedAt).toBeUndefined();
+    expect(runningLink.durationMs).toBeGreaterThanOrEqual(40);
+    expect(runningLink.durationUpdatedAt).toEqual(expect.any(Number));
+
+    resumedRun.resolve({ text: "done", steps: 1 });
+    await resumed!.promise;
+    await terminalLinkFlushed.promise;
+    const terminalLink = parentStore.getState().childSessionLinks.at(-1)!;
+    expect(terminalLink.status).toBe("completed");
+    expect(terminalLink.startedAt).toBe(startedAt);
+    expect(terminalLink.durationMs).toBe(childStore.getState().executions[0]!.durationMs);
+    expect(terminalLink.durationUpdatedAt).toEqual(expect.any(Number));
+  });
+
+  test("reconciles exact sync-child intent across absent, created, running, suspended, and terminal states", async () => {
+    const cases = ["absent", "created", "running", "suspended", "terminal"] as const;
+    for (const childState of cases) {
+      const parentId = crypto.randomUUID();
+      const childId = crypto.randomUUID();
+      const parentExecutionId = `parent-${childState}`;
+      const childExecutionId = `child-${childState}`;
+      const batchId = `batch-${childState}`;
+      const toolCallId = `delegate-${childState}`;
+      const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+      const parentAgent = {
+        store: parentStore,
+        cwd: workspaceRoot,
+        classifyCommand: mock((_input: string) => null),
+        executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+        run: mock(async (): Promise<AgentResult> => ({
+          outcome: "terminal",
+          text: "parent resumed",
+          steps: 1,
+          status: "completed",
+        })),
+        dispose: mock(() => undefined),
+      } as unknown as MockAgent;
+      parentStore.getState().append(testExecutionStart(parentExecutionId));
+      const parentStartedAt = parentStore.getState().executions[0]!.startedAt;
+      const parentBatch: SessionToolBatch = {
+        batchId,
+        executionId: parentExecutionId,
+        runOrdinal: 0,
+        step: 0,
+        agentName: "lead",
+        allowedTools: ["delegate"],
+        agentSkills: [],
+        partitions: [{ type: "serial", callIds: [toolCallId] }],
+        calls: [{
+          ordinal: 0,
+          partitionIndex: 0,
+          toolCallId,
+          toolName: "delegate",
+          input: delegationRequest({ objective: `recover ${childState}`, background: false }),
+          traits: { readOnly: false, destructive: false, concurrencySafe: false },
+          state: "child_launch",
+          attempt: 1,
+          checkpointAt: parentStartedAt,
+          childDependency: {
+            kind: "child_launch",
+            parentExecutionId,
+            runOrdinal: 0,
+            toolCallId,
+            childSessionId: childId,
+            childExecutionId,
+            createdAt: parentStartedAt,
+          },
+        }],
+        createdAt: new Date(parentStartedAt).toISOString(),
+        updatedAt: new Date(parentStartedAt).toISOString(),
+      };
+      parentStore.setState({ toolBatches: [parentBatch] });
+      parentStore.getState().append(testExecutionSuspended(
+        parentExecutionId,
+        {
+          kind: "child_dependency",
+          toolBatchId: batchId,
+          toolCallId,
+          childSessionId: childId,
+          childExecutionId,
+        },
+        {
+          runEndedAt: parentStartedAt + 1,
+          runSettlement: { key: `run:${parentId}:${parentExecutionId}:0`, goalInstanceId: null },
+        },
+      ));
+
+      let childStore: StoreApi<SessionStoreState> | undefined;
+      if (childState !== "absent") {
+        childStore = createTestSession(storeManager, childId, workspaceRoot, {
+          rootSessionId: parentId,
+          parentSessionId: parentId,
+          agentName: "explore",
+          title: "Delegated child",
+          delegationRequest: delegationRequest({ objective: `recover ${childState}`, background: false }),
+        });
+      }
+      if (childState === "running" || childState === "suspended" || childState === "terminal") {
+        childStore!.getState().append(testExecutionStart(childExecutionId));
+      }
+      if (childState === "suspended") {
+        const childBatch = blockedToolBatch(`child-${childState}`);
+        childStore!.setState({
+          toolBatches: [{ ...childBatch, executionId: childExecutionId, agentName: "explore" }],
+        });
+        const childStartedAt = childStore!.getState().executions[0]!.startedAt;
+        childStore!.getState().append(testExecutionSuspended(
+          childExecutionId,
+          { kind: "hitl", toolBatchId: childBatch.batchId, blockerIds: [`child-${childState}`] },
+          {
+            runEndedAt: childStartedAt + 1,
+            runSettlement: { key: `run:${childId}:${childExecutionId}:0`, goalInstanceId: null },
+          },
+        ));
+      } else if (childState === "terminal") {
+        const childStartedAt = childStore!.getState().executions[0]!.startedAt;
+        childStore!.getState().append(testExecutionEnd(childExecutionId, "completed", {
+          endedAt: childStartedAt + 1,
+          runEndedAt: childStartedAt + 1,
+          runSettlement: { key: `run:${childId}:${childExecutionId}:0`, goalInstanceId: null },
+          terminalSettlement: { key: `terminal:${childId}:${childExecutionId}`, goalInstanceId: null },
+        }));
+      }
+
+      const childRun = deferred<MockAgentResult>();
+      const applyOutcome = mock(async (outcome: Parameters<NonNullable<FakeManagerOptions["applyChildDependencyOutcome"]>>[0]) => {
+        await applySessionToolBatchChildOutcome({
+          storeManager,
+          sessionId: outcome.parentSessionId,
+          workspaceRoot: outcome.workspaceRoot,
+          batchId: outcome.parentToolBatchId,
+          toolCallId: outcome.parentToolCallId,
+          childSessionId: outcome.childSessionId,
+          childExecutionId: outcome.childExecutionId,
+          outcome: outcome.outcome,
+        });
+      });
+      const { manager } = createManager({ [parentId]: parentAgent }, {
+        factory: makeFactory(),
+        childRun: childRun.promise,
+        applyChildDependencyOutcome: applyOutcome,
+      });
+
+      const reconciled = await manager.reconcileDurableSession({
+        slug: "project",
+        workspaceRoot,
+        sessionId: parentId,
+      });
+      const canonicalChild = storeManager.get(childId, workspaceRoot);
+      expect(canonicalChild, childState).toBeDefined();
+      expect(canonicalChild!.getState().executions.filter((execution) => execution.id === childExecutionId), childState)
+        .toHaveLength(1);
+      expect(parentStore.getState().toolBatches[0]!.calls[0]!.childDependency?.kind, childState)
+        .toBe("child_dependency");
+      expect(parentStore.getState().childSessionLinks, childState).toContainEqual(expect.objectContaining({
+        parentToolCallId: toolCallId,
+        childSessionId: childId,
+        childExecutionId,
+      }));
+
+      if (childState === "absent" || childState === "created") {
+        expect(canonicalChild!.getState().executions[0]!.status, childState).toBe("running");
+        expect(parentStore.getState().executions[0]!.status, childState).toBe("suspended");
+        expect(manager.getSessionFamilyActivity(workspaceRoot, parentId), childState)
+          .toBe("waiting_for_human");
+        childRun.resolve({ text: "child recovered", steps: 1 });
+        await manager.getExecution(workspaceRoot, childId)!.promise;
+      } else if (childState === "suspended") {
+        expect(canonicalChild!.getState().executions[0]!.status).toBe("suspended");
+        expect(parentStore.getState().executions[0]!.status).toBe("suspended");
+        expect(reconciled).toBeUndefined();
+      } else {
+        expect(applyOutcome).toHaveBeenCalledTimes(1);
+        await reconciled?.promise;
+        expect(parentStore.getState().executions[0]!.status, childState).toBe("completed");
+      }
+    }
+  });
+
+  test("reconciles a three-level sync dependency at the deepest resume-pending child first", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const grandchildId = crypto.randomUUID();
+    const rootStore = storeManager.create(rootId, workspaceRoot, {
+      agentName: "lead",
+      title: "Root",
+    });
+    const childStore = createTestSession(storeManager, childId, workspaceRoot, {
+      rootSessionId: rootId,
+      parentSessionId: rootId,
+      agentName: "build",
+      title: "Build child",
+      delegationRequest: delegationRequest({
+        agent_type: "build",
+        title: "Build child",
+        background: false,
+      }),
+    });
+    const grandchildStore = createTestSession(
+      storeManager,
+      grandchildId,
+      workspaceRoot,
+      {
+        rootSessionId: rootId,
+        parentSessionId: childId,
+        agentName: "explore",
+        title: "Explore grandchild",
+        delegationRequest: delegationRequest({
+          agent_type: "explore",
+          title: "Explore grandchild",
+          background: false,
+        }),
+      },
+    );
+    const seedDependency = (
+      parentStore: StoreApi<SessionStoreState>,
+      parentExecutionId: string,
+      childSessionId: string,
+      childExecutionId: string,
+      agentName: "lead" | "build",
+      agentType: "build" | "explore",
+    ): void => {
+      parentStore.getState().append(testExecutionStart(parentExecutionId));
+      const startedAt = parentStore.getState().executions.at(-1)!.startedAt;
+      const batchId = `batch-${parentExecutionId}`;
+      const toolCallId = `delegate-${childSessionId}`;
+      parentStore.setState({
+        toolBatches: [{
+          batchId,
+          executionId: parentExecutionId,
+          runOrdinal: 0,
+          step: 0,
+          agentName,
+          allowedTools: ["delegate"],
+          agentSkills: [],
+          partitions: [{ type: "serial", callIds: [toolCallId] }],
+          calls: [{
+            ordinal: 0,
+            partitionIndex: 0,
+            toolCallId,
+            toolName: "delegate",
+            input: delegationRequest({
+              agent_type: agentType,
+              title: `Delegate ${childSessionId}`,
+              background: false,
+            }),
+            traits: {
+              readOnly: false,
+              destructive: false,
+              concurrencySafe: false,
+            },
+            state: "child_dependency",
+            attempt: 1,
+            checkpointAt: startedAt,
+            childDependency: {
+              kind: "child_dependency",
+              parentExecutionId,
+              runOrdinal: 0,
+              toolCallId,
+              childSessionId,
+              childExecutionId,
+              createdAt: startedAt,
+              dependencyStartedAt: startedAt + 1,
+            },
+          }],
+          createdAt: new Date(startedAt).toISOString(),
+          updatedAt: new Date(startedAt + 1).toISOString(),
+        }],
+      });
+      parentStore.getState().append(testExecutionSuspended(
+        parentExecutionId,
+        {
+          kind: "child_dependency",
+          toolBatchId: batchId,
+          toolCallId,
+          childSessionId,
+          childExecutionId,
+        },
+        {
+          runEndedAt: startedAt + 1,
+          runSettlement: {
+            key: `run:${parentStore.getState().sessionId}:${parentExecutionId}:0`,
+            goalInstanceId: null,
+          },
+        },
+      ));
+    };
+    seedDependency(
+      rootStore,
+      "execution-root",
+      childId,
+      "execution-child",
+      "lead",
+      "build",
+    );
+    seedDependency(
+      childStore,
+      "execution-child",
+      grandchildId,
+      "execution-grandchild",
+      "build",
+      "explore",
+    );
+    grandchildStore.getState().append(testExecutionStart("execution-grandchild"));
+    const grandchildStartedAt =
+      grandchildStore.getState().executions[0]!.startedAt;
+    const grandchildBatch = blockedToolBatch("grandchild-ready");
+    grandchildStore.setState({
+      toolBatches: [{
+        ...grandchildBatch,
+        executionId: "execution-grandchild",
+        agentName: "explore",
+        calls: grandchildBatch.calls.map((call) => ({
+          ...call,
+          state: "queued" as const,
+          blocker: undefined,
+          checkpointAt: grandchildStartedAt + 1,
+        })),
+      }],
+    });
+    grandchildStore.getState().append(testExecutionSuspended(
+      "execution-grandchild",
+      {
+        kind: "hitl",
+        toolBatchId: grandchildBatch.batchId,
+        blockerIds: ["grandchild-ready"],
+      },
+      {
+        runEndedAt: grandchildStartedAt + 1,
+        runSettlement: {
+          key: `run:${grandchildId}:execution-grandchild:0`,
+          goalInstanceId: null,
+        },
+      },
+    ));
+    grandchildStore.getState().append({
+      type: "execution-suspension-updated",
+      executionId: "execution-grandchild",
+      suspension: {
+        kind: "resume_pending",
+        toolBatchId: grandchildBatch.batchId,
+        readyAt: grandchildStartedAt + 1,
+      },
+    });
+    const grandchildStarted = deferred<void>();
+    const grandchildRun = deferred<MockAgentResult>();
+    const grandchildAgent = {
+      store: grandchildStore,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" as const }),
+      run: mock(async (): Promise<AgentResult> => {
+        grandchildStarted.resolve(undefined);
+        return normalizeMockAgentResult(await grandchildRun.promise);
+      }),
+      dispose: () => undefined,
+    } as unknown as MockAgent;
+    const factory = makeBuildFactory();
+    const { manager } = createManager(
+      { [grandchildId]: grandchildAgent },
+      {
+        factory: makeFactory({
+          getDefinition: factory.getDefinition,
+          listAgentNames: mock(() => ["lead", "build", "explore"]),
+        }),
+      },
+    );
+
+    await manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+    });
+    await grandchildStarted.promise;
+
+    expect(rootStore.getState().executions[0]?.status).toBe("suspended");
+    expect(childStore.getState().executions[0]?.status).toBe("suspended");
+    expect(grandchildStore.getState().executions[0]).toMatchObject({
+      id: "execution-grandchild",
+      status: "running",
+      runs: [{ ordinal: 0 }, { ordinal: 1 }],
+    });
+
+    const activeGrandchild = manager.getExecution(workspaceRoot, grandchildId);
+    grandchildRun.resolve({ text: "deepest resumed", steps: 1 });
+    await activeGrandchild!.promise;
+  });
+
+  test("automatically retries a capacity-blocked resume when the child slot is released", async () => {
+    const parentId = crypto.randomUUID();
+    const targetId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      agentName: "lead",
+      title: "Parent",
+    });
+    const targetStore = createTestSession(storeManager, targetId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Resume target",
+      delegationRequest: delegationRequest({
+        agent_type: "explore",
+        title: "Resume target",
+        background: false,
+      }),
+    });
+    const targetStarted = deferred<void>();
+    const targetRun = deferred<MockAgentResult>();
+    const targetRunMock = mock(async (): Promise<AgentResult> => {
+      targetStarted.resolve(undefined);
+      return normalizeMockAgentResult(await targetRun.promise);
+    });
+    const targetAgent = {
+      store: targetStore,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" as const }),
+      run: targetRunMock,
+      dispose: () => undefined,
+    } as unknown as MockAgent;
+    const holderRun = deferred<MockAgentResult>();
+    let manager!: TestSessionExecutionManager;
+    ({ manager } = createManager(
+      { [targetId]: targetAgent },
+      {
+        childRun: holderRun.promise,
+        onContinuationAdmissionReleased: async () => {
+          await manager.reconcileDurableSession({
+            slug: "project",
+            workspaceRoot,
+            sessionId: targetId,
+          });
+        },
+      },
+    ));
+    const holder = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "capacity-holder",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Capacity holder",
+        background: true,
+      }),
+      parentAbort: undefined,
+    });
+
+    targetStore.getState().append(testExecutionStart("execution-target"));
+    const targetStartedAt = targetStore.getState().executions[0]!.startedAt;
+    const targetBatch = blockedToolBatch("target-ready");
+    targetStore.setState({
+      toolBatches: [{
+        ...targetBatch,
+        executionId: "execution-target",
+        agentName: "explore",
+        calls: targetBatch.calls.map((call) => ({
+          ...call,
+          state: "queued" as const,
+          blocker: undefined,
+          checkpointAt: targetStartedAt + 1,
+        })),
+      }],
+    });
+    targetStore.getState().append(testExecutionSuspended(
+      "execution-target",
+      {
+        kind: "hitl",
+        toolBatchId: targetBatch.batchId,
+        blockerIds: ["target-ready"],
+      },
+      {
+        runEndedAt: targetStartedAt + 1,
+        runSettlement: {
+          key: `run:${targetId}:execution-target:0`,
+          goalInstanceId: null,
+        },
+      },
+    ));
+    targetStore.getState().append({
+      type: "execution-suspension-updated",
+      executionId: "execution-target",
+      suspension: {
+        kind: "resume_pending",
+        toolBatchId: targetBatch.batchId,
+        readyAt: targetStartedAt + 1,
+      },
+    });
+
+    expect(await manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: targetId,
+    })).toBeUndefined();
+    expect(targetRunMock).not.toHaveBeenCalled();
+
+    holderRun.resolve({ text: "slot released", steps: 1 });
+    await holder.result;
+    await targetStarted.promise;
+
+    expect(targetRunMock).toHaveBeenCalledTimes(1);
+    expect(targetStore.getState().executions[0]).toMatchObject({
+      id: "execution-target",
+      status: "running",
+      runs: [{ ordinal: 0 }, { ordinal: 1 }],
+    });
+
+    const activeTarget = manager.getExecution(workspaceRoot, targetId);
+    targetRun.resolve({ text: "resumed automatically", steps: 1 });
+    await activeTarget!.promise;
+  });
+
 
   test("checked execution forwards maxSteps to agent.run", async () => {
     const sessionId = crypto.randomUUID();
@@ -2045,6 +2890,12 @@ describe("SessionExecutionManager", () => {
       modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
       listSessionFamilyToolBatchHitlIds: async () => [],
+      cancelSessionToolBatch: async () => undefined,
+      applyChildDependencyOutcome: async () => undefined,
+      onSessionInputMutationReleased: async () => undefined,
+      onContinuationAdmissionReleased: async () => undefined,
+      resolveGoalInstanceId: async () => null,
+      onExecutionSettlement: async () => undefined,
       sessionInputService: new SessionInputService(storeManager),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
@@ -2094,6 +2945,12 @@ describe("SessionExecutionManager", () => {
       modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
       listSessionFamilyToolBatchHitlIds: async () => [],
+      cancelSessionToolBatch: async () => undefined,
+      applyChildDependencyOutcome: async () => undefined,
+      onSessionInputMutationReleased: async () => undefined,
+      onContinuationAdmissionReleased: async () => undefined,
+      resolveGoalInstanceId: async () => null,
+      onExecutionSettlement: async () => undefined,
       sessionInputService: new SessionInputService(storeManager),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
@@ -2138,13 +2995,22 @@ describe("SessionExecutionManager", () => {
 
   test("stopSessionFamily force-terminalizes a hung agent that ignores abort", async () => {
     const sessionId = crypto.randomUUID();
+    const goalInstanceId = crypto.randomUUID();
+    const settlements: Parameters<NonNullable<FakeManagerOptions["onExecutionSettlement"]>>[0][] = [];
+    const firstRunEntered = deferred<void>();
     class HungAgent implements Agent {
       readonly store;
       readonly cwd: string;
       readonly disposeMock = mock(() => undefined);
+      #runCount = 0;
       readonly runMock = mock(async (_options?: AgentRunOptions): Promise<AgentResult> => {
-        await new Promise<never>(() => undefined);
-        return { text: "never", steps: 1, status: "completed" };
+        this.#runCount += 1;
+        if (this.#runCount === 1) {
+          firstRunEntered.resolve(undefined);
+          await new Promise<never>(() => undefined);
+          return { outcome: "terminal", text: "never", steps: 1, status: "completed" };
+        }
+        return { outcome: "terminal", text: "next", steps: 1, status: "completed" };
       });
       constructor(sessionId: string, workspaceRoot: string) {
         this.store = createTestSession(storeManager, sessionId, workspaceRoot, { agentName: "lead" });
@@ -2163,7 +3029,20 @@ describe("SessionExecutionManager", () => {
       dispose(): void { this.disposeMock(); }
     }
     const hung = new HungAgent(sessionId, workspaceRoot);
-    const { manager } = createManager({ [sessionId]: hung as unknown as MockAgent }, { sessionFamilyStopTimeoutMs: 50 });
+    const cancelSessionToolBatch = mock(async (id: string, root: string) => {
+      const archivedAt = new Date().toISOString();
+      hung.store.setState((state) => ({
+        toolBatches: state.toolBatches.map((batch) => ({ ...batch, archivedAt, updatedAt: archivedAt })),
+      }));
+      await storeManager.flushSession(id, root);
+    });
+    const { manager } = createManager({ [sessionId]: hung as unknown as MockAgent }, {
+      sessionFamilyStopTimeoutMs: 50,
+      cancelSessionToolBatch,
+      flushSessionStore: (id, root) => storeManager.flushSession(id, root),
+      resolveGoalInstanceId: async () => goalInstanceId,
+      onExecutionSettlement: async (input) => { settlements.push(input); },
+    });
 
     const execution = await manager.startCheckedExecution({
       slug: "project",
@@ -2172,8 +3051,26 @@ describe("SessionExecutionManager", () => {
       input: { kind: "direct", text: "hang" },
     });
     await execution.started;
+    await firstRunEntered.promise;
+    hung.store.setState({
+      goal: {
+        instanceId: goalInstanceId,
+        generation: 1,
+        objective: "Finish the work",
+        status: "active",
+        usage: { tokens: createEmptySessionStats().usage, executionTimeMs: 0, executionCount: 0 },
+        settlementReceipts: [],
+        createdAt: 1,
+        activatedAt: 1,
+        updatedAt: 1,
+      },
+      toolBatches: [{
+        ...blockedToolBatch("force-terminalize"),
+        executionId: execution.executionId,
+      }],
+    });
 
-    await expect(manager.stopSessionFamily(workspaceRoot, sessionId)).resolves.toBeUndefined();
+    await manager.stopSessionFamily(workspaceRoot, sessionId);
     expect(execution.abortController.signal.aborted).toBe(true);
     expect(manager.getSessionFamilyActivity(workspaceRoot, sessionId)).toBe("idle");
     expect(manager.getExecution(workspaceRoot, sessionId)).toBeUndefined();
@@ -2181,6 +3078,23 @@ describe("SessionExecutionManager", () => {
       status: "cancelled",
     });
     expect(hung.store.getState().isRunning).toBe(false);
+    expect(cancelSessionToolBatch).toHaveBeenCalledWith(sessionId, workspaceRoot, "Session family cancelled");
+    expect(hung.store.getState().toolBatches[0]?.archivedAt).toEqual(expect.any(String));
+    expect((await storeManager.getSessionFile(workspaceRoot, sessionId)).toolBatches[0]?.archivedAt)
+      .toEqual(expect.any(String));
+    expect(settlements.flatMap((entry) => entry.settlements)).toEqual([
+      expect.objectContaining({ kind: "run", goalInstanceId }),
+      expect.objectContaining({ kind: "terminal", goalInstanceId, terminalStatus: "cancelled" }),
+    ]);
+
+    const next = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "next" },
+    });
+    await next.promise;
+    expect(next.executionId).not.toBe(execution.executionId);
   });
 
   test("stopSessionFamily force-terminalizes a hung child and frees its concurrency slot", async () => {
@@ -2195,7 +3109,7 @@ describe("SessionExecutionManager", () => {
         executeCommand: mock(async (): Promise<AgentCommandResult> => ({ kind: "handled" })),
         run: mock(async (): Promise<AgentResult> => {
           await new Promise<never>(() => undefined);
-          return { text: "never", steps: 1, status: "completed" };
+          return { outcome: "terminal", text: "never", steps: 1, status: "completed" };
         }),
         dispose: mock(() => undefined),
       }) as unknown as MockAgent,
@@ -2775,20 +3689,21 @@ describe("SessionExecutionManager", () => {
     });
   });
 
-  test("child HITL pause remains non-terminal and emits no failed reminder", async () => {
+  test("child HITL pause remains non-terminal, then family Stop converges its link once", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
-    let childSessionId = "";
     const { manager } = createManager({}, {
       factory: makeFactory(),
-      childRunStarted: () => {
-        childSessionId = parentStore.getState().childSessionLinks.at(-1)?.childSessionId ?? "";
-        const childStore = storeManager.get(childSessionId, workspaceRoot);
-        childStore?.getState().append({
-          type: "execution-end",
-          status: "waiting_for_human",
-        });
-      },
+      childRun: Promise.resolve({
+        outcome: "suspended",
+        text: "waiting",
+        steps: 1,
+        suspension: {
+          kind: "hitl",
+          toolBatchId: "child-batch",
+          blockerIds: ["child-hitl"],
+        },
+      }),
     });
 
     const handle = await manager.startChildExecution(workspaceRoot, {
@@ -2801,12 +3716,26 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
-    expect(childSessionId).toBe(handle.sessionId);
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
-      childSessionId,
+      childSessionId: handle.sessionId,
       status: "waiting_for_human",
     });
     expect(parentStore.getState().reminders).toEqual([]);
+
+    await manager.stopSessionFamily(workspaceRoot, parentId);
+
+    expect(handle.store.getState().executions.at(-1)).toMatchObject({
+      id: handle.executionId,
+      status: "cancelled",
+    });
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      childSessionId: handle.sessionId,
+      childExecutionId: handle.executionId,
+      status: "cancelled",
+    });
+    expect(parentStore.getState().reminders.filter((reminder) =>
+      reminder.source.type === "subagent_cancelled" && reminder.sessionId === handle.sessionId
+    )).toHaveLength(1);
   });
 
 
@@ -2851,8 +3780,14 @@ describe("SessionExecutionManager", () => {
       request: delegationRequest({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
     });
+    const initialDelay = timed.deadlineScheduler.scheduledDelays().at(-1)!;
+    expect(initialDelay).toBeGreaterThan(0);
+    expect(initialDelay).toBeLessThanOrEqual(60_000);
     timed.deadlineScheduler.fireScheduled();
-    expect((await timedHandle.result).executionStatus).toBe("timed_out");
+    expect(await timedHandle.result).toMatchObject({
+      outcome: "terminal",
+      executionStatus: "timed_out",
+    });
     expect(timedParentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "timed_out" });
   });
 
@@ -3198,18 +4133,19 @@ describe("SessionExecutionManager", () => {
     expect(untrackRootSession).toHaveBeenCalledTimes(3);
   });
 
-  test("restart reconciliation marks persisted active executions and links interrupted", async () => {
+  test("restart reconciliation terminalizes an unknown running Execution without replay", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const now = Date.now();
     await writeSessionFile({
       sessionId: rootId,
-      executions: [{ id: "execution-running", startedAt: now - 1000, status: "running", binding: TEST_BINDING_SUMMARY, origin: "user_message" }],
+      executions: [testExecutionRecord("execution-running", "running")],
       childSessionLinks: [{
         parentSessionId: rootId,
         parentToolCallId: "tool-child",
         toolName: "delegate",
         childSessionId: childId,
+        childExecutionId: "execution-child",
         childAgentName: "explore",
       childProfile: "fast",
       childSkillNames: [],
@@ -3222,13 +4158,326 @@ describe("SessionExecutionManager", () => {
     });
     const restarted = new SessionStoreManager({ logger: silentLogger });
 
+    const { manager } = createManager({}, { storeManager: restarted });
+    await manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+    });
     const store = await restarted.getOrLoad(rootId, workspaceRoot);
     const file = await restarted.getSessionFile(workspaceRoot, rootId);
 
-    expect(store.getState().executions.at(-1)).toMatchObject({ status: "interrupted", error: "Execution interrupted by restart" });
-    expect(store.getState().childSessionLinks.at(-1)).toMatchObject({ status: "interrupted", error: "Child execution interrupted by restart" });
+    expect(store.getState().executions.at(-1)).toMatchObject({
+      id: "execution-running",
+      status: "interrupted",
+      error: "Execution lost its live model/tool continuation and requires manual inspection",
+    });
+    expect(store.getState().childSessionLinks.at(-1)).toMatchObject({ status: "cancelling" });
     expect(file.executions.at(-1)?.status).toBe("interrupted");
-    expect(file.childSessionLinks.at(-1)?.status).toBe("interrupted");
+    expect(file.childSessionLinks.at(-1)?.status).toBe("cancelling");
+  });
+
+  test("restart reconciliation archives an orphaned active Tool Batch before terminalizing its Execution", async () => {
+    const rootId = crypto.randomUUID();
+    const runningCheckpointAt = Date.now();
+    const now = new Date(runningCheckpointAt).toISOString();
+    const batch: SessionToolBatch = {
+      batchId: "batch-orphaned",
+      executionId: "execution-orphaned",
+      runOrdinal: 0,
+      step: 0,
+      agentName: "lead",
+      allowedTools: ["effect_tool"],
+      agentSkills: [],
+      partitions: [{ type: "serial", callIds: ["effect-1"] }],
+      calls: [{
+        ordinal: 0,
+        partitionIndex: 0,
+        toolCallId: "effect-1",
+        toolName: "effect_tool",
+        input: {},
+        traits: { readOnly: false, destructive: false, concurrencySafe: false },
+        state: "running",
+        attempt: 1,
+        checkpointAt: runningCheckpointAt,
+      }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    await writeSessionFile({
+      sessionId: rootId,
+      executions: [testExecutionRecord("execution-orphaned", "running")],
+      steps: [{
+        id: "step-orphaned",
+        step: batch.step,
+        executionId: batch.executionId,
+        runOrdinal: batch.runOrdinal,
+        startedAt: runningCheckpointAt,
+      }],
+      toolBatches: [batch],
+    });
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const restartedStore = await restarted.getOrLoad(rootId, workspaceRoot);
+    const agent: Agent = {
+      store: restartedStore,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: async () => ({ outcome: "terminal", text: "next", steps: 1, status: "completed" }),
+      dispose: () => undefined,
+    };
+    const cancelSessionToolBatch = mock(async (sessionId: string, root: string) => {
+      const archivedAt = new Date().toISOString();
+      await restarted.updateToolBatches(sessionId, root, (batches) => batches.map((candidate) => ({
+        ...candidate,
+        archivedAt,
+        updatedAt: archivedAt,
+      })));
+    });
+    const { manager } = createManager({ [rootId]: agent as unknown as MockAgent }, {
+      storeManager: restarted,
+      cancelSessionToolBatch,
+    });
+
+    await manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+    });
+
+    expect(cancelSessionToolBatch).toHaveBeenCalledWith(
+      rootId,
+      workspaceRoot,
+      "Execution lost its live tool continuation and requires manual inspection",
+    );
+    const reconciled = await restarted.getSessionFile(workspaceRoot, rootId);
+    expect(reconciled.toolBatches[0]?.archivedAt).toEqual(expect.any(String));
+    expect(reconciled.executions[0]?.runs[0]).toMatchObject({ endedAt: runningCheckpointAt });
+
+    const next = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      input: { kind: "direct", text: "continue after inspection" },
+    });
+    await next.promise;
+    expect((await restarted.getSessionFile(workspaceRoot, rootId)).executions).toHaveLength(2);
+  });
+
+  test("restart reconciliation archives an active Tool Batch left by a terminal Execution", async () => {
+    const rootId = crypto.randomUUID();
+    const executionId = "execution-terminal-with-active-batch";
+    const terminal = testExecutionRecord(executionId, "failed");
+    if (terminal.status === "running" || terminal.status === "suspended") {
+      throw new Error("Expected terminal Execution fixture");
+    }
+    const batch = {
+      ...blockedToolBatch("terminal-with-active-batch"),
+      executionId,
+    };
+    await writeSessionFile({
+      sessionId: rootId,
+      executions: [{
+        ...terminal,
+        runs: terminal.runs.map((run) => ({
+          ...run,
+          settlement: { key: `run:${rootId}:${executionId}:${run.ordinal}`, goalInstanceId: null },
+        })),
+        terminalSettlement: { key: `terminal:${rootId}:${executionId}`, goalInstanceId: null },
+      }],
+      steps: [{
+        id: "step-terminal-with-active-batch",
+        step: batch.step,
+        executionId,
+        runOrdinal: batch.runOrdinal,
+        startedAt: 1,
+        completedAt: 1,
+      }],
+      toolBatches: [batch],
+    });
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const restartedStore = await restarted.getOrLoad(rootId, workspaceRoot);
+    const agent: Agent = {
+      store: restartedStore,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: async () => ({ outcome: "terminal", text: "next", steps: 1, status: "completed" }),
+      dispose: () => undefined,
+    };
+    const cancelSessionToolBatch = mock(async (sessionId: string, root: string) => {
+      const archivedAt = new Date().toISOString();
+      await restarted.updateToolBatches(sessionId, root, (batches) => batches.map((candidate) => ({
+        ...candidate,
+        archivedAt,
+        updatedAt: archivedAt,
+      })));
+    });
+    const { manager } = createManager({ [rootId]: agent as unknown as MockAgent }, {
+      storeManager: restarted,
+      cancelSessionToolBatch,
+    });
+
+    await manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+    });
+
+    expect(cancelSessionToolBatch).toHaveBeenCalledWith(
+      rootId,
+      workspaceRoot,
+      "Terminal Session cannot retain an active Tool Batch",
+    );
+    expect(typeof (await restarted.getSessionFile(workspaceRoot, rootId)).toolBatches[0]?.archivedAt)
+      .toBe("string");
+
+    const next = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      input: { kind: "direct", text: "continue after cold repair" },
+    });
+    await next.promise;
+    expect((await restarted.getSessionFile(workspaceRoot, rootId)).executions).toHaveLength(2);
+  });
+
+  test("restart trusts terminal call checkpoint after a batch-result crash without trusting repaired metadata", async () => {
+    const rootId = crypto.randomUUID();
+    const executionId = "execution-steer-recovery";
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const store = restarted.create(rootId, workspaceRoot, { agentName: "lead" });
+    const inputs = new SessionInputService(restarted);
+    store.getState().append(testExecutionStart(executionId));
+    const recoveryBinding = store.getState().executions[0]!.runs[0]!.binding;
+    const recoveryAudit = {
+      requested: TEST_REQUESTED_MODEL_SELECTION,
+      actual: recoveryBinding.selection,
+    };
+    await inputs.beginDirectExecution({
+      sessionId: rootId,
+      workspaceRoot,
+      executionId,
+      runOrdinal: 0,
+      text: "Initial",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+      modelAudit: recoveryAudit,
+      binding: recoveryBinding,
+      origin: "user_message",
+    });
+    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "step-end", step: 0, finishReason: "tool-calls" });
+    const accepted = await inputs.acceptMessage({
+      sessionId: rootId,
+      workspaceRoot,
+      text: "Steer",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+    await inputs.claimSteer({
+      sessionId: rootId,
+      workspaceRoot,
+      messageId: accepted.messageId,
+      expectedRevision: 0,
+      expectedExecutionId: executionId,
+      runOrdinal: 0,
+      modelAudit: recoveryAudit,
+    });
+    store.getState().append({
+      type: "tool-call",
+      toolCallId: "prior-work",
+      toolName: "file_read",
+      input: { path: "README.md" },
+    });
+    const result = {
+      isError: false,
+      output: {
+        preview: "done",
+        completeness: "complete" as const,
+        observed: { bytes: 4, lines: 1 },
+        canonical: { bytes: 4, lines: 1 },
+        stored: { bytes: 4, lines: 1 },
+        omitted: { bytes: 0, lines: 0 },
+        recovery: { kind: "none" as const },
+      },
+    };
+    const durableTool = store.getState().messages
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "tool" && part.toolCallId === "prior-work");
+    if (durableTool?.type !== "tool" || !("startedAt" in durableTool)) {
+      throw new Error("Expected running durable tool work");
+    }
+    await Bun.sleep(2);
+    const settledAt = Math.max(Date.now(), durableTool.startedAt);
+    const repairedAt = settledAt + 30_000;
+    const blockedCall = {
+      ...blockedToolBatch("repaired-hitl").calls[0]!,
+      ordinal: 1,
+      partitionIndex: 1,
+      checkpointAt: settledAt,
+    };
+    const blocked = {
+      ...blockedToolBatch("repaired-hitl"),
+      executionId,
+      updatedAt: new Date(repairedAt).toISOString(),
+      partitions: [
+        { type: "serial" as const, callIds: ["prior-work"] },
+        { type: "serial" as const, callIds: ["tool-repaired-hitl"] },
+      ],
+      calls: [
+        {
+          ordinal: 0,
+          partitionIndex: 0,
+          toolCallId: "prior-work",
+          toolName: "file_read",
+          input: { path: "README.md" },
+          traits: { readOnly: true, destructive: false, concurrencySafe: true },
+          state: "completed" as const,
+          attempt: 1,
+          checkpointAt: settledAt,
+          result,
+        },
+        blockedCall,
+      ],
+    };
+    await restarted.updateToolBatches(rootId, workspaceRoot, () => [blocked]);
+    let committedAt: number | undefined;
+    const port = inputServicePort(inputs);
+    const { manager } = createManager({}, {
+      storeManager: restarted,
+      sessionInputService: {
+        ...port,
+        commitSteers: async (input) => {
+          committedAt = input.committedAt;
+          return await inputs.commitSteers(input);
+        },
+      },
+    });
+
+    await manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+    });
+
+    expect(committedAt).toBe(settledAt);
+    const recovered = await restarted.getSessionFile(workspaceRoot, rootId);
+    expect(recovered.messages.map((message) => message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(""))).toEqual(["Initial", "", "Steer"]);
+    expect(recovered.messages.at(-1)?.completedAt).toBe(settledAt);
+    expect(recovered.executions[0]).toMatchObject({
+      id: executionId,
+      status: "suspended",
+      runs: [{ endedAt: settledAt }],
+    });
+    const recoveredPriorTool = recovered.messages
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "tool" && part.toolCallId === "prior-work");
+    expect(recoveredPriorTool).toMatchObject({ type: "tool", state: "running" });
+    expect(settledAt).toBeLessThan(repairedAt);
   });
 
   test("delete preserves files when a manually triggered abort deadline finds a stuck execution", async () => {
@@ -3629,11 +4878,9 @@ describe("SessionExecutionManager", () => {
       name: string;
       input: StartSessionExecutionInput["input"];
       origin: StartSessionExecutionInput["origin"];
-      toolBatch: boolean;
     }> = [
-      { name: "direct", input: { kind: "direct", text: "continue" }, origin: "user_message", toolBatch: false },
-      { name: "queue", input: { kind: "queue" }, origin: "user_message", toolBatch: false },
-      { name: "tool_batch", input: { kind: "continuation" }, origin: "tool_batch", toolBatch: true },
+      { name: "direct", input: { kind: "direct", text: "continue" }, origin: "user_message" },
+      { name: "queue", input: { kind: "queue" }, origin: "user_message" },
     ];
 
     for (const activation of cases) {
@@ -3646,11 +4893,6 @@ describe("SessionExecutionManager", () => {
         agentName: "explore",
         title: activation.name,
       });
-      if (activation.toolBatch) {
-        childStore.setState({
-          toolBatches: [{ ...blockedToolBatch(activation.name), agentName: "explore" }],
-        });
-      }
       const { manager, sessionAgentManager } = createManager({}, { factory: deniedFactory });
 
       await expect(manager.startCheckedExecution({
@@ -3717,7 +4959,18 @@ describe("SessionExecutionManager", () => {
 
   test("cold-loads a Session and rejects messages while its durable tool batch remains blocked", async () => {
     const sessionId = crypto.randomUUID();
-    await writeSessionFile({ sessionId, toolBatches: [blockedToolBatch("hitl-pending")] });
+    await writeSessionFile({
+      sessionId,
+      executions: [testExecutionRecord("execution-hitl-pending", "running")],
+      steps: [{
+        id: "step-hitl-pending",
+        step: 0,
+        executionId: "execution-hitl-pending",
+        runOrdinal: 0,
+        startedAt: Date.now(),
+      }],
+      toolBatches: [blockedToolBatch("hitl-pending")],
+    });
     const coldStores = new SessionStoreManager({ logger: silentLogger });
     const { manager } = createManager({}, { storeManager: coldStores });
 
@@ -3859,6 +5112,12 @@ describe("SessionExecutionManager", () => {
       modelRuntime: makeModelRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...callbacks,
+      cancelSessionToolBatch: async () => undefined,
+      applyChildDependencyOutcome: async () => undefined,
+      onSessionInputMutationReleased: async () => undefined,
+      onContinuationAdmissionReleased: async () => undefined,
+      resolveGoalInstanceId: async () => null,
+      onExecutionSettlement: async () => undefined,
       sessionInputService: new SessionInputService(storeManager),
       loadSessionStore: async (sessionId, root) => {
         if (sessionId === rootId) {
@@ -3905,6 +5164,7 @@ describe("SessionExecutionManager", () => {
         parentToolCallId: "initial-tool-call",
         toolName: "delegate",
         childSessionId,
+        childExecutionId: "initial-child-execution",
         childAgentName: "explore",
       childProfile: "fast",
       childSkillNames: [],
@@ -3947,16 +5207,32 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "resume-tool-call",
       status: "running",
     });
+    expect(runningLink?.startedAt).toBe(childAgent.store.getState().executions.at(-1)?.startedAt);
     expect(runningLink?.endedAt).toBeUndefined();
-    expect(runningLink?.durationMs).toBeUndefined();
+    expect(runningLink?.durationMs).toEqual(expect.any(Number));
+    expect(runningLink?.durationUpdatedAt).toEqual(expect.any(Number));
 
-    resumedRun.resolve({ text: "resumed done", steps: 1 });
+    resumedRun.resolve({
+      text: "waiting for approval",
+      steps: 1,
+      outcome: "suspended",
+      suspension: {
+        kind: "hitl",
+        toolBatchId: "resume-hitl-batch",
+        blockerIds: ["resume-hitl"],
+      },
+    });
     await resumed.result;
-    expect(parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "resume-tool-call")).toMatchObject({
+    const waitingLink = parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "resume-tool-call");
+    expect(waitingLink).toMatchObject({
       childSessionId,
       parentToolCallId: "resume-tool-call",
-      status: "completed",
+      status: "waiting_for_human",
     });
+    expect(waitingLink?.startedAt).toBe(runningLink?.startedAt);
+    expect(waitingLink?.endedAt).toBeUndefined();
+    expect(waitingLink?.durationMs).toBeGreaterThanOrEqual(runningLink?.durationMs ?? 0);
+    expect(waitingLink?.durationUpdatedAt).toEqual(expect.any(Number));
   });
 
   test("resumeChildExecution uses the canonical child title instead of a stale link title", async () => {
@@ -4250,7 +5526,10 @@ describe("SessionExecutionManager", () => {
       sessionId: timedChildId, instruction: "resume", background: false,
     });
     timedManager.deadlineScheduler.fireScheduled();
-    expect((await timed.result).executionStatus).toBe("timed_out");
+    expect(await timed.result).toMatchObject({
+      outcome: "terminal",
+      executionStatus: "timed_out",
+    });
 
     const uncascadedRun = deferred<MockAgentResult>();
     const uncascadedAgent = new MockAgent(uncascadedChildId, uncascadedRun.promise, workspaceRoot);
@@ -4279,7 +5558,10 @@ describe("SessionExecutionManager", () => {
       sessionId: cascadedChildId, instruction: "resume", background: false, parentAbort: cascadingAbort.signal,
     });
     cascadingAbort.abort();
-    expect((await cascaded.result).executionStatus).toBe("cancelled");
+    expect(await cascaded.result).toMatchObject({
+      outcome: "terminal",
+      executionStatus: "cancelled",
+    });
   });
 
   test("resumeChildExecution supports background links and terminal reminders", async () => {
@@ -4299,6 +5581,7 @@ describe("SessionExecutionManager", () => {
         parentToolCallId: "initial-tool-call",
         toolName: "delegate",
         childSessionId,
+        childExecutionId: "initial-child-execution",
         childAgentName: "explore",
       childProfile: "fast",
       childSkillNames: [],

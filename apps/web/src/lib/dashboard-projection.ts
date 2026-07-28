@@ -5,6 +5,7 @@ import type {
   DashboardProjection,
   DashboardRootSession,
   HitlDisplayPayload,
+  SessionFamilyActivity,
   SessionGoal,
 } from "@archcode/protocol";
 import type { ScopedHitlView } from "../store/hitl-store";
@@ -78,7 +79,7 @@ export interface DashboardSessionRow {
   readonly rootSessionId: string;
   readonly title: string | null;
   readonly updatedAt: number;
-  readonly activity: "running" | "stopping" | "idle";
+  readonly activity: SessionFamilyActivity;
   readonly goal?: SessionGoal;
 }
 
@@ -104,7 +105,7 @@ export interface DashboardSections {
 export interface DeriveDashboardSectionsInput {
   readonly read: DashboardReadProjection;
   readonly hitl: readonly ScopedHitlView[];
-  readonly activityFor: (projectSlug: string, rootSessionId: string) => "running" | "stopping" | "idle" | undefined;
+  readonly activityFor: (projectSlug: string, rootSessionId: string) => SessionFamilyActivity | undefined;
 }
 
 const ATTENTION_KIND_ORDER: Record<DashboardAttentionItem["kind"], number> = {
@@ -133,18 +134,14 @@ export function deriveDashboardSections(input: DeriveDashboardSectionsInput): Da
   const attentionOwnerKeys = new Set(attention.map((item) => item.sectionOwnerKey));
   const running = input.read.sessions
     .filter((session) => !attentionOwnerKeys.has(sessionFamilyKey(session.projectSlug, session.rootSessionId)))
-    .filter((session) => {
+    .flatMap((session) => {
       const activity = input.activityFor(session.projectSlug, session.rootSessionId);
-      return activity === "running" || activity === "stopping";
+      return activity !== undefined && activity !== "idle"
+        ? [toSessionRow(session, activity)]
+        : [];
     })
-    .map((session) => toSessionRow(
-      session,
-      input.activityFor(session.projectSlug, session.rootSessionId) ?? "idle",
-    ))
     .sort((left, right) => {
-      const leftActivity = input.activityFor(left.projectSlug, left.rootSessionId);
-      const rightActivity = input.activityFor(right.projectSlug, right.rootSessionId);
-      return activityOrder(leftActivity) - activityOrder(rightActivity)
+      return activityOrder(left.activity) - activityOrder(right.activity)
         || right.updatedAt - left.updatedAt
         || left.identity.localeCompare(right.identity);
     });
@@ -282,8 +279,12 @@ function compareAttention(left: DashboardAttentionItem, right: DashboardAttentio
   return kindOrder || left.attentionSinceMs - right.attentionSinceMs || left.identity.localeCompare(right.identity);
 }
 
-function activityOrder(activity: "running" | "stopping" | "idle" | undefined): number {
-  return activity === "running" ? 0 : activity === "stopping" ? 1 : 2;
+function activityOrder(activity: DashboardSessionRow["activity"]): number {
+  if (activity === "running") return 0;
+  if (activity === "resuming") return 1;
+  if (activity === "waiting_for_human") return 2;
+  if (activity === "stopping") return 3;
+  return 4;
 }
 
 function parseIsoTime(value: string, identity: string): number {

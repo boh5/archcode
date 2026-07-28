@@ -10,8 +10,16 @@ import { SessionComposerDock } from "../components/features/SessionComposerDock"
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
-import { useAgents, useFocusedSession, useProjectTodos, useSession } from "../api/queries";
-import { getWebSessionStore, markSessionForeground } from "../store/session-store";
+import {
+  useAgents,
+  useFocusedSession,
+  useProjectTodos,
+  useSession,
+} from "../api/queries";
+import {
+  getWebSessionStore,
+  markSessionForeground,
+} from "../store/session-store";
 import { useWorkbenchLayout } from "../context/workbench-layout";
 
 export function SessionRoute() {
@@ -26,7 +34,11 @@ export function SessionRoute() {
   const canvasView = searchParams.get("view");
   const selectedFile = searchParams.get("file") ?? undefined;
 
-  const { data: session, isLoading: isSessionLoading, error: sessionError } = useSession(slug, sessionId);
+  const {
+    data: session,
+    isLoading: isSessionLoading,
+    error: sessionError,
+  } = useSession(slug, sessionId);
   const { data: projectTodos = [] } = useProjectTodos(slug);
   const { data: agents = [] } = useAgents();
   const rootSessionId = session?.rootSessionId ?? sessionId;
@@ -34,13 +46,18 @@ export function SessionRoute() {
   const linkedProjectTodo = sessionSource
     ? projectTodos.find((todo) => todo.id === sessionSource.todoId)
     : undefined;
-  const linkedProjectTodoContext = sessionSource?.entry === "discussion"
-    ? "Discussion Todo"
-    : sessionSource?.entry === "automation"
-      ? "Automation setup Todo"
-      : "Work Todo";
+  const linkedProjectTodoContext =
+    sessionSource?.entry === "discussion"
+      ? "Discussion Todo"
+      : sessionSource?.entry === "automation"
+        ? "Automation setup Todo"
+        : "Work Todo";
   const focusSessionId = searchParams.get("focus");
-  const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
+  const {
+    data: focusedSession,
+    isLoading: isFocusedLoading,
+    error: focusedError,
+  } = useFocusedSession(slug, focusSessionId);
   const focusHitlId = searchParams.get("hitl");
   const inspectModelAudit = (messageId: string) => {
     const next = new URLSearchParams(searchParams);
@@ -71,7 +88,6 @@ export function SessionRoute() {
         isStreamingModel,
         currentExecutionId,
         currentAssistantMessageId,
-        executionInputCheckpoints,
         childSessionLinks,
         eventCursor,
         modelSelection,
@@ -97,7 +113,6 @@ export function SessionRoute() {
         isStreamingModel,
         currentExecutionId,
         currentAssistantMessageId,
-        executionInputCheckpoints,
         childSessionLinks,
         eventCursor,
         modelSelection,
@@ -142,7 +157,6 @@ export function SessionRoute() {
         isStreamingModel,
         currentExecutionId,
         currentAssistantMessageId,
-        executionInputCheckpoints,
         childSessionLinks,
         eventCursor,
         modelSelection,
@@ -169,7 +183,6 @@ export function SessionRoute() {
         isStreamingModel,
         currentExecutionId,
         currentAssistantMessageId,
-        executionInputCheckpoints,
         childSessionLinks,
         eventCursor,
         modelSelection,
@@ -232,7 +245,11 @@ export function SessionRoute() {
   if (isSessionLoading || !session || session.rootSessionId !== sessionId) {
     return (
       <div className="flex h-full items-center justify-center gap-2 text-sm text-text-secondary">
-        <LoaderCircle size={14} className="animate-activity text-text-muted" aria-hidden="true" />
+        <LoaderCircle
+          size={14}
+          className="animate-activity text-text-muted"
+          aria-hidden="true"
+        />
         Loading session...
       </div>
     );
@@ -245,7 +262,7 @@ export function SessionRoute() {
       ? "Error"
       : isFocusedLoading
         ? "Loading..."
-        : focusedSession?.title ?? focusSessionId;
+        : (focusedSession?.title ?? focusSessionId);
 
     const handleReturn = () => {
       const store = getWebSessionStore(rootSessionId, slug);
@@ -286,7 +303,11 @@ export function SessionRoute() {
           </div>
         ) : isFocusedLoading ? (
           <div className="flex-1 flex items-center justify-center text-text-secondary text-sm gap-2">
-            <LoaderCircle size={14} className="animate-activity text-text-muted" aria-hidden="true" />
+            <LoaderCircle
+              size={14}
+              className="animate-activity text-text-muted"
+              aria-hidden="true"
+            />
             Loading sub-agent session...
           </div>
         ) : (
@@ -323,16 +344,23 @@ export function SessionRoute() {
       <ChatHeader
         slug={slug}
         sessionId={rootSessionId}
-        source={linkedProjectTodo ? {
-          label: linkedProjectTodoContext,
-          title: linkedProjectTodo.title,
-          to: `/projects/${encodeURIComponent(slug)}/todos?todo=${encodeURIComponent(linkedProjectTodo.id)}`,
-        } : undefined}
+        source={
+          linkedProjectTodo
+            ? {
+                label: linkedProjectTodoContext,
+                title: linkedProjectTodo.title,
+                to: `/projects/${encodeURIComponent(slug)}/todos?todo=${encodeURIComponent(linkedProjectTodo.id)}`,
+              }
+            : undefined
+        }
         onToggleInspector={toggleInspectorSurface}
         inspectorExpanded={layout.inspectorExpanded}
       />
       {canvasView === "diff" ? (
-        <div className="flex min-h-0 flex-1 flex-col" data-testid="session-diff-canvas">
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          data-testid="session-diff-canvas"
+        >
           <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-default bg-bg-surface px-4">
             <button
               type="button"
@@ -347,13 +375,19 @@ export function SessionRoute() {
               <ArrowLeft size={13} />
               Execution
             </button>
-            <span className="text-text-muted" aria-hidden="true">/</span>
+            <span className="text-text-muted" aria-hidden="true">
+              /
+            </span>
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-primary">
               {selectedFile ?? "All changes"}
             </span>
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
-            <DiffTab slug={slug} sessionId={rootSessionId} selectedPath={selectedFile} />
+            <DiffTab
+              slug={slug}
+              sessionId={rootSessionId}
+              selectedPath={selectedFile}
+            />
           </div>
         </div>
       ) : (
@@ -367,7 +401,10 @@ export function SessionRoute() {
             slug={slug}
             sessionId={rootSessionId}
             routeScopeId={rootSessionId}
-            sessionIdentity={{ agentName: session.agentName, profile: session.profile }}
+            sessionIdentity={{
+              agentName: session.agentName,
+              profile: session.profile,
+            }}
             agents={agents}
             onInspectModelAudit={inspectModelAudit}
           />

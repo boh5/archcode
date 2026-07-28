@@ -16,6 +16,9 @@ const workspace = join("/tmp", "archcode-file-read-source", crypto.randomUUID())
 function ctx(): ToolExecutionContext {
   return {
     store: createMockStore(), storeManager, toolName: "file_read", toolCallId: "call", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch",
     abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["file_read"]),
     cwd: workspace, projectContext: createTestProjectContext(workspace),
   };

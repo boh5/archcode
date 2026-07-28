@@ -406,6 +406,9 @@ export class SessionInputService {
     messageId: string;
     expectedRevision: number;
     expectedExecutionId: string;
+    runOrdinal: number;
+    modelAudit: MessageModelAudit;
+    claimedAt?: number;
   }): Promise<PendingSessionMessage> {
     assertNonEmpty(input.expectedExecutionId, "expectedExecutionId");
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
@@ -417,6 +420,9 @@ export class SessionInputService {
         revision: current.revision + 1,
         updatedAt: nextSessionTimestamp(state),
         targetExecutionId: input.expectedExecutionId,
+        targetRunOrdinal: input.runOrdinal,
+        targetModelAudit: copyModelAudit(input.modelAudit),
+        claimedAt: input.claimedAt ?? Date.now(),
       };
       return {
         result: copyPendingMessage(message),
@@ -429,6 +435,7 @@ export class SessionInputService {
     sessionId: string;
     workspaceRoot: string;
     executionId: string;
+    runOrdinal: number;
     snapshots: readonly ResolvedSessionInputSnapshot[];
     binding: ExecutionModelBindingSummary;
     origin: SessionExecutionOrigin;
@@ -451,6 +458,7 @@ export class SessionInputService {
       const messages = pendingMessages.map((message, index) => toCanonicalMessage(
         message,
         input.executionId,
+        input.runOrdinal,
         committedAt,
         input.snapshots[index]!.modelAudit,
       ));
@@ -467,10 +475,7 @@ export class SessionInputService {
             "canonical",
           ),
         },
-        events: [
-          { type: "execution-start", executionId: input.executionId, binding: input.binding, origin: input.origin },
-          { type: "session.messages_committed", executionId: input.executionId, messages },
-        ],
+        events: [{ type: "session.messages_committed", executionId: input.executionId, messages }],
       };
     });
   }
@@ -479,6 +484,7 @@ export class SessionInputService {
     sessionId: string;
     workspaceRoot: string;
     executionId: string;
+    runOrdinal: number;
     text: string;
     source?: SessionMessageSource;
     messageId?: string;
@@ -519,6 +525,7 @@ export class SessionInputService {
       const message = toCanonicalMessage(
         pending,
         input.executionId,
+        input.runOrdinal,
         createdAt,
         input.modelAudit,
         clientRequestId !== undefined,
@@ -536,10 +543,7 @@ export class SessionInputService {
         patch: receipt === undefined
           ? undefined
           : { inputRequestReceipts: [...state.inputRequestReceipts, receipt] },
-        events: [
-          { type: "execution-start", executionId: input.executionId, binding: input.binding, origin: input.origin },
-          { type: "session.messages_committed", executionId: input.executionId, messages: [message] },
-        ],
+        events: [{ type: "session.messages_committed", executionId: input.executionId, messages: [message] }],
       };
     });
   }
@@ -548,21 +552,27 @@ export class SessionInputService {
     sessionId: string;
     workspaceRoot: string;
     executionId: string;
+    runOrdinal: number;
     snapshots: readonly ResolvedSessionInputSnapshot[];
     binding: ExecutionModelBindingSummary;
+    committedAt?: number;
     signal?: AbortSignal;
   }): Promise<SessionMessage[]> {
     if (input.snapshots.length === 0) return [];
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
       input.signal?.throwIfAborted();
       assertRootSession(state);
-      const committedAt = nextSessionTimestamp(state);
+      const committedAt = input.committedAt ?? nextSessionTimestamp(state);
       const pendingMessages = input.snapshots.map((snapshot) => {
         const current = state.pendingMessages.find((message) => message.id === snapshot.pending.id);
         if (current === undefined) {
           throw new SessionInputConflictError("not_found", `Pending message ${snapshot.pending.id} no longer exists`);
         }
-        if (current.state !== "steering" || current.targetExecutionId !== input.executionId) {
+        if (
+          current.state !== "steering"
+          || current.targetExecutionId !== input.executionId
+          || current.targetRunOrdinal !== input.runOrdinal
+        ) {
           throw new SessionInputConflictError(
             "state",
             `Message ${snapshot.pending.id} is not steering to ${input.executionId}`,
@@ -575,8 +585,9 @@ export class SessionInputService {
       const messages = pendingMessages.map((message, index) => toCanonicalMessage(
         message,
         input.executionId,
+        input.runOrdinal,
         committedAt,
-        input.snapshots[index]!.modelAudit,
+        currentSteerAudit(message),
       ));
       return {
         result: messages.map(copySessionMessage),
@@ -608,7 +619,13 @@ export class SessionInputService {
       );
       let timestamp = nextSessionTimestamp(state);
       const messages = matches.map((message) => {
-        const { targetExecutionId: _targetExecutionId, ...queued } = message;
+        const {
+          targetExecutionId: _targetExecutionId,
+          targetRunOrdinal: _targetRunOrdinal,
+          targetModelAudit: _targetModelAudit,
+          claimedAt: _claimedAt,
+          ...queued
+        } = message;
         return {
           ...queued,
           state: "queued" as const,
@@ -626,9 +643,6 @@ export class SessionInputService {
     });
   }
 
-  async recoverOrphanedSteers(sessionId: string, workspaceRoot: string): Promise<PendingSessionMessage[]> {
-    return await this.rollbackSteers({ sessionId, workspaceRoot });
-  }
 }
 
 export function nextSessionTimestamp(
@@ -756,6 +770,7 @@ function canonicalConflictProjection(
 function toCanonicalMessage(
   pending: PendingSessionMessage,
   executionId: string,
+  runOrdinal: number,
   completedAt: number,
   modelAudit: MessageModelAudit,
   includeClientRequestId = true,
@@ -773,9 +788,21 @@ function toCanonicalMessage(
     createdAt: pending.acceptedAt,
     completedAt,
     executionId,
+    runOrdinal,
     modelAudit: copyModelAudit(modelAudit),
     ...(includeClientRequestId ? { clientRequestId: pending.clientRequestId } : {}),
   };
+}
+
+function currentSteerAudit(message: PendingSessionMessage): MessageModelAudit {
+  if (message.state !== "steering" || message.targetModelAudit === undefined) {
+    throw new SessionInputConflictError(
+      "state",
+      `Message ${message.id} has no durable Steer model audit`,
+      pendingConflictProjection(message),
+    );
+  }
+  return copyModelAudit(message.targetModelAudit);
 }
 
 function updateReceiptStatus(
@@ -908,7 +935,13 @@ function assertNonEmpty(value: string, field: string): void {
 }
 
 function copyPendingMessage(message: PendingSessionMessage): PendingSessionMessage {
-  return { ...message, requestedModelSelection: copyRequestedSelection(message.requestedModelSelection) };
+  return {
+    ...message,
+    requestedModelSelection: copyRequestedSelection(message.requestedModelSelection),
+    ...(message.targetModelAudit === undefined
+      ? {}
+      : { targetModelAudit: copyModelAudit(message.targetModelAudit) }),
+  };
 }
 
 function copySessionMessage(message: SessionMessage): SessionMessage {
@@ -942,6 +975,16 @@ function sameSelection(
   right: ExecutionModelBindingSummary["selection"],
 ): boolean {
   return left.model === right.model && left.variant === right.variant;
+}
+
+function sameOptionalModelAudit(
+  left: MessageModelAudit | undefined,
+  right: MessageModelAudit | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return sameRequestedSelection(left.requested, right.requested)
+    && sameSelection(left.actual, right.actual)
+    && left.reason === right.reason;
 }
 
 function validateAudit(
@@ -978,6 +1021,9 @@ function validateResolvedSnapshot(
     || current.content !== snapshot.pending.content
     || current.source !== snapshot.pending.source
     || current.targetExecutionId !== snapshot.pending.targetExecutionId
+    || current.targetRunOrdinal !== snapshot.pending.targetRunOrdinal
+    || current.claimedAt !== snapshot.pending.claimedAt
+    || !sameOptionalModelAudit(current.targetModelAudit, snapshot.pending.targetModelAudit)
     || !sameRequestedSelection(current.requestedModelSelection, snapshot.pending.requestedModelSelection)) {
     throw new SessionInputConflictError(
       current.state !== expectedState ? "state" : "revision",

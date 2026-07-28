@@ -1,7 +1,7 @@
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
-import { createEmptySessionStats } from "@archcode/protocol";
+import { createEmptySessionStats, validateExecutionTransition } from "@archcode/protocol";
 import type { AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
 import { collectSessionTreeIds } from "../execution/session-tree";
@@ -12,6 +12,9 @@ import type {
   SessionTreeNode,
   SessionTreeResponse,
   ProjectTodoSessionSource,
+  NormalizedUsage,
+  SessionExecutionRecord,
+  ExecutionLifecycleEvent,
 } from "@archcode/protocol";
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
@@ -31,12 +34,10 @@ import { reduceStreamEvent } from "./reduce";
 import { toDurableSessionEvent } from "./durable-tool-input";
 import { assertSafeSessionId, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
-  type ReasoningPart,
   type SessionEventEnvelope,
   type SessionEventPayload,
   type SessionStoreState,
   type SessionToolBatch,
-  type TextPart,
   MAX_EVENTS,
 } from "./types";
 
@@ -57,6 +58,38 @@ export interface DurableSessionMutation<T> {
   readonly patch?: Partial<SessionStoreState>;
   readonly events?: readonly SessionEventPayload[];
 }
+
+export type ExecutionSettlementTarget =
+  | {
+      readonly executionId: string;
+      readonly runOrdinal: number;
+      readonly expectedKey: string;
+    }
+  | {
+      readonly executionId: string;
+      readonly terminal: true;
+      readonly expectedKey: string;
+    };
+
+export type UnappliedExecutionSettlement =
+  | {
+      readonly workspaceRoot: string;
+      readonly sessionId: string;
+      readonly executionId: string;
+      readonly runOrdinal: number;
+      readonly key: string;
+      readonly goalInstanceId: string | null;
+      readonly durationMs: number;
+      readonly usageDelta: NormalizedUsage;
+    }
+  | {
+      readonly workspaceRoot: string;
+      readonly sessionId: string;
+      readonly executionId: string;
+      readonly terminal: true;
+      readonly key: string;
+      readonly goalInstanceId: string | null;
+    };
 
 export interface PublishableSessionEvent {
   readonly workspaceRoot: string;
@@ -168,6 +201,9 @@ export class SessionStoreManager {
     const persistForEvent = (event: SessionEventPayload) => {
       if (
         event.type === "execution-start"
+        || event.type === "execution-suspended"
+        || event.type === "execution-suspension-updated"
+        || event.type === "execution-resumed"
         || event.type === "execution-end"
         || event.type === "tool-attempt"
         || event.type === "tool-result"
@@ -232,6 +268,10 @@ export class SessionStoreManager {
       publishableNextEventId: 0,
       append: (event: SessionEventPayload) => {
         const durableEvent = toDurableSessionEvent(event);
+        if (isExecutionLifecycleEvent(durableEvent)
+          && validateExecutionTransition(get().executions, durableEvent).outcome === "duplicate") {
+          return;
+        }
         const durablePublication = isDurableControlEvent(durableEvent);
         let startNextEventId = 0;
         let targetNextEventId = 0;
@@ -412,6 +452,105 @@ export class SessionStoreManager {
         patch: { toolBatches: updated },
       };
     });
+  }
+
+  async markExecutionSettlementApplied(
+    sessionId: string,
+    workspaceRoot: string,
+    input: ExecutionSettlementTarget,
+  ): Promise<void> {
+    await this.commitDurableSessionMutation(sessionId, workspaceRoot, (state) => {
+      const execution = state.executions.find((candidate) => candidate.id === input.executionId);
+      if (execution === undefined) {
+        throw new Error(`Execution ${input.executionId} does not exist`);
+      }
+      const appliedAt = Date.now();
+      let matched = false;
+      let alreadyApplied = false;
+      const executions = state.executions.map((candidate): SessionExecutionRecord => {
+        if (candidate.id !== input.executionId) return candidate;
+        if ("terminal" in input) {
+          if (candidate.status === "running" || candidate.status === "suspended") {
+            throw new Error(`Execution ${input.executionId} is not terminal`);
+          }
+          if (candidate.terminalSettlement.key !== input.expectedKey) {
+            throw new Error(`Execution ${input.executionId} terminal settlement key mismatch`);
+          }
+          matched = true;
+          alreadyApplied = candidate.terminalSettlement.appliedAt !== undefined;
+          return alreadyApplied
+            ? candidate
+            : {
+                ...candidate,
+                terminalSettlement: { ...candidate.terminalSettlement, appliedAt },
+              };
+        }
+
+        const run = candidate.runs[input.runOrdinal];
+        if (run === undefined || run.endedAt === undefined) {
+          throw new Error(`Execution ${input.executionId} run ${input.runOrdinal} is not settled`);
+        }
+        if (run.settlement.key !== input.expectedKey) {
+          throw new Error(`Execution ${input.executionId} run ${input.runOrdinal} settlement key mismatch`);
+        }
+        matched = true;
+        alreadyApplied = run.settlement.appliedAt !== undefined;
+        if (alreadyApplied) return candidate;
+        return {
+          ...candidate,
+          runs: candidate.runs.map((candidateRun, ordinal) =>
+            ordinal === input.runOrdinal && candidateRun.endedAt !== undefined
+              ? {
+                  ...candidateRun,
+                  settlement: { ...candidateRun.settlement, appliedAt },
+                }
+              : candidateRun
+          ),
+        };
+      });
+      if (!matched) throw new Error(`Execution ${input.executionId} settlement was not found`);
+      return {
+        result: undefined,
+        ...(alreadyApplied ? {} : { patch: { executions } }),
+      };
+    });
+  }
+
+  async listUnappliedExecutionSettlements(
+    workspaceRoot: string,
+  ): Promise<UnappliedExecutionSettlement[]> {
+    const settlements: UnappliedExecutionSettlement[] = [];
+    for (const summary of await this.listAllSessionSummaries(workspaceRoot)) {
+      const session = await this.getSessionFile(workspaceRoot, summary.sessionId);
+      for (const execution of session.executions) {
+        for (const run of execution.runs) {
+          if (!("endedAt" in run) || run.settlement.appliedAt !== undefined) continue;
+          settlements.push({
+            workspaceRoot,
+            sessionId: session.sessionId,
+            executionId: execution.id,
+            runOrdinal: run.ordinal,
+            key: run.settlement.key,
+            goalInstanceId: run.settlement.goalInstanceId,
+            durationMs: run.durationMs,
+            usageDelta: run.usageDelta,
+          });
+        }
+        if (execution.status !== "running"
+          && execution.status !== "suspended"
+          && execution.terminalSettlement.appliedAt === undefined) {
+          settlements.push({
+            workspaceRoot,
+            sessionId: session.sessionId,
+            executionId: execution.id,
+            terminal: true,
+            key: execution.terminalSettlement.key,
+            goalInstanceId: execution.terminalSettlement.goalInstanceId,
+          });
+        }
+      }
+    }
+    return settlements;
   }
 
   /** Lists roots and descendants for project startup repair services. */
@@ -1094,12 +1233,7 @@ export class SessionStoreManager {
     workspaceRoot: string,
   ): Promise<StoreApi<SessionStoreState>> {
     const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
-    const now = Date.now();
-    const repair = reconcileInterruptedSessionFile(
-      await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId),
-      now,
-    );
-    const parsed = repair.file;
+    const parsed = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
 
     // Re-check registry after I/O: a concurrent create() may have registered
     // a store for this key while we were reading from disk. If so, return it
@@ -1121,6 +1255,14 @@ export class SessionStoreManager {
         ...(parsed.title === null ? {} : { title: parsed.title }),
         ...(parsed.projectTodo === undefined ? {} : { projectTodo: parsed.projectTodo }),
       });
+      const nonterminalExecution = parsed.executions.find(
+        (execution) => execution.status === "running" || execution.status === "suspended",
+      );
+      const activeBatch = nonterminalExecution === undefined
+        ? undefined
+        : parsed.toolBatches.find(
+            (batch) => batch.executionId === nonterminalExecution.id && batch.archivedAt === undefined,
+          );
       store.setState({
         sessionId: parsed.sessionId,
         createdAt: parsed.createdAt,
@@ -1151,10 +1293,10 @@ export class SessionStoreManager {
         parentSessionId: parsed.parentSessionId,
         goal: parsed.goal,
         projectTodo: parsed.projectTodo,
-        isRunning: false,
+        isRunning: nonterminalExecution?.status === "running",
         isStreamingModel: false,
-        currentExecutionId: undefined,
-        currentAssistantMessageId: undefined,
+        currentExecutionId: nonterminalExecution?.id,
+        currentAssistantMessageId: activeBatch?.assistantMessageId,
         readSnapshots: new Map(),
         events: parsed.events ?? [],
         eventOffset: eventOffsetFromEvents(parsed.events ?? []),
@@ -1162,14 +1304,6 @@ export class SessionStoreManager {
         publishableNextEventId: nextEventIdFromEvents(parsed.events ?? []),
       });
       this.#registerRootSessionId(parsed.sessionId, workspaceRoot, parsed.rootSessionId);
-      if (repair.changed) {
-        try {
-          await this.#enqueuePersist(key, sessionId, workspaceRoot, store.getState(), now);
-        } catch (error) {
-          this.delete(sessionId, workspaceRoot);
-          throw error;
-        }
-      }
 
       return store;
     } finally {
@@ -1271,6 +1405,10 @@ function appendEventToState(
   event: SessionEventPayload,
   publishImmediately: boolean,
 ): SessionStoreState {
+  if (isExecutionLifecycleEvent(event)
+    && validateExecutionTransition(state.executions, event).outcome === "duplicate") {
+    return state;
+  }
   const envelope: SessionEventEnvelope = {
     id: state.nextEventId,
     createdAt: Date.now(),
@@ -1297,6 +1435,16 @@ function appendEventToState(
   };
 }
 
+function isExecutionLifecycleEvent(
+  event: SessionEventPayload,
+): event is ExecutionLifecycleEvent {
+  return event.type === "execution-start"
+    || event.type === "execution-suspended"
+    || event.type === "execution-suspension-updated"
+    || event.type === "execution-resumed"
+    || event.type === "execution-end";
+}
+
 function isDurableControlEvent(event: SessionEventPayload): boolean {
   return event.type === "session.message_accepted"
     || event.type === "session.message_edited"
@@ -1305,6 +1453,9 @@ function isDurableControlEvent(event: SessionEventPayload): boolean {
     || event.type === "session.message_steer_rolled_back"
     || event.type === "session.messages_committed"
     || event.type === "execution-start"
+    || event.type === "execution-suspended"
+    || event.type === "execution-suspension-updated"
+    || event.type === "execution-resumed"
     || event.type === "execution-stop-requested"
     || event.type === "execution-end";
 }
@@ -1395,85 +1546,6 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     title: file.title,
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,
-  };
-}
-
-const TERMINAL_EXECUTION_STATUSES = new Set<HydratedSessionFile["executions"][number]["status"]>([
-  "completed",
-  "max_steps",
-  "failed",
-  "aborted",
-  "cancelled",
-  "timed_out",
-  "interrupted",
-  "waiting_for_human",
-]);
-
-const ACTIVE_CHILD_LINK_STATUSES = new Set(["linked", "running", "cancelling"]);
-
-interface InterruptedSessionRepair {
-  readonly file: HydratedSessionFile;
-  readonly changed: boolean;
-}
-
-function reconcileInterruptedSessionFile(
-  file: HydratedSessionFile,
-  now: number,
-): InterruptedSessionRepair {
-  let changed = false;
-  const executions = file.executions.map((execution) => {
-    if (TERMINAL_EXECUTION_STATUSES.has(execution.status)) return execution;
-    changed = true;
-    const endedAt = execution.endedAt ?? now;
-    return {
-      ...execution,
-      status: "interrupted" as const,
-      endedAt,
-      durationMs: execution.durationMs ?? Math.max(0, endedAt - execution.startedAt),
-      error: execution.error ?? "Execution interrupted by restart",
-    };
-  });
-  const childSessionLinks = file.childSessionLinks.map((link) => {
-    if (!ACTIVE_CHILD_LINK_STATUSES.has(link.status)) return link;
-    changed = true;
-    return {
-      ...link,
-      status: "interrupted" as const,
-      endedAt: link.endedAt ?? now,
-      error: link.error ?? "Child execution interrupted by restart",
-    };
-  });
-  const messages = file.messages.map((message) => {
-    let messageChanged = false;
-    const parts = message.parts.map((part) => {
-      if ((part.type === "text" || part.type === "reasoning") && part.completedAt === undefined) {
-        changed = true;
-        messageChanged = true;
-        const partial = part as TextPart | ReasoningPart;
-        return {
-          ...partial,
-          completedAt: now,
-          meta: { ...(partial.meta ?? {}), interrupted: true, discardedFromContext: true },
-        };
-      }
-
-      return part;
-    });
-
-    return messageChanged ? { ...message, parts, completedAt: message.completedAt ?? now } : message;
-  });
-  const inputRequestReceipts = file.inputRequestReceipts.map((receipt) => {
-    if (receipt.kind !== "command" || receipt.status !== "executing") return receipt;
-    changed = true;
-    return {
-      ...receipt,
-      status: "indeterminate" as const,
-      error: "Command outcome is unknown because execution was interrupted by restart",
-    };
-  });
-  return {
-    file: changed ? { ...file, executions, childSessionLinks, messages, inputRequestReceipts } : file,
-    changed,
   };
 }
 

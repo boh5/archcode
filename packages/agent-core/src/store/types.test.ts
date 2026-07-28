@@ -119,7 +119,7 @@ describe("StreamEvent", () => {
 
 describe("ExecutionEndEvent", () => {
   test("accepts all terminal status values", () => {
-    const statuses: ExecutionEndEvent["status"][] = [
+    const statuses: ExecutionEndEvent["terminalStatus"][] = [
       "completed",
       "max_steps",
       "failed",
@@ -130,9 +130,12 @@ describe("ExecutionEndEvent", () => {
 
     const events: ExecutionEndEvent[] = statuses.map((status) => ({
       type: "execution-end",
-      status,
+      executionId: "execution-1",
+      terminalStatus: status,
+      endedAt: 2,
+      terminalSettlement: { key: "terminal:session-1:execution-1", goalInstanceId: null },
     }));
 
-    expect(events.map((event) => event.status)).toEqual(statuses);
+    expect(events.map((event) => event.terminalStatus)).toEqual(statuses);
   });
 });

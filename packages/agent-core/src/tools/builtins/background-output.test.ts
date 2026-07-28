@@ -15,7 +15,11 @@ import {
   type BackgroundOutputDeadlineScheduler,
 } from "./background-output";
 import { sourceDraftText } from "./source-page";
-import { testExecutionStart } from "../../testing/test-execution-fixtures";
+import {
+  testExecutionEnd,
+  testExecutionStart,
+  testExecutionSuspended,
+} from "../../testing/test-execution-fixtures";
 
 // Keep mutable fixtures out of the source worktree: constrained runners can mount it read-only.
 const root = join("/tmp", "archcode-background-source", crypto.randomUUID());
@@ -25,6 +29,19 @@ const sessions: Array<{
   sessionId: string;
 }> = [];
 
+function endExecution(
+  executionId: string,
+  terminalStatus: Parameters<typeof testExecutionEnd>[1] = "completed",
+  error?: string,
+) {
+  const endedAt = Date.now() + 1;
+  return testExecutionEnd(executionId, terminalStatus, {
+    endedAt,
+    runEndedAt: endedAt,
+    ...(error === undefined ? {} : { error }),
+  });
+}
+
 function context(): ToolExecutionContext {
   const manager = new SessionStoreManager({ logger: silentLogger });
   const id = crypto.randomUUID();
@@ -32,6 +49,9 @@ function context(): ToolExecutionContext {
   return {
     store: manager.create(id, workspace, { agentName: "lead" }), storeManager: manager,
     toolName: "background_output", toolCallId: "call", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch",
     abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["background_output"]),
     cwd: workspace, projectContext: createTestProjectContext(workspace),
   };
@@ -116,7 +136,7 @@ describe("background_output source pages", () => {
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "latest" });
     store.getState().append({ type: "text-end" });
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(endExecution("run"));
 
     const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
     expect(result.draft.kind).toBe("source");
@@ -142,7 +162,7 @@ describe("background_output source pages", () => {
         completedAt: 2,
       }],
     }]);
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(endExecution("huge"));
 
     const { pages, nextInputs } = await readAllPages(input(store.getState().sessionId), ctx);
     expect(pages.length).toBeGreaterThan(2);
@@ -188,7 +208,7 @@ describe("background_output source pages", () => {
       deadline.scheduler,
     );
     await deadline.whenScheduled;
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(endExecution("running"));
 
     const result = await pending;
     expect(sourceDraftText(result)).toContain("Wait status: stopped");
@@ -244,14 +264,14 @@ describe("background_output source pages", () => {
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "I need one decision before continuing." });
     store.getState().append({ type: "text-end" });
-    store.getState().append({
-      type: "execution-end",
-      status: "waiting_for_human",
-      blockedByHitlIds: ["hitl-1"],
-    });
+    store.getState().append(testExecutionSuspended("waiting", {
+      kind: "hitl",
+      toolBatchId: "batch-1",
+      blockerIds: ["hitl-1"],
+    }, { runEndedAt: Date.now() + 1 }));
 
     const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
-    expect(sourceDraftText(result)).toContain("Status: waiting_for_human");
+    expect(sourceDraftText(result)).toContain("Status: suspended");
     expect(sourceDraftText(result)).toContain("I need one decision before continuing.");
     expect(sourceDraftText(result)).toContain("waiting for human input");
     expect(sourceDraftText(result)).toContain("not a final deliverable");
@@ -264,9 +284,9 @@ describe("background_output source pages", () => {
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "final review complete" });
     store.getState().append({ type: "text-end" });
-    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append(endExecution("old"));
     store.getState().append(testExecutionStart("latest"));
-    store.getState().append({ type: "execution-end", status: "failed", error: "boom" });
+    store.getState().append(endExecution("latest", "failed", "boom"));
 
     const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
     expect(sourceDraftText(result)).not.toContain("final review complete");

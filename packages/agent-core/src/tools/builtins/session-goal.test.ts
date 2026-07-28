@@ -42,6 +42,9 @@ function context(options: { readonly discussion?: boolean } = {}): ToolExecution
     toolCallId: crypto.randomUUID(),
     input: {},
     step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch",
     abort: new AbortController().signal,
     agentName: "lead",
     startedAt: Date.now(),
@@ -89,6 +92,7 @@ function attachChild(
       parentToolCallId: crypto.randomUUID(),
       toolName: "delegate",
       childSessionId: sessionId,
+      childExecutionId: crypto.randomUUID(),
       childAgentName: "build",
       childProfile: "deep",
       childSkillNames: [],
@@ -137,7 +141,7 @@ describe("Session Goal model tools", () => {
       workspaceRoot: tempRoot.path,
       sessionId: ctx.store.getState().sessionId,
     };
-    await ctx.sessionGoalService!.create({
+    const goal = await ctx.sessionGoalService!.create({
       ...target,
       authority: { kind: "user_control" },
       objective: "Semantic objective must stay in GoalNotice.",
@@ -147,9 +151,11 @@ describe("Session Goal model tools", () => {
       authority: { kind: "user_control" },
       tokenBudget: 100,
     });
-    await ctx.sessionGoalService!.recordUsage({
+    await ctx.sessionGoalService!.recordSettlement({
       ...target,
       authority: { kind: "runtime" },
+      settlementKey: `terminal:${target.sessionId}:test`,
+      goalInstanceId: goal.instanceId,
       usage: {
         inputTokens: 7,
         outputTokens: 3,
@@ -158,6 +164,7 @@ describe("Session Goal model tools", () => {
         cachedInputTokens: 1,
       },
       executionTimeMs: 25,
+      terminal: true,
     });
     await ctx.sessionGoalService!.block({
       ...target,

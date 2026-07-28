@@ -156,6 +156,16 @@ describe("DelegationCard", () => {
     expect(text).toContain("Completed");
   });
 
+  test("renders an authoritative child duration after terminal status", () => {
+    const result = DelegationCard({
+      ...baseProps,
+      visualKind: "completed",
+      executionStatusLabel: "Completed",
+      durationMs: 65_000,
+    });
+    expect(textContent(result)).toContain("1m 5s");
+  });
+
   test("renders a unified stopped state with its specific reason", () => {
     const result = DelegationCard({
       ...baseProps,

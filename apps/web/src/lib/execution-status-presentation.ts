@@ -1,22 +1,29 @@
 import type {
-  SessionExecutionInputCheckpoint,
   SessionExecutionRecord,
   ToolChildSessionLinkStatus,
 } from "@archcode/protocol";
 import type { VisualStatusKind } from "./status-visuals";
 
-export type ProductExecutionStatus = "running" | "needs_you" | "completed" | "stopped";
+export type ProductExecutionStatus =
+  | "running"
+  | "needs_you"
+  | "waiting_on_child"
+  | "resuming"
+  | "completed"
+  | "stopped";
 
 export interface ExecutionStatusPresentation {
   productStatus: ProductExecutionStatus;
   label: string;
   detail?: string;
-  continuationExecutionId?: string;
 }
 
 type ExecutionStatus = SessionExecutionRecord["status"];
 
-const STOP_DETAILS: Record<Exclude<ExecutionStatus, "running" | "waiting_for_human" | "completed">, string> = {
+const STOP_DETAILS: Record<
+  Exclude<ExecutionStatus, "running" | "suspended" | "completed">,
+  string
+> = {
   max_steps: "Max steps",
   failed: "Failed",
   aborted: "Aborted",
@@ -25,42 +32,28 @@ const STOP_DETAILS: Record<Exclude<ExecutionStatus, "running" | "waiting_for_hum
   interrupted: "Interrupted",
 };
 
-/**
- * Projects runtime execution facts into the four product states used by the UI.
- * A waiting end reason becomes actionable only while its input checkpoint is
- * unresolved; answered history is presented as received, never as still paused.
- */
 export function presentExecutionStatus(
-  status: ExecutionStatus,
-  checkpoint?: SessionExecutionInputCheckpoint,
+  record: SessionExecutionRecord,
 ): ExecutionStatusPresentation {
-  if (status === "running") return { productStatus: "running", label: "Running" };
-  if (status === "waiting_for_human") {
-    if (checkpoint?.state === "cancelled") {
-      return { productStatus: "stopped", label: "Stopped", detail: "Input cancelled" };
+  if (record.status === "running")
+    return { productStatus: "running", label: "Running" };
+  if (record.status === "suspended") {
+    switch (record.suspension.kind) {
+      case "hitl":
+        return { productStatus: "needs_you", label: "Needs you" };
+      case "child_dependency":
+        return { productStatus: "waiting_on_child", label: "Waiting on child" };
+      case "resume_pending":
+        return { productStatus: "resuming", label: "Resuming" };
     }
-    if (checkpoint?.state === "response_received") {
-      return { productStatus: "completed", label: "Input received", detail: "Resuming" };
-    }
-    if (checkpoint?.state === "continuing") {
-      return {
-        productStatus: "completed",
-        label: "Input received",
-        detail: "Continuing",
-        continuationExecutionId: checkpoint.continuationExecutionId,
-      };
-    }
-    if (checkpoint?.state === "continued") {
-      return {
-        productStatus: "completed",
-        label: "Input received",
-        continuationExecutionId: checkpoint.continuationExecutionId,
-      };
-    }
-    return { productStatus: "needs_you", label: "Needs you" };
   }
-  if (status === "completed") return { productStatus: "completed", label: "Completed" };
-  return { productStatus: "stopped", label: "Stopped", detail: STOP_DETAILS[status] };
+  if (record.status === "completed")
+    return { productStatus: "completed", label: "Completed" };
+  return {
+    productStatus: "stopped",
+    label: "Stopped",
+    detail: STOP_DETAILS[record.status],
+  };
 }
 
 export function presentChildExecutionStatus(
@@ -80,32 +73,56 @@ export function presentChildExecutionStatus(
     case "failed":
       return { productStatus: "stopped", label: "Stopped", detail: "Failed" };
     case "timed_out":
-      return { productStatus: "stopped", label: "Stopped", detail: "Timed out" };
+      return {
+        productStatus: "stopped",
+        label: "Stopped",
+        detail: "Timed out",
+      };
     case "cancelled":
-      return { productStatus: "stopped", label: "Stopped", detail: "Cancelled" };
+      return {
+        productStatus: "stopped",
+        label: "Stopped",
+        detail: "Cancelled",
+      };
     case "interrupted":
-      return { productStatus: "stopped", label: "Stopped", detail: "Interrupted" };
+      return {
+        productStatus: "stopped",
+        label: "Stopped",
+        detail: "Interrupted",
+      };
   }
 }
 
-/**
- * Selects visual semantics without changing the four-state product presentation.
- * Terminal failure facts remain distinguishable from user/system stops even
- * though both intentionally keep the visible `Stopped · reason` presentation.
- */
 export function executionVisualKind(
-  status: ExecutionStatus,
-  checkpoint?: SessionExecutionInputCheckpoint,
+  record: SessionExecutionRecord,
 ): VisualStatusKind {
-  const presentation = presentExecutionStatus(status, checkpoint);
-  if (presentation.productStatus !== "stopped") return presentation.productStatus;
-  return status === "failed" || status === "timed_out" || status === "max_steps"
-    ? "failed"
-    : "stopped";
+  const presentation = presentExecutionStatus(record);
+  switch (presentation.productStatus) {
+    case "waiting_on_child":
+      return "blocked";
+    case "resuming":
+      return "loading";
+    case "needs_you":
+      return "needs_you";
+    case "running":
+      return "running";
+    case "completed":
+      return "completed";
+    case "stopped":
+      return record.status === "failed" ||
+        record.status === "timed_out" ||
+        record.status === "max_steps"
+        ? "failed"
+        : "stopped";
+  }
 }
 
-export function childExecutionVisualKind(status: ToolChildSessionLinkStatus): VisualStatusKind {
+export function childExecutionVisualKind(
+  status: ToolChildSessionLinkStatus,
+): VisualStatusKind {
   const presentation = presentChildExecutionStatus(status);
-  if (presentation.productStatus !== "stopped") return presentation.productStatus;
+  if (presentation.productStatus === "needs_you") return "needs_you";
+  if (presentation.productStatus === "running") return "running";
+  if (presentation.productStatus === "completed") return "completed";
   return status === "failed" || status === "timed_out" ? "failed" : "stopped";
 }

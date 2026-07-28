@@ -30,6 +30,19 @@ export const SessionGoalUsageSchema = z.strictObject({
   executionCount: NON_NEGATIVE_SAFE_INT,
 });
 
+const SessionGoalSettlementReceiptsSchema = z.array(z.string().trim().min(1))
+  .superRefine((receipts, ctx) => {
+    if (new Set(receipts).size !== receipts.length) {
+      ctx.addIssue({ code: "custom", message: "settlementReceipts must be unique" });
+    }
+    for (let index = 1; index < receipts.length; index += 1) {
+      if (receipts[index - 1]!.localeCompare(receipts[index]!) > 0) {
+        ctx.addIssue({ code: "custom", message: "settlementReceipts must be sorted" });
+        break;
+      }
+    }
+  });
+
 export const SessionGoalSchema = z.strictObject({
   instanceId: z.string().uuid(),
   generation: z.number().int().positive().safe(),
@@ -37,6 +50,7 @@ export const SessionGoalSchema = z.strictObject({
   status: z.enum(SESSION_GOAL_STATUSES),
   tokenBudget: z.number().int().positive().safe().optional(),
   usage: SessionGoalUsageSchema,
+  settlementReceipts: SessionGoalSettlementReceiptsSchema,
   blockedReason: SessionGoalBlockedReasonSchema.optional(),
   createdAt: NON_NEGATIVE_SAFE_INT,
   activatedAt: NON_NEGATIVE_SAFE_INT,

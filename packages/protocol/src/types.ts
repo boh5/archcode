@@ -21,22 +21,77 @@ export interface JsonObject {
 export interface ExecutionStartEvent {
   type: "execution-start";
   executionId: string;
-  binding: ExecutionModelBindingSummary;
   origin: SessionExecutionOrigin;
+  maxSteps: number;
+  activeTimeoutMs?: number;
+  binding: ExecutionModelBindingSummary;
 }
 
 export type SessionExecutionOrigin =
   | "user_message"
   | "tool_call"
-  | "tool_batch"
   | "goal_continuation";
+
+export type SessionExecutionTerminalStatus =
+  | "completed"
+  | "max_steps"
+  | "failed"
+  | "aborted"
+  | "cancelled"
+  | "timed_out"
+  | "interrupted";
+
+export type SessionExecutionSuspension =
+  | {
+      kind: "hitl";
+      toolBatchId: string;
+      blockerIds: string[];
+    }
+  | {
+      kind: "child_dependency";
+      toolBatchId: string;
+      toolCallId: string;
+      childSessionId: string;
+      childExecutionId: string;
+    }
+  | {
+      kind: "resume_pending";
+      toolBatchId: string;
+      readyAt: number;
+    };
+
+export interface ExecutionSuspendedEvent {
+  type: "execution-suspended";
+  executionId: string;
+  suspension: SessionExecutionSuspension;
+  runEndedAt: number;
+  runUsageDelta: NormalizedUsage;
+  runSettlement: SessionExecutionSettlementInput;
+}
+
+export interface ExecutionSuspensionUpdatedEvent {
+  type: "execution-suspension-updated";
+  executionId: string;
+  suspension: SessionExecutionSuspension;
+}
+
+export interface ExecutionResumedEvent {
+  type: "execution-resumed";
+  executionId: string;
+  runOrdinal: number;
+  binding: ExecutionModelBindingSummary;
+}
 
 export interface ExecutionEndEvent {
   type: "execution-end";
-  status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out" | "interrupted" | "waiting_for_human";
+  executionId: string;
+  terminalStatus: SessionExecutionTerminalStatus;
+  endedAt: number;
+  runEndedAt?: number;
+  runUsageDelta?: NormalizedUsage;
+  runSettlement?: SessionExecutionSettlementInput;
+  terminalSettlement: SessionExecutionSettlementInput;
   error?: string;
-  blockedByHitlIds?: string[];
-  blockedToolCallId?: string;
 }
 
 /** Durable Session execution-directory transition. Session storage remains at the canonical project root. */
@@ -61,25 +116,88 @@ export interface SessionStats {
   usage: NormalizedUsage;
 }
 
-export interface SessionExecutionRecord {
+export interface SessionExecutionRecordBase {
   id: string;
   startedAt: number;
-  status: "running" | ExecutionEndEvent["status"];
-  endedAt?: number;
-  durationMs?: number;
-  error?: string;
-  /** User-requested Stop fact for this execution. This is not a Session pause state. */
-  stopRequestedAt?: number;
-  binding: ExecutionModelBindingSummary;
   origin: SessionExecutionOrigin;
+  maxSteps: number;
+  activeTimeoutMs?: number;
+  durationMs: number;
+  stopRequestedAt?: number;
+  runs: SessionExecutionRun[];
 }
 
-/** Read-only product projection for an Execution that yielded at a HITL tool boundary. */
-export interface SessionExecutionInputCheckpoint {
-  executionId: string;
-  state: "pending_response" | "response_received" | "continuing" | "continued" | "cancelled";
-  continuationExecutionId?: string;
+export interface SessionExecutionSettlement {
+  key: string;
+  /** Captured when the owning run or logical Execution settles. */
+  goalInstanceId: string | null;
+  appliedAt?: number;
 }
+
+export type SessionExecutionSettlementInput = Omit<SessionExecutionSettlement, "appliedAt">;
+
+export interface SessionExecutionOpenRun {
+  ordinal: number;
+  startedAt: number;
+  binding: ExecutionModelBindingSummary;
+  endedAt?: never;
+  durationMs?: never;
+  usageDelta?: never;
+  settlement?: never;
+}
+
+export interface SessionExecutionClosedRun {
+  ordinal: number;
+  startedAt: number;
+  endedAt: number;
+  durationMs: number;
+  binding: ExecutionModelBindingSummary;
+  usageDelta: NormalizedUsage;
+  settlement: SessionExecutionSettlement;
+}
+
+export type SessionExecutionRun = SessionExecutionOpenRun | SessionExecutionClosedRun;
+
+export interface RunningSessionExecutionRecord extends SessionExecutionRecordBase {
+  status: "running";
+  suspension?: never;
+  endedAt?: never;
+  error?: never;
+  terminalSettlement?: never;
+}
+
+export interface SuspendedSessionExecutionRecord extends SessionExecutionRecordBase {
+  status: "suspended";
+  suspension: SessionExecutionSuspension;
+  endedAt?: never;
+  error?: never;
+  terminalSettlement?: never;
+}
+
+export interface TerminalSessionExecutionRecord extends SessionExecutionRecordBase {
+  status: SessionExecutionTerminalStatus;
+  suspension?: never;
+  endedAt: number;
+  error?: string;
+  terminalSettlement: SessionExecutionSettlement;
+}
+
+export type SessionExecutionRecord =
+  | RunningSessionExecutionRecord
+  | SuspendedSessionExecutionRecord
+  | TerminalSessionExecutionRecord;
+
+export type ExecutionLifecycleEvent =
+  | ExecutionStartEvent
+  | ExecutionSuspendedEvent
+  | ExecutionSuspensionUpdatedEvent
+  | ExecutionResumedEvent
+  | ExecutionEndEvent;
+
+export type ExecutionTransitionValidation =
+  | { outcome: "valid" }
+  | { outcome: "duplicate" }
+  | { outcome: "invalid"; reason: string };
 
 export type SessionMessageSource = "user" | "automation";
 
@@ -93,6 +211,9 @@ export interface PendingSessionMessage {
   acceptedAt: number;
   updatedAt: number;
   targetExecutionId?: string;
+  targetRunOrdinal?: number;
+  targetModelAudit?: MessageModelAudit;
+  claimedAt?: number;
   requestedModelSelection: RequestedModelSelection;
 }
 
@@ -373,6 +494,7 @@ export interface ToolChildSessionLink {
   parentToolCallId: string;
   toolName: string;
   childSessionId: string;
+  childExecutionId: string;
   childAgentName: string;
   /** Immutable Profile selected when the child was delegated. */
   childProfile: Exclude<ProfileName, "principal">;
@@ -387,6 +509,8 @@ export interface ToolChildSessionLink {
   startedAt?: number;
   endedAt?: number;
   durationMs?: number;
+  /** Timestamp of the authoritative duration snapshot. Present with durationMs. */
+  durationUpdatedAt?: number;
   error?: string;
 }
 
@@ -605,6 +729,9 @@ export interface LlmRecoveryFailedEvent {
 
 export type StreamEvent =
   | ExecutionStartEvent
+  | ExecutionSuspendedEvent
+  | ExecutionSuspensionUpdatedEvent
+  | ExecutionResumedEvent
   | ExecutionEndEvent
   | SessionCwdChangedEvent
   | SessionModelSelectionChangedEvent
@@ -819,7 +946,12 @@ export interface GlobalSSEMcpStatusEvent {
 }
 
 /** Live ownership of one root Session and every descendant execution. */
-export type SessionFamilyActivity = "idle" | "running" | "stopping";
+export type SessionFamilyActivity =
+  | "idle"
+  | "running"
+  | "waiting_for_human"
+  | "resuming"
+  | "stopping";
 
 export interface SessionFamilyRuntimeProjection {
   projectSlug: string;
@@ -1053,6 +1185,7 @@ export interface SessionMessage {
   createdAt: number;
   completedAt?: number;
   executionId?: string;
+  runOrdinal?: number;
   /** Correlates a canonical user message with Queue admission and optimistic UI. */
   clientRequestId?: string;
   compacted?: boolean;
@@ -1063,7 +1196,8 @@ export interface SessionMessage {
 export interface SessionStep {
   id: string;
   step: number;
-  executionId?: string;
+  executionId: string;
+  runOrdinal: number;
   startedAt: number;
   completedAt?: number;
   finishReason?: string;
@@ -1089,8 +1223,6 @@ export interface SessionProjection {
   childSessionLinks: ToolChildSessionLink[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
-  /** Snapshot-only semantic join over durable tool-batch and Execution history. */
-  executionInputCheckpoints?: SessionExecutionInputCheckpoint[];
   promptTraces?: PromptTraceSnapshot[];
   executionCount: number;
   isRunning: boolean;
@@ -1202,12 +1334,11 @@ export interface Session {
   stats: SessionStats;
   executions: SessionExecutionRecord[];
   /** Live reducer ownership returned by the Session detail endpoint; never persisted. */
-  executionCount?: number;
-  isRunning?: boolean;
-  isStreamingModel?: boolean;
-  currentExecutionId?: string;
-  currentAssistantMessageId?: string;
-  executionInputCheckpoints: SessionExecutionInputCheckpoint[];
+  executionCount: number;
+  isRunning: boolean;
+  isStreamingModel: boolean;
+  currentExecutionId: string | undefined;
+  currentAssistantMessageId: string | undefined;
   events?: SessionEventEnvelope[];
   parentSessionId?: string;
   delegationRequest?: DelegationRequest;

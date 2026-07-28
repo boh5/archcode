@@ -80,6 +80,13 @@ describe("Provider secret redaction integration", () => {
       const store = storeManager.create(crypto.randomUUID(), testRoot.path, { agentName: "lead" });
       const messageId = crypto.randomUUID();
       store.getState().append({
+        type: "execution-start",
+        executionId: `execution-${messageId}`,
+        binding: binding.summary,
+        origin: "tool_call",
+        maxSteps: 50,
+      });
+      store.getState().append({
         type: "session.messages_committed",
         executionId: `execution-${messageId}`,
         messages: [{
@@ -95,6 +102,9 @@ describe("Provider secret redaction integration", () => {
       const memoryLogger = createInMemoryLogger();
 
       const result = await runQueryLoop({
+        executionId: `execution-${messageId}`,
+        runOrdinal: 0,
+        initialStep: 0,
         binding,
         logger: memoryLogger.logger,
         toolRegistry: toolFixture.registry,
@@ -118,7 +128,7 @@ describe("Provider secret redaction integration", () => {
         modelMessages: store.getState().toModelMessages(),
         logs: memoryLogger.entries,
       });
-      expect(result.status).toBe("failed");
+      expect(result).toMatchObject({ outcome: "terminal", status: "failed" });
       expect(visible).not.toContain(HEADER_SECRET);
       expect(visible).not.toContain(QUERY_SECRET);
       expect(visible).not.toContain(encodeURIComponent(HEADER_SECRET));

@@ -17,11 +17,22 @@ import type {
   McpServerStatus,
   SessionGoal,
 } from "@archcode/protocol";
-import type { WebSessionStoreState } from "../store/session-store";
+import type {
+  RemoteEnvelopeApplyOutcome,
+  WebSessionStoreState,
+} from "../store/session-store";
 import { queryKeys } from "../api/queries";
-import { hitlStore, scopedHitlIdentity, scopedHitlKey, type ScopedHitlView } from "../store/hitl-store";
+import {
+  hitlStore,
+  scopedHitlIdentity,
+  scopedHitlKey,
+  type ScopedHitlView,
+} from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
-import { runtimeFamilyKey, sessionRuntimeStore } from "../store/session-runtime-store";
+import {
+  runtimeFamilyKey,
+  sessionRuntimeStore,
+} from "../store/session-runtime-store";
 import {
   SSE_WATCHDOG_TIMEOUT_MS,
   SSE_SHUTDOWN_RECONNECT_DELAY_MS,
@@ -41,13 +52,32 @@ import {
   type SSEReconnectState,
 } from "./global-sse";
 
-const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "profile_default" as const, modelRuntimeRevision: "m1" };
+const binding = {
+  selection: { model: "test:model" },
+  providerId: "test",
+  modelId: "model",
+  providerDisplayName: "Test",
+  modelDisplayName: "Test Model",
+  resolution: "profile_default" as const,
+  modelRuntimeRevision: "m1",
+};
 const sessionGoal: SessionGoal = {
   instanceId: "00000000-0000-4000-8000-000000000001",
+  settlementReceipts: [],
   generation: 1,
   objective: "Finish the implementation",
   status: "active",
-  usage: { tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 0, executionCount: 0 },
+  usage: {
+    tokens: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+    },
+    executionTimeMs: 0,
+    executionCount: 0,
+  },
   createdAt: 1,
   activatedAt: 1,
   updatedAt: 1,
@@ -56,21 +86,31 @@ import type { SSEEventHandlerDeps } from "./global-sse";
 
 function createMockStore(): StoreApi<WebSessionStoreState> {
   return {
-    getState: () => ({ applyRemoteEnvelope: mockApplyRemoteEnvelope } as unknown as WebSessionStoreState),
+    getState: () =>
+      ({
+        applyRemoteEnvelope: mockApplyRemoteEnvelope,
+      }) as unknown as WebSessionStoreState,
     subscribe: () => () => {},
-    getInitialState: () => ({} as WebSessionStoreState),
+    getInitialState: () => ({}) as WebSessionStoreState,
   } as unknown as StoreApi<WebSessionStoreState>;
 }
 
-const mockApplyRemoteEnvelope = mock((_envelope: GlobalSessionEventEnvelope) => {});
-const mockInitializeFromSnapshot = mock((_data: Partial<WebSessionStoreState>) => {});
+const mockApplyRemoteEnvelope = mock(
+  (_envelope: GlobalSessionEventEnvelope): RemoteEnvelopeApplyOutcome => "applied",
+);
+const mockInitializeMetadata = mock(
+  (_data: Partial<WebSessionStoreState>) => {},
+);
 const mockFindWebSessionStore = mock(
-  (_sessionId: string, _slug?: string) => undefined as StoreApi<WebSessionStoreState> | undefined,
+  (_sessionId: string, _slug?: string) =>
+    undefined as StoreApi<WebSessionStoreState> | undefined,
 );
-const mockCreateWebSessionStore = mock(
-  (_sessionId: string, _slug?: string) => createMockStore(),
+const mockCreateWebSessionStore = mock((_sessionId: string, _slug?: string) =>
+  createMockStore(),
 );
-const mockInvalidateQueries = mock((_opts: { queryKey: readonly unknown[] }) => Promise.resolve());
+const mockInvalidateQueries = mock((_opts: { queryKey: readonly unknown[] }) =>
+  Promise.resolve(),
+);
 const mockOnShutdown = mock(() => {});
 const mockOnHeartbeat = mock((_createdAt: number) => {});
 const mockRefreshMcpStatus = mock(() => {});
@@ -190,8 +230,18 @@ describe("SSE liveness watchdog", () => {
     expect(state.shutdown).toBe(true);
 
     scheduled?.();
-    expect(state).toMatchObject({ requested: false, shutdown: false, shutdownTimer: undefined });
-    expect(order).toEqual(["closed", "watchdog", "abort", "reconnecting", "reconnect"]);
+    expect(state).toMatchObject({
+      requested: false,
+      shutdown: false,
+      shutdownTimer: undefined,
+    });
+    expect(order).toEqual([
+      "closed",
+      "watchdog",
+      "abort",
+      "reconnecting",
+      "reconnect",
+    ]);
 
     expect(requestSSEShutdownReconnectOnce(state, actions)).toBe(true);
     cancelSSEShutdownReconnect(state, actions.cancel);
@@ -200,10 +250,29 @@ describe("SSE liveness watchdog", () => {
   });
 
   test("matches only project Session snapshot query keys", () => {
-    expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions"])).toBe(true);
-    expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions", "root-1"])).toBe(true);
-    expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions", "child-1", "focused"])).toBe(true);
-    expect(isSessionSnapshotQueryKey(["projects", "demo", "automations", "automation-1"])).toBe(false);
+    expect(isSessionSnapshotQueryKey(["projects", "demo", "sessions"])).toBe(
+      true,
+    );
+    expect(
+      isSessionSnapshotQueryKey(["projects", "demo", "sessions", "root-1"]),
+    ).toBe(true);
+    expect(
+      isSessionSnapshotQueryKey([
+        "projects",
+        "demo",
+        "sessions",
+        "child-1",
+        "focused",
+      ]),
+    ).toBe(true);
+    expect(
+      isSessionSnapshotQueryKey([
+        "projects",
+        "demo",
+        "automations",
+        "automation-1",
+      ]),
+    ).toBe(false);
     expect(isSessionSnapshotQueryKey(["sessions", "root-1"])).toBe(false);
   });
 
@@ -218,15 +287,17 @@ describe("SSE liveness watchdog", () => {
       ["todos", "demo"],
     ] as const;
     const refreshed: (readonly unknown[])[] = [];
-    const invalidateQueries = mock(async (filters: {
-      predicate?: (query: { queryKey: readonly unknown[] }) => boolean;
-      refetchType?: string;
-    }) => {
-      expect(filters.refetchType).toBe("active");
-      for (const queryKey of candidates) {
-        if (filters.predicate?.({ queryKey })) refreshed.push(queryKey);
-      }
-    });
+    const invalidateQueries = mock(
+      async (filters: {
+        predicate?: (query: { queryKey: readonly unknown[] }) => boolean;
+        refetchType?: string;
+      }) => {
+        expect(filters.refetchType).toBe("active");
+        for (const queryKey of candidates) {
+          if (filters.predicate?.({ queryKey })) refreshed.push(queryKey);
+        }
+      },
+    );
 
     await refreshProjectTodoQueriesAfterSSEOpen({
       invalidateQueries,
@@ -243,7 +314,15 @@ describe("SSE liveness watchdog", () => {
 
 describe("parseSSEEvent", () => {
   test("parses valid event type", () => {
-    const data = JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, payload: { type: "text-start" }, agentName: "lead" });
+    const data = JSON.stringify({
+      type: "event",
+      slug: "p",
+      sessionId: "s",
+      eventId: 1,
+      createdAt: 0,
+      payload: { type: "text-start" },
+      agentName: "lead",
+    });
     const result = parseSSEEvent("event", data);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("event");
@@ -292,28 +371,44 @@ describe("parseSSEEvent", () => {
   });
 
   test("parses reset event", () => {
-    const data = JSON.stringify({ type: "reset", slug: "p", sessionId: "s", reason: "stale_cursor" });
+    const data = JSON.stringify({
+      type: "reset",
+      slug: "p",
+      sessionId: "s",
+      reason: "stale_cursor",
+    });
     const result = parseSSEEvent("reset", data);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("reset");
   });
 
   test("parses lagged event", () => {
-    const data = JSON.stringify({ type: "lagged", dropped: 5, reason: "client_backpressure" });
+    const data = JSON.stringify({
+      type: "lagged",
+      dropped: 5,
+      reason: "client_backpressure",
+    });
     const result = parseSSEEvent("lagged", data);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("lagged");
   });
 
   test("parses shutdown event", () => {
-    const data = JSON.stringify({ type: "shutdown", reason: "server_shutdown" });
+    const data = JSON.stringify({
+      type: "shutdown",
+      reason: "server_shutdown",
+    });
     const result = parseSSEEvent("shutdown", data);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("shutdown");
   });
 
   test("parses mcp_status event with serverName, status, and createdAt", () => {
-    const status: McpServerStatus = { state: "ready", toolCount: 4, warningCount: 0 };
+    const status: McpServerStatus = {
+      state: "ready",
+      toolCount: 4,
+      warningCount: 0,
+    };
     const mcpEvent: GlobalSSEMcpStatusEvent = {
       type: "mcp_status",
       serverName: "context7",
@@ -354,7 +449,10 @@ describe("parseSSEEvent", () => {
   });
 
   test("rejects malformed global event contracts", () => {
-    const hitlEvent = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" });
+    const hitlEvent = hitlRealtimeEvent({
+      projectSlug: "proj",
+      hitlId: "hitl-1",
+    });
     const resourceEvent = {
       type: "resource.changed",
       projectSlug: "proj",
@@ -363,24 +461,48 @@ describe("parseSSEEvent", () => {
       createdAt: 1,
     };
 
-    expect(parseSSEEvent("hitl.event", JSON.stringify({
-      ...hitlEvent,
-      payload: { ...hitlEvent.payload, status: "pending" },
-    }))).toBeNull();
-    expect(parseSSEEvent("hitl.event", JSON.stringify({ type: "hitl.event" }))).toBeNull();
-    expect(parseSSEEvent("resource.changed", JSON.stringify({
-      ...resourceEvent,
-      unexpectedField: true,
-    }))).toBeNull();
-    expect(parseSSEEvent("resource.changed", JSON.stringify({ type: "resource.changed" }))).toBeNull();
+    expect(
+      parseSSEEvent(
+        "hitl.event",
+        JSON.stringify({
+          ...hitlEvent,
+          payload: { ...hitlEvent.payload, status: "pending" },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseSSEEvent("hitl.event", JSON.stringify({ type: "hitl.event" })),
+    ).toBeNull();
+    expect(
+      parseSSEEvent(
+        "resource.changed",
+        JSON.stringify({
+          ...resourceEvent,
+          unexpectedField: true,
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseSSEEvent(
+        "resource.changed",
+        JSON.stringify({ type: "resource.changed" }),
+      ),
+    ).toBeNull();
   });
 
   test("parses authoritative hitl.snapshot reset events", () => {
-    const view = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" }).view;
+    const view = hitlRealtimeEvent({
+      projectSlug: "proj",
+      hitlId: "hitl-1",
+    }).view;
     const event = {
       type: "hitl.snapshot" as const,
       projectSlugs: ["proj"],
-      entries: [hitlSnapshotEntry(hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" }))],
+      entries: [
+        hitlSnapshotEntry(
+          hitlRealtimeEvent({ projectSlug: "proj", hitlId: "hitl-1" }),
+        ),
+      ],
       createdAt: 1700000000000,
     };
 
@@ -393,7 +515,9 @@ describe("parseSSEEvent", () => {
     const snapshot: GlobalSSESessionRuntimeSnapshotEvent = {
       type: "session.runtime.snapshot",
       projectSlugs: ["proj"],
-      families: [{ projectSlug: "proj", rootSessionId: "root-1", activity: "running" }],
+      families: [
+        { projectSlug: "proj", rootSessionId: "root-1", activity: "running" },
+      ],
       createdAt: 1,
     };
     const changed: GlobalSSESessionRuntimeChangedEvent = {
@@ -404,8 +528,12 @@ describe("parseSSEEvent", () => {
       createdAt: 2,
     };
 
-    expect(parseSSEEvent(snapshot.type, JSON.stringify(snapshot))).toEqual(snapshot);
-    expect(parseSSEEvent(changed.type, JSON.stringify(changed))).toEqual(changed);
+    expect(parseSSEEvent(snapshot.type, JSON.stringify(snapshot))).toEqual(
+      snapshot,
+    );
+    expect(parseSSEEvent(changed.type, JSON.stringify(changed))).toEqual(
+      changed,
+    );
   });
 
   test("returns null for malformed JSON", () => {
@@ -419,7 +547,18 @@ describe("parseSSEEvent", () => {
   });
 
   test("returns null for unknown SSE event name", () => {
-    const result = parseSSEEvent("unknown-type", JSON.stringify({ type: "event", slug: "p", sessionId: "s", eventId: 1, createdAt: 0, payload: { type: "text-start" }, agentName: "lead" }));
+    const result = parseSSEEvent(
+      "unknown-type",
+      JSON.stringify({
+        type: "event",
+        slug: "p",
+        sessionId: "s",
+        eventId: 1,
+        createdAt: 0,
+        payload: { type: "text-start" },
+        agentName: "lead",
+      }),
+    );
     expect(result).not.toBeNull();
   });
 });
@@ -429,7 +568,10 @@ describe("handleSSEEvent", () => {
 
   beforeEach(() => {
     mockApplyRemoteEnvelope.mockClear();
-    mockInitializeFromSnapshot.mockClear();
+    mockApplyRemoteEnvelope.mockImplementation(
+      (_envelope: GlobalSessionEventEnvelope) => "applied",
+    );
+    mockInitializeMetadata.mockClear();
     mockFindWebSessionStore.mockClear();
     mockCreateWebSessionStore.mockClear();
     mockInvalidateQueries.mockClear();
@@ -460,8 +602,41 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
-    expect(mockFindWebSessionStore).toHaveBeenCalledWith("session-1", "my-project");
+    expect(mockFindWebSessionStore).toHaveBeenCalledWith(
+      "session-1",
+      "my-project",
+    );
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
+  });
+
+  test("refreshes the authoritative Session query after an invalid lifecycle edge", () => {
+    const store = createMockStore();
+    mockFindWebSessionStore.mockReturnValue(store);
+    mockApplyRemoteEnvelope.mockImplementation(
+      (_envelope: GlobalSessionEventEnvelope) => "invalid",
+    );
+    const envelope: GlobalSessionEventEnvelope = {
+      type: "event",
+      slug: "my-project",
+      sessionId: "session-1",
+      eventId: 42,
+      createdAt: 1,
+      agentName: "lead",
+      payload: {
+        type: "execution-resumed",
+        executionId: "execution-1",
+        runOrdinal: 1,
+        binding,
+      },
+    };
+
+    handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
+
+    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.session("my-project", "session-1"),
+    });
   });
 
   test("accepts update events and invalidates only the process-level update query", () => {
@@ -514,11 +689,16 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
-    expect(mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey)).toEqual([
+    expect(
+      mockInvalidateQueries.mock.calls.map(([options]) => options.queryKey),
+    ).toEqual([
       queryKeys.session("my-project", "session-1"),
       queryKeys.sessions("my-project"),
       queryKeys.dashboardProjection({ kind: "global" }),
-      queryKeys.dashboardProjection({ kind: "project", projectSlug: "my-project" }),
+      queryKeys.dashboardProjection({
+        kind: "project",
+        projectSlug: "my-project",
+      }),
     ]);
   });
 
@@ -539,8 +719,14 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
-    expect(mockFindWebSessionStore).toHaveBeenCalledWith("unknown-session", "my-project");
-    expect(mockCreateWebSessionStore).toHaveBeenCalledWith("unknown-session", "my-project");
+    expect(mockFindWebSessionStore).toHaveBeenCalledWith(
+      "unknown-session",
+      "my-project",
+    );
+    expect(mockCreateWebSessionStore).toHaveBeenCalledWith(
+      "unknown-session",
+      "my-project",
+    );
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
   });
 
@@ -548,17 +734,21 @@ describe("handleSSEEvent", () => {
     const parentStore = createMockStore();
     const childStore = {
       ...createMockStore(),
-      getState: () => ({
-        applyRemoteEnvelope: mockApplyRemoteEnvelope,
-        initializeFromSnapshot: mockInitializeFromSnapshot,
-      } as unknown as WebSessionStoreState),
+      getState: () =>
+        ({
+          applyRemoteEnvelope: mockApplyRemoteEnvelope,
+          initializeMetadata: mockInitializeMetadata,
+        }) as unknown as WebSessionStoreState,
     } as StoreApi<WebSessionStoreState>;
-    parentStore.getState = () => ({
-      applyRemoteEnvelope: mockApplyRemoteEnvelope,
-      rootSessionId: "root-session",
-    } as unknown as WebSessionStoreState);
+    parentStore.getState = () =>
+      ({
+        applyRemoteEnvelope: mockApplyRemoteEnvelope,
+        rootSessionId: "root-session",
+      }) as unknown as WebSessionStoreState;
     mockFindWebSessionStore.mockReturnValue(undefined);
-    mockFindWebSessionStore.mockImplementation((sessionId) => sessionId === "parent-session" ? parentStore : undefined);
+    mockFindWebSessionStore.mockImplementation((sessionId) =>
+      sessionId === "parent-session" ? parentStore : undefined,
+    );
     mockCreateWebSessionStore.mockReturnValue(childStore);
 
     const envelope: GlobalSessionEventEnvelope = {
@@ -574,7 +764,10 @@ describe("handleSSEEvent", () => {
           parentToolCallId: "call-1",
           toolName: "delegate",
           childSessionId: "child-session",
-          childAgentName: "explore", childProfile: "fast", childSkillNames: [],
+          childExecutionId: "child-execution-1",
+          childAgentName: "explore",
+          childProfile: "fast",
+          childSkillNames: [],
           title: "Explore files",
           depth: 1,
           background: true,
@@ -587,11 +780,20 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.session("proj", "parent-session") });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "root-session", "tree"] });
-    expect(mockCreateWebSessionStore).toHaveBeenCalledWith("child-session", "proj");
-    expect(mockInitializeFromSnapshot).toHaveBeenCalledWith({
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.session("proj", "parent-session"),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["projects", "proj", "sessions"],
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["projects", "proj", "sessions", "root-session", "tree"],
+    });
+    expect(mockCreateWebSessionStore).toHaveBeenCalledWith(
+      "child-session",
+      "proj",
+    );
+    expect(mockInitializeMetadata).toHaveBeenCalledWith({
       rootSessionId: "root-session",
       parentSessionId: "parent-session",
       agentName: "explore",
@@ -607,7 +809,12 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "hitl.event", data: JSON.stringify(event) }, deps);
 
-    expect(hitlStore.getState().views[scopedHitlKey(event)]).toEqual({ projectSlug: "proj", ownerSessionId: event.ownerSessionId, rootSessionId: event.rootSessionId, view: event.view });
+    expect(hitlStore.getState().views[scopedHitlKey(event)]).toEqual({
+      projectSlug: "proj",
+      ownerSessionId: event.ownerSessionId,
+      rootSessionId: event.rootSessionId,
+      view: event.view,
+    });
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
@@ -616,25 +823,29 @@ describe("handleSSEEvent", () => {
     hitlStore.getState().applyRealtimeEvent(stale);
     const fresh = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "fresh" });
 
-    handleSSEEvent({
-      event: "hitl.snapshot",
-      data: JSON.stringify({
-        type: "hitl.snapshot",
-        projectSlugs: ["proj"],
-        entries: [hitlSnapshotEntry(fresh)],
-        createdAt: 1700000000001,
-      }),
-    }, deps);
+    handleSSEEvent(
+      {
+        event: "hitl.snapshot",
+        data: JSON.stringify({
+          type: "hitl.snapshot",
+          projectSlugs: ["proj"],
+          entries: [hitlSnapshotEntry(fresh)],
+          createdAt: 1700000000001,
+        }),
+      },
+      deps,
+    );
 
     expect(hitlStore.getState().views[scopedHitlKey(stale)]).toBeUndefined();
-    expect(hitlStore.getState().views[scopedHitlKey(fresh)]).toEqual({ projectSlug: "proj", ownerSessionId: fresh.ownerSessionId, rootSessionId: fresh.rootSessionId, view: fresh.view });
+    expect(hitlStore.getState().views[scopedHitlKey(fresh)]).toEqual({
+      projectSlug: "proj",
+      ownerSessionId: fresh.ownerSessionId,
+      rootSessionId: fresh.rootSessionId,
+      view: fresh.view,
+    });
     expect(hitlStore.getState().isProjectInitialized("proj")).toBe(true);
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
-
-
-
-
 
   test("invalidates session query on reset event", () => {
     const resetEvent: GlobalSSEResetEvent = {
@@ -649,8 +860,15 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "my-project", "sessions", "session-1"],
     });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.dashboardProjection({ kind: "global" }) });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.dashboardProjection({ kind: "project", projectSlug: "my-project" }) });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.dashboardProjection({ kind: "global" }),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.dashboardProjection({
+        kind: "project",
+        projectSlug: "my-project",
+      }),
+    });
   });
 
   test("refreshes MCP status snapshot on reset event", () => {
@@ -686,10 +904,15 @@ describe("handleSSEEvent", () => {
       reason: "client_backpressure",
     };
 
-    handleSSEEvent({ event: "lagged", data: JSON.stringify(laggedEvent) }, deps);
+    handleSSEEvent(
+      { event: "lagged", data: JSON.stringify(laggedEvent) },
+      deps,
+    );
 
     expect(mockOnShutdown).not.toHaveBeenCalled();
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["dashboard"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["dashboard"],
+    });
     expect(mockFindWebSessionStore).not.toHaveBeenCalled();
     expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
     expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
@@ -699,22 +922,39 @@ describe("handleSSEEvent", () => {
     sessionRuntimeStore.getState().applySnapshot({
       type: "session.runtime.snapshot",
       projectSlugs: ["proj"],
-      families: [{ projectSlug: "proj", rootSessionId: "stale-root", activity: "running" }],
+      families: [
+        {
+          projectSlug: "proj",
+          rootSessionId: "stale-root",
+          activity: "running",
+        },
+      ],
       createdAt: 1,
     });
     const snapshot: GlobalSSESessionRuntimeSnapshotEvent = {
       type: "session.runtime.snapshot",
       projectSlugs: ["proj"],
-      families: [{ projectSlug: "proj", rootSessionId: "current-root", activity: "stopping" }],
+      families: [
+        {
+          projectSlug: "proj",
+          rootSessionId: "current-root",
+          activity: "stopping",
+        },
+      ],
       createdAt: 2,
     };
 
-    handleSSEEvent({ event: snapshot.type, data: JSON.stringify(snapshot) }, deps);
+    handleSSEEvent(
+      { event: snapshot.type, data: JSON.stringify(snapshot) },
+      deps,
+    );
 
     expect(sessionRuntimeStore.getState().families).toEqual({
       [runtimeFamilyKey("proj", "current-root")]: snapshot.families[0],
     });
-    expect(sessionRuntimeStore.getState().isProjectInitialized("proj")).toBe(true);
+    expect(sessionRuntimeStore.getState().isProjectInitialized("proj")).toBe(
+      true,
+    );
     expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
   });
 
@@ -725,7 +965,10 @@ describe("handleSSEEvent", () => {
       families: [],
       createdAt: 1,
     };
-    handleSSEEvent({ event: snapshot.type, data: JSON.stringify(snapshot) }, deps);
+    handleSSEEvent(
+      { event: snapshot.type, data: JSON.stringify(snapshot) },
+      deps,
+    );
 
     const running: GlobalSSESessionRuntimeChangedEvent = {
       type: "session.runtime_changed",
@@ -734,23 +977,38 @@ describe("handleSSEEvent", () => {
       activity: "running",
       createdAt: 2,
     };
-    handleSSEEvent({ event: running.type, data: JSON.stringify(running) }, deps);
-    expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe("running");
+    handleSSEEvent(
+      { event: running.type, data: JSON.stringify(running) },
+      deps,
+    );
+    expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe(
+      "running",
+    );
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: queryKeys.session("proj", "root-1"),
     });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.sessions("proj") });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.sessions("proj"),
+    });
 
-    const idle: GlobalSSESessionRuntimeChangedEvent = { ...running, activity: "idle", createdAt: 3 };
+    const idle: GlobalSSESessionRuntimeChangedEvent = {
+      ...running,
+      activity: "idle",
+      createdAt: 3,
+    };
     handleSSEEvent({ event: idle.type, data: JSON.stringify(idle) }, deps);
-    expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe("idle");
+    expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBe(
+      "idle",
+    );
   });
 
   test("lagged invalidates runtime and HITL readiness before forcing reconnect", () => {
     sessionRuntimeStore.getState().applySnapshot({
       type: "session.runtime.snapshot",
       projectSlugs: ["proj"],
-      families: [{ projectSlug: "proj", rootSessionId: "root-1", activity: "running" }],
+      families: [
+        { projectSlug: "proj", rootSessionId: "root-1", activity: "running" },
+      ],
       createdAt: 1,
     });
     hitlStore.getState().applySnapshot({
@@ -765,9 +1023,14 @@ describe("handleSSEEvent", () => {
       reason: "client_backpressure",
     };
 
-    handleSSEEvent({ event: "lagged", data: JSON.stringify(laggedEvent) }, deps);
+    handleSSEEvent(
+      { event: "lagged", data: JSON.stringify(laggedEvent) },
+      deps,
+    );
 
-    expect(sessionRuntimeStore.getState().activityFor("proj", "root-1")).toBeUndefined();
+    expect(
+      sessionRuntimeStore.getState().activityFor("proj", "root-1"),
+    ).toBeUndefined();
     expect(hitlStore.getState().isProjectInitialized("proj")).toBe(false);
     expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
     expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
@@ -779,7 +1042,10 @@ describe("handleSSEEvent", () => {
       createdAt: 1700000000000,
     };
 
-    handleSSEEvent({ event: "heartbeat", data: JSON.stringify(heartbeat) }, deps);
+    handleSSEEvent(
+      { event: "heartbeat", data: JSON.stringify(heartbeat) },
+      deps,
+    );
 
     expect(mockOnHeartbeat).toHaveBeenCalledWith(1700000000000);
   });
@@ -797,7 +1063,11 @@ describe("handleSSEEvent", () => {
   });
 
   test("updates mcp status store on mcp_status event", () => {
-    const status: McpServerStatus = { state: "ready", toolCount: 7, warningCount: 1 };
+    const status: McpServerStatus = {
+      state: "ready",
+      toolCount: 7,
+      warningCount: 1,
+    };
     const mcpEvent: GlobalSSEMcpStatusEvent = {
       type: "mcp_status",
       serverName: "context7",
@@ -805,7 +1075,10 @@ describe("handleSSEEvent", () => {
       createdAt: 1700000000000,
     };
 
-    handleSSEEvent({ event: "mcp_status", data: JSON.stringify(mcpEvent) }, deps);
+    handleSSEEvent(
+      { event: "mcp_status", data: JSON.stringify(mcpEvent) },
+      deps,
+    );
 
     expect(useMcpStatusStore.getState().servers).toEqual({ context7: status });
   });
@@ -819,7 +1092,9 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: event.type, data: JSON.stringify(event) }, deps);
 
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.modelRuntime });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.modelRuntime,
+    });
     expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
   });
 
@@ -835,7 +1110,10 @@ describe("handleSSEEvent", () => {
       createdAt: 1700000000001,
     };
 
-    handleSSEEvent({ event: "mcp_status", data: JSON.stringify(mcpEvent) }, deps);
+    handleSSEEvent(
+      { event: "mcp_status", data: JSON.stringify(mcpEvent) },
+      deps,
+    );
 
     expect(useMcpStatusStore.getState().servers).toEqual({
       grep: { state: "pending" },
@@ -850,7 +1128,10 @@ describe("handleSSEEvent", () => {
   });
 
   test("ignores unknown SSE event types with valid JSON", () => {
-    handleSSEEvent({ event: "unknown-type", data: JSON.stringify({ type: "unknown" }) }, deps);
+    handleSSEEvent(
+      { event: "unknown-type", data: JSON.stringify({ type: "unknown" }) },
+      deps,
+    );
 
     expect(mockFindWebSessionStore).not.toHaveBeenCalled();
     expect(mockOnShutdown).not.toHaveBeenCalled();
@@ -862,11 +1143,19 @@ describe("handleSSEEvent", () => {
 describe("HITL live notification gate", () => {
   test("uses the snapshot as a baseline and emits only one new live request", () => {
     const gate = createHitlNotificationGate();
-    const existing = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "existing" });
+    const existing = hitlRealtimeEvent({
+      projectSlug: "proj",
+      hitlId: "existing",
+    });
     const live = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "live" });
 
     gate.beginConnection();
-    gate.observeSnapshot({ type: "hitl.snapshot", projectSlugs: ["proj"], entries: [hitlSnapshotEntry(existing)], createdAt: 1 });
+    gate.observeSnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: ["proj"],
+      entries: [hitlSnapshotEntry(existing)],
+      createdAt: 1,
+    });
 
     expect(gate.observeRealtimeEvent(existing)).toBeNull();
     expect(gate.observeRealtimeEvent(live)).toEqual({
@@ -876,7 +1165,9 @@ describe("HITL live notification gate", () => {
       view: live.view,
     });
     expect(gate.observeRealtimeEvent(live)).toBeNull();
-    expect(gate.observeRealtimeEvent({ ...live, payload: { type: "hitl.updated" } })).toBeNull();
+    expect(
+      gate.observeRealtimeEvent({ ...live, payload: { type: "hitl.updated" } }),
+    ).toBeNull();
   });
 });
 
@@ -912,45 +1203,70 @@ describe("HITL live notification presentation", () => {
 
   test("does not suppress announcements for a hidden, unfocused, or different Session page", () => {
     const root = scopedHitlView("root-session");
-    expect(isHitlOwnerForeground(root, { ...foregroundEnvironment(""), visibilityState: "hidden" })).toBe(false);
-    expect(isHitlOwnerForeground(root, { ...foregroundEnvironment(""), hasFocus: false })).toBe(false);
-    expect(isHitlOwnerForeground(root, { ...foregroundEnvironment(""), pathname: "/projects/proj/sessions/other" })).toBe(false);
+    expect(
+      isHitlOwnerForeground(root, {
+        ...foregroundEnvironment(""),
+        visibilityState: "hidden",
+      }),
+    ).toBe(false);
+    expect(
+      isHitlOwnerForeground(root, {
+        ...foregroundEnvironment(""),
+        hasFocus: false,
+      }),
+    ).toBe(false);
+    expect(
+      isHitlOwnerForeground(root, {
+        ...foregroundEnvironment(""),
+        pathname: "/projects/proj/sessions/other",
+      }),
+    ).toBe(false);
   });
 
   test("opens the precise HITL deep link from a granted hidden-page browser notification", () => {
     const entry = scopedHitlView("child-a");
     let onClick: (() => void) | undefined;
-    const createNotification = mock((title: string, body: string, handler: () => void) => {
-      expect(title).toBe("ArchCode needs your attention");
-      expect(body).toBe("Need input");
-      onClick = handler;
-    });
+    const createNotification = mock(
+      (title: string, body: string, handler: () => void) => {
+        expect(title).toBe("ArchCode needs your attention");
+        expect(body).toBe("Need input");
+        onClick = handler;
+      },
+    );
     const focusWindow = mock(() => {});
     const navigate = mock((_path: string) => {});
 
-    expect(showHiddenBrowserHitlNotification(entry, {
-      visibilityState: "hidden",
-      permission: "granted",
-      createNotification,
-      focusWindow,
-      navigate,
-    })).toBe(true);
+    expect(
+      showHiddenBrowserHitlNotification(entry, {
+        visibilityState: "hidden",
+        permission: "granted",
+        createNotification,
+        focusWindow,
+        navigate,
+      }),
+    ).toBe(true);
     onClick?.();
 
     expect(createNotification).toHaveBeenCalledTimes(1);
     expect(focusWindow).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("/projects/proj/sessions/root-session?hitl=hitl-child-a&focus=child-a");
+    expect(navigate).toHaveBeenCalledWith(
+      "/projects/proj/sessions/root-session?hitl=hitl-child-a&focus=child-a",
+    );
   });
 
   test("does not create a browser notification when permission is denied", () => {
-    const createNotification = mock((_title: string, _body: string, _onClick: () => void) => {});
-    expect(showHiddenBrowserHitlNotification(scopedHitlView("root-session"), {
-      visibilityState: "hidden",
-      permission: "denied",
-      createNotification,
-      focusWindow: () => {},
-      navigate: () => {},
-    })).toBe(false);
+    const createNotification = mock(
+      (_title: string, _body: string, _onClick: () => void) => {},
+    );
+    expect(
+      showHiddenBrowserHitlNotification(scopedHitlView("root-session"), {
+        visibilityState: "hidden",
+        permission: "denied",
+        createNotification,
+        focusWindow: () => {},
+        navigate: () => {},
+      }),
+    ).toBe(false);
     expect(createNotification).not.toHaveBeenCalled();
   });
 
@@ -960,7 +1276,9 @@ describe("HITL live notification presentation", () => {
     hitlStore.getState().applyRealtimeEvent(request);
     const identity = scopedHitlIdentity(scopedHitlView("session-1", "live"));
 
-    expect(resolveHitlNoticeEntries([identity], hitlStore.getState().views)).toHaveLength(1);
+    expect(
+      resolveHitlNoticeEntries([identity], hitlStore.getState().views),
+    ).toHaveLength(1);
 
     hitlStore.getState().applyRealtimeEvent({
       ...request,
@@ -968,7 +1286,9 @@ describe("HITL live notification presentation", () => {
       view: { ...request.view, status: "resolved", allowedActions: [] },
     });
 
-    expect(resolveHitlNoticeEntries([identity], hitlStore.getState().views)).toEqual([]);
+    expect(
+      resolveHitlNoticeEntries([identity], hitlStore.getState().views),
+    ).toEqual([]);
   });
 });
 
@@ -982,7 +1302,11 @@ function hitlSnapshotEntry(event: GlobalSSEHitlRealtimeEvent) {
   };
 }
 
-function hitlRealtimeEvent(input: { projectSlug: string; hitlId: string; status?: HitlView["status"] }): GlobalSSEHitlRealtimeEvent {
+function hitlRealtimeEvent(input: {
+  projectSlug: string;
+  hitlId: string;
+  status?: HitlView["status"];
+}): GlobalSSEHitlRealtimeEvent {
   const status = input.status ?? "pending";
   const view: HitlView = {
     hitlId: input.hitlId,
@@ -994,10 +1318,22 @@ function hitlRealtimeEvent(input: { projectSlug: string; hitlId: string; status?
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
   };
-  return { type: "hitl.event", projectSlug: input.projectSlug, hitlId: input.hitlId, ownerSessionId: view.owner.id, rootSessionId: "root-session", createdAt: 1700000000000, payload: { type: "hitl.request" }, view };
+  return {
+    type: "hitl.event",
+    projectSlug: input.projectSlug,
+    hitlId: input.hitlId,
+    ownerSessionId: view.owner.id,
+    rootSessionId: "root-session",
+    createdAt: 1700000000000,
+    payload: { type: "hitl.request" },
+    view,
+  };
 }
 
-function scopedHitlView(ownerSessionId: string, hitlId = `hitl-${ownerSessionId}`): ScopedHitlView {
+function scopedHitlView(
+  ownerSessionId: string,
+  hitlId = `hitl-${ownerSessionId}`,
+): ScopedHitlView {
   return {
     projectSlug: "proj",
     ownerSessionId,

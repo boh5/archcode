@@ -261,10 +261,24 @@ function createAgent(options: {
 async function runAgent(
   agent: ConfiguredAgent,
   message: string,
-  options: AgentRunOptions = {},
+  options: Partial<AgentRunOptions> = {},
 ) {
   const id = crypto.randomUUID();
-  const executionId = `test-${id}`;
+  const runOptions: AgentRunOptions = {
+    executionId: `test-${id}`,
+    runOrdinal: 0,
+    initialStep: 0,
+    ...options,
+  };
+  const executionId = runOptions.executionId;
+  const binding = makeBinding();
+  agent.store.getState().append({
+    type: "execution-start",
+    executionId,
+    binding: binding.summary,
+    origin: "tool_call",
+    maxSteps: runOptions.maxSteps ?? 50,
+  });
   agent.store.getState().append({
     type: "session.messages_committed",
     executionId,
@@ -278,7 +292,57 @@ async function runAgent(
       clientRequestId: `request-${id}`,
     }],
   });
-  return agent.run(makeBinding(), options);
+  const zeroUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    reasoningTokens: 0,
+    cachedInputTokens: 0,
+  };
+  try {
+    const result = await agent.run(binding, runOptions);
+    const endedAt = Date.now();
+    const sessionId = agent.store.getState().sessionId;
+    const runSettlement = { key: `run:${sessionId}:${executionId}:0`, goalInstanceId: null };
+    if (result.outcome === "suspended") {
+      agent.store.getState().append({
+        type: "execution-suspended",
+        executionId,
+        suspension: result.suspension,
+        runEndedAt: endedAt,
+        runUsageDelta: zeroUsage,
+        runSettlement,
+      });
+    } else {
+      agent.store.getState().append({
+        type: "execution-end",
+        executionId,
+        terminalStatus: result.status,
+        endedAt,
+        runEndedAt: endedAt,
+        runUsageDelta: zeroUsage,
+        runSettlement,
+        terminalSettlement: { key: `terminal:${sessionId}:${executionId}`, goalInstanceId: null },
+        ...(result.error === undefined ? {} : { error: result.error }),
+      });
+    }
+    return result;
+  } catch (error) {
+    const endedAt = Date.now();
+    const sessionId = agent.store.getState().sessionId;
+    agent.store.getState().append({
+      type: "execution-end",
+      executionId,
+      terminalStatus: "failed",
+      endedAt,
+      runEndedAt: endedAt,
+      runUsageDelta: zeroUsage,
+      runSettlement: { key: `run:${sessionId}:${executionId}:0`, goalInstanceId: null },
+      terminalSettlement: { key: `terminal:${sessionId}:${executionId}`, goalInstanceId: null },
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 describe("ConfiguredAgent", () => {
@@ -539,7 +603,15 @@ describe("ConfiguredAgent", () => {
     const streamText = setupMockStreamText("explicit model ok");
     const agent = createAgent({ definition: exploreAgentDefinition });
     const modelInfo = makeModelInfo("per-execution");
+    const binding = makeBinding(modelInfo, { temperature: 0.6 });
     const id = crypto.randomUUID();
+    agent.store.getState().append({
+      type: "execution-start",
+      executionId: id,
+      binding: binding.summary,
+      origin: "tool_call",
+      maxSteps: 50,
+    });
     agent.store.getState().append({
       type: "session.messages_committed",
       executionId: id,
@@ -553,8 +625,16 @@ describe("ConfiguredAgent", () => {
       }],
     });
 
-    await expect(agent.run(makeBinding(modelInfo, { temperature: 0.6 })))
-      .resolves.toEqual({ text: "explicit model ok", steps: 0, status: "completed" });
+    await expect(agent.run(binding, {
+      executionId: id,
+      runOrdinal: 0,
+      initialStep: 0,
+    })).resolves.toEqual({
+      outcome: "terminal",
+      text: "explicit model ok",
+      steps: 1,
+      status: "completed",
+    });
     expect(streamText).toHaveBeenCalledWith(expect.objectContaining({
       model: modelInfo.model,
       temperature: 0.6,
@@ -846,9 +926,57 @@ describe("ConfiguredAgent", () => {
 
     const result = await runAgent(agent, "limited run", { maxSteps: 1 });
 
-    expect(result).toEqual({ text: "", steps: 1, status: "max_steps", error: "Max steps (1) reached" });
+    expect(result).toEqual({
+      outcome: "terminal",
+      text: "",
+      steps: 1,
+      status: "max_steps",
+      error: "Max steps (1) reached",
+    });
     expect(streamFn).toHaveBeenCalledTimes(1);
-    expect(agent.store.getState().executions).toEqual([]);
+    expect(agent.store.getState().executions).toEqual([
+      expect.objectContaining({ status: "max_steps", maxSteps: 1 }),
+    ]);
+  });
+
+  test("Todo continuation advances the same step cursor and stops at the Execution maxSteps", async () => {
+    let modelCalls = 0;
+    const streamFn = mock(() => {
+      modelCalls += 1;
+      const isToolRound = modelCalls === 1;
+      return {
+        fullStream: (async function* () {
+          if (isToolRound) {
+            yield {
+              type: "tool-call",
+              toolCallId: `file-read-${modelCalls}`,
+              toolName: "file_read",
+              input: {},
+            };
+          }
+        })(),
+        finishReason: Promise.resolve(isToolRound ? "tool-calls" : "stop"),
+        text: Promise.resolve(""),
+        toolCalls: Promise.resolve(isToolRound
+          ? [{ toolCallId: `file-read-${modelCalls}`, toolName: "file_read", input: {} }]
+          : []),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      };
+    });
+    setLlmAdapterForTest({ streamText: streamFn as unknown as typeof import("ai").streamText });
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    store.setState({ todos: [{ id: "todo-continue", content: "Finish", status: "pending" }] });
+    const agent = createAgent({ definition: leadAgentDefinition, store });
+
+    const result = await runAgent(agent, "continue", { maxSteps: 3 });
+
+    expect(result).toMatchObject({ outcome: "terminal", status: "max_steps", steps: 3 });
+    expect(streamFn).toHaveBeenCalledTimes(3);
+    expect(agent.store.getState().steps.map(({ step }) => step)).toEqual([0, 1, 2]);
+    expect(agent.store.getState().steps.every(({ step }) => step < 3)).toBe(true);
+    expect(agent.store.getState().executions).toEqual([
+      expect.objectContaining({ status: "max_steps", maxSteps: 3 }),
+    ]);
   });
 
   test("non-loop runs keep definition tools unchanged and do not expose profile-only GitHub tools", async () => {

@@ -17,11 +17,14 @@ import { createTextToolResult } from "../tools/results";
 import { SecretRedactionPolicy } from "../security";
 import { createTestProjectContext } from "../tools/test-project-context";
 import type { ToolCallLike, ToolExecutionContext } from "../tools/types";
+import { testExecutionStart } from "../testing/test-execution-fixtures";
 import {
   SessionToolBatchScheduler,
+  applySessionToolBatchChildOutcome,
   applySessionToolBatchResponse,
   cancelSessionToolBatch,
   hasRunnableSessionToolBatch,
+  repairSessionToolBatchHitlIds,
   validateSessionToolBatchResponse,
   type SessionToolBatchQueue,
 } from "./session-tool-batch-scheduler";
@@ -35,6 +38,9 @@ async function createHarness() {
   const storeManager = new SessionStoreManager({ logger: silentLogger });
   const sessionId = crypto.randomUUID();
   const store = storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
+  store.getState().append(testExecutionStart("test-execution", "tool_call"));
+  store.getState().append({ type: "step-start", step: 0 });
+  await storeManager.flushSession(sessionId, TMP_DIR);
   const projectContext = createTestProjectContext(TMP_DIR, storeManager);
   const redactionPolicy = new SecretRedactionPolicy([]);
   const artifactStore = new ToolOutputArtifactStore({ rootDir: join(TMP_DIR, "outputs") });
@@ -58,7 +64,7 @@ async function createHarness() {
     name: "permission_tool",
     description: "permission",
     inputSchema: z.object({}).strict(),
-    traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    traits: { readOnly: false, destructive: false, concurrencySafe: true },
     outputPolicy: { kind: "inline", previewDirection: "head" },
     permissions: [async () => ({ outcome: "ask", reason: "Approve effect" })],
     execute: async () => {
@@ -94,6 +100,42 @@ async function createHarness() {
     execute: async () => createTextToolResult("changed", { sidecar: { sessionCwdChanged: true } }),
   }));
   registry.register(askUserTool);
+  let scheduler!: SessionToolBatchScheduler;
+  registry.register(defineTool({
+    name: "delegate",
+    description: "synchronous child",
+    inputSchema: z.object({}).strict(),
+    traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    outputPolicy: { kind: "inline", previewDirection: "head" },
+    execute: async (_input, ctx) => {
+      const dependency = {
+        parentExecutionId: ctx.executionId,
+        runOrdinal: ctx.runOrdinal,
+        toolBatchId: ctx.toolBatchId,
+        toolCallId: ctx.toolCallId,
+        childSessionId: "child-session",
+        childExecutionId: "child-execution",
+      };
+      await scheduler.prepareChildLaunch({
+        parentExecutionId: dependency.parentExecutionId,
+        parentRunOrdinal: dependency.runOrdinal,
+        parentToolBatchId: dependency.toolBatchId,
+        parentToolCallId: dependency.toolCallId,
+        childSessionId: dependency.childSessionId,
+        childExecutionId: dependency.childExecutionId,
+      });
+      return { kind: "child_deferred" as const, dependency };
+    },
+    resumeChildDependency: async (_input, _dependency, outcome) => (
+      outcome.executionStatus === "completed"
+        ? createTextToolResult(outcome.output ?? "child complete")
+        : createToolErrorResult({
+            kind: "execution",
+            code: "CHILD_EXECUTION_FAILED",
+            message: `Child ended ${outcome.executionStatus}`,
+          })
+    ),
+  }));
 
   const queueRecords = new Map<string, string>();
   const hitlQueue: SessionToolBatchQueue = {
@@ -112,20 +154,25 @@ async function createHarness() {
     toolCallId: call.toolCallId,
     input: call.input,
     step,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: store.getState().toolBatches.find((batch) => batch.archivedAt === undefined)!.batchId,
     abort: new AbortController().signal,
     startedAt: Date.now(),
-    allowedTools: new Set(["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user"]),
+    allowedTools: new Set(["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user", "delegate"]),
     projectContext,
     cwd: TMP_DIR,
   });
-  const scheduler = new SessionToolBatchScheduler({
+  scheduler = new SessionToolBatchScheduler({
+    executionId: "test-execution",
+    runOrdinal: 0,
     store,
     storeManager,
     workspaceRoot: TMP_DIR,
     registry,
     hitlQueue,
     agentName: "lead",
-    allowedTools: ["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user"],
+    allowedTools: ["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user", "delegate"],
     agentSkills: [],
     createContext,
   });
@@ -153,19 +200,26 @@ async function markRunning(
   attempt: number,
 ) {
   const batch = harness.scheduler.activeBatch()!;
+  const checkpointAt = Date.now();
   await harness.storeManager.updateToolBatches(harness.sessionId, TMP_DIR, (batches) => batches.map((candidate) => candidate.batchId !== batch.batchId ? candidate : {
     ...candidate,
-    calls: candidate.calls.map((item) => item.toolCallId === call.toolCallId ? { ...item, state: "running", attempt } : item),
+    calls: candidate.calls.map((item) => item.toolCallId === call.toolCallId
+      ? { ...item, state: "running", attempt, checkpointAt }
+      : item),
   }));
 }
 
 describe("SessionToolBatchScheduler output ownership", () => {
   test("persists and appends only nested FinalizedToolResult", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: { value: "hello" } }], 0);
+    const batch = await harness.scheduler.createBatch([
+      { toolCallId: "read-1", toolName: "read_tool", input: { value: "hello" } },
+    ], 0);
+    const queuedCheckpointAt = batch.calls[0]!.checkpointAt;
     expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
     const call = harness.scheduler.activeBatch()!.calls[0]!;
     expect(call.result?.output.preview).toBe("hello");
+    expect(call.checkpointAt).toBeGreaterThanOrEqual(queuedCheckpointAt);
     expect(eventResults(harness)[0]?.payload).toMatchObject({
       type: "tool-result",
       result: { isError: false, output: { preview: "hello" } },
@@ -180,7 +234,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
     }], 0);
     const waiting = await harness.scheduler.advance();
-    expect(waiting.status).toBe("waiting_for_human");
+    expect(waiting.status).toBe("suspended_hitl");
     expect(eventResults(harness)).toHaveLength(0);
     const blocked = harness.scheduler.activeBatch()!.calls[0]!;
     const hitlId = blocked.blocker!.hitlId!;
@@ -196,6 +250,256 @@ describe("SessionToolBatchScheduler output ownership", () => {
     expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
     expect(harness.scheduler.activeBatch()!.calls[0]!.result?.details?.presentations?.[0]).toMatchObject({ kind: "ask_user" });
     expect(eventResults(harness)).toHaveLength(1);
+  });
+
+  test("missing HITL link repair preserves the blocked call checkpoint", async () => {
+    const harness = await createHarness();
+    const batch = await harness.scheduler.createBatch([{
+      toolCallId: "ask-repair",
+      toolName: "ask_user",
+      input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
+    }], 0);
+    const queuedCheckpointAt = batch.calls[0]!.checkpointAt;
+    await harness.scheduler.advance();
+    const blocked = harness.scheduler.activeBatch()!.calls[0]!;
+    expect(blocked.checkpointAt).toBeGreaterThanOrEqual(queuedCheckpointAt);
+    await harness.storeManager.updateToolBatches(
+      harness.sessionId,
+      TMP_DIR,
+      (batches) => batches.map((candidate) => ({
+        ...candidate,
+        calls: candidate.calls.map((call) => {
+          if (call.toolCallId !== blocked.toolCallId || call.blocker === undefined) return call;
+          const { hitlId: _hitlId, ...blocker } = call.blocker;
+          return { ...call, blocker };
+        }),
+      })),
+    );
+
+    await repairSessionToolBatchHitlIds({
+      store: harness.store,
+      storeManager: harness.storeManager,
+      workspaceRoot: TMP_DIR,
+      hitlQueue: harness.hitlQueue,
+      batchId: batch.batchId,
+    });
+
+    expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({
+      state: "blocked",
+      checkpointAt: blocked.checkpointAt,
+      blocker: { hitlId: expect.any(String) },
+    });
+  });
+
+  test("accepted HITL redelivery stays idempotent after its batch is archived", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([{
+      toolCallId: "ask-archived",
+      toolName: "ask_user",
+      input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
+    }], 0);
+    await harness.scheduler.advance();
+    const blocker = harness.scheduler.activeBatch()!.calls[0]!.blocker!;
+    const response = { type: "question_answer" as const, answers: ["Yes"] };
+    await applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: blocker.hitlId!,
+      requestKey: blocker.requestKey,
+      response,
+    });
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    await harness.scheduler.completeContinuation();
+
+    await expect(validateSessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: blocker.hitlId!,
+      requestKey: blocker.requestKey,
+      response,
+    })).resolves.toMatchObject({ toolCallId: "ask-archived" });
+    await expect(applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: blocker.hitlId!,
+      requestKey: blocker.requestKey,
+      response,
+    })).resolves.toMatchObject({ toolCallId: "ask-archived" });
+    expect(harness.scheduler.activeBatch()).toBeUndefined();
+    expect(eventResults(harness)).toHaveLength(1);
+  });
+
+  test("redelivery recovers an answered read-only call left running without duplicating its result", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([{
+      toolCallId: "ask-recovery",
+      toolName: "ask_user",
+      input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
+    }], 0);
+    await harness.scheduler.advance();
+    const blocked = harness.scheduler.activeBatch()!.calls[0]!;
+    const response = { type: "question_answer" as const, answers: ["Yes"] };
+    await applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: blocked.blocker!.hitlId!,
+      requestKey: blocked.blocker!.requestKey,
+      response,
+    });
+    await markRunning(harness, harness.scheduler.activeBatch()!.calls[0]!, 1);
+
+    await applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: blocked.blocker!.hitlId!,
+      requestKey: blocked.blocker!.requestKey,
+      response,
+    });
+    expect(await harness.scheduler.recoverInterruptedBatch()).toMatchObject({
+      status: "ready_for_continuation",
+    });
+    expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({
+      state: "completed",
+      attempt: 2,
+    });
+    expect(eventResults(harness)).toHaveLength(1);
+  });
+
+  test("defers approved parallel permission until the final blocker resumes the same Execution", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([
+      {
+        toolCallId: "permission-1",
+        toolName: "permission_tool",
+        input: {},
+      },
+      {
+        toolCallId: "permission-2",
+        toolName: "permission_tool",
+        input: {},
+      },
+    ], 0);
+    expect(await harness.scheduler.advance()).toMatchObject({
+      status: "suspended_hitl",
+      hitlIds: expect.any(Array),
+    });
+    const [first, second] = harness.scheduler.activeBatch()!.calls;
+    await applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: first!.blocker!.hitlId!,
+      requestKey: first!.blocker!.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+    });
+
+    expect(harness.scheduler.activeBatch()!.calls.map((call) => call.state))
+      .toEqual(["queued", "blocked"]);
+    expect(harness.permissionExecutions()).toBe(0);
+    expect(eventResults(harness)).toHaveLength(0);
+
+    await applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: second!.blocker!.hitlId!,
+      requestKey: second!.blocker!.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+    });
+    expect(await harness.scheduler.advance()).toMatchObject({
+      status: "ready_for_continuation",
+    });
+    expect(harness.permissionExecutions()).toBe(2);
+    expect(eventResults(harness)).toHaveLength(2);
+  });
+
+  test("accepts reverse-order HITL answers exactly once before resuming the batch", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([
+      { toolCallId: "permission-first", toolName: "permission_tool", input: {} },
+      { toolCallId: "permission-second", toolName: "permission_tool", input: {} },
+    ], 0);
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "suspended_hitl" });
+
+    const batch = harness.scheduler.activeBatch()!;
+    const [first, second] = batch.calls;
+    const secondIdentity = {
+      executionId: batch.executionId,
+      batchId: batch.batchId,
+      toolCallId: second!.toolCallId,
+      requestKey: second!.blocker!.requestKey,
+      hitlId: second!.blocker!.hitlId!,
+    };
+    const approved = { type: "permission_decision" as const, decision: "approve_once" as const };
+
+    await expect(applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: secondIdentity.hitlId,
+      requestKey: secondIdentity.requestKey,
+      response: approved,
+    })).resolves.toEqual({ batchId: secondIdentity.batchId, toolCallId: secondIdentity.toolCallId });
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "suspended_hitl" });
+    expect(harness.permissionExecutions()).toBe(0);
+    expect(eventResults(harness)).toHaveLength(0);
+
+    await expect(applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: secondIdentity.hitlId,
+      requestKey: secondIdentity.requestKey,
+      response: approved,
+    })).resolves.toEqual({ batchId: secondIdentity.batchId, toolCallId: secondIdentity.toolCallId });
+    await expect(applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: secondIdentity.hitlId,
+      requestKey: secondIdentity.requestKey,
+      response: { type: "permission_decision", decision: "deny" },
+    })).rejects.toThrow("conflicts with the accepted response");
+
+    const secondAfterRedelivery = harness.scheduler.activeBatch()!.calls[1]!;
+    expect({
+      executionId: harness.scheduler.activeBatch()!.executionId,
+      batchId: harness.scheduler.activeBatch()!.batchId,
+      toolCallId: secondAfterRedelivery.toolCallId,
+      requestKey: secondAfterRedelivery.blocker!.requestKey,
+      hitlId: secondAfterRedelivery.blocker!.hitlId,
+    }).toEqual(secondIdentity);
+    expect(secondAfterRedelivery.blocker!.response).toEqual(approved);
+    expect(secondAfterRedelivery.result).toBeUndefined();
+
+    await applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: first!.blocker!.hitlId!,
+      requestKey: first!.blocker!.requestKey,
+      response: approved,
+    });
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(harness.permissionExecutions()).toBe(2);
+    expect(eventResults(harness)).toHaveLength(2);
   });
 
   test("requires the exact HITL id and requestKey pair", async () => {
@@ -262,6 +566,56 @@ describe("SessionToolBatchScheduler output ownership", () => {
     expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({ state: "completed", attempt: 2 });
   });
 
+  for (const executionStatus of ["completed", "failed"] as const) {
+    test(`settles a ${executionStatus} child dependency once and clears correlation from the terminal call`, async () => {
+      const harness = await createHarness();
+      const batch = await harness.scheduler.createBatch([{
+        toolCallId: "child-1",
+        toolName: "delegate",
+        input: {},
+      }], 0);
+
+      expect(await harness.scheduler.advance()).toMatchObject({
+        status: "waiting_for_child",
+        toolBatchId: batch.batchId,
+        toolCallId: "child-1",
+        childSessionId: "child-session",
+        childExecutionId: "child-execution",
+      });
+      expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({
+        state: "child_dependency",
+        childDependency: {
+          kind: "child_dependency",
+          childSessionId: "child-session",
+          childExecutionId: "child-execution",
+        },
+      });
+
+      await applySessionToolBatchChildOutcome({
+        storeManager: harness.storeManager,
+        sessionId: harness.sessionId,
+        workspaceRoot: TMP_DIR,
+        batchId: batch.batchId,
+        toolCallId: "child-1",
+        childSessionId: "child-session",
+        childExecutionId: "child-execution",
+        outcome: {
+          outcome: "terminal",
+          executionId: "child-execution",
+          executionStatus,
+          ...(executionStatus === "completed" ? { output: "child output" } : {}),
+        },
+      });
+      expect(await harness.scheduler.advance()).toMatchObject({
+        status: "ready_for_continuation",
+      });
+      const terminalCall = harness.scheduler.activeBatch()!.calls[0]!;
+      expect(terminalCall.state).toBe(executionStatus === "completed" ? "completed" : "failed");
+      expect(terminalCall.childDependency).toBeUndefined();
+      expect(eventResults(harness)).toHaveLength(1);
+    });
+  }
+
   test("retries a read-only running call once after restart", async () => {
     const harness = await createHarness();
     const batch = await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], 0);
@@ -287,13 +641,18 @@ describe("SessionToolBatchScheduler output ownership", () => {
     const harness = await createHarness();
     const batch = await harness.scheduler.createBatch([{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], 0);
     await markRunning(harness, batch.calls[0]!, 1);
+    const runningCheckpointAt = harness.scheduler.activeBatch()!.calls[0]!.checkpointAt;
     expect(await harness.scheduler.recoverInterruptedBatch()).toEqual({
       status: "manual_inspection_required",
       reason: { kind: "effectful_outcome_unknown", toolCallId: "effect-1", toolName: "effect_tool" },
     });
     expect(harness.store.getState().toolBatches[0]).toMatchObject({
       manualInspectionReason: { kind: "effectful_outcome_unknown" },
-      calls: [{ state: "manual_inspection_required", recoveryFailure: { kind: "effectful_outcome_unknown" } }],
+      calls: [{
+        state: "manual_inspection_required",
+        checkpointAt: runningCheckpointAt,
+        recoveryFailure: { kind: "effectful_outcome_unknown" },
+      }],
     });
     expect(eventResults(harness)).toHaveLength(0);
   });
@@ -351,6 +710,77 @@ describe("SessionToolBatchScheduler output ownership", () => {
     expect(result.manualInspectionRequired).toBe(false);
     expect(harness.store.getState().toolBatches[0]).toMatchObject({ archivedAt: expect.any(String), calls: [{ state: "failed" }] });
     expect(eventResults(harness)).toHaveLength(1);
+  });
+
+  test("external cancellation settles an attempted effectful call as an unknown result", async () => {
+    const harness = await createHarness();
+    const batch = await harness.scheduler.createBatch([{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], 0);
+    await markRunning(harness, batch.calls[0]!, 1);
+
+    const result = await cancelSessionToolBatch({
+      storeManager: harness.storeManager,
+      hitlQueue: harness.hitlQueue,
+      prepareHitlCancellation: async () => undefined,
+      settleSystem: async (call, step, raw) => {
+        const outcome = await harness.registry.settleSystem(call, await harness.createContext(call, step), raw);
+        if (outcome.kind !== "settled") throw new Error("unexpected block");
+        return outcome;
+      },
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      reason: "Execution interrupted",
+    });
+
+    expect(result.manualInspectionRequired).toBe(true);
+    expect(harness.store.getState().toolBatches[0]).toMatchObject({
+      archivedAt: expect.any(String),
+      manualInspectionReason: {
+        kind: "effectful_cancelled_unknown",
+        toolCallId: "effect-1",
+        toolName: "effect_tool",
+      },
+      calls: [{
+        state: "failed",
+        recoveryFailure: { kind: "effectful_cancelled_unknown" },
+        result: { isError: true, details: { unknownResult: true } },
+      }],
+    });
+    expect(eventResults(harness)).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          result: expect.objectContaining({
+            isError: true,
+            details: expect.objectContaining({ unknownResult: true }),
+          }),
+        }),
+      }),
+    ]);
+  });
+
+  test("external cancellation clears child dependency correlation from the failed call", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([{ toolCallId: "child-1", toolName: "delegate", input: {} }], 0);
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "waiting_for_child" });
+
+    await cancelSessionToolBatch({
+      storeManager: harness.storeManager,
+      hitlQueue: harness.hitlQueue,
+      prepareHitlCancellation: async () => undefined,
+      settleSystem: async (call, step, raw) => {
+        const outcome = await harness.registry.settleSystem(call, await harness.createContext(call, step), raw);
+        if (outcome.kind !== "settled") throw new Error("unexpected block");
+        return outcome;
+      },
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      reason: "Session stopped",
+    });
+
+    const terminalCall = harness.store.getState().toolBatches[0]!.calls[0]!;
+    expect(terminalCall).toMatchObject({ state: "failed", result: { isError: true } });
+    expect(terminalCall.childDependency).toBeUndefined();
+    const reloaded = await new SessionStoreManager({ logger: silentLogger }).getOrLoad(harness.sessionId, TMP_DIR);
+    expect(reloaded.getState().toolBatches[0]!.calls[0]!.childDependency).toBeUndefined();
   });
 
   test("settleQueuedCall rejects non-text system drafts via the bounded system lane", async () => {

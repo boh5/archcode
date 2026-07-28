@@ -1,6 +1,9 @@
 export type {
   StreamEvent,
   ExecutionStartEvent,
+  ExecutionSuspendedEvent,
+  ExecutionSuspensionUpdatedEvent,
+  ExecutionResumedEvent,
   ExecutionEndEvent,
   SessionMessageAcceptedEvent,
   SessionMessageEditedEvent,
@@ -52,7 +55,7 @@ export type {
   ShutdownEvent,
   SessionStoreState,
 } from "./types";
-export { BusyError } from "./types";
+export { BusyError, InvalidExecutionTransitionError } from "./types";
 export { getAssistantText } from "./helpers";
 export { toModelMessagesFromStoredMessages } from "./projection";
 export { assertValidSessionCwd, resolveValidSessionCwd } from "./session-cwd";

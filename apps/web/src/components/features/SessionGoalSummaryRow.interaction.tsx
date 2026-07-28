@@ -5,7 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { SessionGoalView } from "../../api/types";
 
-type SessionGoalSummaryRowComponent = typeof import("./SessionGoalSummaryRow").SessionGoalSummaryRow;
+type SessionGoalSummaryRowComponent =
+  typeof import("./SessionGoalSummaryRow").SessionGoalSummaryRow;
 
 let dom: JSDOM;
 let root: Root;
@@ -15,6 +16,7 @@ let SessionGoalSummaryRow: SessionGoalSummaryRowComponent;
 
 const activeGoal: SessionGoalView = {
   instanceId: "goal-1",
+  settlementReceipts: [],
   generation: 2,
   objective: "Complete the current work",
   status: "active",
@@ -34,24 +36,44 @@ const activeGoal: SessionGoalView = {
   updatedAt: 2,
 };
 
-function change(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+function change(
+  element: HTMLInputElement | HTMLTextAreaElement,
+  value: string,
+): void {
   act(() => {
     const previous = element.value;
-    const prototype = element instanceof dom.window.HTMLTextAreaElement
-      ? dom.window.HTMLTextAreaElement.prototype
-      : dom.window.HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(element, value);
-    (element as unknown as { _valueTracker?: { setValue(value: string): void } })._valueTracker?.setValue(previous);
-    const propsKey = Object.keys(element).find((key) => key.startsWith("__reactProps$"));
+    const prototype =
+      element instanceof dom.window.HTMLTextAreaElement
+        ? dom.window.HTMLTextAreaElement.prototype
+        : dom.window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(
+      element,
+      value,
+    );
+    (
+      element as unknown as {
+        _valueTracker?: { setValue(value: string): void };
+      }
+    )._valueTracker?.setValue(previous);
+    const propsKey = Object.keys(element).find((key) =>
+      key.startsWith("__reactProps$"),
+    );
     const props = propsKey
-      ? (element as unknown as Record<string, { onChange?: (event: { target: typeof element }) => void }>)[propsKey]
+      ? (
+          element as unknown as Record<
+            string,
+            { onChange?: (event: { target: typeof element }) => void }
+          >
+        )[propsKey]
       : undefined;
     props?.onChange?.({ target: element });
   });
 }
 
 beforeEach(async () => {
-  dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
+  dom = new JSDOM("<!doctype html><html><body></body></html>", {
+    url: "http://localhost",
+  });
   Object.defineProperties(dom.window.HTMLElement.prototype, {
     attachEvent: { configurable: true, value: () => {} },
     detachEvent: { configurable: true, value: () => {} },
@@ -83,7 +105,10 @@ beforeEach(async () => {
     Object.defineProperty(globalThis, name, { configurable: true, value });
   }
   fetchMock = mock(async () => Response.json({ ok: true }));
-  Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: fetchMock,
+  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -99,56 +124,97 @@ function renderGoal(client: QueryClient, goal: SessionGoalView): void {
   act(() => {
     root.render(
       <QueryClientProvider client={client}>
-        <SessionGoalSummaryRow slug="project-1" sessionId="session-goal" goal={goal} />
+        <SessionGoalSummaryRow
+          slug="project-1"
+          sessionId="session-goal"
+          goal={goal}
+        />
       </QueryClientProvider>,
     );
   });
 }
 
 function button(label: string): HTMLButtonElement {
-  const match = [...document.querySelectorAll("button")].find((candidate) => candidate.textContent === label || candidate.getAttribute("aria-label") === label);
-  if (!(match instanceof dom.window.HTMLButtonElement)) throw new Error(`Missing ${label} button`);
+  const match = [...document.querySelectorAll("button")].find(
+    (candidate) =>
+      candidate.textContent === label ||
+      candidate.getAttribute("aria-label") === label,
+  );
+  if (!(match instanceof dom.window.HTMLButtonElement))
+    throw new Error(`Missing ${label} button`);
   return match;
 }
 
 describe("SessionGoalSummaryRow", () => {
   test("reveals completion once only for the same mounted Goal identity", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
     renderGoal(client, activeGoal);
-    expect(container.querySelector('[data-visual-kind="goal-active"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-visual-kind="goal-active"]'),
+    ).not.toBeNull();
 
     renderGoal(client, { ...activeGoal, status: "complete" });
-    expect(container.querySelector('[data-visual-kind="completed"]')?.className).toContain("animate-status-complete");
+    expect(
+      container.querySelector('[data-visual-kind="completed"]')?.className,
+    ).toContain("animate-status-complete");
 
     renderGoal(client, { ...activeGoal, status: "complete", updatedAt: 3 });
-    expect(container.querySelector('[data-visual-kind="completed"]')?.className).not.toContain("animate-status-complete");
+    expect(
+      container.querySelector('[data-visual-kind="completed"]')?.className,
+    ).not.toContain("animate-status-complete");
 
-    renderGoal(client, { ...activeGoal, instanceId: "goal-2", status: "complete" });
-    expect(container.querySelector('[data-visual-kind="completed"]')?.className).not.toContain("animate-status-complete");
+    renderGoal(client, {
+      ...activeGoal,
+      instanceId: "goal-2",
+      status: "complete",
+    });
+    expect(
+      container.querySelector('[data-visual-kind="completed"]')?.className,
+    ).not.toContain("animate-status-complete");
 
     act(() => root.unmount());
     root = createRoot(container);
     renderGoal(client, { ...activeGoal, status: "complete" });
-    expect(container.querySelector('[data-visual-kind="completed"]')?.className).not.toContain("animate-status-complete");
+    expect(
+      container.querySelector('[data-visual-kind="completed"]')?.className,
+    ).not.toContain("animate-status-complete");
   });
 
   test("keeps one summary row and puts budget adjustment and removal only in budget-limited Edit", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
     renderGoal(client, activeGoal);
 
-    const row = container.querySelector('[data-testid="session-goal-summary-row"]');
+    const row = container.querySelector(
+      '[data-testid="session-goal-summary-row"]',
+    );
     expect(row?.querySelector("textarea")).toBeNull();
     expect(row?.querySelector("progress, [role=progressbar]")).toBeNull();
     expect(row?.textContent).toContain("Active");
     expect(row?.querySelector('button[aria-label="Edit goal"]')).not.toBeNull();
-    expect(row?.querySelector('button[aria-label="Pause goal"]')).not.toBeNull();
-    expect(row?.querySelector('button[aria-label="Clear goal"]')).not.toBeNull();
+    expect(
+      row?.querySelector('button[aria-label="Pause goal"]'),
+    ).not.toBeNull();
+    expect(
+      row?.querySelector('button[aria-label="Clear goal"]'),
+    ).not.toBeNull();
     expect(row?.textContent).not.toContain("Adjust budget");
     await act(async () => {
       button("Edit goal").click();
       await Promise.resolve();
     });
-    expect(document.querySelector('[data-testid="goal-budget-editor"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="goal-budget-editor"]'),
+    ).toBeNull();
     await act(async () => button("Cancel").click());
 
     const budgetLimitedGoal: SessionGoalView = {
@@ -158,19 +224,36 @@ describe("SessionGoalSummaryRow", () => {
       blockedReason: "Token budget reached",
     };
     renderGoal(client, budgetLimitedGoal);
-    expect(container.querySelector('button[aria-label="Edit goal"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="Clear goal"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="Pause goal"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="Resume goal"]')).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="Edit goal"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('button[aria-label="Clear goal"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('button[aria-label="Pause goal"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="Resume goal"]'),
+    ).toBeNull();
     await act(async () => {
       button("Edit goal").click();
       await Promise.resolve();
     });
 
-    expect(document.querySelector('[data-testid="goal-budget-editor"]')).not.toBeNull();
-    const objective = document.querySelector('textarea[aria-label="Goal objective"]');
-    const budget = document.querySelector('input[aria-label="Goal token budget"]');
-    if (!(objective instanceof dom.window.HTMLTextAreaElement) || !(budget instanceof dom.window.HTMLInputElement)) {
+    expect(
+      document.querySelector('[data-testid="goal-budget-editor"]'),
+    ).not.toBeNull();
+    const objective = document.querySelector(
+      'textarea[aria-label="Goal objective"]',
+    );
+    const budget = document.querySelector(
+      'input[aria-label="Goal token budget"]',
+    );
+    if (
+      !(objective instanceof dom.window.HTMLTextAreaElement) ||
+      !(budget instanceof dom.window.HTMLInputElement)
+    ) {
       throw new Error("Missing Goal Edit fields");
     }
     change(objective, "Complete and verify the current work");
@@ -180,30 +263,54 @@ describe("SessionGoalSummaryRow", () => {
       await Promise.resolve();
     });
 
-    const requests = fetchMock.mock.calls.map(([path, init]) => ({ path: String(path), init: init as RequestInit | undefined }));
-    const objectiveRequest = requests.find(({ path, init }) => path.endsWith("/goal") && init?.method === "PATCH");
-    const budgetRequest = requests.find(({ path, init }) => path.endsWith("/goal/budget") && init?.method === "POST");
+    const requests = fetchMock.mock.calls.map(([path, init]) => ({
+      path: String(path),
+      init: init as RequestInit | undefined,
+    }));
+    const objectiveRequest = requests.find(
+      ({ path, init }) => path.endsWith("/goal") && init?.method === "PATCH",
+    );
+    const budgetRequest = requests.find(
+      ({ path, init }) =>
+        path.endsWith("/goal/budget") && init?.method === "POST",
+    );
     expect(JSON.parse(String(objectiveRequest?.init?.body))).toEqual({
       objective: "Complete and verify the current work",
       expectedGeneration: 2,
     });
-    expect(JSON.parse(String(budgetRequest?.init?.body))).toEqual({ tokenBudget: 6500 });
+    expect(JSON.parse(String(budgetRequest?.init?.body))).toEqual({
+      tokenBudget: 6500,
+    });
 
-    renderGoal(client, { ...budgetLimitedGoal, tokenBudget: 6_500, objective: "Complete and verify the current work", generation: 3 });
+    renderGoal(client, {
+      ...budgetLimitedGoal,
+      tokenBudget: 6_500,
+      objective: "Complete and verify the current work",
+      generation: 3,
+    });
     await act(async () => {
       button("Edit goal").click();
       await Promise.resolve();
     });
     const removeLimit = document.querySelector('input[type="checkbox"]');
-    if (!(removeLimit instanceof dom.window.HTMLInputElement)) throw new Error("Missing remove-limit control");
+    if (!(removeLimit instanceof dom.window.HTMLInputElement))
+      throw new Error("Missing remove-limit control");
     await act(async () => removeLimit.click());
     await act(async () => {
       button("Save").click();
       await Promise.resolve();
     });
     const removalRequest = fetchMock.mock.calls
-      .filter(([path, init]) => String(path).endsWith("/goal/budget") && (init as RequestInit | undefined)?.method === "POST")
+      .filter(
+        ([path, init]) =>
+          String(path).endsWith("/goal/budget") &&
+          (init as RequestInit | undefined)?.method === "POST",
+      )
       .at(-1);
-    expect(JSON.parse(String((removalRequest?.[1] as RequestInit | undefined)?.body))).toEqual({ tokenBudget: null });
+    expect(
+      JSON.parse(
+        String((removalRequest?.[1] as RequestInit | undefined)?.body),
+      ),
+    ).toEqual({ tokenBudget: null });
   });
 });

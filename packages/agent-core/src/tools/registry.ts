@@ -1,5 +1,6 @@
 import type { FinalizedToolResult, HitlResponse } from "@archcode/protocol";
 import type { Logger } from "../logger";
+import type { ChildExecutionOutcome } from "../delegation/types";
 import { silentLogger } from "../logger";
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
 import { ToolOutputFinalizer } from "../tool-output/finalizer";
@@ -11,6 +12,7 @@ import type {
   AiToolInputSchema,
   AnyToolDescriptor,
   BeforeHook,
+  ChildToolDependency,
   FinalizedResultHook,
   PermissionDecision,
   RawToolResult,
@@ -73,6 +75,13 @@ export class ToolRegistry {
     const hasResume = descriptor.resume !== undefined;
     if (hasPrepareBlock !== hasResume || (hasPrepareBlock && descriptor.name !== "ask_user")) {
       throw new TypeError("ask_user is the only suspendable descriptor and must declare both prepareBlock and resume");
+    }
+    if (
+      descriptor.resumeChildDependency !== undefined
+      && descriptor.name !== "delegate"
+      && descriptor.name !== "resume_session"
+    ) {
+      throw new TypeError("Only delegate and resume_session may resume a synchronous child dependency");
     }
     this.#descriptors.set(descriptor.name, descriptor);
   }
@@ -145,6 +154,78 @@ export class ToolRegistry {
     } catch {
       return await this.#invalidResume(input.toolCall, input.context);
     }
+  }
+
+  async resumeChildDependency(input: {
+    readonly toolCall: ToolCallLike;
+    readonly dependency: ChildToolDependency;
+    readonly outcome: Extract<ChildExecutionOutcome, { outcome: "terminal" }>;
+    readonly context: ToolExecutionContext;
+  }): Promise<RegistryExecutionOutcome> {
+    const { toolCall, dependency, outcome, context } = input;
+    this.#initializeContext(toolCall, context);
+    const descriptor = this.#descriptors.get(toolCall.toolName);
+    if (
+      descriptor?.resumeChildDependency === undefined
+      || dependency.parentExecutionId !== context.executionId
+      || dependency.toolBatchId !== context.toolBatchId
+      || dependency.toolCallId !== toolCall.toolCallId
+      || dependency.childExecutionId !== outcome.executionId
+    ) {
+      return await this.#invalidChildDependency(toolCall, context);
+    }
+    if (!context.allowedTools.has(toolCall.toolName)) {
+      return await this.settleSystem(toolCall, context, createToolErrorResult({
+        kind: "not-allowed",
+        code: "TOOL_NOT_ALLOWED",
+        message: `Tool "${toolCall.toolName}" is not allowed for this execution context`,
+      }));
+    }
+
+    const prepared = await this.#prepareInput(descriptor, toolCall.input, context);
+    if (prepared.kind === "error") return await this.settleSystem(toolCall, context, prepared.raw);
+    const before = await this.#runBeforeHooks(descriptor, prepared.input, context);
+    if (before.kind === "error") return await this.settleSystem(toolCall, context, before.raw);
+    context.input = before.input;
+
+    let capture;
+    try {
+      capture = await this.#beginCapture(descriptor, context);
+    } catch (error) {
+      return await this.settleSystem(toolCall, context, pipelineError("execution", error, false));
+    }
+
+    let raw: RawToolResult;
+    try {
+      raw = await descriptor.resumeChildDependency(before.input, dependency, outcome, context);
+      raw = await this.#runAfterHooks(descriptor.hooks?.after ?? [], raw, context, false);
+    } catch (error) {
+      raw = pipelineError("execution", error, false);
+    }
+    context.durationMs = Date.now() - context.startedAt;
+
+    let result: FinalizedToolResult;
+    try {
+      result = await this.#finalizer.finalize({
+        descriptor,
+        raw,
+        context,
+        capture,
+        attempted: false,
+      });
+    } catch (error) {
+      await capture?.abort().catch(() => undefined);
+      this.#logFailure("tool.child-dependency-finalize.failed", descriptor.name, error);
+      result = this.#finalizer.createSystemResult({
+        isError: true,
+        code: "TOOL_OUTPUT_UNAVAILABLE",
+        message: "Tool output finalization failed",
+        unknownResult: false,
+      });
+    }
+    context.outputCapture = undefined;
+    await this.#runFinalizedHooks(result, context);
+    return { kind: "settled", result, ...(raw.sidecar === undefined ? {} : { sidecar: raw.sidecar }) };
   }
 
   async settleSystem(
@@ -293,8 +374,7 @@ export class ToolRegistry {
 
     let capture;
     try {
-      capture = await this.#finalizer.beginCapture(descriptor, context);
-      context.outputCapture = capture;
+      capture = await this.#beginCapture(descriptor, context);
     } catch (error) {
       return this.settleSystem(toolCall, context, pipelineError("execution", error, false));
     }
@@ -317,7 +397,21 @@ export class ToolRegistry {
         if (!descriptor.resume) throw new Error("Blocked descriptor does not implement resume");
         raw = await descriptor.resume(currentInput, resume!.response, context);
       } else {
-        raw = await descriptor.execute(currentInput, context);
+        const executed = await descriptor.execute(currentInput, context);
+        if (isChildDeferredToolResult(executed)) {
+          await capture?.abort().catch(() => undefined);
+          context.outputCapture = undefined;
+          if (
+            executed.dependency.parentExecutionId !== context.executionId
+            || executed.dependency.runOrdinal !== context.runOrdinal
+            || executed.dependency.toolBatchId !== context.toolBatchId
+            || executed.dependency.toolCallId !== toolCall.toolCallId
+          ) {
+            return await this.#invalidChildDependency(toolCall, context);
+          }
+          return executed;
+        }
+        raw = executed;
       }
       raw = await this.#runAfterHooks(descriptor.hooks?.after ?? [], raw, context, attempted);
     } catch (error) {
@@ -351,6 +445,12 @@ export class ToolRegistry {
       result,
       ...(raw.sidecar === undefined ? {} : { sidecar: raw.sidecar }),
     };
+  }
+
+  async #beginCapture(descriptor: AnyToolDescriptor, context: ToolExecutionContext) {
+    const capture = await this.#finalizer.beginCapture(descriptor, context);
+    context.outputCapture = capture;
+    return capture;
   }
 
   async #prepareInput(
@@ -589,12 +689,29 @@ export class ToolRegistry {
     }));
   }
 
+  #invalidChildDependency(
+    toolCall: ToolCallLike,
+    context: ToolExecutionContext,
+  ): Promise<RegistryExecutionOutcome> {
+    return this.settleSystem(toolCall, context, createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_CHILD_DEPENDENCY_INVALID",
+      message: "Synchronous child dependency does not match the original tool call",
+    }));
+  }
+
   #logFailure(event: string, toolName: string, error: unknown): void {
     this.#logger.warn(event, {
       context: { tool: toolName },
       error: { name: error instanceof Error ? error.name : "NonErrorThrow" },
     });
   }
+}
+
+function isChildDeferredToolResult(
+  result: Awaited<ReturnType<AnyToolDescriptor["execute"]>>,
+): result is Extract<Awaited<ReturnType<AnyToolDescriptor["execute"]>>, { kind: "child_deferred" }> {
+  return "kind" in result && result.kind === "child_deferred";
 }
 
 function pipelineError(

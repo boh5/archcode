@@ -10,6 +10,7 @@ import { silentLogger } from "../logger";
 import { SessionFileSchema, sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionPath } from "../store/sessions-dir";
+import { testExecutionEnd, testExecutionStart } from "../testing/test-execution-fixtures";
 import { GoalNoticePartSchema, SessionGoalSchema } from "./schema";
 import { SessionGoalService, SessionGoalServiceError } from "./service";
 
@@ -19,6 +20,7 @@ const service = new SessionGoalService(manager);
 const user = { kind: "user_control" } as const;
 const agent = { kind: "agent" } as const;
 const runtime = { kind: "runtime" } as const;
+let settlementOrdinal = 0;
 
 afterEach(async () => {
   manager.clearAll();
@@ -40,6 +42,24 @@ function usage(totalTokens: number) {
     reasoningTokens: 0,
     cachedInputTokens: 0,
   };
+}
+
+async function recordGoalExecution(input: {
+  readonly workspaceRoot: string;
+  readonly sessionId: string;
+  readonly authority: typeof runtime;
+  readonly usage: ReturnType<typeof usage>;
+  readonly executionTimeMs: number;
+}) {
+  const goal = await service.get(input);
+  if (goal === undefined) throw new Error("Expected Goal");
+  settlementOrdinal += 1;
+  return await service.recordSettlement({
+    ...input,
+    settlementKey: `terminal:test-execution-${settlementOrdinal}`,
+    goalInstanceId: goal.instanceId,
+    terminal: true,
+  });
 }
 
 function pendingGoalReminders(reminders: readonly Reminder[]): Array<Reminder & {
@@ -67,6 +87,7 @@ describe("SessionGoalSchema", () => {
       status: "active" as const,
       tokenBudget: 100,
       usage: { tokens: usage(0), executionTimeMs: 0, executionCount: 0 },
+      settlementReceipts: [],
       createdAt: 1,
       activatedAt: 1,
       updatedAt: 1,
@@ -79,6 +100,7 @@ describe("SessionGoalSchema", () => {
       "generation",
       "instanceId",
       "objective",
+      "settlementReceipts",
       "status",
       "tokenBudget",
       "updatedAt",
@@ -86,6 +108,8 @@ describe("SessionGoalSchema", () => {
     ]);
 
     expect(SessionGoalSchema.safeParse({ ...goal, unexpectedField: true }).success).toBe(false);
+    expect(SessionGoalSchema.safeParse({ ...goal, settlementReceipts: ["b", "a"] }).success).toBe(false);
+    expect(SessionGoalSchema.safeParse({ ...goal, settlementReceipts: ["a", "a"] }).success).toBe(false);
   });
 
   test("enforces terminal and visible status metadata invariants", () => {
@@ -94,6 +118,7 @@ describe("SessionGoalSchema", () => {
       generation: 1,
       objective: "Ship the result.",
       usage: { tokens: usage(0), executionTimeMs: 0, executionCount: 0 },
+      settlementReceipts: [],
       createdAt: 1,
       activatedAt: 1,
       updatedAt: 1,
@@ -166,6 +191,7 @@ describe("SessionGoalService", () => {
       "generation",
       "instanceId",
       "objective",
+      "settlementReceipts",
       "status",
       "updatedAt",
       "usage",
@@ -224,6 +250,93 @@ describe("SessionGoalService", () => {
     const replacement = await service.create({ workspaceRoot: TMP_DIR, sessionId, authority: user, objective: "Replacement Goal" });
     expect(replacement.instanceId).not.toBe(created.instanceId);
     expect(replacement.generation).toBe(1);
+  });
+
+  test("blocks Goal replacement after descendant receipt write until its settlement is marked applied", async () => {
+    const rootSessionId = await rootSession();
+    const childSessionId = crypto.randomUUID();
+    const childExecutionId = crypto.randomUUID();
+    const created = await service.create({
+      workspaceRoot: TMP_DIR,
+      sessionId: rootSessionId,
+      authority: user,
+      objective: "Keep descendant accounting attached to this Goal.",
+    });
+    await manager.createSessionFile(TMP_DIR, {
+      agentName: "explore",
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Inspect descendant",
+        objective: "Inspect the delegated scope.",
+        skills: [],
+        background: false,
+      },
+    }, childSessionId);
+    const childStore = manager.get(childSessionId, TMP_DIR)!;
+    childStore.getState().append(testExecutionStart(childExecutionId));
+    const childRun = childStore.getState().executions[0]!.runs[0]!;
+    const runEndedAt = Math.max(Date.now(), childRun.startedAt);
+    const settlementKey = `run:${childSessionId}:${childExecutionId}:0`;
+    childStore.getState().append(testExecutionEnd(childExecutionId, "completed", {
+      endedAt: runEndedAt,
+      runEndedAt,
+      runSettlement: { key: settlementKey, goalInstanceId: created.instanceId },
+      terminalSettlement: {
+        key: `terminal:${childSessionId}:${childExecutionId}`,
+        goalInstanceId: null,
+      },
+    }));
+    await manager.flushSession(childSessionId, TMP_DIR);
+
+    await service.recordSettlement({
+      workspaceRoot: TMP_DIR,
+      sessionId: rootSessionId,
+      authority: runtime,
+      settlementKey,
+      goalInstanceId: created.instanceId,
+      usage: usage(3),
+      executionTimeMs: 5,
+      terminal: false,
+    });
+
+    manager.clearAll();
+    const restartedManager = new SessionStoreManager({ logger: silentLogger });
+    const restartedService = new SessionGoalService(restartedManager);
+    await restartedService.complete({
+      workspaceRoot: TMP_DIR,
+      sessionId: rootSessionId,
+      authority: agent,
+      reason: "The work is verified.",
+      expectedInstanceId: created.instanceId,
+      expectedGeneration: created.generation,
+    });
+
+    await expect(restartedService.create({
+      workspaceRoot: TMP_DIR,
+      sessionId: rootSessionId,
+      authority: user,
+      objective: "Replacement Goal",
+    })).rejects.toMatchObject({ code: "PENDING_SETTLEMENTS" });
+    expect((await restartedService.get({
+      workspaceRoot: TMP_DIR,
+      sessionId: rootSessionId,
+    }))?.instanceId).toBe(created.instanceId);
+
+    await restartedManager.markExecutionSettlementApplied(childSessionId, TMP_DIR, {
+      executionId: childExecutionId,
+      runOrdinal: 0,
+      expectedKey: settlementKey,
+    });
+    const replacement = await restartedService.create({
+      workspaceRoot: TMP_DIR,
+      sessionId: rootSessionId,
+      authority: user,
+      objective: "Replacement Goal",
+    });
+    expect(replacement.instanceId).not.toBe(created.instanceId);
   });
 
   test("materializes pending notices once in durable append order without client input fields", async () => {
@@ -556,7 +669,7 @@ describe("SessionGoalService", () => {
     await service.setTokenBudget({ workspaceRoot: TMP_DIR, sessionId, authority: user, tokenBudget: 50 });
     const afterBudget = pendingGoalReminders(manager.get(sessionId, TMP_DIR)!.getState().reminders).length;
     await service.setTokenBudget({ workspaceRoot: TMP_DIR, sessionId, authority: user, tokenBudget: 50 });
-    await service.recordUsage({
+    await recordGoalExecution({
       workspaceRoot: TMP_DIR,
       sessionId,
       authority: runtime,
@@ -655,7 +768,7 @@ describe("SessionGoalService", () => {
     }
     expect((await service.resume({ workspaceRoot: TMP_DIR, sessionId, authority: user })).status).toBe("active");
 
-    await service.recordUsage({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(10), executionTimeMs: 5 });
+    await recordGoalExecution({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(10), executionTimeMs: 5 });
     await service.setTokenBudget({ workspaceRoot: TMP_DIR, sessionId, authority: user, tokenBudget: 10 });
     const limited = await service.pause({ workspaceRoot: TMP_DIR, sessionId, authority: user });
     expect(limited.status).toBe("budget_limited");
@@ -678,9 +791,9 @@ describe("SessionGoalService", () => {
     await service.setTokenBudget({ workspaceRoot: TMP_DIR, sessionId, authority: user, tokenBudget: 7 });
 
     const created = await service.get({ workspaceRoot: TMP_DIR, sessionId });
-    const first = await service.recordUsage({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(3), executionTimeMs: 10 });
+    const first = await recordGoalExecution({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(3), executionTimeMs: 10 });
     const beforeCrossing = pendingGoalReminders(manager.get(sessionId, TMP_DIR)!.getState().reminders).length;
-    const second = await service.recordUsage({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(4), executionTimeMs: 20 });
+    const second = await recordGoalExecution({ workspaceRoot: TMP_DIR, sessionId, authority: runtime, usage: usage(4), executionTimeMs: 20 });
     expect(first).toMatchObject({ status: "active", usage: { tokens: { totalTokens: 3 }, executionCount: 1 } });
     expect(first.updatedAt).toBe(created!.updatedAt);
     expect(second).toMatchObject({
@@ -704,6 +817,60 @@ describe("SessionGoalService", () => {
     expect(removed.tokenBudget).toBeUndefined();
   });
 
+  test("applies run usage and logical terminal count exactly once by settlement key", async () => {
+    const sessionId = await rootSession();
+    const goal = await service.create({
+      workspaceRoot: TMP_DIR,
+      sessionId,
+      authority: user,
+      objective: "Settle one logical execution exactly once.",
+    });
+    const target = { workspaceRoot: TMP_DIR, sessionId, authority: runtime };
+
+    const run = await service.recordSettlement({
+      ...target,
+      settlementKey: `run:${sessionId}:execution-1:0`,
+      goalInstanceId: goal.instanceId,
+      usage: usage(5),
+      executionTimeMs: 20,
+      terminal: false,
+    });
+    expect(run.usage).toMatchObject({ tokens: { totalTokens: 5 }, executionTimeMs: 20, executionCount: 0 });
+
+    const duplicate = await service.recordSettlement({
+      ...target,
+      settlementKey: `run:${sessionId}:execution-1:0`,
+      goalInstanceId: goal.instanceId,
+      usage: usage(5),
+      executionTimeMs: 20,
+      terminal: false,
+    });
+    expect(duplicate).toEqual(run);
+
+    const terminal = await service.recordSettlement({
+      ...target,
+      settlementKey: `terminal:${sessionId}:execution-1`,
+      goalInstanceId: goal.instanceId,
+      usage: usage(0),
+      executionTimeMs: 0,
+      terminal: true,
+    });
+    expect(terminal.usage).toMatchObject({ tokens: { totalTokens: 5 }, executionTimeMs: 20, executionCount: 1 });
+    expect(terminal.settlementReceipts).toEqual([
+      `run:${sessionId}:execution-1:0`,
+      `terminal:${sessionId}:execution-1`,
+    ].sort((left, right) => left.localeCompare(right)));
+
+    await expect(service.recordSettlement({
+      ...target,
+      settlementKey: `run:${sessionId}:execution-2:0`,
+      goalInstanceId: crypto.randomUUID(),
+      usage: usage(1),
+      executionTimeMs: 1,
+      terminal: false,
+    })).rejects.toMatchObject({ code: "GENERATION_CONFLICT" });
+  });
+
   test("preserves the canonical blocked reason across both budget-limited paths", async () => {
     const loweringSession = await rootSession();
     await service.create({
@@ -712,7 +879,7 @@ describe("SessionGoalService", () => {
       authority: user,
       objective: "Preserve the blocker while lowering budget.",
     });
-    await service.recordUsage({
+    await recordGoalExecution({
       workspaceRoot: TMP_DIR,
       sessionId: loweringSession,
       authority: runtime,
@@ -757,7 +924,7 @@ describe("SessionGoalService", () => {
       authority: user,
       tokenBudget: 5,
     });
-    await service.recordUsage({
+    await recordGoalExecution({
       workspaceRoot: TMP_DIR,
       sessionId: usageSession,
       authority: runtime,
@@ -770,7 +937,7 @@ describe("SessionGoalService", () => {
       authority: agent,
       reason: "Missing production credential.",
     });
-    const crossed = await service.recordUsage({
+    const crossed = await recordGoalExecution({
       workspaceRoot: TMP_DIR,
       sessionId: usageSession,
       authority: runtime,
@@ -835,7 +1002,7 @@ describe("SessionGoalService", () => {
     expect(completed.status).toBe("complete");
     expect(completed.completedAt).toBeNumber();
 
-    const settled = await service.recordUsage({
+    const settled = await recordGoalExecution({
       workspaceRoot: TMP_DIR,
       sessionId,
       authority: runtime,

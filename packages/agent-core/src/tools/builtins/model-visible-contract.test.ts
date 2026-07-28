@@ -222,7 +222,7 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "background_output",
     competitorEvidenceIds: ["CC-160-A:TaskOutput", "OMO-B", "GB:task_output"],
     runtimeSourceIds: ["tools/builtins/background-output.ts"],
-    descriptionPatterns: [/status/, /direct child Session/, /final assistant response is the child result/i, /Failed, cancelled, timed-out, and interrupted executions expose status\/error but no final output/i, /block=true/, /terminal reminder/, /do not poll/i, /background_output\(/, /status is running or waiting_for_human.*not a final deliverable/i, /full_session=true/, /50 KiB/, /2,000 lines/, /exact schema-valid nextInput/, /without an artifact or silent truncation/i],
+    descriptionPatterns: [/status/, /direct child Session/, /final assistant response is the child result/i, /Failed, cancelled, timed-out, and interrupted executions expose status\/error but no final output/i, /block=true/, /terminal reminder/, /do not poll/i, /background_output\(/, /status is running or suspended.*not a final deliverable/i, /full_session=true/, /50 KiB/, /2,000 lines/, /exact schema-valid nextInput/, /without an artifact or silent truncation/i],
     schema: [
       { path: ["properties", "session_id"], descriptionPatterns: [/delegate, resume_session, a terminal reminder, or a prior child result/i, /must not be the current Session ID/i] },
       { path: ["properties", "block"], descriptionPatterns: [/Default false/, /waits while the Session is running/] },

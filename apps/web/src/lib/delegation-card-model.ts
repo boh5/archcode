@@ -13,6 +13,8 @@ export interface DelegationCardViewModel {
   executionStatusLabel: string;
   executionStatusDetail?: string;
   startedAt?: number;
+  durationMs?: number;
+  durationUpdatedAt?: number;
   hasInput: boolean;
   input?: unknown;
   projectSlug: string;
@@ -55,6 +57,8 @@ export function buildDelegationCardViewModel({
     : visualKind === "failed" ? "Error" : undefined;
   const startedAt = link?.startedAt
     ?? ("startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt);
+  const durationMs = link?.durationMs;
+  const durationUpdatedAt = link?.durationUpdatedAt;
 
   return {
     sessionId,
@@ -64,6 +68,8 @@ export function buildDelegationCardViewModel({
     executionStatusLabel,
     executionStatusDetail,
     startedAt,
+    durationMs,
+    durationUpdatedAt,
     hasInput,
     input,
     projectSlug,

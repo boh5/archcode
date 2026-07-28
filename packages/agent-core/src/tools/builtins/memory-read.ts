@@ -2,7 +2,7 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
-import type { AnyToolDescriptor, RawToolResult, ToolExecutionContext } from "../types";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import {
   DEFAULT_MAX_INDEX_LINES,
   DEFAULT_MAX_PREFERENCES_BYTES,
@@ -128,7 +128,7 @@ async function readTopicFile(
 
 // ─── Tool Definition (factory) ───
 
-export function createMemoryReadTool(): AnyToolDescriptor {
+export function createMemoryReadTool() {
   return defineTool({
     name: "memory_read",
     description:

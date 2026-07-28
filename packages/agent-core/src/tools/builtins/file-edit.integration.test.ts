@@ -97,6 +97,9 @@ function diagnostic(message: string, code?: string) {
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
     store: createMockStore(), toolName: "file_edit", toolCallId: "call-1", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch",
     abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["file_edit"]),
     cwd: testDir, storeManager, projectContext: createTestProjectContext(testDir), ...overrides,
   };

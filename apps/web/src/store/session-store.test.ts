@@ -17,7 +17,9 @@ import {
   __resetWebSessionStoresForTest,
 } from "./session-store";
 
-function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
+function compressionSummary(
+  currentObjective: string,
+): CompressionSummarySnapshot {
   return {
     sections: Object.fromEntries(
       COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [
@@ -32,19 +34,55 @@ const requestedModelSelection = {
   mode: "profile_default" as const,
   selection: { model: "test:model" },
 };
-const binding = { selection: { model: "test:model" }, providerId: "test", modelId: "model", providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "profile_default" as const, modelRuntimeRevision: "m1" };
+const binding = {
+  selection: { model: "test:model" },
+  providerId: "test",
+  modelId: "model",
+  providerDisplayName: "Test",
+  modelDisplayName: "Test Model",
+  resolution: "profile_default" as const,
+  modelRuntimeRevision: "m1",
+};
+const executionUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  reasoningTokens: 0,
+  cachedInputTokens: 0,
+};
+const idleRuntimeSnapshot = {
+  executionCount: 0,
+  isRunning: false,
+  isStreamingModel: false,
+  currentExecutionId: undefined,
+  currentAssistantMessageId: undefined,
+} as const;
 const sessionGoal: SessionGoal = {
   instanceId: "00000000-0000-4000-8000-000000000001",
+  settlementReceipts: [],
   generation: 1,
   objective: "Finish the implementation",
   status: "active",
-  usage: { tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 0, executionCount: 0 },
+  usage: {
+    tokens: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+    },
+    executionTimeMs: 0,
+    executionCount: 0,
+  },
   createdAt: 1,
   activatedAt: 1,
   updatedAt: 1,
 };
 
-function event(eventId: number, payload: SessionEventPayload): GlobalSessionEventEnvelope {
+function event(
+  eventId: number,
+  payload: SessionEventPayload,
+): GlobalSessionEventEnvelope {
   return {
     type: "event",
     slug: "demo",
@@ -56,20 +94,37 @@ function event(eventId: number, payload: SessionEventPayload): GlobalSessionEven
   };
 }
 
-function committedMessage(content: string, suffix: string): SessionEventPayload {
+function committedMessage(
+  content: string,
+  suffix: string,
+): SessionEventPayload {
   return {
     type: "session.messages_committed",
     executionId: `execution-${suffix}`,
-    messages: [{
-      id: `message-${suffix}`,
-      clientRequestId: `request-${suffix}`,
-      role: "user",
-      parts: [{ type: "text", id: `part-${suffix}`, text: content, createdAt: 1, completedAt: 1 }],
-      createdAt: 1,
-      completedAt: 1,
-      executionId: `execution-${suffix}`,
-      modelAudit: { requested: requestedModelSelection, actual: requestedModelSelection.selection },
-    }],
+    messages: [
+      {
+        id: `message-${suffix}`,
+        clientRequestId: `request-${suffix}`,
+        role: "user",
+        parts: [
+          {
+            type: "text",
+            id: `part-${suffix}`,
+            text: content,
+            createdAt: 1,
+            completedAt: 1,
+          },
+        ],
+        createdAt: 1,
+        completedAt: 1,
+        executionId: `execution-${suffix}`,
+        runOrdinal: 0,
+        modelAudit: {
+          requested: requestedModelSelection,
+          actual: requestedModelSelection.selection,
+        },
+      },
+    ],
   };
 }
 
@@ -79,12 +134,18 @@ describe("web session store registry", () => {
   });
 
   test("findWebSessionStore returns existing stores without creating missing stores", () => {
-    expect(findWebSessionStore("registry-session", "registry-slug")).toBeUndefined();
+    expect(
+      findWebSessionStore("registry-session", "registry-slug"),
+    ).toBeUndefined();
 
     const store = createWebSessionStore("registry-session", "registry-slug");
 
-    expect(findWebSessionStore("registry-session", "registry-slug")).toBe(store);
-    expect(findWebSessionStore("registry-session", "other-slug")).toBeUndefined();
+    expect(findWebSessionStore("registry-session", "registry-slug")).toBe(
+      store,
+    );
+    expect(
+      findWebSessionStore("registry-session", "other-slug"),
+    ).toBeUndefined();
   });
 
   test("new session stores hydrate canonical root and child identity", () => {
@@ -92,6 +153,7 @@ describe("web session store registry", () => {
     const childStore = createWebSessionStore("child-session", "identity");
 
     childStore.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       rootSessionId: "root-session",
       parentSessionId: "root-session",
       eventCursor: -1,
@@ -106,53 +168,142 @@ describe("web session store registry", () => {
   test("hydrates durable selection state and tracks the active execution binding", () => {
     const store = createWebSessionStore("model-state", "demo");
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       modelSelection: { revision: 2 },
-      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      nextModelSelection: {
+        requested: requestedModelSelection,
+        resolved: binding,
+      },
       activeModelBinding: undefined,
       eventCursor: -1,
     });
     expect(store.getState().nextModelSelection?.resolved).toEqual(binding);
-    store.getState().applyRemoteEnvelope({ ...event(0, { type: "execution-start", executionId: "execution-model", binding, origin: "user_message" }), sessionId: "model-state" });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "execution-start",
+        executionId: "execution-model",
+        binding,
+        origin: "user_message",
+        maxSteps: 10,
+      }),
+      sessionId: "model-state",
+    });
     expect(store.getState().activeModelBinding).toEqual(binding);
-    store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-end", status: "completed" }), sessionId: "model-state" });
+    store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "execution-end",
+        executionId: "execution-model",
+        terminalStatus: "completed",
+        endedAt: 1_700_000_000_001,
+        runEndedAt: 1_700_000_000_001,
+        runUsageDelta: executionUsage,
+        runSettlement: {
+          key: "run:execution-model:0",
+          goalInstanceId: null,
+        },
+        terminalSettlement: {
+          key: "terminal:execution-model",
+          goalInstanceId: null,
+        },
+      }),
+      sessionId: "model-state",
+    });
     expect(store.getState().activeModelBinding).toBeUndefined();
   });
 
-  test("hydrates the read-only Execution input checkpoint projection", () => {
-    const store = createWebSessionStore("input-checkpoint", "demo");
-    store.getState().initializeFromSnapshot({
-      executionInputCheckpoints: [{
-        executionId: "execution-1",
-        state: "continued",
-        continuationExecutionId: "execution-2",
-      }],
-      eventCursor: -1,
+  test("tracks the binding selected for a resumed run", () => {
+    const store = createWebSessionStore("resumed-model-state", "demo");
+    const resumedBinding = {
+      ...binding,
+      selection: { model: "test:resumed-model" },
+      modelId: "resumed-model",
+      modelDisplayName: "Resumed Model",
+      modelRuntimeRevision: "m2",
+    };
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "execution-start",
+        executionId: "execution-model",
+        binding,
+        origin: "user_message",
+        maxSteps: 10,
+      }),
+      sessionId: "resumed-model-state",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "execution-suspended",
+        executionId: "execution-model",
+        suspension: {
+          kind: "hitl",
+          toolBatchId: "batch-1",
+          blockerIds: ["hitl-1"],
+        },
+        runEndedAt: 1_700_000_000_001,
+        runUsageDelta: executionUsage,
+        runSettlement: {
+          key: "run:execution-model:0",
+          goalInstanceId: null,
+        },
+      }),
+      sessionId: "resumed-model-state",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(2, {
+        type: "execution-suspension-updated",
+        executionId: "execution-model",
+        suspension: {
+          kind: "resume_pending",
+          toolBatchId: "batch-1",
+          readyAt: 1_700_000_000_002,
+        },
+      }),
+      sessionId: "resumed-model-state",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(3, {
+        type: "execution-resumed",
+        executionId: "execution-model",
+        runOrdinal: 1,
+        binding: resumedBinding,
+      }),
+      sessionId: "resumed-model-state",
     });
 
-    expect(store.getState().executionInputCheckpoints).toEqual([{
-      executionId: "execution-1",
-      state: "continued",
-      continuationExecutionId: "execution-2",
-    }]);
+    expect(store.getState().activeModelBinding).toEqual(resumedBinding);
   });
 
   test("tracks Session cwd from snapshots and formal cwd transition events", () => {
     const store = createWebSessionStore("session-1", "demo");
-    store.getState().initializeFromSnapshot({ cwd: "/repo", eventCursor: -1 });
+    store
+      .getState()
+      .initializeFromSnapshot({
+        ...idleRuntimeSnapshot,
+        cwd: "/repo",
+        eventCursor: -1,
+      });
     expect(store.getState().cwd).toBe("/repo");
 
-    store.getState().applyRemoteEnvelope(event(0, {
-      type: "session.cwd_changed",
-      previousCwd: "/repo",
-      cwd: "/repo.worktrees/session-1",
-    }));
+    store.getState().applyRemoteEnvelope(
+      event(0, {
+        type: "session.cwd_changed",
+        previousCwd: "/repo",
+        cwd: "/repo.worktrees/session-1",
+      }),
+    );
 
     expect(store.getState().cwd).toBe("/repo.worktrees/session-1");
   });
 
   test("does not infer Session cwd from worktree tool-result metadata", () => {
     const store = createWebSessionStore("session-cwd-meta", "demo");
-    store.getState().initializeFromSnapshot({ cwd: "/repo", eventCursor: -1 });
+    store
+      .getState()
+      .initializeFromSnapshot({
+        ...idleRuntimeSnapshot,
+        cwd: "/repo",
+        eventCursor: -1,
+      });
 
     store.getState().applyRemoteEnvelope({
       ...event(0, {
@@ -185,7 +336,10 @@ describe("web session store registry", () => {
       parentToolCallId: "tool-call-1",
       toolName: "delegate",
       childSessionId: "child-1",
-      childAgentName: "explore", childProfile: "fast" as const, childSkillNames: [],
+      childExecutionId: "child-execution-1",
+      childAgentName: "explore",
+      childProfile: "fast" as const,
+      childSkillNames: [],
       title: "Explore child",
       depth: 1,
       background: true,
@@ -197,14 +351,22 @@ describe("web session store registry", () => {
       status: "completed" as const,
       endedAt: 200,
       durationMs: 100,
+      durationUpdatedAt: 200,
     };
 
-    store.getState().applyRemoteEnvelope(event(0, { type: "tool-child-session-link", link }));
-    store.getState().applyRemoteEnvelope(event(1, { type: "tool-child-session-link", link: completed }));
+    store
+      .getState()
+      .applyRemoteEnvelope(event(0, { type: "tool-child-session-link", link }));
+    store
+      .getState()
+      .applyRemoteEnvelope(
+        event(1, { type: "tool-child-session-link", link: completed }),
+      );
 
     expect(store.getState().childSessionLinks).toEqual([completed]);
 
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       childSessionLinks: [link],
       eventCursor: 1,
     });
@@ -256,7 +418,10 @@ describe("applyRemoteEnvelope", () => {
   test("drops envelopes for other sessions without changing the store", () => {
     const store = createWebSessionStore("known", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("wrong", "wrong")), sessionId: "unknown" });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("wrong", "wrong")),
+      sessionId: "unknown",
+    });
 
     expect(store.getState().nextEventId).toBe(0);
     expect(store.getState().events).toEqual([]);
@@ -264,7 +429,10 @@ describe("applyRemoteEnvelope", () => {
 
   test("dedupes stale and duplicate remote envelopes by server event id", () => {
     const store = createWebSessionStore("dedupe", "demo");
-    const first = { ...event(0, committedMessage("hello", "first")), sessionId: "dedupe" };
+    const first = {
+      ...event(0, committedMessage("hello", "first")),
+      sessionId: "dedupe",
+    };
 
     store.getState().applyRemoteEnvelope(first);
     store.getState().applyRemoteEnvelope(first);
@@ -274,45 +442,118 @@ describe("applyRemoteEnvelope", () => {
     expect(store.getState().nextEventId).toBe(1);
   });
 
+  test("consumes an exact lifecycle replay without changing its projection", () => {
+    const store = createWebSessionStore("lifecycle-duplicate", "demo");
+    const start = {
+      type: "execution-start" as const,
+      executionId: "execution-1",
+      binding,
+      origin: "user_message" as const,
+      maxSteps: 10,
+    };
+
+    expect(store.getState().applyRemoteEnvelope({
+      ...event(0, start),
+      sessionId: "lifecycle-duplicate",
+    })).toBe("applied");
+    const executions = store.getState().executions;
+
+    expect(store.getState().applyRemoteEnvelope({
+      ...event(1, start),
+      sessionId: "lifecycle-duplicate",
+    })).toBe("duplicate");
+
+    expect(store.getState().executions).toBe(executions);
+    expect(store.getState().events.map((item) => item.id)).toEqual([0, 1]);
+    expect(store.getState().nextEventId).toBe(2);
+  });
+
+  test("rejects an invalid lifecycle edge without moving the event cursor", () => {
+    const store = createWebSessionStore("lifecycle-invalid", "demo");
+    const start = {
+      type: "execution-start" as const,
+      executionId: "execution-1",
+      binding,
+      origin: "user_message" as const,
+      maxSteps: 10,
+    };
+    store.getState().applyRemoteEnvelope({
+      ...event(0, start),
+      sessionId: "lifecycle-invalid",
+    });
+    const executions = store.getState().executions;
+
+    expect(store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "execution-resumed",
+        executionId: "execution-1",
+        runOrdinal: 1,
+        binding,
+      }),
+      sessionId: "lifecycle-invalid",
+    })).toBe("invalid");
+
+    expect(store.getState().executions).toBe(executions);
+    expect(store.getState().events.map((item) => item.id)).toEqual([0]);
+    expect(store.getState().nextEventId).toBe(1);
+  });
+
   test("replays Session Goal snapshots without crashing and applies an explicit clear", () => {
     const store = createWebSessionStore("session-1", "demo");
 
-    expect(() => store.getState().applyRemoteEnvelope(event(0, {
-      type: "session.goal_changed",
-      action: "created",
-      instanceId: sessionGoal.instanceId,
-      generation: sessionGoal.generation,
-      goal: sessionGoal,
-      status: sessionGoal.status,
-      occurredAt: 1,
-    }))).not.toThrow();
+    expect(() =>
+      store.getState().applyRemoteEnvelope(
+        event(0, {
+          type: "session.goal_changed",
+          action: "created",
+          instanceId: sessionGoal.instanceId,
+          generation: sessionGoal.generation,
+          goal: sessionGoal,
+          status: sessionGoal.status,
+          occurredAt: 1,
+        }),
+      ),
+    ).not.toThrow();
     expect(store.getState().goal).toEqual(sessionGoal);
 
-    expect(() => store.getState().applyRemoteEnvelope(event(1, {
-      type: "session.goal_changed",
-      action: "cleared",
-      instanceId: sessionGoal.instanceId,
-      generation: sessionGoal.generation,
-      goal: null,
-      occurredAt: 2,
-    }))).not.toThrow();
+    expect(() =>
+      store.getState().applyRemoteEnvelope(
+        event(1, {
+          type: "session.goal_changed",
+          action: "cleared",
+          instanceId: sessionGoal.instanceId,
+          generation: sessionGoal.generation,
+          goal: null,
+          occurredAt: 2,
+        }),
+      ),
+    ).not.toThrow();
     expect(store.getState().goal).toBeUndefined();
   });
 
   test("buffers gaps and drains only contiguous remote envelopes", () => {
     const store = createWebSessionStore("gap", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(1, committedMessage("second", "second")), sessionId: "gap" });
+    store.getState().applyRemoteEnvelope({
+      ...event(1, committedMessage("second", "second")),
+      sessionId: "gap",
+    });
     expect(store.getState().events).toEqual([]);
     expect(store.getState().nextEventId).toBe(0);
 
-    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("first", "first")), sessionId: "gap" });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("first", "first")),
+      sessionId: "gap",
+    });
 
     expect(store.getState().events.map((item) => item.id)).toEqual([0, 1]);
-    expect(store.getState().messages.map((message) => message.parts[0]?.type === "text" ? message.parts[0].text : "")).toEqual([
-      "first",
-      "second",
-    ]);
+    expect(
+      store
+        .getState()
+        .messages.map((message) =>
+          message.parts[0]?.type === "text" ? message.parts[0].text : "",
+        ),
+    ).toEqual(["first", "second"]);
     expect(store.getState().nextEventId).toBe(2);
   });
 
@@ -324,13 +565,15 @@ describe("applyRemoteEnvelope", () => {
       requestedModelSelection,
       createdAt: 42,
     });
-    expect(store.getState().localSendingMessages).toEqual([{
-      clientRequestId: "request-1",
-      content: "hello",
-      createdAt: 42,
-      status: "sending",
-      requestedModelSelection,
-    }]);
+    expect(store.getState().localSendingMessages).toEqual([
+      {
+        clientRequestId: "request-1",
+        content: "hello",
+        createdAt: 42,
+        status: "sending",
+        requestedModelSelection,
+      },
+    ]);
     store.getState().setLocalSendingMessageStatus("request-1", "retryable");
     expect(store.getState().localSendingMessages[0]?.status).toBe("retryable");
 
@@ -356,61 +599,6 @@ describe("applyRemoteEnvelope", () => {
     expect(store.getState().pendingMessages).toHaveLength(1);
   });
 
-  test("projects edit, steer, rollback, delete, and commit events in the ordinary timeline", () => {
-    const store = createWebSessionStore("queue-lifecycle", "demo");
-    const queued = {
-      id: "message-1",
-      clientRequestId: "request-1",
-      content: "first",
-      source: "user" as const,
-      state: "queued" as const,
-      revision: 1,
-      acceptedAt: 10,
-      updatedAt: 10,
-      requestedModelSelection,
-    };
-
-    const apply = (eventId: number, payload: SessionEventPayload) => store.getState().applyRemoteEnvelope({
-      ...event(eventId, payload),
-      sessionId: "queue-lifecycle",
-    });
-
-    apply(0, { type: "session.message_accepted", message: queued });
-    apply(1, { type: "session.message_edited", message: { ...queued, content: "edited", revision: 2, updatedAt: 11 } });
-    apply(2, {
-      type: "session.message_steer_claimed",
-      message: { ...queued, content: "edited", state: "steering", revision: 3, updatedAt: 12, targetExecutionId: "execution-1" },
-    });
-    expect(store.getState().pendingMessages[0]).toMatchObject({ state: "steering", targetExecutionId: "execution-1" });
-
-    apply(3, {
-      type: "session.message_steer_rolled_back",
-      message: { ...queued, content: "edited", revision: 4, updatedAt: 13 },
-    });
-    expect(store.getState().pendingMessages[0]).toMatchObject({ state: "queued", revision: 4 });
-
-    apply(4, {
-      type: "session.messages_committed",
-      executionId: "execution-2",
-      messages: [{
-        id: "message-1",
-        clientRequestId: "request-1",
-        role: "user",
-        parts: [{ type: "text", id: "part-1", text: "edited", createdAt: 14, completedAt: 14 }],
-        createdAt: 14,
-        completedAt: 14,
-        executionId: "execution-2",
-        modelAudit: { requested: requestedModelSelection, actual: requestedModelSelection.selection },
-      }],
-    });
-    expect(store.getState().pendingMessages).toEqual([]);
-    expect(store.getState().messages[0]).toMatchObject({ id: "message-1", clientRequestId: "request-1" });
-
-    apply(5, { type: "session.message_accepted", message: { ...queued, id: "message-2", clientRequestId: "request-2" } });
-    apply(6, { type: "session.message_deleted", messageId: "message-2", clientRequestId: "request-2", revision: 2, deletedAt: 15 });
-    expect(store.getState().pendingMessages).toEqual([]);
-  });
-
 });
 
 describe("initializeFromSnapshot", () => {
@@ -421,29 +609,49 @@ describe("initializeFromSnapshot", () => {
   test("hydrates and explicitly clears the Session Goal from a current snapshot", () => {
     const store = createWebSessionStore("goal-snapshot", "demo");
 
-    store.getState().initializeFromSnapshot({ goal: sessionGoal, eventCursor: -1 });
+    store
+      .getState()
+      .initializeFromSnapshot({
+        ...idleRuntimeSnapshot,
+        goal: sessionGoal,
+        eventCursor: -1,
+      });
     expect(store.getState().goal).toEqual(sessionGoal);
 
-    store.getState().initializeFromSnapshot({ goal: undefined, eventCursor: -1 });
+    store
+      .getState()
+      .initializeFromSnapshot({
+        ...idleRuntimeSnapshot,
+        goal: undefined,
+        eventCursor: -1,
+      });
     expect(store.getState().goal).toBeUndefined();
   });
 
   test("durable snapshot takes over an optimistic bubble by clientRequestId", () => {
     const store = createWebSessionStore("snapshot-optimistic", "demo");
-    store.getState().addLocalSendingMessage({ clientRequestId: "request-1", content: "hello", requestedModelSelection, createdAt: 1 });
+    store.getState().addLocalSendingMessage({
+      clientRequestId: "request-1",
+      content: "hello",
+      requestedModelSelection,
+      createdAt: 1,
+    });
 
     store.getState().initializeFromSnapshot({
-      pendingMessages: [{
-        id: "message-1",
-        clientRequestId: "request-1",
-        content: "hello",
-        source: "user",
-        state: "queued",
-        revision: 1,
-        acceptedAt: 2,
-        updatedAt: 2,
-        requestedModelSelection,
-      }],
+      ...idleRuntimeSnapshot,
+      pendingMessages: [
+        {
+          id: "message-1",
+          clientRequestId: "request-1",
+          content: "hello",
+          source: "user",
+          state: "queued",
+          revision: 1,
+          acceptedAt: 2,
+          updatedAt: 2,
+          requestedModelSelection,
+        },
+      ],
       eventCursor: -1,
     });
 
@@ -454,8 +662,12 @@ describe("initializeFromSnapshot", () => {
   test("authoritatively overwrites fields with empty arrays, null title, and event cursor", () => {
     const store = createWebSessionStore("snapshot", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("old", "old")), sessionId: "snapshot" });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("old", "old")),
+      sessionId: "snapshot",
+    });
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       title: "Existing",
       todos: [{ id: "todo-1", content: "todo", status: "pending" }],
       rootSessionId: "root-session-id",
@@ -463,6 +675,7 @@ describe("initializeFromSnapshot", () => {
     });
 
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       messages: [],
       steps: [],
       todos: [],
@@ -489,9 +702,21 @@ describe("initializeFromSnapshot", () => {
   test("replays contiguous buffered remote events after snapshot cursor", () => {
     const store = createWebSessionStore("snapshot-buffer", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(6, committedMessage("six", "six")), sessionId: "snapshot-buffer" });
-    store.getState().applyRemoteEnvelope({ ...event(8, committedMessage("eight", "eight")), sessionId: "snapshot-buffer" });
-    store.getState().initializeFromSnapshot({ messages: [], eventCursor: 5 });
+    store.getState().applyRemoteEnvelope({
+      ...event(6, committedMessage("six", "six")),
+      sessionId: "snapshot-buffer",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(8, committedMessage("eight", "eight")),
+      sessionId: "snapshot-buffer",
+    });
+    store
+      .getState()
+      .initializeFromSnapshot({
+        ...idleRuntimeSnapshot,
+        messages: [],
+        eventCursor: 5,
+      });
 
     expect(store.getState().events.map((item) => item.id)).toEqual([6]);
     expect(store.getState().nextEventId).toBe(7);
@@ -501,11 +726,47 @@ describe("initializeFromSnapshot", () => {
     const store = createWebSessionStore("stale-guard", "demo");
 
     // Simulate SSE processing events up to event 5
-    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("hello", "stale-hello")), sessionId: "stale-guard" });
-    store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "stale-guard" });
-    store.getState().applyRemoteEnvelope({ ...event(2, committedMessage("world", "stale-world")), sessionId: "stale-guard" });
-    store.getState().applyRemoteEnvelope({ ...event(3, { type: "execution-end", executionId: "run-1", status: "completed" } as SessionEventPayload), sessionId: "stale-guard" });
-    store.getState().applyRemoteEnvelope({ ...event(4, { type: "execution-start", executionId: "run-2" } as SessionEventPayload), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("hello", "stale-hello")),
+      sessionId: "stale-guard",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "execution-start",
+        executionId: "run-1",
+        binding,
+        origin: "user_message",
+        maxSteps: 10,
+      }),
+      sessionId: "stale-guard",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(2, committedMessage("world", "stale-world")),
+      sessionId: "stale-guard",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(3, {
+        type: "execution-end",
+        executionId: "run-1",
+        terminalStatus: "completed",
+        endedAt: 1_700_000_000_003,
+        runEndedAt: 1_700_000_000_003,
+        runUsageDelta: executionUsage,
+        runSettlement: { key: "run:run-1:0", goalInstanceId: null },
+        terminalSettlement: { key: "terminal:run-1", goalInstanceId: null },
+      }),
+      sessionId: "stale-guard",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(4, {
+        type: "execution-start",
+        executionId: "run-2",
+        binding,
+        origin: "user_message",
+        maxSteps: 10,
+      }),
+      sessionId: "stale-guard",
+    });
 
     expect(store.getState().nextEventId).toBe(5);
 
@@ -515,9 +776,21 @@ describe("initializeFromSnapshot", () => {
 
     // Simulate a stale snapshot from server with eventCursor=2 (behind SSE's nextEventId=5)
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       messages: [],
       steps: [],
-      stats: { messages: { user: 0, assistant: 0, total: 0 }, tools: { calls: 0, completed: 0, failed: 0 }, steps: { started: 0, completed: 0 }, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 } },
+      stats: {
+        messages: { user: 0, assistant: 0, total: 0 },
+        tools: { calls: 0, completed: 0, failed: 0 },
+        steps: { started: 0, completed: 0 },
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+        },
+      },
       eventCursor: 2,
     });
 
@@ -532,20 +805,34 @@ describe("initializeFromSnapshot", () => {
 
   test("does not roll model selection back when a stale snapshot follows selection SSE", () => {
     const store = createWebSessionStore("stale-model-selection", "demo");
-    const latestSelection = { revision: 3, override: { model: "test:new-model" } };
+    const latestSelection = {
+      revision: 3,
+      override: { model: "test:new-model" },
+    };
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       modelSelection: { revision: 1 },
-      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      nextModelSelection: {
+        requested: requestedModelSelection,
+        resolved: binding,
+      },
       eventCursor: -1,
     });
     store.getState().applyRemoteEnvelope({
-      ...event(0, { type: "session.model_selection_changed", modelSelection: latestSelection }),
+      ...event(0, {
+        type: "session.model_selection_changed",
+        modelSelection: latestSelection,
+      }),
       sessionId: "stale-model-selection",
     });
 
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       modelSelection: { revision: 1 },
-      nextModelSelection: { requested: requestedModelSelection, resolved: binding },
+      nextModelSelection: {
+        requested: requestedModelSelection,
+        resolved: binding,
+      },
       eventCursor: -1,
     });
 
@@ -556,22 +843,39 @@ describe("initializeFromSnapshot", () => {
   test("does not clear an active binding when a stale snapshot follows execution-start SSE", () => {
     const store = createWebSessionStore("stale-active-binding", "demo");
     store.getState().applyRemoteEnvelope({
-      ...event(0, { type: "execution-start", executionId: "execution-model", binding, origin: "user_message" }),
+      ...event(0, {
+        type: "execution-start",
+        executionId: "execution-model",
+        binding,
+        origin: "user_message",
+        maxSteps: 10,
+      }),
       sessionId: "stale-active-binding",
     });
 
-    store.getState().initializeFromSnapshot({ activeModelBinding: undefined, eventCursor: -1 });
+    store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
+      activeModelBinding: undefined,
+      eventCursor: -1,
+    });
 
     expect(store.getState().activeModelBinding).toEqual(binding);
   });
 
   test("does not rewind the event log or cursor when a stale snapshot contains events", () => {
     const store = createWebSessionStore("stale-events", "demo");
-    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("first", "first")), sessionId: "stale-events" });
-    store.getState().applyRemoteEnvelope({ ...event(1, committedMessage("second", "second")), sessionId: "stale-events" });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("first", "first")),
+      sessionId: "stale-events",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(1, committedMessage("second", "second")),
+      sessionId: "stale-events",
+    });
     const eventsBeforeSnapshot = store.getState().events;
 
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       events: [eventsBeforeSnapshot[0]!],
       eventCursor: 0,
     });
@@ -585,16 +889,39 @@ describe("initializeFromSnapshot", () => {
     const store = createWebSessionStore("fresh-snapshot", "demo");
 
     // Local state has only processed 2 events
-    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("hello", "fresh-hello")), sessionId: "fresh-snapshot" });
-    store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "fresh-snapshot" });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("hello", "fresh-hello")),
+      sessionId: "fresh-snapshot",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "execution-start",
+        executionId: "run-1",
+      } as SessionEventPayload),
+      sessionId: "fresh-snapshot",
+    });
     expect(store.getState().nextEventId).toBe(2);
 
     // Snapshot from server has up-to-date data (eventCursor matches)
-    const snapshotMessages: SessionMessage[] = [{ id: "msg-1", role: "assistant", parts: [], createdAt: 1000 }];
+    const snapshotMessages: SessionMessage[] = [
+      { id: "msg-1", role: "assistant", parts: [], createdAt: 1000 },
+    ];
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       messages: snapshotMessages,
       steps: [],
-      stats: { messages: { user: 3, assistant: 2, total: 5 }, tools: { calls: 3, completed: 2, failed: 0 }, steps: { started: 8, completed: 7 }, usage: { inputTokens: 100, outputTokens: 200, totalTokens: 300, reasoningTokens: 0, cachedInputTokens: 0 } },
+      stats: {
+        messages: { user: 3, assistant: 2, total: 5 },
+        tools: { calls: 3, completed: 2, failed: 0 },
+        steps: { started: 8, completed: 7 },
+        usage: {
+          inputTokens: 100,
+          outputTokens: 200,
+          totalTokens: 300,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+        },
+      },
       eventCursor: 2,
     });
 
@@ -603,28 +930,72 @@ describe("initializeFromSnapshot", () => {
     expect(store.getState().stats.tools.calls).toBe(3);
   });
 
+  test("does not infer runtime ownership from execution records", () => {
+    const store = createWebSessionStore("authoritative-runtime", "demo");
+    store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
+      executions: [
+        {
+          id: "recorded-running-execution",
+          startedAt: 1,
+          status: "running",
+          origin: "user_message",
+          maxSteps: 10,
+          durationMs: 0,
+          runs: [{ ordinal: 0, startedAt: 1, binding }],
+        },
+      ],
+      steps: [
+        {
+          id: "recorded-running-step",
+          step: 0,
+          executionId: "recorded-running-execution",
+          runOrdinal: 0,
+          startedAt: 1,
+        },
+      ],
+      eventCursor: 0,
+    });
+
+    expect(store.getState()).toMatchObject({
+      executionCount: 0,
+      isRunning: false,
+      isStreamingModel: false,
+    });
+    expect(store.getState().currentExecutionId).toBeUndefined();
+    expect(store.getState().currentAssistantMessageId).toBeUndefined();
+  });
+
   test("restores live reducer ownership before applying post-snapshot tool events", () => {
     const store = createWebSessionStore("session-1", "demo");
     const executionId = "running-execution";
     store.getState().initializeFromSnapshot({
       messages: [],
-      steps: [{
-        id: "running-step",
-        step: 0,
-        executionId,
-        startedAt: 1,
-      }],
-      executions: [{
-        id: executionId,
-        startedAt: 1,
-        status: "running",
-        binding,
-        origin: "user_message",
-      }],
+      steps: [
+        {
+          id: "running-step",
+          step: 0,
+          executionId,
+          runOrdinal: 0,
+          startedAt: 1,
+        },
+      ],
+      executions: [
+        {
+          id: executionId,
+          startedAt: 1,
+          status: "running",
+          origin: "user_message",
+          maxSteps: 10,
+          durationMs: 0,
+          runs: [{ ordinal: 0, startedAt: 1, binding }],
+        },
+      ],
       executionCount: 1,
       isRunning: true,
       isStreamingModel: true,
       currentExecutionId: executionId,
+      currentAssistantMessageId: undefined,
       activeModelBinding: binding,
       eventCursor: 10,
     });
@@ -636,21 +1007,25 @@ describe("initializeFromSnapshot", () => {
       isStreamingModel: true,
     });
 
-    store.getState().applyRemoteEnvelope(event(11, {
-      type: "tool-input-start",
-      toolCallId: "live-tool",
-      toolName: "glob",
-    }));
+    store.getState().applyRemoteEnvelope(
+      event(11, {
+        type: "tool-input-start",
+        toolCallId: "live-tool",
+        toolName: "glob",
+      }),
+    );
 
     expect(store.getState().messages).toHaveLength(1);
     expect(store.getState().messages[0]).toMatchObject({
       role: "assistant",
       executionId,
-      parts: [{
-        type: "tool",
-        state: "pending",
-        toolCallId: "live-tool",
-      }],
+      parts: [
+        {
+          type: "tool",
+          state: "pending",
+          toolCallId: "live-tool",
+        },
+      ],
     });
   });
 
@@ -662,25 +1037,31 @@ describe("initializeFromSnapshot", () => {
       role: "assistant",
       executionId,
       createdAt: 1,
-      parts: [{
-        type: "tool",
-        id: "tool-part",
-        state: "pending",
-        toolCallId: "live-tool",
-        toolName: "glob",
-        createdAt: 1,
-      }],
+      parts: [
+        {
+          type: "tool",
+          id: "tool-part",
+          state: "pending",
+          toolCallId: "live-tool",
+          toolName: "glob",
+          createdAt: 1,
+        },
+      ],
     };
     store.getState().initializeFromSnapshot({
       messages: [assistant],
       steps: [],
-      executions: [{
-        id: executionId,
-        startedAt: 1,
-        status: "running",
-        binding,
-        origin: "user_message",
-      }],
+      executions: [
+        {
+          id: executionId,
+          startedAt: 1,
+          status: "running",
+          origin: "user_message",
+          maxSteps: 10,
+          durationMs: 0,
+          runs: [{ ordinal: 0, startedAt: 1, binding }],
+        },
+      ],
       executionCount: 1,
       isRunning: true,
       isStreamingModel: false,
@@ -691,12 +1072,14 @@ describe("initializeFromSnapshot", () => {
 
     expect(store.getState().currentAssistantMessageId).toBe(assistant.id);
 
-    store.getState().applyRemoteEnvelope(event(11, {
-      type: "tool-call",
-      toolCallId: "live-tool",
-      toolName: "glob",
-      input: { pattern: "**/*.ts" },
-    }));
+    store.getState().applyRemoteEnvelope(
+      event(11, {
+        type: "tool-call",
+        toolCallId: "live-tool",
+        toolName: "glob",
+        input: { pattern: "**/*.ts" },
+      }),
+    );
 
     expect(store.getState().messages).toHaveLength(1);
     expect(store.getState().messages[0]?.parts[0]).toMatchObject({
@@ -714,29 +1097,38 @@ describe("initializeFromSnapshot", () => {
       role: "assistant",
       executionId,
       createdAt: 1,
-      parts: [{
-        type: "text",
-        id: "text-part",
-        text: "Checking the workspace.",
-        createdAt: 1,
-        completedAt: 2,
-      }],
+      parts: [
+        {
+          type: "text",
+          id: "text-part",
+          text: "Checking the workspace.",
+          createdAt: 1,
+          completedAt: 2,
+        },
+      ],
     };
     store.getState().initializeFromSnapshot({
       messages: [assistant],
-      steps: [{
-        id: "running-step",
-        step: 0,
-        executionId,
-        startedAt: 1,
-      }],
-      executions: [{
-        id: executionId,
-        startedAt: 1,
-        status: "running",
-        binding,
-        origin: "user_message",
-      }],
+      steps: [
+        {
+          id: "running-step",
+          step: 0,
+          executionId,
+          runOrdinal: 0,
+          startedAt: 1,
+        },
+      ],
+      executions: [
+        {
+          id: executionId,
+          startedAt: 1,
+          status: "running",
+          origin: "user_message",
+          maxSteps: 10,
+          durationMs: 0,
+          runs: [{ ordinal: 0, startedAt: 1, binding }],
+        },
+      ],
       executionCount: 1,
       isRunning: true,
       isStreamingModel: true,
@@ -745,11 +1137,13 @@ describe("initializeFromSnapshot", () => {
       eventCursor: 10,
     });
 
-    store.getState().applyRemoteEnvelope(event(11, {
-      type: "tool-input-start",
-      toolCallId: "live-tool",
-      toolName: "glob",
-    }));
+    store.getState().applyRemoteEnvelope(
+      event(11, {
+        type: "tool-input-start",
+        toolCallId: "live-tool",
+        toolName: "glob",
+      }),
+    );
 
     expect(store.getState().messages).toHaveLength(1);
     expect(store.getState().messages[0]).toMatchObject({
@@ -771,56 +1165,67 @@ describe("initializeFromSnapshot", () => {
       requestedModelSelection,
       createdAt: 1,
     });
-    store.getState().applyRemoteEnvelope(event(0, {
-      type: "session.message_accepted",
-      message: {
-        id: "first-message",
-        clientRequestId: "first-request",
-        content: "Start the first task",
-        source: "user",
-        state: "queued",
-        revision: 0,
-        acceptedAt: 1,
-        updatedAt: 1,
-        requestedModelSelection,
-      },
-    }));
+    store.getState().applyRemoteEnvelope(
+      event(0, {
+        type: "session.message_accepted",
+        message: {
+          id: "first-message",
+          clientRequestId: "first-request",
+          content: "Start the first task",
+          source: "user",
+          state: "queued",
+          revision: 0,
+          acceptedAt: 1,
+          updatedAt: 1,
+          requestedModelSelection,
+        },
+      }),
+    );
 
     expect(store.getState().pendingMessages).toHaveLength(1);
 
     store.getState().initializeFromSnapshot({
-      messages: [{
-        id: "first-message",
-        clientRequestId: "first-request",
-        role: "user",
-        executionId,
-        createdAt: 1,
-        completedAt: 2,
-        modelAudit: {
-          requested: requestedModelSelection,
-          actual: requestedModelSelection.selection,
-        },
-        parts: [{
-          type: "text",
-          id: "first-message:text",
-          text: "Start the first task",
+      messages: [
+        {
+          id: "first-message",
+          clientRequestId: "first-request",
+          role: "user",
+          executionId,
           createdAt: 1,
           completedAt: 2,
-        }],
-      }],
+          modelAudit: {
+            requested: requestedModelSelection,
+            actual: requestedModelSelection.selection,
+          },
+          parts: [
+            {
+              type: "text",
+              id: "first-message:text",
+              text: "Start the first task",
+              createdAt: 1,
+              completedAt: 2,
+            },
+          ],
+        },
+      ],
       pendingMessages: [],
       steps: [],
-      executions: [{
-        id: executionId,
-        startedAt: 2,
-        status: "running",
-        binding,
-        origin: "user_message",
-      }],
+      executions: [
+        {
+          id: executionId,
+          startedAt: 2,
+          status: "running",
+          origin: "user_message",
+          maxSteps: 10,
+          durationMs: 0,
+          runs: [{ ordinal: 0, startedAt: 2, binding }],
+        },
+      ],
       executionCount: 1,
       isRunning: true,
       isStreamingModel: false,
       currentExecutionId: executionId,
+      currentAssistantMessageId: undefined,
       eventCursor: 2,
     });
 
@@ -840,10 +1245,20 @@ describe("initializeFromSnapshot", () => {
   test("always updates scalar metadata fields even with stale snapshot", () => {
     const store = createWebSessionStore("stale-metadata", "demo");
 
-    store.getState().applyRemoteEnvelope({ ...event(0, committedMessage("hello", "metadata-hello")), sessionId: "stale-metadata" });
-    store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "stale-metadata" });
+    store.getState().applyRemoteEnvelope({
+      ...event(0, committedMessage("hello", "metadata-hello")),
+      sessionId: "stale-metadata",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "execution-start",
+        executionId: "run-1",
+      } as SessionEventPayload),
+      sessionId: "stale-metadata",
+    });
 
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       title: "New Title",
       createdAt: 9999,
       rootSessionId: "root-session-id",
@@ -876,7 +1291,9 @@ describe("focusSessionId", () => {
   });
 });
 
-function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {}): CompressionBlockSnapshot {
+function makeCompressionBlock(
+  overrides: Partial<CompressionBlockSnapshot> = {},
+): CompressionBlockSnapshot {
   return {
     id: "block-1",
     ref: "b1",
@@ -900,7 +1317,9 @@ function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {})
   };
 }
 
-function makeCompressionState(block: CompressionBlockSnapshot): CompressionStateSnapshot {
+function makeCompressionState(
+  block: CompressionBlockSnapshot,
+): CompressionStateSnapshot {
   return {
     refMap: {
       messageRefsById: { first: "m0001", tail: "m0002" },
@@ -929,7 +1348,11 @@ describe("compression events and snapshot hydration", () => {
     const block = makeCompressionBlock();
 
     store.getState().applyRemoteEnvelope({
-      ...event(0, { type: "compression.block_committed", block, state: makeCompressionState(block) }),
+      ...event(0, {
+        type: "compression.block_committed",
+        block,
+        state: makeCompressionState(block),
+      }),
       sessionId: "compress-1",
     });
 
@@ -948,14 +1371,22 @@ describe("compression events and snapshot hydration", () => {
     const block = makeCompressionBlock();
 
     store.getState().applyRemoteEnvelope({
-      ...event(0, { type: "compression.block_committed", block, state: makeCompressionState(block) }),
+      ...event(0, {
+        type: "compression.block_committed",
+        block,
+        state: makeCompressionState(block),
+      }),
       sessionId: "compress-compact",
     });
     expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
     expect(store.getState().compressionBlocks).toHaveLength(1);
 
     store.getState().applyRemoteEnvelope({
-      ...event(1, { type: "compact", summary: "summary", tailStartId: "missing" }),
+      ...event(1, {
+        type: "compact",
+        summary: "summary",
+        tailStartId: "missing",
+      }),
       sessionId: "compress-compact",
     });
 
@@ -969,14 +1400,26 @@ describe("compression events and snapshot hydration", () => {
     store.getState().applyRemoteEnvelope({
       ...event(0, {
         type: "compression.block_failed",
-        failure: { id: "failure-1", reason: "summary invalid", startRef: "m0001", endRef: "m0002", failedAt: 101 },
+        failure: {
+          id: "failure-1",
+          reason: "summary invalid",
+          startRef: "m0001",
+          endRef: "m0002",
+          failedAt: 101,
+        },
       }),
       sessionId: "compress-fail",
     });
 
     const state = store.getState();
     expect(state.compression?.failures).toEqual([
-      { id: "failure-1", reason: "summary invalid", startRef: "m0001", endRef: "m0002", failedAt: 101 },
+      {
+        id: "failure-1",
+        reason: "summary invalid",
+        startRef: "m0001",
+        endRef: "m0002",
+        failedAt: 101,
+      },
     ]);
     expect(state.compressionBlocks ?? []).toEqual([]);
   });
@@ -1000,7 +1443,9 @@ describe("compression events and snapshot hydration", () => {
       sessionId: "compress-refmap",
     });
 
-    expect(store.getState().compression?.refMap.messageRefsById.first).toBe("m0001");
+    expect(store.getState().compression?.refMap.messageRefsById.first).toBe(
+      "m0001",
+    );
   });
 
   test("initializeFromSnapshot hydrates only the authoritative compression snapshot", () => {
@@ -1009,6 +1454,7 @@ describe("compression events and snapshot hydration", () => {
     const compression = makeCompressionState(block);
 
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       compression,
       eventCursor: 0,
     });
@@ -1024,7 +1470,11 @@ describe("compression events and snapshot hydration", () => {
     const block = makeCompressionBlock();
 
     store.getState().applyRemoteEnvelope({
-      ...event(0, { type: "compression.block_committed", block, state: makeCompressionState(block) }),
+      ...event(0, {
+        type: "compression.block_committed",
+        block,
+        state: makeCompressionState(block),
+      }),
       sessionId: "compress-stale",
     });
     store.getState().applyRemoteEnvelope({
@@ -1037,6 +1487,7 @@ describe("compression events and snapshot hydration", () => {
 
     const staleBlock = makeCompressionBlock({ ref: "b2", id: "block-2" });
     store.getState().initializeFromSnapshot({
+      ...idleRuntimeSnapshot,
       compression: makeCompressionState(staleBlock),
       eventCursor: 0,
     });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { automationInvocationStatusLabel, automationStatusLabel, automationVisualKind } from "./automation-status-presentation";
-import { sessionFamilyVisual } from "./session-family-presentation";
+import { sessionFamilyActivityLabel, sessionFamilyVisual } from "./session-family-presentation";
 import { presentSessionGoalStatus } from "./session-goal-presentation";
 
 describe("workbench domain status presentation", () => {
@@ -17,9 +17,16 @@ describe("workbench domain status presentation", () => {
 
   test("maps only authoritative Session family activity to a looping kind", () => {
     expect(sessionFamilyVisual("running")).toEqual({ kind: "running" });
+    expect(sessionFamilyVisual("resuming")).toEqual({ kind: "running" });
+    expect(sessionFamilyVisual("waiting_for_human")).toEqual({ kind: "pending" });
     expect(sessionFamilyVisual("stopping")).toEqual({ kind: "running", tone: "warning" });
     expect(sessionFamilyVisual("idle")).toEqual({ kind: "idle" });
     expect(sessionFamilyVisual(undefined)).toEqual({ kind: "unknown" });
+  });
+
+  test("keeps suspended and resuming families distinct from idle", () => {
+    expect(sessionFamilyActivityLabel("waiting_for_human")).toBe("Waiting");
+    expect(sessionFamilyActivityLabel("resuming")).toBe("Resuming");
   });
 
   test("locks the five concise Goal status labels and semantics", () => {

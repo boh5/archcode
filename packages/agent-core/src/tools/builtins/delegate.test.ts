@@ -7,6 +7,7 @@ import { expectTextDraft } from "../test-results";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 import { DelegateInputSchema, executeDelegate } from "./delegate";
+import type { ToolDescriptorExecutionResult } from "../types";
 
 const WORKSPACE_ROOT = import.meta.dir;
 
@@ -31,6 +32,9 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
     toolCallId: "delegate-call",
     input: {},
     step: 0,
+    executionId: "parent-execution",
+    runOrdinal: 0,
+    toolBatchId: "parent-batch",
     abort: new AbortController().signal,
     agentName: "lead",
     startedAt: 0,
@@ -50,10 +54,21 @@ function childHandle(parentSessionId: string, value: DelegationRequest): ChildEx
   });
   return {
     sessionId: store.getState().sessionId,
+    executionId: "child-execution",
     store,
-    result: Promise.resolve({ executionStatus: "completed", output: "Owner found" }),
+    result: Promise.resolve({
+      outcome: "terminal",
+      executionId: "child-execution",
+      executionStatus: "completed",
+      output: "Owner found",
+    }),
     abort: () => {},
   };
+}
+
+function textResult(result: ToolDescriptorExecutionResult): string {
+  if ("kind" in result) throw new Error(`Expected settled draft, got ${result.kind}`);
+  return expectTextDraft(result);
 }
 
 describe("delegate request", () => {
@@ -77,8 +92,16 @@ describe("delegate request", () => {
         return handle;
       },
     }));
-    expect(childRequest).toMatchObject({ toolName: "delegate", request: value });
-    expect(JSON.parse(expectTextDraft(output))).toEqual({
+    expect(childRequest).toMatchObject({
+      toolName: "delegate",
+      request: value,
+      parentExecutionId: "parent-execution",
+      parentRunOrdinal: 0,
+      parentToolBatchId: "parent-batch",
+    });
+    expect(childRequest?.childSessionId).toBeString();
+    expect(childRequest?.childExecutionId).toBeString();
+    expect(JSON.parse(textResult(output))).toEqual({
       session_id: handle.sessionId,
       agent_type: "explore",
       execution_status: "completed",
@@ -94,10 +117,15 @@ describe("delegate request", () => {
       ...parent,
       startChildExecution: async () => ({
         ...handle,
-        result: Promise.resolve({ executionStatus: "failed", terminalError: "boom" }),
+        result: Promise.resolve({
+          outcome: "terminal",
+          executionId: handle.executionId,
+          executionStatus: "failed",
+          terminalError: "boom",
+        }),
       }),
     });
-    expect(JSON.parse(expectTextDraft(output))).toEqual({
+    expect(JSON.parse(textResult(output))).toEqual({
       session_id: handle.sessionId,
       agent_type: "explore",
       execution_status: "failed",
@@ -111,7 +139,7 @@ describe("delegate request", () => {
         throw new SkillNotAllowedError("explore", "research-docs", ["codemap"]);
       },
     }));
-    expect(JSON.parse(expectTextDraft(result))).toMatchObject({
+    expect(JSON.parse(textResult(result))).toMatchObject({
       code: "TOOL_DELEGATE_FAILED",
       name: "SkillNotAllowedError",
     });
@@ -123,10 +151,42 @@ describe("delegate request", () => {
     const handle = childHandle(parent.store.getState().sessionId, value);
     const startChildExecution = mock(async (_request: ChildExecutionRequest) => handle);
     const output = await executeDelegate(value, { ...parent, startChildExecution });
-    expect(JSON.parse(expectTextDraft(output))).toEqual({
+    expect(JSON.parse(textResult(output))).toEqual({
       session_id: handle.sessionId,
       agent_type: "explore",
       execution_status: "running",
+    });
+  });
+
+  it("returns an internal dependency without final output when a synchronous child suspends", async () => {
+    const parent = makeContext();
+    const value = request();
+    const handle = childHandle(parent.store.getState().sessionId, value);
+    const output = await executeDelegate(value, {
+      ...parent,
+      startChildExecution: async () => ({
+        ...handle,
+        result: Promise.resolve({
+          outcome: "suspended",
+          executionId: handle.executionId,
+          suspension: {
+            kind: "hitl",
+            toolBatchId: "child-batch",
+            blockerIds: ["hitl-1"],
+          },
+        }),
+      }),
+    });
+    expect(output).toEqual({
+      kind: "child_deferred",
+      dependency: {
+        parentExecutionId: "parent-execution",
+        runOrdinal: 0,
+        toolBatchId: "parent-batch",
+        toolCallId: "delegate-call",
+        childSessionId: handle.sessionId,
+        childExecutionId: handle.executionId,
+      },
     });
   });
 });

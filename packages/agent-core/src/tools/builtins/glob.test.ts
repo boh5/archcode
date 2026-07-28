@@ -20,6 +20,9 @@ function processResult(stdout: string, stderr = "", exitCode = 0) {
 function ctx(): ToolExecutionContext {
   return {
     store: {} as any, storeManager, toolName: "glob", toolCallId: "call", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch",
     abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["glob"]),
     cwd: "/workspace", projectContext: createTestProjectContext("/workspace"),
   };

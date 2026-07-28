@@ -96,11 +96,25 @@ function wrappedMessage(ref: string, text: string): string {
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
   const workspaceRoot = TEST_WORKSPACE_ROOT;
+  const executionId = overrides.executionId ?? "test-execution";
+  const store = overrides.store ?? createStore();
+  if (store.getState().currentExecutionId === undefined) {
+    store.getState().append({
+      type: "execution-start",
+      executionId,
+      binding: dummyBinding.summary,
+      origin: "tool_call",
+      maxSteps: overrides.maxSteps ?? 50,
+    });
+  }
   return {
+    executionId,
+    runOrdinal: 0,
+    initialStep: 0,
     binding: dummyBinding,
     logger: silentLogger,
     toolRegistry: createTestRegistry(),
-    store: createStore(),
+    store,
     allowedTools: [],
     agentSkills: [],
     skillService: testSkillService,
@@ -279,7 +293,7 @@ describe("query loop LLM stream recovery", () => {
       message: expect.stringContaining("Model call failed:"),
     }));
     expect(events.filter((event) => event.type === "llm-recovery-failed")).toHaveLength(0);
-    expect(result.status).toBe("aborted");
+    expect(result).toMatchObject({ outcome: "terminal", status: "aborted" });
   });
 
   test("generic outer-catch failures are not labeled as model-call failures", async () => {
@@ -332,6 +346,29 @@ describe("query loop LLM stream recovery", () => {
       expect.objectContaining({ scope: "short", visibility: "internal", profile: "zero-output-short", attempt: 1 }),
     ]);
     expect(JSON.stringify(store.getState().messages)).not.toContain("recovery-notice");
+  });
+
+  test("strictly reloads persisted same-run retry attempts", async () => {
+    sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
+    const store = createStore();
+    const options = makeOptions({ store });
+    createMockStreamText([
+      { throwBeforeOutput: retryableEof("socket closed before response") },
+      { text: "Recovered answer" },
+    ]);
+
+    await runCanonicalQueryLoop(options);
+    await storeManager.flushSession(store.getState().sessionId, TEST_WORKSPACE_ROOT);
+    const retrySteps = store.getState().steps.filter((step) => step.step === 0);
+    expect(retrySteps).toHaveLength(2);
+    expect(new Set(retrySteps.map((step) => step.runOrdinal))).toEqual(new Set([0]));
+
+    const sessionId = store.getState().sessionId;
+    storeManager.clearAll();
+    const reloaded = await storeManager.getOrLoad(sessionId, TEST_WORKSPACE_ROOT);
+    expect(reloaded.getState().steps).toHaveLength(2);
+    expect(reloaded.getState().steps.map((step) => [step.step, step.runOrdinal]))
+      .toEqual([[0, 0], [0, 0]]);
   });
 
   test("unknown provider error before output retries at the LLM boundary", async () => {
@@ -422,48 +459,6 @@ describe("query loop LLM stream recovery", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "text-delta", text: "Recovered continuation" }));
   });
 
-  test("tool-input-start without tool-call before EOF is not executed and transcript is legalized", async () => {
-    const store = createStore();
-    const executor = mock(async () => createTextToolResult("should not run"));
-    const registry = createTestRegistry([
-      defineTool({
-        name: "echo",
-        description: "Echo",
-        inputSchema,
-        traits: { readOnly: true, destructive: false, concurrencySafe: true },
-        outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
-        execute: executor,
-      }),
-    ]);
-    createMockStreamText([
-      { chunks: [{ type: "tool-input-start", id: "tc-pending", toolName: "echo" }], fullStreamError: retryableEof("tool input only", 0.001) },
-      { text: "Recovered" },
-    ]);
-
-    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"] }), "Use tool");
-
-    expect(executor).not.toHaveBeenCalled();
-    const tool = assistantMessages(store).flatMap((message) => message.parts).find((part) => part.type === "tool");
-    expect(tool).toMatchObject({ type: "tool", state: "error", result: { details: { error: { code: "TOOL_NOT_EXECUTED" } } } });
-    if (tool?.type !== "tool" || tool.state !== "error") throw new Error("Expected strict tool error");
-    expect((JSON.parse(tool.result.output.preview) as { message: string }).message).toBe("Execution ended before the tool ran");
-    const modelMessages = store.getState().toModelMessages();
-    expect(modelMessages.slice(0, 2)).toEqual([
-      { role: "user", content: wrappedMessage("m0001", "Use tool") },
-      { role: "assistant", content: [
-        { type: "text", text: '<message ref="m0002">' },
-        { type: "tool-call", toolCallId: "tc-pending", toolName: "echo", input: null },
-        { type: "text", text: "Recovered" },
-        { type: "text", text: "</message>" },
-      ] },
-    ]);
-    expect(modelMessages[2]).toMatchObject({
-      role: "tool",
-      content: [{ type: "tool-result", toolCallId: "tc-pending", toolName: "echo", output: { type: "error-text" } }],
-    });
-    expect(JSON.stringify(modelMessages[2])).toContain("Execution ended before the tool ran");
-  });
-
   test("effectful tool attempt without result becomes unknown-result warning and is not replayed", async () => {
     const store = createStore();
     const executor = mock(async (_input: z.infer<typeof inputSchema>, ctx: ToolExecutionContext) => {
@@ -540,7 +535,7 @@ describe("query loop LLM stream recovery", () => {
 
     const result = await runQueryLoop(makeOptions({ store, abort: abort.signal }), "Abort backoff", retryScheduler);
 
-    expect(result.status).toBe("aborted");
+    expect(result).toMatchObject({ outcome: "terminal", status: "aborted" });
     expect(events).toContainEqual(expect.objectContaining({
       type: "llm-recovery-failed",
       scope: "session",

@@ -1,92 +1,94 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionExecutionRecord, ToolChildSessionLinkStatus } from "@archcode/protocol";
-import { childExecutionVisualKind, executionVisualKind, presentChildExecutionStatus, presentExecutionStatus } from "./execution-status-presentation";
+import type {
+  ExecutionModelBindingSummary,
+  SessionExecutionRecord,
+} from "@archcode/protocol";
+import {
+  executionVisualKind,
+  presentExecutionStatus,
+} from "./execution-status-presentation";
+
+const binding: ExecutionModelBindingSummary = {
+  selection: { model: "local:test" },
+  providerId: "local",
+  modelId: "test",
+  providerDisplayName: "Local",
+  modelDisplayName: "Test",
+  resolution: "profile_default",
+  modelRuntimeRevision: "r1",
+};
+function record(
+  status: SessionExecutionRecord["status"],
+  suspension?: Extract<
+    SessionExecutionRecord,
+    { status: "suspended" }
+  >["suspension"],
+): SessionExecutionRecord {
+  const base = {
+    id: "execution",
+    startedAt: 0,
+    origin: "user_message" as const,
+    maxSteps: 10,
+    durationMs: 0,
+    runs: status === "running" ? [{ ordinal: 0, startedAt: 0, binding }] : [],
+  };
+  if (status === "running")
+    return { ...base, status } as SessionExecutionRecord;
+  if (status === "suspended")
+    return {
+      ...base,
+      status,
+      suspension: suspension!,
+    } as SessionExecutionRecord;
+  return {
+    ...base,
+    status,
+    endedAt: 1,
+    terminalSettlement: { key: "terminal", goalInstanceId: null },
+  } as SessionExecutionRecord;
+}
 
 describe("execution status presentation", () => {
-  test("shows an unresolved input checkpoint as current action", () => {
-    expect(presentExecutionStatus("waiting_for_human")).toEqual({
-      productStatus: "needs_you",
-      label: "Needs you",
+  test("presents durable suspended causes without checkpoint stitching", () => {
+    expect(
+      presentExecutionStatus(
+        record("suspended", {
+          kind: "hitl",
+          toolBatchId: "batch",
+          blockerIds: ["hitl"],
+        }),
+      ),
+    ).toMatchObject({ productStatus: "needs_you", label: "Needs you" });
+    expect(
+      presentExecutionStatus(
+        record("suspended", {
+          kind: "child_dependency",
+          toolBatchId: "batch",
+          toolCallId: "call",
+          childSessionId: "child",
+          childExecutionId: "child-execution",
+        }),
+      ),
+    ).toMatchObject({
+      productStatus: "waiting_on_child",
+      label: "Waiting on child",
     });
+    expect(
+      presentExecutionStatus(
+        record("suspended", {
+          kind: "resume_pending",
+          toolBatchId: "batch",
+          readyAt: 1,
+        }),
+      ),
+    ).toMatchObject({ productStatus: "resuming", label: "Resuming" });
   });
 
-  test("shows a resolved checkpoint as received and links its continuation", () => {
-    expect(presentExecutionStatus("waiting_for_human", {
-      executionId: "execution-1",
-      state: "continued",
-      continuationExecutionId: "execution-2",
-    })).toEqual({
+  test("keeps terminal failures distinct in visual semantics", () => {
+    expect(presentExecutionStatus(record("completed"))).toMatchObject({
       productStatus: "completed",
-      label: "Input received",
-      continuationExecutionId: "execution-2",
     });
-  });
-
-  test("keeps accepted, continuing, and cancelled checkpoint copy distinct", () => {
-    expect(presentExecutionStatus("waiting_for_human", {
-      executionId: "execution-1",
-      state: "response_received",
-    })).toMatchObject({ label: "Input received", detail: "Resuming" });
-    expect(presentExecutionStatus("waiting_for_human", {
-      executionId: "execution-1",
-      state: "continuing",
-      continuationExecutionId: "execution-2",
-    })).toMatchObject({ label: "Input received", detail: "Continuing" });
-    expect(presentExecutionStatus("waiting_for_human", {
-      executionId: "execution-1",
-      state: "cancelled",
-    })).toEqual({ productStatus: "stopped", label: "Stopped", detail: "Input cancelled" });
-  });
-
-  test("projects every terminal stop into Stopped while preserving its reason", () => {
-    const cases: Array<[SessionExecutionRecord["status"], string]> = [
-      ["max_steps", "Max steps"],
-      ["failed", "Failed"],
-      ["aborted", "Aborted"],
-      ["cancelled", "Cancelled"],
-      ["timed_out", "Timed out"],
-      ["interrupted", "Interrupted"],
-    ];
-
-    for (const [status, detail] of cases) {
-      expect(presentExecutionStatus(status)).toEqual({
-        productStatus: "stopped",
-        label: "Stopped",
-        detail,
-      });
-    }
-  });
-
-  test("uses the same product states for current child sessions", () => {
-    const cases: Array<[ToolChildSessionLinkStatus, string, string | undefined]> = [
-      ["linked", "Running", "Starting"],
-      ["running", "Running", undefined],
-      ["waiting_for_human", "Needs you", undefined],
-      ["cancelling", "Running", "Stopping"],
-      ["completed", "Completed", undefined],
-      ["failed", "Stopped", "Failed"],
-      ["timed_out", "Stopped", "Timed out"],
-      ["cancelled", "Stopped", "Cancelled"],
-      ["interrupted", "Stopped", "Interrupted"],
-    ];
-
-    for (const [status, label, detail] of cases) {
-      const presentation = presentChildExecutionStatus(status);
-      expect(presentation.label).toBe(label);
-      expect(presentation.detail).toBe(detail);
-    }
-  });
-
-  test("keeps failure visuals distinct from neutral stops without changing copy", () => {
-    expect(executionVisualKind("failed")).toBe("failed");
-    expect(executionVisualKind("timed_out")).toBe("failed");
-    expect(executionVisualKind("max_steps")).toBe("failed");
-    expect(executionVisualKind("cancelled")).toBe("stopped");
-    expect(executionVisualKind("interrupted")).toBe("stopped");
-    expect(childExecutionVisualKind("failed")).toBe("failed");
-    expect(childExecutionVisualKind("timed_out")).toBe("failed");
-    expect(childExecutionVisualKind("cancelled")).toBe("stopped");
-    expect(childExecutionVisualKind("interrupted")).toBe("stopped");
-    expect(childExecutionVisualKind("waiting_for_human")).toBe("needs_you");
+    expect(executionVisualKind(record("failed"))).toBe("failed");
+    expect(executionVisualKind(record("cancelled"))).toBe("stopped");
   });
 });

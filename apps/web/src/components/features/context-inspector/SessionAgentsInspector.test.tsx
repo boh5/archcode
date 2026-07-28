@@ -77,6 +77,7 @@ function link(input: {
     parentToolCallId: `delegate-${input.childSessionId}`,
     toolName: "delegate",
     childSessionId: input.childSessionId,
+    childExecutionId: `execution-${input.childSessionId}`,
     childAgentName: input.childAgentName,
     childProfile: input.childProfile,
     childSkillNames: [],
@@ -143,6 +144,11 @@ describe("SessionAgentsInspector", () => {
       childSessionLinks: [grandchildLink],
     } as Session);
     getWebSessionStore("root", "demo").getState().initializeFromSnapshot({
+      executionCount: 0,
+      isRunning: false,
+      isStreamingModel: false,
+      currentExecutionId: undefined,
+      currentAssistantMessageId: undefined,
       childSessionLinks: [rootLink],
     });
 

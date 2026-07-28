@@ -39,6 +39,7 @@ export class SessionGoalServiceError extends Error {
       | "GOAL_NOT_FOUND"
       | "GOAL_ALREADY_ACTIVE"
       | "GOAL_TERMINAL"
+      | "PENDING_SETTLEMENTS"
       | "GENERATION_CONFLICT"
       | "INVALID_TRANSITION"
       | "AUTHORITY_DENIED"
@@ -65,22 +66,56 @@ export class SessionGoalService {
   }): Promise<SessionGoal> {
     requireAuthority(input.authority, "user_control");
     const objective = SessionGoalObjectiveSchema.parse(input.objective);
+    const current = await this.sessions.getSessionFile(input.workspaceRoot, input.sessionId);
+    if (current.goal?.status === "complete") {
+      // Goal completion has already fenced live descendants, and startup replay
+      // finishes before requests open. This scan closes the remaining
+      // receipt-written/session-not-yet-marked crash window before replacement.
+      await this.#assertNoPendingFamilySettlements(input, current.goal.instanceId);
+    }
     return await this.mutate(input, (state, now) => {
       if (state.goal !== undefined && state.goal.status !== "complete") {
         throw new SessionGoalServiceError("GOAL_ALREADY_ACTIVE", "A non-terminal Goal already exists");
       }
+      if (state.goal !== undefined) assertNoPendingGoalSettlements(state, state.goal.instanceId);
       const goal = checkedGoal({
         instanceId: crypto.randomUUID(),
         generation: 1,
         objective,
         status: "active",
         usage: { tokens: createEmptySessionStats().usage, executionTimeMs: 0, executionCount: 0 },
+        settlementReceipts: [],
         createdAt: now,
         activatedAt: now,
         updatedAt: now,
       });
       return semanticChange(goal, "created", "created", input.authority.kind, now);
     });
+  }
+
+  async assertNoPendingFamilySettlements(target: SessionGoalTarget): Promise<void> {
+    const goal = await this.get(target);
+    if (goal === undefined) return;
+    await this.#assertNoPendingFamilySettlements(target, goal.instanceId);
+  }
+
+  async #assertNoPendingFamilySettlements(
+    target: SessionGoalTarget,
+    goalInstanceId: string,
+  ): Promise<void> {
+    for (const settlement of await this.sessions.listUnappliedExecutionSettlements(target.workspaceRoot)) {
+      if (settlement.goalInstanceId !== goalInstanceId) continue;
+      const settlementRootSessionId = await this.sessions.resolveRootSessionId(
+        settlement.sessionId,
+        target.workspaceRoot,
+      );
+      if (settlementRootSessionId === target.sessionId) {
+        throw new SessionGoalServiceError(
+          "PENDING_SETTLEMENTS",
+          "Goal has unapplied Execution settlements in its Session family",
+        );
+      }
+    }
   }
 
   async edit(input: SessionGoalTarget & {
@@ -163,6 +198,7 @@ export class SessionGoalService {
         assertRootLead(state);
         assertGoalContract(state);
         const goal = requiredGoal(state);
+        assertNoPendingGoalSettlements(state, goal.instanceId);
         const occurredAt = Date.now();
         const reminder = goalReminder({
           goal,
@@ -209,14 +245,25 @@ export class SessionGoalService {
     });
   }
 
-  async recordUsage(input: SessionGoalTarget & {
+  async recordSettlement(input: SessionGoalTarget & {
     readonly authority: SessionGoalAuthority;
+    readonly settlementKey: string;
+    readonly goalInstanceId: string;
     readonly usage: NormalizedUsage;
     readonly executionTimeMs: number;
+    readonly terminal: boolean;
   }): Promise<SessionGoal> {
     requireAuthority(input.authority, "runtime");
+    const settlementKey = requiredText(input.settlementKey, "settlementKey");
     return await this.mutate(input, (state, now) => {
       const current = requiredGoal(state);
+      if (current.instanceId !== input.goalInstanceId) {
+        throw new SessionGoalServiceError(
+          "GENERATION_CONFLICT",
+          `Expected Goal ${input.goalInstanceId}, found ${current.instanceId}`,
+        );
+      }
+      if (current.settlementReceipts.includes(settlementKey)) return unchanged(current);
       const tokens = addUsage(current.usage.tokens, input.usage);
       const budgetLimited = current.status !== "complete"
         && current.tokenBudget !== undefined
@@ -228,8 +275,9 @@ export class SessionGoalService {
         usage: {
           tokens,
           executionTimeMs: current.usage.executionTimeMs + nonNegativeInt(input.executionTimeMs, "executionTimeMs"),
-          executionCount: current.usage.executionCount + 1,
+          executionCount: current.usage.executionCount + (input.terminal ? 1 : 0),
         },
+        settlementReceipts: [...current.settlementReceipts, settlementKey].sort((left, right) => left.localeCompare(right)),
         // Usage is telemetry, not a semantic Goal revision. Keep updatedAt stable
         // unless usage itself crosses the budget boundary and changes status so
         // a review created during an Execution is not invalidated by settlement.
@@ -502,6 +550,38 @@ function contractViolation(message: string): SessionGoalServiceError {
 function requiredGoal(state: Readonly<SessionStoreState>): SessionGoal {
   if (state.goal === undefined) throw new SessionGoalServiceError("GOAL_NOT_FOUND", "Session has no Goal");
   return state.goal;
+}
+
+function assertNoPendingGoalSettlements(
+  state: Readonly<SessionStoreState>,
+  goalInstanceId: string,
+): void {
+  for (const execution of state.executions) {
+    for (const run of execution.runs) {
+      const settlement = run.settlement;
+      if (
+        settlement !== undefined
+        && settlement.goalInstanceId === goalInstanceId
+        && settlement.appliedAt === undefined
+      ) {
+        throw new SessionGoalServiceError(
+          "PENDING_SETTLEMENTS",
+          "Goal has unapplied Execution settlements",
+        );
+      }
+    }
+    const terminalSettlement = execution.terminalSettlement;
+    if (
+      terminalSettlement !== undefined
+      && terminalSettlement.goalInstanceId === goalInstanceId
+      && terminalSettlement.appliedAt === undefined
+    ) {
+      throw new SessionGoalServiceError(
+        "PENDING_SETTLEMENTS",
+        "Goal has unapplied Execution settlements",
+      );
+    }
+  }
 }
 
 function nonTerminalGoal(state: Readonly<SessionStoreState>): SessionGoal {

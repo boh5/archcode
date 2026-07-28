@@ -101,7 +101,7 @@ packages/agent-core/src/
 ├── agents/query/               # runLlmStream + tool execution cycle (max 50 steps), doom detection
 ├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
 ├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation
-├── execution/session-execution-manager.ts # Sole live Execution admission, concurrency, abort, and terminal owner
+├── execution/session-execution-manager.ts # Sole logical Execution lifecycle/admission, run resources, abort, recovery, and terminal owner
 ├── process/                    # ProcessRunner lifecycle, bounded streaming, timeout/abort, and structured results
 ├── tools/define-tool.ts        # defineTool() → ToolDescriptor (strict RawToolResult + explicit outputPolicy)
 ├── tools/registry.ts           # admission/blocked handling and exactly-once Raw → Finalized finalization
@@ -168,7 +168,7 @@ packages/utils/src/
   → Hono Runtime routes → Session-scoped Lead / Automation / HITL routes
   → SessionExecutionManager → ConfiguredAgent → query loop → store → SSE → Web UI
 
-Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resume_session` preserves its Agent, Profile, Skills, and responsibility. Every child finishes with a normal assistant response; synchronous delegation returns that final response directly, while background work is read through `background_output`. SessionExecutionManager owns admission, concurrency, execution, and terminal records. There is no Build owned-scope or lease subsystem.
+Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resume_session` preserves its Agent, Profile, Skills, and responsibility. Every child finishes with a normal assistant response; synchronous delegation returns that final response directly, while background work is read through `background_output`. If a synchronous child suspends, its parent suspends on the original tool call; each resumes its own same logical Execution when ready. `SessionExecutionManager` is the sole owner of Execution lifecycle, admission, concurrency, live run resources, recovery, and terminal records. There is no Build owned-scope or lease subsystem.
 ```
 
 **Server + Web UI:**
@@ -210,7 +210,7 @@ Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resum
 - Event names are `stream`, `permission.request`, `question.request`, `heartbeat`, and shutdown-related lifecycle notifications. `stream` carries flattened store events such as text deltas, reasoning deltas, tool calls/results, compaction, steps, reminders, and todos.
 - `EventRing` stores recent events and supports replay via `Last-Event-ID` or `lastEventId`; heartbeat emits every 15 seconds to keep connections alive.
 - Cross-network confirmations use a deferred request/response pattern: `PermissionService.request()` pushes `permission.request` into the session ring and returns a Promise that resolves when `/api/permissions` responds; `AskUserService.request()` does the same with `question.request` and `/api/questions`.
-- Abort signals and cleanup resolve pending confirmations safely (`timeout` for permissions, cancelled response for questions) so agent execution is not left hanging when a client disconnects or a job shuts down.
+- Abort signals and cleanup resolve pending confirmations safely (`timeout` for permissions, cancelled response for questions) so agent execution is not left hanging when a client disconnects or a job shuts down. A response is applied to its exact original Tool Batch call, then resumes the same logical Execution; it is never a terminal `waiting_for_human` Execution followed by a continuation Execution.
 
 **Tool execution pipeline:**
 ```
@@ -368,7 +368,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Session Store
 
-Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and, when present, an immutable `projectTodo` source; an optional `goal` belongs only to a root Lead Session. `projectTodo` is valid only on a root Lead and records `{ todoId, entry }`, where entry is `discussion`, `work`, or `automation`. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns live execution admission and terminal records; load-time repair only converts restart-orphaned `running` records to `interrupted`.
+Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and, when present, an immutable `projectTodo` source; an optional `goal` belongs only to a root Lead Session. `projectTodo` is valid only on a root Lead and records `{ todoId, entry }`, where entry is `discussion`, `work`, or `automation`. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns logical Execution start/suspend/resume/end, admission, live run resources, and recovery. Store load performs no lifecycle repair; it exposes only current-schema durable facts and reducer state.
 
 ## Context Compaction
 

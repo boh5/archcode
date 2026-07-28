@@ -1,4 +1,4 @@
-import { useEffect, useState, type HTMLAttributes } from "react";
+import { useEffect, useRef, useState, type HTMLAttributes } from "react";
 import {
   browserTimeClock,
   type TimeClock,
@@ -29,8 +29,18 @@ export function useRelativeTimePresentation(
   const [cadence, setCadence] = useState<TimeCadence>(() =>
     relativeCadence(timestamp, clock.store("second").getSnapshot())
   );
-  const now = useClockSnapshot(cadence, true, clock)
+  const publishedNow = useClockSnapshot(cadence, true, clock)
     ?? clock.store(cadence).getSnapshot();
+  const previousSnapshot = useRef<{
+    cadence: TimeCadence;
+    now: number;
+  } | null>(null);
+  const now =
+    previousSnapshot.current?.cadence !== cadence &&
+      previousSnapshot.current !== null
+      ? Math.max(previousSnapshot.current.now, publishedNow)
+      : publishedNow;
+  previousSnapshot.current = { cadence, now };
   const nextCadence = relativeCadence(timestamp, now);
   useEffect(() => {
     if (cadence !== nextCadence) setCadence(nextCadence);
@@ -53,6 +63,8 @@ export interface ElapsedTimeInput {
   startedAt: number;
   active: boolean;
   durationMs?: number;
+  /** Timestamp at which an authoritative active duration was measured. */
+  durationUpdatedAt?: number;
   endedAt?: number;
 }
 
@@ -61,10 +73,16 @@ export function useElapsedTime(
   clock: TimeClock = browserTimeClock,
 ): string {
   const now = useClockSnapshot("second", input.active, clock);
-  const durationMs = input.durationMs
-    ?? (input.active
-      ? (now ?? input.startedAt) - input.startedAt
-      : (input.endedAt ?? input.startedAt) - input.startedAt);
+  const durationMs = input.active && input.durationMs !== undefined
+    ? input.durationMs + Math.max(
+        0,
+        (now ?? input.durationUpdatedAt ?? input.startedAt) -
+          (input.durationUpdatedAt ?? input.startedAt),
+      )
+    : input.durationMs
+      ?? (input.active
+        ? (now ?? input.startedAt) - input.startedAt
+        : (input.endedAt ?? input.startedAt) - input.startedAt);
   return formatElapsedDuration(durationMs);
 }
 

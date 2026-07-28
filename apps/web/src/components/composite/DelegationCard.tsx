@@ -16,6 +16,8 @@ export function DelegationCard({
   executionStatusLabel,
   executionStatusDetail,
   startedAt,
+  durationMs,
+  durationUpdatedAt,
   hasInput,
   input,
   projectSlug,
@@ -24,7 +26,11 @@ export function DelegationCard({
   const statusTransition = useStatusTransition(sessionId, visualKind);
   const elapsed = useElapsedTime({
     startedAt: startedAt ?? 0,
-    active: visualKind === "running" && startedAt !== undefined,
+    active:
+      visualKind === "running" &&
+      startedAt !== undefined,
+    durationMs,
+    durationUpdatedAt,
   });
   const handleViewConversation = () => {
     if (!canNavigate) return;
@@ -49,7 +55,8 @@ export function DelegationCard({
         </span>
         {taskTitle && <span className="min-w-0 flex-1 truncate text-[12px] text-text-secondary" title={taskTitle}>{taskTitle}</span>}
         {!taskTitle && <span className="flex-1" />}
-        {visualKind === "running" && startedAt !== undefined && (
+        {(durationMs !== undefined ||
+          (visualKind === "running" && startedAt !== undefined)) && (
           <span className="text-[11px] text-text-tertiary">{elapsed}</span>
         )}
         {canNavigate ? (

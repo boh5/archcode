@@ -197,7 +197,7 @@ describe("dynamic range compression", () => {
     ]);
     state.todos = [{ id: "todo-1", content: "finish", status: "pending" }];
     state.reminders = [{ id: "r1", source: { type: "todo_step_reminder", pendingTodos: [] }, delivery: "auto_inject", content: "remember", createdAt: 1, consumedAt: null }];
-    state.childSessionLinks = [{ parentSessionId: "session-1", parentToolCallId: "call-1", toolName: "delegate", childSessionId: "child", childAgentName: "explore", childProfile: "fast", childSkillNames: [], title: "Explore child", depth: 1, background: false, status: "running", createdAt: 1 }];
+    state.childSessionLinks = [{ parentSessionId: "session-1", parentToolCallId: "call-1", toolName: "delegate", childSessionId: "child", childExecutionId: "execution-child", childAgentName: "explore", childProfile: "fast", childSkillNames: [], title: "Explore child", depth: 1, background: false, status: "running", createdAt: 1 }];
     const result = prepareDynamicRangeCompression(state, { startId: "m0001", endId: "m0004", summary: summary() }, 1000);
 
     expect(result.ok).toBe(false);

@@ -91,6 +91,9 @@ const steeringMessage = {
   state: "steering" as const,
   revision: 1,
   targetExecutionId: "execution-1",
+  targetRunOrdinal: 0,
+  targetModelAudit: { requested: requestedModelSelection, actual: binding.selection },
+  claimedAt: 2,
 };
 const canonicalMessage = {
   id: pendingMessage.id,
@@ -99,6 +102,7 @@ const canonicalMessage = {
   createdAt: 1,
   completedAt: 2,
   executionId: "execution-1",
+  runOrdinal: 0,
   clientRequestId: pendingMessage.clientRequestId,
   modelAudit: { requested: requestedModelSelection, actual: binding.selection },
 };
@@ -116,8 +120,31 @@ const finalizedResult = {
 };
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
-  { type: "execution-start", executionId: "execution-1", binding, origin: "user_message" },
-  { type: "execution-end", status: "waiting_for_human", blockedByHitlIds: ["hitl-1"] },
+  { type: "execution-start", executionId: "execution-1", binding, origin: "user_message", maxSteps: 50 },
+  {
+    type: "execution-suspended",
+    executionId: "execution-1",
+    suspension: { kind: "hitl", toolBatchId: "batch-1", blockerIds: ["hitl-1"] },
+    runEndedAt: 2,
+    runUsageDelta: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 },
+    runSettlement: { key: "run:session:execution-1:0", goalInstanceId: null },
+  },
+  {
+    type: "execution-suspension-updated",
+    executionId: "execution-1",
+    suspension: { kind: "resume_pending", toolBatchId: "batch-1", readyAt: 3 },
+  },
+  { type: "execution-resumed", executionId: "execution-1", runOrdinal: 1, binding },
+  {
+    type: "execution-end",
+    executionId: "execution-1",
+    terminalStatus: "completed",
+    endedAt: 5,
+    runEndedAt: 5,
+    runUsageDelta: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 },
+    runSettlement: { key: "run:session:execution-1:1", goalInstanceId: null },
+    terminalSettlement: { key: "terminal:session:execution-1", goalInstanceId: null },
+  },
   { type: "session.cwd_changed", previousCwd: "/old", cwd: "/new" },
   { type: "session.model_selection_changed", modelSelection: { revision: 1, override: { model: "test:model" } } },
   {
@@ -128,6 +155,7 @@ const validPayloads = [
     goal: {
       instanceId: crypto.randomUUID(), generation: 1, objective: "Finish it", status: "active",
       usage: { tokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 }, executionTimeMs: 0, executionCount: 0 },
+      settlementReceipts: [],
       createdAt: 1, activatedAt: 1, updatedAt: 1,
     },
     status: "active",
@@ -167,7 +195,7 @@ const validPayloads = [
       },
     },
   },
-  { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childAgentName: "explore", childProfile: "fast", childSkillNames: [], title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
+  { type: "tool-child-session-link", link: { parentSessionId: "parent", parentToolCallId: "call", toolName: "delegate", childSessionId: "child", childExecutionId: "child-execution", childAgentName: "explore", childProfile: "fast", childSkillNames: [], title: "Explore child", depth: 1, background: false, status: "completed", createdAt: 1 } },
   { type: "todo-write", todos: [{ id: "todo-1", content: "work", status: "in_progress" }] },
   {
     type: "reminder",
@@ -215,8 +243,11 @@ describe("protocol event guards", () => {
       "compression.ref_map_updated",
       "execution-end",
       "execution-error",
+      "execution-resumed",
       "execution-start",
       "execution-stop-requested",
+      "execution-suspended",
+      "execution-suspension-updated",
       "llm-recovery",
       "llm-recovery-failed",
       "llm-retry",
@@ -402,6 +433,10 @@ describe("protocol event guards", () => {
       result: { ...finalizedResult, details: { arbitrary: "metadata escape" } },
     })).toBe(false);
     expect(isSessionEventPayload({ type: "tool-child-session-link", link: { ...validPayloads[23]!.link, unexpectedField: true } })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "tool-child-session-link",
+      link: { ...validPayloads[23]!.link, durationMs: 1 },
+    })).toBe(false);
     expect(isSessionEventPayload({ type: "compression.block_committed", block: { ...compressionBlock, range: { ...compressionBlock.range, endIndex: "0" } } })).toBe(false);
     expect(isSessionEventPayload({
       type: "compression.block_committed",

@@ -25,21 +25,53 @@ describe("deriveTodoProgress", () => {
   });
 
   test("distinguishes waiting, blocked, failed, and completed states", () => {
-    expect(deriveTodoProgress(todos, { isRunning: false, lastExecutionStatus: "waiting_for_human" })?.state).toBe("waiting");
-    expect(deriveTodoProgress(todos, { isRunning: false, blockedByHitlIds: ["hitl-1"] })?.state).toBe("blocked");
-    expect(deriveTodoProgress(todos, { isRunning: false, lastExecutionStatus: "failed" })?.state).toBe("failed");
-    expect(deriveTodoProgress(todos.map((todo) => ({ ...todo, status: "completed" })), { isRunning: false })?.state).toBe("completed");
+    expect(
+      deriveTodoProgress(todos, {
+        isRunning: false,
+        lastExecutionStatus: "suspended",
+      })?.state,
+    ).toBe("waiting");
+    expect(
+      deriveTodoProgress(todos, {
+        isRunning: false,
+        blockedByHitlIds: ["hitl-1"],
+      })?.state,
+    ).toBe("blocked");
+    expect(
+      deriveTodoProgress(todos, {
+        isRunning: false,
+        lastExecutionStatus: "failed",
+      })?.state,
+    ).toBe("failed");
+    expect(
+      deriveTodoProgress(
+        todos.map((todo) => ({ ...todo, status: "completed" })),
+        { isRunning: false },
+      )?.state,
+    ).toBe("completed");
   });
 });
 
 describe("presentTodoContent", () => {
   test("extracts P0, P1, and P2 priorities without leaking the tag into task text", () => {
-    expect(presentTodoContent("P0 Fix production")).toEqual({ content: "Fix production", priority: "high" });
-    expect(presentTodoContent("Review P1 regression")).toEqual({ content: "Review regression", priority: "medium" });
-    expect(presentTodoContent("Polish UI P2")).toEqual({ content: "Polish UI", priority: "low" });
+    expect(presentTodoContent("P0 Fix production")).toEqual({
+      content: "Fix production",
+      priority: "high",
+    });
+    expect(presentTodoContent("Review P1 regression")).toEqual({
+      content: "Review regression",
+      priority: "medium",
+    });
+    expect(presentTodoContent("Polish UI P2")).toEqual({
+      content: "Polish UI",
+      priority: "low",
+    });
   });
 
   test("preserves unprioritized Todo text", () => {
-    expect(presentTodoContent("Run tests")).toEqual({ content: "Run tests", priority: null });
+    expect(presentTodoContent("Run tests")).toEqual({
+      content: "Run tests",
+      priority: null,
+    });
   });
 });

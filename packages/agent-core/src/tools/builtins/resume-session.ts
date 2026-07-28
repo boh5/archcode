@@ -3,8 +3,9 @@ import type { ChildExecutionHandle } from "../../delegation/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
-import type { RawToolResult, ToolExecutionContext } from "../types";
+import type { ToolDescriptorExecutionResult, ToolExecutionContext } from "../types";
 import {
+  childDeferredResult,
   formatAsyncChildOutput,
   formatSyncChildOutput,
   waitForChildOutcome,
@@ -21,7 +22,10 @@ export const ResumeSessionInputSchema = z.strictObject({
 
 export type ResumeSessionInput = z.output<typeof ResumeSessionInputSchema>;
 
-export async function executeResumeSession(input: ResumeSessionInput, ctx: ToolExecutionContext): Promise<RawToolResult> {
+export async function executeResumeSession(
+  input: ResumeSessionInput,
+  ctx: ToolExecutionContext,
+): Promise<ToolDescriptorExecutionResult> {
   if (ctx.resumeChildSession === undefined) {
     return createToolErrorResult({
       kind: "execution",
@@ -36,9 +40,13 @@ export async function executeResumeSession(input: ResumeSessionInput, ctx: ToolE
     handle = await ctx.resumeChildSession(ctx.projectContext.project.workspaceRoot, {
       parentStore: ctx.store,
       parentSessionId: ctx.store.getState().sessionId,
+      parentExecutionId: ctx.executionId,
+      parentRunOrdinal: ctx.runOrdinal,
+      parentToolBatchId: ctx.toolBatchId,
       parentToolCallId: ctx.toolCallId,
       toolName: "resume_session",
       sessionId: input.session_id,
+      childExecutionId: crypto.randomUUID(),
       instruction: input.instruction,
       background: input.background,
       parentAbort: ctx.abort,
@@ -55,7 +63,12 @@ export async function executeResumeSession(input: ResumeSessionInput, ctx: ToolE
   }
 
   if (input.background) return createTextToolResult(formatAsyncChildOutput(handle));
-  return createTextToolResult(formatSyncChildOutput(handle, await waitForChildOutcome(handle)));
+  const outcome = await waitForChildOutcome(handle);
+  if (outcome.outcome === "suspended") return childDeferredResult(ctx, handle);
+  return createTextToolResult(formatSyncChildOutput({
+    sessionId: handle.sessionId,
+    agentName: handle.store.getState().agentName,
+  }, outcome));
 }
 
 export const resumeSessionTool = defineTool({
@@ -69,4 +82,14 @@ export const resumeSessionTool = defineTool({
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
   execute: executeResumeSession,
+  resumeChildDependency: async (_input, dependency, outcome, ctx) => {
+    const child = await ctx.storeManager.getOrLoad(
+      dependency.childSessionId,
+      ctx.projectContext.project.workspaceRoot,
+    );
+    return createTextToolResult(formatSyncChildOutput({
+      sessionId: dependency.childSessionId,
+      agentName: child.getState().agentName,
+    }, outcome));
+  },
 });

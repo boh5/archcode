@@ -8,8 +8,8 @@ import { createTextToolResult } from "../tools/results";
 import { createMcpDestructivePermission } from "../tools/permission";
 import type { SecretRedactionPolicy } from "../security";
 import type {
-  AnyToolDescriptor,
   RawToolResult,
+  ToolDescriptor,
   ToolTraits,
 } from "../tools/types";
 import {
@@ -32,7 +32,7 @@ export function adaptMcpTool(
   mcpClient: McpClient,
   redactionPolicy: SecretRedactionPolicy,
   logger?: Logger,
-): AnyToolDescriptor {
+): ToolDescriptor<z.infer<typeof mcpToolInputSchema>, RawToolResult> {
   const toolName = mcpTool.name;
   const execLogger = logger ?? silentLogger;
 

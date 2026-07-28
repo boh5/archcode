@@ -345,6 +345,7 @@ describe("SessionAgentManager", () => {
         executionId,
         binding: binding.summary,
         origin: "user_message",
+        maxSteps: 1,
       });
       agent.store.getState().append({
         type: "session.messages_committed",
@@ -356,6 +357,7 @@ describe("SessionAgentManager", () => {
           createdAt: 1,
           completedAt: 1,
           executionId,
+          runOrdinal: 0,
           clientRequestId: `request-${messageId}`,
           modelAudit: {
             requested: { mode: "profile_default", selection: binding.summary.selection },
@@ -363,8 +365,18 @@ describe("SessionAgentManager", () => {
           },
         }],
       });
-      await agent.run(binding, { maxSteps: 1 });
-      agent.store.getState().append({ type: "execution-end", status: "completed" });
+      await agent.run(binding, { executionId, runOrdinal: 0, initialStep: 0, maxSteps: 1 });
+      const endedAt = Date.now();
+      agent.store.getState().append({
+        type: "execution-end",
+        executionId,
+        terminalStatus: "completed",
+        endedAt,
+        runEndedAt: endedAt,
+        runUsageDelta: agent.store.getState().stats.usage,
+        runSettlement: { key: `run:${sessionId}:${executionId}:0`, goalInstanceId: null },
+        terminalSettlement: { key: `terminal:${sessionId}:${executionId}`, goalInstanceId: null },
+      });
       await storeManager.flushSession(sessionId, workspaceRoot);
       const context = activeContexts[contextCount]!;
       const prompt = (streamText.mock.calls[promptCount]![0] as { system: string }).system;

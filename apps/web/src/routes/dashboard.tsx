@@ -12,7 +12,7 @@ import { RelativeTime } from "../components/primitives/TemporalText";
 import { GoalStatusMark } from "../components/features/GoalStatusMark";
 import { presentSessionGoalStatus } from "../lib/session-goal-presentation";
 import { automationVisualKind } from "../lib/automation-status-presentation";
-import { sessionFamilyVisual } from "../lib/session-family-presentation";
+import { sessionFamilyActivityLabel, sessionFamilyVisual } from "../lib/session-family-presentation";
 import { STATUS_TONE_CLASS, statusVisual } from "../lib/status-visuals";
 
 const HOME_SCOPE: DashboardScope = { kind: "global" };
@@ -177,12 +177,12 @@ function AttentionRow({ item, showProject }: { item: DashboardAttentionItem; sho
 
 function SessionRow({ item, showProject }: { item: DashboardSessionRow; showProject: boolean }) {
   const visual = sessionFamilyVisual(item.activity);
-  const label = item.activity === "running" ? "Running" : item.activity === "stopping" ? "Stopping" : "Idle";
-  const running = item.activity === "running";
+  const label = sessionFamilyActivityLabel(item.activity);
+  const active = item.activity !== "idle";
   const staticActivity = visual.kind === "running";
   const tone = visual.tone ?? statusVisual(visual.kind).tone;
   return (
-    <div className={`relative flex items-center gap-3 px-4 py-3 ${running ? "min-h-24 bg-signal-field before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-signal" : "min-h-[76px] bg-bg-surface"}`}>
+    <div className={`relative flex items-center gap-3 px-4 py-3 ${active ? "min-h-24 bg-signal-field before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-signal" : "min-h-[76px] bg-bg-surface"}`}>
       {staticActivity
         ? <Activity size={15} className={STATUS_TONE_CLASS[tone]} aria-hidden="true" />
         : <StatusGlyph kind={visual.kind} tone={visual.tone} label={label} size={15} />}

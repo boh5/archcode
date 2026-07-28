@@ -2,13 +2,13 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
-import type { AnyToolDescriptor, ToolExecutionContext } from "../types";
+import type { ToolExecutionContext } from "../types";
 
 export const SkillListInputSchema = z.object({}).strict();
 
 type SkillListInput = z.infer<typeof SkillListInputSchema>;
 
-export function createSkillListTool(): AnyToolDescriptor {
+export function createSkillListTool() {
   return defineTool({
     name: "skill_list",
     description: [

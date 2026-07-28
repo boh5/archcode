@@ -11,6 +11,9 @@ import { sourceDraftText } from "./source-page";
 function ctx(outputArtifacts?: ToolOutputAccessService): ToolExecutionContext {
   return {
     store: {} as any, storeManager, toolName: "output_read", toolCallId: "call", input: {}, step: 1,
+    executionId: "test-execution",
+    runOrdinal: 0,
+    toolBatchId: "test-tool-batch",
     abort: new AbortController().signal, startedAt: Date.now(), allowedTools: new Set(["output_read", "output_search"]),
     cwd: "/workspace", projectContext: createTestProjectContext("/workspace"), outputArtifacts,
   };

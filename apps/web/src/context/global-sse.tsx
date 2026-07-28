@@ -368,7 +368,17 @@ export function handleSSEEvent(
       const envelope = parsed as GlobalSessionEventEnvelope;
       const store = deps.findStore(envelope.sessionId, envelope.slug)
         ?? deps.createStore(envelope.sessionId, envelope.slug);
-      store.getState().applyRemoteEnvelope(envelope);
+      const outcome = store.getState().applyRemoteEnvelope(envelope);
+
+      // A lifecycle edge that cannot follow the current local projection is
+      // not a harmless replay. Keep the cursor parked and replace the local
+      // projection from the authoritative Session snapshot.
+      if (outcome === "invalid") {
+        deps.invalidateQueries({
+          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
+        });
+        break;
+      }
 
       if (envelope.payload.type === "tool-child-session-link") {
         const { link } = envelope.payload;
@@ -377,7 +387,7 @@ export function handleSSEEvent(
         deps.invalidateQueries({ queryKey: queryKeys.tree(envelope.slug, store.getState().rootSessionId) });
         const childStore = deps.findStore(link.childSessionId, envelope.slug)
           ?? deps.createStore(link.childSessionId, envelope.slug);
-        childStore.getState().initializeFromSnapshot({
+        childStore.getState().initializeMetadata({
           rootSessionId: store.getState().rootSessionId,
           parentSessionId: link.parentSessionId,
           agentName: link.childAgentName,

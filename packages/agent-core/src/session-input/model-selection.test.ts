@@ -193,6 +193,7 @@ describe("Session model selection protocol", () => {
       sessionId: SESSION_ID,
       workspaceRoot: WORKSPACE,
       executionId: "execution-1",
+      runOrdinal: 0,
       snapshots,
       binding,
       origin: "user_message",
@@ -201,7 +202,7 @@ describe("Session model selection protocol", () => {
     expect(result.messages.map((message) => message.modelAudit)).toEqual([audit, audit]);
     const file = await manager.getSessionFile(WORKSPACE, SESSION_ID);
     expect(file.pendingMessages.map((message) => message.content)).toEqual(["C"]);
-    expect(file.executions[0]).toMatchObject({ id: "execution-1", binding });
+    expect(file.executions).toEqual([]);
   });
 
   test("rejects a stale resolved snapshot without partially starting an execution", async () => {
@@ -224,6 +225,7 @@ describe("Session model selection protocol", () => {
       sessionId: SESSION_ID,
       workspaceRoot: WORKSPACE,
       executionId: "execution-stale",
+      runOrdinal: 0,
       snapshots: [{ pending: accepted.message!, modelAudit: audit }],
       binding,
       origin: "user_message",

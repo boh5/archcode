@@ -5,10 +5,12 @@ export {
 } from "./session-execution-scope-validator";
 export {
   SessionToolBatchScheduler,
+  applySessionToolBatchChildOutcome,
   applySessionToolBatchResponse,
   cancelSessionToolBatch,
   hasRunnableSessionToolBatch,
   listSessionToolBatchHitlIds,
+  repairSessionToolBatchHitlIds,
   validateSessionToolBatchResponse,
 } from "./session-tool-batch-scheduler";
 export { SessionCwdReferenceMigrationService } from "./session-cwd-reference-migration";

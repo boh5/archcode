@@ -2,7 +2,7 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
-import type { AnyToolDescriptor, RawToolResult, ToolExecutionContext } from "../types";
+import type { RawToolResult, ToolExecutionContext } from "../types";
 import { SkillNotFoundError, SkillPathError, SkillValidationError, type ResolvedSkill } from "../../skills";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
 import { BoundedFileReadError, ONE_SHOT_FILE_READ_MAX_BYTES } from "../../utils/safe-file";
@@ -90,7 +90,7 @@ function skillReadError(error: unknown, name: string): RawToolResult {
   });
 }
 
-export function createSkillReadTool(): AnyToolDescriptor {
+export function createSkillReadTool() {
   return defineTool({
     name: "skill_read",
     description: [

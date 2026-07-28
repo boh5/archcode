@@ -34,15 +34,45 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "shutdown":
       return exact(event, ["type"], ["reason"]) && optionalString(event.reason);
     case "execution-start":
-      return exact(event, ["type", "executionId", "binding", "origin"])
+      return exact(event, ["type", "executionId", "origin", "maxSteps", "binding"], ["activeTimeoutMs"])
         && isString(event.executionId) && isExecutionModelBinding(event.binding)
-        && oneOf(event.origin, ["user_message", "tool_call", "tool_batch", "goal_continuation"]);
+        && oneOf(event.origin, ["user_message", "tool_call", "goal_continuation"])
+        && isPositiveSafeInteger(event.maxSteps)
+        && (event.activeTimeoutMs === undefined || isPositiveSafeInteger(event.activeTimeoutMs));
+    case "execution-suspended":
+      return exact(event, [
+        "type", "executionId", "suspension", "runEndedAt", "runUsageDelta", "runSettlement",
+      ])
+        && isString(event.executionId)
+        && isExecutionSuspension(event.suspension)
+        && isNonNegativeSafeInteger(event.runEndedAt)
+        && isNormalizedUsage(event.runUsageDelta)
+        && isExecutionSettlementInput(event.runSettlement);
+    case "execution-suspension-updated":
+      return exact(event, ["type", "executionId", "suspension"])
+        && isString(event.executionId)
+        && isExecutionSuspension(event.suspension);
+    case "execution-resumed":
+      return exact(event, ["type", "executionId", "runOrdinal", "binding"])
+        && isString(event.executionId)
+        && isNonNegativeSafeInteger(event.runOrdinal)
+        && isExecutionModelBinding(event.binding);
     case "execution-end":
-      return exact(event, ["type", "status"], ["error", "blockedByHitlIds", "blockedToolCallId"])
-        && oneOf(event.status, ["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human"])
+      return exact(event, [
+        "type", "executionId", "terminalStatus", "endedAt", "terminalSettlement",
+      ], ["runEndedAt", "runUsageDelta", "runSettlement", "error"])
+        && isString(event.executionId)
+        && oneOf(event.terminalStatus, ["completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted"])
+        && isNonNegativeSafeInteger(event.endedAt)
+        && ((event.runEndedAt === undefined
+          && event.runUsageDelta === undefined
+          && event.runSettlement === undefined)
+          || (isNonNegativeSafeInteger(event.runEndedAt)
+            && isNormalizedUsage(event.runUsageDelta)
+            && isExecutionSettlementInput(event.runSettlement)))
+        && isExecutionSettlementInput(event.terminalSettlement)
         && optionalString(event.error)
-        && optionalArray(event.blockedByHitlIds, isString)
-        && optionalString(event.blockedToolCallId);
+        ;
     case "session.cwd_changed":
       return exact(event, ["type", "previousCwd", "cwd"])
         && isString(event.previousCwd) && isString(event.cwd);
@@ -117,10 +147,11 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "reminder-consumed":
       return exact(event, ["type", "reminderIds"]) && arrayOf(event.reminderIds, isString);
     case "step-start":
-      return exact(event, ["type", "step"]) && isFiniteNumber(event.step);
+      return exact(event, ["type", "step"]) && isNonNegativeSafeInteger(event.step);
     case "step-end":
       return exact(event, ["type", "step", "finishReason"], ["usage"])
-        && isFiniteNumber(event.step) && isString(event.finishReason);
+        && isNonNegativeSafeInteger(event.step)
+        && isString(event.finishReason);
     case "execution-error":
       return exact(event, ["type", "error"], ["step"])
         && isString(event.error) && optionalFiniteNumber(event.step);
@@ -192,7 +223,7 @@ function isPendingSessionMessage(value: unknown): boolean {
     || !exact(
       message,
       ["id", "clientRequestId", "content", "source", "state", "revision", "acceptedAt", "updatedAt", "requestedModelSelection"],
-      ["targetExecutionId"],
+      ["targetExecutionId", "targetRunOrdinal", "targetModelAudit", "claimedAt"],
     )
     || !isString(message.id)
     || !isString(message.clientRequestId)
@@ -203,11 +234,20 @@ function isPendingSessionMessage(value: unknown): boolean {
     || !isFiniteNumber(message.acceptedAt)
     || !isFiniteNumber(message.updatedAt)
     || !isRequestedModelSelection(message.requestedModelSelection)
-    || !optionalString(message.targetExecutionId)) return false;
+    || !optionalString(message.targetExecutionId)
+    || (message.targetRunOrdinal !== undefined && !isNonNegativeSafeInteger(message.targetRunOrdinal))
+    || (message.targetModelAudit !== undefined && !isMessageModelAudit(message.targetModelAudit))
+    || !optionalFiniteNumber(message.claimedAt)) return false;
 
   return message.state === "steering"
     ? typeof message.targetExecutionId === "string"
-    : message.targetExecutionId === undefined;
+      && isNonNegativeSafeInteger(message.targetRunOrdinal)
+      && isMessageModelAudit(message.targetModelAudit)
+      && isFiniteNumber(message.claimedAt)
+    : message.targetExecutionId === undefined
+      && message.targetRunOrdinal === undefined
+      && message.targetModelAudit === undefined
+      && message.claimedAt === undefined;
 }
 
 function isCommittedUserMessage(value: unknown, executionId: string): boolean {
@@ -217,7 +257,7 @@ function isCommittedUserMessage(value: unknown, executionId: string): boolean {
     && exact(
       message,
       ["id", "role", "parts", "createdAt"],
-      ["completedAt", "executionId", "clientRequestId", "compacted", "modelAudit"],
+      ["completedAt", "executionId", "runOrdinal", "clientRequestId", "compacted", "modelAudit"],
     )
     && isString(message.id)
     && message.role === "user"
@@ -227,6 +267,7 @@ function isCommittedUserMessage(value: unknown, executionId: string): boolean {
     && isFiniteNumber(message.createdAt)
     && optionalFiniteNumber(message.completedAt)
     && message.executionId === executionId
+    && isNonNegativeSafeInteger(message.runOrdinal)
     && optionalString(message.clientRequestId)
     && isMessageModelAudit(message.modelAudit)
     && (message.compacted === undefined || typeof message.compacted === "boolean");
@@ -267,6 +308,55 @@ function isExecutionModelBinding(value: unknown): boolean {
     && isString(binding.modelDisplayName)
     && oneOf(binding.resolution, ["requested", "session_override", "profile_default"])
     && isString(binding.modelRuntimeRevision);
+}
+
+function isExecutionSuspension(value: unknown): boolean {
+  const suspension = record(value);
+  if (suspension === undefined || typeof suspension.kind !== "string") return false;
+  switch (suspension.kind) {
+    case "hitl": {
+      if (!exact(suspension, ["kind", "toolBatchId", "blockerIds"])
+        || !isString(suspension.toolBatchId)
+        || !Array.isArray(suspension.blockerIds)
+        || !arrayOf(suspension.blockerIds, isString)
+        || suspension.blockerIds.length === 0) return false;
+      const blockerIds = suspension.blockerIds as string[];
+      return new Set(blockerIds).size === blockerIds.length
+        && blockerIds.every((id, index) => index === 0 || blockerIds[index - 1]! < id);
+    }
+    case "child_dependency":
+      return exact(suspension, [
+        "kind", "toolBatchId", "toolCallId", "childSessionId", "childExecutionId",
+      ])
+        && isString(suspension.toolBatchId)
+        && isString(suspension.toolCallId)
+        && isString(suspension.childSessionId)
+        && isString(suspension.childExecutionId);
+    case "resume_pending":
+      return exact(suspension, ["kind", "toolBatchId", "readyAt"])
+        && isString(suspension.toolBatchId)
+        && isNonNegativeSafeInteger(suspension.readyAt);
+    default:
+      return false;
+  }
+}
+
+function isNormalizedUsage(value: unknown): boolean {
+  const usage = record(value);
+  return usage !== undefined
+    && exact(usage, [
+      "inputTokens", "outputTokens", "totalTokens", "reasoningTokens", "cachedInputTokens",
+    ])
+    && Object.values(usage).every(isNonNegativeSafeInteger);
+}
+
+function isExecutionSettlementInput(value: unknown): boolean {
+  const settlement = record(value);
+  return settlement !== undefined
+    && exact(settlement, ["key", "goalInstanceId"])
+    && isString(settlement.key)
+    && settlement.key.length > 0
+    && (settlement.goalInstanceId === null || isString(settlement.goalInstanceId));
 }
 
 function isMessageModelAudit(value: unknown): boolean {
@@ -468,11 +558,11 @@ function isToolChildSessionLink(value: unknown): boolean {
   return link !== undefined
     && exact(
       link,
-      ["parentSessionId", "parentToolCallId", "toolName", "childSessionId", "childAgentName", "childProfile", "childSkillNames", "title", "depth", "background", "status", "createdAt"],
-      ["startedAt", "endedAt", "durationMs", "error"],
+      ["parentSessionId", "parentToolCallId", "toolName", "childSessionId", "childExecutionId", "childAgentName", "childProfile", "childSkillNames", "title", "depth", "background", "status", "createdAt"],
+      ["startedAt", "endedAt", "durationMs", "durationUpdatedAt", "error"],
     )
     && isString(link.parentSessionId) && isString(link.parentToolCallId) && isString(link.toolName)
-    && isString(link.childSessionId) && isString(link.childAgentName)
+    && isString(link.childSessionId) && isString(link.childExecutionId) && isString(link.childAgentName)
     && oneOf(link.childProfile, ["principal", "deep", "fast"])
     && Array.isArray(link.childSkillNames) && link.childSkillNames.every(isString)
     && isFiniteNumber(link.depth) && typeof link.background === "boolean"
@@ -480,6 +570,8 @@ function isToolChildSessionLink(value: unknown): boolean {
     && isFiniteNumber(link.createdAt) && isString(link.title)
     && optionalFiniteNumber(link.startedAt) && optionalFiniteNumber(link.endedAt)
     && optionalFiniteNumber(link.durationMs)
+    && optionalFiniteNumber(link.durationUpdatedAt)
+    && (link.durationMs === undefined) === (link.durationUpdatedAt === undefined)
     && optionalString(link.error);
 }
 
@@ -1006,7 +1098,8 @@ function isHitlResponse(value: unknown): boolean {
 function isSessionGoalSnapshot(value: unknown): boolean {
   const goal = record(value);
   if (goal === undefined || !exact(goal, [
-    "instanceId", "generation", "objective", "status", "usage", "createdAt", "activatedAt", "updatedAt",
+    "instanceId", "generation", "objective", "status", "usage", "settlementReceipts",
+    "createdAt", "activatedAt", "updatedAt",
   ], [
     "tokenBudget", "blockedReason", "pausedAt", "completedAt",
   ])) return false;
@@ -1025,6 +1118,8 @@ function isSessionGoalSnapshot(value: unknown): boolean {
     && Object.values(tokens).every(isNonNegativeSafeInteger)
     && isNonNegativeSafeInteger(usage.executionTimeMs)
     && isNonNegativeSafeInteger(usage.executionCount)
+    && arrayOf(goal.settlementReceipts, isString)
+    && new Set(goal.settlementReceipts as string[]).size === (goal.settlementReceipts as string[]).length
     && isNonNegativeSafeInteger(goal.createdAt)
     && isNonNegativeSafeInteger(goal.activatedAt)
     && isNonNegativeSafeInteger(goal.updatedAt)

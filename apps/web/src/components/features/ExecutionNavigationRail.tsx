@@ -8,8 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { SessionPart } from "@archcode/protocol";
-import type { ExecutionWorkstreamExecution } from "../../lib/execution-workstream";
-import { presentExecutionStatus } from "../../lib/execution-status-presentation";
+import type { ExecutionWorkstreamSegment } from "../../lib/execution-workstream";
 import { useElapsedTime } from "../primitives/TemporalText";
 
 const TOOLTIP_GAP_PX = 8;
@@ -21,36 +20,29 @@ const RAIL_MAX_HEIGHT = "min(70vh, 40rem, calc(100% - 16px))";
 function firstText(parts: readonly SessionPart[]): string | undefined {
   for (const part of parts) {
     if (part.type !== "text") continue;
-    const text = part.text.trim();
-    if (text.length > 0) return text;
+    const value = part.text.trim();
+    if (value) return value;
   }
   return undefined;
 }
 
-function executionRequest(execution: ExecutionWorkstreamExecution): string {
-  for (const message of execution.userMessages) {
-    const text = firstText(message.parts);
-    if (text) {
-      const normalized = text.replace(/\s+/g, " ");
-      if (normalized.length <= REQUEST_SUMMARY_MAX_CHARACTERS) return normalized;
-      return `${normalized.slice(0, REQUEST_SUMMARY_MAX_CHARACTERS - 1).trimEnd()}…`;
-    }
+function segmentRequest(segment: ExecutionWorkstreamSegment): string {
+  for (const message of segment.inputMessages) {
+    const value = firstText(message.parts);
+    if (!value) continue;
+    const normalized = value.replace(/\s+/g, " ");
+    return normalized.length <= REQUEST_SUMMARY_MAX_CHARACTERS
+      ? normalized
+      : `${normalized.slice(0, REQUEST_SUMMARY_MAX_CHARACTERS - 1).trimEnd()}…`;
   }
-  switch (execution.record.origin) {
-    case "goal_continuation":
-      return "Goal continuation";
-    case "tool_batch":
-      return "Tool batch continuation";
-    case "tool_call":
-      return "Tool continuation";
-    case "user_message":
-      return "User request";
-  }
+  return "Work in progress";
 }
 
-function ExecutionNavigationMarker({
-  execution,
+function SegmentMarker({
+  segment,
+  ordinal,
   current,
+  live,
   tabIndex,
   buttonRef,
   onNavigate,
@@ -62,8 +54,10 @@ function ExecutionNavigationMarker({
   onTooltipHover,
   onTooltipLeave,
 }: {
-  execution: ExecutionWorkstreamExecution;
+  segment: ExecutionWorkstreamSegment;
+  ordinal: number;
   current: boolean;
+  live: boolean;
   tabIndex: number;
   buttonRef: (button: HTMLButtonElement | null) => void;
   onNavigate: () => void;
@@ -76,29 +70,31 @@ function ExecutionNavigationMarker({
   onTooltipLeave: () => void;
 }) {
   const duration = useElapsedTime({
-    startedAt: execution.record.startedAt,
-    active: execution.record.status === "running",
-    durationMs: execution.record.durationMs,
-    endedAt: execution.record.endedAt,
+    startedAt: segment.windowStartedAt,
+    active: live,
+    durationMs: segment.activeDurationMs,
+    durationUpdatedAt: segment.windowEndedAt,
+    endedAt: segment.windowEndedAt,
   });
-  const request = executionRequest(execution);
-  const status = presentExecutionStatus(execution.record.status);
-  const extraInputs = Math.max(0, execution.userMessages.length - 1);
   const label = [
-    `Execution ${execution.number}`,
-    request,
-    status.label,
+    `Message ${ordinal}`,
+    segmentRequest(segment),
     duration,
-    extraInputs > 0 ? `${extraInputs} additional inputs` : undefined,
-  ].filter(Boolean).join(", ");
-
+  ]
+    .filter(Boolean)
+    .join(", ");
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    let direction: "previous" | "next" | "first" | "last" | undefined;
-    if (event.key === "ArrowUp") direction = "previous";
-    else if (event.key === "ArrowDown") direction = "next";
-    else if (event.key === "Home") direction = "first";
-    else if (event.key === "End") direction = "last";
-    else if (event.key === "Escape") {
+    const direction =
+      event.key === "ArrowUp"
+        ? "previous"
+        : event.key === "ArrowDown"
+          ? "next"
+          : event.key === "Home"
+            ? "first"
+            : event.key === "End"
+              ? "last"
+              : undefined;
+    if (event.key === "Escape") {
       onTooltipBlur();
       onTooltipLeave();
       return;
@@ -107,7 +103,6 @@ function ExecutionNavigationMarker({
     event.preventDefault();
     onMove(direction);
   };
-
   return (
     <button
       ref={buttonRef}
@@ -117,7 +112,7 @@ function ExecutionNavigationMarker({
       aria-current={current ? "location" : undefined}
       aria-describedby={tooltipVisible ? tooltipId : undefined}
       tabIndex={tabIndex}
-      data-execution-navigation-id={execution.id}
+      data-execution-navigation-id={segment.id}
       onBlur={onTooltipBlur}
       onClick={onNavigate}
       onFocus={onTooltipFocus}
@@ -126,151 +121,172 @@ function ExecutionNavigationMarker({
       onMouseLeave={onTooltipLeave}
     >
       <span
-        className={`h-0.5 rounded-full transition-[width,background-color] duration-[var(--motion-hover)] group-hover:w-5 group-focus-visible:w-5 ${
-          current ? "w-4 bg-text-secondary" : "w-2 bg-border-strong"
-        }`}
+        className={`h-0.5 rounded-full transition-[width,background-color] duration-[var(--motion-hover)] group-hover:w-5 group-focus-visible:w-5 ${current ? "w-4 bg-text-secondary" : "w-2 bg-border-strong"}`}
         aria-hidden="true"
       />
     </button>
   );
 }
 
-function ExecutionNavigationTooltip({
-  execution,
+function SegmentTooltip({
+  segment,
+  ordinal,
+  active,
 }: {
-  execution: ExecutionWorkstreamExecution;
+  segment: ExecutionWorkstreamSegment;
+  ordinal: number;
+  active: boolean;
 }) {
   const duration = useElapsedTime({
-    startedAt: execution.record.startedAt,
-    active: execution.record.status === "running",
-    durationMs: execution.record.durationMs,
-    endedAt: execution.record.endedAt,
+    startedAt: segment.windowStartedAt,
+    active,
+    durationMs: segment.activeDurationMs,
+    durationUpdatedAt: segment.windowEndedAt,
+    endedAt: segment.windowEndedAt,
   });
   return (
     <>
-      <strong className="block font-semibold">Execution {execution.number}</strong>
+      <strong className="block font-semibold">
+        Message {ordinal}
+      </strong>
       <span className="mt-1 block line-clamp-3 text-text-secondary">
-        {executionRequest(execution)}
+        {segmentRequest(segment)}
       </span>
       <span className="mt-1 block text-text-tertiary">
-        {presentExecutionStatus(execution.record.status).label} · {duration}
+        {active ? "Working for" : "Worked for"} {duration}
       </span>
     </>
   );
 }
 
 export function ExecutionNavigationRail({
-  executions,
-  currentExecutionId,
+  segments,
+  currentSegmentId,
+  running,
   left,
   visible,
   onNavigate,
 }: {
-  executions: readonly ExecutionWorkstreamExecution[];
-  currentExecutionId: string | null;
+  segments: readonly ExecutionWorkstreamSegment[];
+  currentSegmentId: string | null;
+  running: boolean;
   left: number;
   visible: boolean;
-  onNavigate: (executionId: string, behavior: ScrollBehavior) => void;
+  onNavigate: (segmentId: string, behavior: ScrollBehavior) => void;
 }) {
-  const markerByExecutionIdRef = useRef(new Map<string, HTMLButtonElement>());
+  const markerByIdRef = useRef(new Map<string, HTMLButtonElement>());
   const navigationRef = useRef<HTMLElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const tooltipId = useId();
-  const [focusedExecutionId, setFocusedExecutionId] = useState<string | null>(null);
-  const [hoveredExecutionId, setHoveredExecutionId] = useState<string | null>(null);
-  const [tooltipPosition, setTooltipPosition] = useState<{ left: number; top: number } | null>(null);
-  const tooltipExecutionId = focusedExecutionId ?? hoveredExecutionId;
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
+  const tooltipSegmentId = focusedId ?? hoveredId;
   const currentIndex = Math.max(
     0,
-    executions.findIndex((execution) => execution.id === currentExecutionId),
+    segments.findIndex((segment) => segment.id === currentSegmentId),
   );
-  const tooltipExecution = executions.find((execution) => execution.id === tooltipExecutionId);
-
-  const positionTooltip = useCallback((executionId: string) => {
-    if (tooltipRef.current === null) return;
-    const marker = markerByExecutionIdRef.current.get(executionId);
+  const tooltipSegment = segments.find(
+    (segment) => segment.id === tooltipSegmentId,
+  );
+  const positionTooltip = useCallback((segmentId: string) => {
+    if (!tooltipRef.current) return;
+    const marker = markerByIdRef.current.get(segmentId);
     if (!marker) return;
     const markerRect = marker.getBoundingClientRect();
     const tooltipRect = tooltipRef.current.getBoundingClientRect();
-    const maximumLeft = Math.max(
-      VIEWPORT_GUTTER_PX,
-      window.innerWidth - tooltipRect.width - VIEWPORT_GUTTER_PX,
-    );
-    const nextLeft = Math.min(maximumLeft, markerRect.right + TOOLTIP_GAP_PX);
-    const nextTop = Math.min(
-      Math.max(VIEWPORT_GUTTER_PX, markerRect.top + markerRect.height / 2 - tooltipRect.height / 2),
-      Math.max(VIEWPORT_GUTTER_PX, window.innerHeight - tooltipRect.height - VIEWPORT_GUTTER_PX),
-    );
-    setTooltipPosition({ left: nextLeft, top: nextTop });
+    setTooltipPosition({
+      left: Math.min(
+        Math.max(
+          VIEWPORT_GUTTER_PX,
+          window.innerWidth - tooltipRect.width - VIEWPORT_GUTTER_PX,
+        ),
+        markerRect.right + TOOLTIP_GAP_PX,
+      ),
+      top: Math.min(
+        Math.max(
+          VIEWPORT_GUTTER_PX,
+          markerRect.top + markerRect.height / 2 - tooltipRect.height / 2,
+        ),
+        Math.max(
+          VIEWPORT_GUTTER_PX,
+          window.innerHeight - tooltipRect.height - VIEWPORT_GUTTER_PX,
+        ),
+      ),
+    });
   }, []);
-
-  useLayoutEffect(() => {
-    if (!visible || tooltipExecutionId === null) return;
-    positionTooltip(tooltipExecutionId);
-  }, [positionTooltip, tooltipExecutionId, visible]);
-
-  const keepMarkerVisible = useCallback((executionId: string | null) => {
+  const keepMarkerVisible = useCallback((segmentId: string | null) => {
     const navigation = navigationRef.current;
-    const marker = executionId === null
-      ? undefined
-      : markerByExecutionIdRef.current.get(executionId);
+    const marker =
+      segmentId === null ? undefined : markerByIdRef.current.get(segmentId);
     if (!navigation || !marker) return;
     const navigationRect = navigation.getBoundingClientRect();
     const markerRect = marker.getBoundingClientRect();
-    const visibleTop = navigationRect.top + RAIL_VISIBLE_PADDING_PX;
-    const visibleBottom = navigationRect.bottom - RAIL_VISIBLE_PADDING_PX;
-    if (markerRect.top < visibleTop) {
-      navigation.scrollTop -= visibleTop - markerRect.top;
-    } else if (markerRect.bottom > visibleBottom) {
-      navigation.scrollTop += markerRect.bottom - visibleBottom;
-    }
+    const top = navigationRect.top + RAIL_VISIBLE_PADDING_PX;
+    const bottom = navigationRect.bottom - RAIL_VISIBLE_PADDING_PX;
+    if (markerRect.top < top) navigation.scrollTop -= top - markerRect.top;
+    else if (markerRect.bottom > bottom)
+      navigation.scrollTop += markerRect.bottom - bottom;
   }, []);
-
   useLayoutEffect(() => {
     if (!visible) return;
-    keepMarkerVisible(currentExecutionId ?? focusedExecutionId);
-  }, [currentExecutionId, focusedExecutionId, keepMarkerVisible, visible]);
-
+    keepMarkerVisible(currentSegmentId ?? focusedId);
+    if (tooltipSegmentId) positionTooltip(tooltipSegmentId);
+  }, [
+    currentSegmentId,
+    focusedId,
+    keepMarkerVisible,
+    positionTooltip,
+    tooltipSegmentId,
+    visible,
+  ]);
   useLayoutEffect(() => {
-    if (!visible || typeof ResizeObserver === "undefined") return;
+    if (
+      !visible ||
+      typeof ResizeObserver === "undefined" ||
+      !navigationRef.current
+    )
+      return;
     const navigation = navigationRef.current;
-    if (!navigation) return;
     const observer = new ResizeObserver(() => {
-      keepMarkerVisible(currentExecutionId ?? focusedExecutionId);
-      if (tooltipExecutionId !== null) positionTooltip(tooltipExecutionId);
+      keepMarkerVisible(currentSegmentId ?? focusedId);
+      if (tooltipSegmentId) positionTooltip(tooltipSegmentId);
     });
     observer.observe(navigation);
     if (navigation.parentElement) observer.observe(navigation.parentElement);
     return () => observer.disconnect();
   }, [
-    currentExecutionId,
-    focusedExecutionId,
+    currentSegmentId,
+    focusedId,
     keepMarkerVisible,
     positionTooltip,
-    tooltipExecutionId,
+    tooltipSegmentId,
     visible,
   ]);
-
   if (!visible) return null;
-
   const move = (
-    executionId: string,
+    id: string,
     direction: "previous" | "next" | "first" | "last",
   ) => {
-    const index = executions.findIndex((execution) => execution.id === executionId);
-    const nextIndex = direction === "first"
-      ? 0
-      : direction === "last"
-        ? executions.length - 1
-        : direction === "previous"
-          ? Math.max(0, index - 1)
-          : Math.min(executions.length - 1, index + 1);
-    const target = executions[nextIndex];
+    const index = segments.findIndex((segment) => segment.id === id);
+    const nextIndex =
+      direction === "first"
+        ? 0
+        : direction === "last"
+          ? segments.length - 1
+          : direction === "previous"
+            ? Math.max(0, index - 1)
+            : Math.min(segments.length - 1, index + 1);
+    const target = segments[nextIndex];
     if (!target) return;
     onNavigate(target.id, "smooth");
-    requestAnimationFrame(() => markerByExecutionIdRef.current.get(target.id)?.focus({ preventScroll: true }));
+    requestAnimationFrame(() =>
+      markerByIdRef.current.get(target.id)?.focus({ preventScroll: true }),
+    );
   };
-
   return (
     <>
       <nav
@@ -279,56 +295,75 @@ export function ExecutionNavigationRail({
         style={{
           left,
           maxHeight: RAIL_MAX_HEIGHT,
-          maskImage: "linear-gradient(to bottom, transparent, black 12px, black calc(100% - 12px), transparent)",
-          WebkitMaskImage: "linear-gradient(to bottom, transparent, black 12px, black calc(100% - 12px), transparent)",
+          maskImage:
+            "linear-gradient(to bottom, transparent, black 12px, black calc(100% - 12px), transparent)",
+          WebkitMaskImage:
+            "linear-gradient(to bottom, transparent, black 12px, black calc(100% - 12px), transparent)",
         }}
-        aria-label="Execution navigation"
+        aria-label="Message navigation"
         data-testid="execution-navigation-rail"
         onScroll={() => {
-          if (tooltipExecutionId !== null) positionTooltip(tooltipExecutionId);
+          if (tooltipSegmentId) positionTooltip(tooltipSegmentId);
         }}
       >
-        {executions.map((execution, index) => (
-          <ExecutionNavigationMarker
-            key={execution.id}
-            execution={execution}
-            current={execution.id === currentExecutionId}
+        {segments.map((segment, index) => (
+          <SegmentMarker
+            key={segment.id}
+            segment={segment}
+            ordinal={index + 1}
+            current={segment.id === currentSegmentId}
+            live={running && index === segments.length - 1}
             tabIndex={index === currentIndex ? 0 : -1}
             buttonRef={(button) => {
-              if (button) markerByExecutionIdRef.current.set(execution.id, button);
-              else markerByExecutionIdRef.current.delete(execution.id);
+              if (button) markerByIdRef.current.set(segment.id, button);
+              else markerByIdRef.current.delete(segment.id);
             }}
-            onNavigate={() => onNavigate(execution.id, "smooth")}
-            onMove={(direction) => move(execution.id, direction)}
+            onNavigate={() => onNavigate(segment.id, "smooth")}
+            onMove={(direction) => move(segment.id, direction)}
             tooltipId={tooltipId}
-            tooltipVisible={tooltipExecutionId === execution.id}
+            tooltipVisible={tooltipSegmentId === segment.id}
             onTooltipFocus={() => {
               setTooltipPosition(null);
-              setFocusedExecutionId(execution.id);
+              setFocusedId(segment.id);
             }}
-            onTooltipBlur={() => setFocusedExecutionId(null)}
+            onTooltipBlur={() => setFocusedId(null)}
             onTooltipHover={() => {
               setTooltipPosition(null);
-              setHoveredExecutionId(execution.id);
+              setHoveredId(segment.id);
             }}
-            onTooltipLeave={() => setHoveredExecutionId(null)}
+            onTooltipLeave={() => setHoveredId(null)}
           />
         ))}
       </nav>
-      {tooltipExecution && typeof document !== "undefined" && createPortal(
-        <div
-          ref={tooltipRef}
-          id={tooltipId}
-          role="tooltip"
-          className="pointer-events-none fixed z-[100] max-w-[320px] rounded-md border border-border-default bg-bg-overlay px-3 py-2 text-[11px] leading-4 text-text-primary shadow-md animate-overlay-enter"
-          style={tooltipPosition === null
-            ? { left: 0, top: 0, visibility: "hidden" }
-            : tooltipPosition}
-        >
-          <ExecutionNavigationTooltip execution={tooltipExecution} />
-        </div>,
-        document.body,
-      )}
+      {tooltipSegment &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={tooltipRef}
+            id={tooltipId}
+            role="tooltip"
+            className="pointer-events-none fixed z-[100] max-w-[320px] rounded-md border border-border-default bg-bg-overlay px-3 py-2 text-[11px] leading-4 text-text-primary shadow-md animate-overlay-enter"
+            style={
+              tooltipPosition === null
+                ? { left: 0, top: 0, visibility: "hidden" }
+                : tooltipPosition
+            }
+          >
+            <SegmentTooltip
+              segment={tooltipSegment}
+              active={
+                running
+                && tooltipSegment.id === segments.at(-1)?.id
+              }
+              ordinal={
+                segments.findIndex(
+                  (segment) => segment.id === tooltipSegment.id,
+                ) + 1
+              }
+            />
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

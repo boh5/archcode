@@ -1,13 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import type { SessionStoreState } from "../store/types";
-import { testExecutionBinding } from "../testing/test-execution-fixtures";
+import { testExecutionRecord } from "../testing/test-execution-fixtures";
 import { finalOutputForExecution } from "./final-output";
 
 function state(status: "completed" | "failed", latestText?: string): Pick<SessionStoreState, "executions" | "messages"> {
   return {
     executions: [
-      { id: "old", startedAt: 1, endedAt: 2, status: "completed", binding: testExecutionBinding, origin: "tool_call" },
-      { id: "latest", startedAt: 3, endedAt: 4, status, binding: testExecutionBinding, origin: "tool_call" },
+      testExecutionRecord("old"),
+      testExecutionRecord("latest", status),
     ],
     messages: [
       {

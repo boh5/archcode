@@ -1,5 +1,6 @@
 import type { FinalizedToolResult, HitlResponse } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
+import type { ChildExecutionOutcome } from "../delegation/types";
 
 import { toDurableToolInput } from "../store/durable-tool-input";
 import type { SessionStoreManager } from "../store/session-store-manager";
@@ -33,6 +34,8 @@ export interface SessionToolBatchQueue {
 }
 
 export interface SessionToolBatchSchedulerOptions {
+  readonly executionId: string;
+  readonly runOrdinal: number;
   readonly store: StoreApi<SessionStoreState>;
   readonly storeManager: SessionStoreManager;
   readonly workspaceRoot: string;
@@ -47,7 +50,20 @@ export interface SessionToolBatchSchedulerOptions {
 export type SessionToolBatchAdvanceResult =
   | { readonly status: "ready_for_continuation"; readonly sessionCwdChanged: boolean }
   | { readonly status: "execution_completed"; readonly sessionCwdChanged: boolean }
-  | { readonly status: "waiting_for_human"; readonly hitlIds: string[]; readonly sessionCwdChanged: boolean }
+  | {
+      readonly status: "suspended_hitl";
+      readonly toolBatchId: string;
+      readonly hitlIds: string[];
+      readonly sessionCwdChanged: boolean;
+    }
+  | {
+      readonly status: "waiting_for_child";
+      readonly toolBatchId: string;
+      readonly toolCallId: string;
+      readonly childSessionId: string;
+      readonly childExecutionId: string;
+      readonly sessionCwdChanged: boolean;
+    }
   | { readonly status: "manual_inspection_required"; readonly reason: SessionToolManualInspectionReason };
 
 const TERMINAL_CALL_STATES = new Set<SessionToolBatchCall["state"]>(["completed", "failed"]);
@@ -71,11 +87,18 @@ export class SessionToolBatchScheduler {
       const calls = partition.type === "parallel" ? partition.calls : [partition.call];
       for (const call of calls) partitionIndexByCall.set(call.toolCallId, partitionIndex);
     });
-    const now = new Date().toISOString();
+    const checkpointAt = Date.now();
+    const now = new Date(checkpointAt).toISOString();
     const state = this.#options.store.getState();
+    if (state.currentExecutionId !== this.#options.executionId) {
+      throw new Error(
+        `Tool batch execution ${this.#options.executionId} does not match current Session execution ${state.currentExecutionId ?? "none"}`,
+      );
+    }
     const batch: SessionToolBatch = {
       batchId: crypto.randomUUID(),
-      executionId: state.currentExecutionId ?? crypto.randomUUID(),
+      executionId: this.#options.executionId,
+      runOrdinal: this.#options.runOrdinal,
       ...(state.currentAssistantMessageId === undefined ? {} : { assistantMessageId: state.currentAssistantMessageId }),
       step,
       agentName: this.#options.agentName,
@@ -95,6 +118,7 @@ export class SessionToolBatchScheduler {
           ?? { readOnly: false, destructive: false, concurrencySafe: false },
         state: "queued",
         attempt: 0,
+        checkpointAt,
       })),
       createdAt: now,
       updatedAt: now,
@@ -115,12 +139,55 @@ export class SessionToolBatchScheduler {
     await this.#commitSettled(batch.batchId, call, outcome);
   }
 
+  async prepareChildLaunch(input: {
+    readonly parentExecutionId: string;
+    readonly parentRunOrdinal: number;
+    readonly parentToolBatchId: string;
+    readonly parentToolCallId: string;
+    readonly childSessionId: string;
+    readonly childExecutionId: string;
+  }): Promise<void> {
+    const batch = this.#requireActiveBatch();
+    if (
+      batch.batchId !== input.parentToolBatchId
+      || batch.executionId !== input.parentExecutionId
+      || batch.runOrdinal !== input.parentRunOrdinal
+    ) throw new Error("Synchronous child launch does not match its active Tool Batch");
+    const call = requiredCall(batch, input.parentToolCallId);
+    if (call.state === "child_launch" || call.state === "child_dependency") {
+      if (
+        call.childDependency?.parentExecutionId !== input.parentExecutionId
+        || call.childDependency.runOrdinal !== input.parentRunOrdinal
+        || call.childDependency.toolCallId !== input.parentToolCallId
+        || call.childDependency.childSessionId !== input.childSessionId
+        || call.childDependency.childExecutionId !== input.childExecutionId
+      ) throw new Error("Synchronous child launch conflicts with its durable intent");
+      return;
+    }
+    if (call.state !== "running") throw new Error(`Tool call ${call.toolCallId} cannot prepare a child launch from ${call.state}`);
+    const createdAt = Date.now();
+    await this.#updateBatch(batch.batchId, (current) => ({
+      ...current,
+      calls: current.calls.map((candidate) => candidate.toolCallId !== call.toolCallId ? candidate : {
+        ...candidate,
+        state: "child_launch",
+        checkpointAt: createdAt,
+        childDependency: {
+          kind: "child_launch",
+          parentExecutionId: input.parentExecutionId,
+          runOrdinal: input.parentRunOrdinal,
+          toolCallId: input.parentToolCallId,
+          childSessionId: input.childSessionId,
+          childExecutionId: input.childExecutionId,
+          createdAt,
+        },
+      }),
+    }));
+  }
+
   async recoverInterruptedBatch(): Promise<SessionToolBatchAdvanceResult | undefined> {
     let batch = this.activeBatch();
     if (batch === undefined) return undefined;
-    if (batch.continuationStartedAt !== undefined && batch.continuationCompletedAt === undefined) {
-      return await this.#archiveManual({ kind: "continuation_interrupted", batchId: batch.batchId });
-    }
 
     await this.#repairBlockerHitlIds(batch.batchId);
     await this.#repairMissingToolResults();
@@ -171,7 +238,11 @@ export class SessionToolBatchScheduler {
       if (!batch.calls.filter((call) => call.partitionIndex < partitionIndex).every((call) => TERMINAL_CALL_STATES.has(call.state))) break;
 
       const calls = partition.callIds.map((callId) => requiredCall(batch, callId));
-      const queued = calls.filter((call) => call.state === "queued");
+      const hasUnansweredBlocker = batch.calls.some((call) => call.state === "blocked");
+      const queued = calls.filter((call) =>
+        call.state === "queued"
+        && !(hasUnansweredBlocker && isApprovedPermissionResponse(call.blocker?.response))
+      );
       if (partition.type === "parallel") {
         const outcomes = await Promise.all(queued.map((call) => this.#runCall(batch.batchId, call.toolCallId)));
         for (const outcome of outcomes) {
@@ -189,6 +260,19 @@ export class SessionToolBatchScheduler {
       const manual = refreshed.find((call) => call.state === "manual_inspection_required");
       if (manual !== undefined) {
         return await this.#archiveManual(manualReasonFromCall(manual));
+      }
+      const child = refreshed.find((call) =>
+        call.state === "child_launch" || call.state === "child_dependency"
+      );
+      if (child?.childDependency !== undefined) {
+        return {
+          status: "waiting_for_child",
+          toolBatchId: batch.batchId,
+          toolCallId: child.toolCallId,
+          childSessionId: child.childDependency.childSessionId,
+          childExecutionId: child.childDependency.childExecutionId,
+          sessionCwdChanged,
+        };
       }
       if (sessionCwdChanged) {
         await this.#failCallsAfterControlBoundary(batch.batchId, partitionIndex, {
@@ -214,10 +298,24 @@ export class SessionToolBatchScheduler {
     batch = this.#requireActiveBatch();
     const manual = batch.calls.find((call) => call.state === "manual_inspection_required");
     if (manual !== undefined) return await this.#archiveManual(manualReasonFromCall(manual));
+    const child = batch.calls.find((call) =>
+      call.state === "child_launch" || call.state === "child_dependency"
+    );
+    if (child?.childDependency !== undefined) {
+      return {
+        status: "waiting_for_child",
+        toolBatchId: batch.batchId,
+        toolCallId: child.toolCallId,
+        childSessionId: child.childDependency.childSessionId,
+        childExecutionId: child.childDependency.childExecutionId,
+        sessionCwdChanged,
+      };
+    }
     const blockers = batch.calls.filter((call) => call.state === "blocked");
     if (blockers.length > 0 || !batch.calls.every((call) => TERMINAL_CALL_STATES.has(call.state))) {
       return {
-        status: "waiting_for_human",
+        status: "suspended_hitl",
+        toolBatchId: batch.batchId,
         hitlIds: blockers.flatMap((call) => call.blocker?.hitlId === undefined ? [] : [call.blocker.hitlId]).sort(),
         sessionCwdChanged,
       };
@@ -228,17 +326,10 @@ export class SessionToolBatchScheduler {
     };
   }
 
-  async claimContinuation(): Promise<boolean> {
-    const batch = this.#requireActiveBatch();
-    if (batch.continuationStartedAt !== undefined) return false;
-    await this.#updateBatch(batch.batchId, (current) => ({ ...current, continuationStartedAt: new Date().toISOString() }));
-    return true;
-  }
-
   async completeContinuation(): Promise<void> {
     const batch = this.#requireActiveBatch();
     const now = new Date().toISOString();
-    await this.#updateBatch(batch.batchId, (current) => ({ ...current, continuationCompletedAt: now, archivedAt: now }));
+    await this.#updateBatch(batch.batchId, (current) => ({ ...current, archivedAt: now }));
   }
 
   async #runCall(batchId: string, toolCallId: string): Promise<{ sessionCwdChanged: boolean; executionCompleted: boolean }> {
@@ -247,10 +338,11 @@ export class SessionToolBatchScheduler {
       sessionCwdChanged: false,
       executionCompleted: call.state === "completed" && call.executionCompleted === true,
     };
+    const checkpointAt = Date.now();
     await this.#updateBatch(batchId, (batch) => ({
       ...batch,
       calls: batch.calls.map((candidate) => candidate.toolCallId === toolCallId
-        ? { ...candidate, state: "running", attempt: candidate.attempt + 1 }
+        ? { ...candidate, state: "running", attempt: candidate.attempt + 1, checkpointAt }
         : candidate),
     }));
     const batch = this.#requireActiveBatch();
@@ -258,9 +350,32 @@ export class SessionToolBatchScheduler {
     const toolCall = toToolCall(call);
     const context = await this.#options.createContext(toolCall, batch.step);
     const blocker = call.blocker;
-    const outcome = blocker?.response === undefined
-      ? await this.#options.registry.execute(toolCall, context)
-      : await this.#options.registry.resumeBlocked({
+    const dependency = call.childDependency;
+    const outcome = dependency?.kind === "child_dependency" && dependency.outcome !== undefined
+      ? await this.#options.registry.resumeChildDependency({
+          toolCall,
+          dependency: {
+            parentExecutionId: dependency.parentExecutionId,
+            runOrdinal: dependency.runOrdinal,
+            toolBatchId: batch.batchId,
+            toolCallId: dependency.toolCallId,
+            childSessionId: dependency.childSessionId,
+            childExecutionId: dependency.childExecutionId,
+          },
+          outcome: {
+            outcome: "terminal",
+            executionId: dependency.childExecutionId,
+            executionStatus: dependency.outcome.executionStatus,
+            ...(dependency.outcome.output === undefined ? {} : { output: dependency.outcome.output }),
+            ...(dependency.outcome.terminalError === undefined
+              ? {}
+              : { terminalError: dependency.outcome.terminalError }),
+          },
+          context,
+        })
+      : blocker?.response === undefined
+        ? await this.#options.registry.execute(toolCall, context)
+        : await this.#options.registry.resumeBlocked({
           toolCall,
           request: requestFromBlocker(blocker),
           requestKey: blocker.requestKey,
@@ -271,11 +386,45 @@ export class SessionToolBatchScheduler {
       await this.#blockCall(batchId, call, outcome.requestKey, outcome.request);
       return { sessionCwdChanged: false, executionCompleted: false };
     }
+    if (outcome.kind === "child_deferred") {
+      await this.#deferChild(batchId, call, outcome.dependency);
+      return { sessionCwdChanged: false, executionCompleted: false };
+    }
     await this.#commitSettled(batchId, call, outcome);
     return {
       sessionCwdChanged: outcome.sidecar?.sessionCwdChanged === true,
       executionCompleted: outcome.sidecar?.executionCompleted === true,
     };
+  }
+
+  async #deferChild(
+    batchId: string,
+    call: SessionToolBatchCall,
+    dependency: Extract<RegistryExecutionOutcome, { kind: "child_deferred" }>["dependency"],
+  ): Promise<void> {
+    const launch = call.childDependency ?? requiredCall(this.#requireActiveBatch(), call.toolCallId).childDependency;
+    if (
+      launch?.kind !== "child_launch"
+      || dependency.parentExecutionId !== launch.parentExecutionId
+      || dependency.runOrdinal !== launch.runOrdinal
+      || dependency.toolCallId !== launch.toolCallId
+      || dependency.childSessionId !== launch.childSessionId
+      || dependency.childExecutionId !== launch.childExecutionId
+    ) throw new Error("Child-deferred result does not match the durable launch intent");
+    const dependencyStartedAt = Date.now();
+    await this.#updateBatch(batchId, (batch) => ({
+      ...batch,
+      calls: batch.calls.map((candidate) => candidate.toolCallId !== call.toolCallId ? candidate : {
+        ...candidate,
+        state: "child_dependency",
+        checkpointAt: dependencyStartedAt,
+        childDependency: {
+          ...launch,
+          kind: "child_dependency",
+          dependencyStartedAt,
+        },
+      }),
+    }));
   }
 
   async #blockCall(
@@ -284,11 +433,13 @@ export class SessionToolBatchScheduler {
     requestKey: string,
     request: ToolBlockedRequest,
   ): Promise<void> {
+    const checkpointAt = Date.now();
     await this.#updateBatch(batchId, (batch) => ({
       ...batch,
       calls: batch.calls.map((candidate) => candidate.toolCallId === call.toolCallId ? {
         ...candidate,
         state: "blocked",
+        checkpointAt,
         blocker: blockerFromRequest(requestKey, request),
       } : candidate),
     }));
@@ -310,25 +461,13 @@ export class SessionToolBatchScheduler {
   }
 
   async #repairBlockerHitlIds(batchId: string): Promise<void> {
-    for (const call of this.#requireActiveBatch().calls) {
-      const blocker = call.state === "blocked" ? call.blocker : undefined;
-      if (blocker === undefined || blocker.hitlId !== undefined) continue;
-      const created = await this.#options.hitlQueue.create({
-        requestKey: blocker.requestKey,
-        owner: { type: "session", id: this.#options.store.getState().sessionId },
-        source: blocker.source,
-        displayPayload: blocker.displayPayload,
-        ...(blocker.source.type === "tool_permission"
-          ? { persistentApprovalEligible: blocker.persistentApprovalEligible }
-          : {}),
-      });
-      await this.#updateBatch(batchId, (current) => ({
-        ...current,
-        calls: current.calls.map((candidate) => candidate.toolCallId === call.toolCallId && candidate.blocker?.requestKey === blocker.requestKey
-          ? { ...candidate, blocker: { ...candidate.blocker, hitlId: created.record.hitlId } }
-          : candidate),
-      }));
-    }
+    await repairSessionToolBatchHitlIds({
+      store: this.#options.store,
+      storeManager: this.#options.storeManager,
+      workspaceRoot: this.#options.workspaceRoot,
+      hitlQueue: this.#options.hitlQueue,
+      batchId,
+    });
   }
 
   async #repairMissingToolResults(): Promise<void> {
@@ -390,8 +529,6 @@ export class SessionToolBatchScheduler {
     const now = new Date().toISOString();
     await this.#updateBatch(batchId, (current) => ({
       ...current,
-      continuationStartedAt: current.continuationStartedAt ?? now,
-      continuationCompletedAt: current.continuationCompletedAt ?? now,
       archivedAt: current.archivedAt ?? now,
     }));
   }
@@ -414,21 +551,27 @@ export class SessionToolBatchScheduler {
     recoveryFailure?: SessionToolBatchCall["recoveryFailure"],
     markBlockerApplied = false,
   ): Promise<void> {
-    const now = new Date().toISOString();
+    const checkpointAt = Date.now();
+    const now = new Date(checkpointAt).toISOString();
     await this.#updateBatch(batchId, (batch) => ({
       ...batch,
-      calls: batch.calls.map((candidate) => candidate.toolCallId === call.toolCallId ? {
-        ...candidate,
-        state: outcome.result.isError ? "failed" : "completed",
-        result: outcome.result,
-        ...(outcome.sidecar?.executionCompleted === true && !outcome.result.isError
-          ? { executionCompleted: true as const }
-          : {}),
-        ...(recoveryFailure === undefined ? {} : { recoveryFailure }),
-        ...(markBlockerApplied && candidate.blocker !== undefined
-          ? { blocker: { ...candidate.blocker, responseAppliedAt: candidate.blocker.responseAppliedAt ?? now, response: candidate.blocker.response ?? { type: "cancel", reason: "Tool batch stopped" } } }
-          : {}),
-      } : candidate),
+      calls: batch.calls.map((candidate) => {
+        if (candidate.toolCallId !== call.toolCallId) return candidate;
+        const { childDependency: _childDependency, ...terminalCall } = candidate;
+        return {
+          ...terminalCall,
+          state: outcome.result.isError ? "failed" : "completed",
+          checkpointAt,
+          result: outcome.result,
+          ...(outcome.sidecar?.executionCompleted === true && !outcome.result.isError
+            ? { executionCompleted: true as const }
+            : {}),
+          ...(recoveryFailure === undefined ? {} : { recoveryFailure }),
+          ...(markBlockerApplied && candidate.blocker !== undefined
+            ? { blocker: { ...candidate.blocker, responseAppliedAt: candidate.blocker.responseAppliedAt ?? now, response: candidate.blocker.response ?? { type: "cancel", reason: "Tool batch stopped" } } }
+            : {}),
+        };
+      }),
     }));
     this.#appendResult(call, outcome.result);
     await this.#flush();
@@ -462,6 +605,55 @@ export class SessionToolBatchScheduler {
   }
 }
 
+/** Repairs the durable blocked-call -> Project HITL link before lifecycle recovery. */
+export async function repairSessionToolBatchHitlIds(input: {
+  readonly store: StoreApi<SessionStoreState>;
+  readonly storeManager: SessionStoreManager;
+  readonly workspaceRoot: string;
+  readonly hitlQueue: Pick<SessionToolBatchQueue, "create">;
+  readonly batchId: string;
+}): Promise<void> {
+  const sessionId = input.store.getState().sessionId;
+  const batch = input.store.getState().toolBatches.find((candidate) =>
+    candidate.archivedAt === undefined && candidate.batchId === input.batchId
+  );
+  if (batch === undefined) throw new Error(`Session has no active Tool Batch ${input.batchId}`);
+  for (const call of batch.calls) {
+    const blocker = call.state === "blocked" ? call.blocker : undefined;
+    if (blocker === undefined || blocker.hitlId !== undefined) continue;
+    const created = await input.hitlQueue.create({
+      requestKey: blocker.requestKey,
+      owner: { type: "session", id: sessionId },
+      source: blocker.source,
+      displayPayload: blocker.displayPayload,
+      ...(blocker.source.type === "tool_permission"
+        ? { persistentApprovalEligible: blocker.persistentApprovalEligible }
+        : {}),
+    });
+    const hitlId = created.record.hitlId;
+    const updatedAt = new Date().toISOString();
+    await input.storeManager.updateToolBatches(
+      sessionId,
+      input.workspaceRoot,
+      (batches) => batches.map((candidate) => candidate.batchId !== input.batchId
+          ? candidate
+          : {
+            ...candidate,
+            updatedAt,
+            calls: candidate.calls.map((candidateCall) =>
+              candidateCall.toolCallId === call.toolCallId
+                && candidateCall.blocker?.requestKey === blocker.requestKey
+                ? {
+                    ...candidateCall,
+                    blocker: { ...candidateCall.blocker, hitlId },
+                  }
+                : candidateCall
+            ),
+          }),
+    );
+  }
+}
+
 /** Persists one accepted response for later Registry.resumeBlocked execution. */
 export async function applySessionToolBatchResponse(input: {
   readonly registry: ToolRegistry;
@@ -473,29 +665,98 @@ export async function applySessionToolBatchResponse(input: {
   readonly response: HitlResponse;
 }): Promise<{ batchId: string; toolCallId: string }> {
   const store = await input.storeManager.getOrLoad(input.sessionId, input.workspaceRoot);
-  const { batch, call } = requireExactBlockedCall(store.getState(), input.hitlId, input.requestKey);
-  if (call.blocker!.response !== undefined) {
-    if (JSON.stringify(call.blocker!.response) !== JSON.stringify(input.response)) throw new Error("HITL response conflicts with the accepted response");
-    return { batchId: batch.batchId, toolCallId: call.toolCallId };
+  const accepted = findExactHitlCall(store.getState(), input.hitlId, input.requestKey);
+  if (accepted?.call.blocker?.response !== undefined) {
+    const response = input.registry.validateBlockedResponse(
+      requestFromBlocker(accepted.call.blocker),
+      input.response,
+    );
+    if (JSON.stringify(accepted.call.blocker.response) !== JSON.stringify(response)) {
+      throw new Error("HITL response conflicts with the accepted response");
+    }
+    return { batchId: accepted.batch.batchId, toolCallId: accepted.call.toolCallId };
   }
+  const { batch, call } = requireExactBlockedCall(store.getState(), input.hitlId, input.requestKey);
   const response = input.registry.validateBlockedResponse(requestFromBlocker(call.blocker!), input.response);
-  const now = new Date().toISOString();
+  const checkpointAt = Date.now();
+  const now = new Date(checkpointAt).toISOString();
   await input.storeManager.updateToolBatches(input.sessionId, input.workspaceRoot, (batches) => batches.map((candidate) => candidate.batchId !== batch.batchId ? candidate : {
     ...candidate,
     updatedAt: now,
     calls: candidate.calls.map((candidateCall) => candidateCall.toolCallId !== call.toolCallId ? candidateCall : {
       ...candidateCall,
       state: "queued",
+      checkpointAt,
       blocker: { ...call.blocker!, hitlId: input.hitlId, responseAppliedAt: now, response },
     }),
   }));
   return { batchId: batch.batchId, toolCallId: call.toolCallId };
 }
 
+export async function applySessionToolBatchChildOutcome(input: {
+  readonly storeManager: SessionStoreManager;
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+  readonly batchId: string;
+  readonly toolCallId: string;
+  readonly childSessionId: string;
+  readonly childExecutionId: string;
+  readonly outcome: Extract<ChildExecutionOutcome, { outcome: "terminal" }>;
+}): Promise<void> {
+  if (input.outcome.executionId !== input.childExecutionId) {
+    throw new Error("Child terminal outcome executionId conflicts with the durable dependency");
+  }
+  const store = await input.storeManager.getOrLoad(input.sessionId, input.workspaceRoot);
+  const batch = store.getState().toolBatches.find((candidate) => candidate.batchId === input.batchId);
+  const call = batch === undefined ? undefined : batch.calls.find((candidate) => candidate.toolCallId === input.toolCallId);
+  const dependency = call?.childDependency;
+  if (
+    batch?.archivedAt !== undefined
+    || call?.state !== "child_dependency"
+    || dependency?.kind !== "child_dependency"
+    || dependency.childSessionId !== input.childSessionId
+    || dependency.childExecutionId !== input.childExecutionId
+  ) throw new Error("Child terminal outcome has no exact active dependency");
+  const durableOutcome = {
+    executionStatus: input.outcome.executionStatus,
+    ...(input.outcome.output === undefined ? {} : { output: input.outcome.output }),
+    ...(input.outcome.terminalError === undefined
+      ? {}
+      : {
+          terminalError: input.outcome.terminalError instanceof Error
+            ? input.outcome.terminalError.message
+            : String(input.outcome.terminalError),
+        }),
+    resolvedAt: Date.now(),
+  };
+  if (dependency.outcome !== undefined) {
+    const previous = JSON.stringify({ ...dependency.outcome, resolvedAt: 0 });
+    const next = JSON.stringify({ ...durableOutcome, resolvedAt: 0 });
+    if (previous !== next) throw new Error("Child terminal outcome conflicts with the applied dependency outcome");
+    return;
+  }
+  await input.storeManager.updateToolBatches(input.sessionId, input.workspaceRoot, (batches) => batches.map((candidate) => (
+    candidate.batchId !== input.batchId ? candidate : {
+      ...candidate,
+      calls: candidate.calls.map((candidateCall) => candidateCall.toolCallId !== input.toolCallId
+        ? candidateCall
+        : {
+            ...candidateCall,
+            state: "queued",
+            checkpointAt: durableOutcome.resolvedAt,
+            childDependency: {
+              ...dependency,
+              outcome: durableOutcome,
+            },
+          }),
+    }
+  )));
+}
+
 export function listSessionToolBatchHitlIds(state: Pick<SessionStoreState, "toolBatches">): string[] {
   const active = state.toolBatches.find((batch) => batch.archivedAt === undefined);
   if (active === undefined) return [];
-  return active.calls.flatMap((call) => call.state === "blocked" && call.blocker?.hitlId !== undefined ? [call.blocker.hitlId] : []).sort();
+  return [...new Set(active.calls.flatMap((call) => call.blocker?.hitlId === undefined ? [] : [call.blocker.hitlId]))].sort();
 }
 
 export async function validateSessionToolBatchResponse(input: {
@@ -506,15 +767,33 @@ export async function validateSessionToolBatchResponse(input: {
   readonly hitlId: string;
   readonly requestKey: string;
   readonly response: HitlResponse;
-}): Promise<void> {
+}): Promise<{ executionId: string; batchId: string; toolCallId: string }> {
   const store = await input.storeManager.getOrLoad(input.sessionId, input.workspaceRoot);
-  const { call } = requireExactBlockedCall(store.getState(), input.hitlId, input.requestKey);
-  input.registry.validateBlockedResponse(requestFromBlocker(call.blocker!), input.response);
+  const exact = findExactHitlCall(store.getState(), input.hitlId, input.requestKey);
+  if (exact === undefined || exact.call.blocker === undefined) {
+    throw new Error(`HITL ${input.hitlId} and request key do not match a Session tool batch`);
+  }
+  const response = input.registry.validateBlockedResponse(
+    requestFromBlocker(exact.call.blocker),
+    input.response,
+  );
+  if (exact.call.blocker.response !== undefined) {
+    if (JSON.stringify(exact.call.blocker.response) !== JSON.stringify(response)) {
+      throw new Error("HITL response conflicts with the accepted response");
+    }
+  } else if (exact.batch.archivedAt !== undefined || exact.call.state !== "blocked") {
+    throw new Error(`HITL ${input.hitlId} call ${exact.call.toolCallId} is not awaiting a response`);
+  }
+  return {
+    executionId: exact.batch.executionId,
+    batchId: exact.batch.batchId,
+    toolCallId: exact.call.toolCallId,
+  };
 }
 
 export function hasRunnableSessionToolBatch(state: Pick<SessionStoreState, "toolBatches">): boolean {
   const active = state.toolBatches.find((batch) => batch.archivedAt === undefined);
-  if (active === undefined || active.continuationStartedAt !== undefined) return false;
+  if (active === undefined) return false;
   for (const partition of active.partitions) {
     const calls = partition.callIds.map((callId) => requiredCall(active, callId));
     if (calls.every((call) => TERMINAL_CALL_STATES.has(call.state))) continue;
@@ -535,28 +814,19 @@ export async function cancelSessionToolBatch(input: {
   const store = await input.storeManager.getOrLoad(input.sessionId, input.workspaceRoot);
   let batch = store.getState().toolBatches.find((candidate) => candidate.archivedAt === undefined);
   if (batch === undefined) return { hitlIds: [], manualInspectionRequired: false };
-  for (const call of batch.calls) {
-    const blocker = call.state === "blocked" ? call.blocker : undefined;
-    if (blocker === undefined || blocker.hitlId !== undefined) continue;
-    const { record } = await input.hitlQueue.create({
-      requestKey: blocker.requestKey,
-      owner: { type: "session", id: input.sessionId },
-      source: blocker.source,
-      displayPayload: blocker.displayPayload,
-      ...(blocker.source.type === "tool_permission" ? { persistentApprovalEligible: blocker.persistentApprovalEligible } : {}),
-    });
-    await input.storeManager.updateToolBatches(input.sessionId, input.workspaceRoot, (batches) => batches.map((candidate) => candidate.batchId !== batch!.batchId ? candidate : {
-      ...candidate,
-      updatedAt: new Date().toISOString(),
-      calls: candidate.calls.map((candidateCall) => candidateCall.toolCallId === call.toolCallId && candidateCall.blocker?.requestKey === blocker.requestKey
-        ? { ...candidateCall, blocker: { ...candidateCall.blocker, hitlId: record.hitlId } }
-        : candidateCall),
-    }));
-  }
+  await repairSessionToolBatchHitlIds({
+    store,
+    storeManager: input.storeManager,
+    workspaceRoot: input.workspaceRoot,
+    hitlQueue: input.hitlQueue,
+    batchId: batch.batchId,
+  });
   batch = store.getState().toolBatches.find((candidate) => candidate.archivedAt === undefined);
   if (batch === undefined) return { hitlIds: [], manualInspectionRequired: false };
   const hitlIds = listSessionToolBatchHitlIds(store.getState());
   await input.prepareHitlCancellation(hitlIds);
+  batch = store.getState().toolBatches.find((candidate) => candidate.archivedAt === undefined);
+  if (batch === undefined) return { hitlIds, manualInspectionRequired: false };
   let manualInspectionRequired = false;
   let manualReason: SessionToolManualInspectionReason | undefined;
   for (const call of batch.calls) {
@@ -564,26 +834,50 @@ export async function cancelSessionToolBatch(input: {
     if (call.state === "running" && !call.traits.readOnly) {
       manualInspectionRequired = true;
       manualReason = { kind: "effectful_cancelled_unknown", toolCallId: call.toolCallId, toolName: call.toolName };
+      const raw = createToolErrorResult({
+        kind: "execution",
+        code: "TOOL_RESULT_UNKNOWN",
+        message: "Tool execution result is unknown because execution was interrupted",
+      });
+      const outcome = await input.settleSystem(toToolCall(call), batch.step, {
+        ...raw,
+        details: { ...raw.details, unknownResult: true },
+      });
+      const checkpointAt = Date.now();
       await updateSingleCall(input.storeManager, input.sessionId, input.workspaceRoot, batch.batchId, call.toolCallId, (current) => ({
         ...current,
-        state: "manual_inspection_required",
+        state: "failed",
+        checkpointAt,
+        result: outcome.result,
         recoveryFailure: { kind: "effectful_cancelled_unknown" },
       }));
+      store.getState().append({
+        type: "tool-result",
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        result: outcome.result,
+      });
       continue;
     }
     const outcome = await input.settleSystem(toToolCall(call), batch.step, createToolErrorResult({ kind: "cancelled", message: input.reason }));
-    await updateSingleCall(input.storeManager, input.sessionId, input.workspaceRoot, batch.batchId, call.toolCallId, (current) => ({
-      ...current,
-      state: "failed",
-      result: outcome.result,
-      ...(current.blocker === undefined ? {} : {
-        blocker: {
-          ...current.blocker,
-          responseAppliedAt: new Date().toISOString(),
-          response: { type: "cancel", reason: "Session tool batch cancelled" },
-        },
-      }),
-    }));
+    const checkpointAt = Date.now();
+    const settledAt = new Date(checkpointAt).toISOString();
+    await updateSingleCall(input.storeManager, input.sessionId, input.workspaceRoot, batch.batchId, call.toolCallId, (current) => {
+      const { childDependency: _childDependency, ...terminalCall } = current;
+      return {
+        ...terminalCall,
+        state: "failed",
+        checkpointAt,
+        result: outcome.result,
+        ...(current.blocker === undefined ? {} : {
+          blocker: {
+            ...current.blocker,
+            responseAppliedAt: current.blocker.responseAppliedAt ?? settledAt,
+            response: current.blocker.response ?? { type: "cancel", reason: "Session tool batch cancelled" },
+          },
+        }),
+      };
+    });
     store.getState().append({ type: "tool-result", toolCallId: call.toolCallId, toolName: call.toolName, result: outcome.result });
   }
   const now = new Date().toISOString();
@@ -629,16 +923,44 @@ function requireExactBlockedCall(
   hitlId: string,
   requestKey: string,
 ): { batch: SessionToolBatch; call: SessionToolBatchCall } {
-  const batch = state.toolBatches.find((candidate) => candidate.archivedAt === undefined && candidate.calls.some((call) => (
-    call.blocker?.hitlId === hitlId && call.blocker.requestKey === requestKey
-  )));
-  if (batch === undefined) throw new Error(`HITL ${hitlId} and request key do not match an active Session tool batch`);
-  const call = batch.calls.find((candidate) => candidate.blocker?.hitlId === hitlId && candidate.blocker.requestKey === requestKey);
-  if (call === undefined || call.blocker === undefined) throw new Error(`HITL ${hitlId} does not match an active blocked tool call`);
-  if (call.state !== "blocked" && !(call.state === "queued" && call.blocker.response !== undefined)) {
+  const exact = findExactHitlCall(state, hitlId, requestKey);
+  if (exact === undefined) throw new Error(`HITL ${hitlId} and request key do not match an active Session tool batch`);
+  const { batch, call } = exact;
+  if (batch.archivedAt !== undefined || call.state !== "blocked" || call.blocker?.response !== undefined) {
     throw new Error(`HITL ${hitlId} call ${call.toolCallId} is not awaiting or holding a response`);
   }
   return { batch, call };
+}
+
+function findExactHitlCall(
+  state: Pick<SessionStoreState, "toolBatches">,
+  hitlId: string,
+  requestKey: string,
+): { batch: SessionToolBatch; call: SessionToolBatchCall } | undefined {
+  const exactBatch = state.toolBatches.find((candidate) => candidate.calls.some((call) => (
+    call.blocker?.hitlId === hitlId && call.blocker.requestKey === requestKey
+  )));
+  if (exactBatch !== undefined) {
+    const exactCall = exactBatch.calls.find((candidate) =>
+      candidate.blocker?.hitlId === hitlId && candidate.blocker.requestKey === requestKey
+    );
+    if (exactCall !== undefined) return { batch: exactBatch, call: exactCall };
+  }
+  const unlinkedBatch = state.toolBatches.find((candidate) =>
+    candidate.archivedAt === undefined
+    && candidate.calls.some((call) =>
+      call.blocker?.hitlId === undefined && call.blocker?.requestKey === requestKey
+    )
+  );
+  if (unlinkedBatch === undefined) return undefined;
+  const unlinkedCall = unlinkedBatch.calls.find((candidate) =>
+    candidate.blocker?.hitlId === undefined && candidate.blocker?.requestKey === requestKey
+  );
+  return unlinkedCall === undefined ? undefined : { batch: unlinkedBatch, call: unlinkedCall };
+}
+
+function isApprovedPermissionResponse(response: HitlResponse | undefined): boolean {
+  return response?.type === "permission_decision" && response.decision !== "deny";
 }
 
 function requiredCall(batch: SessionToolBatch, toolCallId: string): SessionToolBatchCall {

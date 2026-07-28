@@ -25,6 +25,7 @@ import { runQueryLoop } from "./loop";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { createTestModelInfo } from "../../testing/test-execution-fixtures";
 import { SessionGoalService } from "../../session-goal";
+import type { SessionToolBatch } from "../../store/types";
 
 const ROOT = join("/tmp", "archcode-query-loop", crypto.randomUUID());
 const skillService = new SkillService({ builtinSkills: {} });
@@ -104,6 +105,9 @@ async function createHarness() {
     async search() { return { matches: [], searchCompleteness: "complete" }; },
   };
   const options: QueryLoopOptions = {
+    executionId: "test-execution",
+    runOrdinal: 0,
+    initialStep: 0,
     binding: dummyBinding,
     logger: silentLogger,
     toolRegistry: registry,
@@ -117,6 +121,13 @@ async function createHarness() {
     store,
     agentName: "lead",
   };
+  store.getState().append({
+    type: "execution-start",
+    executionId: options.executionId,
+    binding: dummyBinding.summary,
+    origin: "tool_call",
+    maxSteps: 50,
+  });
   const appendUser = (text: string) => {
     const id = crypto.randomUUID();
     store.getState().append({
@@ -157,6 +168,39 @@ function toolEvents(harness: Awaited<ReturnType<typeof createHarness>>) {
   return harness.store.getState().events.flatMap((event) => event.payload.type === "tool-result" ? [event.payload] : []);
 }
 
+function stageQueuedBatch(
+  harness: Awaited<ReturnType<typeof createHarness>>,
+  toolName: string,
+  allowedTools: string[],
+  agentSkills: string[],
+): void {
+  const now = new Date().toISOString();
+  const batch: SessionToolBatch = {
+    batchId: crypto.randomUUID(),
+    executionId: harness.options.executionId,
+    runOrdinal: harness.options.runOrdinal,
+    step: harness.options.initialStep,
+    agentName: "lead",
+    allowedTools,
+    agentSkills,
+    partitions: [{ type: "serial", callIds: ["recovered-call"] }],
+    calls: [{
+      ordinal: 0,
+      partitionIndex: 0,
+      toolCallId: "recovered-call",
+      toolName,
+      input: {},
+      traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      state: "queued",
+      attempt: 0,
+      checkpointAt: Date.now(),
+    }],
+    createdAt: now,
+    updatedAt: now,
+  };
+  harness.store.setState({ toolBatches: [batch] });
+}
+
 describe("QueryLoop Tool Output Plane", () => {
   test("executes a model tool batch and appends nested finalized results", async () => {
     const harness = await createHarness();
@@ -175,6 +219,51 @@ describe("QueryLoop Tool Output Plane", () => {
     expect(toolEvents(harness)[0]).toMatchObject({
       toolCallId: "call-1",
       result: { isError: false, output: { preview: "hello" } },
+    });
+  });
+
+  test("recovery intersects a durable batch capability snapshot before its first Registry execution", async () => {
+    const harness = await createHarness();
+    let observed: Pick<ToolExecutionContext, "allowedTools" | "agentSkills"> | undefined;
+    registerInline(harness, "survives", async (_input, context) => {
+      observed = { allowedTools: context.allowedTools, agentSkills: context.agentSkills };
+      return createTextToolResult("recovered");
+    });
+    harness.options.allowedTools = ["survives", "new-tool"];
+    harness.options.agentSkills = ["persisted-skill", "new-skill"];
+    stageQueuedBatch(
+      harness,
+      "survives",
+      ["survives", "removed-tool"],
+      ["persisted-skill", "removed-skill"],
+    );
+    installRounds([{ finishReason: "stop", text: "done" }]);
+
+    await runQueryLoop(harness.options);
+
+    expect([...observed!.allowedTools]).toEqual(["survives"]);
+    expect(observed!.agentSkills).toEqual(["persisted-skill"]);
+    expect(toolEvents(harness)[0]).toMatchObject({
+      toolCallId: "recovered-call",
+      result: { isError: false },
+    });
+  });
+
+  test("recovery rejects a durable queued call whose capability was revoked before its first Registry execution", async () => {
+    const harness = await createHarness();
+    const execute = mock(async () => createTextToolResult("must not run"));
+    registerInline(harness, "revoked", execute);
+    harness.options.allowedTools = ["current-tool"];
+    harness.options.agentSkills = ["current-skill"];
+    stageQueuedBatch(harness, "revoked", ["revoked"], ["persisted-skill"]);
+    installRounds([{ finishReason: "stop", text: "done" }]);
+
+    await runQueryLoop(harness.options);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(toolEvents(harness)[0]).toMatchObject({
+      toolCallId: "recovered-call",
+      result: { isError: true, details: { error: { code: "TOOL_NOT_ALLOWED" } } },
     });
   });
 
@@ -259,7 +348,10 @@ describe("QueryLoop Tool Output Plane", () => {
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
     };
     installRounds([{ finishReason: "tool-calls", toolCalls: [call] }]);
-    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "waiting_for_human" });
+    expect(await runQueryLoop(harness.options)).toMatchObject({
+      outcome: "suspended",
+      suspension: { kind: "hitl" },
+    });
     expect(toolEvents(harness)).toHaveLength(0);
     const blocker = harness.store.getState().toolBatches[0]!.calls[0]!.blocker!;
 
@@ -309,29 +401,6 @@ describe("QueryLoop Tool Output Plane", () => {
     installRounds([{ finishReason: "tool-calls", toolCalls: [{ toolCallId: "cwd-1", toolName: "cwd", input: {} }] }]);
     expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed", cwdChanged: { previousCwd: harness.workspaceRoot } });
     expect(toolEvents(harness)[0]!.result).not.toHaveProperty("sidecar");
-  });
-
-  test("settles restart-orphaned tool parts through Registry before the next model call", async () => {
-    const harness = await createHarness();
-    harness.appendUser("recover");
-    harness.store.getState().append({ type: "step-start", step: 0 });
-    harness.store.getState().append({ type: "tool-call", toolCallId: "orphan-1", toolName: "missing_tool", input: {} });
-    harness.store.getState().append({
-      type: "tool-attempt",
-      toolCallId: "orphan-1",
-      toolName: "missing_tool",
-      attemptId: crypto.randomUUID(),
-      timestamp: Date.now(),
-      destructive: false,
-    });
-    harness.store.getState().append({ type: "execution-end", status: "interrupted" });
-    expect(toolEvents(harness)).toHaveLength(0);
-    installRounds([{ finishReason: "stop", text: "recovered" }]);
-    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed" });
-    expect(toolEvents(harness)[0]!.result).toMatchObject({
-      isError: true,
-      details: { unknownResult: true },
-    });
   });
 
   test("commits steers before projecting messages and runs hooks in lifecycle order", async () => {

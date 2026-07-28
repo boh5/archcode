@@ -1,7 +1,11 @@
 import type { StoreApi } from "zustand";
+import type {
+  SessionExecutionSuspension,
+  SessionExecutionTerminalStatus,
+} from "@archcode/protocol";
 import type { ExecutionModelBinding } from "../../models";
 import type { SessionStoreManager } from "../../store/session-store-manager";
-import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
+import type { SessionStoreState } from "../../store/types";
 import type { ToolRegistry } from "../../tools/registry";
 import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import type { ProjectContext } from "../../projects/types";
@@ -14,6 +18,9 @@ import type { SessionGoalService } from "../../session-goal";
 export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
 
 export interface QueryLoopOptions {
+  executionId: string;
+  runOrdinal: number;
+  initialStep: number;
   binding: ExecutionModelBinding;
   logger: Logger;
   toolRegistry: ToolRegistry;
@@ -45,16 +52,26 @@ export interface QueryLoopOptions {
   hooks?: QueryLoopHooks;
 }
 
-export interface QueryLoopResult {
-  text: string;
-  steps: number;
-  status: ExecutionEndEvent["status"];
-  error?: string;
-  cwdChanged?: {
-    previousCwd: string;
-    cwd: string;
+interface QueryLoopResultBase {
+  readonly text: string;
+  /** Total canonical step cursor after this run, not a per-run reset. */
+  readonly steps: number;
+  readonly cwdChanged?: {
+    readonly previousCwd: string;
+    readonly cwd: string;
   };
 }
+
+export type QueryLoopResult =
+  | QueryLoopResultBase & {
+      readonly outcome: "suspended";
+      readonly suspension: Exclude<SessionExecutionSuspension, { kind: "resume_pending" }>;
+    }
+  | QueryLoopResultBase & {
+      readonly outcome: "terminal";
+      readonly status: SessionExecutionTerminalStatus;
+      readonly error?: string;
+    };
 
 export interface NormalizedToolCall {
   toolName: string;

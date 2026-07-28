@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigationType,
+} from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import { TOOL_DELEGATE, createEmptySessionStats } from "@archcode/protocol";
-import type { GlobalSSEHitlRealtimeEvent, ToolChildSessionLink } from "@archcode/protocol";
+import type {
+  GlobalSSEHitlRealtimeEvent,
+  ToolChildSessionLink,
+} from "@archcode/protocol";
 import type { HitlView, ProjectTodo, Session } from "../api/types";
 import {
   __resetWebSessionStoresForTest,
@@ -22,7 +31,10 @@ import {
   sessionQueryOptions,
 } from "../api/queries";
 import { SessionRoute } from "./session";
-import { WorkbenchLayoutProvider, useWorkbenchLayout } from "../context/workbench-layout";
+import {
+  WorkbenchLayoutProvider,
+  useWorkbenchLayout,
+} from "../context/workbench-layout";
 import { SettingsModalProvider } from "../context/settings-modal";
 
 function createSession(input: {
@@ -48,10 +60,17 @@ function createSession(input: {
     activeSkillNames: [],
     modelSelection: { revision: 0 },
     nextModelSelection: {
-      requested: { mode: "profile_default", selection: { model: "test:model" } },
+      requested: {
+        mode: "profile_default",
+        selection: { model: "test:model" },
+      },
       resolved: {
-        selection: { model: "test:model" }, providerId: "test", modelId: "model",
-        providerDisplayName: "Test", modelDisplayName: "Test Model", resolution: "profile_default",
+        selection: { model: "test:model" },
+        providerId: "test",
+        modelId: "model",
+        providerDisplayName: "Test",
+        modelDisplayName: "Test Model",
+        resolution: "profile_default",
         modelRuntimeRevision: "m1",
       },
     },
@@ -63,7 +82,11 @@ function createSession(input: {
     childSessionLinks: input.childSessionLinks ?? [],
     stats: createEmptySessionStats(),
     executions: [],
-    executionInputCheckpoints: [],
+    executionCount: 0,
+    isRunning: false,
+    isStreamingModel: false,
+    currentExecutionId: undefined,
+    currentAssistantMessageId: undefined,
     eventCursor: 0,
   };
 }
@@ -82,13 +105,17 @@ const DOM_GLOBAL_NAMES = [
 
 type DomGlobalName = (typeof DOM_GLOBAL_NAMES)[number];
 
-let originalGlobalDescriptors: Map<DomGlobalName, PropertyDescriptor | undefined> | undefined;
+let originalGlobalDescriptors:
+  Map<DomGlobalName, PropertyDescriptor | undefined> | undefined;
 
 function saveGlobalDescriptors(): void {
   if (originalGlobalDescriptors) return;
 
   originalGlobalDescriptors = new Map(
-    DOM_GLOBAL_NAMES.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
+    DOM_GLOBAL_NAMES.map((name) => [
+      name,
+      Object.getOwnPropertyDescriptor(globalThis, name),
+    ]),
   );
 }
 
@@ -109,16 +136,37 @@ function restoreGlobals(): void {
 function installDom(): JSDOM {
   saveGlobalDescriptors();
 
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
-    url: "http://localhost/projects/demo/sessions/root-session",
-  });
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+      url: "http://localhost/projects/demo/sessions/root-session",
+    },
+  );
 
-  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
-  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
-  Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
-  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
-  Object.defineProperty(globalThis, "MouseEvent", { value: dom.window.MouseEvent, configurable: true });
-  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
+  Object.defineProperty(globalThis, "window", {
+    value: dom.window,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "document", {
+    value: dom.window.document,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    value: dom.window.navigator,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "HTMLElement", {
+    value: dom.window.HTMLElement,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "MouseEvent", {
+    value: dom.window.MouseEvent,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
+    value: true,
+    configurable: true,
+  });
   Object.defineProperty(globalThis, "requestAnimationFrame", {
     value: (callback: FrameRequestCallback) => {
       queueMicrotask(() => callback(0));
@@ -126,8 +174,14 @@ function installDom(): JSDOM {
     },
     configurable: true,
   });
-  Object.defineProperty(globalThis, "cancelAnimationFrame", { value: () => {}, configurable: true });
-  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", { value: () => {}, configurable: true });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    value: () => {},
+    configurable: true,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
+    value: () => {},
+    configurable: true,
+  });
 
   return dom;
 }
@@ -139,16 +193,24 @@ function findElementByText(container: Element, text: string): Element {
   return match;
 }
 
-async function renderSessionRoute(root: Root, queryClient: QueryClient): Promise<void> {
+async function renderSessionRoute(
+  root: Root,
+  queryClient: QueryClient,
+): Promise<void> {
   await queryClient.fetchQuery(sessionQueryOptions("demo", "root-session"));
   await act(async () => {
     root.render(
       <SettingsModalProvider>
         <WorkbenchLayoutProvider>
           <QueryClientProvider client={queryClient}>
-            <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
+            <MemoryRouter
+              initialEntries={["/projects/demo/sessions/root-session"]}
+            >
               <Routes>
-                <Route path="/projects/:slug/sessions/:sessionId" element={<SessionRoute />} />
+                <Route
+                  path="/projects/:slug/sessions/:sessionId"
+                  element={<SessionRoute />}
+                />
               </Routes>
             </MemoryRouter>
           </QueryClientProvider>
@@ -163,14 +225,19 @@ function LocationProbe() {
   const navigationType = useNavigationType();
   return (
     <output data-testid="location">
-      {location.pathname}{location.search}|{navigationType}
+      {location.pathname}
+      {location.search}|{navigationType}
     </output>
   );
 }
 
 function LayoutProbe() {
   const layout = useWorkbenchLayout();
-  return <output data-testid="inspector-expanded">{String(layout.inspectorExpanded)}</output>;
+  return (
+    <output data-testid="inspector-expanded">
+      {String(layout.inspectorExpanded)}
+    </output>
+  );
 }
 
 describe("SessionRoute store-level behavior", () => {
@@ -179,7 +246,9 @@ describe("SessionRoute store-level behavior", () => {
   });
 
   test("keeps the child Inspector reopen control aligned with the 760px layout boundary", async () => {
-    const source = await Bun.file(new URL("./session.tsx", import.meta.url)).text();
+    const source = await Bun.file(
+      new URL("./session.tsx", import.meta.url),
+    ).text();
     expect(source).toContain("max-[760px]:hidden");
     expect(source).not.toContain("max-[799px]:hidden");
   });
@@ -215,7 +284,26 @@ describe("SessionRoute store-level behavior", () => {
     const slug = "demo";
     const sessionId = "route-snapshot";
     const sessionData = {
-      messages: [{ id: "m1", role: "user" as const, parts: [{ type: "text" as const, id: "p1", text: "hello", createdAt: Date.now() }], createdAt: Date.now() }],
+      executionCount: 0,
+      isRunning: false,
+      isStreamingModel: false,
+      currentExecutionId: undefined,
+      currentAssistantMessageId: undefined,
+      messages: [
+        {
+          id: "m1",
+          role: "user" as const,
+          parts: [
+            {
+              type: "text" as const,
+              id: "p1",
+              text: "hello",
+              createdAt: Date.now(),
+            },
+          ],
+          createdAt: Date.now(),
+        },
+      ],
       steps: [],
       todos: [],
       reminders: [],
@@ -252,6 +340,7 @@ describe("SessionRoute focused view store behavior", () => {
 
     const initialGoal: NonNullable<Session["goal"]> = {
       instanceId: "goal-live",
+      settlementReceipts: [],
       generation: 1,
       objective: "Keep Goal usage live after settlement",
       status: "active",
@@ -279,27 +368,43 @@ describe("SessionRoute focused view store behavior", () => {
     });
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
       const path = new URL(url, "http://localhost").pathname;
       if (path === "/api/projects") return Response.json({ projects: [] });
       if (path === "/api/agents") return Response.json({ agents: [] });
-      if (path === "/api/projects/demo/todos") return Response.json({ todos: [] });
-      if (path === "/api/projects/demo/sessions/root-session") return Response.json(rootSession);
+      if (path === "/api/projects/demo/todos")
+        return Response.json({ todos: [] });
+      if (path === "/api/projects/demo/sessions/root-session")
+        return Response.json(rootSession);
       return new Response("Not found", { status: 404 });
     });
-    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+      },
     });
     const reactRoot = createRoot(container);
 
     try {
       await renderSessionRoute(reactRoot, queryClient);
 
-      const row = container.querySelector('[data-testid="session-goal-summary-row"]');
+      const row = container.querySelector(
+        '[data-testid="session-goal-summary-row"]',
+      );
       expect(row?.textContent).toContain("1,500");
-      expect(getWebSessionStore("root-session", "demo").getState().goal).toEqual(initialGoal);
+      expect(
+        getWebSessionStore("root-session", "demo").getState().goal,
+      ).toEqual(initialGoal);
 
       const updatedGoal: NonNullable<Session["goal"]> = {
         ...initialGoal,
@@ -316,32 +421,46 @@ describe("SessionRoute focused view store behavior", () => {
         },
       };
       await act(async () => {
-        getWebSessionStore("root-session", "demo").getState().applyRemoteEnvelope({
-          type: "event",
-          slug: "demo",
-          sessionId: "root-session",
-          eventId: 1,
-          createdAt: 2,
-          agentName: "lead",
-          payload: {
-            type: "session.goal_changed",
-            action: "usage_recorded",
-            instanceId: updatedGoal.instanceId,
-            generation: updatedGoal.generation,
-            goal: updatedGoal,
-            status: updatedGoal.status,
-            occurredAt: 2,
-          },
-        });
+        getWebSessionStore("root-session", "demo")
+          .getState()
+          .applyRemoteEnvelope({
+            type: "event",
+            slug: "demo",
+            sessionId: "root-session",
+            eventId: 1,
+            createdAt: 2,
+            agentName: "lead",
+            payload: {
+              type: "session.goal_changed",
+              action: "usage_recorded",
+              instanceId: updatedGoal.instanceId,
+              generation: updatedGoal.generation,
+              goal: updatedGoal,
+              status: updatedGoal.status,
+              occurredAt: 2,
+            },
+          });
       });
 
-      const updatedRow = container.querySelector('[data-testid="session-goal-summary-row"]');
+      const updatedRow = container.querySelector(
+        '[data-testid="session-goal-summary-row"]',
+      );
       expect(updatedRow?.textContent).toContain("2,750");
       expect(updatedRow?.textContent).not.toContain("1,500");
-      expect(fetchMock.mock.calls.filter(([input]) => {
-        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        return new URL(url, "http://localhost").pathname === "/api/projects/demo/sessions/root-session";
-      })).toHaveLength(1);
+      expect(
+        fetchMock.mock.calls.filter(([input]) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input.url;
+          return (
+            new URL(url, "http://localhost").pathname ===
+            "/api/projects/demo/sessions/root-session"
+          );
+        }),
+      ).toHaveLength(1);
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();
@@ -351,13 +470,16 @@ describe("SessionRoute focused view store behavior", () => {
 
   test("opens the Context inspector when an invalidated message requests model details", async () => {
     const dom = installDom();
-    dom.window.localStorage.setItem("archcode.workbench.layout", JSON.stringify({
-      sidebarWidth: 280,
-      inspectorWidth: 360,
-      sidebarCollapsed: false,
-      inspectorCollapsed: true,
-      focusMode: false,
-    }));
+    dom.window.localStorage.setItem(
+      "archcode.workbench.layout",
+      JSON.stringify({
+        sidebarWidth: 280,
+        inspectorWidth: 360,
+        sidebarCollapsed: false,
+        inspectorCollapsed: true,
+        focusMode: false,
+      }),
+    );
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
 
@@ -365,42 +487,75 @@ describe("SessionRoute focused view store behavior", () => {
       id: "root-session",
       rootSessionId: "root-session",
       title: "Model audit",
-      messages: [{
-        id: "message-invalidated",
-        role: "user",
-        executionId: "execution-1",
-        parts: [{ type: "text", id: "part-1", text: "Use the old model", createdAt: 1, completedAt: 1 }],
-        modelAudit: {
-          requested: { mode: "session_override", selection: { model: "test:old" } },
-          actual: { model: "test:model" },
-          reason: "config_invalidated",
+      messages: [
+        {
+          id: "message-invalidated",
+          role: "user",
+          executionId: "execution-1",
+          parts: [
+            {
+              type: "text",
+              id: "part-1",
+              text: "Use the old model",
+              createdAt: 1,
+              completedAt: 1,
+            },
+          ],
+          modelAudit: {
+            requested: {
+              mode: "session_override",
+              selection: { model: "test:old" },
+            },
+            actual: { model: "test:model" },
+            reason: "config_invalidated",
+          },
+          createdAt: 1,
+          completedAt: 1,
         },
-        createdAt: 1,
-        completedAt: 1,
-      }],
+      ],
     });
-    rootSession.executions = [{
-      id: "execution-1",
-      origin: "user_message",
-      status: "completed",
-      startedAt: 1,
-      endedAt: 2,
-      binding: rootSession.nextModelSelection.resolved,
-    }];
+    rootSession.executions = [
+      {
+        id: "execution-1",
+        origin: "user_message",
+        status: "completed",
+        startedAt: 1,
+        endedAt: 2,
+        maxSteps: 10,
+        durationMs: 1,
+        runs: [],
+        terminalSettlement: {
+          key: "terminal:execution-1",
+          goalInstanceId: null,
+        },
+      },
+    ];
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
       const path = new URL(url, "http://localhost").pathname;
       if (path === "/api/projects") return Response.json({ projects: [] });
       if (path === "/api/agents") return Response.json({ agents: [] });
-      if (path === "/api/projects/demo/todos") return Response.json({ todos: [] });
-      if (path === "/api/projects/demo/sessions/root-session") return Response.json(rootSession);
+      if (path === "/api/projects/demo/todos")
+        return Response.json({ todos: [] });
+      if (path === "/api/projects/demo/sessions/root-session")
+        return Response.json(rootSession);
       return new Response("Not found", { status: 404 });
     });
-    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+      },
     });
     const reactRoot = createRoot(container);
 
@@ -411,11 +566,19 @@ describe("SessionRoute focused view store behavior", () => {
           <SettingsModalProvider>
             <WorkbenchLayoutProvider>
               <QueryClientProvider client={queryClient}>
-                <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
+                <MemoryRouter
+                  initialEntries={["/projects/demo/sessions/root-session"]}
+                >
                   <Routes>
                     <Route
                       path="/projects/:slug/sessions/:sessionId"
-                      element={<><SessionRoute /><LocationProbe /><LayoutProbe /></>}
+                      element={
+                        <>
+                          <SessionRoute />
+                          <LocationProbe />
+                          <LayoutProbe />
+                        </>
+                      }
                     />
                   </Routes>
                 </MemoryRouter>
@@ -425,17 +588,32 @@ describe("SessionRoute focused view store behavior", () => {
         );
       });
 
-      expect(container.textContent).toContain("Model changed: test:old → test:model");
-      expect(container.querySelector('[data-testid="inspector-expanded"]')?.textContent).toBe("false");
-      const details = Array.from(container.querySelectorAll("button"))
-        .find((button) => button.textContent === "Details");
+      expect(container.textContent).toContain(
+        "Model changed: test:old → test:model",
+      );
+      expect(
+        container.querySelector('[data-testid="inspector-expanded"]')
+          ?.textContent,
+      ).toBe("false");
+      const details = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Details",
+      );
       if (!details) throw new Error("Missing model audit Details button");
-      await act(async () => details.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await act(async () =>
+        details.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        ),
+      );
 
-      expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
+      expect(
+        container.querySelector('[data-testid="location"]')?.textContent,
+      ).toBe(
         "/projects/demo/sessions/root-session?message=message-invalidated&inspector=context|PUSH",
       );
-      expect(container.querySelector('[data-testid="inspector-expanded"]')?.textContent).toBe("true");
+      expect(
+        container.querySelector('[data-testid="inspector-expanded"]')
+          ?.textContent,
+      ).toBe("true");
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();
@@ -466,8 +644,11 @@ describe("SessionRoute focused view store behavior", () => {
               toolCallId: "delegate-call",
               toolName: TOOL_DELEGATE,
               input: {
-                agent_type: "explore", title: "Explore child session", objective: "Explore child session",
-                skills: [], background: false,
+                agent_type: "explore",
+                title: "Explore child session",
+                objective: "Explore child session",
+                skills: [],
+                background: false,
               },
               result: {
                 isError: false,
@@ -494,7 +675,10 @@ describe("SessionRoute focused view store behavior", () => {
           parentToolCallId: "delegate-call",
           toolName: "delegate",
           childSessionId: "child-session",
-          childAgentName: "explore", childProfile: "fast", childSkillNames: [],
+          childExecutionId: "child-execution",
+          childAgentName: "explore",
+          childProfile: "fast",
+          childSkillNames: [],
           title: "Explore child session",
           depth: 1,
           background: false,
@@ -506,15 +690,22 @@ describe("SessionRoute focused view store behavior", () => {
         },
       ],
     });
-    rootSession.executions = [{
-      id: "root-execution",
-      origin: "tool_call",
-      status: "completed",
-      startedAt: 1,
-      endedAt: 2,
-      durationMs: 1,
-      binding: rootSession.nextModelSelection.resolved,
-    }];
+    rootSession.executions = [
+      {
+        id: "root-execution",
+        origin: "tool_call",
+        status: "completed",
+        startedAt: 1,
+        endedAt: 2,
+        durationMs: 1,
+        maxSteps: 10,
+        runs: [],
+        terminalSettlement: {
+          key: "terminal:root-execution",
+          goalInstanceId: null,
+        },
+      },
+    ];
     const childSession = createSession({
       id: "child-session",
       rootSessionId: "root-session",
@@ -526,67 +717,111 @@ describe("SessionRoute focused view store behavior", () => {
           role: "assistant",
           executionId: "child-execution",
           createdAt: 2,
-          parts: [{ type: "text", id: "child-text", text: "Child content", createdAt: 2 }],
+          parts: [
+            {
+              type: "text",
+              id: "child-text",
+              text: "Child content",
+              createdAt: 2,
+            },
+          ],
         },
       ],
     });
-    childSession.executions = [{
-      id: "child-execution",
-      origin: "goal_continuation",
-      status: "completed",
-      startedAt: 2,
-      endedAt: 3,
-      durationMs: 1,
-      binding: childSession.nextModelSelection.resolved,
-    }];
-    childSession.todos = [{ id: "child-todo", content: "Inspect child output", status: "in_progress" }];
+    childSession.executions = [
+      {
+        id: "child-execution",
+        origin: "goal_continuation",
+        status: "completed",
+        startedAt: 2,
+        endedAt: 3,
+        durationMs: 1,
+        maxSteps: 10,
+        runs: [],
+        terminalSettlement: {
+          key: "terminal:child-execution",
+          goalInstanceId: null,
+        },
+      },
+    ];
+    childSession.todos = [
+      {
+        id: "child-todo",
+        content: "Inspect child output",
+        status: "in_progress",
+      },
+    ];
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
-      const path = typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.pathname
-          : new URL(input.url).pathname;
+      const path =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.pathname
+            : new URL(input.url).pathname;
 
-      if (path.endsWith("/sessions/root-session")) return Response.json(rootSession);
-      if (path.endsWith("/sessions/child-session")) return Response.json(childSession);
+      if (path.endsWith("/sessions/root-session"))
+        return Response.json(rootSession);
+      if (path.endsWith("/sessions/child-session"))
+        return Response.json(childSession);
       return new Response("Not found", { status: 404 });
     });
-    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+      },
     });
     const reactRoot = createRoot(container);
 
     try {
       await renderSessionRoute(reactRoot, queryClient);
 
-      expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
-      expect(container.querySelector('[data-testid="work-summary-root-execution"]')).not.toBeNull();
+      expect(
+        getWebSessionStore("root-session", "demo").getState().focusSessionId,
+      ).toBeNull();
+      expect(
+        container.querySelector('[data-testid="work-summary-work:root-execution:implicit"]'),
+      ).not.toBeNull();
       expect(container.textContent).not.toContain("Open child session");
       expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
 
       await act(async () => {
-        container.querySelector<HTMLButtonElement>('[data-testid="work-summary-root-execution"]')?.dispatchEvent(
-          new dom.window.MouseEvent("click", { bubbles: true }),
-        );
+        container
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="work-summary-work:root-execution:implicit"]',
+          )
+          ?.dispatchEvent(
+            new dom.window.MouseEvent("click", { bubbles: true }),
+          );
       });
 
       expect(container.textContent).toContain("Open child session");
 
-      await queryClient.fetchQuery(sessionQueryOptions("demo", "child-session"));
+      await queryClient.fetchQuery(
+        sessionQueryOptions("demo", "child-session"),
+      );
       await act(async () => {
         findElementByText(container, "Open child session").dispatchEvent(
           new dom.window.MouseEvent("click", { bubbles: true }),
         );
       });
 
-      expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBe("child-session");
+      expect(
+        getWebSessionStore("root-session", "demo").getState().focusSessionId,
+      ).toBe("child-session");
       expect(container.textContent).toContain("Back to Root Session");
       expect(container.textContent).toContain("Child Session");
-      expect(container.querySelector('button[aria-label^="Todo progress"]')).not.toBeNull();
-      expect(container.querySelector('button[aria-controls~="context-inspector"]')).not.toBeNull();
+      expect(
+        container.querySelector('button[aria-label^="Todo progress"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('button[aria-controls~="context-inspector"]'),
+      ).not.toBeNull();
       expect(container.querySelector('[data-testid="hitl-inbox"]')).toBeNull();
 
       await act(async () => {
@@ -595,7 +830,9 @@ describe("SessionRoute focused view store behavior", () => {
         );
       });
 
-      expect(getWebSessionStore("root-session", "demo").getState().focusSessionId).toBeNull();
+      expect(
+        getWebSessionStore("root-session", "demo").getState().focusSessionId,
+      ).toBeNull();
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -623,7 +860,14 @@ describe("SessionRoute focused view store behavior", () => {
       status: "pending",
       displayPayload: {
         title: "Need input",
-        questions: [{ header: "Scope", question: "Continue?", options: [{ label: "Yes", description: "Continue" }], custom: true }],
+        questions: [
+          {
+            header: "Scope",
+            question: "Continue?",
+            options: [{ label: "Yes", description: "Continue" }],
+            custom: true,
+          },
+        ],
         redacted: true,
       },
       allowedActions: ["answer", "cancel"],
@@ -643,30 +887,57 @@ describe("SessionRoute focused view store behavior", () => {
     hitlStore.getState().applyRealtimeEvent(event);
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
       const path = new URL(url, "http://localhost").pathname;
       if (path === "/api/projects") return Response.json({ projects: [] });
-      if (path.endsWith("/sessions/root-session")) return Response.json(rootSession);
+      if (path.endsWith("/sessions/root-session"))
+        return Response.json(rootSession);
       return new Response("Not found", { status: 404 });
     });
-    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+      },
     });
     const reactRoot = createRoot(container);
 
     try {
       await renderSessionRoute(reactRoot, queryClient);
 
-      const surface = container.querySelector('[data-testid="session-composer-dock"]');
-      const transcriptSurface = container.querySelector('[data-testid="session-transcript-surface"]');
-      const viewport = container.querySelector('[data-testid="execution-workstream-viewport"]');
-      const scroller = container.querySelector('[data-testid="execution-workstream-scroller"]');
-      const rail = container.querySelector('[data-testid="conversation-composer-rail"]');
-      const threadColumn = container.querySelector('[data-testid="composer-thread-column"]');
-      const attention = container.querySelector('[data-testid="composer-attention-stack"]');
-      const decision = container.querySelector('[data-testid="hitl-decision-card"]');
+      const surface = container.querySelector(
+        '[data-testid="session-composer-dock"]',
+      );
+      const transcriptSurface = container.querySelector(
+        '[data-testid="session-transcript-surface"]',
+      );
+      const viewport = container.querySelector(
+        '[data-testid="execution-workstream-viewport"]',
+      );
+      const scroller = container.querySelector(
+        '[data-testid="execution-workstream-scroller"]',
+      );
+      const rail = container.querySelector(
+        '[data-testid="conversation-composer-rail"]',
+      );
+      const threadColumn = container.querySelector(
+        '[data-testid="composer-thread-column"]',
+      );
+      const attention = container.querySelector(
+        '[data-testid="composer-attention-stack"]',
+      );
+      const decision = container.querySelector(
+        '[data-testid="hitl-decision-card"]',
+      );
       expect(decision).not.toBeNull();
       expect(transcriptSurface?.contains(viewport)).toBe(true);
       expect(transcriptSurface?.contains(surface)).toBe(true);
@@ -683,9 +954,13 @@ describe("SessionRoute focused view store behavior", () => {
       expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
       expect(container.textContent).toContain("Continue?");
       expect(container.textContent).not.toContain("Need input");
-      expect(container.querySelector('[data-testid="hitl-owner-link"]')).toBeNull();
+      expect(
+        container.querySelector('[data-testid="hitl-owner-link"]'),
+      ).toBeNull();
       expect(container.querySelector('input[type="radio"]')).not.toBeNull();
-      expect(container.querySelector('input[aria-label="Scope custom answer"]')).not.toBeNull();
+      expect(
+        container.querySelector('input[aria-label="Scope custom answer"]'),
+      ).not.toBeNull();
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();
@@ -703,8 +978,13 @@ describe("SessionRoute focused view store behavior", () => {
       rootSessionId: "root-session",
       title: "Shape offline mode",
       messages: [],
-    }) as ReturnType<typeof createSession> & { projectTodo: { todoId: string; entry: "discussion" } };
-    rootSession.projectTodo = { todoId: "todo-offline-mode", entry: "discussion" };
+    }) as ReturnType<typeof createSession> & {
+      projectTodo: { todoId: string; entry: "discussion" };
+    };
+    rootSession.projectTodo = {
+      todoId: "todo-offline-mode",
+      entry: "discussion",
+    };
     const projectTodo: ProjectTodo = {
       id: "todo-offline-mode",
       title: "Add resilient offline mode",
@@ -716,17 +996,29 @@ describe("SessionRoute focused view store behavior", () => {
     };
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
       const path = new URL(url, "http://localhost").pathname;
       if (path === "/api/projects") return Response.json({ projects: [] });
-      if (path === "/api/projects/demo/sessions/root-session") return Response.json(rootSession);
-      if (path === "/api/projects/demo/todos") return Response.json({ todos: [projectTodo] });
+      if (path === "/api/projects/demo/sessions/root-session")
+        return Response.json(rootSession);
+      if (path === "/api/projects/demo/todos")
+        return Response.json({ todos: [projectTodo] });
       return new Response("Not found", { status: 404 });
     });
-    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
 
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+      },
     });
     const reactRoot = createRoot(container);
 
@@ -737,34 +1029,53 @@ describe("SessionRoute focused view store behavior", () => {
         reactRoot.render(
           <SettingsModalProvider>
             <WorkbenchLayoutProvider>
-            <QueryClientProvider client={queryClient}>
-              <MemoryRouter initialEntries={["/projects/demo/sessions/root-session"]}>
-                <Routes>
-                  <Route path="/projects/:slug/sessions/:sessionId" element={<SessionRoute />} />
-                  <Route path="/projects/:slug/todos" element={<LocationProbe />} />
-                </Routes>
-              </MemoryRouter>
-            </QueryClientProvider>
+              <QueryClientProvider client={queryClient}>
+                <MemoryRouter
+                  initialEntries={["/projects/demo/sessions/root-session"]}
+                >
+                  <Routes>
+                    <Route
+                      path="/projects/:slug/sessions/:sessionId"
+                      element={<SessionRoute />}
+                    />
+                    <Route
+                      path="/projects/:slug/todos"
+                      element={<LocationProbe />}
+                    />
+                  </Routes>
+                </MemoryRouter>
+              </QueryClientProvider>
             </WorkbenchLayoutProvider>
           </SettingsModalProvider>,
         );
       });
 
-      const backlink = container.querySelector('[data-testid="project-todo-backlink"]');
+      const backlink = container.querySelector(
+        '[data-testid="project-todo-backlink"]',
+      );
       expect(backlink?.textContent).toBe("Add resilient offline mode");
-      expect(backlink?.getAttribute("href")).toBe("/projects/demo/todos?todo=todo-offline-mode");
+      expect(backlink?.getAttribute("href")).toBe(
+        "/projects/demo/todos?todo=todo-offline-mode",
+      );
       expect(container.textContent).toContain("Discussion Todo");
       expect(backlink?.closest("header")).not.toBeNull();
 
-      const link = container.querySelector('[data-testid="project-todo-backlink"]');
+      const link = container.querySelector(
+        '[data-testid="project-todo-backlink"]',
+      );
       if (!link) throw new Error("Missing Project Todo backlink");
       await act(async () => {
-        link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+        link.dispatchEvent(
+          new dom.window.MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
       });
 
-      expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
-        "/projects/demo/todos?todo=todo-offline-mode|PUSH",
-      );
+      expect(
+        container.querySelector('[data-testid="location"]')?.textContent,
+      ).toBe("/projects/demo/todos?todo=todo-offline-mode|PUSH");
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();
@@ -790,18 +1101,31 @@ describe("SessionRoute focused view store behavior", () => {
       messages: [],
     });
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
       const path = new URL(url, "http://localhost").pathname;
       if (path === "/api/projects") return Response.json({ projects: [] });
       if (path === "/api/agents") return Response.json({ agents: [] });
-      if (path === "/api/projects/demo/todos") return Response.json({ todos: [] });
-      if (path === "/api/projects/demo/sessions/child-1") return Response.json(childSession);
-      if (path === "/api/projects/demo/sessions/root-1") return Response.json(rootSession);
+      if (path === "/api/projects/demo/todos")
+        return Response.json({ todos: [] });
+      if (path === "/api/projects/demo/sessions/child-1")
+        return Response.json(childSession);
+      if (path === "/api/projects/demo/sessions/root-1")
+        return Response.json(rootSession);
       return new Response("Not found", { status: 404 });
     });
-    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity, staleTime: Infinity },
+      },
     });
     await Promise.all([
       queryClient.fetchQuery(sessionQueryOptions("demo", "child-1")),
@@ -816,11 +1140,18 @@ describe("SessionRoute focused view store behavior", () => {
           <SettingsModalProvider>
             <WorkbenchLayoutProvider>
               <QueryClientProvider client={queryClient}>
-                <MemoryRouter initialEntries={["/projects/demo/sessions/child-1"]}>
+                <MemoryRouter
+                  initialEntries={["/projects/demo/sessions/child-1"]}
+                >
                   <Routes>
                     <Route
                       path="/projects/:slug/sessions/:sessionId"
-                      element={<><SessionRoute /><LocationProbe /></>}
+                      element={
+                        <>
+                          <SessionRoute />
+                          <LocationProbe />
+                        </>
+                      }
                     />
                   </Routes>
                 </MemoryRouter>
@@ -830,9 +1161,9 @@ describe("SessionRoute focused view store behavior", () => {
         );
       });
 
-      expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(
-        "/projects/demo/sessions/root-1?focus=child-1|REPLACE",
-      );
+      expect(
+        container.querySelector('[data-testid="location"]')?.textContent,
+      ).toBe("/projects/demo/sessions/root-1?focus=child-1|REPLACE");
       expect(container.textContent).toContain("Back to Root Session");
       expect(container.querySelector("textarea")).not.toBeNull();
       expect(container.querySelector('button[title="Stop"]')).toBeNull();
@@ -903,7 +1234,26 @@ describe("SessionRoute focused view store behavior", () => {
 
     const childStore = getWebSessionStore(childSessionId, slug);
     const snapshot = {
-      messages: [{ id: "m1", role: "assistant" as const, parts: [{ type: "text" as const, id: "p1", text: "child response", createdAt: Date.now() }], createdAt: Date.now() }],
+      executionCount: 0,
+      isRunning: false,
+      isStreamingModel: false,
+      currentExecutionId: undefined,
+      currentAssistantMessageId: undefined,
+      messages: [
+        {
+          id: "m1",
+          role: "assistant" as const,
+          parts: [
+            {
+              type: "text" as const,
+              id: "p1",
+              text: "child response",
+              createdAt: Date.now(),
+            },
+          ],
+          createdAt: Date.now(),
+        },
+      ],
       steps: [],
       todos: [],
       reminders: [],

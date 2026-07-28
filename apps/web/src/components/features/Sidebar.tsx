@@ -36,7 +36,7 @@ import { StatusGlyph } from "../primitives/StatusGlyph";
 import { GoalStatusMark } from "./GoalStatusMark";
 import { presentSessionGoalStatus } from "../../lib/session-goal-presentation";
 import { automationVisualKind } from "../../lib/automation-status-presentation";
-import { sessionFamilyVisual } from "../../lib/session-family-presentation";
+import { sessionFamilyActivityLabel, sessionFamilyVisual } from "../../lib/session-family-presentation";
 import {
   RelativeTimeValue,
   useRelativeTimePresentation,
@@ -111,7 +111,7 @@ function sessionListGroup(
   attention: SessionAttention | undefined,
 ): SessionListGroup {
   if (attention) return "needs-you";
-  if (activity === "running" || activity === "stopping") return "running";
+  if (activity !== undefined && activity !== "idle") return "running";
   return "recent";
 }
 
@@ -120,10 +120,7 @@ function sessionStateLabel(
   attention: SessionAttention | undefined,
 ): string {
   if (attention) return "Needs attention";
-  if (activity === "running") return "Running";
-  if (activity === "stopping") return "Stopping";
-  if (activity === "idle") return "Idle";
-  return "Status unavailable";
+  return sessionFamilyActivityLabel(activity);
 }
 
 // Status glyphs

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { StoreApi } from "zustand";
 import { createMockStore } from "../../../store/test-helpers";
-import type { SessionStoreState, StepInfo, StoredPart, StoredTodo, ExecutionEndEvent } from "../../../store/types";
+import type { SessionStoreState, StepInfo, StoredPart, StoredTodo } from "../../../store/types";
 import { createTestProjectContext } from "../../../tools/test-project-context";
 import type { AfterStepEndContext, AfterLoopEndContext } from "../loop-hooks";
 import { silentLogger } from "../../../logger";
@@ -207,10 +207,16 @@ async function runStep(
 async function runLoopEnd(
   hook: (ctx: AfterLoopEndContext) => Promise<void>,
   store: StoreApi<SessionStoreState>,
-  loopEndStatus: ExecutionEndEvent["status"],
+  loopEndStatus: "completed" | "failed",
   projectContext?: AfterLoopEndContext["projectContext"],
 ): Promise<void> {
-  await hook({ store, binding: undefined as never, logger: silentLogger, loopEndStatus, projectContext });
+  await hook({
+    store,
+    binding: undefined as never,
+    logger: silentLogger,
+    loopOutcome: { kind: "terminal", status: loopEndStatus },
+    projectContext,
+  });
 }
 
 function seedTodos(store: StoreApi<SessionStoreState>, todos: StoredTodo[]): void {
@@ -249,6 +255,8 @@ function consumeReminderCooldown(store: StoreApi<SessionStoreState>): void {
 function stepInfo(step: number): StepInfo {
   return {
     id: `step-${step}`,
+    executionId: "test-execution",
+    runOrdinal: 0,
     step,
     startedAt: step,
     completedAt: step + 1,

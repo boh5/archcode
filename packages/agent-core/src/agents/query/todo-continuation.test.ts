@@ -20,7 +20,7 @@ describe("getStepsSinceLastTodoWrite", () => {
 
   test("returns stepCount + 1 when no todo_write has occurred", () => {
     const state = stateWith({
-      steps: [{ id: "s0", step: 0, startedAt: 1 }, { id: "s1", step: 1, startedAt: 2 }],
+      steps: [{ id: "s0", executionId: "e", runOrdinal: 0, step: 0, startedAt: 1 }, { id: "s1", executionId: "e", runOrdinal: 0, step: 1, startedAt: 2 }],
       lastTodoWriteStepIndex: null,
     });
     expect(getStepsSinceLastTodoWrite(state)).toBe(2);
@@ -28,7 +28,7 @@ describe("getStepsSinceLastTodoWrite", () => {
 
   test("counts steps since last todo_write", () => {
     const state = stateWith({
-      steps: [{ id: "s0", step: 0, startedAt: 1 }, { id: "s1", step: 1, startedAt: 2 }, { id: "s2", step: 2, startedAt: 3 }],
+      steps: [{ id: "s0", executionId: "e", runOrdinal: 0, step: 0, startedAt: 1 }, { id: "s1", executionId: "e", runOrdinal: 0, step: 1, startedAt: 2 }, { id: "s2", executionId: "e", runOrdinal: 0, step: 2, startedAt: 3 }],
       lastTodoWriteStepIndex: 0,
     });
     expect(getStepsSinceLastTodoWrite(state)).toBe(2);
@@ -42,7 +42,7 @@ describe("getStepsSinceLastReminder", () => {
 
   test("counts steps since last reminder", () => {
     const state = stateWith({
-      steps: [{ id: "s0", step: 0, startedAt: 1 }, { id: "s1", step: 1, startedAt: 2 }, { id: "s2", step: 2, startedAt: 3 }],
+      steps: [{ id: "s0", executionId: "e", runOrdinal: 0, step: 0, startedAt: 1 }, { id: "s1", executionId: "e", runOrdinal: 0, step: 1, startedAt: 2 }, { id: "s2", executionId: "e", runOrdinal: 0, step: 2, startedAt: 3 }],
       lastTodoReminderStepIndex: 1,
     });
     expect(getStepsSinceLastReminder(state)).toBe(1);
@@ -265,6 +265,8 @@ function stateWithPendingTodo(overrides: Partial<SessionStoreState> = {}): Sessi
 function stepsForCount(count: number): SessionStoreState["steps"] {
   return Array.from({ length: count }, (_, i) => ({
     id: `step-${i}`,
+    executionId: "e",
+    runOrdinal: 0,
     step: i,
     startedAt: i,
   }));

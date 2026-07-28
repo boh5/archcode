@@ -23,6 +23,7 @@ import {
   type AgentRuntimeOptions,
 } from "./runtime";
 import { SessionStoreManager } from "./store/session-store-manager";
+import { SessionInputService } from "./session-input/service";
 import type { SessionToolBatch } from "./store/types";
 import { createTestProjectContext } from "./tools/test-project-context";
 import { createInMemoryLogger, silentLogger } from "./logger";
@@ -30,6 +31,7 @@ import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { setLlmAdapterForTest } from "./llm";
 import { getLspClientPool } from "./lsp/client-pool";
 import { SessionGoalService } from "./session-goal";
+import { testExecutionEnd, testExecutionStart, testExecutionSuspended } from "./testing/test-execution-fixtures";
 
 const tmpRoots: string[] = [];
 const requestedModelSelection: RequestedModelSelection = {
@@ -53,7 +55,7 @@ function makeFakeMcpManager(result: McpDiscoveryResult | Error, secrets: readonl
   const policy = new SecretRedactionPolicy(secrets);
   return { discover: mock(async () => { if (result instanceof Error) throw result; return result; }), closeAll: mock(async () => []), getStatus: mock(() => new Map()), onStatusChange: mock(() => () => {}), startBackgroundDiscovery: mock((onDescriptors: (d: AnyToolDescriptor[]) => void, onWarning: (w: McpWarning) => void) => { if (result instanceof Error) { onWarning({ message: policy.redactString(`Failed to discover MCP tools during startup: ${result.message}`) }); return; } for (const warning of result.warnings) onWarning(warning); if (result.descriptors.length) onDescriptors(result.descriptors); }) } as unknown as McpManager;
 }
-function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead" }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
+function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead" }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, executionId: crypto.randomUUID(), runOrdinal: 0, toolBatchId: crypto.randomUUID(), abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
 type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation">;
 async function createRuntime(options: RuntimeTestOptions) {
   const result = await options.configService.activateForStartup();
@@ -137,6 +139,47 @@ function createStoppedStream(): unknown {
     usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
     text: Promise.resolve(""),
     toolCalls: Promise.resolve([]),
+  };
+}
+
+function createAskUserStream(toolCallId: string): unknown {
+  const input = {
+    questions: [{
+      question: "Continue?",
+      header: "Continue",
+      options: [{ label: "Yes", description: "Continue" }],
+    }],
+  };
+  return {
+    fullStream: (async function* () {
+      yield { type: "tool-input-start", id: toolCallId, toolName: "ask_user" };
+      yield { type: "tool-call", toolCallId, toolName: "ask_user", input };
+    })(),
+    finishReason: Promise.resolve("tool-calls"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve(""),
+    toolCalls: Promise.resolve([{ toolCallId, toolName: "ask_user", input }]),
+  };
+}
+
+function createBackgroundDelegateStream(toolCallId: string): unknown {
+  const input = {
+    agent_type: "explore",
+    profile: "fast",
+    title: "Held child",
+    objective: "Wait until the test releases this child",
+    skills: [],
+    background: true,
+  };
+  return {
+    fullStream: (async function* () {
+      yield { type: "tool-input-start", id: toolCallId, toolName: "delegate" };
+      yield { type: "tool-call", toolCallId, toolName: "delegate", input };
+    })(),
+    finishReason: Promise.resolve("tool-calls"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve(""),
+    toolCalls: Promise.resolve([{ toolCallId, toolName: "delegate", input }]),
   };
 }
 
@@ -231,6 +274,213 @@ describe("createRuntime", () => {
       await runtime.abortAllSessionExecutions();
       setLlmAdapterForTest(undefined);
     }
+  });
+  test("terminalizes a Tool Batch when HITL creation fails and admits the next Execution", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "HITL create failure" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const context = await runtime.contextResolver.resolve(workspaceRoot);
+    const originalCreate = context.hitl.create.bind(context.hitl);
+    let createAttempts = 0;
+    context.hitl.create = mock(async (input) => {
+      createAttempts += 1;
+      if (createAttempts === 1) throw new Error("transient HITL create failure");
+      return await originalCreate(input);
+    });
+    let streams = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        streams += 1;
+        return streams === 1 ? createAskUserStream("question-create-failure") : createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
+    });
+
+    const failed = nextSessionEvent(
+      runtime,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "execution-end" && event.payload.terminalStatus === "failed",
+    );
+    await runtime.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "Ask before continuing",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+    await failed;
+
+    const afterFailure = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(createAttempts).toBe(2);
+    expect(afterFailure.executions.at(-1)?.status).toBe("failed");
+    expect(typeof afterFailure.toolBatches.at(-1)?.archivedAt).toBe("string");
+    expect(afterFailure.toolBatches.at(-1)?.calls[0]).toMatchObject({
+      toolCallId: "question-create-failure",
+      state: "failed",
+      result: { isError: true },
+    });
+
+    const completed = nextSessionEvent(
+      runtime,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "execution-end" && event.payload.terminalStatus === "completed",
+    );
+    await runtime.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "Continue after the failed question",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+    await completed;
+    const recovered = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(recovered.executions).toHaveLength(2);
+    expect(recovered.executions.at(-1)?.status).toBe("completed");
+    await runtime.shutdown();
+  });
+  test("retries the same queued input after release reconciliation fails once", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const { logger, entries } = createInMemoryLogger();
+    const runtime = await createRuntime({
+      logger,
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Input release retry" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const originalResolve = runtime.contextResolver.resolve.bind(runtime.contextResolver);
+    let resolveAttempts = 0;
+    runtime.contextResolver.resolve = async (root) => {
+      resolveAttempts += 1;
+      if (resolveAttempts === 1) throw new Error("transient input release failure");
+      return await originalResolve(root);
+    };
+    installTestLlmAdapter();
+    const executionCompleted = nextSessionEvent(
+      runtime,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "execution-end" && event.payload.terminalStatus === "completed",
+    );
+    const clientRequestId = crypto.randomUUID();
+
+    await runtime.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "Run after retry",
+      clientRequestId,
+      source: "automation",
+      requestedModelSelection,
+    });
+    await executionCompleted;
+
+    const recovered = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(resolveAttempts).toBeGreaterThanOrEqual(2);
+    expect(recovered.executions).toHaveLength(1);
+    expect(recovered.inputRequestReceipts).toContainEqual(expect.objectContaining({
+      clientRequestId,
+      status: "canonical",
+    }));
+    expect(entries.some((entry) => entry.event === "project.runtime.reconcile_failed")).toBe(true);
+    await runtime.shutdown();
+  });
+  test("retries durable queued work after child-slot release reconciliation fails once", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const { logger, entries } = createInMemoryLogger();
+    const runtime = await createRuntime({
+      logger,
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Child release retry" });
+    const parent = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    let resolveChildStarted!: () => void;
+    const childStarted = new Promise<void>((resolve) => { resolveChildStarted = resolve; });
+    let releaseChild!: () => void;
+    const childGate = new Promise<void>((resolve) => { releaseChild = resolve; });
+    let delegateIssued = false;
+    setLlmAdapterForTest({
+      streamText: mock((options: { tools?: Record<string, unknown> }) => {
+        const isRoot = options.tools?.create_goal !== undefined;
+        if (isRoot && !delegateIssued) {
+          delegateIssued = true;
+          return createBackgroundDelegateStream("delegate-held-child");
+        }
+        if (!isRoot) {
+          resolveChildStarted();
+          return {
+            fullStream: (async function* () { await childGate; })(),
+            finishReason: Promise.resolve("stop"),
+            usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+            text: Promise.resolve(""),
+            toolCalls: Promise.resolve([]),
+          };
+        }
+        return createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
+    });
+    await runtime.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: parent.sessionId,
+      text: "Start a background child",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+    await childStarted;
+
+    const queuedSessionId = crypto.randomUUID();
+    const externalStoreManager = new SessionStoreManager({ logger: silentLogger });
+    externalStoreManager.create(queuedSessionId, workspaceRoot, { agentName: "lead" });
+    await externalStoreManager.flushSession(queuedSessionId, workspaceRoot);
+    const queuedClientRequestId = crypto.randomUUID();
+    await new SessionInputService(externalStoreManager).acceptMessage({
+      sessionId: queuedSessionId,
+      workspaceRoot,
+      text: "Continue from the child-slot retry",
+      clientRequestId: queuedClientRequestId,
+      source: "automation",
+      requestedModelSelection,
+    });
+    const originalResolve = runtime.contextResolver.resolve.bind(runtime.contextResolver);
+    let resolveAttempts = 0;
+    runtime.contextResolver.resolve = async (root) => {
+      resolveAttempts += 1;
+      if (resolveAttempts === 1) throw new Error("transient child release failure");
+      return await originalResolve(root);
+    };
+    const queuedCompleted = nextSessionEvent(
+      runtime,
+      project.slug,
+      queuedSessionId,
+      (event) => event.payload.type === "execution-end" && event.payload.terminalStatus === "completed",
+    );
+
+    releaseChild();
+    await queuedCompleted;
+
+    const recovered = await runtime.getSessionFile(workspaceRoot, queuedSessionId);
+    expect(resolveAttempts).toBeGreaterThanOrEqual(2);
+    expect(recovered.executions).toHaveLength(1);
+    expect(recovered.inputRequestReceipts).toContainEqual(expect.objectContaining({
+      clientRequestId: queuedClientRequestId,
+      status: "canonical",
+    }));
+    expect(entries.some((entry) => entry.event === "project.runtime.reconcile_failed")).toBe(true);
+    await runtime.shutdown();
   });
   test("integrates Analyst and Build results through the ordinary Lead delegation path", async () => {
     const workspaceRoot = await makeTempRoot();
@@ -562,6 +812,160 @@ describe("createRuntime", () => {
     expect(deliveryLogs.every((entry) => typeof entry.meta?.failure === "object")).toBe(true);
   });
 
+  test("waits for the exact live run boundary when HITL is answered before suspension persists", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Fast HITL answer" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const context = await runtime.contextResolver.resolve(workspaceRoot);
+    const originalCreate = context.hitl.create.bind(context.hitl);
+    let responsePromise: ReturnType<AgentRuntime["respondToHitl"]> | undefined;
+    let markResponseStarted!: () => void;
+    const responseStarted = new Promise<void>((resolve) => {
+      markResponseStarted = resolve;
+    });
+    context.hitl.create = async (...args: Parameters<typeof originalCreate>) => {
+      const created = await originalCreate(...args);
+      responsePromise = runtime.respondToHitl({
+        slug: project.slug,
+        workspaceRoot,
+        hitlId: created.record.hitlId,
+        response: { type: "question_answer", answers: ["Yes"] },
+      });
+      markResponseStarted();
+      return created;
+    };
+
+    let streams = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        streams += 1;
+        return streams === 1 ? createAskUserStream("fast-question") : createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
+    });
+    const lifecycle: GlobalSessionEventEnvelope[] = [];
+    const unsubscribe = runtime.subscribeSessionEvents((event) => {
+      if (event.slug === project.slug && event.sessionId === session.sessionId) lifecycle.push(event);
+    });
+    const completed = nextSessionEvent(
+      runtime,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "execution-end",
+    );
+
+    await runtime.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "Ask before continuing.",
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+    await responseStarted;
+    expect((await responsePromise!).status).toBe("resolved");
+    await completed;
+    unsubscribe();
+
+    const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+    expect(file.executions).toHaveLength(1);
+    expect(file.executions[0]).toMatchObject({
+      status: "completed",
+      runs: [{ ordinal: 0 }, { ordinal: 1 }],
+    });
+    const executionId = file.executions[0]!.id;
+    const lifecycleTypes = lifecycle
+      .filter((event) => "executionId" in event.payload && event.payload.executionId === executionId)
+      .map((event) => event.payload.type);
+    expect(lifecycleTypes).toEqual(expect.arrayContaining([
+      "execution-start",
+      "execution-suspended",
+      "execution-resumed",
+      "execution-end",
+    ]));
+    expect(lifecycleTypes.indexOf("execution-suspended"))
+      .toBeLessThan(lifecycleTypes.indexOf("execution-resumed"));
+    const suspension = lifecycle.find((event) =>
+      event.payload.type === "execution-suspended" && event.payload.executionId === executionId
+    );
+    expect(suspension?.payload).toMatchObject({
+      type: "execution-suspended",
+      suspension: {
+        kind: "hitl",
+      },
+    });
+    if (suspension?.payload.type !== "execution-suspended" || suspension.payload.suspension.kind !== "hitl") {
+      throw new Error("Expected a persisted HITL suspension");
+    }
+    expect(suspension.payload.suspension.blockerIds).toHaveLength(1);
+    expect(typeof suspension.payload.suspension.blockerIds[0]).toBe("string");
+    const call = file.toolBatches[0]?.calls[0];
+    expect(call).toMatchObject({
+      toolCallId: "fast-question",
+      state: "completed",
+    });
+    expect(typeof call?.blocker?.hitlId).toBe("string");
+    expect(typeof call?.blocker?.responseAppliedAt).toBe("string");
+    expect(file.executions.some((execution) => execution.status === "interrupted")).toBe(false);
+    await runtime.shutdown();
+  });
+
+  test("rejects startup recovery when any registered project cannot reconcile", async () => {
+    const healthyWorkspaceRoot = await makeTempRoot();
+    const failedWorkspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: await makeTempRoot(),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await runtime.projectRegistry.add({ workspaceRoot: healthyWorkspaceRoot, name: "Healthy project" });
+    await runtime.createSession(healthyWorkspaceRoot, { agentName: "lead" });
+    await runtime.projectRegistry.add({ workspaceRoot: failedWorkspaceRoot, name: "Failed project" });
+    const failedSession = await runtime.createSession(failedWorkspaceRoot, { agentName: "lead" });
+    const context = await runtime.contextResolver.resolve(failedWorkspaceRoot);
+    const request = context.hitl.codec.createAskUserRequest({
+      toolCallId: "missing-startup-call",
+      displayPayload: {
+        title: "Continue",
+        summary: "Continue?",
+        questions: [{ question: "Continue?", header: "Continue", custom: true }],
+        redacted: true,
+      },
+    });
+    const record = (await context.hitl.create({
+      requestKey: context.hitl.codec.createToolRequestKey({
+        sessionId: failedSession.sessionId,
+        toolCallId: "missing-startup-call",
+        toolName: "ask_user",
+        request,
+      }),
+      owner: { type: "session", id: failedSession.sessionId },
+      source: request.source,
+      displayPayload: request.displayPayload,
+    })).record;
+    await context.hitl.respond(record.hitlId, {
+      type: "question_answer",
+      answers: ["Yes"],
+    });
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await context.hitl.resolve(record.hitlId, { type: "dispatching" });
+      await context.hitl.resolve(record.hitlId, {
+        type: "delivery_failed",
+        error: `failed-${attempt}`,
+        retryAt: new Date().toISOString(),
+      });
+    }
+
+    await expect(runtime.recoverSessionContinuations())
+      .rejects.toThrow(`Answered HITL ${record.hitlId} exhausted delivery attempts`);
+    await runtime.shutdown();
+  });
+
   test("recovers one persisted active Session Goal through the public Runtime boundary", async () => {
     const workspaceRoot = await makeTempRoot();
     const registryHome = await makeTempRoot();
@@ -642,6 +1046,77 @@ describe("createRuntime", () => {
     await runtime2.shutdown();
   });
 
+  test("blocks Goal clear for an unapplied descendant settlement, then clears after it is applied", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const rootSessionId = crypto.randomUUID();
+    const childSessionId = crypto.randomUUID();
+    const childExecutionId = crypto.randomUUID();
+    const seed = new SessionStoreManager({ logger: silentLogger });
+    await seed.createSessionFile(workspaceRoot, { agentName: "lead" }, rootSessionId);
+    const seedGoals = new SessionGoalService(seed);
+    const goal = await seedGoals.create({
+      workspaceRoot,
+      sessionId: rootSessionId,
+      authority: { kind: "user_control" },
+      objective: "Keep the descendant settlement accountable.",
+    });
+    await seed.createSessionFile(workspaceRoot, {
+      agentName: "explore",
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Descendant",
+        objective: "Inspect the scope.",
+        skills: [],
+        background: false,
+      },
+    }, childSessionId);
+    const childStore = seed.get(childSessionId, workspaceRoot)!;
+    childStore.getState().append(testExecutionStart(childExecutionId));
+    const childRun = childStore.getState().executions[0]!.runs[0]!;
+    const runEndedAt = Math.max(Date.now(), childRun.startedAt);
+    const settlementKey = `run:${childSessionId}:${childExecutionId}:0`;
+    childStore.getState().append(testExecutionEnd(childExecutionId, "completed", {
+      endedAt: runEndedAt,
+      runEndedAt,
+      runSettlement: { key: settlementKey, goalInstanceId: goal.instanceId },
+      terminalSettlement: { key: `terminal:${childSessionId}:${childExecutionId}`, goalInstanceId: null },
+    }));
+    await seed.flushSession(childSessionId, workspaceRoot);
+
+    const runtime1 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: await makeTempRoot(),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await expect(runtime1.updateSessionGoalControl({
+      workspaceRoot,
+      sessionId: rootSessionId,
+      action: "clear",
+    })).rejects.toMatchObject({ code: "PENDING_SETTLEMENTS" });
+    await runtime1.shutdown();
+
+    await seed.markExecutionSettlementApplied(childSessionId, workspaceRoot, {
+      executionId: childExecutionId,
+      runOrdinal: 0,
+      expectedKey: settlementKey,
+    });
+    const runtime2 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: await makeTempRoot(),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const cleared = await runtime2.updateSessionGoalControl({
+      workspaceRoot,
+      sessionId: rootSessionId,
+      action: "clear",
+    });
+    expect(cleared.goal).toBeUndefined();
+    await runtime2.shutdown();
+  });
+
   test("continues an active Goal after a completed root Execution without a workflow state machine", async () => {
     const workspaceRoot = await makeTempRoot();
     const registryHome = await makeTempRoot();
@@ -714,7 +1189,7 @@ describe("createRuntime", () => {
       runtime,
       project.slug,
       session.sessionId,
-      (event) => event.payload.type === "execution-end" && event.payload.status === "failed",
+      (event) => event.payload.type === "execution-end" && event.payload.terminalStatus === "failed",
     );
     const familyIdle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
     await runtime.acceptSessionMessage({
@@ -739,7 +1214,162 @@ describe("createRuntime", () => {
     await runtime.shutdown();
   });
 
-  test("reconciles an answered Session HITL to its exact blocked call after restart", async () => {
+  test("repairs a missing HITL link before applying its answered startup delivery", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    const runtime1 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Repair answered HITL" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const context = await runtime1.contextResolver.resolve(workspaceRoot);
+    const questionInput = {
+      questions: [{
+        question: "Continue?",
+        header: "Continue",
+        options: [{ label: "Yes", description: "Continue" }],
+      }],
+    };
+    const request = context.hitl.codec.createAskUserRequest({
+      toolCallId: "repair-question",
+      displayPayload: {
+        title: "Continue",
+        summary: "Continue?",
+        questions: [{
+          question: "Continue?",
+          header: "Continue",
+          options: [{ label: "Yes", description: "Continue" }],
+          custom: true,
+        }],
+        redacted: true,
+      },
+    });
+    const requestKey = context.hitl.codec.createToolRequestKey({
+      sessionId: session.sessionId,
+      toolCallId: "repair-question",
+      toolName: "ask_user",
+      request,
+    });
+    const answered = (await context.hitl.create({
+      requestKey,
+      owner: { type: "session", id: session.sessionId },
+      source: request.source,
+      displayPayload: request.displayPayload,
+    })).record;
+    await context.hitl.respond(answered.hitlId, {
+      type: "question_answer",
+      answers: ["Yes"],
+    });
+    await runtime1.shutdown();
+
+    const executionId = "execution-repair-answered-hitl";
+    const now = new Date().toISOString();
+    const batch: SessionToolBatch = {
+      batchId: "batch-repair-answered-hitl",
+      executionId,
+      step: 0,
+      runOrdinal: 0,
+      agentName: "lead",
+      allowedTools: ["ask_user"],
+      agentSkills: [],
+      partitions: [{ type: "serial", callIds: ["repair-question"] }],
+      calls: [{
+        ordinal: 0,
+        partitionIndex: 0,
+        toolCallId: "repair-question",
+        toolName: "ask_user",
+        input: questionInput,
+        traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        state: "blocked",
+        attempt: 1,
+        checkpointAt: Date.parse(now),
+        blocker: {
+          requestKey,
+          source: request.source,
+          displayPayload: request.displayPayload,
+        },
+      }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
+    const seedStore = await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
+    seedStore.getState().append(testExecutionStart(executionId));
+    seedStore.getState().append({ type: "step-start", step: batch.step });
+    seedStore.getState().append({
+      type: "tool-call",
+      toolCallId: "repair-question",
+      toolName: "ask_user",
+      input: questionInput,
+    });
+    const durableTool = seedStore.getState().messages
+      .flatMap((message) => message.parts)
+      .find((part) => part.type === "tool" && part.toolCallId === "repair-question");
+    if (durableTool?.type !== "tool" || !("startedAt" in durableTool)) {
+      throw new Error("Expected durable tool checkpoint");
+    }
+    const durableToolStartedAt = durableTool.startedAt;
+    const blockedCheckpointAt = Math.max(Date.now(), durableToolStartedAt);
+    await seedStoreManager.updateToolBatches(session.sessionId, workspaceRoot, () => [{
+      ...batch,
+      calls: batch.calls.map((call) => ({ ...call, checkpointAt: blockedCheckpointAt })),
+    }]);
+
+    const runtime2 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    installTestLlmAdapter();
+    const lifecycle: GlobalSessionEventEnvelope[] = [];
+    const unsubscribe = runtime2.subscribeSessionEvents((event) => {
+      if (event.slug === project.slug && event.sessionId === session.sessionId) lifecycle.push(event);
+    });
+    const completed = nextSessionEvent(
+      runtime2,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "execution-end" && event.payload.executionId === executionId,
+    );
+
+    await runtime2.recoverSessionContinuations();
+    await completed;
+    unsubscribe();
+
+    const file = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
+    expect(file.executions).toHaveLength(1);
+    expect(file.executions[0]).toMatchObject({
+      id: executionId,
+      status: "completed",
+      runs: [{ ordinal: 0 }, { ordinal: 1 }],
+    });
+    const recoveredFirstRun = file.executions[0]!.runs[0]!;
+    expect(recoveredFirstRun).toHaveProperty("endedAt");
+    if ("endedAt" in recoveredFirstRun) {
+      expect(recoveredFirstRun.endedAt).toBe(blockedCheckpointAt);
+    }
+    const lifecycleTypes = lifecycle
+      .filter((event) => "executionId" in event.payload && event.payload.executionId === executionId)
+      .map((event) => event.payload.type);
+    expect(lifecycleTypes.indexOf("execution-suspended")).toBeGreaterThanOrEqual(0);
+    expect(lifecycleTypes.indexOf("execution-suspended"))
+      .toBeLessThan(lifecycleTypes.indexOf("execution-resumed"));
+    expect(file.toolBatches[0]?.calls[0]).toMatchObject({
+      state: "completed",
+      blocker: {
+        hitlId: answered.hitlId,
+      },
+    });
+    expect(typeof file.toolBatches[0]?.calls[0]?.blocker?.responseAppliedAt).toBe("string");
+    expect((await (await runtime2.contextResolver.resolve(workspaceRoot)).hitl.list())
+      .find((record) => record.hitlId === answered.hitlId)?.status).toBe("resolved");
+    expect(file.executions.some((execution) => execution.status === "interrupted")).toBe(false);
+    await runtime2.shutdown();
+  });
+
+  test("reconciles parallel answered HITL before resuming their one logical Execution", async () => {
     const workspaceRoot = await makeTempRoot();
     const registryHome = await makeTempRoot();
     const runtime1 = await createRuntime({
@@ -797,6 +1427,7 @@ describe("createRuntime", () => {
       batchId: "batch-1",
       executionId: "execution-1",
       step: 0,
+      runOrdinal: 0,
       agentName: "lead",
       allowedTools: ["ask_user"],
       agentSkills: [],
@@ -810,6 +1441,7 @@ describe("createRuntime", () => {
         traits: { readOnly: true, destructive: false, concurrencySafe: true },
         state: "blocked" as const,
         attempt: 1,
+        checkpointAt: Date.parse(now),
         blocker: {
           requestKey: record.requestKey,
           hitlId: record.hitlId,
@@ -821,7 +1453,18 @@ describe("createRuntime", () => {
       updatedAt: now,
     };
     const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
-    await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
+    const seedStore = await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
+    seedStore.getState().append(testExecutionStart(batch.executionId));
+    seedStore.getState().append({ type: "step-start", step: batch.step });
+    const firstSuspendedAt = Date.now();
+    seedStore.getState().append(testExecutionSuspended(batch.executionId, {
+      kind: "hitl",
+      toolBatchId: batch.batchId,
+      blockerIds: [first.hitlId, second.hitlId].sort(),
+    }, {
+      runEndedAt: firstSuspendedAt,
+      runSettlement: { key: `run:${session.sessionId}:${batch.executionId}:0`, goalInstanceId: null },
+    }));
     await seedStoreManager.updateToolBatches(session.sessionId, workspaceRoot, () => [batch]);
     await context.hitl.respond(first.hitlId, { type: "question_answer", answers: ["Yes"] });
 
@@ -833,31 +1476,195 @@ describe("createRuntime", () => {
     expect((await runtime2.getSessionFile(workspaceRoot, session.sessionId)).toolBatches[0]?.calls[0]?.state).toBe("blocked");
     expect((await (await runtime2.contextResolver.resolve(workspaceRoot)).hitl.list()).find((record) => record.hitlId === first.hitlId)?.status).toBe("answered");
     installTestLlmAdapter();
-    const firstCallCompleted = nextSessionEvent(
-      runtime2,
-      project.slug,
-      session.sessionId,
-      (event) => event.payload.type === "tool-result" && event.payload.toolCallId === "question-1",
-    );
     await runtime2.recoverSessionContinuations();
-    await firstCallCompleted;
 
-    const recovered = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
-    const recoveredCalls = recovered.toolBatches[0]?.calls;
-    expect(recoveredCalls?.[0]).toMatchObject({
+    const partiallyRecovered = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
+    const partiallyRecoveredCalls = partiallyRecovered.toolBatches[0]?.calls;
+    expect(partiallyRecoveredCalls?.[0]).toMatchObject({
       toolCallId: "question-1",
-      state: "completed",
+      state: "queued",
       blocker: { hitlId: first.hitlId },
     });
-    expect(typeof recoveredCalls?.[0]?.blocker?.responseAppliedAt).toBe("string");
-    expect(recoveredCalls?.[1]).toMatchObject({
+    expect(typeof partiallyRecoveredCalls?.[0]?.blocker?.responseAppliedAt).toBe("string");
+    expect(partiallyRecoveredCalls?.[0]?.result).toBeUndefined();
+    expect(partiallyRecoveredCalls?.[1]).toMatchObject({
       toolCallId: "question-2",
       state: "blocked",
       blocker: { hitlId: second.hitlId },
     });
-    expect(recoveredCalls?.[0]?.result?.output.preview).toContain("Yes");
     expect((await (await runtime2.contextResolver.resolve(workspaceRoot)).hitl.list()).find((record) => record.hitlId === first.hitlId)?.status).toBe("resolved");
+
+    const secondCallCompleted = nextSessionEvent(
+      runtime2,
+      project.slug,
+      session.sessionId,
+      (event) => event.payload.type === "tool-result" && event.payload.toolCallId === "question-2",
+    );
+    await runtime2.respondToHitl({
+      slug: project.slug,
+      workspaceRoot,
+      hitlId: second.hitlId,
+      response: { type: "question_answer", answers: ["Yes"] },
+    });
+    await secondCallCompleted;
+
+    const recovered = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
+    expect(recovered.executions).toHaveLength(1);
+    expect(recovered.toolBatches[0]?.calls[0]).toMatchObject({
+      toolCallId: "question-1",
+      state: "completed",
+    });
+    expect(recovered.toolBatches[0]?.calls[0]?.result?.output.preview).toContain("Yes");
+    expect(recovered.toolBatches[0]?.calls[1]).toMatchObject({
+      toolCallId: "question-2",
+      state: "completed",
+    });
     await runtime2.abortAllSessionExecutions();
+  });
+
+  test("applies an in-flight HITL answer before Stop uniquely cancels its suspended Execution", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    const runtime1 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "HITL answer and Stop" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const context1 = await runtime1.contextResolver.resolve(workspaceRoot);
+    const input = {
+      questions: [{
+        question: "Continue?",
+        header: "Continue",
+        options: [{ label: "Yes", description: "Continue" }],
+      }],
+    };
+    const request = context1.hitl.codec.createAskUserRequest({
+      toolCallId: "stop-race-question",
+      displayPayload: {
+        title: "Continue",
+        summary: "Continue?",
+        questions: [{
+          question: "Continue?",
+          header: "Continue",
+          options: [{ label: "Yes", description: "Continue" }],
+          custom: true,
+        }],
+        redacted: true,
+      },
+    });
+    const record = (await context1.hitl.create({
+      requestKey: context1.hitl.codec.createToolRequestKey({
+        sessionId: session.sessionId,
+        toolCallId: "stop-race-question",
+        toolName: "ask_user",
+        request,
+      }),
+      owner: { type: "session", id: session.sessionId },
+      source: request.source,
+      displayPayload: request.displayPayload,
+    })).record;
+    await runtime1.shutdown();
+
+    const executionId = "execution-hitl-stop-race";
+    const now = new Date().toISOString();
+    const batch: SessionToolBatch = {
+      batchId: "batch-hitl-stop-race",
+      executionId,
+      step: 0,
+      runOrdinal: 0,
+      agentName: "lead",
+      allowedTools: ["ask_user"],
+      agentSkills: [],
+      partitions: [{ type: "serial", callIds: ["stop-race-question"] }],
+      calls: [{
+        ordinal: 0,
+        partitionIndex: 0,
+        toolCallId: "stop-race-question",
+        toolName: "ask_user",
+        input,
+        traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        state: "blocked",
+        attempt: 1,
+        checkpointAt: Date.parse(now),
+        blocker: {
+          requestKey: record.requestKey,
+          hitlId: record.hitlId,
+          source: request.source,
+          displayPayload: request.displayPayload,
+        },
+      }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
+    const seedStore = await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
+    seedStore.getState().append(testExecutionStart(executionId));
+    seedStore.getState().append({ type: "step-start", step: batch.step });
+    const suspendedAt = Date.now();
+    seedStore.getState().append(testExecutionSuspended(executionId, {
+      kind: "hitl",
+      toolBatchId: batch.batchId,
+      blockerIds: [record.hitlId],
+    }, {
+      runEndedAt: suspendedAt,
+      runSettlement: { key: `run:${session.sessionId}:${executionId}:0`, goalInstanceId: null },
+    }));
+    await seedStoreManager.updateToolBatches(session.sessionId, workspaceRoot, () => [batch]);
+
+    const runtime2 = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const context2 = await runtime2.contextResolver.resolve(workspaceRoot);
+    const originalResolve = context2.hitl.resolve.bind(context2.hitl);
+    let markDispatching!: () => void;
+    const dispatching = new Promise<void>((resolve) => {
+      markDispatching = resolve;
+    });
+    let releaseDispatch!: () => void;
+    const dispatchGate = new Promise<void>((resolve) => {
+      releaseDispatch = resolve;
+    });
+    context2.hitl.resolve = async (...args: Parameters<typeof originalResolve>) => {
+      const resolved = await originalResolve(...args);
+      if (args[1].type === "dispatching") {
+        markDispatching();
+        await dispatchGate;
+      }
+      return resolved;
+    };
+
+    const answer = runtime2.respondToHitl({
+      slug: project.slug,
+      workspaceRoot,
+      hitlId: record.hitlId,
+      response: { type: "question_answer", answers: ["Yes"] },
+    });
+    await dispatching;
+    const stop = runtime2.stopSessionFamily(workspaceRoot, session.sessionId);
+    releaseDispatch();
+    const [answered] = await Promise.all([answer, stop]);
+
+    expect(answered.status).toBe("resolved");
+    expect(answered.view.allowedActions).toEqual([]);
+    const file = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
+    expect(file.executions).toHaveLength(1);
+    expect(file.executions[0]).toMatchObject({
+      id: executionId,
+      status: "cancelled",
+      runs: [{ ordinal: 0 }],
+    });
+    expect(file.toolBatches[0]).toMatchObject({
+      batchId: batch.batchId,
+    });
+    expect(typeof file.toolBatches[0]?.archivedAt).toBe("string");
+    const settled = (await context2.hitl.list()).find(({ hitlId }) => hitlId === record.hitlId);
+    expect(settled?.status).toBe("resolved");
+    expect(settled?.delivery).toBeUndefined();
+    await runtime2.shutdown();
   });
 
   test("coalesces concurrent identical HITL responses into one delivery", async () => {
@@ -897,6 +1704,7 @@ describe("createRuntime", () => {
       batchId: "batch-concurrent",
       executionId: "execution-concurrent",
       step: 0,
+      runOrdinal: 0,
       agentName: "lead",
       allowedTools: ["ask_user"],
       agentSkills: [],
@@ -910,6 +1718,7 @@ describe("createRuntime", () => {
         traits: { readOnly: true, destructive: false, concurrencySafe: false },
         state: "blocked",
         attempt: 1,
+        checkpointAt: Date.parse(now),
         blocker: {
           requestKey: record.requestKey,
           hitlId: record.hitlId,
@@ -921,7 +1730,18 @@ describe("createRuntime", () => {
       updatedAt: now,
     };
     const seedStoreManager = new SessionStoreManager({ logger: silentLogger });
-    await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
+    const seedStore = await seedStoreManager.getOrLoad(session.sessionId, workspaceRoot);
+    seedStore.getState().append(testExecutionStart(batch.executionId));
+    seedStore.getState().append({ type: "step-start", step: batch.step });
+    const concurrentSuspendedAt = Date.now();
+    seedStore.getState().append(testExecutionSuspended(batch.executionId, {
+      kind: "hitl",
+      toolBatchId: batch.batchId,
+      blockerIds: [record.hitlId],
+    }, {
+      runEndedAt: concurrentSuspendedAt,
+      runSettlement: { key: `run:${session.sessionId}:${batch.executionId}:0`, goalInstanceId: null },
+    }));
     await seedStoreManager.updateToolBatches(session.sessionId, workspaceRoot, () => [batch]);
 
     const runtime2 = await createRuntime({

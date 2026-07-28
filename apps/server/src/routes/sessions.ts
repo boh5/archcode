@@ -286,7 +286,7 @@ async function applySessionGoalControl(
     await runtime.updateSessionGoalControl(input);
   } catch (error) {
     if (error instanceof SessionGoalServiceError) {
-      if (error.code === "GENERATION_CONFLICT") {
+      if (error.code === "GENERATION_CONFLICT" || error.code === "PENDING_SETTLEMENTS") {
         throw new ServerError("BAD_REQUEST", error.message, 409, { scopeCode: error.code });
       }
       throw new ServerError("BAD_REQUEST", error.message, 422, { scopeCode: error.code });

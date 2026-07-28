@@ -218,7 +218,7 @@ function createBackgroundOutputPage(
   if (cursor === undefined) {
     const empty = input.full_session
       ? "_No messages are available._"
-      : state.isRunning || latestExecution(state)?.status === "waiting_for_human"
+      : state.isRunning || latestExecution(state)?.status === "suspended"
         ? "_No assistant output yet for the current execution._"
         : latestExecution(state)?.status === "completed"
           ? "_The completed execution returned an empty final output._"
@@ -354,7 +354,7 @@ function latestOutputMessage(state: SessionStoreState): StoredMessage | undefine
   if (execution === undefined) return undefined;
   const canExpose = execution.status === "completed"
     || execution.status === "running"
-    || execution.status === "waiting_for_human";
+    || execution.status === "suspended";
   if (!canExpose) return undefined;
   for (let index = state.messages.length - 1; index >= 0; index -= 1) {
     const message = state.messages[index];
@@ -432,8 +432,15 @@ function statusNote(state: SessionStoreState, waitResult: WaitResult): string {
   if (waitResult === "timed_out") return "Timed out waiting; this page is the current non-final snapshot.";
   if (waitResult === "aborted") return "Parent wait was aborted; this page is the current non-final snapshot.";
   if (state.isRunning) return "The Session is still running; this snapshot is not a final deliverable.";
-  if (latestExecution(state)?.status === "waiting_for_human") {
-    return "The Session is waiting for human input; this snapshot is not a final deliverable.";
+  const execution = latestExecution(state);
+  if (execution?.status === "suspended") {
+    if (execution.suspension.kind === "hitl") {
+      return "The Session is waiting for human input; this snapshot is not a final deliverable.";
+    }
+    if (execution.suspension.kind === "child_dependency") {
+      return "The Session is waiting for a synchronous child; this snapshot is not a final deliverable.";
+    }
+    return "The Session is ready to resume; this snapshot is not a final deliverable.";
   }
   return "";
 }
@@ -452,7 +459,7 @@ export const backgroundOutputTool = defineTool({
     "The latest completed execution's final assistant response is the child result. Failed, cancelled, timed-out, and interrupted executions expose status/error but no final output.",
     "Use block=true after a terminal reminder when the final output is required; do not poll.",
     "",
-    "For a final child result, wait for its terminal reminder and call `background_output({\"session_id\":\"<session-id>\",\"block\":true,\"timeout_ms\":1800000})`. If status is running or waiting_for_human, the returned live page is explicitly not a final deliverable.",
+    "For a final child result, wait for its terminal reminder and call `background_output({\"session_id\":\"<session-id>\",\"block\":true,\"timeout_ms\":1800000})`. If status is running or suspended, the returned live page is explicitly not a final deliverable.",
     "",
     "Every page is at most 50 KiB and 2,000 lines. When more content exists, call background_output again with the exact schema-valid nextInput returned by the tool; the cursor advances inside oversized text parts and across messages without an artifact or silent truncation. Use full_session=true for intermediate context. Reasoning and unified tool results remain hidden unless explicitly included.",
   ].join("\n"),

@@ -8,7 +8,6 @@ import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegri
 import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
-import { SessionInputService } from "../session-input/service";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
 const TEST_REQUESTED_MODEL_SELECTION = { mode: "profile_default" as const, selection: { model: "test:model" } };
@@ -18,8 +17,33 @@ const TEST_BINDING = {
   resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
 const executionStart = (executionId: string) => ({
-  type: "execution-start" as const, executionId, binding: TEST_BINDING, origin: "user_message" as const,
+  type: "execution-start" as const,
+  executionId,
+  binding: TEST_BINDING,
+  origin: "user_message" as const,
+  maxSteps: 50,
 });
+
+function executionEnd(
+  store: ReturnType<SessionStoreManager["create"]>,
+  terminalStatus: "completed" | "aborted",
+) {
+  const state = store.getState();
+  const execution = state.executions.find((candidate) => candidate.id === state.currentExecutionId);
+  if (execution === undefined || execution.status !== "running") throw new Error("Expected running Execution");
+  const run = execution.runs.at(-1)!;
+  const endedAt = Math.max(Date.now(), run.startedAt);
+  return {
+    type: "execution-end" as const,
+    executionId: execution.id,
+    terminalStatus,
+    endedAt,
+    runEndedAt: endedAt,
+    runUsageDelta: createEmptySessionStats().usage,
+    runSettlement: { key: `run:${state.sessionId}:${execution.id}:${run.ordinal}`, goalInstanceId: null },
+    terminalSettlement: { key: `terminal:${state.sessionId}:${execution.id}`, goalInstanceId: null },
+  };
+}
 
 beforeEach(async () => {
   await mkdir(TMP_DIR, { recursive: true });
@@ -500,7 +524,6 @@ describe("SessionStoreManager", () => {
     title?: string | null;
     createdAt?: number;
     activeSkillNames?: string[];
-    blockedByHitlIds?: string[];
   }): Promise<void> {
     await sessionFileInternals.saveSessionTranscript(
       persistedSession(input.sessionId, {
@@ -510,7 +533,6 @@ describe("SessionStoreManager", () => {
         activeSkillNames: input.activeSkillNames ?? [],
         title: input.title ?? null,
         rootSessionId: input.rootSessionId ?? input.sessionId,
-        ...(input.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: input.blockedByHitlIds }),
         ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
       }),
       TMP_DIR,
@@ -821,200 +843,6 @@ describe("SessionStoreManager", () => {
     }
   });
 
-  test("public current-state read durably repairs once and a second hydration is idempotent", async () => {
-    const id = sessionId();
-    const activeLink: ToolChildSessionLink = {
-      parentSessionId: id,
-      parentToolCallId: "delegate-call",
-      toolName: "delegate",
-      childSessionId: sessionId(),
-      childAgentName: "explore",
-      childProfile: "fast",
-      childSkillNames: [],
-      title: "Interrupted child",
-      depth: 1,
-      background: true,
-      status: "running",
-      createdAt: 900,
-      startedAt: 950,
-    };
-    await sessionFileInternals.saveSessionTranscript(persistedSession(id, {
-      messages: [{
-        id: "assistant-repair",
-        role: "assistant",
-        parts: [
-          { type: "text", id: "text-repair", text: "partial", createdAt: 1001 },
-          { type: "reasoning", id: "reasoning-repair", text: "partial reasoning", createdAt: 1002 },
-        ],
-        createdAt: 1001,
-        executionId: "run-repair",
-      }],
-      executions: [{
-        id: "run-repair",
-        startedAt: 1000,
-        status: "running",
-        binding: TEST_BINDING,
-        origin: "user_message",
-      }],
-      childSessionLinks: [activeLink],
-      inputRequestReceipts: [{
-        kind: "command",
-        clientRequestId: "command-repair",
-        requestFingerprint: "command",
-        status: "executing",
-        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
-      }],
-    }), TMP_DIR);
-    const path = canonicalSessionPath(id);
-
-    const originalSave = sessionFileInternals.saveSessionTranscript;
-    let saveCount = 0;
-    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
-      saveCount += 1;
-      await originalSave(state, workspaceRoot);
-    };
-
-    try {
-      const manager = new SessionStoreManager({ logger: silentLogger });
-      const current = await manager.getSessionFile(TMP_DIR, id);
-      expect(saveCount).toBe(1);
-
-      const repairedAt = current.executions[0]!.endedAt!;
-      expect(repairedAt).toBeNumber();
-      expect(current.executions[0]).toMatchObject({
-        status: "interrupted",
-        endedAt: repairedAt,
-        durationMs: repairedAt - 1000,
-        error: "Execution interrupted by restart",
-      });
-      expect(current.childSessionLinks[0]).toMatchObject({
-        status: "interrupted",
-        endedAt: repairedAt,
-        error: "Child execution interrupted by restart",
-      });
-      expect(current.messages[0]).toMatchObject({
-        completedAt: repairedAt,
-        parts: [
-          { completedAt: repairedAt, meta: { interrupted: true, discardedFromContext: true } },
-          { completedAt: repairedAt, meta: { interrupted: true, discardedFromContext: true } },
-        ],
-      });
-      expect(current.inputRequestReceipts[0]).toMatchObject({
-        status: "indeterminate",
-        error: expect.stringContaining("unknown"),
-      });
-      expect(current.updatedAt).toBe(repairedAt);
-
-      const onceRepaired = await Bun.file(path).text();
-      const restarted = new SessionStoreManager({ logger: silentLogger });
-      const reloaded = await restarted.getSessionFile(TMP_DIR, id);
-      expect(reloaded.updatedAt).toBe(current.updatedAt);
-      expect(saveCount).toBe(1);
-      expect(await Bun.file(path).text()).toBe(onceRepaired);
-    } finally {
-      sessionFileInternals.saveSessionTranscript = originalSave;
-    }
-  });
-
-  test("authoritative hydration durably repairs an interrupted child Session once", async () => {
-    const rootId = sessionId();
-    const childId = sessionId();
-    await sessionFileInternals.saveSessionTranscript(persistedSession(rootId), TMP_DIR);
-    await sessionFileInternals.saveSessionTranscript(persistedSession(childId, {
-      rootSessionId: rootId,
-      parentSessionId: rootId,
-      executions: [{
-        id: "child-run",
-        startedAt: 1000,
-        status: "running",
-        binding: TEST_BINDING,
-        origin: "tool_call",
-      }],
-    }), TMP_DIR);
-
-    const originalSave = sessionFileInternals.saveSessionTranscript;
-    let saveCount = 0;
-    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
-      saveCount += 1;
-      await originalSave(state, workspaceRoot);
-    };
-
-    try {
-      const manager = new SessionStoreManager({ logger: silentLogger });
-      const loaded = await manager.getOrLoad(childId, TMP_DIR);
-      expect(loaded.getState().executions[0]?.status).toBe("interrupted");
-      expect(saveCount).toBe(1);
-
-      const restarted = new SessionStoreManager({ logger: silentLogger });
-      expect((await restarted.getOrLoad(childId, TMP_DIR)).getState().executions[0]?.status)
-        .toBe("interrupted");
-      expect(saveCount).toBe(1);
-    } finally {
-      sessionFileInternals.saveSessionTranscript = originalSave;
-    }
-  });
-
-  test("restart repair and orphaned Steer rollback persist as two serial domain writes", async () => {
-    const id = sessionId();
-    await sessionFileInternals.saveSessionTranscript(persistedSession(id, {
-      pendingMessages: [{
-        id: "steer-message",
-        clientRequestId: "steer-request",
-        content: "continue",
-        source: "user",
-        state: "steering",
-        revision: 1,
-        acceptedAt: 1000,
-        updatedAt: 1001,
-        targetExecutionId: "run-repair",
-        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
-      }],
-      inputRequestReceipts: [{
-        kind: "message",
-        clientRequestId: "steer-request",
-        messageId: "steer-message",
-        requestFingerprint: "steer",
-        status: "pending",
-        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
-      }],
-      executions: [{
-        id: "run-repair",
-        startedAt: 1000,
-        status: "running",
-        binding: TEST_BINDING,
-        origin: "user_message",
-      }],
-    }), TMP_DIR);
-
-    const originalSave = sessionFileInternals.saveSessionTranscript;
-    const snapshots: PersistedSessionState[] = [];
-    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
-      snapshots.push(state);
-      await originalSave(state, workspaceRoot);
-    };
-
-    try {
-      const manager = new SessionStoreManager({ logger: silentLogger });
-      const service = new SessionInputService(manager);
-      const recovered = await service.recoverOrphanedSteers(id, TMP_DIR);
-
-      expect(recovered).toEqual([
-        expect.objectContaining({ id: "steer-message", state: "queued", revision: 2 }),
-      ]);
-      expect(snapshots).toHaveLength(2);
-      expect(snapshots[0]!.executions[0]?.status).toBe("interrupted");
-      expect(snapshots[0]!.pendingMessages[0]?.state).toBe("steering");
-      expect(snapshots[1]!.executions[0]?.status).toBe("interrupted");
-      expect(snapshots[1]!.pendingMessages[0]).toMatchObject({
-        state: "queued",
-        revision: 2,
-      });
-      expect(snapshots[1]!.updatedAt).toBeGreaterThan(snapshots[0]!.updatedAt);
-    } finally {
-      sessionFileInternals.saveSessionTranscript = originalSave;
-    }
-  });
-
   test("persists background child session completion link events", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const parentSessionId = sessionId();
@@ -1025,6 +853,7 @@ describe("SessionStoreManager", () => {
       parentToolCallId: "tool-call-1",
       toolName: "delegate",
       childSessionId,
+      childExecutionId: "child-execution-1",
       childAgentName: "explore",
       childProfile: "fast",
       childSkillNames: [],
@@ -1036,6 +865,7 @@ describe("SessionStoreManager", () => {
       startedAt: 110,
       endedAt: 210,
       durationMs: 100,
+      durationUpdatedAt: 210,
     };
 
     store.getState().append({ type: "tool-child-session-link", link });
@@ -1093,7 +923,7 @@ describe("SessionStoreManager", () => {
       toolCallId: "call-partial",
       toolName: "file_write",
     });
-    store.getState().append({ type: "execution-end", status: "aborted" });
+    store.getState().append(executionEnd(store, "aborted"));
 
     const filePath = canonicalSessionPath(id);
     await manager.flushSession(id, TMP_DIR);
@@ -1124,7 +954,7 @@ describe("SessionStoreManager", () => {
       toolName: "file_write",
       input: undefined,
     });
-    store.getState().append({ type: "execution-end", status: "aborted" });
+    store.getState().append(executionEnd(store, "aborted"));
 
     const filePath = canonicalSessionPath(id);
     await manager.flushSession(id, TMP_DIR);
@@ -1141,87 +971,6 @@ describe("SessionStoreManager", () => {
       state: "running",
       input: null,
     });
-  });
-
-  test("load reconciliation marks interrupted partial text visible but excluded from model context", async () => {
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const id = sessionId();
-    await sessionFileInternals.saveSessionTranscript(
-      persistedSession(id, {
-        messages: [
-          {
-            id: "assistant-1",
-            role: "assistant",
-            parts: [
-              {
-                type: "text",
-                id: "text-1",
-                text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
-                createdAt: 1001,
-              },
-            ],
-            createdAt: 1001,
-            executionId: "run-1",
-          },
-        ],
-        executions: [{ id: "run-1", startedAt: 1000, status: "running", binding: TEST_BINDING, origin: "user_message" }],
-      }),
-      TMP_DIR,
-    );
-
-    const loaded = await manager.getOrLoad(id, TMP_DIR);
-    const text = loaded.getState().messages[0]?.parts[0];
-    expect(text).toMatchObject({
-      type: "text",
-      text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
-      meta: { interrupted: true, discardedFromContext: true },
-    });
-    expect(JSON.stringify(loaded.getState().toModelMessages())).toContain("previous assistant response was interrupted");
-    expect(JSON.stringify(loaded.getState().toModelMessages())).not.toContain("PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT");
-    expect(loaded.getState().executions[0]).toMatchObject({ status: "interrupted" });
-  });
-
-  test("load reconciliation preserves waiting_for_human execution status", async () => {
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const id = sessionId();
-    await sessionFileInternals.saveSessionTranscript(
-      persistedSession(id, {
-        executions: [{ id: "run-1", startedAt: 1000, status: "waiting_for_human", endedAt: 2000, durationMs: 1000, binding: TEST_BINDING, origin: "user_message" }],
-      }),
-      TMP_DIR,
-    );
-
-    const loaded = await manager.getOrLoad(id, TMP_DIR);
-
-    expect(loaded.getState().executions[0]).toMatchObject({
-      id: "run-1",
-      status: "waiting_for_human",
-      endedAt: 2000,
-      durationMs: 1000,
-    });
-  });
-
-  test("load reconciliation makes an unfinished command outcome indeterminate", async () => {
-    const id = sessionId();
-    await sessionFileInternals.saveSessionTranscript(persistedSession(id, {
-      inputRequestReceipts: [{
-        kind: "command",
-        clientRequestId: "interrupted-command",
-        requestFingerprint: "user-command",
-        status: "executing",
-        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
-      }],
-    }), TMP_DIR);
-
-    const restarted = new SessionStoreManager({ logger: silentLogger });
-    expect((await restarted.getOrLoad(id, TMP_DIR)).getState().inputRequestReceipts).toEqual([
-      expect.objectContaining({
-        kind: "command",
-        clientRequestId: "interrupted-command",
-        status: "indeterminate",
-        error: expect.stringContaining("unknown"),
-      }),
-    ]);
   });
 
   test("persists completed tool results and does not downgrade them on restart", async () => {

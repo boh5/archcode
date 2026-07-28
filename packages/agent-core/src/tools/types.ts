@@ -6,12 +6,20 @@ import type { SessionStoreState } from "../store/index";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
-import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import type {
+  ChildExecutionHandle,
+  ChildExecutionOutcome,
+  ChildExecutionRequest,
+  ResumeChildRequest,
+} from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
 import type { SkillService } from "../skills";
 import type {
+  ChildDeferredToolResult,
+  ChildToolDependency,
   RawToolResult,
+  ToolDescriptorExecutionResult,
   ToolBlockedRequest,
   ToolOutputPolicy,
 } from "../tool-output/types";
@@ -20,7 +28,10 @@ import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
 
 export type {
+  ChildDeferredToolResult,
+  ChildToolDependency,
   RawToolResult,
+  ToolDescriptorExecutionResult,
   RegistryExecutionOutcome,
   ToolBlockedRequest,
   ToolExecutionSidecar,
@@ -52,6 +63,9 @@ export interface ToolExecutionContext {
   toolTraits?: ToolTraits;
   permissionOutcome?: "allow" | "deny" | "ask";
   step: number;
+  executionId: string;
+  runOrdinal: number;
+  toolBatchId: string;
   abort: AbortSignal;
   agentName?: string;
   startedAt: number;
@@ -148,7 +162,10 @@ export type PermissionErrorCode =
  */
 export type AiToolInputSchema = ZodTypeAny | AiSchema<unknown>;
 
-export interface ToolDescriptor<I = any> {
+export interface ToolDescriptor<
+  I = any,
+  O extends ToolDescriptorExecutionResult = RawToolResult,
+> {
   name: string;
   description: string;
   /**
@@ -182,11 +199,18 @@ export interface ToolDescriptor<I = any> {
     response: HitlResponse,
     ctx: ToolExecutionContext,
   ) => MaybePromise<RawToolResult>;
+  /** Finalizes a previously persisted synchronous child dependency without relaunching it. */
+  resumeChildDependency?: (
+    input: I,
+    dependency: ChildToolDependency,
+    outcome: Extract<ChildExecutionOutcome, { outcome: "terminal" }>,
+    ctx: ToolExecutionContext,
+  ) => MaybePromise<RawToolResult>;
   permissions?: ToolPermission[];
-  execute: (input: I, ctx: ToolExecutionContext) => MaybePromise<RawToolResult>;
+  execute: (input: I, ctx: ToolExecutionContext) => MaybePromise<O>;
 }
 
-export type AnyToolDescriptor = ToolDescriptor<any>;
+export type AnyToolDescriptor = ToolDescriptor<any, ToolDescriptorExecutionResult>;
 
 export interface ToolCallLike {
   toolCallId: string;

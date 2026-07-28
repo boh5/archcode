@@ -21,7 +21,7 @@ import { buildAgentFocusSearch } from "./session-canvas-navigation";
 import { childExecutionVisualKind, presentChildExecutionStatus } from "../../../lib/execution-status-presentation";
 import { STATUS_TONE_CLASS, statusVisual, type StatusTone, type VisualStatusKind } from "../../../lib/status-visuals";
 import { StatusGlyph } from "../../primitives/StatusGlyph";
-import { sessionFamilyVisual } from "../../../lib/session-family-presentation";
+import { sessionFamilyActivityLabel, sessionFamilyVisual } from "../../../lib/session-family-presentation";
 
 interface AgentEntry {
   sessionId: string;
@@ -57,7 +57,7 @@ export function resolveInspectorAgentStatus(
     return { label: status.label, kind: childExecutionVisualKind(childStatus), detail: status.detail };
   }
   const visual = sessionFamilyVisual(rootActivity);
-  const label = rootActivity === "running" ? "Running" : rootActivity === "stopping" ? "Stopping" : rootActivity === "idle" ? "Idle" : "Status unavailable";
+  const label = sessionFamilyActivityLabel(rootActivity);
   return { label, ...visual };
 }
 

@@ -70,7 +70,7 @@ describe("HITL architecture", () => {
 
   test("Runtime HITL delivery logs use only redacted stable failures", () => {
     const runtime = source("packages/agent-core/src/runtime.ts");
-    for (const event of ["session.tool_batch.wake_failed", "hitl.delivery.failed"]) {
+    for (const event of ["hitl.delivery.failed"]) {
       const eventIndex = runtime.indexOf(`runtimeLogger.warn("${event}"`);
       expect(eventIndex).toBeGreaterThan(0);
       const snippet = runtime.slice(Math.max(0, eventIndex - 600), eventIndex + 500);

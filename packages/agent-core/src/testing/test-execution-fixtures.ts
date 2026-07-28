@@ -1,9 +1,14 @@
 import type {
   ExecutionModelBindingSummary,
+  ExecutionEndEvent,
   ExecutionStartEvent,
+  ExecutionSuspendedEvent,
+  NormalizedUsage,
   RequestedModelSelection,
   SessionExecutionOrigin,
   SessionExecutionRecord,
+  SessionExecutionSuspension,
+  SessionExecutionTerminalStatus,
 } from "@archcode/protocol";
 import { ModelInfo } from "../provider/model";
 
@@ -45,23 +50,105 @@ export const testExecutionBinding: ExecutionModelBindingSummary = {
   modelRuntimeRevision: "test-model-runtime-revision",
 };
 
+export const testExecutionUsage: NormalizedUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  reasoningTokens: 0,
+  cachedInputTokens: 0,
+};
+
 export function testExecutionStart(
   executionId: string,
   origin: SessionExecutionOrigin = "tool_call",
 ): ExecutionStartEvent {
-  return { type: "execution-start", executionId, binding: testExecutionBinding, origin };
+  return {
+    type: "execution-start",
+    executionId,
+    binding: testExecutionBinding,
+    origin,
+    maxSteps: 50,
+  };
+}
+
+export function testExecutionEnd(
+  executionId: string,
+  terminalStatus: SessionExecutionTerminalStatus = "completed",
+  overrides: Partial<Omit<ExecutionEndEvent, "type" | "executionId" | "terminalStatus">> = {},
+): ExecutionEndEvent {
+  const endedAt = overrides.endedAt ?? 1;
+  return {
+    type: "execution-end",
+    executionId,
+    terminalStatus,
+    endedAt,
+    runEndedAt: overrides.runEndedAt ?? endedAt,
+    runUsageDelta: overrides.runUsageDelta ?? testExecutionUsage,
+    runSettlement: overrides.runSettlement ?? { key: `run:test-session:${executionId}:0`, goalInstanceId: null },
+    terminalSettlement: overrides.terminalSettlement ?? { key: `terminal:test-session:${executionId}`, goalInstanceId: null },
+    ...(overrides.error === undefined ? {} : { error: overrides.error }),
+  };
+}
+
+export function testExecutionSuspended(
+  executionId: string,
+  suspension: SessionExecutionSuspension,
+  overrides: Partial<Omit<ExecutionSuspendedEvent, "type" | "executionId" | "suspension">> = {},
+): ExecutionSuspendedEvent {
+  const runEndedAt = overrides.runEndedAt ?? 1;
+  return {
+    type: "execution-suspended",
+    executionId,
+    suspension,
+    runEndedAt,
+    runUsageDelta: overrides.runUsageDelta ?? testExecutionUsage,
+    runSettlement: overrides.runSettlement ?? { key: `run:test-session:${executionId}:0`, goalInstanceId: null },
+  };
 }
 
 export function testExecutionRecord(
   id: string,
   status: SessionExecutionRecord["status"] = "completed",
 ): SessionExecutionRecord {
+  const run = {
+    ordinal: 0,
+    startedAt: 1,
+    binding: testExecutionBinding,
+  };
+  const settlement = { key: `run:test-session:${id}:0`, goalInstanceId: null };
+
+  if (status === "running") {
+    return {
+      id,
+      startedAt: 1,
+      status,
+      origin: "tool_call",
+      maxSteps: 50,
+      durationMs: 0,
+      runs: [run],
+    };
+  }
+  if (status === "suspended") {
+    return {
+      id,
+      startedAt: 1,
+      status,
+      origin: "tool_call",
+      maxSteps: 50,
+      durationMs: 0,
+      runs: [{ ...run, endedAt: 1, durationMs: 0, usageDelta: testExecutionUsage, settlement }],
+      suspension: { kind: "hitl", toolBatchId: `batch:${id}`, blockerIds: [`blocker:${id}`] },
+    };
+  }
   return {
     id,
     startedAt: 1,
     status,
-    ...(status === "running" ? {} : { endedAt: 1 }),
-    binding: testExecutionBinding,
     origin: "tool_call",
+    maxSteps: 50,
+    durationMs: 0,
+    endedAt: 1,
+    runs: [{ ...run, endedAt: 1, durationMs: 0, usageDelta: testExecutionUsage, settlement }],
+    terminalSettlement: { key: `terminal:test-session:${id}`, goalInstanceId: null },
   };
 }

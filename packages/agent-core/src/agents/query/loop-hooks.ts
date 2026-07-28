@@ -1,7 +1,11 @@
 import type { StoreApi } from "zustand";
+import type {
+  SessionExecutionSuspension,
+  SessionExecutionTerminalStatus,
+} from "@archcode/protocol";
 import type { ExecutionModelBinding } from "../../models";
 import type { ModelMessage } from "ai";
-import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
+import type { SessionStoreState } from "../../store/types";
 import type { Logger } from "../../logger";
 import type { ProjectContext } from "../../projects/types";
 
@@ -37,7 +41,15 @@ export interface AfterLoopEndContext {
   binding: ExecutionModelBinding;
   logger: Logger;
   abort?: AbortSignal;
-  loopEndStatus: ExecutionEndEvent["status"];
+  loopOutcome:
+    | {
+        readonly kind: "suspended";
+        readonly suspension: Exclude<SessionExecutionSuspension, { kind: "resume_pending" }>;
+      }
+    | {
+        readonly kind: "terminal";
+        readonly status: SessionExecutionTerminalStatus;
+      };
   projectContext?: ProjectContext;
 }
 

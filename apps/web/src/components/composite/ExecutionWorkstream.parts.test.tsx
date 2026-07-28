@@ -731,6 +731,7 @@ describe("CompressionBlock", () => {
       parentToolCallId: "tc-delegate-1",
       toolName: "delegate",
       childSessionId: "child-sess-1",
+      childExecutionId: "child-exec-1",
       childAgentName: "explore", childProfile: "fast", childSkillNames: [],
       depth: 1,
       background: false,

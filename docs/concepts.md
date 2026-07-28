@@ -22,9 +22,22 @@ state.
 
 ## Execution
 
-An Execution is one active or queued run inside a Session. You can add a message
-while work is running, queue follow-up work, stop the current Execution, and
-return to the same Session later.
+An Execution is one accepted unit of logical work inside a Session. It begins
+with a new user, Goal, or child-task input and keeps the same `executionId`
+until it truly completes, fails, or is stopped. A permission/question pause and
+a synchronous child pause suspend that Execution; answering or finishing the
+child resumes it instead of creating a continuation Execution.
+
+One Execution can have several active run spans. A span owns live resources and
+one resolved model binding, which stays fixed for that span. A later resume may
+resolve the current Session/Profile model again and therefore use a new binding
+without changing the logical Execution. Queued new input waits for the current
+Execution to end, then starts a new one.
+
+The workbench may show one Execution as several Work Segments, split in
+persisted message order at canonical user inputs (including Steer). Segments
+are independent display and navigation projections only: they do not create,
+persist, or schedule Executions.
 
 ## Todo
 
@@ -45,9 +58,10 @@ creating a Todo.
 ## Goal
 
 A Goal is an optional persistent objective attached to a root Lead Session. It
-starts only after explicit user authorization. While active, the same Lead can
-continue toward the objective across multiple Executions, pause for human
-input, and finish only after the required review gate.
+starts only after explicit user authorization. Each distinct Goal continuation
+can start a new Execution; an in-progress Execution may suspend for human input
+or a synchronous child and later resume with the same ID. The Goal finishes
+only after the required review gate.
 
 Ordinary requests do not create Goals automatically.
 
@@ -87,7 +101,8 @@ granting additional tools or permissions.
 
 Sensitive actions can pause for explicit approval. Agents can also ask a
 question when a decision or missing context blocks useful progress. Both flows
-are visible in the Web workbench and return control to the same Session.
+are visible in the Web workbench; their response is applied to the original
+tool call and resumes the same logical Execution.
 
 ## Worktrees
 

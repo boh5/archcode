@@ -1,6 +1,6 @@
 import type { AutomationStatus, AutomationInvocationStatus } from "./types";
 import type { SessionGoal } from "./session-goal";
-import type { ExecutionEndEvent } from "./types";
+import type { SessionExecutionRecord } from "./types";
 
 /** The Dashboard is a transient read projection, scoped to all projects or one project. */
 export type DashboardScope =
@@ -10,7 +10,7 @@ export type DashboardScope =
 /** Presentation-safe latest execution data for one root Session. */
 export interface DashboardExecution {
   id: string;
-  status: "running" | ExecutionEndEvent["status"];
+  status: SessionExecutionRecord["status"];
   startedAt: number;
   endedAt?: number;
 }

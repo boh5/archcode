@@ -59,7 +59,7 @@ describe("compact icon control contract", () => {
     const workstream = await source("components/composite/ExecutionWorkstream.tsx");
     const delegation = await source("components/composite/DelegationCard.tsx");
     expect(workstream).toContain("work-summary-control group relative flex min-h-8");
-    expect(workstream).toContain('data-testid={`work-divider-${execution.id}`}');
+    expect(workstream).toContain('data-testid={`work-divider-${segment.id}`}');
     expect(workstream).not.toContain("work-summary-control relative flex min-h-8");
     expect(delegation).toContain("rounded-md border border-border-subtle bg-bg-elevated");
     expect(delegation).toContain("border-b border-border-subtle bg-transparent");

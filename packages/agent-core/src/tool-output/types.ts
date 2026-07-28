@@ -48,6 +48,24 @@ export interface RawToolResult {
   readonly sidecar?: ToolExecutionSidecar;
 }
 
+/** Runtime-only durable identity for one synchronous child tool dependency. */
+export interface ChildToolDependency {
+  readonly parentExecutionId: string;
+  readonly runOrdinal: number;
+  readonly toolBatchId: string;
+  readonly toolCallId: string;
+  readonly childSessionId: string;
+  readonly childExecutionId: string;
+}
+
+/** Descriptor-to-Registry control result. It never enters Raw-to-Finalized output. */
+export interface ChildDeferredToolResult {
+  readonly kind: "child_deferred";
+  readonly dependency: ChildToolDependency;
+}
+
+export type ToolDescriptorExecutionResult = RawToolResult | ChildDeferredToolResult;
+
 export interface AskUserToolBlockedRequest {
   readonly source: Extract<HitlSource, { type: "ask_user" }>;
   readonly displayPayload: HitlDisplayPayload;
@@ -78,4 +96,8 @@ export type RegistryExecutionOutcome =
       readonly kind: "blocked";
       readonly request: ToolBlockedRequest;
       readonly requestKey: string;
+    }
+  | {
+      readonly kind: "child_deferred";
+      readonly dependency: ChildToolDependency;
     };

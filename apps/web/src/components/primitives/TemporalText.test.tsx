@@ -161,6 +161,27 @@ describe("TemporalText", () => {
     expect(controlled.focusListenerCount()).toBe(0);
   });
 
+  test("does not oscillate when the replacement cadence snapshot is stale", async () => {
+    installDom();
+    let secondReads = 0;
+    const clock: TimeClock = {
+      store: (cadence) => ({
+        getSnapshot: () => {
+          if (cadence === "minute") return 159_000;
+          secondReads += 1;
+          return secondReads === 1 ? 159_000 : 160_000;
+        },
+        subscribe: () => () => {},
+      }),
+    };
+
+    await act(async () => {
+      root.render(<RelativeTime timestamp={100_000} clock={clock} />);
+    });
+
+    expect(container.textContent).toBe("1m ago");
+  });
+
   test("derives full and short presentation from one paused external-store snapshot", async () => {
     installDom();
     const controlled = createControlledClock(159_000);
@@ -230,6 +251,63 @@ describe("TemporalText", () => {
     await act(async () => root.render(<Probe />));
     expect(container.textContent).toBe("1m 5s");
     expect(controlled.scheduledCount()).toBe(0);
+  });
+
+  test("advances from an authoritative active-duration snapshot", async () => {
+    installDom();
+    const controlled = createControlledClock(100_000);
+
+    function Probe() {
+      return useElapsedTime({
+        startedAt: 0,
+        active: true,
+        durationMs: 65_000,
+        durationUpdatedAt: 100_000,
+      }, controlled.clock);
+    }
+
+    await act(async () => root.render(<Probe />));
+    expect(container.textContent).toBe("1m 5s");
+
+    controlled.setNow(102_000);
+    await act(async () => controlled.tick());
+    expect(container.textContent).toBe("1m 7s");
+  });
+
+  test("does not count suspended wait when a child duration snapshot resumes", async () => {
+    installDom();
+    const controlled = createControlledClock(2_000);
+
+    function Probe({ active, durationMs, durationUpdatedAt }: {
+      active: boolean;
+      durationMs: number;
+      durationUpdatedAt: number;
+    }) {
+      return useElapsedTime({
+        startedAt: 0,
+        active,
+        durationMs,
+        durationUpdatedAt,
+      }, controlled.clock);
+    }
+
+    await act(async () => root.render(
+      <Probe active durationMs={2_000} durationUpdatedAt={2_000} />,
+    ));
+    expect(container.textContent).toBe("2s");
+
+    controlled.setNow(32_000);
+    await act(async () => root.render(
+      <Probe active={false} durationMs={2_000} durationUpdatedAt={2_000} />,
+    ));
+    expect(container.textContent).toBe("2s");
+
+    await act(async () => root.render(
+      <Probe active durationMs={2_000} durationUpdatedAt={32_000} />,
+    ));
+    controlled.setNow(33_000);
+    await act(async () => controlled.tick());
+    expect(container.textContent).toBe("3s");
   });
 
   test("countdown releases the second cadence as soon as it reaches zero", async () => {

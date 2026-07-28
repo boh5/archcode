@@ -27,6 +27,13 @@ Responsibilities:
 - Execute tools through guards, hooks, partitioning, and the Tool Output Plane: Registry finalizes each raw result once, while the Finalizer owns redaction, bounded projection, and artifact recovery metadata before audit/logger consume it.
 - Persist and project session state through the store.
 - Maintain isomorphic stream event reduction via `src/store/reduce.ts`.
+- Let `SessionExecutionManager` be the sole owner of logical Execution
+  lifecycle: start, suspend, resume, terminal transition, admission, live
+  resources, and recovery. The store reads/writes only the current durable
+  schema and reducer facts; it does not repair lifecycle state.
+- Keep a suspended Execution durable but resource-free. HITL responses and
+  synchronous child completion resume the original Execution and original tool
+  call through its Tool Batch checkpoint.
 
 ## 3. Server Layer (`src/server/`)
 
@@ -76,7 +83,7 @@ Responsibilities:
 ## Data Flow
 
 ```text
-Config classification → Host shell → Setup or Runtime activation → optional Session auth → project-scoped Agent → query loop → store → SSE → Web UI
+Config classification → Host shell → Setup or Runtime activation → optional Session auth → SessionExecutionManager → project-scoped Agent/query-loop run span → store → SSE → Web UI
 ```
 
 ## Key Design Decisions
@@ -93,6 +100,27 @@ One global SSE connection carries live Session, Session Goal, Automation, HITL, 
 
 Permission and question prompts cross the server/browser boundary as durable owner-scoped HITL records. The Web UI renders only redacted display payloads and submits responses through REST; continuation resumes from the persisted checkpoint.
 
+The HITL record does not own Execution lifecycle. Its exact response is applied
+to the originating Tool Batch call, then the Manager admits another run span of
+the same logical `executionId`. A synchronous child follows the same rule: the
+parent suspends on its original call and resumes only after that child reaches a
+real terminal outcome.
+
 ### Isomorphic reducer shared by server and web
 
 `src/store/reduce.ts` defines the stream event reducer used to convert raw events into session state. Keeping reducer semantics shared prevents server and Web UI views from drifting when events such as text deltas, reasoning deltas, tool calls, todos, reminders, and lifecycle transitions evolve.
+
+The reducer projects valid lifecycle events; it does not stitch continuation
+Executions or repair invalid state. On reconnect, out-of-order, or invalid
+lifecycle input, the Web discards the affected projection and refreshes the
+authoritative Session snapshot.
+
+### Execution workstream projection
+
+An Execution is a single logical record even when it has several run spans.
+The Web renders its persisted messages in array order as alternating canonical
+user input and Work Segments. A canonical user input starts the following
+segment; tools are never aggregated across that boundary. HITL resume does not
+add a segment. Segment IDs and collapse/navigation state are Web-only, while
+Execution status, duration, usage, and final response remain attached to the
+one Execution.

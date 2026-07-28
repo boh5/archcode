@@ -49,18 +49,34 @@ export interface ExecutionWorkstreamFinalResponse {
   textParts: readonly TextPart[];
 }
 
+/**
+ * A read-only, Web-only slice of one logical Execution.  Its boundaries are
+ * canonical input batches in message-array order; it is not a persisted
+ * lifecycle object.
+ */
+export interface ExecutionWorkstreamSegment {
+  id: string;
+  executionId: string;
+  executionNumber: number;
+  inputMessages: readonly SessionMessage[];
+  inputMessageIds: readonly string[];
+  workMessages: readonly ExecutionWorkstreamMessageSlice[];
+  /** Assistant text rendered outside the collapsible Work disclosure. */
+  outputMessages: readonly ExecutionWorkstreamMessageSlice[];
+  finalResponse?: ExecutionWorkstreamFinalResponse;
+  windowStartedAt: number;
+  windowEndedAt: number;
+  activeDurationMs: number;
+}
+
 export interface ExecutionWorkstreamExecution {
   kind: "execution";
   id: string;
   number: number;
   sortTime: number;
   record: SessionExecutionRecord;
-  /** Canonical user inputs remain outside the Work disclosure. */
-  userMessages: readonly SessionMessage[];
-  /** Every non-input part except the trusted final Text parts. */
-  workMessages: readonly ExecutionWorkstreamMessageSlice[];
-  /** Absent unless the completed Execution has an authoritative terminal model step. */
-  finalResponse?: ExecutionWorkstreamFinalResponse;
+  /** Ordered Web display projection; domain ownership remains the Execution. */
+  segments: readonly ExecutionWorkstreamSegment[];
   stepCount: number;
   /** Sum of provider-reported reasoning usage for this Execution. */
   reasoningTokens: number;
@@ -117,19 +133,27 @@ export interface ExecutionWorkstreamProjection {
 }
 
 function sameReferences<T>(left: readonly T[], right: readonly T[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function sameMessageSlices(
   left: readonly ExecutionWorkstreamMessageSlice[],
   right: readonly ExecutionWorkstreamMessageSlice[],
 ): boolean {
-  return left.length === right.length && left.every((slice, index) => {
-    const candidate = right[index];
-    return candidate !== undefined
-      && slice.message === candidate.message
-      && sameReferences(slice.parts, candidate.parts);
-  });
+  return (
+    left.length === right.length &&
+    left.every((slice, index) => {
+      const candidate = right[index];
+      return (
+        candidate !== undefined &&
+        slice.message === candidate.message &&
+        sameReferences(slice.parts, candidate.parts)
+      );
+    })
+  );
 }
 
 function sameFinalResponse(
@@ -137,25 +161,49 @@ function sameFinalResponse(
   right: ExecutionWorkstreamFinalResponse | undefined,
 ): boolean {
   if (left === undefined || right === undefined) return left === right;
-  return left.message === right.message && sameReferences(left.textParts, right.textParts);
+  return (
+    left.message === right.message &&
+    sameReferences(left.textParts, right.textParts)
+  );
+}
+
+function sameSegment(
+  left: ExecutionWorkstreamSegment,
+  right: ExecutionWorkstreamSegment,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.windowStartedAt === right.windowStartedAt &&
+    left.windowEndedAt === right.windowEndedAt &&
+    left.activeDurationMs === right.activeDurationMs &&
+    sameReferences(left.inputMessages, right.inputMessages) &&
+    sameReferences(left.inputMessageIds, right.inputMessageIds) &&
+    sameMessageSlices(left.workMessages, right.workMessages) &&
+    sameMessageSlices(left.outputMessages, right.outputMessages) &&
+    sameFinalResponse(left.finalResponse, right.finalResponse)
+  );
 }
 
 function sameExecutionProjection(
   left: ExecutionWorkstreamExecution,
   right: ExecutionWorkstreamExecution,
 ): boolean {
-  return left.id === right.id
-    && left.number === right.number
-    && left.sortTime === right.sortTime
-    && left.record === right.record
-    && left.stepCount === right.stepCount
-    && left.reasoningTokens === right.reasoningTokens
-    && left.toolCount === right.toolCount
-    && left.childCount === right.childCount
-    && sameReferences(left.userMessages, right.userMessages)
-    && sameMessageSlices(left.workMessages, right.workMessages)
-    && sameFinalResponse(left.finalResponse, right.finalResponse)
-    && sameReferences(left.childSessionLinks, right.childSessionLinks);
+  return (
+    left.id === right.id &&
+    left.number === right.number &&
+    left.sortTime === right.sortTime &&
+    left.record === right.record &&
+    left.stepCount === right.stepCount &&
+    left.reasoningTokens === right.reasoningTokens &&
+    left.toolCount === right.toolCount &&
+    left.childCount === right.childCount &&
+    left.segments.length === right.segments.length &&
+    left.segments.every((segment, index) => {
+      const candidate = right.segments[index];
+      return candidate !== undefined && sameSegment(segment, candidate);
+    }) &&
+    sameReferences(left.childSessionLinks, right.childSessionLinks)
+  );
 }
 
 /**
@@ -170,17 +218,28 @@ export function stabilizeExecutionWorkstreamProjection(
 ): ExecutionWorkstreamProjection {
   if (previous === undefined) return next;
 
-  const previousExecutions = new Map(previous.executions.map((execution) => [execution.id, execution]));
+  const previousExecutions = new Map(
+    previous.executions.map((execution) => [execution.id, execution]),
+  );
   const executions = next.executions.map((execution) => {
     const candidate = previousExecutions.get(execution.id);
-    return candidate && sameExecutionProjection(candidate, execution) ? candidate : execution;
+    return candidate && sameExecutionProjection(candidate, execution)
+      ? candidate
+      : execution;
   });
-  const executionById = new Map(executions.map((execution) => [execution.id, execution]));
-  const previousItems = new Map(previous.items.map((item) => [`${item.kind}\u0000${item.id}`, item]));
+  const executionById = new Map(
+    executions.map((execution) => [execution.id, execution]),
+  );
+  const previousItems = new Map(
+    previous.items.map((item) => [`${item.kind}\u0000${item.id}`, item]),
+  );
   const items = next.items.map((item) => {
     if (item.kind === "execution") return executionById.get(item.id) ?? item;
     const candidate = previousItems.get(`${item.kind}\u0000${item.id}`);
-    if (item.kind === "activity-message" && candidate?.kind === "activity-message") {
+    if (
+      item.kind === "activity-message" &&
+      candidate?.kind === "activity-message"
+    ) {
       return candidate.message === item.message ? candidate : item;
     }
     if (item.kind === "compression" && candidate?.kind === "compression") {
@@ -188,11 +247,12 @@ export function stabilizeExecutionWorkstreamProjection(
     }
     return item;
   });
-  const session = previous.session.agentName === next.session.agentName
-    && previous.session.profile === next.session.profile
-    && previous.session.displayName === next.session.displayName
-    ? previous.session
-    : next.session;
+  const session =
+    previous.session.agentName === next.session.agentName &&
+    previous.session.profile === next.session.profile &&
+    previous.session.displayName === next.session.displayName
+      ? previous.session
+      : next.session;
 
   return {
     ...next,
@@ -222,21 +282,30 @@ function compareStrings(left: string, right: string): number {
 }
 
 function compareExecutionRecords(
-  left: SessionExecutionRecord,
-  right: SessionExecutionRecord,
+  left: { record: SessionExecutionRecord; sourceIndex: number },
+  right: { record: SessionExecutionRecord; sourceIndex: number },
 ): number {
-  return left.startedAt - right.startedAt || compareStrings(left.id, right.id);
+  return (
+    left.record.startedAt - right.record.startedAt ||
+    left.sourceIndex - right.sourceIndex ||
+    compareStrings(left.record.id, right.record.id)
+  );
 }
 
 function compareSortableItems(left: SortableItem, right: SortableItem): number {
-  return left.item.sortTime - right.item.sortTime
-    || left.rank - right.rank
-    || compareStrings(left.identity, right.identity)
-    || left.sourceIndex - right.sourceIndex;
+  return (
+    left.item.sortTime - right.item.sortTime ||
+    left.rank - right.rank ||
+    left.sourceIndex - right.sourceIndex ||
+    compareStrings(left.identity, right.identity)
+  );
 }
 
 function isCanonicalUserMessage(message: SessionMessage): boolean {
-  return message.role === "user" && message.parts.some((part) => part.type === "text");
+  return (
+    message.role === "user" &&
+    message.parts.some((part) => part.type === "text")
+  );
 }
 
 /** Internal model-context records are never part of the human conversation UI. */
@@ -255,11 +324,13 @@ export function isWebVisibleSessionPart(part: SessionPart): boolean {
 }
 
 function isTrustedFinalTextPart(part: SessionPart): part is TextPart {
-  return part.type === "text"
-    && part.completedAt !== undefined
-    && part.text.trim().length > 0
-    && part.meta?.interrupted !== true
-    && part.meta?.discardedFromContext !== true;
+  return (
+    part.type === "text" &&
+    part.completedAt !== undefined &&
+    part.text.trim().length > 0 &&
+    part.meta?.interrupted !== true &&
+    part.meta?.discardedFromContext !== true
+  );
 }
 
 function finalResponseForExecution(
@@ -271,11 +342,11 @@ function finalResponseForExecution(
 
   const terminalStep = steps.at(-1);
   if (
-    terminalStep?.completedAt === undefined
-    || terminalStep.finishReason === undefined
-    || terminalStep.finishReason === "tool-calls"
-    || terminalStep.finishReason === "interrupted"
-    || terminalStep.finishReason === "error"
+    terminalStep?.completedAt === undefined ||
+    terminalStep.finishReason === undefined ||
+    terminalStep.finishReason === "tool-calls" ||
+    terminalStep.finishReason === "interrupted" ||
+    terminalStep.finishReason === "error"
   ) {
     return undefined;
   }
@@ -293,30 +364,157 @@ function finalResponseForExecution(
   return textParts.length === 0 ? undefined : { message, textParts };
 }
 
-function splitExecutionMessages(
+function messageBoundary(message: SessionMessage): number {
+  if (message.completedAt !== undefined) return message.completedAt;
+  let boundary = message.createdAt;
+  for (const part of message.parts) {
+    if ("completedAt" in part && part.completedAt !== undefined)
+      boundary = Math.max(boundary, part.completedAt);
+    else if ("createdAt" in part) boundary = Math.max(boundary, part.createdAt);
+  }
+  return boundary;
+}
+
+interface MutableSegment {
+  id: string;
+  inputMessages: SessionMessage[];
+  workMessages: ExecutionWorkstreamMessageSlice[];
+  outputMessages: ExecutionWorkstreamMessageSlice[];
+  windowStartedAt: number;
+}
+
+function executionRunIntervals(
+  record: SessionExecutionRecord,
+  snapshotNow: number,
+): readonly { startedAt: number; endedAt: number }[] {
+  return record.runs.map((run) => ({
+    startedAt: run.startedAt,
+    endedAt: Math.max(run.startedAt, run.endedAt ?? snapshotNow),
+  }));
+}
+
+function activeDurationInWindow(
+  runs: readonly { startedAt: number; endedAt: number }[],
+  windowStartedAt: number,
+  windowEndedAt: number,
+): number {
+  return runs.reduce(
+    (total, run) =>
+      total +
+      Math.max(
+        0,
+        Math.min(run.endedAt, windowEndedAt) -
+          Math.max(run.startedAt, windowStartedAt),
+      ),
+    0,
+  );
+}
+
+function projectExecutionSegments(
+  record: SessionExecutionRecord,
   messages: readonly SessionMessage[],
   finalResponse: ExecutionWorkstreamFinalResponse | undefined,
-): {
-  userMessages: readonly SessionMessage[];
-  workMessages: readonly ExecutionWorkstreamMessageSlice[];
-} {
-  const userMessages: SessionMessage[] = [];
-  const workMessages: ExecutionWorkstreamMessageSlice[] = [];
+  executionNumber: number,
+  snapshotNow: number,
+): readonly ExecutionWorkstreamSegment[] {
+  const segments: MutableSegment[] = [];
   const finalTextParts = new Set<SessionPart>(finalResponse?.textParts ?? []);
+  let current: MutableSegment | undefined;
+  let previousBoundary = record.startedAt;
 
-  for (const message of messages) {
-    if (isCanonicalUserMessage(message)) {
-      userMessages.push(message);
+  const openImplicit = () => {
+    if (current) return current;
+    current = {
+      id: `work:${record.id}:implicit`,
+      inputMessages: [],
+      workMessages: [],
+      outputMessages: [],
+      windowStartedAt: previousBoundary,
+    };
+    segments.push(current);
+    return current;
+  };
+
+  for (let index = 0; index < messages.length;) {
+    const message = messages[index];
+    if (message && isCanonicalUserMessage(message)) {
+      const batch: SessionMessage[] = [];
+      while (
+        index < messages.length &&
+        messages[index] &&
+        isCanonicalUserMessage(messages[index]!)
+      ) {
+        batch.push(messages[index]!);
+        index += 1;
+      }
+      const boundary = Math.max(previousBoundary, messageBoundary(batch[0]!));
+      const isFirstSegment = segments.length === 0;
+      previousBoundary = boundary;
+      current = {
+        id: `work:${record.id}:after:${batch[0]!.id}`,
+        inputMessages: batch,
+        workMessages: [],
+        outputMessages: [],
+        windowStartedAt: isFirstSegment ? record.startedAt : boundary,
+      };
+      segments.push(current);
       continue;
     }
 
-    const parts = message === finalResponse?.message
-      ? message.parts.filter((part) => !finalTextParts.has(part))
-      : message.parts;
-    if (parts.length > 0) workMessages.push({ message, parts });
+    if (!message) break;
+    const visibleParts =
+      message === finalResponse?.message
+        ? message.parts.filter((part) => !finalTextParts.has(part))
+        : message.parts;
+    const outputParts = message.role === "assistant"
+      ? visibleParts.filter((part) => part.type === "text")
+      : [];
+    const workParts = visibleParts.filter((part) =>
+      message.role !== "assistant" || part.type !== "text"
+    );
+    const segment = openImplicit();
+    if (outputParts.length > 0) {
+      segment.outputMessages.push({ message, parts: outputParts });
+    }
+    if (workParts.length > 0) {
+      segment.workMessages.push({ message, parts: workParts });
+    }
+    index += 1;
   }
 
-  return { userMessages, workMessages };
+  // A terminal response belongs to the final display segment, including an
+  // otherwise empty input-only Execution.
+  if (finalResponse) openImplicit();
+  if (segments.length === 0) openImplicit();
+
+  const terminalBoundary = Math.max(
+    previousBoundary,
+    record.endedAt ?? snapshotNow,
+  );
+  const runs = executionRunIntervals(record, snapshotNow);
+  return segments.map((segment, index) => {
+    const next = segments[index + 1];
+    const windowEndedAt = next?.windowStartedAt ?? terminalBoundary;
+    return {
+      id: segment.id,
+      executionId: record.id,
+      executionNumber,
+      inputMessages: segment.inputMessages,
+      inputMessageIds: segment.inputMessages.map((message) => message.id),
+      workMessages: segment.workMessages,
+      outputMessages: segment.outputMessages,
+      ...(index === segments.length - 1 && finalResponse
+        ? { finalResponse }
+        : {}),
+      windowStartedAt: segment.windowStartedAt,
+      windowEndedAt,
+      activeDurationMs: activeDurationInWindow(
+        runs,
+        segment.windowStartedAt,
+        windowEndedAt,
+      ),
+    };
+  });
 }
 
 function sessionActivityTime(message: SessionMessage): number | null {
@@ -382,7 +580,10 @@ export function buildExecutionWorkstream(
   }
 
   const messagesByExecutionId = new Map<string, SessionMessage[]>();
-  const stepsByExecutionId = new Map<string, Array<{ step: SessionStep; sourceIndex: number }>>();
+  const stepsByExecutionId = new Map<
+    string,
+    Array<{ step: SessionStep; sourceIndex: number }>
+  >();
   const duplicateMessagesById = new Map<string, SessionMessage[]>();
   const diagnostics: ExecutionWorkstreamDiagnostic[] = [];
   const sortableItems: SortableItem[] = [];
@@ -390,9 +591,10 @@ export function buildExecutionWorkstream(
   input.messages.forEach((sourceMessage, sourceIndex) => {
     const visibleParts = sourceMessage.parts.filter(isWebVisibleSessionPart);
     if (visibleParts.length === 0) return;
-    const message = visibleParts.length === sourceMessage.parts.length
-      ? sourceMessage
-      : { ...sourceMessage, parts: visibleParts };
+    const message =
+      visibleParts.length === sourceMessage.parts.length
+        ? sourceMessage
+        : { ...sourceMessage, parts: visibleParts };
     const executionId = message.executionId;
     if (executionId !== undefined && executionId.length > 0) {
       if (duplicateIds.has(executionId)) {
@@ -432,7 +634,8 @@ export function buildExecutionWorkstream(
   });
 
   input.steps.forEach((step, sourceIndex) => {
-    if (step.executionId === undefined || duplicateIds.has(step.executionId)) return;
+    if (step.executionId === undefined || duplicateIds.has(step.executionId))
+      return;
     if (!recordsById.has(step.executionId)) return;
     const steps = stepsByExecutionId.get(step.executionId);
     const indexedStep = { step, sourceIndex };
@@ -441,40 +644,53 @@ export function buildExecutionWorkstream(
   });
 
   const uniqueRecords = input.executions
-    .filter((record) => !duplicateIds.has(record.id))
-    .sort(compareExecutionRecords);
+    .map((record, sourceIndex) => ({ record, sourceIndex }))
+    .filter(({ record }) => !duplicateIds.has(record.id))
+    .sort(compareExecutionRecords)
+    .map(({ record }) => record);
 
-  const executions: ExecutionWorkstreamExecution[] = uniqueRecords.map((record, index) => {
-    const messages = messagesByExecutionId.get(record.id) ?? [];
-    const steps = (stepsByExecutionId.get(record.id) ?? [])
-      .sort((left, right) =>
-        left.step.step - right.step.step
-        || left.step.startedAt - right.step.startedAt
-        || left.sourceIndex - right.sourceIndex
-      )
-      .map(({ step }) => step);
-    const finalResponse = finalResponseForExecution(record, messages, steps);
-    const { userMessages, workMessages } = splitExecutionMessages(messages, finalResponse);
-    const childSessionLinks = resolveChildLinks(messages, input.childSessionLinks);
-    return {
-      kind: "execution",
-      id: record.id,
-      number: index + 1,
-      sortTime: record.startedAt,
-      record,
-      userMessages,
-      workMessages,
-      ...(finalResponse === undefined ? {} : { finalResponse }),
-      stepCount: steps.length,
-      reasoningTokens: steps.reduce(
-        (total, step) => total + Math.max(0, normalizeUsage(step.usage).reasoningTokens),
-        0,
-      ),
-      toolCount: countTools(messages),
-      childCount: childSessionLinks.length,
-      childSessionLinks,
-    };
-  });
+  const snapshotNow = Date.now();
+  const executions: ExecutionWorkstreamExecution[] = uniqueRecords.map(
+    (record, index) => {
+      const messages = messagesByExecutionId.get(record.id) ?? [];
+      const steps = (stepsByExecutionId.get(record.id) ?? [])
+        .sort(
+          (left, right) =>
+            left.step.step - right.step.step ||
+            left.step.startedAt - right.step.startedAt ||
+            left.sourceIndex - right.sourceIndex,
+        )
+        .map(({ step }) => step);
+      const finalResponse = finalResponseForExecution(record, messages, steps);
+      const childSessionLinks = resolveChildLinks(
+        messages,
+        input.childSessionLinks,
+      );
+      return {
+        kind: "execution",
+        id: record.id,
+        number: index + 1,
+        sortTime: record.startedAt,
+        record,
+        segments: projectExecutionSegments(
+          record,
+          messages,
+          finalResponse,
+          index + 1,
+          snapshotNow,
+        ),
+        stepCount: steps.length,
+        reasoningTokens: steps.reduce(
+          (total, step) =>
+            total + Math.max(0, normalizeUsage(step.usage).reasoningTokens),
+          0,
+        ),
+        toolCount: countTools(messages),
+        childCount: childSessionLinks.length,
+        childSessionLinks,
+      };
+    },
+  );
 
   executions.forEach((item, sourceIndex) => {
     sortableItems.push({
@@ -485,8 +701,12 @@ export function buildExecutionWorkstream(
     });
   });
 
-  const compressionBlocks = Object.values(input.compression?.blocksByRef ?? {})
-    .sort((left, right) => left.createdAt - right.createdAt || compareStrings(left.ref, right.ref));
+  const compressionBlocks = Object.values(
+    input.compression?.blocksByRef ?? {},
+  ).sort(
+    (left, right) =>
+      left.createdAt - right.createdAt || compareStrings(left.ref, right.ref),
+  );
   compressionBlocks.forEach((snapshot, sourceIndex) => {
     const block: CompressionBlockPart = {
       type: "compression-block",

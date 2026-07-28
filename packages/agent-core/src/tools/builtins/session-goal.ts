@@ -12,7 +12,6 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
 import type {
-  AnyToolDescriptor,
   ToolExecutionContext,
 } from "../types";
 
@@ -43,7 +42,7 @@ export const UpdateGoalInputSchema = z.discriminatedUnion("status", [
 type CreateGoalInput = z.infer<typeof CreateGoalInputSchema>;
 type UpdateGoalInput = z.infer<typeof UpdateGoalInputSchema>;
 
-export const createGoalTool: AnyToolDescriptor = defineTool({
+export const createGoalTool = defineTool({
   name: TOOL_CREATE_GOAL,
   description: "Create a persistent Goal on the current root Lead Session. Before calling this tool, ask the user with the ordinary ask_user tool and interpret the answer normally. Call only when the Lead determines that the user agreed. Discussion Sessions cannot create Goals.",
   inputSchema: CreateGoalInputSchema,
@@ -71,7 +70,7 @@ export const createGoalTool: AnyToolDescriptor = defineTool({
   },
 });
 
-export const getGoalTool: AnyToolDescriptor = defineTool({
+export const getGoalTool = defineTool({
   name: TOOL_GET_GOAL,
   description: "Read accounting only for the current Session Goal: normalized token usage, accumulated execution time, execution count, and optional token budget. This is read-only and never returns the objective, status, or blocked reason; use the latest GoalNotice for semantic Goal state. Absence means this Session has no Goal.",
   inputSchema: GetGoalInputSchema,
@@ -94,7 +93,7 @@ export const getGoalTool: AnyToolDescriptor = defineTool({
   },
 });
 
-export const updateGoalTool: AnyToolDescriptor = defineTool({
+export const updateGoalTool = defineTool({
   name: TOOL_UPDATE_GOAL,
   description: "Set the current Session Goal status to complete or blocked. Complete only after finishing the work, verifying it, and interpreting a fresh independent Goal review; every child in the Session family must already be terminal. status=blocked records only a genuine blocker.",
   inputSchema: UpdateGoalInputSchema,

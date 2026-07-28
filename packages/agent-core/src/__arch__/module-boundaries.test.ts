@@ -355,22 +355,21 @@ function findAgentRunOwnershipViolations(): Violation[] {
 }
 
 function findExecutionLifecycleWriteViolations(): Violation[] {
-  const allowedLifecycleReaders = new Set([
-    normalize(join("execution", "session-execution-manager.ts")),
-    // Session Input commits canonical input and its execution-start record atomically.
-    normalize(join("session-input", "service.ts")),
-    normalize(join("store", "reduce.ts")),
-    normalize(join("store", "session-store-manager.ts")),
-  ]);
+  const owner = normalize(join("execution", "session-execution-manager.ts"));
   const violations: Violation[] = [];
   for (const file of findTsFiles(srcRoot)) {
     const relativeToSrc = normalize(relative(srcRoot, file));
-    if (allowedLifecycleReaders.has(relativeToSrc)) continue;
+    if (relativeToSrc === owner) continue;
     const source = readFileSync(file, "utf8");
-    if (/["'`]execution-(?:start|end)["'`]/.test(source)) {
+    if (
+      /\btype\s*:\s*["'`]execution-(?:start|suspended|suspension-updated|resumed|end)["'`]/.test(
+        source,
+      )
+    ) {
       violations.push({
         file: relativeFile(file),
-        importPath: "source-pattern:execution lifecycle event construction outside owner or reducer",
+        importPath:
+          "source-pattern:execution lifecycle event construction outside SessionExecutionManager",
       });
     }
   }

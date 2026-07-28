@@ -46,8 +46,18 @@ describe("createRuntimeApp", () => {
             modelRuntimeRevision: "test",
           },
           origin: "user_message",
+          maxSteps: 50,
         } });
-        listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 2, createdAt: 2, agentName: "lead", payload: { type: "execution-end", status: "completed" } });
+        listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 2, createdAt: 2, agentName: "lead", payload: {
+          type: "execution-end",
+          executionId: "run-1",
+          terminalStatus: "completed",
+          endedAt: 2,
+          runEndedAt: 2,
+          runUsageDelta: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 },
+          runSettlement: { key: "run:session-1:run-1:0", goalInstanceId: null },
+          terminalSettlement: { key: "terminal:session-1:run-1", goalInstanceId: null },
+        } });
         return () => undefined;
       }),
     } as unknown as AgentRuntime;

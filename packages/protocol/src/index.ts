@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./execution";
 export * from "./reduce";
 export * from "./usage";
 export * from "./tools";

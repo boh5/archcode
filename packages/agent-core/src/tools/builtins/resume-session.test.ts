@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ChildExecutionHandle, ResumeChildRequest } from "../../delegation/types";
-import { testExecutionStart } from "../../testing/test-execution-fixtures";
+import { testExecutionEnd, testExecutionStart } from "../../testing/test-execution-fixtures";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
@@ -17,6 +17,9 @@ function context(resumeChildSession?: ToolExecutionContext["resumeChildSession"]
     toolCallId: "resume-call",
     input: {},
     step: 0,
+    executionId: "parent-execution",
+    runOrdinal: 1,
+    toolBatchId: "parent-batch",
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set(["delegate", "resume_session"]),
@@ -32,12 +35,19 @@ function handle(parentSessionId: string): ChildExecutionHandle {
     parentSessionId,
     title: "Original title",
   });
-  store.getState().append(testExecutionStart(crypto.randomUUID()));
-  store.getState().append({ type: "execution-end", status: "failed" });
+  const executionId = crypto.randomUUID();
+  store.getState().append(testExecutionStart(executionId));
+  const endedAt = Date.now() + 1;
+  store.getState().append(testExecutionEnd(executionId, "failed", { endedAt, runEndedAt: endedAt }));
   return {
     sessionId: store.getState().sessionId,
+    executionId: "child-execution",
     store,
-    result: Promise.resolve({ executionStatus: "failed" }),
+    result: Promise.resolve({
+      outcome: "terminal",
+      executionId: "child-execution",
+      executionStatus: "failed",
+    }),
     abort: () => {},
   };
 }
@@ -64,7 +74,11 @@ describe("resume_session V2 contract", () => {
     expect(request).toMatchObject({
       sessionId: "child",
       instruction: "repair",
+      parentExecutionId: "parent-execution",
+      parentRunOrdinal: 1,
+      parentToolBatchId: "parent-batch",
     });
+    expect(request?.childExecutionId).toBeString();
     expect(request && "contract" in request).toBe(false);
     expect(request && "prompt" in request).toBe(false);
   });

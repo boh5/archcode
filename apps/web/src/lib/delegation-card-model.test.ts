@@ -22,6 +22,7 @@ function makeLink(overrides: Partial<ToolChildSessionLink> = {}): ToolChildSessi
     parentToolCallId: "call-1",
     toolName: "delegate",
     childSessionId: "child-1",
+    childExecutionId: "child-exec-1",
     childAgentName: "explore", childProfile: "fast", childSkillNames: [],
     title: "Child title",
     depth: 2,
@@ -155,5 +156,47 @@ describe("delegation card view-model", () => {
       childSessionLinks: [],
     });
     expect(completed.visualKind).toBe("completed");
+  });
+
+  test("projects the child link's authoritative active duration for terminal display", () => {
+    const model = buildDelegationCardViewModel({
+      part: makePart({ state: "completed" }),
+      projectSlug: "demo",
+      focusStoreSessionId: "root-1",
+      childSessionLinks: [makeLink({
+        status: "completed",
+        endedAt: 99_999,
+        durationMs: 65_000,
+        durationUpdatedAt: 99_999,
+      })],
+    });
+
+    expect(model).toMatchObject({
+      visualKind: "completed",
+      startedAt: 140,
+      durationMs: 65_000,
+      durationUpdatedAt: 99_999,
+    });
+  });
+
+  test("anchors a running child duration to its persisted link snapshot", () => {
+    const model = buildDelegationCardViewModel({
+      part: makePart(),
+      projectSlug: "demo",
+      focusStoreSessionId: "root-1",
+      childSessionLinks: [makeLink({
+        status: "running",
+        createdAt: 500,
+        startedAt: 100,
+        durationMs: 40,
+        durationUpdatedAt: 2_000,
+      })],
+    });
+
+    expect(model).toMatchObject({
+      visualKind: "running",
+      durationMs: 40,
+      durationUpdatedAt: 2_000,
+    });
   });
 });

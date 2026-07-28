@@ -416,6 +416,7 @@ describe("SessionInputService", () => {
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       executionId: "execution-bc",
+      runOrdinal: 0,
       snapshots: pending.map((message) => ({ pending: message, modelAudit: MODEL_AUDIT })),
       binding: BINDING,
       origin: "user_message",
@@ -430,7 +431,7 @@ describe("SessionInputService", () => {
     const file = await manager.getSessionFile(WORKSPACE, ROOT_SESSION_ID);
     expect(file.pendingMessages).toEqual([]);
     expect(file.messages.map((message) => message.clientRequestId)).toEqual(["b", "c"]);
-    expect(file.executions).toEqual([expect.objectContaining({ id: "execution-bc", status: "running" })]);
+    expect(file.executions).toEqual([]);
 
     await expect(service.editMessage({
       sessionId: ROOT_SESSION_ID,
@@ -459,12 +460,15 @@ describe("SessionInputService", () => {
       messageId: acceptedB.messageId,
       expectedRevision: 0,
       expectedExecutionId: "execution-a",
+      runOrdinal: 0,
+      modelAudit: MODEL_AUDIT,
     });
 
     const committed = await service.commitSteers({
       sessionId: ROOT_SESSION_ID,
       workspaceRoot: WORKSPACE,
       executionId: "execution-a",
+      runOrdinal: 0,
       snapshots: [{ pending: claimed, modelAudit: MODEL_AUDIT }],
       binding: BINDING,
     });
@@ -484,6 +488,7 @@ describe("SessionInputService", () => {
       sessionId: CHILD_SESSION_ID,
       workspaceRoot: WORKSPACE,
       executionId: "execution-child",
+      runOrdinal: 0,
       text: "direct child input",
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
       modelAudit: MODEL_AUDIT,
@@ -497,7 +502,7 @@ describe("SessionInputService", () => {
     expect(file.inputRequestReceipts).toEqual([]);
   });
 
-  test("rolls orphaned steering back to queued with a new revision", async () => {
+  test("rolls an exact steering claim back to queued with a new revision", async () => {
     const accepted = await service.acceptMessage({ sessionId: ROOT_SESSION_ID, workspaceRoot: WORKSPACE, text: "B", clientRequestId: "b", source: "user", requestedModelSelection: REQUESTED_MODEL_SELECTION });
     await service.claimSteer({
       sessionId: ROOT_SESSION_ID,
@@ -505,9 +510,16 @@ describe("SessionInputService", () => {
       messageId: accepted.messageId,
       expectedRevision: 0,
       expectedExecutionId: "execution-a",
+      runOrdinal: 0,
+      modelAudit: MODEL_AUDIT,
     });
 
-    const recovered = await service.recoverOrphanedSteers(ROOT_SESSION_ID, WORKSPACE);
+    const recovered = await service.rollbackSteers({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      executionId: "execution-a",
+      messageIds: [accepted.messageId],
+    });
     expect(recovered).toEqual([expect.objectContaining({ state: "queued", revision: 2 })]);
     expect(recovered[0]!.targetExecutionId).toBeUndefined();
   });
