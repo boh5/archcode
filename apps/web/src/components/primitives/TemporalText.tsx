@@ -33,14 +33,38 @@ export function useRelativeTimePresentation(
     ?? clock.store(cadence).getSnapshot();
   const previousSnapshot = useRef<{
     cadence: TimeCadence;
+    timestamp: number;
     now: number;
+    transition?: {
+      cadence: TimeCadence;
+      initialPublishedNow: number;
+      floor: number;
+    };
   } | null>(null);
-  const now =
-    previousSnapshot.current?.cadence !== cadence &&
-      previousSnapshot.current !== null
-      ? Math.max(previousSnapshot.current.now, publishedNow)
-      : publishedNow;
-  previousSnapshot.current = { cadence, now };
+  const previous = previousSnapshot.current;
+  let now = publishedNow;
+  let transition: NonNullable<typeof previous>["transition"];
+  if (previous?.timestamp === timestamp && previous.cadence !== cadence) {
+    transition = {
+      cadence,
+      initialPublishedNow: publishedNow,
+      floor: previous.now,
+    };
+    now = Math.max(previous.now, publishedNow);
+  } else if (
+    previous?.timestamp === timestamp &&
+    previous.transition?.cadence === cadence &&
+    Object.is(previous.transition.initialPublishedNow, publishedNow)
+  ) {
+    transition = previous.transition;
+    now = Math.max(previous.transition.floor, publishedNow);
+  }
+  previousSnapshot.current = {
+    cadence,
+    timestamp,
+    now,
+    ...(transition === undefined ? {} : { transition }),
+  };
   const nextCadence = relativeCadence(timestamp, now);
   useEffect(() => {
     if (cadence !== nextCadence) setCadence(nextCadence);

@@ -1215,7 +1215,6 @@ export function ExecutionWorkstream({
       const manuallyOverridden = snapshot.manualOverrideIds.has(segment.id);
 
       if (
-        previousStatus === undefined &&
         execution.record.status === "running" &&
         !manuallyOverridden
       ) {
@@ -1226,6 +1225,7 @@ export function ExecutionWorkstream({
       } else if (
         previousStatus === "running" &&
         execution.record.status === "completed" &&
+        segment.finalResponse !== undefined &&
         followLatestRef.current &&
         !manuallyOverridden &&
         next.has(segment.id)

@@ -404,21 +404,36 @@ describe("ExecutionWorkstream", () => {
       .toContain("Needs you");
   });
 
-  test("auto-collapses the latest Segment when its Execution completes", async () => {
-    const messages = [
-      message("input", "user", "Initial request", 10),
-      message("early", "assistant", "Early work", 20),
-      message("steer", "user", "Steer the work", 40),
-      message("late", "assistant", "Later work", 50),
-    ];
-    await render(messages, running());
-    const latest = "work:execution:after:steer";
+  test("moves automatic expansion from the initial implicit Segment to committed input, then folds after final output", async () => {
+    const implicit = "work:execution:implicit";
+    await render([], running());
+    expect(container.querySelector(`[data-testid="work-disclosure-${implicit}"]`)
+      ?.getAttribute("data-work-expanded")).toBe("true");
+
+    const input = message("input", "user", "Initial request", 10);
+    const latest = "work:execution:after:input";
+    await render([input], running());
+    expect(container.querySelector(`[data-testid="work-disclosure-${implicit}"]`))
+      .toBeNull();
     expect(container.querySelector(`[data-testid="work-disclosure-${latest}"]`)
       ?.getAttribute("data-work-expanded")).toBe("true");
 
-    await render(messages, completed());
+    const final = message("final", "assistant", "Done", 90);
+    await render([input, final], completed(), [
+      {
+        id: "step",
+        executionId: "execution",
+        runOrdinal: 0,
+        step: 1,
+        startedAt: 80,
+        completedAt: 90,
+        finishReason: "stop",
+      },
+    ]);
     expect(container.querySelector(`[data-testid="work-disclosure-${latest}"]`)
       ?.getAttribute("data-work-expanded")).toBe("false");
+    expect(container.querySelector('[data-testid="final-response-execution"]')
+      ?.textContent).toContain("Done");
   });
 
   test("shows each durable suspended reason", async () => {

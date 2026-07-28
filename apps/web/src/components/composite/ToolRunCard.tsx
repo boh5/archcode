@@ -67,7 +67,7 @@ export function ToolRunCard({
     representative.toolName,
     "input" in representative ? representative.input : undefined,
   );
-  const toolNames = tools.map((tool) => tool.toolName).join(", ");
+  const toolNames = [...new Set(tools.map((tool) => tool.toolName))].join(", ");
   const statusLabel = running
     ? "Running"
     : failed

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import {
   createTimeClock,
+  type TimeCadence,
   type TimeClock,
   type TimeClockEnvironment,
 } from "../../lib/time-clock";
@@ -161,25 +162,56 @@ describe("TemporalText", () => {
     expect(controlled.focusListenerCount()).toBe(0);
   });
 
-  test("does not oscillate when the replacement cadence snapshot is stale", async () => {
+  test("does not oscillate across parent renders when the replacement cadence snapshot is stale", async () => {
     installDom();
     let secondReads = 0;
-    const clock: TimeClock = {
-      store: (cadence) => ({
+    const subscriptions: Record<TimeCadence, number> = {
+      second: 0,
+      minute: 0,
+    };
+    const stores = {
+      second: {
         getSnapshot: () => {
-          if (cadence === "minute") return 159_000;
           secondReads += 1;
           return secondReads === 1 ? 159_000 : 160_000;
         },
-        subscribe: () => () => {},
-      }),
+        subscribe: () => {
+          subscriptions.second += 1;
+          return () => {};
+        },
+      },
+      minute: {
+        getSnapshot: () => 159_000,
+        subscribe: () => {
+          subscriptions.minute += 1;
+          return () => {};
+        },
+      },
+    } satisfies Record<TimeCadence, ReturnType<TimeClock["store"]>>;
+    const clock: TimeClock = {
+      store: (cadence) => stores[cadence],
     };
 
+    function Probe({ revision }: { revision: number }) {
+      return (
+        <div data-revision={revision}>
+          <RelativeTime timestamp={100_000} clock={clock} />
+        </div>
+      );
+    }
+
     await act(async () => {
-      root.render(<RelativeTime timestamp={100_000} clock={clock} />);
+      root.render(<Probe revision={0} />);
     });
 
     expect(container.textContent).toBe("1m ago");
+    const secondSubscriptionsAfterSettlement = subscriptions.second;
+
+    for (let revision = 1; revision <= 3; revision += 1) {
+      await act(async () => root.render(<Probe revision={revision} />));
+      expect(container.textContent).toBe("1m ago");
+    }
+    expect(subscriptions.second).toBe(secondSubscriptionsAfterSettlement);
   });
 
   test("derives full and short presentation from one paused external-store snapshot", async () => {
