@@ -2421,13 +2421,41 @@ describe("SessionExecutionManager", () => {
       } as unknown as MockAgent;
       parentStore.getState().append(testExecutionStart(parentExecutionId));
       const parentStartedAt = parentStore.getState().executions[0]!.startedAt;
+      const parentStepId = `step-${parentExecutionId}`;
+      const parentRequest = delegationRequest({
+        objective: `recover ${childState}`,
+        background: false,
+      });
+      parentStore.getState().append({
+        type: "step-start",
+        stepId: parentStepId,
+        step: 0,
+      });
+      parentStore.getState().append({
+        type: "tool-call",
+        toolCallId,
+        toolName: "delegate",
+        input: parentRequest,
+      });
+      parentStore.getState().append({
+        type: "step-end",
+        stepId: parentStepId,
+        step: 0,
+        finishReason: "tool-calls",
+      });
+      const parentAssistantMessage = parentStore.getState().messages.find(
+        (message) => message.role === "assistant" && message.stepId === parentStepId,
+      );
+      if (parentAssistantMessage === undefined) {
+        throw new Error(`Expected Assistant message for ${parentStepId}`);
+      }
       const parentBatch: SessionToolBatch = {
         batchId,
         executionId: parentExecutionId,
         runOrdinal: 0,
         step: 0,
-        stepId: `step-${parentExecutionId}`,
-        assistantMessageId: `assistant-${parentExecutionId}`,
+        stepId: parentStepId,
+        assistantMessageId: parentAssistantMessage.id,
         agentName: "lead",
         allowedTools: ["delegate"],
         agentSkills: [],
@@ -2437,7 +2465,7 @@ describe("SessionExecutionManager", () => {
           partitionIndex: 0,
           toolCallId,
           toolName: "delegate",
-          input: delegationRequest({ objective: `recover ${childState}`, background: false }),
+          input: parentRequest,
           traits: { readOnly: false, destructive: false, concurrencySafe: false },
           state: "child_launch",
           attempt: 1,
@@ -2455,7 +2483,7 @@ describe("SessionExecutionManager", () => {
         createdAt: new Date(parentStartedAt).toISOString(),
         updatedAt: new Date(parentStartedAt).toISOString(),
       };
-      parentStore.setState({ toolBatches: [parentBatch] });
+      await storeManager.updateToolBatches(parentId, workspaceRoot, () => [parentBatch]);
       parentStore.getState().append(testExecutionSuspended(
         parentExecutionId,
         {
@@ -2509,17 +2537,26 @@ describe("SessionExecutionManager", () => {
       }
 
       const childRun = deferred<MockAgentResult>();
+      const applyOutcomeSettled = deferred<void>();
+      let applyOutcomeFailure: { error: unknown } | undefined;
       const applyOutcome = mock(async (outcome: Parameters<NonNullable<FakeManagerOptions["applyChildDependencyOutcome"]>>[0]) => {
-        await applySessionToolBatchChildOutcome({
-          storeManager,
-          sessionId: outcome.parentSessionId,
-          workspaceRoot: outcome.workspaceRoot,
-          batchId: outcome.parentToolBatchId,
-          toolCallId: outcome.parentToolCallId,
-          childSessionId: outcome.childSessionId,
-          childExecutionId: outcome.childExecutionId,
-          outcome: outcome.outcome,
-        });
+        try {
+          await applySessionToolBatchChildOutcome({
+            storeManager,
+            sessionId: outcome.parentSessionId,
+            workspaceRoot: outcome.workspaceRoot,
+            batchId: outcome.parentToolBatchId,
+            toolCallId: outcome.parentToolCallId,
+            childSessionId: outcome.childSessionId,
+            childExecutionId: outcome.childExecutionId,
+            outcome: outcome.outcome,
+          });
+        } catch (error) {
+          applyOutcomeFailure = { error };
+          throw error;
+        } finally {
+          applyOutcomeSettled.resolve(undefined);
+        }
       });
       const { manager } = createManager({ [parentId]: parentAgent }, {
         factory: makeFactory(),
@@ -2551,6 +2588,16 @@ describe("SessionExecutionManager", () => {
           .toBe("waiting_for_human");
         childRun.resolve({ text: "child recovered", steps: 1 });
         await manager.getExecution(workspaceRoot, childId)!.promise;
+        await applyOutcomeSettled.promise;
+        if (applyOutcomeFailure !== undefined) throw applyOutcomeFailure.error;
+        expect(applyOutcome, childState).toHaveBeenCalledTimes(1);
+        expect(
+          parentStore.getState().toolBatches[0]!.calls[0]!.childDependency?.outcome,
+          childState,
+        ).toMatchObject({
+          executionStatus: "completed",
+          output: "child recovered",
+        });
       } else if (childState === "suspended") {
         expect(canonicalChild!.getState().executions[0]!.status).toBe("suspended");
         expect(parentStore.getState().executions[0]!.status).toBe("suspended");
