@@ -42,7 +42,9 @@ describe("InspectorToggleButton", () => {
     let button = container.querySelector("button")!;
     expect(button.getAttribute("aria-label")).toBe("Collapse context inspector");
     expect(button.getAttribute("data-state")).toBe("expanded");
-    expect(button.className).toContain("max-[799px]:hidden");
+    expect(button.className).toContain("h-8");
+    expect(button.className).toContain("max-[760px]:hidden");
+    expect(button.className).not.toContain("border-border-default");
     expect(button.querySelector(".lucide-panel-right-close")).not.toBeNull();
 
     await act(async () => root.render(<InspectorToggleButton expanded={false} onToggle={() => {}} />));

@@ -87,8 +87,6 @@ function Probe() {
       <output data-testid="navigation-open">{String(layout.mobileNavigationOpen)}</output>
       <output data-testid="inspector-open">{String(layout.mobileInspectorOpen)}</output>
       <button type="button" onClick={() => layout.setMobileNavigationOpen(true)}>Open navigation</button>
-      <button type="button" onClick={layout.toggleFocusMode}>Toggle focus</button>
-      <output data-testid="focus-mode">{String(layout.focusMode)}</output>
       <nav aria-label="Projects"><button type="button" aria-label="Open dashboard">Desktop dashboard</button></nav>
       <button type="button" data-state={layout.inspectorCollapsed ? "collapsed" : "expanded"} aria-controls="context-inspector">Desktop inspector</button>
       <aside id="context-inspector"><button type="button" role="tab" tabIndex={0}>Inspector active tab</button></aside>
@@ -245,23 +243,6 @@ describe("WorkbenchLayout mobile inspector", () => {
     await act(async () => dom.mutableMedia.setMatches(true));
     await act(async () => dom.mutableMedia.flushAnimationFrames(2));
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Open context inspector");
-
-    await act(async () => root.unmount());
-    dom.window.close();
-  });
-
-  test("entering focus mode closes mobile navigation instead of leaving a hidden open drawer", async () => {
-    const dom = installDom();
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
-    await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
-
-    const buttons = Array.from(container.querySelectorAll("button"));
-    await act(async () => buttons.find((button) => button.textContent === "Open navigation")!.click());
-    expect(container.querySelector('[data-testid="navigation-open"]')?.textContent).toBe("true");
-    await act(async () => buttons.find((button) => button.textContent === "Toggle focus")!.click());
-    expect(container.querySelector('[data-testid="focus-mode"]')?.textContent).toBe("true");
-    expect(container.querySelector('[data-testid="navigation-open"]')?.textContent).toBe("false");
 
     await act(async () => root.unmount());
     dom.window.close();

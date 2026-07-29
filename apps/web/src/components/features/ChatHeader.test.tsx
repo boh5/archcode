@@ -11,6 +11,7 @@ import {
   __resetWebSessionStoresForTest,
   getWebSessionStore,
 } from "../../store/session-store";
+import { WorkbenchLayoutProvider } from "../../context/workbench-layout";
 
 let dom: JSDOM;
 let root: Root;
@@ -83,12 +84,14 @@ describe("ChatHeader", () => {
     });
     await act(async () =>
       root.render(
-        <ChatHeader
-          slug="demo"
-          sessionId="session"
-          inspectorExpanded={false}
-          onToggleInspector={() => {}}
-        />,
+        <WorkbenchLayoutProvider>
+          <ChatHeader
+            slug="demo"
+            sessionId="session"
+            inspectorExpanded={false}
+            onToggleInspector={() => {}}
+          />
+        </WorkbenchLayoutProvider>,
       ),
     );
     const status = container.querySelector(
@@ -96,5 +99,7 @@ describe("ChatHeader", () => {
     );
     expect(status?.textContent).toContain("Needs you");
     expect(status?.getAttribute("data-product-status")).toBe("needs_you");
+    expect(container.querySelector('header > button[aria-label="Collapse project sidebar"]')).not.toBeNull();
+    expect(container.querySelector('header button[aria-label="Expand context inspector"]')).not.toBeNull();
   });
 });

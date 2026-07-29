@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { JSDOM } from "jsdom";
@@ -71,6 +71,16 @@ mock.module("../components/features/CloseProjectDialog", () => ({ CloseProjectDi
 mock.module("../components/features/DeleteSessionDialog", () => ({ DeleteSessionDialog: () => null }));
 
 const { RootLayout } = await import("./root-layout");
+const { SidebarToggleButton } = await import("../components/features/SidebarToggleButton");
+
+function Canvas({ children }: { children: ReactNode }) {
+  return (
+    <div data-testid="canvas">
+      <SidebarToggleButton />
+      {children}
+    </div>
+  );
+}
 
 function installDom(): JSDOM {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
@@ -95,7 +105,6 @@ function installDom(): JSDOM {
     inspectorWidth: 360,
     sidebarCollapsed: false,
     inspectorCollapsed: false,
-    focusMode: false,
   }));
   for (const [name, value] of Object.entries({
     window: dom.window,
@@ -130,9 +139,9 @@ describe("RootLayout persistent project shell", () => {
     const router = createMemoryRouter([{
       element: <RootLayout />,
       children: [
-        { path: "/projects/:slug", element: <div data-testid="canvas">Dashboard canvas</div> },
-        { path: "/projects/:slug/todos", element: <div data-testid="canvas">Todos canvas</div> },
-        { path: "/projects/:slug/sessions/:sessionId", element: <div data-testid="canvas">Session canvas</div> },
+        { path: "/projects/:slug", element: <Canvas>Dashboard canvas</Canvas> },
+        { path: "/projects/:slug/todos", element: <Canvas>Todos canvas</Canvas> },
+        { path: "/projects/:slug/sessions/:sessionId", element: <Canvas>Session canvas</Canvas> },
       ],
     }], { initialEntries: ["/projects/demo/sessions/root"] });
 
@@ -140,6 +149,7 @@ describe("RootLayout persistent project shell", () => {
     const projectBarBefore = container.querySelector('[data-testid="project-bar"]');
     const sidebarBefore = container.querySelector("#project-sidebar")!;
     expect(sidebarBefore.parentElement?.getAttribute("style")).toContain("width: 337px");
+    expect(container.querySelector('[data-testid="context-inspector"]')?.parentElement?.className).toContain("max-[1180px]:top-16");
 
     const automationsTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .find((element) => element.textContent === "Automations")!;
@@ -167,6 +177,7 @@ describe("RootLayout persistent project shell", () => {
     const collapse = container.querySelector<HTMLButtonElement>('button[aria-label="Collapse project sidebar"]')!;
     await act(async () => collapse.click());
     expect(container.querySelector("#project-sidebar")).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Expand project sidebar"]')).toBe(collapse);
     await act(async () => { await router.navigate("/projects/demo/todos"); });
     expect(container.querySelector("#project-sidebar")).toBeNull();
     expect(container.querySelector('[data-testid="canvas"]')?.textContent).toBe("Todos canvas");

@@ -14,6 +14,7 @@ import { presentSessionGoalStatus } from "../lib/session-goal-presentation";
 import { automationVisualKind } from "../lib/automation-status-presentation";
 import { sessionFamilyActivityLabel, sessionFamilyVisual } from "../lib/session-family-presentation";
 import { STATUS_TONE_CLASS, statusVisual } from "../lib/status-visuals";
+import { SidebarToggleButton } from "../components/features/SidebarToggleButton";
 
 const HOME_SCOPE: DashboardScope = { kind: "global" };
 
@@ -25,6 +26,7 @@ export function Dashboard({ scope = HOME_SCOPE }: { scope?: DashboardScope }) {
     <main className="h-full overflow-y-auto bg-bg-base" data-testid={`dashboard-${scope.kind}`}>
       <div className="mx-auto flex max-w-[1180px] flex-col gap-[34px] px-4 pb-18 pt-8 min-[761px]:px-10 min-[761px]:pt-11.5">
         <header className="flex items-center gap-4">
+          {!isGlobal ? <SidebarToggleButton /> : null}
           <span className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-lg border border-brand/20 bg-brand-subtle text-brand" aria-hidden="true">
             <LayoutDashboard size={21} strokeWidth={1.8} />
           </span>

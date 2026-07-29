@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { Focus, Menu, PanelLeftOpen, PanelRightOpen, X } from "lucide-react";
+import { Menu, PanelRightOpen, X } from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useStore } from "zustand/react";
 import { useAddProjectModal } from "../context/add-project-modal";
@@ -23,7 +23,6 @@ import {
   getWorkbenchSurfaceNavigationKey,
   resolveInspectorGeometry,
 } from "../lib/workbench-layout";
-import { focusElementAfterLayoutChange } from "../lib/focus-control";
 import { useTheme } from "../hooks/use-theme";
 
 export function RootLayout() {
@@ -49,10 +48,9 @@ function WorkbenchShell() {
   const navigationTriggerRef = useRef<HTMLButtonElement>(null);
   const inspectorTriggerRef = useRef<HTMLButtonElement>(null);
   const hasProject = location.pathname.startsWith("/projects/");
-  const showNavigation = !layout.focusMode;
-  const showSidebar = showNavigation && hasProject && !layout.sidebarCollapsed;
+  const showSidebar = hasProject && !layout.sidebarCollapsed;
   const showInspector = inspectorKind !== null && !layout.inspectorCollapsed;
-  const desktopNavigationWidth = showNavigation ? 52 + (showSidebar ? panelSizes.sidebarWidth + 8 : 0) : 0;
+  const desktopNavigationWidth = 52 + (showSidebar ? panelSizes.sidebarWidth + 8 : 0);
   const inspectorGeometry = resolveInspectorGeometry(
     panelSizes.inspectorWidth,
     viewportWidth <= 1180 ? viewportWidth - desktopNavigationWidth : INSPECTOR_MAX_WIDTH,
@@ -64,30 +62,9 @@ function WorkbenchShell() {
     getWorkbenchSurfaceNavigationKey(location.pathname, location.search),
   );
 
-  const collapseSidebar = () => {
-    layout.toggleSidebar();
-    focusElementAfterLayoutChange('button[aria-label="Expand project sidebar"]');
-  };
-  const expandSidebar = () => {
-    layout.toggleSidebar();
-    focusElementAfterLayoutChange('button[aria-label="Collapse project sidebar"]');
-  };
-  const enterFocusMode = () => {
-    layout.toggleFocusMode();
-    focusElementAfterLayoutChange('button[aria-label="Exit focus mode"]');
-  };
-  const exitFocusMode = () => {
-    layout.toggleFocusMode();
-    focusElementAfterLayoutChange('button[aria-label="Enter focus mode"]');
-  };
-  const collapseInspector = () => {
-    layout.toggleInspector();
-    focusElementAfterLayoutChange('button[data-state="collapsed"][aria-controls~="context-inspector"]');
-  };
-
   return (
     <div className="relative flex h-screen min-w-0 overflow-hidden bg-bg-base text-text-primary">
-      {showNavigation && !layout.isMobile && (
+      {!layout.isMobile && (
         <div className="hidden h-full shrink-0 min-[761px]:flex">
           <div className="relative z-40 w-[52px] shrink-0 border-r border-border-default bg-rail">
             <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} theme={theme} toggleTheme={toggleTheme} />
@@ -95,7 +72,7 @@ function WorkbenchShell() {
           {showSidebar && (
             <>
               <div className="min-w-0 shrink-0 bg-bg-surface" style={{ width: panelSizes.sidebarWidth }}>
-                <Sidebar onCollapse={collapseSidebar} onEnterFocusMode={enterFocusMode} />
+                <Sidebar />
               </div>
               <ResizeHandle
                 label="Resize project sidebar"
@@ -111,7 +88,7 @@ function WorkbenchShell() {
         </div>
       )}
 
-      {showNavigation && layout.isMobile && (
+      {layout.isMobile && (
         <div className="relative z-[55] w-12 shrink-0 border-r border-border-default bg-rail">
           <ProjectBar
             onAddProject={openAddProjectModal}
@@ -130,28 +107,6 @@ function WorkbenchShell() {
           navigationTriggerRef={navigationTriggerRef}
           inspectorTriggerRef={inspectorTriggerRef}
         />
-        {hasProject && !showSidebar && !layout.focusMode && (
-          <button
-            type="button"
-            aria-label="Expand project sidebar"
-            aria-controls="project-sidebar"
-            aria-expanded="false"
-            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-text-tertiary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand min-[761px]:flex"
-            onClick={expandSidebar}
-          >
-            <PanelLeftOpen size={14} />
-          </button>
-        )}
-        {layout.focusMode && (
-          <button
-            type="button"
-            aria-label="Exit focus mode"
-            className="absolute left-0 top-12 z-20 hidden h-8 w-6 items-center justify-center rounded-r-sm border border-l-0 border-border-default bg-bg-surface text-brand hover:text-brand-hover min-[761px]:flex"
-            onClick={exitFocusMode}
-          >
-            <Focus size={14} />
-          </button>
-        )}
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <Outlet />
         </div>
@@ -191,7 +146,7 @@ function WorkbenchShell() {
             />
           </div>
           <div
-            className="z-30 hidden h-full shrink-0 bg-bg-surface min-[761px]:block max-[1180px]:absolute max-[1180px]:inset-y-0 max-[1180px]:right-0 max-[1180px]:shadow-lg"
+            className="z-30 hidden shrink-0 bg-bg-surface min-[761px]:block min-[1181px]:h-full max-[1180px]:absolute max-[1180px]:bottom-0 max-[1180px]:right-0 max-[1180px]:top-16 max-[1180px]:shadow-lg"
             style={{ width: inspectorGeometry.value }}
           >
             <div className="absolute inset-y-0 left-0 z-40 hidden min-[761px]:block min-[1181px]:hidden">
@@ -205,7 +160,7 @@ function WorkbenchShell() {
                 onChange={setRenderedInspectorWidth}
               />
             </div>
-            <ContextInspector key={inspectorKind} kind={inspectorKind} onCollapse={collapseInspector} />
+            <ContextInspector key={inspectorKind} kind={inspectorKind} />
           </div>
         </>
       )}
@@ -213,7 +168,7 @@ function WorkbenchShell() {
       {layout.isMobile && (
         <>
           <Drawer
-            open={layout.mobileNavigationOpen && !layout.focusMode}
+            open={layout.mobileNavigationOpen}
             label="Work navigation"
             side="left"
             offsetForProjectRail
@@ -255,20 +210,17 @@ function CompactToolbar({
       <button
         ref={navigationTriggerRef}
         type="button"
-        aria-label={layout.focusMode ? "Exit focus mode" : "Open work navigation"}
+        aria-label="Open work navigation"
         aria-expanded={layout.mobileNavigationOpen}
         aria-controls="mobile-work-navigation"
-        disabled={!navigationAvailable && !layout.focusMode}
+        disabled={!navigationAvailable}
         className="flex h-8 w-8 items-center justify-center rounded-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:invisible"
         onClick={() => {
-          if (layout.focusMode) layout.toggleFocusMode();
-          else {
-            layout.setMobileInspectorOpen(false);
-            layout.setMobileNavigationOpen(true);
-          }
+          layout.setMobileInspectorOpen(false);
+          layout.setMobileNavigationOpen(true);
         }}
       >
-        {layout.focusMode ? <Focus size={17} /> : <Menu size={17} />}
+        <Menu size={17} />
       </button>
       <span className="text-xs font-semibold text-text-secondary">ArchCode</span>
       <div className="flex items-center gap-1">

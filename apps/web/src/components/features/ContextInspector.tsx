@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { PanelRightClose } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import type { InspectorKind } from "../../lib/workbench-layout";
 import { SessionInspector, type SessionInspectorTab } from "./context-inspector/SessionInspector";
@@ -18,26 +17,22 @@ const SESSION_TABS = [
 export function ContextInspector({
   kind,
   id = "context-inspector",
-  onCollapse,
 }: {
   kind: InspectorKind;
   id?: string;
-  onCollapse?: () => void;
 }) {
-  return <InspectorShell key="session" id={id} kind={kind} tabs={SESSION_TABS} onCollapse={onCollapse} renderPanel={(activeTab) => <SessionInspector activeTab={activeTab} />} />;
+  return <InspectorShell key="session" id={id} kind={kind} tabs={SESSION_TABS} renderPanel={(activeTab) => <SessionInspector activeTab={activeTab} />} />;
 }
 
 function InspectorShell<T extends string>({
   kind,
   id,
   tabs,
-  onCollapse,
   renderPanel,
 }: {
   kind: InspectorKind;
   id: string;
   tabs: readonly [InspectorTab<T>, ...InspectorTab<T>[]];
-  onCollapse?: () => void;
   renderPanel: (activeTab: T) => ReactNode;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -62,19 +57,6 @@ function InspectorShell<T extends string>({
           <div className="text-[14px] font-semibold leading-5 text-text-primary">Context inspector</div>
           <div className="text-[12px] leading-4 capitalize text-text-tertiary">{kind}</div>
         </div>
-        {onCollapse && (
-          <button
-            type="button"
-            aria-label="Collapse context inspector from overlay"
-            aria-controls={id}
-            aria-expanded="true"
-            title="Collapse context inspector"
-            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand min-[761px]:flex min-[1181px]:hidden"
-            onClick={onCollapse}
-          >
-            <PanelRightClose size={15} aria-hidden="true" />
-          </button>
-        )}
       </header>
       <div className="flex shrink-0 border-b border-border-subtle px-2" role="tablist" aria-label={`${kind} context sections`}>
         {tabs.map((tab, index) => (

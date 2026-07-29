@@ -55,7 +55,6 @@ describe("workbench layout", () => {
       inspectorWidth: INSPECTOR_DEFAULT_WIDTH,
       sidebarCollapsed: false,
       inspectorCollapsed: false,
-      focusMode: false,
     });
     expect(readWorkbenchPreferences("not-json").sidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
     expect(readWorkbenchPreferences(JSON.stringify({ sidebarWidth: null, inspectorWidth: null }))).toEqual({
@@ -63,20 +62,17 @@ describe("workbench layout", () => {
       inspectorWidth: INSPECTOR_DEFAULT_WIDTH,
       sidebarCollapsed: false,
       inspectorCollapsed: false,
-      focusMode: false,
     });
     expect(readWorkbenchPreferences(JSON.stringify({
       sidebarWidth: 999,
       inspectorWidth: 10,
       sidebarCollapsed: true,
       inspectorCollapsed: "no",
-      focusMode: true,
     }))).toEqual({
       sidebarWidth: 340,
       inspectorWidth: 280,
       sidebarCollapsed: true,
       inspectorCollapsed: false,
-      focusMode: true,
     });
   });
 });

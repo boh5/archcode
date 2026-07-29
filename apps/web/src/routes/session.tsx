@@ -10,6 +10,7 @@ import { SessionComposerDock } from "../components/features/SessionComposerDock"
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
+import { SidebarToggleButton } from "../components/features/SidebarToggleButton";
 import { useAgents, useFocusedSession, useProjectTodos, useSession } from "../api/queries";
 import {
   beginSessionSnapshotRecovery,
@@ -298,7 +299,8 @@ export function SessionRoute() {
 
     return (
       <div className="flex h-full flex-col">
-        <div className="flex min-h-11 items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-4 py-2 text-[13px] sm:px-5">
+        <div className="flex min-h-16 items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-4 py-2 text-[13px] sm:px-5">
+          <SidebarToggleButton />
           <button
             type="button"
             className="inline-flex items-center gap-1 text-text-secondary transition-colors duration-[var(--motion-hover)] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -313,8 +315,6 @@ export function SessionRoute() {
           <InspectorToggleButton
             expanded={layout.inspectorExpanded}
             onToggle={toggleInspectorSurface}
-            iconSize={14}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border-default text-text-tertiary hover:bg-bg-hover hover:text-text-primary max-[760px]:hidden"
           />
         </div>
         {focusedError ? (

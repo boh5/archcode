@@ -81,13 +81,6 @@ mock.module("../../api/queries", () => ({
   useProjectTodos: () => ({ data: projectTodos }),
 }));
 
-mock.module("../../context/workbench-layout", () => ({
-  useWorkbenchLayout: () => ({
-    toggleSidebar: mock(() => {}),
-    toggleFocusMode: mock(() => {}),
-  }),
-}));
-
 mock.module("../../store/session-runtime-store", () => ({
   runtimeFamilyKey: (slug: string, sessionId: string) => `${slug}:${sessionId}`,
   useSessionRuntimeInitialized: () => runtimeInitialized,
