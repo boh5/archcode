@@ -7,6 +7,38 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-07-29
+
+### Added
+
+- Add durable Session attachments with guarded upload, model projection, and
+  composer support.
+- Stream live Bash output into the workbench while preserving bounded,
+  redacted tool results.
+- Add execution navigation and sortable Project Todo workflows for moving
+  between parallel work and entering multiple Sessions.
+- Add safe Session and Automation deletion with active-run shutdown,
+  Automation reference protection, and cross-tab cleanup.
+
+### Changed
+
+- Unify suspend, resume, steer, approval, and terminal handling under one
+  logical Execution lifecycle.
+- Preserve persisted message phases when projecting model workstreams so
+  commentary, reasoning, tools, and final output retain their real order.
+- Refine the Session composer, navigation, dashboard, and work activity
+  presentation for denser engineering workflows.
+
+### Fixed
+
+- Restore live Execution state from authoritative Session snapshots after
+  reconnecting or refreshing.
+- Stabilize streaming work presentation and temporal text updates during
+  long-running executions.
+- Require the one-time setup token before exposing the first-run setup form.
+- Preserve structured tool payloads while keeping secret redaction at the
+  finalized output boundary.
+
 ## [0.0.5] - 2026-07-27
 
 ### Changed
