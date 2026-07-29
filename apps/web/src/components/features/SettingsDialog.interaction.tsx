@@ -54,6 +54,11 @@ function input(label: string, index = 0) {
   if (!element) throw new Error(`Missing input ${label}[${index}]`);
   return element;
 }
+function modality(label: "Input modalities" | "Output modalities", value: "text" | "image" | "audio" | "video") {
+  const element = container.querySelector(`input[aria-label="${label}: ${value}"]`) as HTMLInputElement | null;
+  if (!element) throw new Error(`Missing modality ${label}: ${value}`);
+  return element;
+}
 function change(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   act(() => {
     const previous = element.value;
@@ -102,6 +107,20 @@ beforeEach(() => installDom());
 afterEach(() => { act(() => root.unmount()); dom.window.close(); });
 
 describe("SettingsDialog interactions", () => {
+  test("keeps the apply notice and Settings workspace inside one bounded column", () => {
+    const withNotice = structuredClone(snapshot);
+    withNotice.restartRequiredSections = ["mcp"];
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={withNotice} servers={{}} onReload={async () => {}} /></DialogRoot>));
+
+    const layout = container.querySelector("[data-settings-layout]") as HTMLElement;
+    const workspace = container.querySelector("[data-settings-workspace]") as HTMLElement;
+    expect(layout.className).toContain("flex-col");
+    expect(layout.className).toContain("h-full");
+    expect(workspace.className).toContain("flex-1");
+    expect(workspace.className).toContain("min-h-0");
+    expect(workspace.className).not.toContain("h-full");
+  });
+
   test("opens the requested section and follows an external section change", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} section="profiles" /></DialogRoot>));
     expect(container.textContent).toContain("Principal, deep, and fast model bindings");
@@ -216,8 +235,25 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     expect(input("Provider package").value).toBe("@ai-sdk/openai-compatible");
     expect(input("Output limit").value).toBe("500");
-    expect(input("Input modalities").value).toBe("text");
-    expect(input("Output modalities").value).toBe("text");
+    expect(modality("Input modalities", "text").checked).toBe(true);
+    expect(modality("Input modalities", "image").checked).toBe(false);
+    expect(modality("Output modalities", "text").checked).toBe(true);
+    expect(modality("Output modalities", "image").checked).toBe(false);
+    expect(modality("Input modalities", "text").disabled).toBe(true);
+  });
+
+  test("selects model modalities without comma-delimited text editing", () => {
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+
+    act(() => modality("Input modalities", "image").click());
+    expect(modality("Input modalities", "text").checked).toBe(true);
+    expect(modality("Input modalities", "text").disabled).toBe(false);
+    expect(modality("Input modalities", "image").checked).toBe(true);
+
+    act(() => modality("Input modalities", "text").click());
+    expect(modality("Input modalities", "text").checked).toBe(false);
+    expect(modality("Input modalities", "image").checked).toBe(true);
+    expect(modality("Input modalities", "image").disabled).toBe(true);
   });
 
   test("selects packages from the server catalog and preserves adapter-specific advanced options", () => {
@@ -263,7 +299,8 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Add provider");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
-    expect(container.textContent).toContain("Must be a URL");
+    expect(container.querySelector("footer [role=\"alert\"]")?.textContent)
+      .toBe("Configuration validation failed: Must be a URL");
     expect(container.textContent).toContain("provider-2");
   });
 
@@ -305,7 +342,7 @@ describe("SettingsDialog interactions", () => {
     )) });
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Memory");
-    const enabled = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const enabled = container.querySelector('input[aria-label="Memory extraction"]') as HTMLInputElement;
     act(() => enabled.click());
     await act(async () => { click("Save changes"); await Promise.resolve(); });
     expect(container.textContent).toContain("Restart required for: Memory");
@@ -394,6 +431,41 @@ describe("SettingsDialog interactions", () => {
     click("Profiles");
     expect(input("Model").value).toBe("local:demo");
     expect([...(input("Variant") as HTMLSelectElement).querySelectorAll("option")].map((option) => option.value)).toContain("deep");
+  });
+
+  test("saves missing Profile variant references and marks Profiles for attention", async () => {
+    const referenced = structuredClone(snapshot);
+    referenced.config.profiles.principal.variant = "fast";
+    referenced.config.profiles.deep.variant = "fast";
+    let request: Record<string, unknown> | undefined;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
+      request = JSON.parse(String(init?.body));
+      const submitted = request?.config as typeof snapshot.config;
+      const response = successfulSaveResponse();
+      response.config.provider.local.models.demo.variants = structuredClone(submitted.provider.local.models.demo.variants);
+      response.config.profiles = structuredClone(submitted.profiles);
+      return Response.json(response);
+    }) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={referenced} servers={{}} onReload={async () => {}} /></DialogRoot>));
+
+    change(input("Variants JSON"), JSON.stringify({ high: { temperature: 0.2 } }));
+    const profilesButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Profiles");
+    expect(profilesButton?.getAttribute("data-invalid-count")).toBe("2");
+    expect(profilesButton?.getAttribute("aria-label")).toBe("Profiles, 2 variant references need attention");
+
+    click("Profiles");
+    expect(container.textContent).toContain('Variant "fast" no longer exists. This Profile is using the model default.');
+    expect(input("Variant").getAttribute("aria-invalid")).toBe("true");
+    expect(input("Variant").value).toBe("fast");
+    const principalSummary = [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("principal"));
+    expect(principalSummary?.getAttribute("aria-label")).toBe('principal, local:demo, variant "fast" is missing; using model default');
+
+    await act(async () => { click("Save changes"); await Promise.resolve(); });
+    const config = request?.config as typeof snapshot.config;
+    expect(config.profiles.principal.variant).toBe("fast");
+    expect(config.profiles.deep.variant).toBe("fast");
+    expect(profilesButton?.getAttribute("data-invalid-count")).toBe("2");
+    expect(input("Variant").value).toBe("fast");
   });
 
   test("locks secret-bearing identities and still renames entries without preserved secrets", () => {

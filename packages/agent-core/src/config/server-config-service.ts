@@ -415,9 +415,6 @@ function validateConfig(value: unknown): ArchCodeConfig {
       issues.push({ path: `profiles.${profileName}.model`, message: `Unknown model reference "${profile.model}"` });
       continue;
     }
-    if (profile.variant !== undefined && model.variants?.[profile.variant] === undefined) {
-      issues.push({ path: `profiles.${profileName}.variant`, message: `Unknown variant "${profile.variant}" for model "${profile.model}"` });
-    }
   }
 
   for (const name of Object.keys(config.mcp?.servers ?? {})) {

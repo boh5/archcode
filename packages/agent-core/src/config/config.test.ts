@@ -293,6 +293,44 @@ describe("parseConfig", () => {
     expect(parsed.profiles.fast.options?.temperature).toBe(0.5);
   });
 
+  test("normalizes an empty Profile variant to the model default", () => {
+    const config = {
+      ...VALID_CONFIG_WITH_PROFILES,
+      profiles: {
+        ...VALID_CONFIG_WITH_PROFILES.profiles,
+        principal: {
+          ...VALID_CONFIG_WITH_PROFILES.profiles.principal,
+          variant: "",
+        },
+      },
+    };
+
+    const parsed = parseConfig(config);
+
+    expect(parsed.profiles.principal.variant).toBeUndefined();
+  });
+
+  test("rejects an empty model variant name", () => {
+    const config = {
+      ...VALID_CONFIG_WITH_PROFILES,
+      provider: {
+        xxx: {
+          ...VALID_CONFIG_WITH_PROFILES.provider.xxx,
+          models: {
+            "gpt-5.2": {
+              ...VALID_CONFIG_WITH_PROFILES.provider.xxx.models["gpt-5.2"],
+              variants: {
+                "": { temperature: 0.2 },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    expect(() => parseConfig(config)).toThrow(ConfigValidationError);
+  });
+
   test("memory config is optional", () => {
     const parsed = parseConfig(VALID_CONFIG_WITH_PROFILES);
 

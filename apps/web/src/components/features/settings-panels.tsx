@@ -2,7 +2,7 @@ import type { ConfigSecretMutation, McpServerStatus, ProviderAdapterCatalog, Pro
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import type { ModelCallOptions, ServerConfig, ServerMcpConfig, ServerModelConfig } from "../../api/config";
 import { Field, JsonObjectField, NumberField, RenameInput, SecretField, SecretRecordEditor, TextInput } from "./settings-fields";
-import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
+import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow, missingProfileVariant, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
 
 type JsonValidationChange = (path: string, error?: string) => void;
 
@@ -10,6 +10,8 @@ const secondaryActionClass = "inline-flex h-8 items-center justify-center gap-2 
 const subtleActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand";
 const dangerActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-error transition-colors duration-[var(--motion-hover)] hover:bg-error-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand";
 const selectClass = "h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle";
+const MODEL_MODALITIES = ["text", "image", "audio", "video"] as const;
+type ModelModality = typeof MODEL_MODALITIES[number];
 
 function PanelHeader({ title, description }: { title: string; description: string }) {
   return <header className="border-b border-border-subtle pb-4">
@@ -21,12 +23,53 @@ function PanelHeader({ title, description }: { title: string; description: strin
 
 function SettingsToggle({ checked, onChange, label, description }: { checked: boolean; onChange: (checked: boolean) => void; label: string; description: string }) {
   return <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-border-subtle bg-bg-elevated px-3 py-3 transition-colors duration-[var(--motion-hover)] hover:border-border-default">
-    <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-1 h-4 w-4 accent-brand" />
+    <input type="checkbox" aria-label={label} checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-1 h-4 w-4 accent-brand" />
     <span className="flex flex-col gap-1">
       <span className="text-[13px] font-medium text-text-secondary">{label}</span>
       <span className="text-[11px] leading-4 text-text-tertiary">{description}</span>
     </span>
   </label>;
+}
+
+function ModalityField({
+  label,
+  value,
+  onChange,
+  error,
+}: {
+  label: string;
+  value: readonly ModelModality[];
+  onChange: (value: ModelModality[]) => void;
+  error?: string;
+}) {
+  const selected = new Set(value);
+  return <fieldset className={`min-w-0 rounded-sm border bg-bg-base px-3 pb-3 pt-2 ${error ? "border-error/60" : "border-border-control"}`}>
+    <legend className="px-1 text-[12px] font-medium leading-4 text-text-secondary">{label}</legend>
+    <div className="mt-1 flex flex-wrap gap-2">
+      {MODEL_MODALITIES.map((modality) => {
+        const checked = selected.has(modality);
+        const onlySelection = checked && selected.size === 1;
+        return <label key={modality} className={`inline-flex h-7 items-center gap-2 rounded-sm border px-2.5 font-mono text-[11px] transition-colors duration-[var(--motion-hover)] ${checked ? "border-brand/50 bg-brand-subtle text-brand" : "border-border-subtle bg-bg-elevated text-text-tertiary hover:border-border-default hover:text-text-secondary"} ${onlySelection ? "cursor-not-allowed" : "cursor-pointer"}`}>
+          <input
+            type="checkbox"
+            value={modality}
+            checked={checked}
+            disabled={onlySelection}
+            aria-label={`${label}: ${modality}`}
+            onChange={(event) => {
+              const next = new Set(selected);
+              if (event.target.checked) next.add(modality);
+              else next.delete(modality);
+              onChange(MODEL_MODALITIES.filter((entry) => next.has(entry)));
+            }}
+            className="h-3.5 w-3.5 accent-brand"
+          />
+          {modality}
+        </label>;
+      })}
+    </div>
+    {error && <p role="alert" className="mt-2 text-[11px] font-normal leading-4 text-error">{error}</p>}
+  </fieldset>;
 }
 
 function nextGeneratedId(prefix: string, entries: Record<string, unknown>): string {
@@ -134,11 +177,39 @@ const MCP_STATUS_META: Record<McpServerStatus["state"] | "unreported", { label: 
   },
 };
 
-export function SettingsNavigation({ activeSection, onSelect }: { activeSection: SettingsSection; onSelect: (section: SettingsSection) => void }) {
+export function SettingsNavigation({
+  activeSection,
+  onSelect,
+  invalidProfileCount = 0,
+}: {
+  activeSection: SettingsSection;
+  onSelect: (section: SettingsSection) => void;
+  invalidProfileCount?: number;
+}) {
   const entries: Array<[SettingsSection, string]> = [["models", "Models"], ["profiles", "Profiles"], ["security", "Security"], ["mcp", "MCP"], ["memory", "Memory"], ["github", "GitHub"], ["updates", "About & Updates"]];
   return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-1 px-3 py-3 sm:flex sm:flex-col sm:px-3">
     <p className="col-span-3 px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">Server</p>
-    {entries.map(([id, label]) => <button key={id} type="button" onClick={() => onSelect(id)} aria-current={id === activeSection ? "page" : undefined} className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12px] font-medium transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-brand" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}>{label}</button>)}
+    {entries.map(([id, label]) => {
+      const showsInvalidProfiles = id === "profiles" && invalidProfileCount > 0;
+      const attentionMessage = showsInvalidProfiles
+        ? `${invalidProfileCount} variant ${invalidProfileCount === 1 ? "reference needs" : "references need"} attention`
+        : undefined;
+      return <button
+        key={id}
+        type="button"
+        onClick={() => onSelect(id)}
+        aria-current={id === activeSection ? "page" : undefined}
+        aria-label={attentionMessage === undefined ? undefined : `${label}, ${attentionMessage}`}
+        title={attentionMessage}
+        data-invalid-count={showsInvalidProfiles ? invalidProfileCount : undefined}
+        className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12px] font-medium transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-brand" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
+      >
+        <span className="flex items-center justify-between gap-2">
+          <span>{label}</span>
+          {showsInvalidProfiles && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-error" />}
+        </span>
+      </button>;
+    })}
   </nav>;
 }
 
@@ -232,8 +303,18 @@ function ModelEditor({ config, onChange, providerId, modelId, model, errors, onJ
         <Field label="Name"><TextInput value={model.name} onChange={(next) => update((draft) => { draft.name = next; })} /></Field>
         <Field label="Context limit"><NumberField value={model.limit.context} onChange={(next) => update((draft) => { draft.limit.context = next ?? 0; })} /></Field>
         <Field label="Output limit"><NumberField value={model.limit.output} onChange={(next) => update((draft) => { draft.limit.output = next ?? 0; })} /></Field>
-        <Field label="Input modalities"><TextInput value={model.modalities.input.join(", ")} onChange={(next) => update((draft) => { draft.modalities.input = next.split(",").map((entry) => entry.trim()).filter(Boolean) as ServerModelConfig["modalities"]["input"]; })} /></Field>
-        <Field label="Output modalities"><TextInput value={model.modalities.output.join(", ")} onChange={(next) => update((draft) => { draft.modalities.output = next.split(",").map((entry) => entry.trim()).filter(Boolean) as ServerModelConfig["modalities"]["output"]; })} /></Field>
+        <ModalityField
+          label="Input modalities"
+          value={model.modalities.input}
+          onChange={(next) => update((draft) => { draft.modalities.input = next; })}
+          error={errorAtOrBelow(errors, `${path}.modalities.input`)}
+        />
+        <ModalityField
+          label="Output modalities"
+          value={model.modalities.output}
+          onChange={(next) => update((draft) => { draft.modalities.output = next; })}
+          error={errorAtOrBelow(errors, `${path}.modalities.output`)}
+        />
       </div>
       <JsonObjectField label="Default options JSON" value={model.options as Record<string, unknown> | undefined} onChange={(next) => update((draft) => { draft.options = next as ModelCallOptions | undefined; })} error={errorAtOrBelow(errors, `${path}.options`)} validationPath={`${path}.options`} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />
       <JsonObjectField label="Variants JSON" value={model.variants as Record<string, unknown> | undefined} onChange={(next) => update((draft) => { draft.variants = next as Record<string, ModelCallOptions> | undefined; })} error={errorAtOrBelow(errors, `${path}.variants`)} validationPath={`${path}.variants`} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />
@@ -252,16 +333,27 @@ export function SettingsProfilesPanel({ config, onChange, errors, onJsonValidati
       const model = separator < 0 ? "" : item.model.slice(separator + 1);
       const variants = config.provider[provider]?.models[model]?.variants ?? {};
       const optionsPath = `profiles.${profile}.options`;
+      const missingVariant = missingProfileVariant(config, profile);
+      const variantPath = `profiles.${profile}.variant`;
+      const variantError = errors[variantPath] ?? (missingVariant === undefined
+        ? undefined
+        : `Variant "${missingVariant.variant}" no longer exists. This Profile is using the model default.`);
       return <details key={profile} className="group">
-        <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover [&::-webkit-details-marker]:hidden">
+        <summary
+          aria-label={missingVariant === undefined
+            ? undefined
+            : `${profile}, ${item.model}, variant "${missingVariant.variant}" is missing; using model default`}
+          className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover [&::-webkit-details-marker]:hidden"
+        >
           <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] group-open:rotate-90" />
+          {missingVariant && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-error" />}
           <span className="min-w-0 flex-1 font-mono text-[12px] font-medium text-text-secondary">{profile}</span>
           <span className="truncate text-[11px] text-text-tertiary">{item.model}{item.variant ? ` · ${item.variant}` : ""}</span>
         </summary>
         <div className="space-y-4 border-t border-border-subtle bg-bg-base p-4">
           <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
             <Field label="Model" error={errors[`profiles.${profile}.model`]}><select className={selectClass} value={item.model} onChange={(event) => onChange(withDraft(config, (draft) => { draft.profiles[profile].model = event.target.value; draft.profiles[profile].variant = undefined; }))}><option value="">Select model</option>{models.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select></Field>
-            <Field label="Variant" error={errors[`profiles.${profile}.variant`]}><select className={selectClass} value={item.variant ?? ""} onChange={(event) => onChange(withDraft(config, (draft) => { draft.profiles[profile].variant = event.target.value || undefined; }))}><option value="">Default</option>{Object.keys(variants).map((variant) => <option key={variant} value={variant}>{variant}</option>)}</select></Field>
+            <Field label="Variant" error={variantError}><select aria-invalid={missingVariant ? true : undefined} className={selectClass} value={item.variant ?? ""} onChange={(event) => onChange(withDraft(config, (draft) => { draft.profiles[profile].variant = event.target.value || undefined; }))}><option value="">Default</option>{missingVariant && <option value={missingVariant.variant} disabled>{missingVariant.variant} (missing)</option>}{Object.keys(variants).map((variant) => <option key={variant} value={variant}>{variant}</option>)}</select></Field>
           </div>
           <JsonObjectField label="Overrides JSON" value={item.options as Record<string, unknown> | undefined} onChange={(next) => onChange(withDraft(config, (draft) => { draft.profiles[profile].options = next as ModelCallOptions | undefined; }))} error={errorAtOrBelow(errors, optionsPath)} validationPath={optionsPath} onValidationChange={onJsonValidationChange} resetVersion={jsonResetVersion} />
         </div>

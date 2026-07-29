@@ -70,6 +70,7 @@ The catalog contains exactly these official AI SDK language Provider packages:
 - Analyst requires `deep`; Explore and Librarian require `fast`; Build accepts `deep` or `fast` selected by Lead at delegation time.
 - A Profile changes model resources only. Agent identity controls tools and delegation; Skills control workflow guidance.
 - Profile-default call options merge as `model.options → variants[profile.variant] → profiles[profile].options`. `providerOptions` is shallow-replaced like any other top-level key.
+- If a Profile still names a removed variant, Settings marks that Profile for attention but allows the document to save. Runtime omits the missing variant and uses the model default plus Profile options until the reference is repaired. An empty Profile variant is normalized to Default; an unknown Profile model remains a validation error.
 - A root Lead Session override is a complete alternative selection. It resolves the chosen model and variant without inheriting `principal` options; clearing it returns to `principal`.
 
 Saving in **Settings → Models / Profiles** validates the complete document, prepares the new Provider registry, writes atomically, then publishes Models and Profile defaults immediately. It returns the disk revision, the published model-runtime revision, and any restart-required sections: `mcp`, `memory`, or `integrations.github`.

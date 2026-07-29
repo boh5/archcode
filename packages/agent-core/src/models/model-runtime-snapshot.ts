@@ -76,9 +76,9 @@ export class ModelRuntimeSnapshot {
     );
 
     for (const [profileName, profile] of profiles) {
-      if (!this.tryResolveSelection({ model: profile.model, variant: profile.variant })) {
+      if (!this.#models.has(profile.model)) {
         throw new InvalidModelRuntimeSnapshotError(
-          `Profile "${profileName}" has invalid default selection "${formatSelection(profile)}"`,
+          `Profile "${profileName}" has unknown default model "${profile.model}"`,
         );
       }
     }
@@ -92,7 +92,11 @@ export class ModelRuntimeSnapshot {
     if (!profile) {
       throw new InvalidModelRuntimeSnapshotError(`Profile "${profileName}" is absent from the model runtime snapshot`);
     }
-    return freezeSelection({ model: profile.model, variant: profile.variant });
+    const model = this.#models.get(profile.model);
+    if (!model) {
+      throw new InvalidModelRuntimeSnapshotError(`Profile "${profileName}" has unknown default model "${profile.model}"`);
+    }
+    return freezeSelection(resolvedProfileSelection(profile, model.config));
   }
 
   getProfileOptions(profileName: ProfileName): ProfileConfig["options"] {
@@ -143,18 +147,35 @@ function buildCatalog(
     })),
   }));
   const profileDefaults = {
-    principal: selectionFromProfile(config.profiles.principal),
-    deep: selectionFromProfile(config.profiles.deep),
-    fast: selectionFromProfile(config.profiles.fast),
+    principal: selectionFromProfile(config, config.profiles.principal),
+    deep: selectionFromProfile(config, config.profiles.deep),
+    fast: selectionFromProfile(config, config.profiles.fast),
   };
 
   return deepFreeze({ revision, providers, profileDefaults });
 }
 
-function selectionFromProfile(profile: ProfileConfig): ModelSelectionRef {
-  return profile.variant === undefined
-    ? { model: profile.model }
-    : { model: profile.model, variant: profile.variant };
+function selectionFromProfile(
+  config: Omit<ArchCodeConfig, "auth">,
+  profile: ProfileConfig,
+): ModelSelectionRef {
+  const [providerId = "", ...modelIdParts] = profile.model.split(":");
+  const model = config.provider[providerId]?.models[modelIdParts.join(":")];
+  if (!model) return { model: profile.model };
+  return resolvedProfileSelection(profile, model);
+}
+
+function resolvedProfileSelection(
+  profile: ProfileConfig,
+  model: ModelConfig,
+): ModelSelectionRef {
+  if (
+    profile.variant === undefined
+    || !Object.prototype.hasOwnProperty.call(model.variants ?? {}, profile.variant)
+  ) {
+    return { model: profile.model };
+  }
+  return { model: profile.model, variant: profile.variant };
 }
 
 function freezeSelection(selection: ModelSelectionRef): ModelSelectionRef {
@@ -162,10 +183,4 @@ function freezeSelection(selection: ModelSelectionRef): ModelSelectionRef {
     model: selection.model,
     ...(selection.variant === undefined ? {} : { variant: selection.variant }),
   });
-}
-
-function formatSelection(selection: ModelSelectionRef): string {
-  return selection.variant === undefined
-    ? selection.model
-    : `${selection.model} (${selection.variant})`;
 }

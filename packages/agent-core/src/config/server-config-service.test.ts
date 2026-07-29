@@ -499,10 +499,9 @@ describe("ServerConfigService", () => {
     expect(await readFile(service.configPath, "utf8")).toBe(before);
   });
 
-  test("rejects unsupported provider packages, unknown variants, and invalid MCP URLs before writing", async () => {
+  test("rejects unsupported provider packages and invalid MCP URLs before writing", async () => {
     for (const mutate of [
       (draft: ServerConfigUpdate) => { draft.provider.local.npm = "unsupported"; },
-      (draft: ServerConfigUpdate) => { draft.profiles.principal.variant = "missing"; },
       (draft: ServerConfigUpdate) => { draft.mcp!.servers.custom.url = "file:///not-http"; },
     ]) {
       const service = await createService();
@@ -513,6 +512,45 @@ describe("ServerConfigService", () => {
       await expect(service.save({ expectedRevision: snapshot.revision, config: invalid })).rejects.toBeInstanceOf(ConfigSemanticValidationError);
       expect(await readFile(service.configPath, "utf8")).toBe(before);
     }
+  });
+
+  test("saves a missing Profile variant and publishes its model-default fallback", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const update = preserveSecrets(snapshot.config);
+    update.profiles.fast.variant = "removed";
+
+    const saved = await service.save({
+      expectedRevision: snapshot.revision,
+      config: update,
+    });
+
+    expect(saved.config.profiles.fast.variant).toBe("removed");
+    expect(service.modelRuntime.current.getProfileDefault("fast")).toEqual({
+      model: "local:test-model",
+    });
+    expect(service.modelRuntime.current.catalog.profileDefaults.fast).toEqual({
+      model: "local:test-model",
+    });
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).profiles.fast.variant).toBe("removed");
+  });
+
+  test("normalizes an empty Profile variant to the model default on save", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const update = preserveSecrets(snapshot.config);
+    update.profiles.fast.variant = "";
+
+    const saved = await service.save({
+      expectedRevision: snapshot.revision,
+      config: update,
+    });
+
+    expect(saved.config.profiles.fast.variant).toBeUndefined();
+    expect(service.modelRuntime.current.getProfileDefault("fast")).toEqual({
+      model: "local:test-model",
+    });
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).profiles.fast).not.toHaveProperty("variant");
   });
 
   test("rejects built-in MCP names before writing", async () => {

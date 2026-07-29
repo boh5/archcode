@@ -23,7 +23,9 @@ export const integrationsConfigSchema = z
 export const profileConfigSchema = z
   .object({
     model: z.string().min(1),
-    variant: z.string().optional(),
+    variant: z.string().transform((variant) =>
+      variant === "" ? undefined : variant
+    ).optional(),
     options: modelCallOptionsSchema.optional(),
   })
   .strict();
