@@ -2592,11 +2592,14 @@ describe("SessionExecutionManager", () => {
         if (applyOutcomeFailure !== undefined) throw applyOutcomeFailure.error;
         expect(applyOutcome, childState).toHaveBeenCalledTimes(1);
         expect(
-          parentStore.getState().toolBatches[0]!.calls[0]!.childDependency?.outcome,
+          parentStore.getState().toolBatches[0]!.calls[0]!.childDependency,
           childState,
         ).toMatchObject({
-          executionStatus: "completed",
-          output: "child recovered",
+          kind: "child_dependency",
+          outcome: {
+            executionStatus: "completed",
+            output: "child recovered",
+          },
         });
       } else if (childState === "suspended") {
         expect(canonicalChild!.getState().executions[0]!.status).toBe("suspended");
