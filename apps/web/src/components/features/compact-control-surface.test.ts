@@ -27,10 +27,12 @@ describe("compact icon control contract", () => {
     expect(session).toContain('className="h-8 rounded-sm border border-border-default bg-bg-elevated px-3 text-[12px] font-medium leading-4');
   });
 
-  test("Model Picker keeps Popover radius separate from field and menu-control radius", async () => {
+  test("Model Picker keeps the shared Popover surface with two quiet ghost triggers", async () => {
     const picker = await source("components/features/ModelPicker.tsx");
     expect(picker).toContain("rounded-lg border border-border-default bg-bg-overlay");
-    expect(picker).toContain("h-8 w-full rounded-sm border border-border-control");
+    expect(picker).toContain('className="relative flex min-w-0 items-center gap-0.5"');
+    expect(picker).toContain("transition-[background-color,color]");
+    expect(picker).not.toContain("rounded-sm border border-border-subtle bg-bg-base p-0.5");
   });
 
   test("Composer owns overlay Menu styling and keeps Send/Stop on the control grammar", async () => {
