@@ -1687,11 +1687,14 @@ describe("createRuntime", () => {
     });
     expect((await (await runtime2.contextResolver.resolve(workspaceRoot)).hitl.list()).find((record) => record.hitlId === first.hitlId)?.status).toBe("resolved");
 
-    const secondCallCompleted = nextSessionEvent(
+    const executionCompleted = nextSessionEvent(
       runtime2,
       project.slug,
       session.sessionId,
-      (event) => event.payload.type === "tool-result" && event.payload.toolCallId === "question-2",
+      (event) => (
+        event.payload.type === "execution-end"
+        && event.payload.executionId === batch.executionId
+      ),
     );
     await runtime2.respondToHitl({
       slug: project.slug,
@@ -1699,7 +1702,7 @@ describe("createRuntime", () => {
       hitlId: second.hitlId,
       response: { type: "question_answer", answers: ["Yes"] },
     });
-    await secondCallCompleted;
+    await executionCompleted;
 
     const recovered = await runtime2.getSessionFile(workspaceRoot, session.sessionId);
     expect(recovered.executions).toHaveLength(1);
