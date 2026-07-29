@@ -56,8 +56,9 @@ Validation order is `typecheck` before `test`.
 ## Pull request workflow
 
 1. Open an issue or describe the problem clearly in the PR.
-2. Fetch the latest `origin/main` and create a focused branch from it.
-   Contributors without write access should work from a fork.
+2. Fetch the latest `main` from the canonical repository and create a focused
+   branch from it. Use `origin/main` as a collaborator; when working from a
+   fork, synchronize it first and use the canonical `upstream/main`.
 3. Keep changes focused. Separate unrelated refactors from feature work.
 4. Add or update tests for behavior changes.
 5. Update user-facing documentation when behavior, setup, or configuration
