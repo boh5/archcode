@@ -156,11 +156,26 @@ describe("ModelRuntimeSnapshot", () => {
     expect(Object.isFrozen(runtimeSnapshot.catalog)).toBe(true);
   });
 
-  test("rejects an invalid Profile binding and a registry missing a configured model", () => {
+  test("falls back from a missing Profile variant to the model default", () => {
     const invalidProfile = config();
     invalidProfile.profiles.deep.variant = "removed";
-    expect(() => snapshot(invalidProfile)).toThrow(InvalidModelRuntimeSnapshotError);
+    const runtimeSnapshot = snapshot(invalidProfile);
+    const binding = new ModelSelectionResolver().resolve({
+      snapshot: runtimeSnapshot,
+      profile: "deep",
+    });
 
+    expect(runtimeSnapshot.getProfileDefault("deep")).toEqual({ model: "local:alpha" });
+    expect(runtimeSnapshot.catalog.profileDefaults.deep).toEqual({ model: "local:alpha" });
+    expect(binding.summary.selection).toEqual({ model: "local:alpha" });
+    expect(binding.options).toEqual({
+      temperature: 0.25,
+      topP: 0.7,
+      providerOptions: { local: { layer: "model" } },
+    });
+  });
+
+  test("rejects a registry missing a configured model", () => {
     const missingModel = config();
     const missingRegistry = registry(missingModel);
     (missingRegistry.models as Map<string, ModelInfo>).delete("local:beta");

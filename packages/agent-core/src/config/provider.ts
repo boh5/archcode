@@ -122,7 +122,7 @@ export const modelConfigSchema = z
     limit: modelLimitSchema,
     modalities: modelModalitiesSchema,
     options: modelCallOptionsSchema.optional(),
-    variants: z.record(z.string(), modelCallOptionsSchema).optional(),
+    variants: z.record(z.string().min(1), modelCallOptionsSchema).optional(),
   })
   .strict();
 

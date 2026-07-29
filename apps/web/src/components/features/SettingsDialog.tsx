@@ -5,7 +5,7 @@ import { ApiError } from "../../api/client";
 import { getProviderAdapterCatalog, getServerConfig, saveServerConfig, toConfigDraft, type ServerConfigSnapshot } from "../../api/config";
 import { useMcpStatusStore } from "../../store/mcp-status-store";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
-import { cloneConfig, hasConfigChanges, toFieldErrors, type SettingsSection } from "./settings-helpers";
+import { cloneConfig, hasConfigChanges, missingProfileVariants, toFieldErrors, type SettingsSection } from "./settings-helpers";
 import { SettingsProfilesPanel, SettingsGithubPanel, SettingsMcpPanel, SettingsMemoryPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
 import { SettingsSecurityPanel } from "./SettingsSecurityPanel";
 import { SettingsUpdatesPanel } from "./SettingsUpdatesPanel";
@@ -22,7 +22,7 @@ const restartSectionLabels: Record<RestartRequiredSection, string> = {
 
 export function SettingsApplyNotice({ modelsAppliedLive, restartRequiredSections }: { modelsAppliedLive: boolean; restartRequiredSections: readonly RestartRequiredSection[] }) {
   if (!modelsAppliedLive && restartRequiredSections.length === 0) return null;
-  return <div role="status" className={`border-b px-5 py-2 text-sm ${restartRequiredSections.length > 0 ? "border-warning/30 bg-warning-muted text-warning" : "border-success/30 bg-success-muted text-success"}`}>
+  return <div role="status" className={`shrink-0 border-b px-5 py-2 text-sm ${restartRequiredSections.length > 0 ? "border-warning/30 bg-warning-muted text-warning" : "border-success/30 bg-success-muted text-success"}`}>
     {modelsAppliedLive && <span>Model and Profile changes applied live.</span>}
     {modelsAppliedLive && restartRequiredSections.length > 0 ? " " : null}
     {restartRequiredSections.length > 0 && <span>Restart required for: {restartRequiredSections.map((section) => restartSectionLabels[section]).join(", ")}.</span>}
@@ -58,6 +58,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, sect
   }, [requestedSection]);
 
   const dirty = useMemo(() => hasConfigChanges(draft, snapshot.config), [draft, snapshot.config]);
+  const invalidProfileCount = useMemo(() => missingProfileVariants(draft).length, [draft]);
   const onJsonValidationChange = useCallback((path: string, error?: string) => {
     setJsonErrors((current) => {
       if (error === undefined) {
@@ -89,10 +90,14 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, sect
       await onReload();
       setModelsAppliedLive(modelSettingsChanged);
     } catch (error) {
-      setErrors(toFieldErrors(error));
+      const nextErrors = toFieldErrors(error);
+      setErrors(nextErrors);
+      const firstValidationMessage = Object.values(nextErrors)[0];
       setSaveError(error instanceof ApiError && error.code === "CONFIG_REVISION_CONFLICT"
         ? "This configuration was changed elsewhere. Reload the latest version before saving."
-        : error instanceof Error ? error.message : "Unable to save settings");
+        : firstValidationMessage !== undefined
+          ? `Configuration validation failed: ${firstValidationMessage}`
+          : error instanceof Error ? error.message : "Unable to save settings");
     } finally {
       setSaving(false);
     }
@@ -103,21 +108,24 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, sect
     onSectionChange?.(next);
   };
 
-  return <>{section !== "updates" && <SettingsApplyNotice modelsAppliedLive={modelsAppliedLive} restartRequiredSections={restartRequiredSections} />}<div className="flex h-full min-h-0 flex-col sm:flex-row">
-    <SettingsSidebar section={section} onSelect={selectSection} />
-    {section === "updates"
-      ? <main className="min-h-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6"><SettingsUpdatesPanel /></main>
-      : <fieldset data-settings-controls disabled={saving || reloading} className="contents">
-    <div className="flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6">
-      <div hidden={section !== "models"}><SettingsModelsPanel config={draft} adapterCatalog={adapterCatalog} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
-      <div hidden={section !== "profiles"}><SettingsProfilesPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
-      {section === "security" && <SettingsSecurityPanel onConfigChanged={onReload} />}
-      <div hidden={section !== "mcp"}><SettingsMcpPanel config={draft} servers={servers} onChange={setDraft} errors={errors} /></div>
-      <div hidden={section !== "memory"}><SettingsMemoryPanel config={draft} onChange={setDraft} errors={errors} /></div>
-      <div hidden={section !== "github"}><SettingsGithubPanel config={draft} onChange={setDraft} errors={errors} /></div>
-    </main><footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border-subtle bg-bg-surface px-5 py-3">{saveError || reloadError ? <div role="alert" className="text-[11px] leading-4 text-error">{saveError ?? reloadError}</div> : <span className={`text-[11px] leading-4 ${hasJsonErrors ? "text-error" : dirty ? "text-warning" : "text-text-tertiary"}`}>{hasJsonErrors ? "Fix invalid JSON before saving" : dirty ? "Unsaved changes" : "All changes saved"}</span>}<div className="flex gap-2"><button type="button" onClick={() => { setModelsAppliedLive(false); void onReload(); }} className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">{reloading ? "Reloading…" : "Reload"}</button><button type="button" disabled={!dirty || saving || reloading || hasJsonErrors} onClick={() => { void save(); }} className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving…" : "Save changes"}</button></div></footer></div>
-    </fieldset>}
-  </div></>;
+  return <div data-settings-layout className="flex h-full min-h-0 flex-col">
+    {section !== "updates" && <SettingsApplyNotice modelsAppliedLive={modelsAppliedLive} restartRequiredSections={restartRequiredSections} />}
+    <div data-settings-workspace className="flex min-h-0 flex-1 flex-col sm:flex-row">
+      <SettingsSidebar section={section} onSelect={selectSection} invalidProfileCount={invalidProfileCount} />
+      {section === "updates"
+        ? <main className="min-h-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6"><SettingsUpdatesPanel /></main>
+        : <fieldset data-settings-controls disabled={saving || reloading} className="contents">
+          <div className="flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6">
+            <div hidden={section !== "models"}><SettingsModelsPanel config={draft} adapterCatalog={adapterCatalog} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
+            <div hidden={section !== "profiles"}><SettingsProfilesPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
+            {section === "security" && <SettingsSecurityPanel onConfigChanged={onReload} />}
+            <div hidden={section !== "mcp"}><SettingsMcpPanel config={draft} servers={servers} onChange={setDraft} errors={errors} /></div>
+            <div hidden={section !== "memory"}><SettingsMemoryPanel config={draft} onChange={setDraft} errors={errors} /></div>
+            <div hidden={section !== "github"}><SettingsGithubPanel config={draft} onChange={setDraft} errors={errors} /></div>
+          </main><footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border-subtle bg-bg-surface px-5 py-3">{saveError || reloadError ? <div role="alert" className="text-[11px] leading-4 text-error">{saveError ?? reloadError}</div> : <span className={`text-[11px] leading-4 ${hasJsonErrors ? "text-error" : dirty ? "text-warning" : "text-text-tertiary"}`}>{hasJsonErrors ? "Fix invalid JSON before saving" : dirty ? "Unsaved changes" : "All changes saved"}</span>}<div className="flex gap-2"><button type="button" onClick={() => { setModelsAppliedLive(false); void onReload(); }} className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">{reloading ? "Reloading…" : "Reload"}</button><button type="button" disabled={!dirty || saving || reloading || hasJsonErrors} onClick={() => { void save(); }} className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving…" : "Save changes"}</button></div></footer></div>
+        </fieldset>}
+    </div>
+  </div>;
 }
 
 export function SettingsDialog({ open, section = "models", onClose }: { open: boolean; section?: SettingsSection; onClose: () => void }) {
@@ -178,8 +186,8 @@ export function SettingsDialog({ open, section = "models", onClose }: { open: bo
         : "Loading settings…"}</SettingsLoadState>}</DialogContent></DialogRoot>;
 }
 
-function SettingsSidebar({ section, onSelect }: { section: SettingsSection; onSelect: (section: SettingsSection) => void }) {
-  return <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-bg-surface sm:w-52 sm:border-b-0 sm:border-r"><div className="border-b border-border-subtle px-4 py-4"><h2 className="text-[16px] font-semibold leading-[22px] text-text-primary">Settings</h2><p className="mt-1 text-[11px] leading-4 text-text-tertiary">Server and application</p></div><SettingsNavigation activeSection={section} onSelect={onSelect} /></aside>;
+function SettingsSidebar({ section, onSelect, invalidProfileCount = 0 }: { section: SettingsSection; onSelect: (section: SettingsSection) => void; invalidProfileCount?: number }) {
+  return <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-bg-surface sm:w-52 sm:border-b-0 sm:border-r"><div className="border-b border-border-subtle px-4 py-4"><h2 className="text-[16px] font-semibold leading-[22px] text-text-primary">Settings</h2><p className="mt-1 text-[11px] leading-4 text-text-tertiary">Server and application</p></div><SettingsNavigation activeSection={section} onSelect={onSelect} invalidProfileCount={invalidProfileCount} /></aside>;
 }
 
 function UpdatesOnlyWorkspace({ section, onSelect }: { section: SettingsSection; onSelect: (section: SettingsSection) => void }) {

@@ -11,6 +11,36 @@ export const PROFILE_NAMES = [
 
 export const BUILT_IN_MCP_NAMES = BUILTIN_MCP_SERVER_NAMES;
 
+export interface MissingProfileVariant {
+  profile: typeof PROFILE_NAMES[number];
+  model: string;
+  variant: string;
+}
+
+export function missingProfileVariant(
+  config: ServerConfig,
+  profile: typeof PROFILE_NAMES[number],
+): MissingProfileVariant | undefined {
+  const item = config.profiles[profile];
+  if (item.variant === undefined) return undefined;
+  const separator = item.model.indexOf(":");
+  if (separator < 0) return undefined;
+  const providerId = item.model.slice(0, separator);
+  const modelId = item.model.slice(separator + 1);
+  const model = config.provider[providerId]?.models[modelId];
+  if (!model || Object.prototype.hasOwnProperty.call(model.variants ?? {}, item.variant)) {
+    return undefined;
+  }
+  return { profile, model: item.model, variant: item.variant };
+}
+
+export function missingProfileVariants(config: ServerConfig): MissingProfileVariant[] {
+  return PROFILE_NAMES.flatMap((profile) => {
+    const issue = missingProfileVariant(config, profile);
+    return issue === undefined ? [] : [issue];
+  });
+}
+
 export function cloneConfig(config: ServerConfig): ServerConfig {
   return structuredClone(config);
 }
