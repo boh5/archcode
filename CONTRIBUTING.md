@@ -56,8 +56,8 @@ Validation order is `typecheck` before `test`.
 ## Pull request workflow
 
 1. Open an issue or describe the problem clearly in the PR.
-2. Create a focused branch from the latest `main`. Contributors without write
-   access should work from a fork.
+2. Fetch the latest `origin/main` and create a focused branch from it.
+   Contributors without write access should work from a fork.
 3. Keep changes focused. Separate unrelated refactors from feature work.
 4. Add or update tests for behavior changes.
 5. Update user-facing documentation when behavior, setup, or configuration
@@ -178,6 +178,6 @@ guesses or automatically selects models.
 
 ## Reporting security issues
 
-Do not open public issues for secrets, authentication bypasses, or
-vulnerabilities that expose private workspaces. Follow the private reporting
-instructions in [SECURITY.md](./SECURITY.md).
+Do not open public issues for suspected vulnerabilities, including secrets,
+authentication bypasses, or vulnerabilities that expose private workspaces.
+Follow the private reporting instructions in [SECURITY.md](./SECURITY.md).
