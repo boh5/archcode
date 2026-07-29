@@ -1,5 +1,9 @@
 # Security and trust boundaries
 
+To report a suspected vulnerability privately, follow the repository
+[security policy](../SECURITY.md). This document describes product deployment
+and trust boundaries rather than the vulnerability disclosure process.
+
 ArchCode is a self-hosted coding Agent runtime with access to registered source
 workspaces. Treat the process as a powerful development tool, not as an
 untrusted public Web application.

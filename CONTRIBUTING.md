@@ -56,10 +56,13 @@ Validation order is `typecheck` before `test`.
 ## Pull request workflow
 
 1. Open an issue or describe the problem clearly in the PR.
-2. Keep changes focused. Separate unrelated refactors from feature work.
-3. Add or update tests for behavior changes.
-4. Update user-facing documentation when behavior, setup, or configuration changes.
-5. Run the relevant checks before opening the PR:
+2. Create a focused branch from the latest `main`. Contributors without write
+   access should work from a fork.
+3. Keep changes focused. Separate unrelated refactors from feature work.
+4. Add or update tests for behavior changes.
+5. Update user-facing documentation when behavior, setup, or configuration
+   changes.
+6. Run the relevant checks before opening the PR:
 
 ```sh
 bun run typecheck
@@ -71,6 +74,26 @@ For changes that affect the production package or Web UI, also run:
 ```sh
 bun run build
 ```
+
+Open a ready PR against `main` and complete the PR template. Direct pushes to
+`main`, force pushes, and deletion of `main` are blocked by the repository
+ruleset.
+
+Every PR must satisfy the following repository gates:
+
+- `Verify` must pass. It installs dependencies with the frozen lockfile,
+  typechecks the monorepo, runs tests with diagnostics, builds the production
+  binary, and smoke-tests that binary.
+- The CodeQL code-scanning policy must pass.
+- Every review conversation must be resolved.
+
+CodeRabbit and Cubic automatically provide advisory AI reviews on ready PRs.
+They may add incremental feedback after new commits are pushed. Address
+actionable findings, explain intentional decisions when appropriate, and do not
+treat an AI approval as a substitute for maintainer judgment.
+
+Maintainers merge accepted PRs with squash merge. The merged PR becomes one
+commit on `main`, and GitHub deletes the merged head branch automatically.
 
 ## Code conventions
 
@@ -155,4 +178,6 @@ guesses or automatically selects models.
 
 ## Reporting security issues
 
-Do not open public issues for secrets, authentication bypasses, or vulnerabilities that expose private workspaces. Contact the maintainer privately until a security policy is published.
+Do not open public issues for secrets, authentication bypasses, or
+vulnerabilities that expose private workspaces. Follow the private reporting
+instructions in [SECURITY.md](./SECURITY.md).

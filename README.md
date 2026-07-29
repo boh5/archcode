@@ -175,6 +175,7 @@ ArchCode outside a trusted machine or network.
 - [Workbench concepts](docs/concepts.md)
 - [GitHub and MCP integrations](docs/integrations.md)
 - [Security and trust boundaries](docs/security.md)
+- [Security vulnerability reporting](SECURITY.md)
 - [Architecture](docs/architecture.md)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
