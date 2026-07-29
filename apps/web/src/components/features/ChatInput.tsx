@@ -14,7 +14,6 @@ import {
   getWebSessionStore,
   useSessionStore,
 } from "../../store/session-store";
-import { useSettingsModal } from "../../context/settings-modal";
 import { ModelPicker } from "./ModelPicker";
 import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
 import { createClientUuid } from "../../lib/client-uuid";
@@ -109,7 +108,6 @@ export function ChatInput({
     nextModelSelection,
     isModelRuntimeFetching,
   );
-  const { openSettingsModal } = useSettingsModal();
   const postMessage = usePostMessage();
   const patchModelSelection = usePatchSessionModelSelection();
   const stopSession = useStopSessionFamily();
@@ -583,7 +581,6 @@ export function ChatInput({
                 next={nextModelSelection}
                 active={activeModelBinding}
                 onSelect={selectModel}
-                onManageModels={() => openSettingsModal("models")}
                 disabled={patchModelSelection.isPending}
               /> : <span className="block max-w-[180px] truncate">Loading model…</span>}
             </div>

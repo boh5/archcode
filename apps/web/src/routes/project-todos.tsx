@@ -33,6 +33,7 @@ import {
   presentProjectTodoCard,
   type ProjectTodoLane,
 } from "./project-todo-presentation";
+import { SidebarToggleButton } from "../components/features/SidebarToggleButton";
 
 type View = "board" | "rejected" | "archived";
 type BoardOrder = Record<ProjectTodoLane, string[]>;
@@ -197,7 +198,10 @@ export function ProjectTodosRoute() {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg-base">
       <header className="flex min-h-[68px] shrink-0 flex-wrap items-center justify-between gap-4 border-b border-border-default bg-bg-surface px-4 py-3 min-[621px]:px-6">
-        <div><h1 className="text-[20px] font-semibold leading-7 tracking-[-0.02em] text-text-primary">Todos</h1><p className="mt-0.5 text-[12px] leading-5 text-text-tertiary">Shape intent, then start as many discussions or work sessions as useful.</p></div>
+        <div className="flex min-w-0 items-center gap-3">
+          <SidebarToggleButton />
+          <div><h1 className="text-[20px] font-semibold leading-7 tracking-[-0.02em] text-text-primary">Todos</h1><p className="mt-0.5 text-[12px] leading-5 text-text-tertiary">Shape intent, then start as many discussions or work sessions as useful.</p></div>
+        </div>
         <div className="flex items-center rounded-md border border-border-default bg-bg-muted p-0.5" role="group" aria-label="Todo views">
           <ViewButton active={view === "board"} onClick={() => setView("board")}>Board</ViewButton>
           <ViewButton active={view === "rejected"} onClick={() => setView("rejected")}>Rejected</ViewButton>

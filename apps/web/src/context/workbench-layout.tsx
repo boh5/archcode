@@ -10,7 +10,6 @@ import { focusElementAfterLayoutChange } from "../lib/focus-control";
 export interface WorkbenchLayoutValue {
   sidebarCollapsed: boolean;
   inspectorCollapsed: boolean;
-  focusMode: boolean;
   mobileNavigationOpen: boolean;
   mobileInspectorOpen: boolean;
   isMobile: boolean;
@@ -20,7 +19,6 @@ export interface WorkbenchLayoutValue {
   toggleInspector: () => void;
   toggleInspectorSurface: () => void;
   openInspectorSurface: () => void;
-  toggleFocusMode: () => void;
   setMobileNavigationOpen: (open: boolean) => void;
   setMobileInspectorOpen: (open: boolean) => void;
 }
@@ -111,16 +109,6 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
     ...current,
     inspectorCollapsed: !current.inspectorCollapsed,
   })), []);
-  const toggleFocusMode = useCallback(() => {
-    if (!preferences.focusMode) {
-      setMobileNavigationOpen(false);
-      setMobileInspectorOpen(false);
-    }
-    setPreferences((current) => ({
-      ...current,
-      focusMode: !current.focusMode,
-    }));
-  }, [preferences.focusMode]);
   const updateMobileInspectorOpen = useCallback((open: boolean) => {
     if (open && document.activeElement instanceof HTMLElement) {
       mobileInspectorReturnFocusRef.current = document.activeElement;
@@ -155,7 +143,6 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
   const layoutValue = useMemo<WorkbenchLayoutValue>(() => ({
     sidebarCollapsed: preferences.sidebarCollapsed,
     inspectorCollapsed: preferences.inspectorCollapsed,
-    focusMode: preferences.focusMode,
     mobileNavigationOpen,
     mobileInspectorOpen,
     isMobile,
@@ -165,18 +152,15 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
     toggleInspector,
     toggleInspectorSurface,
     openInspectorSurface,
-    toggleFocusMode,
     setMobileNavigationOpen,
     setMobileInspectorOpen: updateMobileInspectorOpen,
   }), [
     isMobile,
     mobileInspectorOpen,
     mobileNavigationOpen,
-    preferences.focusMode,
     preferences.inspectorCollapsed,
     preferences.sidebarCollapsed,
     openInspectorSurface,
-    toggleFocusMode,
     toggleInspector,
     toggleInspectorSurface,
     toggleSidebar,
@@ -232,9 +216,9 @@ function getMobileBreakpointFocusSelector(activeElement: HTMLElement): string | 
   }
   if (
     activeElement.closest('nav[aria-label="Projects"], #project-sidebar')
-    || activeElement.matches('button[aria-label="Expand project sidebar"], button[aria-label="Exit focus mode"], [role="separator"][aria-controls="project-sidebar"]')
+    || activeElement.matches('button[aria-controls="project-sidebar"], [role="separator"][aria-controls="project-sidebar"]')
   ) {
-    return 'button[aria-label="Open work navigation"], button[aria-label="Exit focus mode"]';
+    return 'button[aria-label="Open work navigation"]';
   }
   return null;
 }

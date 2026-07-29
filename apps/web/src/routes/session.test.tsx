@@ -262,11 +262,15 @@ describe("SessionRoute store-level behavior", () => {
   });
 
   test("keeps the child Inspector reopen control aligned with the 760px layout boundary", async () => {
-    const source = await Bun.file(
+    const sessionSource = await Bun.file(
       new URL("./session.tsx", import.meta.url),
     ).text();
-    expect(source).toContain("max-[760px]:hidden");
-    expect(source).not.toContain("max-[799px]:hidden");
+    const panelToggleSource = await Bun.file(
+      new URL("../components/features/PanelToggleButton.tsx", import.meta.url),
+    ).text();
+    expect(sessionSource).toContain("<InspectorToggleButton");
+    expect(panelToggleSource).toContain("max-[760px]:hidden");
+    expect(panelToggleSource).not.toContain("max-[799px]:hidden");
   });
 
   test("markSessionForeground(true) pins the store against eviction", () => {
@@ -551,7 +555,6 @@ describe("SessionRoute focused view store behavior", () => {
         inspectorWidth: 360,
         sidebarCollapsed: false,
         inspectorCollapsed: true,
-        focusMode: false,
       }),
     );
     const container = document.getElementById("root");

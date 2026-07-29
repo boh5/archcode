@@ -12,6 +12,7 @@ import { StatusGlyph } from "../components/primitives/StatusGlyph";
 import { IconAction } from "../components/primitives/IconAction";
 import { automationInvocationStatusLabel, automationStatusLabel, automationVisualKind } from "../lib/automation-status-presentation";
 import { DeleteAutomationDialog } from "../components/features/DeleteAutomationDialog";
+import { SidebarToggleButton } from "../components/features/SidebarToggleButton";
 
 export function AutomationDetailRoute() {
   const { slug = "", automationId = "" } = useParams<{ slug: string; automationId: string }>();
@@ -110,6 +111,7 @@ function AutomationHeader({
   const statusLabel = automationStatusLabel(automation.status);
   return (
     <header className="flex min-h-14 flex-wrap items-center gap-2 border-b border-border-default bg-bg-surface px-4 py-2 min-[640px]:flex-nowrap min-[640px]:gap-3 min-[640px]:px-5">
+      <SidebarToggleButton />
       <Link
         aria-label="Back to automations"
         className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-transparent text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:border-border-default hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"

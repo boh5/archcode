@@ -4,7 +4,6 @@ import type {
   ExecutionModelBindingSummary,
   ModelRuntimeCatalog,
   ModelRuntimeModelDescriptor,
-  ModelSelectionRef,
   RequestedModelSelection,
   SessionNextModelSelection,
 } from "@archcode/protocol";
@@ -14,31 +13,57 @@ export interface ModelPickerProps {
   next: SessionNextModelSelection;
   active?: ExecutionModelBindingSummary;
   onSelect: (selection: RequestedModelSelection) => void;
-  onManageModels: () => void;
   disabled?: boolean;
 }
 
-function sameSelection(left: ModelSelectionRef, right: ModelSelectionRef): boolean {
-  return left.model === right.model && left.variant === right.variant;
+type OpenPicker = "model" | "variant";
+
+type CatalogModelEntry = {
+  model: ModelRuntimeModelDescriptor;
+  providerId: string;
+  providerDisplayName: string;
+};
+
+const MODEL_SEARCH_THRESHOLD = 8;
+
+function findCatalogModel(
+  catalog: ModelRuntimeCatalog,
+  qualifiedId: string,
+): ModelRuntimeModelDescriptor | undefined {
+  return catalog.providers
+    .flatMap((provider) => provider.models)
+    .find((model) => model.qualifiedId === qualifiedId);
 }
 
-function bindingLabel(binding: ExecutionModelBindingSummary): string {
-  const model = binding.modelDisplayName || binding.modelId;
-  return binding.selection.variant ? `${model} · ${binding.selection.variant}` : model;
+function pickerPopoverClass(width: string, mobileWidth: string, alignment: string): string {
+  return `absolute bottom-[calc(100%+6px)] ${alignment} z-50 flex max-h-[min(70vh,384px)] ${width} flex-col overflow-hidden rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md animate-overlay-enter motion-reduce:animate-none [@media(max-width:520px)]:fixed [@media(max-width:520px)]:bottom-[72px] [@media(max-width:520px)]:left-auto [@media(max-width:520px)]:right-3 ${mobileWidth}`;
 }
 
-function modeLabel(selection: RequestedModelSelection): string {
-  return selection.mode === "profile_default" ? "Principal profile" : "Override";
-}
+function movePickerFocus(
+  event: React.KeyboardEvent<HTMLElement>,
+  root: HTMLDivElement | null,
+): void {
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  const fromOption = event.target instanceof HTMLElement
+    && event.target.hasAttribute("data-picker-option");
+  if (!fromOption && (event.key === "Home" || event.key === "End")) return;
+  const options = Array.from(
+    root?.querySelectorAll<HTMLButtonElement>("[data-picker-option]:not(:disabled)") ?? [],
+  );
+  if (options.length === 0) return;
 
-function catalogSelectionLabel(model: ModelRuntimeModelDescriptor, variant?: string): string {
-  return variant ? `${model.displayName} · ${variant}` : model.displayName;
-}
+  const currentIndex = options.indexOf(event.target as HTMLButtonElement);
+  let nextIndex: number;
+  if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = options.length - 1;
+  else if (event.key === "ArrowUp") {
+    nextIndex = currentIndex <= 0 ? options.length - 1 : currentIndex - 1;
+  } else {
+    nextIndex = currentIndex < 0 || currentIndex === options.length - 1 ? 0 : currentIndex + 1;
+  }
 
-function catalogRefLabel(catalog: ModelRuntimeCatalog, selection: ModelSelectionRef): string {
-  const model = catalog.providers.flatMap((provider) => provider.models).find((candidate) => candidate.qualifiedId === selection.model);
-  const displayName = model?.displayName ?? selection.model;
-  return selection.variant ? `${displayName} · ${selection.variant}` : displayName;
+  event.preventDefault();
+  options[nextIndex]?.focus();
 }
 
 export function ModelPicker({
@@ -46,187 +71,356 @@ export function ModelPicker({
   next,
   active,
   onSelect,
-  onManageModels,
   disabled = false,
 }: ModelPickerProps) {
-  const [open, setOpen] = useState(false);
+  const [openPicker, setOpenPicker] = useState<OpenPicker>();
   const [query, setQuery] = useState("");
+  const [showNextNotice, setShowNextNotice] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const variantTriggerRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const modelPopoverRef = useRef<HTMLDivElement>(null);
+  const variantPopoverRef = useRef<HTMLDivElement>(null);
   const principalProfile = catalog.profileDefaults.principal;
+  const currentModel = findCatalogModel(catalog, next.resolved.selection.model);
+  const hasVariants = (currentModel?.variants.length ?? 0) > 0;
+
+  const catalogModels = useMemo<CatalogModelEntry[]>(
+    () => catalog.providers.flatMap((provider) => provider.models.map((model) => ({
+      model,
+      providerId: provider.id,
+      providerDisplayName: provider.displayName,
+    }))),
+    [catalog.providers],
+  );
+  const supportsSearch = catalogModels.length > MODEL_SEARCH_THRESHOLD;
+  const duplicateDisplayNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const { model } of catalogModels) {
+      const key = model.displayName.toLocaleLowerCase();
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [catalogModels]);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visibleModels = useMemo(() => catalogModels.filter(({ model, providerId, providerDisplayName }) => (
+    normalizedQuery.length === 0
+    || model.id.toLocaleLowerCase().includes(normalizedQuery)
+    || model.displayName.toLocaleLowerCase().includes(normalizedQuery)
+    || model.qualifiedId.toLocaleLowerCase().includes(normalizedQuery)
+    || providerId.toLocaleLowerCase().includes(normalizedQuery)
+    || providerDisplayName.toLocaleLowerCase().includes(normalizedQuery)
+  )), [catalogModels, normalizedQuery]);
+  const activeDiffers = active !== undefined && (
+    active.selection.model !== next.resolved.selection.model
+    || active.selection.variant !== next.resolved.selection.variant
+  );
+  const nextSelectionKey = [
+    next.requested.mode,
+    next.requested.selection.model,
+    next.requested.selection.variant ?? "",
+  ].join("\0");
+  const previousNextSelectionKeyRef = useRef(nextSelectionKey);
 
   useEffect(() => {
-    if (!open) return;
+    if (previousNextSelectionKeyRef.current === nextSelectionKey) return;
+    previousNextSelectionKeyRef.current = nextSelectionKey;
+    setShowNextNotice(activeDiffers);
+  }, [activeDiffers, nextSelectionKey]);
+
+  useEffect(() => {
+    if (!showNextNotice) return;
+    const timeout = window.setTimeout(() => setShowNextNotice(false), 2_400);
+    return () => window.clearTimeout(timeout);
+  }, [showNextNotice]);
+
+  useEffect(() => {
+    if (!openPicker) return;
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpenPicker(undefined);
+        setQuery("");
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      const trigger = openPicker === "model"
+        ? modelTriggerRef.current
+        : variantTriggerRef.current;
+      setOpenPicker(undefined);
+      setQuery("");
+      queueMicrotask(() => trigger?.focus());
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
-    queueMicrotask(() => searchRef.current?.focus());
+
+    queueMicrotask(() => {
+      if (openPicker === "model" && supportsSearch) {
+        searchRef.current?.focus();
+        return;
+      }
+      const popover = openPicker === "model"
+        ? modelPopoverRef.current
+        : variantPopoverRef.current;
+      const selected = popover?.querySelector<HTMLElement>('[aria-pressed="true"]');
+      (selected ?? popover?.querySelector<HTMLElement>("[data-picker-option]"))?.focus();
+    });
+
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [openPicker, supportsSearch]);
 
   useEffect(() => {
-    if (disabled || catalog.revision !== next.resolved.modelRuntimeRevision) setOpen(false);
+    if (disabled || catalog.revision !== next.resolved.modelRuntimeRevision) {
+      setOpenPicker(undefined);
+      setQuery("");
+      setShowNextNotice(false);
+    }
   }, [catalog.revision, disabled, next.resolved.modelRuntimeRevision]);
 
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const providers = useMemo(() => catalog.providers.flatMap((provider) => {
-    const providerMatches = normalizedQuery.length === 0
-      || provider.id.toLocaleLowerCase().includes(normalizedQuery)
-      || provider.displayName.toLocaleLowerCase().includes(normalizedQuery);
-    const models = provider.models.flatMap((model) => {
-      const modelMatches = providerMatches
-        || model.id.toLocaleLowerCase().includes(normalizedQuery)
-        || model.displayName.toLocaleLowerCase().includes(normalizedQuery)
-        || model.qualifiedId.toLocaleLowerCase().includes(normalizedQuery);
-      const variants = [undefined, ...model.variants].filter((variant) => modelMatches
-        || (variant?.toLocaleLowerCase().includes(normalizedQuery) ?? false));
-      return variants.length === 0 ? [] : [{ model, variants }];
-    });
-    return models.length === 0 ? [] : [{ provider, models }];
-  }), [catalog.providers, normalizedQuery]);
-
+  const closePicker = () => {
+    setOpenPicker(undefined);
+    setQuery("");
+  };
   const select = (selection: RequestedModelSelection) => {
     onSelect(selection);
-    setOpen(false);
-    setQuery("");
+    closePicker();
   };
-  const manageModels = () => {
-    setOpen(false);
-    setQuery("");
-    onManageModels();
+  const selectModel = (model: ModelRuntimeModelDescriptor) => {
+    if (next.resolved.selection.model === model.qualifiedId) {
+      closePicker();
+      return;
+    }
+    select({
+      mode: "session_override",
+      selection: { model: model.qualifiedId },
+    });
   };
-  const runningDifferentModel = active !== undefined && !sameSelection(active.selection, next.resolved.selection);
-  const nextLabel = bindingLabel(next.resolved);
+  const selectVariant = (variant?: string) => {
+    if (next.resolved.selection.variant === variant) {
+      closePicker();
+      return;
+    }
+    select({
+      mode: "session_override",
+      selection: {
+        model: next.resolved.selection.model,
+        ...(variant === undefined ? {} : { variant }),
+      },
+    });
+  };
+
+  const activeModelDiffers = active !== undefined
+    && active.selection.model !== next.resolved.selection.model;
+  const activeModelLabel = active
+    ? active.modelDisplayName || active.modelId
+    : undefined;
+  const nextModelLabel = next.resolved.modelDisplayName || next.resolved.modelId;
+  const nextVariantLabel = next.resolved.selection.variant ?? "Default";
+  const effectiveVariant = next.resolved.selection.variant;
 
   if (catalog.revision !== next.resolved.modelRuntimeRevision) {
     return <span className="max-w-[180px] truncate" data-testid="model-picker-refreshing">Refreshing model configuration…</span>;
   }
 
   return (
-    <div ref={rootRef} className="relative min-w-0" data-testid="model-picker">
+    <div
+      ref={rootRef}
+      className="relative flex min-w-0 items-center gap-0.5"
+      data-testid="model-picker"
+    >
+      {showNextNotice && !openPicker && (
+        <span
+          role="status"
+          className="pointer-events-none absolute bottom-[calc(100%+6px)] right-0 z-40 whitespace-nowrap rounded-sm border border-border-default bg-bg-overlay px-2 py-1 text-[10px] text-text-secondary shadow-md animate-overlay-enter motion-reduce:animate-none"
+          data-testid="model-picker-next-notice"
+        >
+          Applies to the next execution
+        </span>
+      )}
+
       <button
+        ref={modelTriggerRef}
         type="button"
         aria-haspopup="dialog"
-        aria-expanded={open}
+        aria-expanded={openPicker === "model"}
         aria-controls="model-picker-popover"
+        aria-label={activeModelDiffers && activeModelLabel
+          ? `Choose next model, ${nextModelLabel}; running ${activeModelLabel}`
+          : `Choose model, current ${nextModelLabel}`}
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        className="flex max-w-[260px] min-w-0 items-center gap-1 rounded-sm px-2 py-1 text-left text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50 max-[520px]:max-w-[150px] max-[420px]:max-w-[130px]"
+        onClick={() => {
+          setOpenPicker((current) => current === "model" ? undefined : "model");
+          setQuery("");
+        }}
+        className={`flex h-7 max-w-[190px] min-w-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 text-left text-[11px] font-medium transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 max-[520px]:max-w-[108px] max-[420px]:max-w-[88px] ${
+          openPicker === "model" ? "bg-bg-hover text-text-primary" : "text-text-secondary"
+        }`}
         data-testid="model-picker-trigger"
+        title={activeModelDiffers ? `Next model: ${nextModelLabel}` : nextModelLabel}
       >
-        <span className="truncate">{runningDifferentModel ? `Next: ${nextLabel}` : nextLabel}</span>
-        <ChevronDown size={12} className="shrink-0" aria-hidden="true" />
+        <span className="truncate">{nextModelLabel}</span>
+        <ChevronDown
+          size={11}
+          strokeWidth={1.75}
+          className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-hover)] motion-reduce:transition-none ${
+            openPicker === "model" ? "rotate-180" : ""
+          }`}
+          aria-hidden="true"
+        />
       </button>
 
-      {open && (
+      {hasVariants && (
+        <button
+          ref={variantTriggerRef}
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={openPicker === "variant"}
+          aria-controls="variant-picker-popover"
+          aria-label={activeDiffers
+            ? `Choose next variant for ${nextModelLabel}, ${nextVariantLabel}`
+            : `Choose variant for ${nextModelLabel}, current ${nextVariantLabel}`}
+          disabled={disabled}
+          onClick={() => {
+            setOpenPicker((current) => current === "variant" ? undefined : "variant");
+            setQuery("");
+          }}
+          className={`flex h-7 max-w-[88px] min-w-0 cursor-pointer items-center gap-1 rounded-sm px-1.5 text-left text-[11px] transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 max-[520px]:max-w-[72px] max-[420px]:max-w-[64px] ${
+            openPicker === "variant" ? "bg-bg-hover text-text-primary" : "text-text-tertiary"
+          }`}
+          data-testid="variant-picker-trigger"
+          title={activeDiffers ? `Next variant: ${nextVariantLabel}` : nextVariantLabel}
+        >
+          <span className="truncate">{nextVariantLabel}</span>
+          <ChevronDown
+            size={11}
+            strokeWidth={1.75}
+            className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-hover)] motion-reduce:transition-none ${
+              openPicker === "variant" ? "rotate-180" : ""
+            }`}
+            aria-hidden="true"
+          />
+        </button>
+      )}
+
+      {openPicker === "model" && (
         <div
+          ref={modelPopoverRef}
           id="model-picker-popover"
           role="dialog"
           aria-label="Choose model"
-          className="absolute bottom-[calc(100%+8px)] right-0 z-50 flex max-h-[min(70vh,480px)] w-[min(360px,calc(100vw-24px))] flex-col overflow-hidden rounded-lg border border-border-default bg-bg-overlay shadow-md max-[520px]:fixed max-[520px]:bottom-[72px] max-[520px]:right-3 max-[520px]:w-[min(360px,calc(100vw-72px))]"
+          onKeyDown={(event) => movePickerFocus(event, modelPopoverRef.current)}
+          className={pickerPopoverClass(
+            "w-[288px] max-w-[calc(100vw-24px)]",
+            "[@media(max-width:520px)]:w-[min(288px,calc(100vw-72px))]",
+            "right-0 min-[761px]:left-0 min-[761px]:right-auto",
+          )}
           data-testid="model-picker-popover"
         >
-          <div className="grid gap-1 border-b border-border-subtle bg-bg-surface px-3 py-3 text-[11px]">
-            {active && (
-              <div className="flex min-w-0 items-center justify-between gap-3">
-                <span className="text-text-tertiary">Running with</span>
-                <span className="truncate font-medium text-text-secondary">{bindingLabel(active)}</span>
-              </div>
+          {supportsSearch && (
+            <>
+              <label className="flex h-8 items-center rounded-sm px-2 text-text-tertiary focus-within:bg-bg-elevated">
+                <Search size={13} strokeWidth={1.75} className="pointer-events-none shrink-0" aria-hidden="true" />
+                <span className="sr-only">Search models</span>
+                <input
+                  ref={searchRef}
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search models…"
+                  className="h-full min-w-0 flex-1 bg-transparent px-2 text-[12px] text-text-primary outline-none placeholder:text-text-muted"
+                />
+              </label>
+              <div className="mx-1 my-1 h-px bg-border-subtle" aria-hidden="true" />
+            </>
+          )}
+
+          <div className="min-h-0 overflow-y-auto overscroll-contain">
+            {next.requested.mode === "session_override" && principalProfile && (
+              <>
+                <button
+                  type="button"
+                  data-picker-option
+                  onClick={() => select({ mode: "profile_default", selection: principalProfile })}
+                  className="flex h-8 w-full cursor-pointer items-center rounded-sm px-2.5 text-left text-[11px] text-text-tertiary outline-none transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus:bg-bg-hover focus:text-text-primary"
+                  data-testid="model-picker-principal-profile"
+                >
+                  Use Principal default
+                </button>
+                <div className="mx-1 my-1 h-px bg-border-subtle" aria-hidden="true" />
+              </>
             )}
-            <div className="flex min-w-0 items-center justify-between gap-3">
-              <span className="text-text-tertiary">Next</span>
-              <div className="flex min-w-0 items-center gap-2 font-medium text-text-primary">
-                <span className="truncate">{bindingLabel(next.resolved)}</span>
-                <span className="shrink-0 text-text-tertiary" data-testid="model-picker-next-mode">· {modeLabel(next.requested)}</span>
-              </div>
-            </div>
+
+            {visibleModels.map(({ model, providerDisplayName }) => {
+              const selected = next.resolved.selection.model === model.qualifiedId;
+              const duplicateName = (duplicateDisplayNames.get(model.displayName.toLocaleLowerCase()) ?? 0) > 1;
+              return (
+                <button
+                  type="button"
+                  key={model.qualifiedId}
+                  data-picker-option
+                  aria-pressed={selected}
+                  onClick={() => selectModel(model)}
+                  className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 text-left text-[12px] text-text-secondary outline-none transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus:bg-bg-hover focus:text-text-primary"
+                  data-model={model.qualifiedId}
+                  title={duplicateName ? `${model.displayName} — ${providerDisplayName}` : model.displayName}
+                >
+                  <span className={`min-w-0 flex-1 truncate ${selected ? "font-medium text-text-primary" : ""}`}>
+                    {model.displayName}
+                  </span>
+                  {duplicateName && (
+                    <span className="max-w-[88px] shrink-0 truncate text-[10px] text-text-tertiary">
+                      {providerDisplayName}
+                    </span>
+                  )}
+                  {selected && <Check size={13} strokeWidth={2} className="shrink-0 text-brand" aria-label="Selected" />}
+                </button>
+              );
+            })}
+
+            {visibleModels.length === 0 && (
+              <div className="px-3 py-6 text-center text-[12px] text-text-tertiary">No models match “{query}”</div>
+            )}
           </div>
+        </div>
+      )}
 
-          <label className="relative block border-b border-border-subtle p-2">
-            <Search size={13} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden="true" />
-            <span className="sr-only">Search models</span>
-            <input
-              ref={searchRef}
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search providers, models, variants…"
-              className="h-8 w-full rounded-sm border border-border-control bg-bg-base pl-8 pr-3 text-[12px] text-text-primary outline-none placeholder:text-text-muted focus:border-brand focus:ring-2 focus:ring-brand-subtle"
-            />
-          </label>
-
-          <div className="min-h-0 overflow-y-auto overscroll-contain p-2">
-            <button
-              type="button"
-              disabled={!principalProfile}
-              onClick={() => {
-                if (principalProfile) select({ mode: "profile_default", selection: principalProfile });
-              }}
-              className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand"
-              data-testid="model-picker-principal-profile"
-            >
-              <span className="flex-1">
-                <span className="block text-[12px] font-medium text-text-primary">Principal profile</span>
-                <span className="block truncate text-[11px] text-text-tertiary">
-                  {principalProfile ? catalogRefLabel(catalog, principalProfile) : "Principal profile is unavailable"}
+      {openPicker === "variant" && currentModel && (
+        <div
+          ref={variantPopoverRef}
+          id="variant-picker-popover"
+          role="dialog"
+          aria-label={`Choose variant for ${nextModelLabel}`}
+          onKeyDown={(event) => movePickerFocus(event, variantPopoverRef.current)}
+          className={pickerPopoverClass(
+            "w-[152px]",
+            "[@media(max-width:520px)]:w-[min(152px,calc(100vw-72px))]",
+            "right-0",
+          )}
+          data-testid="variant-picker-popover"
+        >
+          {[undefined, ...currentModel.variants].map((variant) => {
+            const selected = effectiveVariant === variant;
+            return (
+              <button
+                type="button"
+                key={variant ?? "default"}
+                data-picker-option
+                aria-pressed={selected}
+                onClick={() => selectVariant(variant)}
+                className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 text-left text-[12px] text-text-secondary outline-none transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus:bg-bg-hover focus:text-text-primary"
+                data-variant={variant ?? ""}
+              >
+                <span className={`min-w-0 flex-1 truncate ${selected ? "font-medium text-text-primary" : ""}`}>
+                  {variant ?? "Default"}
                 </span>
-              </span>
-              {principalProfile && next.requested.mode === "profile_default" && <Check size={13} className="shrink-0 text-brand" aria-label="Selected" />}
-            </button>
-
-            <div className="my-1 h-px bg-border-subtle" />
-
-            {providers.map(({ provider, models }) => (
-              <section key={provider.id} aria-label={provider.displayName} className="py-1">
-                <div className="flex items-center justify-between gap-2 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">
-                  <span className="truncate">{provider.displayName}</span>
-                  <span className="truncate font-mono font-normal normal-case tracking-normal">{provider.id}</span>
-                </div>
-                {models.flatMap(({ model, variants }) => variants.map((variant) => {
-                  const selection = { model: model.qualifiedId, ...(variant ? { variant } : {}) };
-                  const selected = next.requested.mode === "session_override" && sameSelection(next.requested.selection, selection);
-                  return (
-                    <button
-                      type="button"
-                      key={`${model.qualifiedId}\0${variant ?? "default"}`}
-                      onClick={() => select({ mode: "session_override", selection })}
-                      className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand"
-                      data-model={model.qualifiedId}
-                      data-variant={variant ?? ""}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[12px] text-text-primary">{catalogSelectionLabel(model, variant)}</span>
-                        <span className="block truncate font-mono text-[11px] text-text-tertiary">{model.qualifiedId}</span>
-                      </span>
-                      {selected && <Check size={13} className="shrink-0 text-brand" aria-label="Selected" />}
-                    </button>
-                  );
-                }))}
-              </section>
-            ))}
-
-            {providers.length === 0 && (
-              <div className="px-3 py-7 text-center text-[12px] text-text-tertiary">No models match “{query}”</div>
-            )}
-          </div>
-
-          <div className="border-t border-border-subtle p-2">
-            <button
-              type="button"
-              onClick={manageModels}
-              className="w-full rounded-sm px-3 py-2 text-left text-[12px] font-medium text-brand hover:bg-brand-subtle focus-visible:outline-2 focus-visible:outline-brand"
-            >
-              Manage models…
-            </button>
-          </div>
+                {selected && <Check size={13} strokeWidth={2} className="shrink-0 text-brand" aria-label="Selected" />}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

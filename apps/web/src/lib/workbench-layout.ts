@@ -13,7 +13,6 @@ export interface WorkbenchPreferences {
   inspectorWidth: number;
   sidebarCollapsed: boolean;
   inspectorCollapsed: boolean;
-  focusMode: boolean;
 }
 
 export const DEFAULT_WORKBENCH_PREFERENCES: WorkbenchPreferences = {
@@ -21,7 +20,6 @@ export const DEFAULT_WORKBENCH_PREFERENCES: WorkbenchPreferences = {
   inspectorWidth: INSPECTOR_DEFAULT_WIDTH,
   sidebarCollapsed: false,
   inspectorCollapsed: false,
-  focusMode: false,
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -76,7 +74,6 @@ export function readWorkbenchPreferences(raw: string | null): WorkbenchPreferenc
         : INSPECTOR_DEFAULT_WIDTH,
       sidebarCollapsed: parsed.sidebarCollapsed === true,
       inspectorCollapsed: parsed.inspectorCollapsed === true,
-      focusMode: parsed.focusMode === true,
     };
   } catch {
     return DEFAULT_WORKBENCH_PREFERENCES;

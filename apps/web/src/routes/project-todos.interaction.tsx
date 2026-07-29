@@ -6,6 +6,7 @@ import { JSDOM } from "jsdom";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ProjectTodo } from "../api/types";
 import { ProjectTodosRoute } from "./project-todos";
+import { WorkbenchLayoutProvider } from "../context/workbench-layout";
 
 let dom: JSDOM;
 let root: Root;
@@ -73,7 +74,7 @@ afterEach(async () => {
 
 async function render(): Promise<void> {
   await act(async () => {
-    root.render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/projects/demo/todos"]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /></Routes></MemoryRouter></QueryClientProvider>);
+    root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={["/projects/demo/todos"]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>);
   });
   await settle();
 }

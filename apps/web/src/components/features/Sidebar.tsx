@@ -2,11 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ChevronRight,
-  Focus,
   LayoutDashboard,
   ListTodo,
   MoreHorizontal,
-  PanelLeftClose,
   Plus,
   Trash2,
   type LucideIcon,
@@ -24,7 +22,6 @@ import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
 import { DeleteSessionDialog } from "./DeleteSessionDialog";
-import { useWorkbenchLayout } from "../../context/workbench-layout";
 import {
   runtimeFamilyKey,
   useSessionRuntimeFamilies,
@@ -379,13 +376,7 @@ function DashboardLinkButton({
 
 // Sidebar
 
-export function Sidebar({
-  onCollapse,
-  onEnterFocusMode,
-}: {
-  onCollapse?: () => void;
-  onEnterFocusMode?: () => void;
-} = {}) {
+export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { slug = "", sessionId = "", automationId = "" } = useParams<{
@@ -395,8 +386,6 @@ export function Sidebar({
   }>();
   const createSession = useCreateSession();
   const postMessage = usePostMessage();
-  const { toggleSidebar, toggleFocusMode } = useWorkbenchLayout();
-
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [closingProject, setClosingProject] = useState<Project | null>(null);
   const [deletingSession, setDeletingSession] = useState<SessionSummaryWithGoal | null>(null);
@@ -533,24 +522,6 @@ export function Sidebar({
               }
             />
           )}
-            <button
-              type="button"
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand max-[760px]:hidden [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
-              aria-label="Collapse project sidebar"
-              aria-controls="project-sidebar"
-              aria-expanded="true"
-              onClick={onCollapse ?? toggleSidebar}
-            >
-              <PanelLeftClose size={13} />
-            </button>
-            <button
-              type="button"
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-2 focus-visible:outline-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
-              aria-label="Enter focus mode"
-              onClick={onEnterFocusMode ?? toggleFocusMode}
-            >
-              <Focus size={13} />
-            </button>
           </div>
         </div>
         <div className="mt-2">
