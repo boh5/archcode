@@ -444,6 +444,15 @@ HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_M
 - Test runner: `bun:test`. Import from `"bun:test"`. Use `mock()` not `jest.fn()`. Files: `<name>.test.ts` colocated. Temp dirs: `__test_tmp__/` cleaned in `afterAll`.
 - Entry point: `apps/server/src/main.ts` boots the headless Hono server. `package.json` bin → `./apps/server/src/main.ts`.
 
+## Repository GitHub Workflow
+
+- `main` is protected and accepts changes through pull requests only. Never commit or push directly to `main`.
+- Start repository work from the latest `origin/main` on a focused feature branch. Keep branch creation, commit, push, PR creation, and merge as explicit, separately reported actions.
+- Before opening a PR, run the relevant local validation documented in `CONTRIBUTING.md`.
+- The required GitHub gates are the `Verify` status check and the CodeQL code-scanning policy. `Verify` installs with the frozen lockfile, typechecks, runs tests with diagnostics, builds the production binary, and smoke-tests that binary.
+- CodeRabbit and Cubic provide automatic advisory review on ready PRs and incremental pushes. Address actionable findings and resolve every review conversation, but final merge judgment remains human.
+- Merge PRs with squash merge only. Do not bypass repository rules, force-push shared branches, or weaken required checks to unblock a change.
+
 ## Testing Patterns
 
 - Mock LLM calls through `setLlmAdapterForTest()` from `packages/agent-core/src/llm`; do not reintroduce `__setStreamTextForTest`, `__setGenerateTextForTest`, or public `llmObject()` aliases.
