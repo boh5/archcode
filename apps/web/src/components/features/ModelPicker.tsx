@@ -44,6 +44,9 @@ function movePickerFocus(
   root: HTMLDivElement | null,
 ): void {
   if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  const fromOption = event.target instanceof HTMLElement
+    && event.target.hasAttribute("data-picker-option");
+  if (!fromOption && (event.key === "Home" || event.key === "End")) return;
   const options = Array.from(
     root?.querySelectorAll<HTMLButtonElement>("[data-picker-option]:not(:disabled)") ?? [],
   );

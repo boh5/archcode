@@ -44,6 +44,27 @@ test("validates a persisted managed claim when HEAD descends from its recorded b
   });
 });
 
+test("synchronous Git runner retains bounded output with truthful metadata", async () => {
+  const result = await gitRunner.run({
+    argv: [process.execPath, "-e", 'process.stdout.write("abcdefghijkl")'],
+    maxOutputBytes: 6,
+  });
+
+  expect(result.kind).toBe("success");
+  if (result.kind !== "success") return;
+  expect(result.output).toMatchObject({
+    stdout: "abcjkl",
+    stderr: "",
+    combined: "abcjkl",
+    stdoutTruncated: true,
+    stderrTruncated: false,
+    combinedTruncated: true,
+    maxOutputBytes: 6,
+    stdoutBytes: 12,
+    stderrBytes: 0,
+  });
+});
+
 async function git(cwd: string, args: readonly string[]): Promise<string> {
   const result = await gitRunner.run({
     argv: ["git", ...args],
@@ -65,6 +86,9 @@ function createSynchronousGitRunner(): ProcessRunner {
   return {
     async run(input) {
       const startedAt = Date.now();
+      const maxBuffer = input.maxOutputBytes === undefined
+        ? undefined
+        : input.maxOutputBytes * 2;
       const result = Bun.spawnSync([...input.argv], {
         cwd: input.cwd,
         env: input.env,
@@ -73,10 +97,17 @@ function createSynchronousGitRunner(): ProcessRunner {
         stderr: "pipe",
         signal: input.signal,
         timeout: input.timeoutMs,
+        // ProcessRunner's budget is per stream; Bun's maxBuffer covers the
+        // process, so allow one budget for stdout and one for stderr.
+        maxBuffer,
       });
       const finishedAt = Date.now();
-      const stdout = result.stdout.toString();
-      const stderr = result.stderr.toString();
+      const stdout = captureSyncOutput(result.stdout, input.maxOutputBytes);
+      const stderr = captureSyncOutput(result.stderr, input.maxOutputBytes);
+      const combined = captureSyncOutput(
+        Buffer.concat([stdout.retained, stderr.retained]),
+        input.maxOutputBytes,
+      );
       const base = {
         argv: input.argv,
         cwd: input.cwd,
@@ -84,15 +115,18 @@ function createSynchronousGitRunner(): ProcessRunner {
         finishedAt,
         durationMs: finishedAt - startedAt,
         output: {
-          stdout,
-          stderr,
-          combined: `${stdout}${stderr}`,
-          stdoutTruncated: false,
-          stderrTruncated: false,
-          combinedTruncated: false,
+          stdout: stdout.text,
+          stderr: stderr.text,
+          combined: combined.text,
+          stdoutTruncated: stdout.truncated,
+          stderrTruncated: stderr.truncated,
+          combinedTruncated: stdout.truncated
+            || stderr.truncated
+            || combined.truncated
+            || result.exitedDueToMaxBuffer === true,
           maxOutputBytes: input.maxOutputBytes,
-          stdoutBytes: result.stdout.byteLength,
-          stderrBytes: result.stderr.byteLength,
+          stdoutBytes: stdout.observedBytes,
+          stderrBytes: stderr.observedBytes,
           sinkStatus: "unused" as const,
         },
       };
@@ -100,5 +134,36 @@ function createSynchronousGitRunner(): ProcessRunner {
       if (result.exitCode === 0) return { ...base, kind: "success", exitCode: 0 };
       return { ...base, kind: "nonzero", exitCode: result.exitCode };
     },
+  };
+}
+
+function captureSyncOutput(
+  source: Uint8Array,
+  maxOutputBytes: number | undefined,
+): {
+  readonly retained: Uint8Array;
+  readonly text: string;
+  readonly observedBytes: number;
+  readonly truncated: boolean;
+} {
+  if (maxOutputBytes === undefined || source.byteLength <= maxOutputBytes) {
+    return {
+      retained: source,
+      text: new TextDecoder().decode(source),
+      observedBytes: source.byteLength,
+      truncated: false,
+    };
+  }
+
+  const headBytes = Math.ceil(maxOutputBytes / 2);
+  const tailBytes = maxOutputBytes - headBytes;
+  const retained = new Uint8Array(maxOutputBytes);
+  retained.set(source.subarray(0, headBytes));
+  retained.set(source.subarray(source.byteLength - tailBytes), headBytes);
+  return {
+    retained,
+    text: new TextDecoder().decode(retained),
+    observedBytes: source.byteLength,
+    truncated: true,
   };
 }

@@ -151,6 +151,25 @@ function profileDefaultState(): SessionNextModelSelection {
   };
 }
 
+function largeCatalogState(): ModelRuntimeCatalog {
+  return {
+    ...catalog,
+    providers: [
+      ...catalog.providers,
+      {
+        id: "local",
+        displayName: "Local",
+        models: Array.from({ length: 8 }, (_, index) => ({
+          id: `model-${index + 1}`,
+          qualifiedId: `local:model-${index + 1}`,
+          displayName: `Local Model ${index + 1}`,
+          variants: index === 7 ? ["deep"] : [],
+        })),
+      },
+    ],
+  };
+}
+
 describe("ModelPicker", () => {
   test("renders only a neutral refresh state for mismatched catalog and next revisions", () => {
     renderPicker({ catalog: { ...catalog, revision: "revision-3" } });
@@ -232,23 +251,7 @@ describe("ModelPicker", () => {
   });
 
   test("reveals search only for a larger catalog and filters models rather than Variants", () => {
-    const largeCatalog: ModelRuntimeCatalog = {
-      ...catalog,
-      providers: [
-        ...catalog.providers,
-        {
-          id: "local",
-          displayName: "Local",
-          models: Array.from({ length: 8 }, (_, index) => ({
-            id: `model-${index + 1}`,
-            qualifiedId: `local:model-${index + 1}`,
-            displayName: `Local Model ${index + 1}`,
-            variants: index === 7 ? ["deep"] : [],
-          })),
-        },
-      ],
-    };
-    renderPicker({ catalog: largeCatalog });
+    renderPicker({ catalog: largeCatalogState() });
     openModelPicker();
 
     expect((container.querySelector('input[type="search"]') as HTMLInputElement).placeholder).toBe("Search models…");
@@ -416,6 +419,46 @@ describe("ModelPicker", () => {
     })));
 
     expect(document.activeElement?.getAttribute("data-variant")).toBe("");
+  });
+
+  test("preserves search caret keys and restores model-trigger focus after keyboard navigation", async () => {
+    renderPicker({
+      catalog: largeCatalogState(),
+      next: profileDefaultState(),
+      active: undefined,
+    });
+    openModelPicker();
+    await act(async () => await Promise.resolve());
+
+    const search = container.querySelector('input[type="search"]');
+    if (!(search instanceof dom.window.HTMLInputElement)) throw new Error("Missing search input");
+    expect(document.activeElement).toBe(search);
+
+    for (const key of ["Home", "End"]) {
+      const event = new dom.window.KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => search.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(search);
+    }
+
+    act(() => search.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+      key: "ArrowDown",
+      bubbles: true,
+      cancelable: true,
+    })));
+    expect(document.activeElement?.getAttribute("data-model")).toBe("openai:gpt-5");
+
+    act(() => document.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+    })));
+    await act(async () => await Promise.resolve());
+    expect(container.querySelector('[data-testid="model-picker-popover"]')).toBeNull();
+    expect(document.activeElement).toBe(container.querySelector('[data-testid="model-picker-trigger"]'));
   });
 
   test("hides the Variant selector when the current model has no configured Variants", () => {
