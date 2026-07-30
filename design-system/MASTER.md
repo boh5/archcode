@@ -1,12 +1,14 @@
 # Signal Workbench Design System
 
-> Persisted from the approved interactive prototype, last synchronized on
+> Persisted from the approved interactive prototype, last content sync on
 > 2026-07-27.
 >
 > When designing or implementing a page, read this file first and then read
 > `pages/[page-name].md`. A page file overrides this Master only where it says
-> so. The interactive prototype remains the rendered reference:
-> [`../../index.html`](../../index.html).
+> so. When a current prototype exists, use the matching rendered reference:
+> [`dashboard.html`](prototypes/dashboard.html),
+> [`session.html`](prototypes/session.html), or
+> [`todos.html`](prototypes/todos.html).
 
 ## Product Fit
 

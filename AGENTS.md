@@ -57,6 +57,65 @@ Validation order: `typecheck` → `test` (enforced by Turborepo task graph).
 
 Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns real subprocess, Git/worktree, and LSP process lifecycles; `src/__arch__/**/*.test.ts` owns architecture contracts; all remaining `*.test.ts` files are unit tests. Do not use `test.concurrent`, `--concurrent`, test-runner retries, or retry-based flaky-test mitigation.
 
+## UI/UX Pro Max Workflow
+
+Use the `ui-ux-pro-max` Skill for work that changes UI structure, visual
+language, interaction, motion, responsive behavior, or accessibility.
+
+The only authoritative design artifact hierarchy is:
+
+```text
+design-system/
+├── MASTER.md
+├── pages/
+└── prototypes/
+```
+
+Follow this order for every UI task:
+
+1. Read `design-system/MASTER.md`. It is the single global design baseline.
+2. Read `design-system/pages/<page>.md` when it exists. Page files contain only
+   explicit deviations from the Master and override it only for that page.
+3. Inspect the current rendered product. Inspect the relevant current HTML
+   prototype under `design-system/prototypes/` when one exists.
+4. UI/UX Pro Max is advisory, not authoritative. Use its searches as candidate
+   evidence and filter recommendations through ArchCode's established quiet
+   engineering workbench direction; never replace the Master with generic
+   landing-page, purple AI-SaaS, glassmorphism, or decorative-motion output.
+5. Record an approved cross-page rule in `MASTER.md`; record a page-only
+   exception in `pages/<page>.md`; then synchronize the current prototype and
+   product implementation as applicable.
+
+Create or update an HTML prototype only for a new complex module, a major
+layout change, or an uncertain visual direction. Routine UI fixes and small
+component changes do not require a prototype.
+
+Keep one current effective HTML prototype per page, named
+`design-system/prototypes/<page>.html`. Do not retain parallel `v2`, `final`,
+`latest`, or dated variants. Keep only cross-page styles and behavior in
+`design-system/prototypes/styles.css` and
+`design-system/prototypes/app.js`. Put page-only CSS and JavaScript directly in
+that page's HTML instead of creating page-specific `.css` or `.js` files.
+
+The current references are:
+
+- Dashboard: `design-system/prototypes/dashboard.html`
+- Session: `design-system/prototypes/session.html`
+- Todos: `design-system/prototypes/todos.html`
+
+When browser QA needs an HTTP origin, serve the prototype root without first
+changing into that directory:
+
+```sh
+python3 -m http.server 4181 \
+  --bind 127.0.0.1 \
+  --directory design-system/prototypes
+```
+
+Files under `docs/` are historical work records, not active design-system
+artifacts. Preserve their original content and paths; an older prototype or
+design reference there does not compete with the current prototype above.
+
 ## Architecture
 
 ```
