@@ -51,7 +51,6 @@
     "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --rail-width: 52px;
   --sidebar-width: 264px;
-  --inspector-width: 312px;
 }
 
 :root[data-theme="dark"] {
@@ -201,36 +200,12 @@ p {
   height: 100dvh;
 }
 
-.session-page .app-shell {
-  grid-template-columns:
-    var(--rail-width) var(--sidebar-width) minmax(0, 1fr)
-    var(--inspector-width);
-}
-
 .dashboard-page.sidebar-collapsed .app-shell,
 .todos-page.sidebar-collapsed .app-shell {
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
 }
 
-.session-page.sidebar-collapsed .app-shell {
-  grid-template-columns:
-    var(--rail-width) minmax(0, 1fr)
-    var(--inspector-width);
-}
-
 .sidebar-collapsed .project-sidebar {
-  display: none;
-}
-
-.session-page.inspector-collapsed .app-shell {
-  grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
-}
-
-.session-page.sidebar-collapsed.inspector-collapsed .app-shell {
-  grid-template-columns: var(--rail-width) minmax(0, 1fr);
-}
-
-.inspector-collapsed .context-inspector {
   display: none;
 }
 
@@ -259,7 +234,7 @@ p {
   height: 36px;
   border-radius: 5px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--rail-muted);
   font-size: 12px;
 }
 
@@ -282,12 +257,12 @@ p {
 
 .rail-project:hover,
 .rail-icon:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: rgb(255 255 255 / 8%);
+  color: var(--rail-ink);
 }
 
 .rail-project.active {
-  background: var(--bg-elevated);
+  background: rgb(255 255 255 / 12%);
   color: var(--rail-ink);
   box-shadow: inset 2px 0 0 var(--brand);
 }
@@ -644,15 +619,6 @@ p {
   color: var(--text-primary);
 }
 
-.context-inspector {
-  position: relative;
-  z-index: 20;
-  min-width: 0;
-  overflow: hidden;
-  border-left: 1px solid var(--border-default);
-  background: var(--bg-surface);
-}
-
 .mobile-close {
   display: none;
 }
@@ -691,40 +657,6 @@ p {
   transform: none;
 }
 
-@media (max-width: 1180px) {
-  .session-page .app-shell {
-    grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
-  }
-
-  .context-inspector {
-    position: fixed;
-    z-index: 35;
-    top: 64px;
-    right: 0;
-    bottom: 0;
-    width: min(var(--inspector-width), calc(100vw - var(--rail-width)));
-    box-shadow: var(--elevation-md);
-    transform: translateX(105%);
-    transition: transform 160ms ease;
-  }
-
-  .inspector-collapsed .context-inspector {
-    display: block;
-  }
-
-  body.inspector-open .context-inspector {
-    transform: none;
-  }
-
-  body.inspector-open .scrim {
-    display: block;
-  }
-
-  .context-inspector .mobile-close {
-    display: inline-grid;
-  }
-}
-
 @media (max-width: 760px) {
   :root {
     --rail-width: 48px;
@@ -736,9 +668,7 @@ p {
   }
 
   .dashboard-page.sidebar-collapsed .app-shell,
-  .todos-page.sidebar-collapsed .app-shell,
-  .session-page.sidebar-collapsed .app-shell,
-  .session-page.sidebar-collapsed.inspector-collapsed .app-shell {
+  .todos-page.sidebar-collapsed .app-shell {
     grid-template-columns: var(--rail-width) minmax(0, 1fr);
   }
 
@@ -762,8 +692,7 @@ p {
     transform: none;
   }
 
-  body.sidebar-open .scrim,
-  body.inspector-open .scrim {
+  body.sidebar-open .scrim {
     display: block;
   }
 

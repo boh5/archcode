@@ -74,15 +74,10 @@ header and conversation. Do not move Execution into the inspector.
 
 ## Conversation Hierarchy
 
-- User messages use one flat muted surface, 15px text, comfortable 1.66
-  line-height, and right alignment. They are visually distinct without becoming
-  oversized chat bubbles.
-- Work commentary uses secondary 13–14px text. Tool names and Work summaries
-  remain quieter than conversational content.
-- The final Agent response is the strongest reading layer: 15px primary text,
-  1.68 line-height, and a full-width structural surface. Its prose children use
-  a 65–72ch reading measure while code, tables, Mermaid, and other technical
-  blocks may use the available canvas. Its opening outcome may use 600 weight.
+- User messages align right on one flat muted surface without becoming oversized
+  chat bubbles.
+- Agent responses use the full-width structural surface; code, tables, Mermaid,
+  and other technical blocks may use the available canvas.
 - Agent responses are editorial text, not bubbles. Avoid avatars, role headers,
   timestamps, and cards competing with the actual outcome.
 - Use spacing and contrast, not additional boxes, to separate user intent,
@@ -104,8 +99,7 @@ running:    user message → expanded Work
 - Do not show `Execution {number}`, steps, Tool count, Child count, model, or
   binding metadata in the visible Work row.
 - Preserve the Execution identity in product data even though it is visually
-  omitted. The accessible disclosure names the Work segment, state, duration,
-  and current activity when present.
+  omitted.
 - Running Work is expanded by default. Historical completed Work is collapsed
   by default.
 - When a followed live Execution completes, collapse Work only if the user is
@@ -146,9 +140,6 @@ running:    user message → expanded Work
 - A user-explicit Work state wins over automatic defaults for the current route
   lifetime.
 - Keyboard focus remains on the disclosure button after opening or closing.
-- `aria-expanded`, `aria-controls`, and an accessible name containing the Work
-  segment, state, elapsed duration, and current activity when present are
-  required.
 
 ## Work content
 

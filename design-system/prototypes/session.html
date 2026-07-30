@@ -10,6 +10,43 @@
     <title>ArchCode — Session Prototype</title>
     <link rel="stylesheet" href="./styles.css?v=implementation-sync-3" />
     <style>
+      :root {
+        --inspector-width: 312px;
+      }
+
+      .session-page .app-shell {
+        grid-template-columns:
+          var(--rail-width) var(--sidebar-width) minmax(0, 1fr)
+          var(--inspector-width);
+      }
+
+      .session-page.sidebar-collapsed .app-shell {
+        grid-template-columns:
+          var(--rail-width) minmax(0, 1fr)
+          var(--inspector-width);
+      }
+
+      .session-page.inspector-collapsed .app-shell {
+        grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
+      }
+
+      .session-page.sidebar-collapsed.inspector-collapsed .app-shell {
+        grid-template-columns: var(--rail-width) minmax(0, 1fr);
+      }
+
+      .inspector-collapsed .context-inspector {
+        display: none;
+      }
+
+      .context-inspector {
+        position: relative;
+        z-index: 20;
+        min-width: 0;
+        overflow: hidden;
+        border-left: 1px solid var(--border-default);
+        background: var(--bg-surface);
+      }
+
       .session-canvas {
         display: flex;
         flex-direction: column;
@@ -996,7 +1033,48 @@
         color: var(--text-tertiary);
       }
 
+      @media (max-width: 1180px) {
+        .session-page .app-shell {
+          grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
+        }
+
+        .context-inspector {
+          position: fixed;
+          z-index: 35;
+          top: 64px;
+          right: 0;
+          bottom: 0;
+          width: min(var(--inspector-width), calc(100vw - var(--rail-width)));
+          box-shadow: var(--elevation-md);
+          transform: translateX(105%);
+          transition: transform 160ms ease;
+        }
+
+        .inspector-collapsed .context-inspector {
+          display: block;
+        }
+
+        body.inspector-open .context-inspector {
+          transform: none;
+        }
+
+        body.inspector-open .scrim {
+          display: block;
+        }
+
+        .context-inspector .mobile-close {
+          display: inline-grid;
+        }
+      }
+
       @media (max-width: 760px) {
+        .session-page .app-shell,
+        .session-page.sidebar-collapsed .app-shell,
+        .session-page.inspector-collapsed .app-shell,
+        .session-page.sidebar-collapsed.inspector-collapsed .app-shell {
+          grid-template-columns: var(--rail-width) minmax(0, 1fr);
+        }
+
         .session-header {
           grid-template-columns: 30px minmax(0, 1fr) auto;
           padding: 9px 12px;
@@ -1127,7 +1205,7 @@
           <header class="sidebar-header">
             <div class="project-copy">
               <strong>archcode</strong>
-              <span>/Users/bo/Developer/AI/archcode</span>
+              <span>/workspace/archcode</span>
             </div>
             <button class="icon-button" aria-label="Project actions" data-action="打开项目操作" data-icon="more"></button>
             <button class="icon-button mobile-close" aria-label="Close project navigation" data-close-overlay data-icon="close"></button>
@@ -1203,7 +1281,7 @@
                 <h1>Session execution state audit</h1><span class="status-badge">Needs you</span>
               </div>
               <div class="session-meta">
-                <span class="session-path">/Users/bo/Developer/AI/archcode</span>
+                <span class="session-path">/workspace/archcode</span>
                 <span class="session-meta-separator">·</span>
                 <span class="session-usage">12 tools · 48,206 tokens</span>
                 <span class="session-meta-separator">·</span>
@@ -1476,7 +1554,7 @@
               <div class="context-row"><span>Goal</span><strong>Active · Verify Session execution UI</strong></div>
               <div class="context-row"><span>Model</span><strong>GPT-5.6 Luna · deep</strong></div>
               <div class="context-row"><span>Context</span><strong>48,206 / 200,000 tokens</strong></div>
-              <div class="context-row"><span>Working dir</span><strong>/Users/bo/Developer/AI/archcode</strong></div>
+              <div class="context-row"><span>Working dir</span><strong>/workspace/archcode</strong></div>
               <div class="context-row"><span>Execution</span><strong>Suspended · Permission</strong></div>
             </div>
           </section>
@@ -1527,6 +1605,77 @@
           });
         });
       });
+
+      const inspectorTrigger = document.querySelector("[data-open-inspector]");
+      const inspectorHandle = document.querySelector("[data-resize-inspector]");
+
+      function closeInspector() {
+        document.body.classList.remove("inspector-open");
+        if (!window.matchMedia("(min-width: 1181px)").matches) {
+          inspectorTrigger?.setAttribute("aria-expanded", "false");
+        }
+      }
+
+      inspectorTrigger?.addEventListener("click", () => {
+        if (window.matchMedia("(min-width: 1181px)").matches) {
+          const collapsed = document.body.classList.toggle("inspector-collapsed");
+          inspectorTrigger.setAttribute("aria-expanded", String(!collapsed));
+          return;
+        }
+        document.body.classList.remove("sidebar-open");
+        document.body.classList.add("inspector-open");
+        inspectorTrigger.setAttribute("aria-expanded", "true");
+      });
+
+      document.querySelectorAll("[data-close-overlay]").forEach((button) => {
+        button.addEventListener("click", closeInspector);
+      });
+      document.querySelector(".scrim")?.addEventListener("click", closeInspector);
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeInspector();
+      });
+
+      function applyInspectorWidth(value, persist = true) {
+        const next = Math.round(Math.max(280, Math.min(460, value)));
+        document.documentElement.style.setProperty("--inspector-width", `${next}px`);
+        inspectorHandle?.setAttribute("aria-valuenow", String(next));
+        if (persist) localStorage.setItem("archcode-prototype-inspector-width", String(next));
+      }
+
+      if (inspectorHandle) {
+        const stored = Number(localStorage.getItem("archcode-prototype-inspector-width"));
+        applyInspectorWidth(Number.isFinite(stored) && stored > 0 ? stored : 312, false);
+
+        inspectorHandle.addEventListener("pointerdown", (event) => {
+          if (event.button !== 0) return;
+          const startX = event.clientX;
+          const startWidth = Number(inspectorHandle.getAttribute("aria-valuenow"));
+          inspectorHandle.classList.add("dragging");
+          inspectorHandle.setPointerCapture(event.pointerId);
+
+          const move = (moveEvent) => {
+            applyInspectorWidth(startWidth - (moveEvent.clientX - startX), false);
+          };
+          const finish = (upEvent) => {
+            applyInspectorWidth(Number(inspectorHandle.getAttribute("aria-valuenow")));
+            inspectorHandle.classList.remove("dragging");
+            inspectorHandle.releasePointerCapture(upEvent.pointerId);
+            inspectorHandle.removeEventListener("pointermove", move);
+            inspectorHandle.removeEventListener("pointerup", finish);
+            inspectorHandle.removeEventListener("pointercancel", finish);
+          };
+          inspectorHandle.addEventListener("pointermove", move);
+          inspectorHandle.addEventListener("pointerup", finish);
+          inspectorHandle.addEventListener("pointercancel", finish);
+        });
+
+        inspectorHandle.addEventListener("keydown", (event) => {
+          if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+          event.preventDefault();
+          const delta = event.key === "ArrowRight" ? -12 : 12;
+          applyInspectorWidth(Number(inspectorHandle.getAttribute("aria-valuenow")) + delta);
+        });
+      }
     </script>
   </body>
 </html>

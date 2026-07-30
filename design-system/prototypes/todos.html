@@ -465,7 +465,7 @@
           <header class="sidebar-header">
             <div class="project-copy">
               <strong>archcode</strong>
-              <span>/Users/bo/Developer/AI/archcode</span>
+              <span>/workspace/archcode</span>
             </div>
             <button class="icon-button" aria-label="Project actions" data-action="打开项目操作" data-icon="more"></button>
             <button class="icon-button mobile-close" aria-label="Close project navigation" data-close-overlay data-icon="close"></button>
@@ -661,10 +661,7 @@
         event.preventDefault();
         const input = event.currentTarget.querySelector("input");
         if (input.value.trim()) {
-          const status = document.querySelector(".toast");
-          status.textContent = `添加 “${input.value.trim()}” · 原型演示`;
-          status.classList.add("visible");
-          setTimeout(() => status.classList.remove("visible"), 2200);
+          showToast(`添加 “${input.value.trim()}”`);
           input.value = "";
         }
       });

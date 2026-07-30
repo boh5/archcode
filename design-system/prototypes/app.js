@@ -62,10 +62,9 @@ document.querySelectorAll("[data-action]").forEach((element) => {
 });
 
 const sidebar = document.querySelector(".project-sidebar");
-const inspector = document.querySelector(".context-inspector");
 
 function closeOverlays() {
-  document.body.classList.remove("sidebar-open", "inspector-open");
+  document.body.classList.remove("sidebar-open");
 }
 
 document.querySelectorAll("[data-open-sidebar]").forEach((button) => {
@@ -77,18 +76,6 @@ document.querySelectorAll("[data-open-sidebar]").forEach((button) => {
     }
     closeOverlays();
     document.body.classList.add("sidebar-open");
-  });
-});
-
-document.querySelectorAll("[data-open-inspector]").forEach((button) => {
-  button.addEventListener("click", () => {
-    if (window.matchMedia("(min-width: 1181px)").matches) {
-      const collapsed = document.body.classList.toggle("inspector-collapsed");
-      button.setAttribute("aria-expanded", String(!collapsed));
-      return;
-    }
-    closeOverlays();
-    document.body.classList.add("inspector-open");
   });
 });
 
@@ -119,15 +106,6 @@ const resizeConfigs = [
     max: 340,
     fallback: 264,
     direction: 1,
-  },
-  {
-    handle: document.querySelector("[data-resize-inspector]"),
-    variable: "--inspector-width",
-    key: "archcode-prototype-inspector-width",
-    min: 280,
-    max: 460,
-    fallback: 312,
-    direction: -1,
   },
 ];
 
@@ -182,4 +160,3 @@ window.addEventListener("keydown", (event) => {
 });
 
 void sidebar;
-void inspector;
