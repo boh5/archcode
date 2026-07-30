@@ -1038,6 +1038,11 @@
           grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
         }
 
+        .session-page.sidebar-collapsed .app-shell,
+        .session-page.sidebar-collapsed.inspector-collapsed .app-shell {
+          grid-template-columns: var(--rail-width) minmax(0, 1fr);
+        }
+
         .context-inspector {
           position: fixed;
           z-index: 35;
@@ -1615,6 +1620,10 @@
           inspectorTrigger?.setAttribute("aria-expanded", "false");
         }
       }
+
+      document.querySelectorAll("[data-open-sidebar]").forEach((button) => {
+        button.addEventListener("click", closeInspector);
+      });
 
       inspectorTrigger?.addEventListener("click", () => {
         if (window.matchMedia("(min-width: 1181px)").matches) {
