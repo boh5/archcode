@@ -10,6 +10,24 @@ must let the user understand the objective, conversation, live Execution, tool
 activity, delegated Agents, changes, context, and next input without navigating
 away.
 
+## Prototype Coverage
+
+- `../prototypes/session.html` is a representative state sample, not a literal
+  copy of one persisted Session.
+- Synthetic content is allowed when it is needed to expose the current product
+  states, but every state must use the current component hierarchy, labels,
+  visual semantics, and interaction rules.
+- Keep the sample compact while covering: completed and suspended Work,
+  Reasoning, grouped ordinary Tools, singleton mutation/Bash calls, a failed
+  Tool, Delegation, Recovery, Compaction, Permission, Ask User,
+  Queue/Steering, a visible final response, and Agent/Changes/Context inspector
+  states.
+- The Permission and Ask User tabs in the prototype are a state-preview control
+  for reviewing both current HITL presentations. The product continues to show
+  only the active request family at one time.
+- Do not replace this representative sample with whichever live Session happens
+  to contain the least content.
+
 ## Layout
 
 - Use the complete workbench shell:
@@ -56,15 +74,10 @@ header and conversation. Do not move Execution into the inspector.
 
 ## Conversation Hierarchy
 
-- User messages use one flat muted surface, 15px text, comfortable 1.66
-  line-height, and right alignment. They are visually distinct without becoming
-  oversized chat bubbles.
-- Work commentary uses secondary 13–14px text. Tool names and Work summaries
-  remain quieter than conversational content.
-- The final Agent response is the strongest reading layer: 16px primary text,
-  1.68 line-height, and a full-width structural surface. Its prose children use
-  a 65–72ch reading measure while code, tables, Mermaid, and other technical
-  blocks may use the available canvas. Its opening outcome may use 600 weight.
+- User messages align right on one flat muted surface without becoming oversized
+  chat bubbles.
+- Agent responses use the full-width structural surface; code, tables, Mermaid,
+  and other technical blocks may use the available canvas.
 - Agent responses are editorial text, not bubbles. Avoid avatars, role headers,
   timestamps, and cards competing with the actual outcome.
 - Use spacing and contrast, not additional boxes, to separate user intent,
@@ -85,8 +98,8 @@ running:    user message → expanded Work
   reads `Working · {duration}` and may append `— {current activity}`.
 - Do not show `Execution {number}`, steps, Tool count, Child count, model, or
   binding metadata in the visible Work row.
-- Preserve the Execution number in the disclosure's accessible name and product
-  data even though it is visually omitted.
+- Preserve the Execution identity in product data even though it is visually
+  omitted.
 - Running Work is expanded by default. Historical completed Work is collapsed
   by default.
 - When a followed live Execution completes, collapse Work only if the user is
@@ -107,7 +120,7 @@ running:    user message → expanded Work
   coarse pointers.
 - Put the chevron first. Running Work adds one small live pulse before
   `Working`; completed Work needs no repeated success icon.
-- The label is 12px/600. Duration uses tabular figures.
+- The label is 13px/600. Duration uses tabular figures.
 - A running current-activity label is quiet, single-line, and separated with an
   em dash. Truncate it before expanding the Work row into multiple metadata
   lines.
@@ -127,9 +140,6 @@ running:    user message → expanded Work
 - A user-explicit Work state wins over automatic defaults for the current route
   lifetime.
 - Keyboard focus remains on the disclosure button after opening or closing.
-- `aria-expanded`, `aria-controls`, and an accessible name containing the
-  Execution number, state, elapsed duration, and current activity when present
-  are required.
 
 ## Work content
 

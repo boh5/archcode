@@ -17,14 +17,16 @@ It is a decision and resumption surface, not an analytics report.
 ## Layout
 
 - Context Inspector is absent on this page.
-- Keep the project rail and project navigation.
+- Keep the project rail. The project-scoped Dashboard also keeps project
+  navigation; the global Dashboard does not add an empty project sidebar.
 - Main content width is at most 1180px.
 - Use 46px top, 40px horizontal, and 72px bottom padding on desktop.
-- Pair Needs attention with Running now in one priority row. Pair Continue
-  working with a narrower Upcoming region below it. These are compositional
-  surface bands, not a KPI or Bento-card grid.
+- At `≥1001px`, pair Needs attention with Running now in one priority row, then
+  pair Continue working with a narrower Upcoming region below it. At narrower
+  widths, all four regions stack in that order. These are compositional surface
+  bands, not KPI or Bento cards.
 - Keep 20px gaps between paired regions and 34px between major rows.
-- At `≤760px`, use 18px horizontal padding and reflow row metadata below the
+- At `≤760px`, use 16px horizontal padding and reflow row metadata below the
   main copy.
 
 ## Section Order

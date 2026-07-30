@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ArchCode 当前 Todos 页面原型" />
+    <title>ArchCode — Todos Prototype</title>
+    <link rel="stylesheet" href="./styles.css?v=implementation-sync-2" />
+    <style>
+      .todos-layout {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+
+      .todos-header {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        flex: 0 0 75px;
+        padding: 10px 20px;
+        border-bottom: 1px solid var(--border-default);
+        background: var(--bg-surface);
+      }
+
+      .todos-title {
+        min-width: 0;
+      }
+
+      .todos-title h1 {
+        font-size: 20px;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+      }
+
+      .todos-title p {
+        margin-top: 5px;
+        overflow: hidden;
+        color: var(--text-secondary);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .view-switcher {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px;
+        border: 1px solid var(--border-default);
+        border-radius: 7px;
+        background: var(--bg-muted);
+        width: 192px;
+      }
+
+      .view-switcher button {
+        min-width: 0;
+        flex: 1;
+        height: 30px;
+        padding: 0 10px;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 620;
+      }
+
+      .view-switcher button[aria-pressed="true"] {
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      }
+
+      .todos-body {
+        min-height: 0;
+        overflow: auto;
+      }
+
+      .todos-inner {
+        width: min(100%, 1440px);
+        margin: 0 auto;
+        padding: 16px 24px 40px;
+      }
+
+      .capture {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 55px;
+        margin-bottom: 15px;
+        padding: 8px 9px 8px 12px;
+        border: 1px solid var(--border-default);
+        border-radius: 8px;
+        background: var(--bg-surface);
+      }
+
+      .capture > [data-icon] {
+        color: var(--text-tertiary);
+      }
+
+      .capture input {
+        min-width: 0;
+        height: 38px;
+        padding: 0 4px;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        font-size: 13px;
+      }
+
+      .capture input:focus {
+        box-shadow: none;
+      }
+
+      .primary-button {
+        min-width: 48px;
+        height: 38px;
+        padding: 0 14px;
+        border-radius: 6px;
+        background: var(--brand);
+        color: var(--brand-ink);
+        font-size: 12px;
+        font-weight: 670;
+      }
+
+      .primary-button:hover {
+        background: var(--brand-hover);
+      }
+
+      .todo-board {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+      }
+
+      .todo-lane {
+        min-width: 0;
+        min-height: 500px;
+        padding: 12px;
+        border: 1px solid var(--border-default);
+        border-radius: 8px;
+        background: var(--bg-surface);
+      }
+
+      .lane-header {
+        display: grid;
+        grid-template-columns: 14px minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 8px;
+        min-height: 53px;
+        padding: 1px 2px 12px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .lane-header h2 {
+        font-size: 13px;
+        font-weight: 670;
+      }
+
+      .lane-header p {
+        margin-top: 4px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+      }
+
+      .lane-count {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 28px;
+        margin-top: -1px;
+        border: 1px solid var(--border-default);
+        background: var(--bg-muted);
+        color: var(--text-tertiary);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .lane-content {
+        display: grid;
+        gap: 9px;
+        padding-top: 10px;
+      }
+
+      .todo-card {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr);
+        min-height: 84px;
+        overflow: hidden;
+        border: 1px solid var(--border-default);
+        border-radius: 7px;
+        background: var(--bg-elevated);
+      }
+
+      .drag-handle {
+        display: grid;
+        place-items: center;
+        border-right: 1px solid var(--border-subtle);
+        background: transparent;
+        color: var(--text-tertiary);
+        cursor: grab;
+      }
+
+      .drag-handle:hover {
+        background: var(--bg-hover);
+        color: var(--text-secondary);
+      }
+
+      .todo-card-content {
+        display: block;
+        min-width: 0;
+        padding: 14px 13px;
+        background: transparent;
+        text-align: left;
+      }
+
+      .todo-card-content:hover {
+        background: var(--bg-hover);
+      }
+
+      .todo-state {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--brand);
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .todo-state::before {
+        width: 7px;
+        height: 7px;
+        border: 1px solid currentColor;
+        border-radius: 50%;
+        content: "";
+      }
+
+      .lane-orbit {
+        width: 12px;
+        height: 12px;
+        margin-top: 3px;
+        border: 1px solid var(--text-tertiary);
+        border-radius: 50%;
+      }
+
+      .lane-orbit.idea {
+        border-color: var(--brand);
+      }
+
+      .lane-orbit.progress {
+        border-color: var(--signal);
+      }
+
+      .lane-orbit.done {
+        border-color: var(--success);
+      }
+
+      .todo-name {
+        display: block;
+        margin-top: 7px;
+        overflow: hidden;
+        font-size: 13px;
+        font-weight: 620;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .lane-empty {
+        display: grid;
+        place-items: center;
+        min-height: 150px;
+        padding: 20px 10px;
+        text-align: center;
+      }
+
+      .lane-empty strong {
+        display: block;
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .lane-empty span {
+        display: block;
+        max-width: 190px;
+        margin-top: 6px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+
+      .flat-view {
+        min-height: 380px;
+        padding: 8px 2px;
+      }
+
+      .flat-empty {
+        display: grid;
+        place-items: center;
+        min-height: 260px;
+        color: var(--text-tertiary);
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .todo-drawer {
+        position: fixed;
+        z-index: 55;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        width: min(430px, calc(100vw - var(--rail-width)));
+        border-left: 1px solid var(--border-default);
+        background: var(--bg-surface);
+        box-shadow: var(--elevation-md);
+        transform: translateX(105%);
+        transition: transform 160ms ease;
+      }
+
+      body.todo-open .todo-drawer {
+        transform: none;
+      }
+
+      body.todo-open .scrim {
+        display: block;
+      }
+
+      .drawer-header {
+        position: relative;
+        padding: 22px 54px 18px 22px;
+        border-bottom: 1px solid var(--border-default);
+      }
+
+      .drawer-header .todo-state {
+        margin-bottom: 7px;
+      }
+
+      .drawer-header h2 {
+        font-size: 21px;
+        line-height: 1.2;
+      }
+
+      .drawer-header p {
+        margin-top: 8px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .drawer-close {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+      }
+
+      .drawer-scroll {
+        min-height: 0;
+        overflow: auto;
+      }
+
+      .drawer-section {
+        padding: 18px 22px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .drawer-section h3 {
+        margin-bottom: 12px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .drawer-section p {
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+
+      .drawer-actions,
+      .drawer-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .secondary-button {
+        min-height: 34px;
+        padding: 0 11px;
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        background: var(--bg-muted);
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .secondary-button:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      @media (min-width: 700px) {
+        .todo-board {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (min-width: 1100px) {
+        .todo-board {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 760px) {
+        .todos-header {
+          grid-template-columns: 30px minmax(0, 1fr);
+          height: auto;
+          min-height: 104px;
+          padding: 10px 14px;
+        }
+
+        .view-switcher {
+          grid-column: 1 / -1;
+          justify-self: stretch;
+        }
+
+        .view-switcher button {
+          flex: 1;
+        }
+
+        .todos-inner {
+          padding: 14px 12px 32px;
+        }
+
+        .todo-lane {
+          min-height: 280px;
+        }
+      }
+    </style>
+    <script src="./app.js?v=implementation-sync-2" defer></script>
+  </head>
+  <body class="todos-page">
+    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+    <div class="app-shell">
+      <nav class="project-rail" aria-label="Projects">
+        <button class="brand-mark" aria-label="Open dashboard" data-action="打开全局 Dashboard"><span>A</span></button>
+        <button class="rail-project active" aria-label="Open archcode">ar</button>
+        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
+        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
+        <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
+        <div class="rail-spacer"></div>
+        <div class="rail-separator"></div>
+        <button class="rail-icon" aria-label="Open requests needing attention" data-action="打开待处理请求" data-icon="bell"></button>
+        <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
+        <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
+      </nav>
+
+      <aside class="project-sidebar" aria-label="Project navigation">
+        <div class="project-sidebar-inner">
+          <header class="sidebar-header">
+            <div class="project-copy">
+              <strong>archcode</strong>
+              <span>/workspace/archcode</span>
+            </div>
+            <button class="icon-button" aria-label="Project actions" data-action="打开项目操作" data-icon="more"></button>
+            <button class="icon-button mobile-close" aria-label="Close project navigation" data-close-overlay data-icon="close"></button>
+          </header>
+
+          <nav class="sidebar-nav" aria-label="Project pages">
+            <a href="./dashboard.html">
+              <span data-icon="dashboard"></span><span>Project Dashboard</span><span data-icon="chevron"></span>
+            </a>
+            <a class="active" href="./todos.html" aria-current="page">
+              <span data-icon="todo"></span><span>Todos</span><span class="nav-count">1</span>
+            </a>
+          </nav>
+
+          <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
+            <button role="tab" aria-selected="true" data-sidebar-tab="sessions">Sessions</button>
+            <button role="tab" aria-selected="false" data-sidebar-tab="automations">Automations</button>
+          </div>
+
+          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="sessions">
+            <div class="sidebar-toolbar">
+              <label class="search-field">
+                <span data-icon="search"></span><span class="sr-only">Search sessions</span>
+                <input type="search" placeholder="Search sessions..." />
+              </label>
+              <button class="new-session" data-action="创建 Session">＋ New session</button>
+            </div>
+            <div class="session-group">
+              <div class="session-group-label"><span>Recent</span><span>2</span></div>
+              <a class="session-item" href="./session.html">
+                <span class="session-state"></span><span class="session-title">Brief Greeting Session</span><time class="session-time">2h</time><span></span>
+              </a>
+              <button class="session-item" data-action="打开项目状态与重点问题汇报">
+                <span class="session-state"></span><span class="session-title">项目状态与重点问题汇报</span><time class="session-time">3h</time><span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="automations" hidden>
+            <div class="sidebar-toolbar">
+              <label class="search-field">
+                <span data-icon="search"></span><span class="sr-only">Search automations</span>
+                <input type="search" placeholder="Search automations..." />
+              </label>
+              <button class="new-session" data-action="创建 Automation">＋ New</button>
+            </div>
+            <div class="session-group">
+              <div class="session-group-label"><span>Automations</span><span>1</span></div>
+              <button class="session-item" data-action="打开每日项目状态检查">
+                <span class="todo-state"></span><span class="session-title">每日项目状态检查</span><time class="session-time">09:00</time><span></span>
+              </button>
+            </div>
+          </section>
+        </div>
+        <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuemin="210" aria-valuemax="340" aria-valuenow="264" data-resize-sidebar></div>
+      </aside>
+
+      <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
+        <div class="todos-layout">
+          <header class="todos-header">
+            <button class="canvas-sidebar-toggle" aria-label="Open project navigation" data-open-sidebar data-icon="panel"></button>
+            <div class="todos-title">
+              <h1>Todos</h1>
+              <p>Shape intent, then start as many discussions or work sessions as useful.</p>
+            </div>
+            <div class="view-switcher" role="group" aria-label="Todo views">
+              <button aria-pressed="true" data-todo-view="board">Board</button>
+              <button aria-pressed="false" data-todo-view="rejected">Rejected</button>
+              <button aria-pressed="false" data-todo-view="archived">Archived</button>
+            </div>
+          </header>
+
+          <div class="todos-body">
+            <div class="todos-inner">
+              <form class="capture" data-capture-form>
+                <span data-icon="plus"></span>
+                <label class="sr-only" for="new-todo">New Todo</label>
+                <input id="new-todo" placeholder="Capture a Todo…" autocomplete="off" />
+                <button class="primary-button" type="submit">Add</button>
+              </form>
+
+              <main class="todo-board" data-todo-panel="board">
+                <section class="todo-lane" aria-label="Ideas">
+                  <header class="lane-header">
+                    <span class="lane-orbit idea"></span><div><h2>Ideas</h2><p>Capture first, shape later</p></div><span class="lane-count">1</span>
+                  </header>
+                  <div class="lane-content">
+                    <article class="todo-card">
+                      <button class="drag-handle" aria-label="Drag test" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="todo-card-content" aria-expanded="false" data-open-todo>
+                        <span class="todo-state">Idea</span><span class="todo-name">test</span>
+                      </button>
+                    </article>
+                  </div>
+                </section>
+
+                <section class="todo-lane" aria-label="Ready">
+                  <header class="lane-header">
+                    <span class="lane-orbit"></span><div><h2>Ready</h2><p>Clear enough to hand off</p></div><span class="lane-count">0</span>
+                  </header>
+                  <div class="lane-empty"><p><strong>Nothing ready</strong><span>Move an idea here when it is ready.</span></p></div>
+                </section>
+
+                <section class="todo-lane" aria-label="In Progress">
+                  <header class="lane-header">
+                    <span class="lane-orbit progress"></span><div><h2>In Progress</h2><p>Work underway</p></div><span class="lane-count">0</span>
+                  </header>
+                  <div class="lane-empty"><p><strong>No work in progress</strong><span>Start work or drag a Todo here.</span></p></div>
+                </section>
+
+                <section class="todo-lane" aria-label="Done">
+                  <header class="lane-header">
+                    <span class="lane-orbit done"></span><div><h2>Done</h2><p>Explicitly completed</p></div><span class="lane-count">0</span>
+                  </header>
+                  <div class="lane-empty"><p><strong>Nothing completed</strong><span>Completed Todos stay visible here.</span></p></div>
+                </section>
+              </main>
+
+              <section class="flat-view" data-todo-panel="rejected" hidden>
+                <div class="flat-empty">No rejected Todos.</div>
+              </section>
+
+              <section class="flat-view" data-todo-panel="archived" hidden>
+                <div class="flat-empty">No archived Todos.</div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <aside class="todo-drawer" role="dialog" aria-modal="true" aria-labelledby="todo-drawer-title">
+      <header class="drawer-header">
+        <span class="todo-state">Idea</span>
+        <h2 id="todo-drawer-title">test</h2>
+        <p>A Todo can source multiple discussions, work sessions, and automations.</p>
+        <button class="icon-button drawer-close" aria-label="Close Todo details" data-close-todo data-icon="close"></button>
+      </header>
+      <div class="drawer-scroll">
+        <section class="drawer-section" aria-label="Todo content">
+          <p>No additional details.</p>
+          <div class="drawer-actions">
+            <button class="secondary-button" data-action="编辑 Todo">Edit</button>
+            <button class="primary-button" data-action="创建 Discussion">New Discussion</button>
+          </div>
+        </section>
+        <section class="drawer-section" aria-label="Linked sessions">
+          <h3>Sessions</h3><p>No sessions yet.</p>
+        </section>
+        <section class="drawer-section" aria-label="Linked automations">
+          <h3>Automations</h3><p>No automations yet.</p>
+        </section>
+        <section class="drawer-section" aria-label="Todo actions">
+          <h3>Actions</h3>
+          <div class="drawer-buttons">
+            <button class="secondary-button" data-action="拒绝 Todo">Reject</button>
+            <button class="secondary-button" data-action="移到 Ready">Move to Ready</button>
+            <button class="secondary-button" data-action="移到 In Progress">Move to In Progress</button>
+            <button class="secondary-button" data-action="移到 Done">Move to Done</button>
+            <button class="secondary-button" data-action="归档 Todo">Archive</button>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <button class="scrim" aria-label="Close overlay" data-close-overlay></button>
+    <div class="toast" role="status" aria-live="polite"></div>
+    <script>
+      const todoViewButtons = document.querySelectorAll("[data-todo-view]");
+      const todoPanels = document.querySelectorAll("[data-todo-panel]");
+      todoViewButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          todoViewButtons.forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+          todoPanels.forEach((panel) => {
+            panel.hidden = panel.dataset.todoPanel !== button.dataset.todoView;
+          });
+        });
+      });
+
+      const todoTrigger = document.querySelector("[data-open-todo]");
+      function closeTodo() {
+        document.body.classList.remove("todo-open");
+        todoTrigger?.setAttribute("aria-expanded", "false");
+      }
+      todoTrigger?.addEventListener("click", () => {
+        document.body.classList.add("todo-open");
+        todoTrigger.setAttribute("aria-expanded", "true");
+      });
+      document.querySelector("[data-close-todo]")?.addEventListener("click", closeTodo);
+      document.querySelector(".scrim")?.addEventListener("click", closeTodo);
+
+      document.querySelector("[data-capture-form]")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const input = event.currentTarget.querySelector("input");
+        if (input.value.trim()) {
+          showToast(`添加 “${input.value.trim()}”`);
+          input.value = "";
+        }
+      });
+    </script>
+  </body>
+</html>
