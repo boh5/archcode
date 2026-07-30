@@ -1,846 +1,1532 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="ArchCode Indigo Ink and Signal Lime visual direction prototype"
+      content="ArchCode Session 页面代表性状态原型，覆盖 Reasoning、Tools、Delegation、HITL 与 Queue"
     />
-    <title>ArchCode — Session Design Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=quiet-precision-1" />
-  </head>
-  <body>
-    <!--
-      THESIS: ArchCode is a workbench that visibly stays alive; it refuses both cold enterprise dashboards and cheerful AI chat toys.
-      OWN-WORLD: Warm mineral surfaces, indigo-ink actions, one signal-lime live state, tight square controls, and evidence organized by rules rather than nested cards.
-      STORY: The user delegates a consequential task, watches the Agent continue, inspects evidence, and decides what happens next.
-      FIRST VIEWPORT: Project rail and Threads frame one readable work canvas; a lime execution line is the memorable center; Changes remain one glance to the right.
-      FORM: Desktop engineering workbench, precisely pinned by the approved Claude-structure/Codex-information/ArchCode-color direction; no concept seed required.
-    -->
-    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+    <title>ArchCode — Session Prototype</title>
+    <link rel="stylesheet" href="./styles.css?v=implementation-sync-3" />
+    <style>
+      .session-canvas {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
 
+      .session-header {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 12px;
+        flex: 0 0 75px;
+        padding: 10px 24px;
+        border-bottom: 1px solid var(--border-default);
+        background: var(--bg-surface);
+      }
+
+      .session-heading {
+        min-width: 0;
+      }
+
+      .session-title-line {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+      }
+
+      .session-title-line h1 {
+        overflow: hidden;
+        font-size: 20px;
+        line-height: 1.2;
+        letter-spacing: -0.025em;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        flex: 0 0 auto;
+        height: 23px;
+        padding: 0 8px;
+        border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+        border-radius: 4px;
+        background: var(--warning-field);
+        color: var(--warning);
+        font-size: 10px;
+        font-weight: 650;
+      }
+
+      .status-badge::before,
+      .live-dot,
+      .state-dot {
+        width: 8px;
+        height: 8px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .session-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        margin-top: 5px;
+        color: var(--text-tertiary);
+        font-family: var(--font-stack-mono);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+
+      .session-path {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .session-usage {
+        flex: 0 0 auto;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .todo-progress {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        height: 38px;
+        padding: 0 11px;
+        border: 1px solid var(--border-default);
+        border-radius: 5px;
+        background: var(--bg-muted);
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .todo-progress::before {
+        width: 11px;
+        height: 11px;
+        border: 1px solid var(--success);
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 3px var(--bg-muted);
+        background: var(--success);
+        content: "";
+      }
+
+      .todo-progress strong {
+        color: var(--text-primary);
+        font-weight: 650;
+      }
+
+      .conversation {
+        min-height: 0;
+        flex: 1;
+        overflow: auto;
+        scrollbar-color: var(--border-default) transparent;
+      }
+
+      .conversation-inner {
+        width: min(100%, 820px);
+        margin: 0 auto;
+        padding: 22px 16px 32px;
+      }
+
+      .message {
+        margin-bottom: 22px;
+      }
+
+      .user-message {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+      }
+
+      .user-bubble {
+        max-width: 660px;
+        padding: 13px 15px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 7px;
+        background: var(--bg-muted);
+        color: var(--text-primary);
+        font-size: 15px;
+        line-height: 1.66;
+      }
+
+      .message-time {
+        margin-top: 6px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+      }
+
+      .work {
+        margin: 7px 0 8px;
+      }
+
+      .work-toggle,
+      .timeline-toggle {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        min-height: 32px;
+        padding: 0 6px;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-secondary);
+        text-align: left;
+      }
+
+      .work-toggle:hover,
+      .timeline-toggle:hover,
+      .tool-row:hover {
+        background: var(--bg-hover);
+      }
+
+      .work-toggle [data-icon],
+      .timeline-toggle [data-icon],
+      .tool-row [data-icon],
+      .hitl-details [data-icon] {
+        transition: transform 160ms ease;
+      }
+
+      .work-toggle[aria-expanded="true"] [data-icon],
+      .timeline-toggle[aria-expanded="true"] [data-icon],
+      .tool-row[aria-expanded="true"] [data-icon],
+      .hitl-details[aria-expanded="true"] [data-icon] {
+        transform: rotate(90deg);
+      }
+
+      .work-toggle strong {
+        font-size: 13px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .work-toggle::after {
+        height: 1px;
+        flex: 1;
+        margin-left: 4px;
+        background: var(--border-subtle);
+        content: "";
+      }
+
+      .work-toggle .needs-you {
+        color: var(--warning);
+      }
+
+      .work-detail {
+        display: grid;
+        gap: 7px;
+        margin: 4px 6px 11px 28px;
+        padding: 5px 0 5px 13px;
+        border-left: 1px solid var(--border-default);
+      }
+
+      .work-detail[hidden],
+      .timeline-body[hidden],
+      .tool-detail[hidden],
+      .hitl-detail-body[hidden] {
+        display: none;
+      }
+
+      .commentary {
+        max-width: 72ch;
+        padding: 5px 7px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.58;
+      }
+
+      .timeline-module {
+        min-width: 0;
+      }
+
+      .timeline-toggle {
+        justify-content: flex-start;
+        font-size: 12px;
+      }
+
+      .timeline-toggle strong,
+      .tool-name {
+        font-family: var(--font-stack-mono);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .timeline-toggle .timeline-summary {
+        overflow: hidden;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .timeline-body {
+        margin: 1px 6px 6px 18px;
+        padding: 7px 9px;
+        border-left: 1px solid var(--border-default);
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .tool-run-list {
+        display: grid;
+        gap: 2px;
+        margin-top: 3px;
+      }
+
+      .tool-child,
+      .tool-row {
+        display: grid;
+        grid-template-columns: minmax(98px, auto) minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 32px;
+        padding: 5px 7px;
+        border-radius: 4px;
+        color: var(--text-secondary);
+        text-align: left;
+      }
+
+      .tool-child + .tool-child {
+        border-top: 1px solid var(--border-subtle);
+        border-radius: 0;
+      }
+
+      .tool-target {
+        overflow: hidden;
+        color: var(--text-secondary);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tool-status {
+        color: var(--text-tertiary);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+
+      .tool-status.running {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--signal-foreground);
+      }
+
+      .tool-status.error {
+        color: var(--error);
+      }
+
+      .tool-row {
+        grid-template-columns: 14px minmax(98px, auto) minmax(0, 1fr) auto;
+        width: 100%;
+      }
+
+      .diffstat {
+        color: var(--text-tertiary);
+        font-family: var(--font-stack-mono);
+        font-size: 10px;
+      }
+
+      .diffstat .plus {
+        color: var(--success);
+      }
+
+      .diffstat .minus {
+        color: var(--error);
+      }
+
+      .tool-detail {
+        margin: 2px 7px 7px 21px;
+        overflow: auto;
+        border: 1px solid var(--border-default);
+        border-radius: 5px;
+        background: var(--rail);
+        color: var(--rail-ink);
+        font-family: var(--font-stack-mono);
+        font-size: 11px;
+        line-height: 1.55;
+      }
+
+      .tool-detail.error-detail {
+        border-color: color-mix(in srgb, var(--error) 42%, var(--border-default));
+        background: var(--error-field);
+        color: var(--error);
+      }
+
+      .terminal-line {
+        display: block;
+        padding: 3px 9px;
+        white-space: pre;
+      }
+
+      .terminal-line + .terminal-line {
+        border-top: 1px solid color-mix(in srgb, var(--rail-muted) 20%, transparent);
+      }
+
+      .delegation-card,
+      .recovery-card,
+      .compaction-card {
+        margin: 2px 6px;
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        background: var(--bg-elevated);
+      }
+
+      .delegation-card {
+        border-color: color-mix(in srgb, var(--brand) 34%, var(--border-default));
+      }
+
+      .delegation-header {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 48px;
+        padding: 8px 10px;
+      }
+
+      .delegation-kicker,
+      .recovery-kicker {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--brand);
+        font-family: var(--font-stack-mono);
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .delegation-copy {
+        min-width: 0;
+      }
+
+      .delegation-copy strong,
+      .delegation-copy span {
+        display: block;
+      }
+
+      .delegation-copy strong {
+        overflow: hidden;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .delegation-copy span {
+        margin-top: 2px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+      }
+
+      .delegation-action {
+        color: var(--brand);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+
+      .recovery-card,
+      .compaction-card {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        padding: 8px 10px;
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+
+      .recovery-kicker {
+        color: var(--success);
+      }
+
+      .compaction-card strong {
+        font-size: 11px;
+      }
+
+      .recovery-card time,
+      .compaction-card time {
+        color: var(--text-tertiary);
+        font-size: 9px;
+      }
+
+      .agent-response {
+        max-width: 72ch;
+        padding: 1px 6px 0 20px;
+        color: var(--text-primary);
+        font-size: 15px;
+        line-height: 1.68;
+      }
+
+      .agent-response strong {
+        font-weight: 600;
+      }
+
+      .composer-dock {
+        flex: 0 0 auto;
+        max-height: min(360px, 49dvh);
+        padding: 10px 24px 11px;
+        overflow: auto;
+        border-top: 1px solid var(--border-default);
+        background: var(--bg-surface);
+        scrollbar-color: var(--border-default) transparent;
+      }
+
+      .dock-inner {
+        display: grid;
+        gap: 8px;
+        width: min(100%, 820px);
+        margin: 0 auto;
+      }
+
+      .hitl-shell {
+        overflow: hidden;
+        border: 1px solid var(--border-default);
+        border-left: 3px solid var(--warning);
+        border-radius: 6px;
+        background: var(--bg-elevated);
+      }
+
+      .hitl-state-tabs {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        min-height: 34px;
+        padding: 3px 6px;
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--attention-field);
+      }
+
+      .hitl-state-tabs span {
+        margin-right: auto;
+        color: var(--warning);
+        font-size: 10px;
+        font-weight: 650;
+        text-transform: uppercase;
+      }
+
+      .hitl-state-tabs button {
+        min-height: 27px;
+        padding: 0 9px;
+        border-radius: 4px;
+        color: var(--text-secondary);
+        font-size: 10px;
+        font-weight: 600;
+      }
+
+      .hitl-state-tabs button[aria-selected="true"] {
+        background: var(--bg-active);
+        color: var(--text-primary);
+      }
+
+      .hitl-panel {
+        padding: 10px 12px 9px;
+      }
+
+      .hitl-panel[hidden] {
+        display: none;
+      }
+
+      .hitl-title-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .hitl-title-row h2 {
+        font-size: 13px;
+        line-height: 1.35;
+      }
+
+      .hitl-title-row span {
+        flex: 0 0 auto;
+        color: var(--text-tertiary);
+        font-size: 9px;
+      }
+
+      .hitl-summary {
+        margin-top: 4px;
+        color: var(--text-secondary);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .hitl-details {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 28px;
+        margin-top: 4px;
+        padding: 0 3px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+      }
+
+      .hitl-detail-body {
+        margin: 1px 0 7px;
+        padding: 7px 9px;
+        overflow: auto;
+        border: 1px solid var(--border-subtle);
+        border-radius: 4px;
+        background: var(--bg-muted);
+        color: var(--text-secondary);
+        font-family: var(--font-stack-mono);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+
+      .hitl-options {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        margin-top: 9px;
+      }
+
+      .hitl-option {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 42px;
+        padding: 7px 9px;
+        border: 1px solid var(--border-default);
+        border-radius: 5px;
+        background: var(--bg-muted);
+        color: var(--text-secondary);
+        font-size: 11px;
+        text-align: left;
+      }
+
+      .hitl-option.selected {
+        border-color: var(--brand);
+        background: var(--selection-field);
+        color: var(--text-primary);
+      }
+
+      .option-mark {
+        width: 12px;
+        height: 12px;
+        flex: 0 0 auto;
+        border: 1px solid var(--text-tertiary);
+        border-radius: 50%;
+      }
+
+      .hitl-option.selected .option-mark {
+        border: 3px solid var(--brand);
+      }
+
+      .hitl-actions {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: 8px;
+      }
+
+      .hitl-actions .spacer {
+        flex: 1;
+      }
+
+      .hitl-action {
+        min-height: 30px;
+        padding: 0 9px;
+        border: 1px solid var(--border-default);
+        border-radius: 4px;
+        background: var(--bg-muted);
+        color: var(--text-secondary);
+        font-size: 10px;
+        font-weight: 600;
+      }
+
+      .hitl-action.primary {
+        border-color: var(--brand);
+        background: var(--brand);
+        color: var(--brand-ink);
+      }
+
+      .hitl-action.danger {
+        color: var(--error);
+      }
+
+      .hitl-index {
+        color: var(--text-tertiary);
+        font-family: var(--font-stack-mono);
+        font-size: 9px;
+      }
+
+      .queue-list {
+        overflow: hidden;
+        border: 1px solid var(--border-default);
+        border-radius: 5px;
+        background: var(--bg-muted);
+      }
+
+      .queue-row {
+        display: grid;
+        grid-template-columns: 58px minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 36px;
+        padding: 5px 8px;
+        color: var(--text-secondary);
+        font-size: 10px;
+      }
+
+      .queue-row + .queue-row {
+        border-top: 1px solid var(--border-subtle);
+      }
+
+      .queue-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--text-tertiary);
+        font-weight: 650;
+      }
+
+      .queue-status.steering {
+        color: var(--signal-foreground);
+      }
+
+      .queue-copy {
+        overflow: hidden;
+        color: var(--text-primary);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .queue-model {
+        color: var(--text-tertiary);
+        font-family: var(--font-stack-mono);
+        font-size: 9px;
+        white-space: nowrap;
+      }
+
+      .queue-actions {
+        display: flex;
+        gap: 2px;
+      }
+
+      .queue-actions button {
+        min-height: 26px;
+        padding: 0 5px;
+        border-radius: 3px;
+        color: var(--text-tertiary);
+        font-size: 9px;
+      }
+
+      .queue-actions button:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .composer {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 48px;
+        padding: 6px 8px;
+        border: 1px solid var(--border-default);
+        border-radius: 9px;
+        background: var(--bg-muted);
+      }
+
+      .composer-placeholder {
+        overflow: hidden;
+        color: var(--text-tertiary);
+        font-size: 13px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .composer-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--warning);
+        font-size: 9px;
+        white-space: nowrap;
+      }
+
+      .composer-model {
+        color: var(--text-tertiary);
+        font-size: 9px;
+        white-space: nowrap;
+      }
+
+      .stop-button {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        border: 1px solid color-mix(in srgb, var(--error) 38%, var(--border-default));
+        border-radius: 5px;
+        color: var(--error);
+        font-size: 12px;
+      }
+
+      .inspector-resize {
+        right: auto;
+        left: -4px;
+      }
+
+      .inspector-shell {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+
+      .inspector-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        min-height: 63px;
+        padding: 16px 16px 10px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .inspector-header strong,
+      .inspector-header span {
+        display: block;
+      }
+
+      .inspector-header strong {
+        font-size: 14px;
+      }
+
+      .inspector-header span {
+        margin-top: 3px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+        text-transform: capitalize;
+      }
+
+      .inspector-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        flex: 0 0 44px;
+        border-bottom: 1px solid var(--border-default);
+      }
+
+      .inspector-tabs button {
+        position: relative;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .inspector-tabs button[aria-selected="true"] {
+        color: var(--text-primary);
+      }
+
+      .inspector-tabs button[aria-selected="true"]::after {
+        position: absolute;
+        right: 7px;
+        bottom: -1px;
+        left: 7px;
+        height: 2px;
+        background: var(--brand);
+        content: "";
+      }
+
+      .inspector-panel {
+        min-height: 0;
+        overflow: auto;
+        padding: 14px 12px;
+      }
+
+      .agent-tree {
+        display: grid;
+        gap: 5px;
+      }
+
+      .agent-node {
+        position: relative;
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        min-height: 49px;
+        padding: 7px 8px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 5px;
+        background: var(--bg-muted);
+      }
+
+      .agent-node.child {
+        margin-left: 18px;
+      }
+
+      .agent-node.child::before {
+        position: absolute;
+        top: -6px;
+        left: -11px;
+        width: 10px;
+        height: 31px;
+        border-bottom: 1px solid var(--border-default);
+        border-left: 1px solid var(--border-default);
+        content: "";
+      }
+
+      .agent-node.active {
+        border-color: color-mix(in srgb, var(--brand) 30%, var(--border-default));
+        background: var(--brand-field);
+      }
+
+      .agent-mark {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 4px;
+        background: var(--brand);
+        color: var(--brand-ink);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .agent-node:not(.active) .agent-mark {
+        background: var(--bg-active);
+        color: var(--text-secondary);
+      }
+
+      .agent-copy {
+        min-width: 0;
+      }
+
+      .agent-line {
+        display: flex;
+        gap: 6px;
+        align-items: baseline;
+      }
+
+      .agent-line strong {
+        font-size: 11px;
+      }
+
+      .agent-line span {
+        color: var(--text-tertiary);
+        font-family: var(--font-stack-mono);
+        font-size: 9px;
+      }
+
+      .agent-copy > span:last-child {
+        display: block;
+        margin-top: 2px;
+        overflow: hidden;
+        color: var(--text-secondary);
+        font-size: 9px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .agent-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--text-tertiary);
+        font-size: 9px;
+        white-space: nowrap;
+      }
+
+      .agent-state.needs-you {
+        color: var(--warning);
+      }
+
+      .agent-state.running {
+        color: var(--signal-foreground);
+      }
+
+      .agent-state.completed {
+        color: var(--success);
+      }
+
+      .agent-state.stopped {
+        color: var(--error);
+      }
+
+      .inspector-list,
+      .context-list {
+        display: grid;
+        gap: 5px;
+      }
+
+      .change-row,
+      .context-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 38px;
+        padding: 6px 8px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 4px;
+        background: var(--bg-muted);
+        font-size: 10px;
+      }
+
+      .change-kind {
+        color: var(--warning);
+        font-family: var(--font-stack-mono);
+        font-weight: 700;
+      }
+
+      .change-path,
+      .context-row strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .context-row {
+        grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
+      }
+
+      .context-row span:first-child {
+        color: var(--text-tertiary);
+      }
+
+      @media (max-width: 760px) {
+        .session-header {
+          grid-template-columns: 30px minmax(0, 1fr) auto;
+          padding: 9px 12px;
+        }
+
+        .session-title-line h1 {
+          font-size: 17px;
+        }
+
+        .session-path,
+        .session-meta-separator,
+        .todo-progress {
+          display: none;
+        }
+
+        .conversation-inner {
+          padding: 16px 12px 24px;
+        }
+
+        .work-detail {
+          margin-left: 14px;
+          padding-left: 8px;
+        }
+
+        .tool-child,
+        .tool-row {
+          grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+        }
+
+        .tool-child .tool-status,
+        .tool-row .tool-status,
+        .tool-row > [data-icon] {
+          display: none;
+        }
+
+        .delegation-header {
+          grid-template-columns: minmax(0, 1fr) auto;
+        }
+
+        .delegation-kicker {
+          display: none;
+        }
+
+        .composer-dock {
+          max-height: 46dvh;
+          padding: 8px 10px 9px;
+        }
+
+        .hitl-options {
+          grid-template-columns: 1fr;
+        }
+
+        .hitl-option {
+          min-height: 38px;
+        }
+
+        .hitl-actions {
+          flex-wrap: wrap;
+        }
+
+        .hitl-actions .spacer {
+          display: none;
+        }
+
+        .queue-row {
+          grid-template-columns: 54px minmax(0, 1fr) auto;
+        }
+
+        .queue-model {
+          display: none;
+        }
+
+        .queue-actions button:not(:first-child) {
+          display: none;
+        }
+
+        .composer {
+          grid-template-columns: auto minmax(0, 1fr) auto auto;
+        }
+
+        .composer-model {
+          display: none;
+        }
+      }
+
+      @media (pointer: coarse) {
+        .work-toggle,
+        .timeline-toggle,
+        .tool-row {
+          min-height: 44px;
+        }
+
+        .hitl-action,
+        .queue-actions button {
+          min-height: 36px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .work-toggle [data-icon],
+        .timeline-toggle [data-icon],
+        .tool-row [data-icon],
+        .hitl-details [data-icon] {
+          transition: none;
+        }
+      }
+    </style>
+    <script src="./app.js?v=implementation-sync-3" defer></script>
+  </head>
+  <body class="session-page">
+    <a class="skip-link" href="#work-canvas">跳到工作区</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
-        <button class="brand-mark" aria-label="ArchCode home" data-action="打开首页">A</button>
-        <div class="rail-projects">
-          <button class="rail-project active" aria-label="ArchCode project" data-action="切换到 ArchCode">AC</button>
-          <button class="rail-project" aria-label="Perler project" data-action="切换到 Perler">BP</button>
-          <button class="rail-project" aria-label="OpenMontage project" data-action="切换到 OpenMontage">OM</button>
-        </div>
+        <button class="brand-mark" aria-label="Open dashboard" data-action="打开全局 Dashboard"><span>A</span></button>
+        <button class="rail-project active" aria-label="Open archcode">ar</button>
+        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
+        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
         <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
         <div class="rail-spacer"></div>
-        <button class="rail-icon" aria-label="Requests needing attention" data-action="打开待处理请求" data-icon="bell">
-          <span class="rail-attention-count">1</span>
-        </button>
+        <div class="rail-separator"></div>
+        <button class="rail-icon" aria-label="Open requests needing attention" data-action="打开待处理请求" data-icon="bell"></button>
         <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
-        <button
-          class="rail-icon"
-          aria-label="Switch to dark theme"
-          title="Switch to dark theme"
-          data-theme-toggle
-          data-icon="moon"
-        ></button>
+        <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
       </nav>
 
-      <aside class="thread-sidebar" id="thread-sidebar">
-        <div
-          class="layout-resize-handle sidebar-resize"
-          role="separator"
-          aria-label="Resize project navigation"
-          aria-orientation="vertical"
-          aria-valuemin="210"
-          aria-valuemax="340"
-          aria-valuenow="248"
-          tabindex="0"
-          data-resize-sidebar
-        ></div>
-        <header class="sidebar-head">
-          <div class="project-title">
-            <strong>ArchCode</strong>
-            <span>/Users/bo/Developer/AI/archcode</span>
-          </div>
-          <div class="sidebar-head-actions">
-            <button class="icon-button" aria-label="Project actions" data-action="打开项目操作">•••</button>
-            <button class="icon-button desktop-sidebar-action" aria-label="Collapse project sidebar" data-collapse-sidebar data-icon="collapse"></button>
-            <button class="icon-button" aria-label="Enter focus mode" aria-pressed="false" data-focus-mode data-icon="focus"></button>
-            <button class="icon-button mobile-close" aria-label="Close sidebar" data-close-sidebar data-icon="close"></button>
-          </div>
-        </header>
+      <aside class="project-sidebar" aria-label="Project navigation">
+        <div class="project-sidebar-inner">
+          <header class="sidebar-header">
+            <div class="project-copy">
+              <strong>archcode</strong>
+              <span>/Users/bo/Developer/AI/archcode</span>
+            </div>
+            <button class="icon-button" aria-label="Project actions" data-action="打开项目操作" data-icon="more"></button>
+            <button class="icon-button mobile-close" aria-label="Close project navigation" data-close-overlay data-icon="close"></button>
+          </header>
 
-        <div class="project-links">
-          <button data-canvas-target="dashboard"><span data-icon="dashboard"></span>Project Dashboard<span data-icon="chevron-right"></span></button>
-          <button data-canvas-target="todos"><span data-icon="todo"></span>Todos<span data-icon="chevron-right"></span></button>
+          <nav class="sidebar-nav" aria-label="Project pages">
+            <a href="./dashboard.html">
+              <span data-icon="dashboard"></span><span>Project Dashboard</span><span data-icon="chevron"></span>
+            </a>
+            <a href="./todos.html">
+              <span data-icon="todo"></span><span>Todos</span><span class="nav-count">5</span>
+            </a>
+          </nav>
+
+          <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
+            <button role="tab" aria-selected="true" data-sidebar-tab="sessions">Sessions</button>
+            <button role="tab" aria-selected="false" data-sidebar-tab="automations">Automations</button>
+          </div>
+
+          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="sessions">
+            <div class="sidebar-toolbar">
+              <label class="search-field">
+                <span data-icon="search"></span><span class="sr-only">Search sessions</span>
+                <input type="search" placeholder="Search sessions..." />
+              </label>
+              <button class="new-session" data-action="创建 Session">＋ New session</button>
+            </div>
+            <div class="session-group">
+              <div class="session-group-label"><span>Needs you</span><span>1</span></div>
+              <a class="session-item active" href="./session.html" aria-current="page">
+                <span class="session-state"></span><span class="session-title">Session execution state audit</span><time class="session-time">now</time><span></span>
+              </a>
+            </div>
+            <div class="session-group">
+              <div class="session-group-label"><span>Running</span><span>1</span></div>
+              <button class="session-item" data-action="打开 Provider stream recovery">
+                <span class="session-state running"></span><span class="session-title">Provider stream recovery</span><time class="session-time">2m</time><span></span>
+              </button>
+            </div>
+            <div class="session-group">
+              <div class="session-group-label"><span>Recent</span><span>1</span></div>
+              <button class="session-item" data-action="打开 Model runtime snapshots">
+                <span class="session-state completed"></span><span class="session-title">Model runtime snapshots</span><time class="session-time">1h</time><span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="automations" hidden>
+            <div class="sidebar-toolbar">
+              <label class="search-field">
+                <span data-icon="search"></span><span class="sr-only">Search automations</span>
+                <input type="search" placeholder="Search automations..." />
+              </label>
+              <button class="new-session" data-action="创建 Automation">＋ New</button>
+            </div>
+            <div class="session-group">
+              <div class="session-group-label"><span>Automations</span><span>1</span></div>
+              <button class="session-item" data-action="打开每日项目状态检查">
+                <span class="session-state running"></span><span class="session-title">Daily project status check</span><time class="session-time">09:00</time><span></span>
+              </button>
+            </div>
+          </section>
         </div>
-
-        <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
-          <button role="tab" aria-selected="true" data-sidebar-tab="sessions">Sessions</button>
-          <button role="tab" aria-selected="false" data-sidebar-tab="automations">Automations</button>
-        </div>
-
-        <div class="sidebar-panel active" role="tabpanel" data-sidebar-panel="sessions">
-          <div class="sidebar-toolbar">
-            <label class="search-field">
-              <span class="sr-only">Search sessions</span>
-              <span data-icon="search"></span>
-              <input type="search" placeholder="Search sessions…" />
-            </label>
-            <button class="compact-create" data-action="创建 Session"><span data-icon="plus"></span>New session</button>
-          </div>
-
-          <div class="sidebar-section">
-            <div class="section-label"><span>Needs you</span><span>2</span></div>
-            <button
-              class="thread attention"
-              data-thread="output"
-              aria-label="Tool output boundary, permission required"
-              title="Permission required"
-            >
-              <span class="thread-state permission" data-icon="review" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Tool output boundary</strong></span>
-              <span class="thread-tail">
-                <span class="thread-attention-tag">Permission</span>
-              </span>
-            </button>
-            <button
-              class="thread attention"
-              data-thread="hitl"
-              aria-label="HITL queue cleanup, answer required"
-              title="Answer required"
-            >
-              <span class="thread-state question" data-icon="question" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>HITL queue cleanup</strong></span>
-              <span class="thread-tail">
-                <span class="thread-attention-tag">Question</span>
-              </span>
-            </button>
-          </div>
-
-          <div class="sidebar-section">
-            <div class="section-label"><span>Running</span><span>2</span></div>
-            <button
-              class="thread active"
-              data-thread="runtime"
-              aria-current="page"
-              aria-label="Runtime authority migration, running now, active goal"
-              title="Running now · Active goal"
-            >
-              <span class="thread-state live" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Runtime authority migration</strong></span>
-              <span class="thread-tail">
-                <span class="thread-goal" data-icon="target" aria-hidden="true" title="Active goal"></span>
-                <time class="thread-time">now</time>
-              </span>
-            </button>
-            <button
-              class="thread"
-              data-thread="provider"
-              aria-label="Provider stream recovery, running for 6 minutes"
-              title="Running · 6 minutes"
-            >
-              <span class="thread-state live" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Provider stream recovery</strong></span>
-              <span class="thread-tail"><time class="thread-time">6m</time></span>
-            </button>
-          </div>
-
-          <div class="sidebar-section history">
-            <div class="section-label"><span>Recent</span><span></span></div>
-            <button
-              class="thread"
-              data-thread="model"
-              aria-label="Model runtime snapshots, completed Tuesday"
-              title="Completed Tuesday"
-            >
-              <span class="thread-state done" data-icon="check" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Model runtime snapshots</strong></span>
-              <span class="thread-tail"><time class="thread-time">Tue</time></span>
-            </button>
-          </div>
-        </div>
-
-        <div class="sidebar-panel" role="tabpanel" data-sidebar-panel="automations" hidden>
-          <div class="project-links automation-link">
-            <button data-action="打开 Automations Dashboard"><span data-icon="automation"></span>Automations<span data-icon="chevron-right"></span></button>
-          </div>
-          <div class="sidebar-toolbar">
-            <label class="search-field">
-              <span class="sr-only">Search automations</span>
-              <span data-icon="search"></span>
-              <input type="search" placeholder="Search automations…" />
-            </label>
-            <button class="compact-create" data-action="创建 Automation"><span data-icon="plus"></span>New automation</button>
-          </div>
-          <div class="sidebar-section">
-            <div class="section-label"><span>Automations</span><span>2</span></div>
-            <button
-              class="thread"
-              data-action="打开 Nightly regression review"
-              aria-label="Nightly regression review, next run at 02:00"
-              title="Next run · 02:00"
-            >
-              <span class="thread-state automation" data-icon="automation" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Nightly regression review</strong></span>
-              <span class="thread-tail"><time class="thread-time">02:00</time></span>
-            </button>
-            <button
-              class="thread"
-              data-action="打开 Dependency watch"
-              aria-label="Dependency watch, next run in 24 hours"
-              title="Next run · 24 hours"
-            >
-              <span class="thread-state automation" data-icon="automation" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Dependency watch</strong></span>
-              <span class="thread-tail"><time class="thread-time">24h</time></span>
-            </button>
-          </div>
-        </div>
+        <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuemin="210" aria-valuemax="340" aria-valuenow="264" data-resize-sidebar></div>
       </aside>
 
-      <main class="work-canvas" id="work-canvas" tabindex="-1">
-        <section class="canvas-view session-view active" data-canvas-view="session">
-          <header class="work-header">
-            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
-            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
-            <div class="work-title">
-              <div class="work-title-line">
-                <strong>Runtime authority migration</strong>
-                <span class="session-status running"><span class="session-status-dot"></span>Running</span>
+      <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
+        <div class="session-canvas">
+          <header class="session-header">
+            <button class="canvas-sidebar-toggle" aria-label="Collapse project sidebar" aria-expanded="true" data-open-sidebar data-icon="panel"></button>
+            <div class="session-heading">
+              <div class="session-title-line">
+                <h1>Session execution state audit</h1><span class="status-badge">Needs you</span>
               </div>
-              <div class="work-title-meta">
-                <span class="header-cwd" title="/Users/bo/Developer/AI/archcode">/Users/bo/Developer/AI/archcode</span>
-                <span class="header-separator" aria-hidden="true">·</span>
-                <span class="header-usage">12 tools · 42,806 tokens</span>
-                <span class="header-separator" aria-hidden="true">·</span>
-                <span class="header-source" title="Todo · Runtime authority migration">Todo · Runtime authority migration</span>
+              <div class="session-meta">
+                <span class="session-path">/Users/bo/Developer/AI/archcode</span>
+                <span class="session-meta-separator">·</span>
+                <span class="session-usage">12 tools · 48,206 tokens</span>
+                <span class="session-meta-separator">·</span>
+                <span>Todo: Verify Session UI</span>
               </div>
             </div>
-            <div class="work-actions">
-              <button class="secondary-button todo-button" data-action="打开 Session Todo">
-                <span data-icon="todo"></span>
-                Todo
-                <span class="button-count">3/5</span>
-              </button>
-              <button class="secondary-button inspector-trigger" aria-label="Collapse context inspector" data-open-inspector aria-expanded="true" aria-controls="changes-inspector">
-                <span data-icon="panel"></span>
-              </button>
-            </div>
+            <button class="todo-progress" data-action="打开 Todo 进度"><strong>3/5</strong><span>Todos</span></button>
+            <button class="icon-button" aria-label="Open context inspector" aria-expanded="true" data-open-inspector data-icon="panel"></button>
           </header>
 
-          <div class="conversation">
-            <section class="user-turn" aria-label="User message">
-              <div class="message user-message">
-                <p>Move all project-owned runtime state under <code>.archcode/runtime</code>. Make it a hard cut, and keep plans and skills directly editable.</p>
-              </div>
-              <time class="message-time">14 minutes ago</time>
-            </section>
-
-            <section class="agent-response" aria-label="ArchCode response">
-              <section class="work-disclosure completed" aria-label="Execution 1 work">
-                <button
-                  class="work-summary"
-                  type="button"
-                  aria-label="Execution 1, completed, worked for 12 minutes 18 seconds"
-                  aria-expanded="false"
-                  aria-controls="completed-work-body"
-                  data-work-toggle
-                >
-                  <span class="work-summary-primary">
-                    <span class="work-chevron" data-icon="chevron-right"></span>
-                    <span class="work-summary-copy">
-                      <strong>Worked for 12m 18s</strong>
-                    </span>
-                  </span>
-                </button>
-                <div class="work-body" id="completed-work-body" data-work-body hidden>
-                  <p class="work-commentary">I mapped every runtime reader and writer before changing the boundary. The migration touches Sessions, HITL, approvals, Todos, Automations, and memory.</p>
-                  <ol class="execution-list">
-                    <li class="tool-run-event complete">
-                      <div class="tool-run-card">
-                        <button
-                          class="tool-run-toggle"
-                          type="button"
-                          aria-expanded="false"
-                          aria-controls="completed-tool-run-list"
-                          aria-label="4 tool calls, file_read, grep, glob, lsp_diagnostics, Completed"
-                          data-tool-run-toggle
-                        >
-                          <span class="tool-run-chevron" data-icon="chevron-right"></span>
-                          <span class="tool-run-names" title="file_read, grep, glob, lsp_diagnostics">
-                            file_read, grep, glob, lsp_diagnostics
-                          </span>
-                        </button>
-                        <div class="tool-run-list" id="completed-tool-run-list" data-tool-run-list hidden>
-                          <div class="tool-child">
-                            <div
-                              class="tool-child-row"
-                              title="packages/agent-core/src/projects/registry.ts"
-                              aria-label="file_read, packages/agent-core/src/projects/registry.ts"
-                            >
-                              <code>file_read</code>
-                              <span class="tool-child-target">registry.ts</span>
-                            </div>
-                          </div>
-                          <div class="tool-child">
-                            <div
-                              class="tool-child-row"
-                              title="Search for .archcode/runtime in packages/agent-core/src"
-                              aria-label="grep, .archcode/runtime"
-                            >
-                              <code>grep</code>
-                              <span class="tool-child-target">“.archcode/runtime”</span>
-                            </div>
-                          </div>
-                          <div class="tool-child">
-                            <div
-                              class="tool-child-row"
-                              title="Find **/*runtime* under packages/agent-core"
-                              aria-label="glob, **/*runtime*"
-                            >
-                              <code>glob</code>
-                              <span class="tool-child-target">**/*runtime*</span>
-                            </div>
-                          </div>
-                          <div class="tool-child">
-                            <div
-                              class="tool-child-row"
-                              title="packages/agent-core/src/runtime.ts"
-                              aria-label="lsp_diagnostics, packages/agent-core/src/runtime.ts"
-                            >
-                              <code>lsp_diagnostics</code>
-                              <span class="tool-child-target">runtime.ts</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </li>
-                    <li class="reasoning-block">
-                      <button
-                        class="reasoning-toggle"
-                        type="button"
-                        aria-expanded="false"
-                        aria-controls="completed-reasoning-body"
-                        data-reasoning-toggle
-                      >
-                        <span class="reasoning-chevron" data-icon="chevron-right"></span>
-                        <span data-icon="sparkles"></span>
-                        <span>Reasoning</span>
+          <section class="conversation" aria-label="Session conversation">
+            <div class="conversation-inner">
+              <article class="message">
+                <div class="user-message">
+                  <p class="user-bubble">Audit the Session execution UI. Verify tools, delegation, recovery, HITL, and queued follow-up behavior.</p>
+                  <time class="message-time">4m ago</time>
+                </div>
+                <div class="work">
+                  <button
+                    class="work-toggle"
+                    aria-expanded="false"
+                    aria-controls="completed-work"
+                    aria-label="Completed Work segment, worked for 2 minutes 14 seconds"
+                    data-work-toggle
+                  >
+                    <span data-icon="chevron"></span><strong>Worked for 2m 14s</strong>
+                  </button>
+                  <div class="work-detail" id="completed-work" hidden>
+                    <p class="commentary">Compared the persisted Session events with the store projection and the visible Workstream hierarchy.</p>
+                    <div class="timeline-module">
+                      <button class="timeline-toggle" aria-expanded="false" aria-controls="completed-reasoning" data-disclosure>
+                        <span data-icon="chevron"></span><strong>Reasoning</strong><span class="timeline-summary">1,842 tokens</span>
                       </button>
-                      <p class="reasoning-body" id="completed-reasoning-body" hidden>
-                        I checked the registry and every runtime-path reference before changing the protected boundary.
-                      </p>
-                    </li>
-                    <li class="work-commentary-event">
-                      <p>I finished mapping the readers. Next I am applying the protected-path change.</p>
-                    </li>
-                    <li class="tool-call-event complete">
-                      <div class="tool-call-card">
-                        <button class="tool-call-toggle" type="button" aria-expanded="false" aria-controls="tool-call-file-edit-detail" data-tool-call-toggle>
-                          <span class="tool-call-chevron" data-icon="chevron-right"></span>
-                          <code>file_edit</code>
-                          <span class="tool-call-summary">workspace-guard.ts</span>
-                          <span class="tool-call-diff">1 file · +24 −10</span>
-                        </button>
-                        <div class="tool-call-detail" id="tool-call-file-edit-detail" data-tool-call-detail hidden>
-                          <div class="tool-diff-preview">
-                            <header><span data-icon="changes"></span><strong>workspace-guard.ts</strong><span>+24 −10</span></header>
-                            <pre><span class="diff-remove">− const protectedRoot = resolve(workspace, ".archcode");</span>
-<span class="diff-add">+ const protectedRoot = resolve(workspace, ".archcode/runtime");</span>
-<span class="diff-add">+ return isWithinPath(target, protectedRoot);</span></pre>
-                          </div>
-                        </div>
+                      <div class="timeline-body" id="completed-reasoning" hidden>
+                        The Execution boundary should preserve chronological order while keeping the final answer outside Work.
                       </div>
-                    </li>
-                    <li class="tool-call-event complete">
-                      <div class="tool-call-card shell-call">
-                        <button
-                          class="tool-call-toggle shell-toggle"
-                          type="button"
-                          aria-expanded="false"
-                          aria-controls="tool-call-bash-detail"
-                          aria-label="bash, bun run test --filter runtime-path-hygiene"
-                          data-tool-call-toggle
-                        >
-                          <span class="tool-call-chevron" data-icon="chevron-right"></span>
-                          <code>bash</code>
-                          <span class="tool-call-command"><span aria-hidden="true">$</span><code>bun run test --filter runtime-path-hygiene</code></span>
-                        </button>
-                        <div class="tool-call-detail terminal-detail" id="tool-call-bash-detail" data-tool-call-detail hidden>
-                          <pre><span>✓ runtime path authority</span>
-<span>✓ protected ancestor mutations</span>
-<span>✓ retired compatibility paths</span></pre>
-                          <div class="terminal-meta"><span>132 passed</span><span>exit 0 · 8.4s</span></div>
-                        </div>
+                    </div>
+                    <div class="timeline-module">
+                      <button class="timeline-toggle" aria-expanded="false" aria-controls="completed-tools" data-disclosure>
+                        <span data-icon="chevron"></span><strong>file_read, grep, lsp_diagnostics</strong>
+                      </button>
+                      <div class="timeline-body tool-run-list" id="completed-tools" hidden>
+                        <div class="tool-child"><span class="tool-name">file_read</span><span class="tool-target">ExecutionWorkstream.tsx</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">grep</span><span class="tool-target">“suspended” in apps/web/src</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">lsp_diagnostics</span><span class="tool-target">SessionComposerDock.tsx</span><span class="tool-status">Completed</span></div>
                       </div>
-                    </li>
-                    <li class="compact-step delegation">
-                      <span class="step-glyph delegation-glyph" data-icon="delegate"></span>
-                      <div><strong>Delegated to Build</strong><p>Verify mutation guards and runtime path hygiene independently.</p></div>
-                    </li>
-                    <li class="compact-step complete">
-                      <span class="step-glyph" data-icon="check"></span>
-                      <div><strong>Architecture verification</strong><p>Checked ancestor mutations, protected paths, and retired runtime locations.</p></div>
-                    </li>
-                  </ol>
+                    </div>
+                  </div>
                 </div>
-              </section>
+                <p class="agent-response"><strong>First pass complete.</strong> The Workstream projection is sound; the remaining risk is interaction coverage around suspended Executions and queued instructions.</p>
+              </article>
 
-              <div class="final-response">
-                <p>The runtime authority migration is complete.</p>
-                <ul>
-                  <li>System-owned project state now lives under <code>.archcode/runtime</code>.</li>
-                  <li>Plans and Skills remain directly editable outside the protected subtree.</li>
-                  <li>Legacy reads and compatibility aliases were removed; the focused verification suite passes.</li>
-                </ul>
-              </div>
-              <div class="response-meta">Lead · principal · just now</div>
-            </section>
+              <article class="message">
+                <div class="user-message">
+                  <p class="user-bubble">Run the focused interaction checks and stop before any broad workspace mutation.</p>
+                  <time class="message-time">1m ago</time>
+                </div>
+                <div class="work">
+                  <button
+                    class="work-toggle"
+                    aria-expanded="true"
+                    aria-controls="current-work"
+                    aria-label="Work segment needs user input, worked for 38 seconds, waiting for permission"
+                    data-work-toggle
+                  >
+                    <span data-icon="chevron"></span><strong class="needs-you">Needs you · Worked for 38s</strong>
+                  </button>
+                  <div class="work-detail" id="current-work">
+                    <p class="commentary">I found the focused test path. Before running the command, I’m checking the exact scope and preserving the current Session state.</p>
 
-            <section class="user-turn follow-up-message" aria-label="User message">
-              <div class="message user-message">
-                <p>Do one final independent review and make sure the Web UI explains the new boundary clearly.</p>
-              </div>
-              <time class="message-time">just now</time>
-            </section>
+                    <div class="timeline-module">
+                      <button class="timeline-toggle" aria-expanded="true" aria-controls="current-reasoning" data-disclosure>
+                        <span data-icon="chevron"></span><strong>Reasoning</strong><span class="timeline-summary">Choosing the narrowest verification lane</span>
+                      </button>
+                      <div class="timeline-body" id="current-reasoning">
+                        The requested check only needs the Web interaction suite. A full monorepo run would add time and unrelated Agent Core process lifecycles.
+                      </div>
+                    </div>
 
-            <section class="agent-response active-turn" aria-label="ArchCode response in progress">
-              <section class="work-disclosure running" aria-label="Execution 2 work">
-                <button
-                  class="work-summary"
-                  type="button"
-                  aria-label="Execution 2, running, working for 2 minutes 14 seconds, Analyst review"
-                  aria-expanded="true"
-                  aria-controls="running-work-body"
-                  data-work-toggle
-                >
-                  <span class="work-summary-primary">
-                    <span class="work-chevron" data-icon="chevron-right"></span>
-                    <span class="live-pulse"></span>
-                    <span class="work-summary-copy">
-                      <strong>Working · <span class="elapsed">02:14</span></strong>
-                    </span>
-                    <span class="work-summary-current">Analyst review</span>
-                  </span>
-                </button>
-                <div class="work-body" id="running-work-body" data-work-body>
-                  <p class="work-commentary">The implementation is already verified. I’m checking the user-facing explanation and asking an Analyst to challenge the final wording.</p>
-                  <div class="active-tool-line" aria-label="delegate Analyst, in progress">
-                    <span class="active-tool-indicator" aria-hidden="true"></span>
-                    <code>delegate</code>
-                    <span>Analyst · Review the boundary explanation</span>
+                    <div class="timeline-module">
+                      <button class="timeline-toggle" aria-expanded="true" aria-controls="current-tools" data-disclosure>
+                        <span data-icon="chevron"></span><strong>file_read, grep, lsp_diagnostics</strong>
+                      </button>
+                      <div class="timeline-body tool-run-list" id="current-tools">
+                        <div class="tool-child"><span class="tool-name">file_read</span><span class="tool-target">HitlCard.tsx</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">grep</span><span class="tool-target">“Queue another instruction”</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">lsp_diagnostics</span><span class="tool-target">ExecutionWorkstream.tsx</span><span class="tool-status">Completed</span></div>
+                      </div>
+                    </div>
+
+                    <div class="timeline-module">
+                      <button class="tool-row" aria-expanded="false" aria-controls="edit-detail" data-disclosure>
+                        <span data-icon="chevron"></span><span class="tool-name">file_edit</span><span class="tool-target">SessionComposerDock.test.tsx</span>
+                        <span class="diffstat">1 file · <span class="plus">+18</span> <span class="minus">−6</span></span>
+                      </button>
+                      <div class="tool-detail" id="edit-detail" hidden>
+                        <span class="terminal-line">+ preserves queued instructions while HITL is active</span>
+                        <span class="terminal-line">+ exposes Ask User and Permission response paths</span>
+                      </div>
+                    </div>
+
+                    <article class="delegation-card">
+                      <div class="delegation-header">
+                        <span class="delegation-kicker">↳ delegate</span>
+                        <span class="delegation-copy"><strong>Verify Session HITL semantics</strong><span>Analyst · deep · Completed · 31s</span></span>
+                        <button class="delegation-action" data-action="打开子 Session">Open child session</button>
+                      </div>
+                    </article>
+
+                    <div class="timeline-module">
+                      <button class="tool-row" aria-expanded="false" aria-controls="fetch-detail" data-disclosure>
+                        <span data-icon="chevron"></span><span class="tool-name">web_fetch</span><span class="tool-target">Provider stream reference</span>
+                        <span class="tool-status error">Error</span>
+                      </button>
+                      <div class="tool-detail error-detail" id="fetch-detail" hidden>
+                        <span class="terminal-line">HTTP 503 · upstream stream ended before the final event</span>
+                      </div>
+                    </div>
+
+                    <article class="recovery-card">
+                      <span class="recovery-kicker">✓ Recovered</span>
+                      <span>Provider stream resumed on attempt 2 · stream_eof</span>
+                      <time>42s ago</time>
+                    </article>
+
+                    <article class="compaction-card">
+                      <strong>Hard context compaction</strong>
+                      <span>Preserved the current and last two rounds; tool artifacts remain recoverable.</span>
+                      <time>38s ago</time>
+                    </article>
+
+                    <div class="timeline-module">
+                      <button class="tool-row" aria-expanded="true" aria-controls="bash-detail" data-disclosure>
+                        <span data-icon="chevron"></span><span class="tool-name">bash</span><span class="tool-target">bun run --cwd apps/web test SessionComposerDock.test.tsx</span>
+                        <span class="tool-status running"><span class="live-dot"></span>Permission</span>
+                      </button>
+                      <div class="tool-detail" id="bash-detail">
+                        <span class="terminal-line">$ bun run --cwd apps/web test SessionComposerDock.test.tsx</span>
+                        <span class="terminal-line">Waiting for permission before starting the process…</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="composer-dock" aria-label="Session composer and pending requests">
+            <div class="dock-inner">
+              <section class="hitl-shell" aria-label="Request needing attention">
+                <div class="hitl-state-tabs" role="tablist" aria-label="Representative HITL states">
+                  <span>Needs attention</span>
+                  <button role="tab" aria-selected="true" data-hitl-tab="permission">Permission</button>
+                  <button role="tab" aria-selected="false" data-hitl-tab="question">Ask user</button>
+                </div>
+
+                <div class="hitl-panel" role="tabpanel" data-hitl-panel="permission">
+                  <div class="hitl-title-row">
+                    <h2>Run focused Web verification</h2><span>bash · 1/2</span>
+                  </div>
+                  <p class="hitl-summary">The Agent wants to run one scoped interaction-test command in apps/web.</p>
+                  <button class="hitl-details" aria-expanded="false" aria-controls="permission-detail" data-disclosure>
+                    <span data-icon="chevron"></span>Show operation details
+                  </button>
+                  <div class="hitl-detail-body" id="permission-detail" hidden>bun run --cwd apps/web test SessionComposerDock.test.tsx</div>
+                  <div class="hitl-actions">
+                    <span class="hitl-index">‹ 1 / 2 ›</span>
+                    <button class="hitl-action" data-action="添加权限说明">Add note</button>
+                    <button class="hitl-action danger" data-action="取消权限请求">Cancel request</button>
+                    <span class="spacer"></span>
+                    <button class="hitl-action danger" data-action="拒绝权限">Deny</button>
+                    <button class="hitl-action" data-action="始终允许此命令">Always allow</button>
+                    <button class="hitl-action primary" data-action="允许一次">Allow once</button>
+                  </div>
+                </div>
+
+                <div class="hitl-panel" role="tabpanel" data-hitl-panel="question" hidden>
+                  <div class="hitl-title-row">
+                    <h2>Which verification scope should run next?</h2><span>ask_user · 1/1</span>
+                  </div>
+                  <p class="hitl-summary">Choose one option. The response resumes the same logical Execution.</p>
+                  <div class="hitl-options" role="radiogroup" aria-label="Verification scope">
+                    <button class="hitl-option selected" role="radio" aria-checked="true" data-hitl-option><span class="option-mark"></span>Focused Web checks</button>
+                    <button class="hitl-option" role="radio" aria-checked="false" data-hitl-option><span class="option-mark"></span>Full monorepo suite</button>
+                    <button class="hitl-option" role="radio" aria-checked="false" data-hitl-option><span class="option-mark"></span>Review only</button>
+                  </div>
+                  <div class="hitl-actions">
+                    <button class="hitl-action danger" data-action="取消问题">Cancel request</button>
+                    <span class="spacer"></span>
+                    <button class="hitl-action primary" data-action="提交回答">Submit answer</button>
                   </div>
                 </div>
               </section>
-            </section>
-          </div>
 
-          <section class="session-composer-dock" aria-label="Session composer">
-            <div class="composer-rail">
-              <section class="composer-attention" aria-label="HITL permission request">
-                <div class="composer-status-mark attention-mark">!</div>
-                <div class="composer-status-copy">
-                  <span class="attention-type">Permission</span>
-                  <strong>Run documentation verification</strong>
-                  <dl>
-                    <div><dt>Tool</dt><dd>bash</dd></div>
-                    <div><dt>Command</dt><dd><code>bun run docs:verify</code></dd></div>
-                  </dl>
+              <section class="queue-list" aria-label="Queued instructions">
+                <div class="queue-row">
+                  <span class="queue-status">Queued</span>
+                  <span class="queue-copy">After verification, summarize the remaining risk.</span>
+                  <span class="queue-model">GPT-5.6 Luna · deep</span>
+                  <span class="queue-actions"><button data-action="立即引导此消息">Steer</button><button data-action="编辑队列消息">Edit</button><button data-action="删除队列消息">Delete</button></span>
                 </div>
-                <div class="attention-actions">
-                  <button class="attention-primary" type="button" data-action="允许本次执行">Allow once</button>
-                  <button type="button" data-action="拒绝权限">Deny</button>
-                  <button type="button" data-action="取消请求">Cancel</button>
+                <div class="queue-row">
+                  <span class="queue-status steering"><span class="state-dot"></span>Steering</span>
+                  <span class="queue-copy">Also check narrow-screen overflow.</span>
+                  <span class="queue-model">GPT-5.6 Luna · deep</span>
+                  <span class="queue-actions"><button data-action="编辑引导消息">Edit</button><button data-action="删除引导消息">Delete</button></span>
                 </div>
               </section>
 
-              <section class="composer-goal-row" aria-label="Session goal">
-                <span class="composer-status-mark goal-mark">G</span>
-                <span class="goal-label">Goal</span>
-                <strong>Active</strong>
-                <span class="goal-objective">Move runtime authority without compatibility paths</span>
-                <span class="goal-metrics">2 executions · 42,806 tokens · 14m</span>
-                <button type="button" data-action="打开 Goal 控制">Edit</button>
-              </section>
-
-              <section class="composer-queue" aria-label="Queued messages">
-                <span class="queue-count">Queued</span>
-                <p>After the tests, summarize the remaining migration risk.</p>
-                <span class="queue-model">GLM-5 · deep</span>
-                <button type="button" data-action="编辑队列消息">Edit</button>
-              </section>
-
-              <div class="composer-input-slot">
-                <form class="composer-card" id="composer">
-                <textarea id="follow-up" rows="1" placeholder="Queue a message while ArchCode is running…"></textarea>
-                <div class="composer-foot">
-                  <div class="composer-context">
-                    <button type="button" data-action="选择下一次模型">GLM-5 · deep <span data-icon="chevron"></span></button>
-                    <span class="composer-divider"></span>
-                    <span class="composer-runtime-status"><span class="attention-dot"></span>Waiting for input</span>
-                  </div>
-                  <div class="composer-actions">
-                    <span class="composer-hint">Enter to queue</span>
-                    <button class="stop-button" type="button" aria-label="Stop Session" data-action="停止 Session" data-icon="stop"></button>
-                    <button class="queue-button" type="submit" aria-label="Queue message" data-icon="arrow"></button>
-                  </div>
-                </div>
-                </form>
+              <div class="composer" aria-label="Queue another instruction">
+                <button class="icon-button" aria-label="Attach file" data-action="添加附件">＋</button>
+                <span class="composer-placeholder">Queue another instruction…</span>
+                <span class="composer-state"><span class="state-dot"></span>Needs attention</span>
+                <span class="composer-model">Lead · principal</span>
+                <button class="stop-button" aria-label="Stop execution" data-action="停止执行">■</button>
               </div>
             </div>
           </section>
-        </section>
-
-        <section class="canvas-view dashboard-view" data-canvas-view="dashboard" hidden>
-          <header class="work-header page-work-header">
-            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
-            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
-            <div class="work-title">
-              <strong>ArchCode</strong>
-              <span>Project Dashboard</span>
-            </div>
-          </header>
-
-          <div class="dashboard-scroll">
-            <div class="dashboard-content">
-              <section class="dashboard-intro">
-                <span class="page-mark" data-icon="dashboard"></span>
-                <div>
-                  <span class="page-overline">Project overview</span>
-                  <h1>Dashboard</h1>
-                  <p>What needs you, what is moving, and where to continue.</p>
-                </div>
-              </section>
-
-              <div class="dashboard-priority-grid">
-                <section class="dashboard-section attention-section">
-                  <header class="dashboard-section-head">
-                    <span class="status-orbit warning"></span>
-                    <h2>Needs attention</h2>
-                    <span class="section-count">1</span>
-                  </header>
-                  <button class="dashboard-row attention-row" data-action="打开 Coverage set">
-                    <span class="status-orbit warning"></span>
-                    <span class="dashboard-row-copy">
-                      <strong>Coverage set</strong>
-                      <small>Which UI states and viewports must the manual Visual QA checklist cover?</small>
-                    </span>
-                    <span class="dashboard-row-meta"><small>Discussion · 13h ago</small><span>Open</span></span>
-                  </button>
-                </section>
-
-                <section class="dashboard-section running-section">
-                  <header class="dashboard-section-head">
-                    <span class="status-orbit live"></span>
-                    <h2>Running now</h2>
-                    <span class="section-count live-count">1</span>
-                  </header>
-                  <button class="dashboard-row running-row" data-action="打开 Runtime authority migration">
-                    <span class="status-orbit live"></span>
-                    <span class="dashboard-row-copy">
-                      <strong>Runtime authority migration</strong>
-                      <small>Lead is validating runtime path hygiene after 12 file changes.</small>
-                    </span>
-                    <span class="dashboard-row-meta"><small class="live-word">RUNNING · 14:32</small><span>Open</span></span>
-                  </button>
-                </section>
-              </div>
-
-              <div class="dashboard-secondary-grid">
-                <section class="dashboard-section continue-section">
-                  <header class="dashboard-section-head">
-                    <span class="status-orbit brand"></span>
-                    <h2>Continue working</h2>
-                    <span class="section-count">3</span>
-                  </header>
-                  <div class="dashboard-list">
-                    <button class="dashboard-row" data-thread-jump="output">
-                      <span class="status-orbit quiet"></span>
-                      <span class="dashboard-row-copy"><strong>Tool output boundary</strong><small>Review active · waiting for a decision</small></span>
-                      <span class="dashboard-row-meta"><small>12m ago</small><span>Open</span></span>
-                    </button>
-                    <button class="dashboard-row" data-thread-jump="model">
-                      <span class="status-orbit quiet"></span>
-                      <span class="dashboard-row-copy"><strong>Model runtime snapshots</strong><small>Idle · last execution completed</small></span>
-                      <span class="dashboard-row-meta"><small>Tuesday</small><span>Open</span></span>
-                    </button>
-                    <button class="dashboard-row" data-thread-jump="hitl">
-                      <span class="status-orbit quiet"></span>
-                      <span class="dashboard-row-copy"><strong>HITL queue cleanup</strong><small>Idle · no pending requests</small></span>
-                      <span class="dashboard-row-meta"><small>Monday</small><span>Open</span></span>
-                    </button>
-                  </div>
-                </section>
-
-                <section class="dashboard-section upcoming-section">
-                  <header class="dashboard-section-head">
-                    <span class="status-orbit brand"></span>
-                    <h2>Upcoming</h2>
-                    <span class="section-count">1</span>
-                  </header>
-                  <button class="dashboard-row" data-action="打开 Nightly regression review">
-                    <span class="status-orbit quiet"></span>
-                    <span class="dashboard-row-copy"><strong>Nightly regression review</strong><small>Automation · active</small></span>
-                    <span class="dashboard-row-meta"><small>Tomorrow · 02:00</small><span>Open</span></span>
-                  </button>
-                  <p class="upcoming-note">Scheduled work stays quiet until it becomes actionable.</p>
-                </section>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="canvas-view todos-view" data-canvas-view="todos" hidden>
-          <header class="work-header page-work-header todos-work-header">
-            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
-            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
-            <div class="work-title">
-              <strong>Todos</strong>
-              <span>Capture intent, shape it with Lead, then connect it to execution.</span>
-            </div>
-            <div class="todo-view-tabs" role="group" aria-label="Todo views">
-              <button aria-pressed="true" data-todo-view="board">Board</button>
-              <button aria-pressed="false" data-todo-view="rejected">Rejected</button>
-              <button aria-pressed="false" data-todo-view="archived">Archived</button>
-            </div>
-          </header>
-
-          <div class="todos-scroll">
-            <div class="todos-content">
-              <form class="todo-capture" id="todo-capture">
-                <span data-icon="plus"></span>
-                <label class="sr-only" for="new-todo-title">New Todo title</label>
-                <input id="new-todo-title" type="text" placeholder="Capture a Todo…" />
-                <button class="primary-button" type="submit">New Todo</button>
-              </form>
-
-              <div class="todo-panel board-panel active" data-todo-panel="board">
-                <section class="todo-lane" aria-label="Ideas">
-                  <header class="todo-lane-head"><span class="status-orbit brand"></span><span><strong>Ideas</strong><small>Capture first, shape later</small></span><span>1</span></header>
-                  <div class="todo-lane-list">
-                    <button class="todo-card" data-todo-card="visual-qa">
-                      <span class="todo-card-state"><span class="status-orbit brand"></span>Idea</span>
-                      <strong>Visual QA for the workbench</strong>
-                      <small><span data-icon="review"></span>Discussion · waiting for you</small>
-                      <span class="todo-next">Continue Discussion</span>
-                    </button>
-                  </div>
-                </section>
-
-                <section class="todo-lane" aria-label="Ready">
-                  <header class="todo-lane-head"><span class="status-orbit quiet"></span><span><strong>Ready</strong><small>Clear enough to hand off</small></span><span>1</span></header>
-                  <div class="todo-lane-list">
-                    <button class="todo-card" data-todo-card="output-boundary">
-                      <span class="todo-card-state"><span class="status-orbit quiet"></span>Ready</span>
-                      <strong>Finalize tool output boundary</strong>
-                      <small>No linked work yet</small>
-                      <span class="todo-next">Start Session</span>
-                    </button>
-                  </div>
-                </section>
-
-                <section class="todo-lane" aria-label="In Progress">
-                  <header class="todo-lane-head"><span class="status-orbit live"></span><span><strong>In Progress</strong><small>Connected to active work</small></span><span>2</span></header>
-                  <div class="todo-lane-list">
-                    <button class="todo-card" data-todo-card="runtime">
-                      <span class="todo-card-state"><span class="status-orbit live"></span>In Progress</span>
-                      <strong>Move runtime authority</strong>
-                      <small><span data-icon="terminal"></span>Session · running · 14:32</small>
-                      <span class="todo-next">Open Session</span>
-                    </button>
-                    <button class="todo-card" data-todo-card="regression">
-                      <span class="todo-card-state"><span class="status-orbit quiet"></span>In Progress</span>
-                      <strong>Nightly regression review</strong>
-                      <small><span data-icon="automation"></span>Automation · active</small>
-                      <span class="todo-next">Open Automation</span>
-                    </button>
-                  </div>
-                </section>
-
-                <section class="todo-lane" aria-label="Done">
-                  <header class="todo-lane-head"><span class="status-orbit success"></span><span><strong>Done</strong><small>Explicitly completed</small></span><span>1</span></header>
-                  <div class="todo-lane-list">
-                    <button class="todo-card" data-todo-card="model">
-                      <span class="todo-card-state"><span class="status-orbit success"></span>Done</span>
-                      <strong>Model runtime snapshots</strong>
-                      <small>Completed Tuesday</small>
-                      <span class="todo-next">Reopen</span>
-                    </button>
-                  </div>
-                </section>
-              </div>
-
-              <section class="todo-panel flat-todo-panel" data-todo-panel="rejected" hidden>
-                <header class="flat-todo-head">
-                  <div><h1>Rejected Todos</h1><p>Declined intent stays visible with the reason preserved.</p></div>
-                  <span>2 items</span>
-                </header>
-                <button class="flat-todo-row" data-todo-card="legacy-aliases">
-                  <span class="status-orbit warning"></span>
-                  <span><strong>Keep compatibility aliases for runtime paths</strong><small>Rejected: the hard cut requires one authority path.</small></span>
-                  <span>Restore to Idea</span>
-                </button>
-                <button class="flat-todo-row" data-todo-card="dashboard-metrics">
-                  <span class="status-orbit warning"></span>
-                  <span><strong>Add velocity metrics to Project Dashboard</strong><small>Rejected: activity counts would not help the next decision.</small></span>
-                  <span>Restore to Idea</span>
-                </button>
-              </section>
-
-              <section class="todo-panel flat-todo-panel" data-todo-panel="archived" hidden>
-                <header class="flat-todo-head">
-                  <div><h1>Archived Todos</h1><p>Inactive work stays recoverable without crowding the active workflow.</p></div>
-                  <span>2 items</span>
-                </header>
-                <button class="flat-todo-row" data-todo-card="old-provider-audit">
-                  <span class="status-orbit quiet"></span>
-                  <span><strong>Audit retired provider configuration</strong><small>Archived after the configuration hard cut · June 18</small></span>
-                  <span>Restore</span>
-                </button>
-                <button class="flat-todo-row" data-todo-card="memory-notes">
-                  <span class="status-orbit quiet"></span>
-                  <span><strong>Collect memory extraction notes</strong><small>Archived from Done · May 29</small></span>
-                  <span>Restore</span>
-                </button>
-              </section>
-            </div>
-          </div>
-
-          <div class="todo-detail-scrim" data-close-todo-detail></div>
-          <aside class="todo-detail" aria-label="Todo details">
-            <header class="todo-detail-head">
-              <div><strong data-todo-detail-title>Visual QA for the workbench</strong><span data-todo-detail-state>Idea · Discussion waiting for you</span></div>
-              <button class="icon-button" aria-label="Close Todo details" data-close-todo-detail data-icon="close"></button>
-            </header>
-            <div class="todo-detail-body">
-              <section>
-                <h2>Objective</h2>
-                <p data-todo-detail-objective>Define the visual acceptance surface before handing implementation to a new Lead Session.</p>
-              </section>
-              <section>
-                <h2>Confirmed decisions</h2>
-                <ul>
-                  <li>Preserve every functional entity and lifecycle action.</li>
-                  <li>Use Signal Workbench as the shared visual system.</li>
-                  <li class="needs-decision">Coverage and acceptance evidence still need confirmation.</li>
-                </ul>
-              </section>
-              <section>
-                <h2>Linked work</h2>
-                <p data-todo-detail-link>Discussion Session · waiting for your response</p>
-              </section>
-              <div class="todo-detail-actions">
-                <button class="primary-button" data-todo-detail-primary>Continue Discussion</button>
-                <div data-todo-detail-secondary></div>
-              </div>
-            </div>
-          </aside>
-        </section>
+        </div>
       </main>
 
-      <aside class="changes-inspector" id="changes-inspector" aria-label="Context inspector">
-        <div
-          class="layout-resize-handle inspector-resize"
-          role="separator"
-          aria-label="Resize context inspector"
-          aria-orientation="vertical"
-          aria-valuemin="280"
-          aria-valuemax="460"
-          aria-valuenow="330"
-          tabindex="0"
-          data-resize-inspector
-        ></div>
-        <header class="inspector-head">
-          <div><strong>Context inspector</strong><span>Session</span></div>
-          <button class="icon-button inspector-close" aria-label="Close context inspector" data-close-inspector data-icon="close"></button>
-        </header>
-
-        <div class="inspector-tabs" role="tablist" aria-label="Session context sections">
-          <button role="tab" aria-selected="true" data-inspector-tab="agents">Agents</button>
-          <button role="tab" aria-selected="false" data-inspector-tab="changes">Changes</button>
-          <button role="tab" aria-selected="false" data-inspector-tab="context">Context</button>
-        </div>
-
-        <div class="inspector-panel active" role="tabpanel" data-inspector-panel="agents">
-          <nav class="agent-tree" aria-label="Agents">
-            <button class="agent-row active" data-action="聚焦 Lead Session">
-              <span class="tree-line root-line"></span>
-              <span class="agent-role lead-role">L</span>
-              <span class="agent-row-copy"><strong>Runtime authority migration</strong><small>orchestrate-work</small></span>
-              <span class="agent-profile">principal</span>
-              <span class="agent-status running"><span></span>Running</span>
-            </button>
-            <button class="agent-row child" data-action="聚焦 Analyst Session">
-              <span class="tree-line"></span>
-              <span class="agent-role analyst-role">A</span>
-              <span class="agent-row-copy"><strong>Map runtime authority</strong><small>analyze-work</small></span>
-              <span class="agent-profile">deep</span>
-              <span class="agent-status complete"><span data-icon="check"></span>Completed</span>
-            </button>
-            <button class="agent-row child" data-action="聚焦 Build Session">
-              <span class="tree-line"></span>
-              <span class="agent-role build-role">B</span>
-              <span class="agent-row-copy"><strong>Verify path guards</strong><small>runtime hygiene</small></span>
-              <span class="agent-profile">deep</span>
-              <span class="agent-status running"><span></span>Running</span>
-            </button>
-          </nav>
-        </div>
-
-        <div class="inspector-panel" role="tabpanel" data-inspector-panel="changes" hidden>
-          <div class="change-summary">
-            <div><strong>12</strong><span>files</span></div>
-            <div class="insertions"><strong>+184</strong><span>insertions</span></div>
-            <div class="deletions"><strong>−97</strong><span>deletions</span></div>
+      <aside class="context-inspector" aria-label="Context inspector">
+        <div class="resize-handle inspector-resize" role="separator" tabindex="0" aria-label="Resize context inspector" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="460" aria-valuenow="312" data-resize-inspector></div>
+        <div class="inspector-shell">
+          <header class="inspector-header">
+            <div><strong>Context inspector</strong><span>Session</span></div>
+            <button class="icon-button mobile-close" aria-label="Close context inspector" data-close-overlay data-icon="close"></button>
+          </header>
+          <div class="inspector-tabs" role="tablist" aria-label="Session context sections">
+            <button role="tab" aria-selected="true" data-inspector-tab="agents">Agents</button>
+            <button role="tab" aria-selected="false" data-inspector-tab="changes">Changes</button>
+            <button role="tab" aria-selected="false" data-inspector-tab="context">Context</button>
           </div>
-          <div class="file-list">
-            <button class="file-row" data-file="registry">
-              <span data-icon="file"></span>
-              <span><strong>registry.ts</strong><small>packages/agent-core/src/projects</small></span>
-              <span class="file-stat">modified</span>
-            </button>
-            <button class="file-row" data-file="persist">
-              <span data-icon="file"></span>
-              <span><strong>persist.ts</strong><small>packages/agent-core/src/store</small></span>
-              <span class="file-stat">modified</span>
-            </button>
-            <button class="file-row" data-file="guard">
-              <span data-icon="file"></span>
-              <span><strong>workspace-guard.ts</strong><small>packages/agent-core/src/tools</small></span>
-              <span class="file-stat">modified</span>
-            </button>
-            <button class="file-row" data-file="tests">
-              <span data-icon="file"></span>
-              <span><strong>runtime-path-hygiene.test.ts</strong><small>packages/agent-core/src/__arch__</small></span>
-              <span class="file-stat">modified</span>
-            </button>
-          </div>
-          <button class="full-diff-button" data-action="在主画布打开完整 Diff">Open full diff in canvas</button>
-        </div>
 
-        <div class="inspector-panel context-panel" role="tabpanel" data-inspector-panel="context" hidden>
-          <section class="context-section">
-            <h2>Working directory</h2>
-            <code>/Users/bo/Developer/AI/archcode</code>
+          <section class="inspector-panel" role="tabpanel" data-inspector-panel="agents">
+            <div class="agent-tree">
+              <article class="agent-node active">
+                <span class="agent-mark">L</span>
+                <span class="agent-copy"><span class="agent-line"><strong>Lead</strong><span>principal</span></span><span>Session execution state audit</span></span>
+                <span class="agent-state needs-you"><span class="state-dot"></span>Needs you</span>
+              </article>
+              <article class="agent-node child">
+                <span class="agent-mark">A</span>
+                <span class="agent-copy"><span class="agent-line"><strong>Analyst</strong><span>deep</span></span><span>Verify Session HITL semantics</span></span>
+                <span class="agent-state completed"><span class="state-dot"></span>Completed</span>
+              </article>
+              <article class="agent-node child">
+                <span class="agent-mark">B</span>
+                <span class="agent-copy"><span class="agent-line"><strong>Build</strong><span>deep</span></span><span>Exercise composer interactions</span></span>
+                <span class="agent-state running"><span class="state-dot"></span>Running</span>
+              </article>
+              <article class="agent-node child">
+                <span class="agent-mark">E</span>
+                <span class="agent-copy"><span class="agent-line"><strong>Explore</strong><span>fast</span></span><span>Check narrow-screen overflow</span></span>
+                <span class="agent-state stopped"><span class="state-dot"></span>Stopped</span>
+              </article>
+            </div>
           </section>
-          <section class="context-section">
-            <h2>Model</h2>
-            <p>GLM-5 <span>· deep</span></p>
+
+          <section class="inspector-panel" role="tabpanel" data-inspector-panel="changes" hidden>
+            <div class="inspector-list">
+              <div class="change-row"><span class="change-kind">M</span><span class="change-path">SessionComposerDock.test.tsx</span><span class="diffstat"><span class="plus">+18</span> <span class="minus">−6</span></span></div>
+              <div class="change-row"><span class="change-kind">M</span><span class="change-path">HitlCard.tsx</span><span class="diffstat"><span class="plus">+9</span> <span class="minus">−2</span></span></div>
+              <div class="change-row"><span class="change-kind">M</span><span class="change-path">ExecutionWorkstream.tsx</span><span class="diffstat"><span class="plus">+4</span> <span class="minus">−1</span></span></div>
+            </div>
           </section>
-          <section class="context-section">
-            <h2>Execution</h2>
-            <dl>
-              <div><dt>Messages</dt><dd>18</dd></div>
-              <div><dt>Tool calls</dt><dd>11</dd></div>
-              <div><dt>Tokens</dt><dd>42,806</dd></div>
-              <div><dt>Executions</dt><dd>1</dd></div>
-            </dl>
+
+          <section class="inspector-panel" role="tabpanel" data-inspector-panel="context" hidden>
+            <div class="context-list">
+              <div class="context-row"><span>Goal</span><strong>Active · Verify Session execution UI</strong></div>
+              <div class="context-row"><span>Model</span><strong>GPT-5.6 Luna · deep</strong></div>
+              <div class="context-row"><span>Context</span><strong>48,206 / 200,000 tokens</strong></div>
+              <div class="context-row"><span>Working dir</span><strong>/Users/bo/Developer/AI/archcode</strong></div>
+              <div class="context-row"><span>Execution</span><strong>Suspended · Permission</strong></div>
+            </div>
           </section>
         </div>
       </aside>
     </div>
 
-    <div class="scrim" data-close-overlays></div>
+    <button class="scrim" aria-label="Close overlay" data-close-overlay></button>
     <div class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=quiet-precision-1"></script>
+    <script>
+      document.querySelectorAll("[data-work-toggle], [data-disclosure]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const expanded = button.getAttribute("aria-expanded") === "true";
+          const target = document.getElementById(button.getAttribute("aria-controls"));
+          button.setAttribute("aria-expanded", String(!expanded));
+          if (target) target.hidden = expanded;
+        });
+      });
+
+      const inspectorTabs = document.querySelectorAll("[data-inspector-tab]");
+      const inspectorPanels = document.querySelectorAll("[data-inspector-panel]");
+      inspectorTabs.forEach((button) => {
+        button.addEventListener("click", () => {
+          inspectorTabs.forEach((tab) => tab.setAttribute("aria-selected", String(tab === button)));
+          inspectorPanels.forEach((panel) => {
+            panel.hidden = panel.dataset.inspectorPanel !== button.dataset.inspectorTab;
+          });
+        });
+      });
+
+      const hitlTabs = document.querySelectorAll("[data-hitl-tab]");
+      const hitlPanels = document.querySelectorAll("[data-hitl-panel]");
+      hitlTabs.forEach((button) => {
+        button.addEventListener("click", () => {
+          hitlTabs.forEach((tab) => tab.setAttribute("aria-selected", String(tab === button)));
+          hitlPanels.forEach((panel) => {
+            panel.hidden = panel.dataset.hitlPanel !== button.dataset.hitlTab;
+          });
+        });
+      });
+
+      document.querySelectorAll("[data-hitl-option]").forEach((option) => {
+        option.addEventListener("click", () => {
+          document.querySelectorAll("[data-hitl-option]").forEach((item) => {
+            const selected = item === option;
+            item.classList.toggle("selected", selected);
+            item.setAttribute("aria-checked", String(selected));
+          });
+        });
+      });
+    </script>
   </body>
 </html>

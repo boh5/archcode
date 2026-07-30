@@ -62,7 +62,7 @@ Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns
 Use the `ui-ux-pro-max` Skill for work that changes UI structure, visual
 language, interaction, motion, responsive behavior, or accessibility.
 
-The only authoritative design artifact hierarchy is:
+The design-system working structure is:
 
 ```text
 design-system/
@@ -71,20 +71,32 @@ design-system/
 └── prototypes/
 ```
 
+`MASTER.md` and `pages/` are normative design specifications.
+`prototypes/` contains supporting visual references, not authoritative
+specifications.
+
 Follow this order for every UI task:
 
 1. Read `design-system/MASTER.md`. It is the single global design baseline.
 2. Read `design-system/pages/<page>.md` when it exists. Page files contain only
    explicit deviations from the Master and override it only for that page.
-3. Inspect the current rendered product. Inspect the relevant current HTML
-   prototype under `design-system/prototypes/` when one exists.
-4. UI/UX Pro Max is advisory, not authoritative. Use its searches as candidate
+3. Inspect the current rendered product and implementation for established
+   product behavior, state semantics, and component interactions.
+4. Inspect the relevant current HTML prototype under
+   `design-system/prototypes/` when one exists. Use it only as a supporting
+   rendered reference.
+5. UI/UX Pro Max is advisory, not authoritative. Use its searches as candidate
    evidence and filter recommendations through ArchCode's established quiet
    engineering workbench direction; never replace the Master with generic
    landing-page, purple AI-SaaS, glassmorphism, or decorative-motion output.
-5. Record an approved cross-page rule in `MASTER.md`; record a page-only
+6. Record an approved cross-page rule in `MASTER.md`; record a page-only
    exception in `pages/<page>.md`; then synchronize the current prototype and
    product implementation as applicable.
+
+Resolve conflicts as follows: a page override modifies `MASTER.md` only for
+that page; the current product is authoritative for existing behavior and state
+mechanics; an HTML prototype never overrides `MASTER.md`, a page override, or
+current product behavior.
 
 Create or update an HTML prototype only for a new complex module, a major
 layout change, or an uncertain visual direction. Routine UI fixes and small

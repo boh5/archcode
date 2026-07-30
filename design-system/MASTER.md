@@ -1,11 +1,11 @@
 # Signal Workbench Design System
 
-> Persisted from the approved interactive prototype, last content sync on
-> 2026-07-27.
+> Synchronized from the current product UI and implementation on 2026-07-30.
 >
 > When designing or implementing a page, read this file first and then read
 > `pages/[page-name].md`. A page file overrides this Master only where it says
-> so. When a current prototype exists, use the matching rendered reference:
+> so. The current product UI is authoritative. When a current prototype exists,
+> use it as a supporting rendered reference:
 > [`dashboard.html`](prototypes/dashboard.html),
 > [`session.html`](prototypes/session.html), or
 > [`todos.html`](prototypes/todos.html).
@@ -66,39 +66,45 @@ Core visual principles:
 
 ## Color System
 
-Use semantic tokens. Do not place raw colors in page-specific components.
+Use the semantic tokens defined in `apps/web/src/styles/globals.css`. Do not
+place raw colors in page-specific components or introduce a second token naming
+scheme in prototypes.
 
 ### Light Theme
 
 | Token | Value | Role |
 |---|---|---|
-| `--canvas` | `#f2f3f0` | Warm-neutral workspace background |
-| `--surface` | `#f8f8f6` | Navigation, headers, large work surfaces |
-| `--surface-raised` | `#ffffff` | Inputs, ToolCards, compact controls |
-| `--surface-muted` | `#eceeea` | User messages and secondary fields |
-| `--surface-hover` | `#e6e8e4` | Hover state |
-| `--surface-active` | `#dde0da` | Pressed neutral state |
-| `--border-soft` | `#e1e3df` | Internal separators |
-| `--border` | `#cdd1ca` | Default boundary |
+| `--bg-base` | `#f2f3f0` | Warm-neutral workspace background |
+| `--bg-surface` | `#f8f8f6` | Navigation, headers, large work surfaces |
+| `--bg-elevated` | `#ffffff` | Inputs, ToolCards, compact controls |
+| `--bg-overlay` | `#ffffff` | Drawers, dialogs, and popovers |
+| `--bg-muted` | `#eceeea` | User messages and secondary fields |
+| `--bg-hover` | `#e6e8e4` | Hover state |
+| `--bg-active` | `#dde0da` | Pressed neutral state |
+| `--border-subtle` | `#e1e3df` | Internal separators |
+| `--border-default` | `#cdd1ca` | Default boundary |
 | `--border-strong` | `#9fa69d` | Structural boundary |
-| `--ink` | `#171917` | Primary text |
-| `--ink-secondary` | `#424742` | Body and explanation text |
-| `--ink-tertiary` | `#626a62` | Secondary metadata |
-| `--ink-muted` | `#747c74` | De-emphasized metadata |
+| `--control-border` | `var(--border-default)` | Form-control boundary |
+| `--text-primary` | `#171917` | Primary text |
+| `--text-secondary` | `#424742` | Body and explanation text |
+| `--text-tertiary` | `#626a62` | Secondary metadata |
+| `--text-muted` | `#747c74` | De-emphasized metadata |
 | `--brand` | `#6157d5` | Selection, primary action, active navigation |
 | `--brand-hover` | `#5148c1` | Primary action hover |
 | `--brand-field` | `#eeecfb` | Explicit brand-tinted field |
 | `--brand-ink` | `#ffffff` | Text on brand |
 | `--signal` | `#758b22` | Running/live indicator |
-| `--signal-ink` | `#202807` | Text on signal |
+| `--signal-ink` | `#151b00` | Text on signal |
 | `--signal-foreground` | `#506015` | Live text on neutral surfaces |
 | `--signal-field` | `#eef3d8` | Explicit running status field |
 | `--success` | `#2f7752` | Completed/success |
 | `--success-field` | `#e8f2eb` | Completed field |
 | `--warning` | `#8a5e13` | Attention/decision required |
 | `--warning-field` | `#f7eddd` | Explicit attention status field |
-| `--danger` | `#b34d45` | Error/destructive/diff removal |
-| `--danger-field` | `#f8e8e6` | Error/removal field |
+| `--error` | `#b14840` | Error/destructive/diff removal |
+| `--error-field` | `#f8e8e6` | Error/removal field |
+| `--neutral` | `#626a62` | Neutral status |
+| `--neutral-field` | `#eceeea` | Neutral status field |
 | `--selection-field` | `#eeedf8` | Quiet selected row |
 | `--running-field` | `#f1f4e7` | Quiet running row |
 | `--attention-field` | `#f8f2e8` | Quiet attention band |
@@ -116,19 +122,21 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 
 | Token | Value | Role |
 |---|---|---|
-| `--canvas` | `#101210` | Graphite workspace background |
-| `--surface` | `#151815` | Navigation, headers, large work surfaces |
-| `--surface-raised` | `#1c201c` | Inputs, ToolCards, controls |
-| `--surface-muted` | `#232723` | Secondary fields |
-| `--surface-hover` | `#292e29` | Hover state |
-| `--surface-active` | `#303630` | Pressed neutral state |
-| `--border-soft` | `#262b26` | Internal separators |
-| `--border` | `#363c36` | Default boundary |
+| `--bg-base` | `#101210` | Graphite workspace background |
+| `--bg-surface` | `#151815` | Navigation, headers, large work surfaces |
+| `--bg-elevated` | `#1c201c` | Inputs, ToolCards, controls |
+| `--bg-overlay` | `#1c201c` | Drawers, dialogs, and popovers |
+| `--bg-muted` | `#232723` | Secondary fields |
+| `--bg-hover` | `#292e29` | Hover state |
+| `--bg-active` | `#303630` | Pressed neutral state |
+| `--border-subtle` | `#262b26` | Internal separators |
+| `--border-default` | `#363c36` | Default boundary |
 | `--border-strong` | `#596159` | Structural boundary |
-| `--ink` | `#f3f5f0` | Primary text |
-| `--ink-secondary` | `#c9cec6` | Body text |
-| `--ink-tertiary` | `#9ca49a` | Secondary metadata |
-| `--ink-muted` | `#868f84` | De-emphasized metadata |
+| `--control-border` | `var(--border-default)` | Form-control boundary |
+| `--text-primary` | `#f3f5f0` | Primary text |
+| `--text-secondary` | `#c9cec6` | Body text |
+| `--text-tertiary` | `#9ca49a` | Secondary metadata |
+| `--text-muted` | `#868f84` | De-emphasized metadata |
 | `--brand` | `#a49bff` | Selection and primary action |
 | `--brand-hover` | `#b9b2ff` | Primary action hover |
 | `--brand-field` | `#2b2845` | Explicit brand-tinted field |
@@ -141,8 +149,10 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 | `--success-field` | `#203329` | Completed field |
 | `--warning` | `#deb96e` | Attention/decision required |
 | `--warning-field` | `#352b1b` | Explicit attention status field |
-| `--danger` | `#f08b82` | Error/destructive/diff removal |
-| `--danger-field` | `#3b2421` | Error/removal field |
+| `--error` | `#f08b82` | Error/destructive/diff removal |
+| `--error-field` | `#3b2421` | Error/removal field |
+| `--neutral` | `#9ca49a` | Neutral status |
+| `--neutral-field` | `#232723` | Neutral status field |
 | `--selection-field` | `#26243a` | Quiet selected row |
 | `--running-field` | `#22291b` | Quiet running row |
 | `--attention-field` | `#2c271e` | Quiet attention band |
@@ -155,6 +165,14 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 | `--terminal-success` | `#b6d84b` | Successful Bash exit |
 | `--terminal-error` | `#ed8178` | Failed Bash exit |
 | `--focus` | `0 0 0 3px rgb(164 155 255 / 26%)` | Focus ring |
+
+Implementation aliases do not introduce new colors:
+
+- `--info` follows `--brand`;
+- `--brand-subtle` and `--info-muted` follow `--brand-field`;
+- `--success-muted`, `--warning-muted`, `--error-muted`, and
+  `--neutral-muted` follow their matching `*-field` token;
+- `--terminal-border` is `rgb(255 255 255 / 10%)` in both themes.
 
 ### Color Discipline
 
@@ -173,8 +191,8 @@ Use semantic tokens. Do not place raw colors in page-specific components.
 No network font dependency is required.
 
 ```css
---font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
---font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+--font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+--font-stack-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 ```
 
 Type scale:
@@ -186,9 +204,9 @@ Type scale:
 | Operational title | 13–14px | 600–680 | Navigation, tool targets, rows |
 | Commentary | 13–14px | 400–500 | Process explanation inside Work |
 | User message | 15px | 400–500 | User intent |
-| Final response | 16px | 400–600 | Agent outcome and supporting detail |
-| Session title | 20px | 700 | Active work identity |
-| Page title | 24–26px | 700–720 | Dashboard and flat Todo views |
+| Final response | 15px | 400–600 | Agent outcome and supporting detail |
+| Session / Todos title | 20px | 600 | Active work or page identity |
+| Dashboard title | 26px | 700 | Operational overview identity |
 
 Rules:
 
@@ -197,7 +215,8 @@ Rules:
   structure use the available Session canvas.
 - Inline and operational code uses monospace.
 - Numeric timers and counters use tabular figures.
-- Small text is metadata only; primary mobile input text remains at least 16px.
+- Small text is metadata only. The Session Composer uses 16px input text on
+  narrow screens; compact operational inputs follow their page specification.
 
 ## Spacing, Radius, and Elevation
 
@@ -205,16 +224,15 @@ Use a 2/4px-derived dense scale:
 
 `2, 4, 6, 8, 10, 12, 14, 18, 24, 30, 40px`.
 
-Radius strategy:
+Radius tokens:
 
-| Radius | Usage |
-|---:|---|
-| 3–4px | Status badges, tight metadata fields |
-| 5–6px | Tool children, rows, cards, page marks |
-| 7–8px | Inputs, segmented controls, primary icon buttons |
-| 8px | User message surface |
-| 12px | Composer only |
-| 50% / 999px | Status orbits, pulses, compact numeric counters only |
+| Token | Value | Usage |
+|---|---:|---|
+| `--shape-control` | 4px | Buttons, inputs, tight metadata fields |
+| `--shape-card` | 6px | Tool children, rows, and compact cards |
+| `--shape-popover` | 8px | Menus, lane surfaces, and user messages |
+| `--shape-dialog` | 12px | Composer and dialogs |
+| circle / full | — | Status orbits, pulses, compact counters only |
 
 Do not make every surface a rounded card. Structural groups should prefer
 dividers, background changes, and inset rules.
@@ -222,7 +240,9 @@ dividers, background changes, and inset rules.
 Elevation:
 
 - Ordinary rows and cards have no drop shadow.
-- The compact Composer input surface uses one soft shadow inside its bottom dock.
+- `--elevation-sm` is the compact Composer/input shadow:
+  `0 10px 30px rgb(26 31 25 / 9%)` in light mode and
+  `0 14px 34px rgb(0 0 0 / 32%)` in dark mode.
 - Inspectors, drawers, and off-canvas navigation use
   `0 22px 56px rgb(25 28 22 / 18%)` in light mode and
   `0 22px 56px rgb(0 0 0 / 52%)` in dark mode.
@@ -234,11 +254,12 @@ Layer scale:
 |---|---:|---|
 | Base | 0 | Canvas, rails, ordinary content |
 | Composer dock | 4 | Session controls and input |
-| Local scrim | 18 | Todo detail scrim |
-| Local drawer | 19 | Todo detail |
 | Inspector | 30 | Responsive context inspector |
-| Navigation | 40 | Responsive project navigation |
-| Accessibility | 1000 | Skip link while focused |
+| Desktop navigation / resize | 40 | Project rail and resize affordances |
+| Mobile overlay | 50 | Mobile navigation and Inspector drawers |
+| Mobile project rail | 55 | Stable rail above mobile overlays |
+| Toast / Todo scrim | 60 | Attention toast and Todo detail scrim |
+| Todo drawer | 61 | Todo detail surface |
 
 ## Workbench Layout
 
@@ -252,7 +273,8 @@ Desktop shell defaults:
 - Context Inspector is resizable from 280–460px.
 - User-adjusted widths persist across visits. Collapse and focus mode never
   discard the last expanded width.
-- Header height: 64px; the narrow Session header becomes 60px.
+- Workbench headers use a 64px minimum height and expand when their two-line
+  content needs more room.
 - Conversation structure follows the flexible work canvas with safe horizontal
   gutters; prose inside Agent responses uses a 65–72ch reading measure and user
   messages remain capped at 660px.
@@ -265,9 +287,9 @@ Responsive behavior:
 | Breakpoint | Behavior |
 |---|---|
 | `>1180px` | Four-region Session shell; inspector and sidebar may collapse |
-| `761–1180px` | 52px rail + 228px sidebar + canvas; inspector becomes a right overlay |
+| `761–1180px` | 52px rail + persisted/resizable sidebar + canvas; inspector becomes a right overlay below the 64px header |
 | `≤760px` | 48px rail + canvas; project sidebar and inspector become overlays |
-| `≤620px` | Todo Board becomes one column; flat rows reflow actions below copy |
+| `<700px` | Todo Board becomes one column |
 
 Narrow-screen rules:
 
@@ -325,9 +347,9 @@ pulse, and terminal cursor may loop.
 
 ### Buttons
 
-- Primary: indigo fill, 6–8px radius, 34px default height.
-- Secondary: raised neutral surface, 1px border, 6px radius.
-- Icon button: 34–38px visible control; expand the hit area to 44px on coarse
+- Primary: indigo fill, 4px radius, 32px default height.
+- Secondary: elevated neutral surface, 1px border, 4px radius.
+- Icon button: 32–40px visible control; expand the hit area to 44px on coarse
   pointers.
 - Hover changes color, border, or surface only. No scale or vertical movement.
 - Each view has one visually dominant primary action.
@@ -368,10 +390,10 @@ Execution is a mandatory product entity, not an optional visual section.
 - A running summary reads `Working · {duration}` and may append one current
   activity label after an em dash.
 - Do not show Execution number, model, message count, step count, Tool count, or
-  Child count in the visible Work row. Preserve Execution identity in semantics,
-  data, and the accessible name.
-- The accessible disclosure name includes Execution number, terminal/live state,
-  elapsed duration, and current activity when present.
+  Child count in the visible Work row. Preserve Execution identity in product
+  data and stable DOM identity.
+- The accessible disclosure name includes the Work segment, terminal/live
+  state, elapsed duration, and current activity when present.
 - A final Agent response is editorial content after Work and remains visible
   when Work is collapsed. Never place the final response inside the disclosure.
 - An Execution without final Agent text does not receive a fabricated empty
@@ -441,8 +463,8 @@ Execution is a mandatory product entity, not an optional visual section.
   below 1181px.
 - Persistent desktop navigation and Inspector widths are user-resizable and
   restored after collapse or focus mode.
-- Todo detail is a right drawer with objective, confirmed decisions, linked
-  work, and lifecycle actions.
+- Todo detail is a right drawer with the Todo body, editing controls, linked
+  Sessions and Automations, and lifecycle actions.
 - Overlays use a scrim and a visible close action.
 
 ### Feedback and Loading
@@ -471,14 +493,14 @@ Execution is a mandatory product entity, not an optional visual section.
 
 Motion explains state changes; it is not decoration.
 
-| Interaction | Duration |
-|---|---:|
-| Hover/surface response | 140ms |
-| Chevron expansion | 160ms |
-| Theme color transition | 180ms |
-| Drawer/sidebar movement | 220ms, `cubic-bezier(0.16, 1, 0.3, 1)` |
-| Live pulse | 1.8s loop, running state only |
-| Terminal cursor | 1.1s stepped loop |
+| Token | Duration | Usage |
+|---|---:|---|
+| `--motion-hover` | 140ms | Hover and surface response |
+| `--motion-icon` | 160ms | Chevron and icon state |
+| `--motion-overlay` | 220ms | Drawer and overlay entry/exit |
+| `--motion-complete` | 180ms | One-shot completion feedback |
+| `--motion-attention` | 700ms | Bounded attention feedback |
+| `--motion-activity` | 1.8s | Running activity only |
 
 - Do not add route-transition choreography or GSAP.
 - Do not animate layout width/height for disclosure; switch content and rotate
@@ -496,7 +518,7 @@ Motion explains state changes; it is not decoration.
 - Status meaning always includes text or an icon in addition to color.
 - Toasts use `role="status"` and `aria-live="polite"`.
 - Preserve keyboard reading order when sidebars and inspectors become overlays.
-- Mobile input text is 16px to avoid platform zoom.
+- The mobile Session Composer uses 16px input text to avoid platform zoom.
 
 ## Forbidden Patterns
 

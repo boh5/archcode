@@ -1,849 +1,418 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="ArchCode Indigo Ink and Signal Lime visual direction prototype"
-    />
-    <title>ArchCode — Dashboard Design Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=quiet-precision-1" />
-  </head>
-  <body>
-    <!--
-      THESIS: ArchCode is a workbench that visibly stays alive; it refuses both cold enterprise dashboards and cheerful AI chat toys.
-      OWN-WORLD: Warm mineral surfaces, indigo-ink actions, one signal-lime live state, tight square controls, and evidence organized by rules rather than nested cards.
-      STORY: The user delegates a consequential task, watches the Agent continue, inspects evidence, and decides what happens next.
-      FIRST VIEWPORT: Project rail and Threads frame one readable work canvas; a lime execution line is the memorable center; Changes remain one glance to the right.
-      FORM: Desktop engineering workbench, precisely pinned by the approved Claude-structure/Codex-information/ArchCode-color direction; no concept seed required.
-    -->
-    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+    <meta name="description" content="ArchCode 当前 Dashboard 页面原型" />
+    <title>ArchCode — Dashboard Prototype</title>
+    <link rel="stylesheet" href="./styles.css?v=implementation-sync-2" />
+    <style>
+      .dashboard-scroll {
+        height: 100%;
+        overflow: auto;
+      }
 
+      .dashboard-content {
+        width: min(100%, 1180px);
+        margin: 0 auto;
+        padding: 44px clamp(24px, 5vw, 64px) 60px;
+      }
+
+      .dashboard-top {
+        display: grid;
+        grid-template-columns: 30px 48px minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+        margin-bottom: 34px;
+      }
+
+      .dashboard-top .canvas-sidebar-toggle {
+        margin-top: 22px;
+      }
+
+      .dashboard-mark {
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 48px;
+        margin-top: 19px;
+        border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border-default));
+        border-radius: 8px;
+        background: var(--brand-field);
+        color: var(--brand);
+      }
+
+      .dashboard-mark svg {
+        width: 22px;
+        height: 22px;
+      }
+
+      .eyebrow {
+        margin-bottom: 5px;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .dashboard-top h1 {
+        font-size: clamp(25px, 3vw, 31px);
+        line-height: 1.15;
+        letter-spacing: -0.035em;
+      }
+
+      .dashboard-top p:last-child {
+        margin-top: 8px;
+        color: var(--text-secondary);
+        font-size: 14px;
+      }
+
+      .dashboard-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 28px;
+      }
+
+      .dashboard-grid.priority {
+        margin-bottom: 34px;
+      }
+
+      .dashboard-section {
+        min-width: 0;
+      }
+
+      .priority-card {
+        min-height: 136px;
+        padding: 13px 18px 10px;
+        border-top: 3px solid var(--warning);
+        background: var(--bg-surface);
+      }
+
+      .priority-card.running {
+        border-top-color: var(--signal);
+      }
+
+      .priority-card .empty-state {
+        min-height: 72px;
+      }
+
+      .secondary-card {
+        min-height: 209px;
+        padding: 0 18px 6px;
+        border-top: 1px solid var(--border-default);
+        background: var(--bg-surface);
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 38px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-default);
+      }
+
+      .section-head [data-icon] {
+        color: var(--text-tertiary);
+      }
+
+      .section-head h2 {
+        font-size: 14px;
+        font-weight: 650;
+      }
+
+      .section-count {
+        color: var(--text-tertiary);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .empty-state {
+        display: grid;
+        place-items: center;
+        min-height: 116px;
+        padding: 22px;
+        color: var(--text-tertiary);
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .dashboard-list {
+        display: grid;
+      }
+
+      .dashboard-row {
+        display: grid;
+        grid-template-columns: 12px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 11px;
+        min-height: 66px;
+        padding: 10px 4px;
+        border-bottom: 1px solid var(--border-subtle);
+        background: transparent;
+        color: inherit;
+        text-align: left;
+      }
+
+      .dashboard-row:hover {
+        background: linear-gradient(
+          90deg,
+          transparent,
+          var(--bg-hover) 4%,
+          var(--bg-hover) 96%,
+          transparent
+        );
+      }
+
+      .state-orbit {
+        width: 11px;
+        height: 11px;
+        border: 1px solid var(--text-tertiary);
+        border-radius: 50%;
+      }
+
+      .state-orbit.automation {
+        position: relative;
+        border-color: var(--brand);
+      }
+
+      .state-orbit.automation::after {
+        position: absolute;
+        inset: 3px;
+        border-radius: 50%;
+        background: var(--brand);
+        content: "";
+      }
+
+      .row-copy {
+        min-width: 0;
+      }
+
+      .row-copy strong,
+      .row-copy small {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .row-copy strong {
+        font-size: 13px;
+        font-weight: 620;
+      }
+
+      .row-copy small {
+        margin-top: 5px;
+        color: var(--text-tertiary);
+        font-size: 11px;
+      }
+
+      .open-link {
+        padding: 6px 8px;
+        border-radius: 5px;
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .open-link:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      @media (min-width: 1001px) {
+        .dashboard-grid.priority {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          column-gap: 38px;
+        }
+
+        .dashboard-grid:not(.priority) {
+          grid-template-columns: minmax(0, 1.8fr) minmax(260px, 1fr);
+          column-gap: 20px;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .dashboard-content {
+          padding: 24px 18px 40px;
+        }
+
+        .dashboard-top {
+          gap: 10px;
+          margin-bottom: 26px;
+        }
+
+        .dashboard-mark {
+          display: none;
+        }
+
+        .dashboard-top {
+          grid-template-columns: 30px minmax(0, 1fr);
+        }
+
+        .dashboard-top h1 {
+          font-size: 25px;
+        }
+
+        .dashboard-grid,
+        .dashboard-grid.priority {
+          gap: 26px;
+          margin-bottom: 26px;
+        }
+      }
+    </style>
+    <script src="./app.js?v=implementation-sync-2" defer></script>
+  </head>
+  <body class="dashboard-page">
+    <a class="skip-link" href="#work-canvas">跳到工作区</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
-        <button class="brand-mark" aria-label="ArchCode home" data-action="打开首页">A</button>
-        <div class="rail-projects">
-          <button class="rail-project active" aria-label="ArchCode project" data-action="切换到 ArchCode">AC</button>
-          <button class="rail-project" aria-label="Perler project" data-action="切换到 Perler">BP</button>
-          <button class="rail-project" aria-label="OpenMontage project" data-action="切换到 OpenMontage">OM</button>
-        </div>
+        <button class="brand-mark" aria-label="Open dashboard" data-action="打开全局 Dashboard"><span>A</span></button>
+        <button class="rail-project active" aria-label="Open archcode">ar</button>
+        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
+        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
         <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
         <div class="rail-spacer"></div>
-        <button class="rail-icon" aria-label="Requests needing attention" data-action="打开待处理请求" data-icon="bell">
-          <span class="rail-attention-count">1</span>
-        </button>
+        <div class="rail-separator"></div>
+        <button class="rail-icon" aria-label="Open requests needing attention" data-action="打开待处理请求" data-icon="bell"></button>
         <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
-        <button
-          class="rail-icon"
-          aria-label="Switch to dark theme"
-          title="Switch to dark theme"
-          data-theme-toggle
-          data-icon="moon"
-        ></button>
+        <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
       </nav>
 
-      <aside class="thread-sidebar" id="thread-sidebar">
-        <div
-          class="layout-resize-handle sidebar-resize"
-          role="separator"
-          aria-label="Resize project navigation"
-          aria-orientation="vertical"
-          aria-valuemin="210"
-          aria-valuemax="340"
-          aria-valuenow="248"
-          tabindex="0"
-          data-resize-sidebar
-        ></div>
-        <header class="sidebar-head">
-          <div class="project-title">
-            <strong>ArchCode</strong>
-            <span>/Users/bo/Developer/AI/archcode</span>
-          </div>
-          <div class="sidebar-head-actions">
-            <button class="icon-button" aria-label="Project actions" data-action="打开项目操作">•••</button>
-            <button class="icon-button desktop-sidebar-action" aria-label="Collapse project sidebar" data-collapse-sidebar data-icon="collapse"></button>
-            <button class="icon-button" aria-label="Enter focus mode" aria-pressed="false" data-focus-mode data-icon="focus"></button>
-            <button class="icon-button mobile-close" aria-label="Close sidebar" data-close-sidebar data-icon="close"></button>
-          </div>
-        </header>
-
-        <div class="project-links">
-          <button data-canvas-target="dashboard"><span data-icon="dashboard"></span>Project Dashboard<span data-icon="chevron-right"></span></button>
-          <button data-canvas-target="todos"><span data-icon="todo"></span>Todos<span data-icon="chevron-right"></span></button>
-        </div>
-
-        <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
-          <button role="tab" aria-selected="true" data-sidebar-tab="sessions">Sessions</button>
-          <button role="tab" aria-selected="false" data-sidebar-tab="automations">Automations</button>
-        </div>
-
-        <div class="sidebar-panel active" role="tabpanel" data-sidebar-panel="sessions">
-          <div class="sidebar-toolbar">
-            <label class="search-field">
-              <span class="sr-only">Search sessions</span>
-              <span data-icon="search"></span>
-              <input type="search" placeholder="Search sessions…" />
-            </label>
-            <button class="compact-create" data-action="创建 Session"><span data-icon="plus"></span>New session</button>
-          </div>
-
-          <div class="sidebar-section">
-            <div class="section-label"><span>Needs you</span><span>2</span></div>
-            <button
-              class="thread attention"
-              data-thread="output"
-              aria-label="Tool output boundary, permission required"
-              title="Permission required"
-            >
-              <span class="thread-state permission" data-icon="review" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Tool output boundary</strong></span>
-              <span class="thread-tail">
-                <span class="thread-attention-tag">Permission</span>
-              </span>
-            </button>
-            <button
-              class="thread attention"
-              data-thread="hitl"
-              aria-label="HITL queue cleanup, answer required"
-              title="Answer required"
-            >
-              <span class="thread-state question" data-icon="question" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>HITL queue cleanup</strong></span>
-              <span class="thread-tail">
-                <span class="thread-attention-tag">Question</span>
-              </span>
-            </button>
-          </div>
-
-          <div class="sidebar-section">
-            <div class="section-label"><span>Running</span><span>2</span></div>
-            <button
-              class="thread active"
-              data-thread="runtime"
-              aria-current="page"
-              aria-label="Runtime authority migration, running now, active goal"
-              title="Running now · Active goal"
-            >
-              <span class="thread-state live" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Runtime authority migration</strong></span>
-              <span class="thread-tail">
-                <span class="thread-goal" data-icon="target" aria-hidden="true" title="Active goal"></span>
-                <time class="thread-time">now</time>
-              </span>
-            </button>
-            <button
-              class="thread"
-              data-thread="provider"
-              aria-label="Provider stream recovery, running for 6 minutes"
-              title="Running · 6 minutes"
-            >
-              <span class="thread-state live" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Provider stream recovery</strong></span>
-              <span class="thread-tail"><time class="thread-time">6m</time></span>
-            </button>
-          </div>
-
-          <div class="sidebar-section history">
-            <div class="section-label"><span>Recent</span><span></span></div>
-            <button
-              class="thread"
-              data-thread="model"
-              aria-label="Model runtime snapshots, completed Tuesday"
-              title="Completed Tuesday"
-            >
-              <span class="thread-state done" data-icon="check" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Model runtime snapshots</strong></span>
-              <span class="thread-tail"><time class="thread-time">Tue</time></span>
-            </button>
-          </div>
-        </div>
-
-        <div class="sidebar-panel" role="tabpanel" data-sidebar-panel="automations" hidden>
-          <div class="project-links automation-link">
-            <button data-action="打开 Automations Dashboard"><span data-icon="automation"></span>Automations<span data-icon="chevron-right"></span></button>
-          </div>
-          <div class="sidebar-toolbar">
-            <label class="search-field">
-              <span class="sr-only">Search automations</span>
-              <span data-icon="search"></span>
-              <input type="search" placeholder="Search automations…" />
-            </label>
-            <button class="compact-create" data-action="创建 Automation"><span data-icon="plus"></span>New automation</button>
-          </div>
-          <div class="sidebar-section">
-            <div class="section-label"><span>Automations</span><span>2</span></div>
-            <button
-              class="thread"
-              data-action="打开 Nightly regression review"
-              aria-label="Nightly regression review, next run at 02:00"
-              title="Next run · 02:00"
-            >
-              <span class="thread-state automation" data-icon="automation" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Nightly regression review</strong></span>
-              <span class="thread-tail"><time class="thread-time">02:00</time></span>
-            </button>
-            <button
-              class="thread"
-              data-action="打开 Dependency watch"
-              aria-label="Dependency watch, next run in 24 hours"
-              title="Next run · 24 hours"
-            >
-              <span class="thread-state automation" data-icon="automation" aria-hidden="true"></span>
-              <span class="thread-copy"><strong>Dependency watch</strong></span>
-              <span class="thread-tail"><time class="thread-time">24h</time></span>
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <main class="work-canvas" id="work-canvas" tabindex="-1">
-        <section class="canvas-view session-view active" data-canvas-view="session">
-          <header class="work-header">
-            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
-            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
-            <div class="work-title">
-              <div class="work-title-line">
-                <strong>Runtime authority migration</strong>
-                <span class="session-status running"><span class="session-status-dot"></span>Running</span>
-              </div>
-              <div class="work-title-meta">
-                <span class="header-cwd" title="/Users/bo/Developer/AI/archcode">/Users/bo/Developer/AI/archcode</span>
-                <span class="header-separator" aria-hidden="true">·</span>
-                <span class="header-usage">12 tools · 42,806 tokens</span>
-                <span class="header-separator" aria-hidden="true">·</span>
-                <span class="header-source" title="Todo · Runtime authority migration">Todo · Runtime authority migration</span>
-              </div>
+      <aside class="project-sidebar" aria-label="Project navigation">
+        <div class="project-sidebar-inner">
+          <header class="sidebar-header">
+            <div class="project-copy">
+              <strong>archcode</strong>
+              <span>/Users/bo/Developer/AI/archcode</span>
             </div>
-            <div class="work-actions">
-              <button class="secondary-button todo-button" data-action="打开 Session Todo">
-                <span data-icon="todo"></span>
-                Todo
-                <span class="button-count">3/5</span>
-              </button>
-              <button class="secondary-button inspector-trigger" aria-label="Collapse context inspector" data-open-inspector aria-expanded="true" aria-controls="changes-inspector">
-                <span data-icon="panel"></span>
-              </button>
-            </div>
+            <button class="icon-button" aria-label="Project actions" data-action="打开项目操作" data-icon="more"></button>
+            <button class="icon-button mobile-close" aria-label="Close project navigation" data-close-overlay data-icon="close"></button>
           </header>
 
-          <div class="conversation">
-            <section class="user-turn" aria-label="User message">
-              <div class="message user-message">
-                <p>Move all project-owned runtime state under <code>.archcode/runtime</code>. Make it a hard cut, and keep plans and skills directly editable.</p>
-              </div>
-              <time class="message-time">14 minutes ago</time>
-            </section>
-
-            <section class="agent-response" aria-label="ArchCode response">
-              <section class="work-disclosure completed" aria-label="Execution 1 work">
-                <button
-                  class="work-summary"
-                  type="button"
-                  aria-label="Execution 1, completed, worked for 12 minutes 18 seconds"
-                  aria-expanded="false"
-                  aria-controls="completed-work-body"
-                  data-work-toggle
-                >
-                  <span class="work-summary-primary">
-                    <span class="work-chevron" data-icon="chevron-right"></span>
-                    <span class="work-summary-copy">
-                      <strong>Worked for 12m 18s</strong>
-                    </span>
-                  </span>
-                </button>
-                <div class="work-body" id="completed-work-body" data-work-body hidden>
-                  <p class="work-commentary">I mapped every runtime reader and writer before changing the boundary. The migration touches Sessions, HITL, approvals, Todos, Automations, and memory.</p>
-                  <ol class="execution-list">
-                    <li class="tool-run-event complete">
-                      <div class="tool-run-card">
-                        <button
-                          class="tool-run-toggle"
-                          type="button"
-                          aria-expanded="false"
-                          aria-controls="completed-tool-run-list"
-                          aria-label="4 tool calls, file_read, grep, glob, lsp_diagnostics, Completed"
-                          data-tool-run-toggle
-                        >
-                          <span class="tool-run-chevron" data-icon="chevron-right"></span>
-                          <span class="tool-run-names" title="file_read, grep, glob, lsp_diagnostics">
-                            file_read, grep, glob, lsp_diagnostics
-                          </span>
-                        </button>
-                        <div class="tool-run-list" id="completed-tool-run-list" data-tool-run-list hidden>
-                          <div class="tool-child">
-                            <div
-                              class="tool-child-row"
-                              title="packages/agent-core/src/projects/registry.ts"
-                              aria-label="file_read, packages/agent-core/src/projects/registry.ts"
-                            >
-                              <code>file_read</code>
-                              <span class="tool-child-target">registry.ts</span>
-                            </div>
-                          </div>
-                          <div class="tool-child">
-                            <div
-                              class="tool-child-row"
-                              title="Search for .archcode/runtime in packages/agent-core/src"
-                              aria-label="grep, .archcode/runtime"
-                            >
-                              <code>grep</code>
-                              <span class="tool-child-target">“.archcode/runtime”</span>
-                            </div>
-                          </div>
-                          <div class="tool-child">
-                            <div
-                              class="tool-child-row"
-                              title="Find **/*runtime* under packages/agent-core"
-                              aria-label="glob, **/*runtime*"
-                            >
-                              <code>glob</code>
-                              <span class="tool-child-target">**/*runtime*</span>
-                            </div>
-                          </div>
-                          <div class="tool-child">
-                            <div
-                              class="tool-child-row"
-                              title="packages/agent-core/src/runtime.ts"
-                              aria-label="lsp_diagnostics, packages/agent-core/src/runtime.ts"
-                            >
-                              <code>lsp_diagnostics</code>
-                              <span class="tool-child-target">runtime.ts</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </li>
-                    <li class="reasoning-block">
-                      <button
-                        class="reasoning-toggle"
-                        type="button"
-                        aria-expanded="false"
-                        aria-controls="completed-reasoning-body"
-                        data-reasoning-toggle
-                      >
-                        <span class="reasoning-chevron" data-icon="chevron-right"></span>
-                        <span data-icon="sparkles"></span>
-                        <span>Reasoning</span>
-                      </button>
-                      <p class="reasoning-body" id="completed-reasoning-body" hidden>
-                        I checked the registry and every runtime-path reference before changing the protected boundary.
-                      </p>
-                    </li>
-                    <li class="work-commentary-event">
-                      <p>I finished mapping the readers. Next I am applying the protected-path change.</p>
-                    </li>
-                    <li class="tool-call-event complete">
-                      <div class="tool-call-card">
-                        <button class="tool-call-toggle" type="button" aria-expanded="false" aria-controls="tool-call-file-edit-detail" data-tool-call-toggle>
-                          <span class="tool-call-chevron" data-icon="chevron-right"></span>
-                          <code>file_edit</code>
-                          <span class="tool-call-summary">workspace-guard.ts</span>
-                          <span class="tool-call-diff">1 file · +24 −10</span>
-                        </button>
-                        <div class="tool-call-detail" id="tool-call-file-edit-detail" data-tool-call-detail hidden>
-                          <div class="tool-diff-preview">
-                            <header><span data-icon="changes"></span><strong>workspace-guard.ts</strong><span>+24 −10</span></header>
-                            <pre><span class="diff-remove">− const protectedRoot = resolve(workspace, ".archcode");</span>
-<span class="diff-add">+ const protectedRoot = resolve(workspace, ".archcode/runtime");</span>
-<span class="diff-add">+ return isWithinPath(target, protectedRoot);</span></pre>
-                          </div>
-                        </div>
-                      </div>
-                    </li>
-                    <li class="tool-call-event complete">
-                      <div class="tool-call-card shell-call">
-                        <button
-                          class="tool-call-toggle shell-toggle"
-                          type="button"
-                          aria-expanded="false"
-                          aria-controls="tool-call-bash-detail"
-                          aria-label="bash, bun run test --filter runtime-path-hygiene"
-                          data-tool-call-toggle
-                        >
-                          <span class="tool-call-chevron" data-icon="chevron-right"></span>
-                          <code>bash</code>
-                          <span class="tool-call-command"><span aria-hidden="true">$</span><code>bun run test --filter runtime-path-hygiene</code></span>
-                        </button>
-                        <div class="tool-call-detail terminal-detail" id="tool-call-bash-detail" data-tool-call-detail hidden>
-                          <pre><span>✓ runtime path authority</span>
-<span>✓ protected ancestor mutations</span>
-<span>✓ retired compatibility paths</span></pre>
-                          <div class="terminal-meta"><span>132 passed</span><span>exit 0 · 8.4s</span></div>
-                        </div>
-                      </div>
-                    </li>
-                    <li class="compact-step delegation">
-                      <span class="step-glyph delegation-glyph" data-icon="delegate"></span>
-                      <div><strong>Delegated to Build</strong><p>Verify mutation guards and runtime path hygiene independently.</p></div>
-                    </li>
-                    <li class="compact-step complete">
-                      <span class="step-glyph" data-icon="check"></span>
-                      <div><strong>Architecture verification</strong><p>Checked ancestor mutations, protected paths, and retired runtime locations.</p></div>
-                    </li>
-                  </ol>
-                </div>
-              </section>
-
-              <div class="final-response">
-                <p>The runtime authority migration is complete.</p>
-                <ul>
-                  <li>System-owned project state now lives under <code>.archcode/runtime</code>.</li>
-                  <li>Plans and Skills remain directly editable outside the protected subtree.</li>
-                  <li>Legacy reads and compatibility aliases were removed; the focused verification suite passes.</li>
-                </ul>
-              </div>
-              <div class="response-meta">Lead · principal · just now</div>
-            </section>
-
-            <section class="user-turn follow-up-message" aria-label="User message">
-              <div class="message user-message">
-                <p>Do one final independent review and make sure the Web UI explains the new boundary clearly.</p>
-              </div>
-              <time class="message-time">just now</time>
-            </section>
-
-            <section class="agent-response active-turn" aria-label="ArchCode response in progress">
-              <section class="work-disclosure running" aria-label="Execution 2 work">
-                <button
-                  class="work-summary"
-                  type="button"
-                  aria-label="Execution 2, running, working for 2 minutes 14 seconds, Analyst review"
-                  aria-expanded="true"
-                  aria-controls="running-work-body"
-                  data-work-toggle
-                >
-                  <span class="work-summary-primary">
-                    <span class="work-chevron" data-icon="chevron-right"></span>
-                    <span class="live-pulse"></span>
-                    <span class="work-summary-copy">
-                      <strong>Working · <span class="elapsed">02:14</span></strong>
-                    </span>
-                    <span class="work-summary-current">Analyst review</span>
-                  </span>
-                </button>
-                <div class="work-body" id="running-work-body" data-work-body>
-                  <p class="work-commentary">The implementation is already verified. I’m checking the user-facing explanation and asking an Analyst to challenge the final wording.</p>
-                  <div class="active-tool-line" aria-label="delegate Analyst, in progress">
-                    <span class="active-tool-indicator" aria-hidden="true"></span>
-                    <code>delegate</code>
-                    <span>Analyst · Review the boundary explanation</span>
-                  </div>
-                </div>
-              </section>
-            </section>
-          </div>
-
-          <section class="session-composer-dock" aria-label="Session composer">
-            <div class="composer-rail">
-              <section class="composer-attention" aria-label="HITL permission request">
-                <div class="composer-status-mark attention-mark">!</div>
-                <div class="composer-status-copy">
-                  <span class="attention-type">Permission</span>
-                  <strong>Run documentation verification</strong>
-                  <dl>
-                    <div><dt>Tool</dt><dd>bash</dd></div>
-                    <div><dt>Command</dt><dd><code>bun run docs:verify</code></dd></div>
-                  </dl>
-                </div>
-                <div class="attention-actions">
-                  <button class="attention-primary" type="button" data-action="允许本次执行">Allow once</button>
-                  <button type="button" data-action="拒绝权限">Deny</button>
-                  <button type="button" data-action="取消请求">Cancel</button>
-                </div>
-              </section>
-
-              <section class="composer-goal-row" aria-label="Session goal">
-                <span class="composer-status-mark goal-mark">G</span>
-                <span class="goal-label">Goal</span>
-                <strong>Active</strong>
-                <span class="goal-objective">Move runtime authority without compatibility paths</span>
-                <span class="goal-metrics">2 executions · 42,806 tokens · 14m</span>
-                <button type="button" data-action="打开 Goal 控制">Edit</button>
-              </section>
-
-              <section class="composer-queue" aria-label="Queued messages">
-                <span class="queue-count">Queued</span>
-                <p>After the tests, summarize the remaining migration risk.</p>
-                <span class="queue-model">GLM-5 · deep</span>
-                <button type="button" data-action="编辑队列消息">Edit</button>
-              </section>
-
-              <div class="composer-input-slot">
-                <form class="composer-card" id="composer">
-                <textarea id="follow-up" rows="1" placeholder="Queue a message while ArchCode is running…"></textarea>
-                <div class="composer-foot">
-                  <div class="composer-context">
-                    <button type="button" data-action="选择下一次模型">GLM-5 · deep <span data-icon="chevron"></span></button>
-                    <span class="composer-divider"></span>
-                    <span class="composer-runtime-status"><span class="attention-dot"></span>Waiting for input</span>
-                  </div>
-                  <div class="composer-actions">
-                    <span class="composer-hint">Enter to queue</span>
-                    <button class="stop-button" type="button" aria-label="Stop Session" data-action="停止 Session" data-icon="stop"></button>
-                    <button class="queue-button" type="submit" aria-label="Queue message" data-icon="arrow"></button>
-                  </div>
-                </div>
-                </form>
-              </div>
-            </div>
-          </section>
-        </section>
-
-        <section class="canvas-view dashboard-view" data-canvas-view="dashboard" hidden>
-          <header class="work-header page-work-header">
-            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
-            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
-            <div class="work-title">
-              <strong>ArchCode</strong>
-              <span>Project Dashboard</span>
-            </div>
-          </header>
-
-          <div class="dashboard-scroll">
-            <div class="dashboard-content">
-              <section class="dashboard-intro">
-                <span class="page-mark" data-icon="dashboard"></span>
-                <div>
-                  <span class="page-overline">Project overview</span>
-                  <h1>Dashboard</h1>
-                  <p>What needs you, what is moving, and where to continue.</p>
-                </div>
-              </section>
-
-              <div class="dashboard-priority-grid">
-                <section class="dashboard-section attention-section">
-                  <header class="dashboard-section-head">
-                    <span class="status-orbit warning"></span>
-                    <h2>Needs attention</h2>
-                    <span class="section-count">1</span>
-                  </header>
-                  <button class="dashboard-row attention-row" data-action="打开 Coverage set">
-                    <span class="status-orbit warning"></span>
-                    <span class="dashboard-row-copy">
-                      <strong>Coverage set</strong>
-                      <small>Which UI states and viewports must the manual Visual QA checklist cover?</small>
-                    </span>
-                    <span class="dashboard-row-meta"><small>Discussion · 13h ago</small><span>Open</span></span>
-                  </button>
-                </section>
-
-                <section class="dashboard-section running-section">
-                  <header class="dashboard-section-head">
-                    <span class="status-orbit live"></span>
-                    <h2>Running now</h2>
-                    <span class="section-count live-count">1</span>
-                  </header>
-                  <button class="dashboard-row running-row" data-action="打开 Runtime authority migration">
-                    <span class="status-orbit live"></span>
-                    <span class="dashboard-row-copy">
-                      <strong>Runtime authority migration</strong>
-                      <small>Lead is validating runtime path hygiene after 12 file changes.</small>
-                    </span>
-                    <span class="dashboard-row-meta"><small class="live-word">RUNNING · 14:32</small><span>Open</span></span>
-                  </button>
-                </section>
-              </div>
-
-              <div class="dashboard-secondary-grid">
-                <section class="dashboard-section continue-section">
-                  <header class="dashboard-section-head">
-                    <span class="status-orbit brand"></span>
-                    <h2>Continue working</h2>
-                    <span class="section-count">3</span>
-                  </header>
-                  <div class="dashboard-list">
-                    <button class="dashboard-row" data-thread-jump="output">
-                      <span class="status-orbit quiet"></span>
-                      <span class="dashboard-row-copy"><strong>Tool output boundary</strong><small>Review active · waiting for a decision</small></span>
-                      <span class="dashboard-row-meta"><small>12m ago</small><span>Open</span></span>
-                    </button>
-                    <button class="dashboard-row" data-thread-jump="model">
-                      <span class="status-orbit quiet"></span>
-                      <span class="dashboard-row-copy"><strong>Model runtime snapshots</strong><small>Idle · last execution completed</small></span>
-                      <span class="dashboard-row-meta"><small>Tuesday</small><span>Open</span></span>
-                    </button>
-                    <button class="dashboard-row" data-thread-jump="hitl">
-                      <span class="status-orbit quiet"></span>
-                      <span class="dashboard-row-copy"><strong>HITL queue cleanup</strong><small>Idle · no pending requests</small></span>
-                      <span class="dashboard-row-meta"><small>Monday</small><span>Open</span></span>
-                    </button>
-                  </div>
-                </section>
-
-                <section class="dashboard-section upcoming-section">
-                  <header class="dashboard-section-head">
-                    <span class="status-orbit brand"></span>
-                    <h2>Upcoming</h2>
-                    <span class="section-count">1</span>
-                  </header>
-                  <button class="dashboard-row" data-action="打开 Nightly regression review">
-                    <span class="status-orbit quiet"></span>
-                    <span class="dashboard-row-copy"><strong>Nightly regression review</strong><small>Automation · active</small></span>
-                    <span class="dashboard-row-meta"><small>Tomorrow · 02:00</small><span>Open</span></span>
-                  </button>
-                  <p class="upcoming-note">Scheduled work stays quiet until it becomes actionable.</p>
-                </section>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="canvas-view todos-view" data-canvas-view="todos" hidden>
-          <header class="work-header page-work-header todos-work-header">
-            <button class="icon-button mobile-menu" aria-label="Open sidebar" data-open-sidebar data-icon="menu"></button>
-            <button class="icon-button sidebar-expand" aria-label="Expand project sidebar" data-expand-sidebar data-icon="expand"></button>
-            <div class="work-title">
-              <strong>Todos</strong>
-              <span>Capture intent, shape it with Lead, then connect it to execution.</span>
-            </div>
-            <div class="todo-view-tabs" role="group" aria-label="Todo views">
-              <button aria-pressed="true" data-todo-view="board">Board</button>
-              <button aria-pressed="false" data-todo-view="rejected">Rejected</button>
-              <button aria-pressed="false" data-todo-view="archived">Archived</button>
-            </div>
-          </header>
-
-          <div class="todos-scroll">
-            <div class="todos-content">
-              <form class="todo-capture" id="todo-capture">
-                <span data-icon="plus"></span>
-                <label class="sr-only" for="new-todo-title">New Todo title</label>
-                <input id="new-todo-title" type="text" placeholder="Capture a Todo…" />
-                <button class="primary-button" type="submit">New Todo</button>
-              </form>
-
-              <div class="todo-panel board-panel active" data-todo-panel="board">
-                <section class="todo-lane" aria-label="Ideas">
-                  <header class="todo-lane-head"><span class="status-orbit brand"></span><span><strong>Ideas</strong><small>Capture first, shape later</small></span><span>1</span></header>
-                  <div class="todo-lane-list">
-                    <button class="todo-card" data-todo-card="visual-qa">
-                      <span class="todo-card-state"><span class="status-orbit brand"></span>Idea</span>
-                      <strong>Visual QA for the workbench</strong>
-                      <small><span data-icon="review"></span>Discussion · waiting for you</small>
-                      <span class="todo-next">Continue Discussion</span>
-                    </button>
-                  </div>
-                </section>
-
-                <section class="todo-lane" aria-label="Ready">
-                  <header class="todo-lane-head"><span class="status-orbit quiet"></span><span><strong>Ready</strong><small>Clear enough to hand off</small></span><span>1</span></header>
-                  <div class="todo-lane-list">
-                    <button class="todo-card" data-todo-card="output-boundary">
-                      <span class="todo-card-state"><span class="status-orbit quiet"></span>Ready</span>
-                      <strong>Finalize tool output boundary</strong>
-                      <small>No linked work yet</small>
-                      <span class="todo-next">Start Session</span>
-                    </button>
-                  </div>
-                </section>
-
-                <section class="todo-lane" aria-label="In Progress">
-                  <header class="todo-lane-head"><span class="status-orbit live"></span><span><strong>In Progress</strong><small>Connected to active work</small></span><span>2</span></header>
-                  <div class="todo-lane-list">
-                    <button class="todo-card" data-todo-card="runtime">
-                      <span class="todo-card-state"><span class="status-orbit live"></span>In Progress</span>
-                      <strong>Move runtime authority</strong>
-                      <small><span data-icon="terminal"></span>Session · running · 14:32</small>
-                      <span class="todo-next">Open Session</span>
-                    </button>
-                    <button class="todo-card" data-todo-card="regression">
-                      <span class="todo-card-state"><span class="status-orbit quiet"></span>In Progress</span>
-                      <strong>Nightly regression review</strong>
-                      <small><span data-icon="automation"></span>Automation · active</small>
-                      <span class="todo-next">Open Automation</span>
-                    </button>
-                  </div>
-                </section>
-
-                <section class="todo-lane" aria-label="Done">
-                  <header class="todo-lane-head"><span class="status-orbit success"></span><span><strong>Done</strong><small>Explicitly completed</small></span><span>1</span></header>
-                  <div class="todo-lane-list">
-                    <button class="todo-card" data-todo-card="model">
-                      <span class="todo-card-state"><span class="status-orbit success"></span>Done</span>
-                      <strong>Model runtime snapshots</strong>
-                      <small>Completed Tuesday</small>
-                      <span class="todo-next">Reopen</span>
-                    </button>
-                  </div>
-                </section>
-              </div>
-
-              <section class="todo-panel flat-todo-panel" data-todo-panel="rejected" hidden>
-                <header class="flat-todo-head">
-                  <div><h1>Rejected Todos</h1><p>Declined intent stays visible with the reason preserved.</p></div>
-                  <span>2 items</span>
-                </header>
-                <button class="flat-todo-row" data-todo-card="legacy-aliases">
-                  <span class="status-orbit warning"></span>
-                  <span><strong>Keep compatibility aliases for runtime paths</strong><small>Rejected: the hard cut requires one authority path.</small></span>
-                  <span>Restore to Idea</span>
-                </button>
-                <button class="flat-todo-row" data-todo-card="dashboard-metrics">
-                  <span class="status-orbit warning"></span>
-                  <span><strong>Add velocity metrics to Project Dashboard</strong><small>Rejected: activity counts would not help the next decision.</small></span>
-                  <span>Restore to Idea</span>
-                </button>
-              </section>
-
-              <section class="todo-panel flat-todo-panel" data-todo-panel="archived" hidden>
-                <header class="flat-todo-head">
-                  <div><h1>Archived Todos</h1><p>Inactive work stays recoverable without crowding the active workflow.</p></div>
-                  <span>2 items</span>
-                </header>
-                <button class="flat-todo-row" data-todo-card="old-provider-audit">
-                  <span class="status-orbit quiet"></span>
-                  <span><strong>Audit retired provider configuration</strong><small>Archived after the configuration hard cut · June 18</small></span>
-                  <span>Restore</span>
-                </button>
-                <button class="flat-todo-row" data-todo-card="memory-notes">
-                  <span class="status-orbit quiet"></span>
-                  <span><strong>Collect memory extraction notes</strong><small>Archived from Done · May 29</small></span>
-                  <span>Restore</span>
-                </button>
-              </section>
-            </div>
-          </div>
-
-          <div class="todo-detail-scrim" data-close-todo-detail></div>
-          <aside class="todo-detail" aria-label="Todo details">
-            <header class="todo-detail-head">
-              <div><strong data-todo-detail-title>Visual QA for the workbench</strong><span data-todo-detail-state>Idea · Discussion waiting for you</span></div>
-              <button class="icon-button" aria-label="Close Todo details" data-close-todo-detail data-icon="close"></button>
-            </header>
-            <div class="todo-detail-body">
-              <section>
-                <h2>Objective</h2>
-                <p data-todo-detail-objective>Define the visual acceptance surface before handing implementation to a new Lead Session.</p>
-              </section>
-              <section>
-                <h2>Confirmed decisions</h2>
-                <ul>
-                  <li>Preserve every functional entity and lifecycle action.</li>
-                  <li>Use Signal Workbench as the shared visual system.</li>
-                  <li class="needs-decision">Coverage and acceptance evidence still need confirmation.</li>
-                </ul>
-              </section>
-              <section>
-                <h2>Linked work</h2>
-                <p data-todo-detail-link>Discussion Session · waiting for your response</p>
-              </section>
-              <div class="todo-detail-actions">
-                <button class="primary-button" data-todo-detail-primary>Continue Discussion</button>
-                <div data-todo-detail-secondary></div>
-              </div>
-            </div>
-          </aside>
-        </section>
-      </main>
-
-      <aside class="changes-inspector" id="changes-inspector" aria-label="Context inspector">
-        <div
-          class="layout-resize-handle inspector-resize"
-          role="separator"
-          aria-label="Resize context inspector"
-          aria-orientation="vertical"
-          aria-valuemin="280"
-          aria-valuemax="460"
-          aria-valuenow="330"
-          tabindex="0"
-          data-resize-inspector
-        ></div>
-        <header class="inspector-head">
-          <div><strong>Context inspector</strong><span>Session</span></div>
-          <button class="icon-button inspector-close" aria-label="Close context inspector" data-close-inspector data-icon="close"></button>
-        </header>
-
-        <div class="inspector-tabs" role="tablist" aria-label="Session context sections">
-          <button role="tab" aria-selected="true" data-inspector-tab="agents">Agents</button>
-          <button role="tab" aria-selected="false" data-inspector-tab="changes">Changes</button>
-          <button role="tab" aria-selected="false" data-inspector-tab="context">Context</button>
-        </div>
-
-        <div class="inspector-panel active" role="tabpanel" data-inspector-panel="agents">
-          <nav class="agent-tree" aria-label="Agents">
-            <button class="agent-row active" data-action="聚焦 Lead Session">
-              <span class="tree-line root-line"></span>
-              <span class="agent-role lead-role">L</span>
-              <span class="agent-row-copy"><strong>Runtime authority migration</strong><small>orchestrate-work</small></span>
-              <span class="agent-profile">principal</span>
-              <span class="agent-status running"><span></span>Running</span>
-            </button>
-            <button class="agent-row child" data-action="聚焦 Analyst Session">
-              <span class="tree-line"></span>
-              <span class="agent-role analyst-role">A</span>
-              <span class="agent-row-copy"><strong>Map runtime authority</strong><small>analyze-work</small></span>
-              <span class="agent-profile">deep</span>
-              <span class="agent-status complete"><span data-icon="check"></span>Completed</span>
-            </button>
-            <button class="agent-row child" data-action="聚焦 Build Session">
-              <span class="tree-line"></span>
-              <span class="agent-role build-role">B</span>
-              <span class="agent-row-copy"><strong>Verify path guards</strong><small>runtime hygiene</small></span>
-              <span class="agent-profile">deep</span>
-              <span class="agent-status running"><span></span>Running</span>
-            </button>
+          <nav class="sidebar-nav" aria-label="Project pages">
+            <a class="active" href="./dashboard.html" aria-current="page">
+              <span data-icon="dashboard"></span><span>Project Dashboard</span><span data-icon="chevron"></span>
+            </a>
+            <a href="./todos.html">
+              <span data-icon="todo"></span><span>Todos</span><span class="nav-count">1</span>
+            </a>
           </nav>
-        </div>
 
-        <div class="inspector-panel" role="tabpanel" data-inspector-panel="changes" hidden>
-          <div class="change-summary">
-            <div><strong>12</strong><span>files</span></div>
-            <div class="insertions"><strong>+184</strong><span>insertions</span></div>
-            <div class="deletions"><strong>−97</strong><span>deletions</span></div>
+          <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
+            <button role="tab" aria-selected="true" data-sidebar-tab="sessions">Sessions</button>
+            <button role="tab" aria-selected="false" data-sidebar-tab="automations">Automations</button>
           </div>
-          <div class="file-list">
-            <button class="file-row" data-file="registry">
-              <span data-icon="file"></span>
-              <span><strong>registry.ts</strong><small>packages/agent-core/src/projects</small></span>
-              <span class="file-stat">modified</span>
-            </button>
-            <button class="file-row" data-file="persist">
-              <span data-icon="file"></span>
-              <span><strong>persist.ts</strong><small>packages/agent-core/src/store</small></span>
-              <span class="file-stat">modified</span>
-            </button>
-            <button class="file-row" data-file="guard">
-              <span data-icon="file"></span>
-              <span><strong>workspace-guard.ts</strong><small>packages/agent-core/src/tools</small></span>
-              <span class="file-stat">modified</span>
-            </button>
-            <button class="file-row" data-file="tests">
-              <span data-icon="file"></span>
-              <span><strong>runtime-path-hygiene.test.ts</strong><small>packages/agent-core/src/__arch__</small></span>
-              <span class="file-stat">modified</span>
-            </button>
-          </div>
-          <button class="full-diff-button" data-action="在主画布打开完整 Diff">Open full diff in canvas</button>
-        </div>
 
-        <div class="inspector-panel context-panel" role="tabpanel" data-inspector-panel="context" hidden>
-          <section class="context-section">
-            <h2>Working directory</h2>
-            <code>/Users/bo/Developer/AI/archcode</code>
+          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="sessions">
+            <div class="sidebar-toolbar">
+              <label class="search-field">
+                <span data-icon="search"></span>
+                <span class="sr-only">Search sessions</span>
+                <input type="search" placeholder="Search sessions..." />
+              </label>
+              <button class="new-session" data-action="创建 Session">＋ New session</button>
+            </div>
+            <div class="session-group">
+              <div class="session-group-label"><span>Recent</span><span>2</span></div>
+              <a class="session-item" href="./session.html" aria-label="Brief Greeting Session · Idle · 2h ago">
+                <span class="session-state"></span><span class="session-title">Brief Greeting Session</span><time class="session-time">2h</time><span></span>
+              </a>
+              <button class="session-item" data-action="打开项目状态与重点问题汇报">
+                <span class="session-state"></span><span class="session-title">项目状态与重点问题汇报</span><time class="session-time">3h</time><span></span>
+              </button>
+            </div>
           </section>
-          <section class="context-section">
-            <h2>Model</h2>
-            <p>GLM-5 <span>· deep</span></p>
-          </section>
-          <section class="context-section">
-            <h2>Execution</h2>
-            <dl>
-              <div><dt>Messages</dt><dd>18</dd></div>
-              <div><dt>Tool calls</dt><dd>11</dd></div>
-              <div><dt>Tokens</dt><dd>42,806</dd></div>
-              <div><dt>Executions</dt><dd>1</dd></div>
-            </dl>
+
+          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="automations" hidden>
+            <div class="sidebar-toolbar">
+              <label class="search-field">
+                <span data-icon="search"></span>
+                <span class="sr-only">Search automations</span>
+                <input type="search" placeholder="Search automations..." />
+              </label>
+              <button class="new-session" data-action="创建 Automation">＋ New</button>
+            </div>
+            <div class="session-group">
+              <div class="session-group-label"><span>Automations</span><span>1</span></div>
+              <button class="session-item" data-action="打开每日项目状态检查">
+                <span class="state-orbit automation"></span><span class="session-title">每日项目状态检查</span><time class="session-time">09:00</time><span></span>
+              </button>
+            </div>
           </section>
         </div>
+        <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuemin="210" aria-valuemax="340" aria-valuenow="264" data-resize-sidebar></div>
       </aside>
+
+      <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
+        <div class="dashboard-scroll">
+          <div class="dashboard-content">
+            <header class="dashboard-top">
+              <button class="canvas-sidebar-toggle" aria-label="Open project navigation" data-open-sidebar data-icon="panel"></button>
+              <span class="dashboard-mark" data-icon="dashboard"></span>
+              <div>
+                <p class="eyebrow">Project overview</p>
+                <h1>Dashboard</h1>
+                <p>What needs you, what is moving, and where to continue.</p>
+              </div>
+            </header>
+
+            <div class="dashboard-grid priority">
+              <section class="dashboard-section priority-card">
+                <header class="section-head">
+                  <span data-icon="bell"></span><h2>Needs attention</h2><span class="section-count">0</span>
+                </header>
+                <div class="empty-state">Nothing needs your attention.</div>
+              </section>
+
+              <section class="dashboard-section priority-card running">
+                <header class="section-head">
+                  <span class="state-orbit"></span><h2>Running now</h2><span class="section-count">0</span>
+                </header>
+                <div class="empty-state">No sessions are running.</div>
+              </section>
+            </div>
+
+            <div class="dashboard-grid">
+              <section class="dashboard-section secondary-card">
+                <header class="section-head">
+                  <span data-icon="app"></span><h2>Continue working</h2><span class="section-count">2</span>
+                </header>
+                <div class="dashboard-list">
+                  <a class="dashboard-row" href="./session.html">
+                    <span class="state-orbit"></span>
+                    <span class="row-copy"><strong>Brief Greeting Session</strong><small>Idle · Updated 2h ago</small></span>
+                    <span class="open-link">Open</span>
+                  </a>
+                  <button class="dashboard-row" data-action="打开项目状态与重点问题汇报">
+                    <span class="state-orbit"></span>
+                    <span class="row-copy"><strong>项目状态与重点问题汇报</strong><small>Idle · Updated 3h ago</small></span>
+                    <span class="open-link">Open</span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="dashboard-section secondary-card">
+                <header class="section-head">
+                  <span data-icon="app"></span><h2>Upcoming</h2><span class="section-count">1</span>
+                </header>
+                <div class="dashboard-list">
+                  <button class="dashboard-row" data-action="打开每日项目状态检查">
+                    <span class="state-orbit automation"></span>
+                    <span class="row-copy"><strong>每日项目状态检查</strong><small>Next run 2026/7/31 09:00:00</small></span>
+                    <span class="open-link">Open</span>
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
 
-    <div class="scrim" data-close-overlays></div>
+    <button class="scrim" aria-label="Close overlay" data-close-overlay></button>
     <div class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=quiet-precision-1"></script>
-    <script>
-      document.querySelector("[data-canvas-target='dashboard']")?.click();
-    </script>
   </body>
 </html>

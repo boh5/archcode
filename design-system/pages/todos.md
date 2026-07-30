@@ -33,18 +33,21 @@ Responsive columns:
 
 | Width | Columns |
 |---|---:|
-| `>1180px` | 4 |
-| `621–1180px` | 2 |
-| `≤620px` | 1 |
+| `≥1100px` | 4 |
+| `700–1099px` | 2 |
+| `<700px` | 1 |
 
 Lane rules:
 
-- Lanes are layout columns, not large rounded containers.
+- Lanes are structural columns with one 1px boundary, an 8px radius, and the
+  surface background. At four columns they use a 500px minimum height; stacked
+  lanes remain content-sized with a 160px minimum.
 - Lane headers use a status orbit, title, short explanation, and count.
 - Cards use one border, 6px radius, and no elevation.
-- Card order is state → title → linked work/status → next action.
-- Selection uses an indigo inset rule and border change.
-- Running linked work uses lime only on the relevant status marker.
+- Card order is state → title → optional body preview. Linked Sessions,
+  Automations, and lifecycle actions live in the detail drawer.
+- Selection changes the card border to indigo.
+- Lifecycle state uses its matching status icon plus text; color is secondary.
 
 ## Rejected Surface
 
@@ -57,17 +60,17 @@ Lane rules:
 ## Archived Surface
 
 - Use the same flat-list structure as Rejected for visual continuity.
-- Show origin/state and archived date.
+- Show the Todo title and a quiet `Archived` state label.
 - Primary recovery is `Restore`.
 - Archived work remains recoverable but visually quiet.
 - Do not replace the list with a hidden archive menu.
 
 ## Quick Capture
 
-- One horizontal input surface on desktop:
-  `plus icon → title input → New Todo`.
-- At `≤620px`, the primary action moves below the input rather than shrinking
-  the title field.
+- Use one horizontal input surface at every width:
+  `plus icon → title input → Add`.
+- The input stays flexible; the 32px Add button remains visible and does not
+  imply that execution has started.
 - Capture creates intent only; it must not imply that execution has started.
 
 ## Todo Detail Drawer
@@ -75,9 +78,8 @@ Lane rules:
 The drawer preserves:
 
 - title and lifecycle state;
-- objective;
-- confirmed decisions and unresolved decisions;
-- linked Discussion, Session, or Automation;
+- Todo body and editing controls;
+- linked Discussions, work Sessions, and Automations;
 - lifecycle-appropriate primary and secondary actions.
 
 The entity and its actions are mandatory. Visual redesign may reorder or
@@ -85,12 +87,9 @@ reweight actions, but must not silently remove them.
 
 Drawer behavior:
 
-- maximum width 430px;
-- right-side overlay with scrim and visible close action;
-- at narrow widths, leave an 18px outer margin and start below the taller Todo
-  header;
+- width is `min(430px, 100% - 18px)`;
+- full-height right-side overlay with scrim and visible close action;
 - use thin section rules instead of nested cards;
-- unresolved decisions use an amber marker plus text.
 
 ## Todos-Specific Avoidances
 
