@@ -7,6 +7,27 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-07-30
+
+### Changed
+
+- Split model and variant selection into separate searchable controls so
+  defaults, active overrides, and available variants are easier to distinguish.
+- Keep workbench navigation and inspector controls available across Dashboard,
+  Todo, Automation, and Session pages, replacing the separate Focus Mode
+  setting with direct panel controls.
+- Present model input and output modalities as explicit text, image, audio, and
+  video selections while keeping Settings notices and actions reachable.
+- Consolidate the active design baseline, page-specific guidance, and current
+  HTML prototypes under `design-system/` without changing Runtime behavior.
+
+### Fixed
+
+- Fall back to a model's default configuration when a saved Profile references
+  a removed variant, and normalize empty variant maps to the Default choice.
+- Surface specific configuration validation failures in Settings instead of
+  replacing them with a generic save error.
+
 ## [0.0.6] - 2026-07-29
 
 ### Added
