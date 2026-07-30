@@ -18,7 +18,7 @@ export interface ProjectTodo {
   readonly updatedAt: number;
 }
 
-/** Immutable source identity owned by a root Lead Session. */
+/** Immutable source identity owned by a user-facing root Session. */
 export interface ProjectTodoSessionSource {
   readonly todoId: string;
   readonly entry: ProjectTodoSessionEntry;
@@ -53,6 +53,8 @@ export interface ProjectTodoDiscussionUpdatePatch {
 export interface CreateProjectTodoSessionInput {
   readonly expectedRevision: number;
   readonly entry: ProjectTodoSessionEntry;
+  /** Makes the new Discussion's first message the deterministic Plan request. */
+  readonly initialIntent?: "plan";
 }
 
 export interface ProjectTodoListResponse {

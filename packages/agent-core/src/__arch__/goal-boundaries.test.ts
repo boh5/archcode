@@ -7,9 +7,9 @@ import { TOOL_CREATE_GOAL, TOOL_GET_GOAL, TOOL_UPDATE_GOAL } from "../tools/name
 
 const projectRoot = resolve(import.meta.dir, "../../../..");
 describe("Session Goal boundaries", () => {
-  test("defines exactly five general-purpose agents", () => {
+  test("defines five execution and collaboration Agents plus the Discussion entry Agent", () => {
     expect(agentDefinitions.map((definition) => definition.name)).toEqual([
-      "lead", "analyst", "build", "explore", "librarian",
+      "lead", "discussion", "analyst", "build", "explore", "librarian",
     ]);
   });
 

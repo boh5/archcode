@@ -19,6 +19,7 @@ export const RESERVED_BUILTIN_SKILL_NAMES = new Set([
   "automation-create",
   "orchestrate-work",
   "plan-work",
+  "execute-plan",
   "run-goal",
   "shape-todo",
   "review-work",

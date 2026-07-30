@@ -237,7 +237,7 @@ describe("ToolCard strict result consumer", () => {
     };
     const element = ToolCard({ part, projectSlug: "demo", sessionId: "root-1" });
     expect(textContent(element)).toContain("Result unknown");
-    expect(findByTestId(element, "tool-output-open")).toBeDefined();
+    expect(textContent(findByTestId(element, "tool-output-open"))).toBe("View output");
   });
 
   test("collapses to the summary row and expands through the one disclosure control", () => {

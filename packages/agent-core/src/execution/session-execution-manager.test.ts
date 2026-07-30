@@ -307,7 +307,6 @@ interface FakeManagerOptions {
   createSessionStore?: ConstructorParameters<typeof SessionExecutionManager>[0]["createSessionStore"];
   listSessionFamilyToolBatchHitlIds?: ConstructorParameters<typeof SessionExecutionManager>[0]["listSessionFamilyToolBatchHitlIds"];
   cancelSessionToolBatch?: ConstructorParameters<typeof SessionExecutionManager>[0]["cancelSessionToolBatch"];
-  isDiscussionSession?: ConstructorParameters<typeof SessionExecutionManager>[0]["isDiscussionSession"];
   resolveSessionDepth?: ConstructorParameters<typeof SessionExecutionManager>[0]["resolveSessionDepth"];
   sessionInputService?: ConstructorParameters<typeof SessionExecutionManager>[0]["sessionInputService"];
   sessionFamilyStopTimeoutMs?: number;
@@ -397,7 +396,7 @@ function testManagerFacade(raw: SessionExecutionManager): TestSessionExecutionMa
 
 function storeCallbacks(manager: SessionStoreManager): Pick<
   SessionExecutionManagerConfigForTest,
-  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "resolveSessionDepth" | "buildSessionTree" | "listSessionFamilyToolBatchHitlIds" | "isDiscussionSession"
+  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "resolveSessionDepth" | "buildSessionTree" | "listSessionFamilyToolBatchHitlIds"
 > {
   return {
     createSessionStore: (sessionId, root, createOptions) => createTestSession(manager, sessionId, root, createOptions),
@@ -420,7 +419,6 @@ function storeCallbacks(manager: SessionStoreManager): Pick<
     },
     buildSessionTree: (root, rootSessionId) => manager.buildSessionTree(root, rootSessionId),
     listSessionFamilyToolBatchHitlIds: (root, rootSessionId) => manager.listSessionFamilyToolBatchHitlIds(root, rootSessionId),
-    isDiscussionSession: async () => false,
   };
 }
 
@@ -518,6 +516,23 @@ function makeFactoryWithChildPolicy(
         ? { ...definition, childPolicy: { ...definition.childPolicy!, ...policy } }
         : definition;
     }),
+  });
+}
+
+function makeDeepExploreFactory(): AgentFactory {
+  const base = makeFactory();
+  const deepExploreDefinition: AgentDefinition = {
+    ...base.getDefinition("lead"),
+    name: "explore",
+    displayName: "Explore",
+    profiles: ["fast"],
+    roleContract: exploreAgentDefinition.roleContract,
+    tools: { tools: ["delegate"], delegateTargets: ["explore"] },
+  };
+  return makeFactory({
+    getDefinition: mock((name: string) => (
+      name === "explore" ? deepExploreDefinition : base.getDefinition(name)
+    )),
   });
 }
 
@@ -625,7 +640,6 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
     flushSessionStore: options.flushSessionStore ?? (async () => undefined),
     listSessionFamilyToolBatchHitlIds: options.listSessionFamilyToolBatchHitlIds ?? (async () => []),
     cancelSessionToolBatch: options.cancelSessionToolBatch ?? (async () => undefined),
-    isDiscussionSession: options.isDiscussionSession ?? (async () => false),
     trackSession,
     untrackSession,
     executionScopeValidator: options.executionScopeValidator ?? allowExecutionScope,
@@ -3616,16 +3630,20 @@ describe("SessionExecutionManager", () => {
     storeManager.create(middleId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
-      agentName: "lead",
+      agentName: "explore",
       title: "Middle child",
+      activeSkillNames: [],
+      delegationRequest: delegationRequest({ agent_type: "explore", title: "Middle child", skills: [] }),
     });
     const parentStore = storeManager.create(parentId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: middleId,
-      agentName: "lead",
+      agentName: "explore",
       title: "Deep parent",
+      activeSkillNames: [],
+      delegationRequest: delegationRequest({ agent_type: "explore", title: "Deep parent", skills: [] }),
     });
-    const factory = makeFactory();
+    const factory = makeDeepExploreFactory();
     const { manager, sessionAgentManager } = createManager({}, { factory });
 
     await expect(manager.startChildExecution(workspaceRoot, {
@@ -3639,32 +3657,6 @@ describe("SessionExecutionManager", () => {
 
     expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
     expect(parentStore.getState().childSessionLinks).toEqual([]);
-  });
-
-  test("Todo Discussion create derives maxDepth 2 from the authoritative binding", async () => {
-    const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
-    const { manager, sessionAgentManager } = createManager({}, {
-      factory: makeFactoryWithChildPolicy({ maxDepth: 3 }),
-      isDiscussionSession: async (_workspaceRoot, sessionId) => sessionId === parentId,
-      resolveSessionDepth: async (_workspaceRoot, sessionId) => sessionId === parentId ? 2 : 3,
-    });
-
-    await expect(manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "discussion-depth",
-      toolName: "delegate",
-      request: delegationRequest({
-        agent_type: "explore",
-        title: "Discussion evidence",
-        objective: "Inspect local evidence for this Todo Discussion.",
-        skills: [],
-        background: false,
-      }),
-    })).rejects.toBeInstanceOf(DepthLimitError);
-
-    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
   });
 
   test("startChildExecution appends link and canonical prompt before model execution", async () => {
@@ -5616,7 +5608,7 @@ describe("SessionExecutionManager", () => {
       background: false,
     })).rejects.toMatchObject({
       name: "SessionModelSelectionNotAllowedError",
-      reason: "not_root_lead",
+      reason: "not_user_facing_root",
     });
     expect(parentStore.getState().childSessionLinks).toEqual([]);
   });
@@ -5655,22 +5647,28 @@ describe("SessionExecutionManager", () => {
     storeManager.create(middleId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
-      agentName: "lead",
+      agentName: "explore",
       title: "Middle",
+      activeSkillNames: [],
+      delegationRequest: delegationRequest({ agent_type: "explore", title: "Middle", skills: [] }),
     });
     const parentStore = storeManager.create(parentId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: middleId,
-      agentName: "lead",
+      agentName: "explore",
       title: "Deep parent",
+      activeSkillNames: [],
+      delegationRequest: delegationRequest({ agent_type: "explore", title: "Deep parent", skills: [] }),
     });
     storeManager.create(childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: parentId,
       agentName: "explore",
       title: "Too deep child",
+      activeSkillNames: [],
+      delegationRequest: delegationRequest({ agent_type: "explore", title: "Too deep child", skills: [] }),
     });
-    const { manager } = createManager({}, { factory: makeFactory() });
+    const { manager } = createManager({}, { factory: makeDeepExploreFactory() });
 
     await expect(manager.resumeChildExecution(workspaceRoot, {
       parentStore,
@@ -5681,41 +5679,6 @@ describe("SessionExecutionManager", () => {
       instruction: "resume",
     background: false,
     })).rejects.toThrow(DepthLimitError);
-  });
-
-  test("Todo Discussion resume derives maxDepth 2 from the authoritative binding", async () => {
-    const parentId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-      title: "Discussion evidence",
-      activeSkillNames: [],
-      delegationRequest: delegationRequest({
-        agent_type: "explore",
-        title: "Discussion evidence",
-        objective: "Inspect local evidence for this Todo Discussion.",
-        skills: [],
-      }),
-    });
-    const { manager } = createManager({}, {
-      factory: makeFactoryWithChildPolicy({ maxDepth: 3 }),
-      isDiscussionSession: async (_workspaceRoot, sessionId) => sessionId === parentId,
-      resolveSessionDepth: async (_workspaceRoot, sessionId) => sessionId === parentId ? 2 : 3,
-    });
-
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "discussion-depth-resume",
-      toolName: "resume_session",
-      sessionId: childId,
-      instruction: "resume",
-      background: false,
-    })).rejects.toBeInstanceOf(DepthLimitError);
-    expect(parentStore.getState().childSessionLinks).toEqual([]);
   });
 
   test("resumeChildExecution re-enforces maxConcurrent", async () => {

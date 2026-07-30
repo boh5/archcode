@@ -1,6 +1,6 @@
 ## Project
 
-ArchCode is an open-source, self-hosted AI coding workbench. Users run it on a local machine or remote server, capture features, bugs, refactors, experiments, and other ideas as Project Todos, shape Ideas through dedicated Discussions, and start Ready or In Progress work as durable Sessions or Automations. A Goal is an optional persistent protocol on a root Lead Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with five Agent identities (Lead, Analyst, Build, Explore, Librarian), three model Profiles (`principal`, `deep`, `fast`), workflow Skills, HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
+ArchCode is an open-source, self-hosted AI coding workbench. Users run it on a local machine or remote server, capture features, bugs, refactors, experiments, and other ideas as Project Todos, shape Ideas through dedicated Discussions, and start Ready or In Progress work as durable Sessions or Automations. A Goal is an optional persistent protocol on a root Lead Session, not a separate work item. ArchCode runs as a Hono server + React Web UI rather than a one-off CLI, with six Agent identities (Lead, Discussion, Analyst, Build, Explore, Librarian), three model Profiles (`principal`, `deep`, `fast`), workflow Skills, HITL/Automation primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Monorepo Structure
 
@@ -256,7 +256,7 @@ Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resum
 **Multi-project model:**
 - `packages/agent-core/src/projects/registry.ts` persists registered workspaces under `~/.archcode/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
 - `packages/agent-core/src/projects/context-resolver.ts` creates per-workspace runtime context: durable HITL, project memory, approvals, and resource notifications. Automation state is owned by the Automation service.
-- Ordinary Session routes create a `lead`. A root Lead Session may own one optional `Session.goal`; no Goal-specific Session, route family, or worktree exists. A Todo-originated root Lead stores its immutable `{ todoId, entry }` source on the Session itself. A `discussion` entry is a restricted root Lead derived from that Session identity.
+- Ordinary Session routes create a `lead`. A root Lead Session may own one optional `Session.goal`; no Goal-specific Session, route family, or worktree exists. A Todo-originated root stores its immutable `{ todoId, entry }` source on the Session itself: `discussion` requires a root `discussion` Agent, while `work` and `automation` require a root `lead`.
 - Web UI Add Project flow should register an existing workspace directory, then use project-scoped API routes (`/api/projects/:slug/...`) for sessions, files, automations, HITL, and events.
 
 **Project `.archcode` layout** (per registered workspace root; user-global `~/.archcode` is unchanged):
@@ -301,7 +301,7 @@ Every descriptor declares an explicit `outputPolicy`. Registry is the sole Raw-t
 - `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `timeout`, and `providerOptions`.
 - `provider.<id>.models.<modelId>.variants.<variantName>` defines named option variants for the same model. A Profile or Session override may reference one; the variant name is consumed during resolution and never passed to the AI SDK call.
 - `profiles.principal`, `profiles.deep`, and `profiles.fast` are all required, and unknown configuration keys fail strict validation.
-- Profile-default merge order is shallow: model `options` → selected `variants[variant]` → Profile `options`. A root Lead Session override resolves independently and never inherits principal Profile options.
+- Profile-default merge order is shallow: model `options` → selected `variants[variant]` → Profile `options`. A user-facing root Session override resolves independently and never inherits principal Profile options.
 - `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
 - Unknown model ids, unknown variant names, and missing Profile config all fail fast with actionable errors.
 - LLM execution is centralized in `packages/agent-core/src/llm/`. Non-LLM runtime code must not import `streamText` or `generateText` directly from `"ai"`; use `runLlmStream`, `runLlmText`, or `runLlmObject` instead.
@@ -371,26 +371,27 @@ Minimal example:
 
 | Agent | Profile | Notes |
 |------|---------|-------|
-| **Lead** (`"lead"`) | root default `principal` | Sole user entry and final technical owner. Works directly, delegates bounded work, owns Plan files, Goal/Automation requests, integration, verification, and delivery. |
+| **Lead** (`"lead"`) | root default `principal` | Ordinary user-work entry and final technical owner. Works directly, delegates bounded work, owns Plan files, Goal/Automation requests, integration, verification, and delivery. |
+| **Discussion** (`"discussion"`) | root default `principal` | Shapes one bound Todo and its optional Plan without implementing product work. May delegate evidence gathering to Explore/Librarian. |
 | **Analyst** (`"analyst"`) | `deep` | Source-read-only architecture analysis, planning support, gap analysis, and independent review. May delegate evidence gathering to Explore/Librarian. |
 | **Build** (`"build"`) | delegated `deep` or `fast` | Source writer with file write/edit, Bash, LSP, Git diff/status, and `ast_grep_replace`. May delegate local research to Explore. |
 | **Explore** (`"explore"`) | `fast` | Terminal read-only local code search/LSP/Git/AST agent. |
 | **Librarian** (`"librarian"`) | `fast` | Terminal read-only documentation/reference agent with local read/search, web_fetch, memory_read, and MCP docs/search tools. |
 
-All five implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) → AgentResult`; SessionExecutionManager commits input before invoking the Agent. Visual is documentation-only future scope and has no runtime identity.
+All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) → AgentResult`; SessionExecutionManager commits input before invoking the Agent. Visual is documentation-only future scope and has no runtime identity.
 
 **Delegation + tool filtering:**
 - Tool sets are hardcoded by `AgentDefinition`; typed RoleContract and Prompt layers describe behavior but never change runtime permissions.
 - Profiles route model resources only; Skills provide guidance only. Neither changes tools, delegation targets, or completion authority.
-- `lead` uses `childPolicy.maxDepth = 3`; `analyst` and `build` use `maxDepth = 2`. A Todo-bound restricted root Lead may delegate Explore/Librarian within depth 2.
+- `lead` uses `childPolicy.maxDepth = 3`; `discussion`, `analyst`, and `build` use `maxDepth = 2`. Discussion may delegate Explore/Librarian.
 - Lead targets Analyst/Build/Explore/Librarian; Analyst targets Explore/Librarian; Build targets Explore.
 - `explore` and `librarian` have no `delegateTargets`; they are terminal read-only support agents.
 - `agents/factory.ts` resolves definition-based allowed tools and removes delegation capabilities at the runtime depth boundary; SessionExecutionManager enforces each role's child policy before child creation.
 - `delegate` persists Agent, Profile, Skills, title, objective, and background choice. `resume_session` preserves that identity. Multiple Builds share general Session concurrency; there is no owned-scope or Build lease subsystem.
 
 **Workflow Skills:**
-- Ordinary root Lead activates `orchestrate-work`; active Goal activates `run-goal`; Todo Discussion activates `shape-todo`, derived from authoritative runtime facts on every Execution.
-- `plan-work` writes an ordinary Markdown Plan under `.archcode/plans/`; Plan has no service, state, ID, API, UI, or Goal link.
+- Ordinary root Lead activates `orchestrate-work`; active Goal activates `run-goal`; root Discussion activates `shape-todo`, derived from authoritative runtime facts on every Execution.
+- `plan-work` writes one ordinary Markdown Plan per Todo under `.archcode/plans/`. Plan has no service, state, ID, API, dedicated page, or Goal link. `execute-plan` is activated only by the Todo-to-work handoff when that file exists.
 - `review-work` guides Lead review orchestration. Analyst analysis/review Skills include `analyze-work`, `review-change`, and the reserved `goal-review` final gate.
 
 **MCP visibility by agent:**
@@ -398,6 +399,7 @@ All five implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) 
 | Agent | MCP servers |
 |-------|-------------|
 | `lead` | `context7`, `exa` |
+| `discussion` | — |
 | `analyst` | `context7` |
 | `build` | — |
 | `explore` | — |
@@ -423,13 +425,13 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | Search / AST | grep✅, glob✅, ast_grep_search✅, ast_grep_replace❌ | Search tools are workspace-scoped. `ast_grep_replace` is destructive and preview-first. |
 | Git / GitHub | git_status✅, git_diff✅, github_get_pull_request✅, github_list_pull_requests✅, github_get_pull_request_checks✅, github_list_issue_comments✅, github_create_issue_comment❌, github_list_workflow_runs✅, github_get_workflow_run✅, github_rerun_workflow_run❌ | GitHub connectors are registered globally but are not default agent tools. |
 | Shell | bash❌✅destructive | Permission: finite path-aware Bash analysis, deterministic deny/ask, default allow |
-| Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current bound restricted Lead Discussion and requires `expectedRevision` |
+| Interaction | ask_user✅❌not-concurrent, todo_write❌, project_todo_update❌ | ask_user serializes (interactive); `project_todo_update` derives its Todo from the current bound root Discussion and requires `expectedRevision` |
 | Web | web_fetch✅ | — |
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
 | Delegation / Skills | delegate❌, resume_session❌, background_output✅, wait_for_reminder✅, cancel_session❌, skill_list✅, skill_read✅ | `delegate` accepts only strict `{ agent_type, profile, title, objective, skills, background }`; `resume_session` accepts only `{ session_id, instruction, background }`; delegated roles return ordinary final assistant text. Only Lead has family cancel. |
 | Tool output recovery | output_read✅, output_search✅ | All agents may retrieve only authorized, bounded artifact pages or search results. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
-| Goal / Automation creation | create_goal❌, get_goal✅, update_goal❌, automation_create❌ | Before a non-Discussion root Lead calls strict `create_goal({ objective })`, it uses ordinary `ask_user` and interprets the answer semantically. Goal creation never parses an initial budget from objective text; users control budget through the Session API/UI. Before completion, Lead uses a fresh direct deep Analyst with `goal-review`, interprets its ordinary report, and calls strict `update_goal({ status, reason })`; Runtime retains only active-family and instance/generation consistency checks. |
+| Goal / Automation creation | create_goal❌, get_goal✅, update_goal❌, automation_create❌ | Before a root Lead calls strict `create_goal({ objective })`, it uses ordinary `ask_user` and interprets the answer semantically. Goal creation never parses an initial budget from objective text; users control budget through the Session API/UI. Before completion, Lead uses a fresh direct deep Analyst with `goal-review`, interprets its ordinary report, and calls strict `update_goal({ status, reason })`; Runtime retains only active-family and instance/generation consistency checks. |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
@@ -439,7 +441,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Session Store
 
-Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and, when present, an immutable `projectTodo` source; an optional `goal` belongs only to a root Lead Session. `projectTodo` is valid only on a root Lead and records `{ todoId, entry }`, where entry is `discussion`, `work`, or `automation`. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns logical Execution start/suspend/resume/end, admission, live run resources, and recovery. Store load performs no lifecycle repair; it exposes only current-schema durable facts and reducer state.
+Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and, when present, an immutable `projectTodo` source; an optional `goal` belongs only to a root Lead Session. `projectTodo` is valid only on a user-facing root and records `{ todoId, entry }`, where entry is `discussion`, `work`, or `automation`; strict identity validation requires `discussion` entry ↔ Discussion Agent and `work`/`automation` entry ↔ Lead Agent. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns logical Execution start/suspend/resume/end, admission, live run resources, and recovery. Store load performs no lifecycle repair; it exposes only current-schema durable facts and reducer state.
 
 ## Context Compaction
 
@@ -455,9 +457,9 @@ Project: `.archcode/runtime/memory/`, User: `~/.archcode/memory/` (user-global, 
 
 ## Project Todos
 
-Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Each Project opens its `/projects/:slug/todos` board by default, while `/projects/:slug` remains the Project Dashboard. `ProjectTodoStateManager` owns strict Todo persistence, flat state updates (`idea`, `ready`, `in_progress`, `done`, `rejected`), archive state, revision checks, and the one canonical array order. `ProjectTodoService` is the only Todo application boundary: it exposes list/create/flat-update and creates a new Root Lead Session for a Todo entry. A Todo never points back to Sessions or Automations.
+Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Each Project opens its `/projects/:slug/todos` board by default, while `/projects/:slug` remains the Project Dashboard. `ProjectTodoStateManager` owns strict Todo persistence, flat state updates (`idea`, `ready`, `in_progress`, `done`, `rejected`), archive state, revision checks, and the one canonical array order. `ProjectTodoService` is the only Todo application boundary: it exposes list/create/flat-update and creates a root Discussion Session for `discussion`, or a root Lead Session for `work` and `automation`. A Todo never points back to Sessions, Plans, or Automations.
 
-A Todo can have any number of direct root Sessions. Each such root stores its immutable `{ todoId, entry }` source; children never copy it. `discussion` roots activate `shape-todo`, may update only their source Todo, and may delegate only Explore/Librarian. `work` and `automation` roots may start only from Ready or In Progress; starting from Ready moves the Todo to In Progress, while starting from In Progress leaves it there. Creating an Automation copies the source `todoId` into the Automation's own optional `projectTodoId`; Automation Invocation Sessions are not direct Todo relations. Todo moves never create, stop, rebind, or delete Sessions or Automations.
+A Todo can have any number of direct root Sessions. Each such root stores its immutable `{ todoId, entry }` source; children never copy it. `discussion` roots activate `shape-todo`, may update only their source Todo, and may delegate only Explore/Librarian. **Generate / Improve Plan** reuses the latest Discussion or creates one, then invokes `plan-work` for the unique `.archcode/plans/<todo-id>.md`; a newly created Discussion receives that Plan request as its first accepted message, never as a second command racing the generic Discussion start. No Plan existence is stored or exposed through Todo APIs. `work` and `automation` roots may start only from Ready or In Progress. At work creation only, `ProjectTodoService` checks that Plan path: an existing file starts with `execute-plan`, while no file preserves ordinary implementation behavior. Starting from Ready moves the Todo to In Progress, while starting from In Progress leaves it there. Creating an Automation copies the source `todoId` into the Automation's own optional `projectTodoId`; Automation Invocation Sessions are not direct Todo relations. Todo moves never create, stop, rebind, or delete Sessions or Automations.
 
 ## HITL
 
@@ -465,7 +467,7 @@ HITL is a durable project-scoped approval/question queue backed by `.archcode/ru
 
 ## Automation System
 
-`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. After the user confirms the creation summary, an ordinary root Lead Session calls `automation_create`; the Runtime rejects Todo-bound Discussions and commits the Automation through the existing scheduler/state path. When the creating root has a Todo source, the new Automation copies its `todoId` into its own `projectTodoId`; Invocation Sessions do not inherit that source. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Lead Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Session Goal state, and worktree lifecycle remain outside Automation.
+`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. After the user confirms the creation summary, a root Lead Session calls `automation_create` and commits the Automation through the existing scheduler/state path; Discussion does not expose that capability. When the creating root has a Todo source, the new Automation copies its `todoId` into its own `projectTodoId`; Invocation Sessions do not inherit that source. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Lead Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Session Goal state, and worktree lifecycle remain outside Automation.
 
 ## LSP Integration
 

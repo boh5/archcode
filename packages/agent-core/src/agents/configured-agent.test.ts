@@ -19,7 +19,8 @@ import {
   IneligibleSessionWorktreeToolError,
   UnknownExtraToolError,
 } from "./configured-agent";
-import { exploreAgentDefinition, leadAgentDefinition } from "./definitions";
+import { discussionAgentDefinition, exploreAgentDefinition, leadAgentDefinition } from "./definitions";
+import { isRootAgentName } from "./root-session-identity";
 import type { AgentDefinition } from "./factory-types";
 import type { VersionControl } from "../version-control/detector";
 import { setLlmAdapterForTest } from "../llm/adapter";
@@ -152,6 +153,8 @@ function makeToolRegistry() {
   return createTestRegistry([
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
+    makeTool("file_write"),
+    makeTool("file_edit"),
     ...DELEGATION_CORE_TOOLS.map(makeTool),
     makeTool("project_todo_update"),
   ]);
@@ -235,11 +238,35 @@ function createAgent(options: {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const projectRoot = options.projectRoot ?? tmpRoot;
   const cwd = options.cwd ?? projectRoot;
-  const store = options.store ?? createStore(crypto.randomUUID(), projectRoot, { cwd, agentName: options.definition.name });
-  if (options.definition.name !== "lead" && store.getState().parentSessionId === undefined) {
+  let store = options.store;
+  if (store === undefined && !isRootAgentName(options.definition.name)) {
     const parentSessionId = crypto.randomUUID();
     createStore(parentSessionId, projectRoot, { cwd, agentName: "lead" });
-    store.setState({ parentSessionId, rootSessionId: parentSessionId });
+    store = createStore(crypto.randomUUID(), projectRoot, {
+      cwd,
+      agentName: options.definition.name,
+      parentSessionId,
+      rootSessionId: parentSessionId,
+    });
+  }
+  store ??= createStore(crypto.randomUUID(), projectRoot, { cwd, agentName: options.definition.name });
+  if (!isRootAgentName(options.definition.name) && store.getState().parentSessionId === undefined) {
+    const parentSessionId = crypto.randomUUID();
+    createStore(parentSessionId, projectRoot, { cwd, agentName: "lead" });
+    const agentType = options.definition.name as "analyst" | "build" | "explore" | "librarian";
+    store.setState({
+      agentName: agentType,
+      parentSessionId,
+      rootSessionId: parentSessionId,
+      delegationRequest: {
+        agent_type: agentType,
+        profile: agentType === "analyst" || agentType === "build" ? "deep" : "fast",
+        title: "Configured Agent test child",
+        objective: "Exercise the configured Agent test contract.",
+        skills: [...store.getState().activeSkillNames],
+        background: false,
+      },
+    });
   }
   return new ConfiguredAgent({
     definition: options.definition,
@@ -579,19 +606,19 @@ describe("ConfiguredAgent", () => {
     expect(JSON.stringify(traces)).not.toContain(editedObjective);
   });
 
-  test("projects Todo Discussion maxDepth 2 into the Prompt from the authoritative binding", async () => {
+  test("derives the Todo Discussion Prompt and shape-todo lifecycle from formal identity", async () => {
     const streamFn = setupMockStreamText("discussion shaped");
     const sessionId = crypto.randomUUID();
     const projectContextResolver = createTestProjectContextResolver(storeManager);
     const projectContext = await projectContextResolver.resolve(tmpRoot);
     const todo = await projectContext.todos.createTodo({ title: "Shape runtime architecture" });
     const store = createStore(sessionId, tmpRoot, {
-      agentName: "lead",
+      agentName: "discussion",
       projectTodo: { todoId: todo.id, entry: "discussion" },
     });
 
     await runAgent(createAgent({
-      definition: leadAgentDefinition,
+      definition: discussionAgentDefinition,
       store,
       projectContextResolver,
     }), "discuss");
@@ -600,6 +627,25 @@ describe("ConfiguredAgent", () => {
     expect(system).toContain(`- Todo: ${todo.id} (bound)`);
     expect(system).toContain("- Allowed delegate targets: explore, librarian");
     expect(system).toContain("- Remaining delegation depth: 2");
+    expect(system).toContain("### shape-todo");
+    expect(store.getState().activeSkillNames).toEqual([]);
+  });
+
+  test("keeps Discussion extraTools within its Definition allowlist", async () => {
+    const streamFn = setupMockStreamText("should not run");
+    const store = createStore(crypto.randomUUID(), tmpRoot, {
+      agentName: "discussion",
+      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+    });
+    const agent = createAgent({
+      definition: discussionAgentDefinition,
+      store,
+    });
+
+    await expect(runAgent(agent, "expand Discussion tools", {
+      extraTools: ["unknown_tool"],
+    })).rejects.toThrow(UnknownExtraToolError);
+    expect(streamFn).not.toHaveBeenCalled();
   });
 
   test("dispose does not cancel a provided shared background task manager", () => {

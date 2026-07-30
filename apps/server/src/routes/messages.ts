@@ -1,8 +1,11 @@
 import {
+  SessionFamilyActiveError,
+  SessionFamilyStopInProgressError,
   SessionCommandConflictError,
   SessionCommandOutcomeError,
   SessionInputConflictError,
   SessionSteerUnavailableError,
+  SessionToolBatchActiveError,
   type AgentRuntime,
 } from "@archcode/agent-core";
 import {
@@ -203,19 +206,66 @@ function mapMessageMutationError(error: unknown, sessionId: string): unknown {
       ...(error.current === undefined ? {} : { current: error.current }),
     });
   }
-  if (error instanceof SessionSteerUnavailableError || error instanceof SessionCommandConflictError) {
-    return new ServerError("BAD_REQUEST", error.message, 409, {
-      scopeCode: error.code,
-      sessionId: error.sessionId,
+  const errorCode = codedErrorValue(error, "code");
+  if (
+    error instanceof SessionFamilyActiveError
+    || error instanceof SessionFamilyStopInProgressError
+    || error instanceof SessionToolBatchActiveError
+    || errorCode === "SESSION_FAMILY_ACTIVE"
+    || errorCode === "SESSION_FAMILY_STOP_IN_PROGRESS"
+    || errorCode === "SESSION_TOOL_BATCH_ACTIVE"
+  ) {
+    return new ServerError("BAD_REQUEST", errorMessage(error), 409, {
+      scopeCode: errorCode,
+      sessionId: codedErrorValue(error, "sessionId") ?? sessionId,
+      ...(codedErrorValue(error, "rootSessionId") === undefined
+        ? {}
+        : { rootSessionId: codedErrorValue(error, "rootSessionId") }),
+      ...(codedStringArray(error, "hitlIds") === undefined
+        ? {}
+        : { hitlIds: codedStringArray(error, "hitlIds") }),
     });
   }
-  if (error instanceof SessionCommandOutcomeError) {
-    return new ServerError("BAD_REQUEST", error.message, 409, {
-      scopeCode: error.code,
-      sessionId: error.sessionId,
-      clientRequestId: error.clientRequestId,
-      status: error.status,
+  if (
+    error instanceof SessionSteerUnavailableError
+    || error instanceof SessionCommandConflictError
+    || errorCode === "SESSION_STEER_UNAVAILABLE"
+    || errorCode === "SESSION_COMMAND_CONFLICT"
+  ) {
+    return new ServerError("BAD_REQUEST", errorMessage(error), 409, {
+      scopeCode: errorCode,
+      sessionId: codedErrorValue(error, "sessionId") ?? sessionId,
+    });
+  }
+  if (
+    error instanceof SessionCommandOutcomeError
+    || errorCode === "SESSION_COMMAND_FAILED"
+    || errorCode === "SESSION_COMMAND_OUTCOME_INDETERMINATE"
+  ) {
+    return new ServerError("BAD_REQUEST", errorMessage(error), 409, {
+      scopeCode: errorCode,
+      sessionId: codedErrorValue(error, "sessionId") ?? sessionId,
+      clientRequestId: codedErrorValue(error, "clientRequestId"),
+      status: codedErrorValue(error, "status"),
     });
   }
   return error;
+}
+
+function codedErrorValue(error: unknown, key: string): string | undefined {
+  if (typeof error !== "object" || error === null || !(key in error)) return undefined;
+  const value = Reflect.get(error, key);
+  return typeof value === "string" ? value : undefined;
+}
+
+function codedStringArray(error: unknown, key: string): readonly string[] | undefined {
+  if (typeof error !== "object" || error === null || !(key in error)) return undefined;
+  const value = Reflect.get(error, key);
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value
+    : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Session command could not be accepted";
 }

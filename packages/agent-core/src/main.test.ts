@@ -573,7 +573,7 @@ describe("createRuntime", () => {
       })]),
     }));
   });
-  test("accepts attachment input through a Todo Discussion root Lead", async () => {
+  test("accepts attachment input through a formal Todo Discussion root", async () => {
     const workspaceRoot = await makeTempRoot();
     const runtime = await createRuntime({
       configService: await writeConfig(makeConfig({ servers: {} })),
@@ -591,11 +591,12 @@ describe("createRuntime", () => {
 
     installTestLlmAdapter();
     try {
-      const discussion = await runtime.createSession(workspaceRoot, {
-        agentName: "lead",
-        title: todo.title,
-        projectTodo: { todoId: todo.id, entry: "discussion" },
+      const started = await context.todos.createSession(todo.id, {
+        expectedRevision: todo.revision,
+        entry: "discussion",
       });
+      const discussion = await runtime.getSessionFile(workspaceRoot, started.sessionId);
+      await nextFamilyActivity(runtime, project.slug, discussion.sessionId, "idle");
       const attachmentId = crypto.randomUUID();
       await runtime.uploadSessionAttachment({
         workspaceRoot,
@@ -629,7 +630,7 @@ describe("createRuntime", () => {
       expect(stored).toMatchObject({
         sessionId: discussion.sessionId,
         rootSessionId: discussion.sessionId,
-        agentName: "lead",
+        agentName: "discussion",
         projectTodo: { todoId: todo.id, entry: "discussion" },
       });
       expect(stored.messages).toContainEqual(expect.objectContaining({

@@ -1683,7 +1683,17 @@ describe("SessionStoreManager", () => {
     const childStore = manager.create(childSessionId, TMP_DIR, {
       rootSessionId,
       parentSessionId: rootSessionId,
-      title: "child-title", agentName: "lead"
+      title: "child-title",
+      agentName: "explore",
+      activeSkillNames: [],
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "child-title",
+        objective: "Persist a child Session in its canonical directory.",
+        skills: [],
+        background: false,
+      },
     });
     await manager.getSessionFile(TMP_DIR, childSessionId);
 

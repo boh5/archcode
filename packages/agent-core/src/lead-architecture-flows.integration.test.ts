@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ServerConfigService, resolveServerConfigPath } from "./config";
@@ -31,6 +31,150 @@ afterAll(async () => {
 });
 
 describe("Lead architecture full-runtime flows", () => {
+  test("Todo Discussion generates and improves its one Markdown Plan through the Plan Skill", async () => {
+    const fixture = await runtimeFixture("Todo Plan authoring flow");
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const idea = await context.todos.createTodo({
+      title: "Make durable execution visible",
+      body: "Expose execution progress without adding another work item state machine.",
+    });
+
+    const planPath = `.archcode/plans/${idea.id}.md`;
+    const initialPlan = `# Durable execution visibility Plan
+
+## Goal and background
+
+Make durable execution progress visible while keeping the Project Todo as the only work item.
+
+## Scope and non-goals
+
+- Scope: expose the existing Session execution progress in the Todo detail.
+- Non-goal: add a Plan service, Plan status, or another workflow state machine.
+
+## Implementation steps
+
+1. Read the existing Todo and Session projections.
+2. Add the smallest Todo-detail projection of existing execution progress.
+3. Verify the projection without changing Todo lifecycle transitions.
+
+## Dependencies and order
+
+The Session projection contract must be confirmed before the Web projection is changed.
+
+## Acceptance criteria
+
+- Opening the bound Todo while its Lead Session is running shows the current execution status from the existing Session projection.
+- Starting and finishing work leaves the Todo lifecycle transitions identical to the four-state contract.
+- Protocol and route schemas contain no Plan entity, Plan status, or Plan-to-Goal identifier.
+
+## Verification
+
+Run the focused protocol, Todo route, and Web Todo tests; then inspect the rendered Todo detail for the running and completed states.
+
+## Risks and open decisions
+
+- Risk: stale Session data could show an outdated execution status; verify SSE invalidation in the focused Web test.
+- Open decisions: none.
+`;
+    const addedCriterion = "- Reloading the Todo detail after completion shows the completed Session status without creating a second Todo or Plan file.";
+    let planCalls = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        planCalls += 1;
+        switch (planCalls) {
+          case 1:
+            return toolStream("read-plan-skill-1", "skill_read", { name: "plan-work" });
+          case 2:
+            return toolStream("write-plan", "file_write", {
+              path: planPath,
+              content: initialPlan,
+            });
+          case 3:
+            return textStream("The Plan has been generated at the unique Todo Plan path.");
+          case 4:
+            return toolStream("read-plan-skill-2", "skill_read", { name: "plan-work" });
+          case 5:
+            return toolStream("read-existing-plan", "file_read", { path: planPath });
+          case 6:
+            return toolStream("improve-plan", "file_edit", {
+              path: planPath,
+              edits: [{
+                oldString: "## Verification",
+                newString: `${addedCriterion}\n\n## Verification`,
+              }],
+            });
+          default:
+            return textStream("The existing Plan has been improved in place.");
+        }
+      }) as never,
+      generateText: mock(async () => ({ text: "Todo Plan authoring flow" })) as never,
+    });
+
+    const discussion = await context.todos.createSession(idea.id, {
+      expectedRevision: idea.revision,
+      entry: "discussion",
+      initialIntent: "plan",
+    });
+    await waitForFamilyIdle(
+      fixture.runtime,
+      fixture.workspaceRoot,
+      fixture.projectSlug,
+      discussion.sessionId,
+    );
+
+    await fixture.runtime.acceptSessionMessage({
+      slug: fixture.projectSlug,
+      workspaceRoot: fixture.workspaceRoot,
+      sessionId: discussion.sessionId,
+      text: `/skill use plan-work Improve the existing implementation Plan at ${planPath}.`,
+      attachmentIds: [],
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection: {
+        mode: "profile_default",
+        selection: { model: "local:test" },
+      },
+    });
+    await waitForFamilyIdle(
+      fixture.runtime,
+      fixture.workspaceRoot,
+      fixture.projectSlug,
+      discussion.sessionId,
+    );
+
+    const session = await fixture.runtime.getSessionFile(
+      fixture.workspaceRoot,
+      discussion.sessionId,
+    );
+    expect(toolTrace(session)).toEqual([
+      "skill_read",
+      "file_write",
+      "skill_read",
+      "file_read",
+      "file_edit",
+    ]);
+    expect(userTextInputs(session)).toHaveLength(2);
+    expect(userTextInputs(session).every((input) =>
+      input.startsWith('Use Skill "plan-work" for this request. First call skill_read'),
+    )).toBe(true);
+    expect(session.messages.flatMap((message) => message.role === "user" ? message.parts : [])
+      .filter((part) => part.type === "system-notice")
+      .map((part) => part.notice)).toEqual([
+      'Activating skill "plan-work"...',
+      'Activating skill "plan-work"...',
+    ]);
+    expect(await readFile(join(fixture.workspaceRoot, planPath), "utf8"))
+      .toBe(initialPlan.replace("## Verification", `${addedCriterion}\n\n## Verification`));
+    expect(await readdir(join(fixture.workspaceRoot, ".archcode", "plans")))
+      .toEqual([`${idea.id}.md`]);
+    expect(await context.todos.readTodo(idea.id)).toMatchObject({
+      status: "idea",
+      revision: idea.revision,
+    });
+    expect(session.goal).toBeUndefined();
+    expect(planCalls).toBe(7);
+  });
+
   test("Todo Discussion reaches Ready and starts a fresh ordinary Lead Session", async () => {
     const fixture = await runtimeFixture("Todo architecture flow");
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
@@ -55,7 +199,7 @@ describe("Lead architecture full-runtime flows", () => {
     expect(discussionSession).toMatchObject({
       sessionId: discussionSessionId,
       rootSessionId: discussionSessionId,
-      agentName: "lead",
+      agentName: "discussion",
       projectTodo: { todoId: idea.id, entry: "discussion" },
     });
     expect(discussionSession.parentSessionId).toBeUndefined();
@@ -64,7 +208,7 @@ describe("Lead architecture full-runtime flows", () => {
       authorization: {
         sessionId: discussionSessionId,
         rootSessionId: discussionSessionId,
-        agentName: "lead",
+        agentName: "discussion",
         projectSlug: fixture.projectSlug,
         projectTodo: discussionSession.projectTodo,
       },
@@ -107,6 +251,159 @@ describe("Lead architecture full-runtime flows", () => {
     ];
     expect(acceptedWorkInputs.some((text) => text.startsWith("Implement the following Project Todo")))
       .toBe(true);
+    expect(workSession.goal).toBeUndefined();
+  });
+
+  test("Start Work reads execute-plan and the Plan before continuing without a Goal", async () => {
+    const fixture = await runtimeFixture("Plan execution without Goal");
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const idea = await context.todos.createTodo({
+      title: "Execute a reviewed Plan without Goal",
+      body: "The user wants an ordinary execution after reviewing the Plan.",
+    });
+    const ready = await context.todos.updateTodo(idea.id, {
+      expectedRevision: idea.revision,
+      status: "ready",
+    });
+    const planPath = `.archcode/plans/${ready.id}.md`;
+    await mkdir(join(fixture.workspaceRoot, ".archcode", "plans"), { recursive: true });
+    await writeFile(join(fixture.workspaceRoot, planPath), executablePlan());
+
+    let rootCalls = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        rootCalls += 1;
+        switch (rootCalls) {
+          case 1:
+            return toolStream("read-execute-plan-skill-no-goal", "skill_read", {
+              name: "execute-plan",
+            });
+          case 2:
+            return toolStream("read-plan-no-goal", "file_read", { path: planPath });
+          case 3:
+            return toolStream("ask-goal-no", "ask_user", {
+              questions: [{
+                header: "Goal",
+                question: "Create a Goal for this Plan execution?",
+              }],
+            });
+          default:
+            return textStream("Continue as an ordinary Lead execution without a Goal.");
+        }
+      }) as never,
+      generateText: mock(async () => ({ text: "Plan execution without Goal" })) as never,
+    });
+    const pendingQuestionPromise = nextPendingQuestion(fixture.runtime);
+    const work = await context.todos.createSession(ready.id, {
+      expectedRevision: ready.revision,
+      entry: "work",
+    });
+    const pendingQuestion = await pendingQuestionPromise;
+    expect(pendingQuestion.sessionId).toBe(work.sessionId);
+
+    await fixture.runtime.respondToHitl({
+      slug: fixture.projectSlug,
+      workspaceRoot: fixture.workspaceRoot,
+      hitlId: pendingQuestion.hitlId,
+      response: {
+        type: "question_answer",
+        answers: ["Continue ordinary execution without a Goal."],
+      },
+    });
+    await waitForFamilyIdle(
+      fixture.runtime,
+      fixture.workspaceRoot,
+      fixture.projectSlug,
+      work.sessionId,
+    );
+
+    const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, work.sessionId);
+    expect(session.agentName).toBe("lead");
+    expect(session.goal).toBeUndefined();
+    expect(toolTrace(session)).toEqual(["skill_read", "file_read", "ask_user"]);
+    expect(rootCalls).toBe(4);
+  });
+
+  test("Start Work reads execute-plan and the Plan before creating the approved Goal", async () => {
+    const fixture = await runtimeFixture("Plan execution with Goal");
+    const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const idea = await context.todos.createTodo({
+      title: "Execute a reviewed Plan with Goal",
+      body: "The user wants durable Goal supervision for the Plan.",
+    });
+    const ready = await context.todos.updateTodo(idea.id, {
+      expectedRevision: idea.revision,
+      status: "ready",
+    });
+    const planPath = `.archcode/plans/${ready.id}.md`;
+    const objective = [
+      "Deliver the bound Todo through the existing Lead execution path.",
+      "The focused tests must pass with zero failures, the Todo must remain the sole work item,",
+      "and no Plan entity or Plan-to-Goal link may be persisted.",
+    ].join(" ");
+    await mkdir(join(fixture.workspaceRoot, ".archcode", "plans"), { recursive: true });
+    await writeFile(join(fixture.workspaceRoot, planPath), executablePlan());
+
+    let rootCalls = 0;
+    setLlmAdapterForTest({
+      streamText: mock(() => {
+        rootCalls += 1;
+        switch (rootCalls) {
+          case 1:
+            return toolStream("read-execute-plan-skill-goal", "skill_read", {
+              name: "execute-plan",
+            });
+          case 2:
+            return toolStream("read-plan-goal", "file_read", { path: planPath });
+          case 3:
+            return toolStream("ask-goal-yes", "ask_user", {
+              questions: [{
+                header: "Goal",
+                question: "Create a Goal from the Plan objective and acceptance criteria?",
+              }],
+            });
+          case 4:
+            return toolStream("create-approved-goal", "create_goal", { objective });
+          default:
+            return textStream("The approved Goal is active and execution can proceed.");
+        }
+      }) as never,
+      generateText: mock(async () => ({ text: "Plan execution with Goal" })) as never,
+    });
+    const pendingQuestionPromise = nextPendingQuestion(fixture.runtime);
+    const work = await context.todos.createSession(ready.id, {
+      expectedRevision: ready.revision,
+      entry: "work",
+    });
+    const pendingQuestion = await pendingQuestionPromise;
+    expect(pendingQuestion.sessionId).toBe(work.sessionId);
+
+    await fixture.runtime.respondToHitl({
+      slug: fixture.projectSlug,
+      workspaceRoot: fixture.workspaceRoot,
+      hitlId: pendingQuestion.hitlId,
+      response: {
+        type: "question_answer",
+        answers: ["Yes, create the Goal from the Plan."],
+      },
+    });
+    await waitForFamilyIdle(
+      fixture.runtime,
+      fixture.workspaceRoot,
+      fixture.projectSlug,
+      work.sessionId,
+    );
+
+    const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, work.sessionId);
+    expect(session.agentName).toBe("lead");
+    expect(session.goal).toMatchObject({ status: "active", objective });
+    expect(toolTrace(session)).toEqual([
+      "skill_read",
+      "file_read",
+      "ask_user",
+      "create_goal",
+    ]);
+    expect(rootCalls).toBe(5);
   });
 
   test("ordinary ask_user confirmation can precede Goal execution", async () => {
@@ -437,6 +734,73 @@ function nextPendingSessionQuestion(
       resolve({ hitlId: event.view.hitlId });
     });
   });
+}
+
+function nextPendingQuestion(
+  runtime: AgentRuntime,
+): Promise<{ hitlId: string; sessionId: string }> {
+  return new Promise((resolve) => {
+    const unsubscribe = runtime.subscribeHitlEvents((event) => {
+      if (event.payload.type !== "hitl.request"
+        || event.view.owner.type !== "session"
+        || event.view.source.type !== "ask_user") return;
+      unsubscribe();
+      resolve({
+        hitlId: event.view.hitlId,
+        sessionId: event.view.owner.id,
+      });
+    });
+  });
+}
+
+function toolTrace(session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>): string[] {
+  return session.messages.flatMap((message) => message.role === "assistant" ? message.parts : [])
+    .filter((part) => part.type === "tool")
+    .map((part) => part.toolName);
+}
+
+function userTextInputs(session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>): string[] {
+  return session.messages.flatMap((message) => message.role === "user" ? message.parts : [])
+    .filter((part) => part.type === "text")
+    .map((part) => part.text);
+}
+
+function executablePlan(): string {
+  return `# Reviewed execution Plan
+
+## Goal and background
+
+Deliver the Todo through the existing Lead execution path.
+
+## Scope and non-goals
+
+- Scope: implement the bound Todo.
+- Non-goal: create a Plan service or Plan-to-Goal link.
+
+## Implementation steps
+
+1. Read the affected code.
+2. Implement the scoped change.
+3. Run the named verification.
+
+## Dependencies and order
+
+Inspect current behavior before editing, then verify after implementation.
+
+## Acceptance criteria
+
+- The focused tests pass with zero failures.
+- The Todo remains the sole work item and no Plan entity is persisted.
+
+## Verification
+
+Run the focused test command and inspect the final diff.
+
+## Risks and open decisions
+
+- Risk: implementation may expose an unrelated regression; the full test suite is the final check.
+- Open decisions: none.
+`;
 }
 
 function nextGoalCompletion(runtime: AgentRuntime, sessionId: string): Promise<void> {

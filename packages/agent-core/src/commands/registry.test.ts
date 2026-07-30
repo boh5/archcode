@@ -46,6 +46,10 @@ describe("CommandRegistry", () => {
       command: "compact",
       args: "--verbose",
     });
+    expect(registry.parse("/skill use plan-work Create the Plan.\n\nTodo ID: todo-1")).toEqual({
+      command: "skill",
+      args: "use plan-work Create the Plan.\n\nTodo ID: todo-1",
+    });
   });
 
   test("returns null for non slash input and bare slash", () => {

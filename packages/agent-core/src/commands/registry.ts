@@ -25,7 +25,7 @@ export class CommandRegistry {
     const trimmedRight = withoutSlash.trimEnd();
     if (trimmedRight.length === 0) return null;
 
-    const match = /^(\S+)(?:\s+(.*))?$/.exec(trimmedRight);
+    const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(trimmedRight);
     if (!match?.[1]) return null;
 
     return {

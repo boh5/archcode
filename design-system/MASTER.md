@@ -479,6 +479,8 @@ Execution is a mandatory product entity, not an optional visual section.
   refreshing.
 - Toasts confirm short-lived outcomes; errors remain near the failed action and
   include a recovery path.
+- Live attention notices stay below the header and above the composer action
+  area; they must never intercept Send, Queue, or Stop controls.
 
 ## Iconography
 

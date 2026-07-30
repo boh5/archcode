@@ -1,6 +1,7 @@
 import type { ModelSelectionRef, RequestedModelSelection, SessionModelSelection } from "@archcode/protocol";
 import type { SessionStoreState } from "../store/types";
 import type { SessionInputDurableMutation } from "./service";
+import { isUserFacingRootSession } from "../agents/root-session-identity";
 
 export class SessionModelSelectionConflictError extends Error {
   constructor(
@@ -22,9 +23,9 @@ export class SessionModelSelectionInvalidError extends Error {
 export class SessionModelSelectionNotAllowedError extends Error {
   constructor(
     public readonly sessionId: string,
-    public readonly reason: "not_root_lead",
+    public readonly reason: "not_user_facing_root",
   ) {
-    super(`Session model overrides belong only to a root Lead Session; "${sessionId}" is not eligible`);
+    super(`Session model overrides belong only to a user-facing root Session; "${sessionId}" is not eligible`);
     this.name = "SessionModelSelectionNotAllowedError";
   }
 }
@@ -50,23 +51,23 @@ type DurableModelSelectionIdentity = Pick<
 >;
 
 /**
- * Returns the durable override only for a root Lead. Child model identity comes
+ * Returns the durable override only for a user-facing root Session. Child model identity comes
  * exclusively from its delegated Profile, so any mutable selection state is a
  * corrupt identity.
  */
 export function resolveDurableSessionModelOverride(
   state: DurableModelSelectionIdentity,
 ): ModelSelectionRef | undefined {
-  if (!isRootLead(state)) {
+  if (!isUserFacingRootSession(state)) {
     if (state.modelSelection.revision !== 0 || state.modelSelection.override !== undefined) {
-      throw new SessionModelSelectionNotAllowedError(state.sessionId, "not_root_lead");
+      throw new SessionModelSelectionNotAllowedError(state.sessionId, "not_user_facing_root");
     }
     return undefined;
   }
   return state.modelSelection.override;
 }
 
-/** Owns the root Lead Session-local model override and its revision-CAS mutation boundary. */
+/** Owns the user-facing root Session-local model override and its revision-CAS mutation boundary. */
 export class SessionModelSelectionService {
   constructor(private readonly store: SessionModelSelectionStorePort) {}
 
@@ -83,9 +84,9 @@ export class SessionModelSelectionService {
     requestedModelSelection: RequestedModelSelection;
   }): Promise<SessionModelSelection> {
     const current = await this.store.getSessionFile(input.workspaceRoot, input.sessionId);
-    assertRootLeadSelectionOwner(current);
+    assertRootSelectionOwner(current);
     return await this.store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
-      assertRootLeadSelectionOwner(state);
+      assertRootSelectionOwner(state);
       if (state.modelSelection.revision !== input.expectedRevision) {
         throw new SessionModelSelectionConflictError(
           input.expectedRevision,
@@ -106,16 +107,10 @@ export class SessionModelSelectionService {
   }
 }
 
-function assertRootLeadSelectionOwner(state: DurableModelSelectionIdentity): void {
-  if (!isRootLead(state)) {
-    throw new SessionModelSelectionNotAllowedError(state.sessionId, "not_root_lead");
+function assertRootSelectionOwner(state: DurableModelSelectionIdentity): void {
+  if (!isUserFacingRootSession(state)) {
+    throw new SessionModelSelectionNotAllowedError(state.sessionId, "not_user_facing_root");
   }
-}
-
-function isRootLead(state: DurableModelSelectionIdentity): boolean {
-  return state.agentName === "lead"
-    && state.parentSessionId === undefined
-    && state.rootSessionId === state.sessionId;
 }
 
 function copySelection(selection: SessionModelSelection): SessionModelSelection {

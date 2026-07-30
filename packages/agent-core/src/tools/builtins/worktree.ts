@@ -219,7 +219,6 @@ async function validateInteractiveRootSession(ctx: ToolExecutionContext): Promis
     ctx.agentName !== "lead"
     || state.parentSessionId !== undefined
     || (ctx.currentDepth ?? 0) !== 0
-    || state.projectTodo?.entry === "discussion"
   ) {
     return createToolErrorResult({
       kind: "permission-denied",

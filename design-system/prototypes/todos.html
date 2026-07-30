@@ -385,7 +385,27 @@
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
+      }
+
+      .drawer-actions {
         margin-top: 14px;
+      }
+
+      .drawer-action-groups {
+        display: grid;
+        gap: 16px;
+      }
+
+      .drawer-action-group h4 {
+        color: var(--text-tertiary);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .drawer-buttons {
+        margin-top: 8px;
       }
 
       .secondary-button {
@@ -609,7 +629,28 @@
           <p>No additional details.</p>
           <div class="drawer-actions">
             <button class="secondary-button" data-action="编辑 Todo">Edit</button>
-            <button class="primary-button" data-action="创建 Discussion">New Discussion</button>
+          </div>
+        </section>
+        <section class="drawer-section" aria-label="Todo actions">
+          <h3>Actions</h3>
+          <div class="drawer-action-groups">
+            <div class="drawer-action-group" role="group" aria-label="Discuss & Plan">
+              <h4>Discuss &amp; Plan</h4>
+              <div class="drawer-buttons">
+                <button class="primary-button" data-action="创建 Discussion">New Discussion</button>
+                <button class="secondary-button" data-action="Generate or improve Plan">Generate / Improve Plan</button>
+              </div>
+            </div>
+            <div class="drawer-action-group" role="group" aria-label="Lifecycle">
+              <h4>Lifecycle</h4>
+              <div class="drawer-buttons">
+                <button class="secondary-button" data-action="拒绝 Todo">Reject</button>
+                <button class="secondary-button" data-action="移到 Ready">Move to Ready</button>
+                <button class="secondary-button" data-action="移到 In Progress">Move to In Progress</button>
+                <button class="secondary-button" data-action="移到 Done">Move to Done</button>
+                <button class="secondary-button" data-action="归档 Todo">Archive</button>
+              </div>
+            </div>
           </div>
         </section>
         <section class="drawer-section" aria-label="Linked sessions">
@@ -617,16 +658,6 @@
         </section>
         <section class="drawer-section" aria-label="Linked automations">
           <h3>Automations</h3><p>No automations yet.</p>
-        </section>
-        <section class="drawer-section" aria-label="Todo actions">
-          <h3>Actions</h3>
-          <div class="drawer-buttons">
-            <button class="secondary-button" data-action="拒绝 Todo">Reject</button>
-            <button class="secondary-button" data-action="移到 Ready">Move to Ready</button>
-            <button class="secondary-button" data-action="移到 In Progress">Move to In Progress</button>
-            <button class="secondary-button" data-action="移到 Done">Move to Done</button>
-            <button class="secondary-button" data-action="归档 Todo">Archive</button>
-          </div>
         </section>
       </div>
     </aside>

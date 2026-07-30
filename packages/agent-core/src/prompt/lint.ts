@@ -56,6 +56,7 @@ export function lintGuidanceAuthority(contract: Pick<PromptContractV2, "guidance
 
 function completionAuthorityFor(runtime: RuntimePromptEnvelope): CompletionAuthority {
   if (runtime.agentName === "lead") return runtime.todo === "none" ? "ordinary-session" : "bound-todo";
+  if (runtime.agentName === "discussion") return "bound-todo";
   return "delegated-scope";
 }
 
@@ -72,11 +73,17 @@ export function assertLegalExecutionMode(runtime: RuntimePromptEnvelope): void {
   const reject = (reason: string): never => { throw new IllegalPromptExecutionModeError(runtime.agentName, reason); };
 
   if (isRoot === hasParentAgent) reject("parent Session and parent Agent identities must either both be present or both be none");
-  if (runtime.agentName !== "lead" && runtime.todo !== "none") reject("only a root Lead may have a bound Todo");
+  if (runtime.agentName !== "lead" && runtime.agentName !== "discussion" && runtime.todo !== "none") {
+    reject("only a user-facing root Agent may have a bound Todo");
+  }
 
   switch (runtime.agentName) {
     case "lead": {
       if (!isRoot) reject("Lead requires a root Session");
+      break;
+    }
+    case "discussion": {
+      if (!isRoot || runtime.todo === "none") reject("Discussion requires a Todo-bound root Session");
       break;
     }
     case "analyst":
@@ -85,12 +92,12 @@ export function assertLegalExecutionMode(runtime: RuntimePromptEnvelope): void {
       break;
     }
     case "explore": {
-      const legalParent = ["lead", "analyst", "build"].includes(runtime.parentAgentName);
+      const legalParent = ["lead", "discussion", "analyst", "build"].includes(runtime.parentAgentName);
       if (isRoot || !legalParent) reject("Explore requires a legal parent role");
       break;
     }
     case "librarian": {
-      const legalParent = ["lead", "analyst"].includes(runtime.parentAgentName);
+      const legalParent = ["lead", "discussion", "analyst"].includes(runtime.parentAgentName);
       if (isRoot || !legalParent) reject("Librarian requires a legal parent role");
       break;
     }

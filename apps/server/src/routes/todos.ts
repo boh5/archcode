@@ -47,6 +47,15 @@ const ProjectTodoUpdateBodySchema = z.strictObject({
 const CreateProjectTodoSessionBodySchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
   entry: z.enum(["discussion", "work", "automation"]),
+  initialIntent: z.literal("plan").optional(),
+}).superRefine((input, context) => {
+  if (input.initialIntent !== undefined && input.entry !== "discussion") {
+    context.addIssue({
+      code: "custom",
+      path: ["initialIntent"],
+      message: "initialIntent is available only for Discussion Sessions",
+    });
+  }
 });
 
 export interface ProjectTodoServiceLike {

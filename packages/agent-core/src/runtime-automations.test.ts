@@ -281,9 +281,19 @@ describe("AgentRuntime Automation wiring", () => {
       agentName: "explore",
       rootSessionId: fixture.sourceSessionId,
       parentSessionId: fixture.sourceSessionId,
+      activeSkillNames: [],
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Invalid child source",
+        objective: "Remain ineligible as an Automation creation source.",
+        skills: [],
+        background: false,
+      },
     });
-    const wrongAgent = await stores.createSessionFile(fixture.workspaceRoot, {
-      agentName: "analyst",
+    const discussion = await stores.createSessionFile(fixture.workspaceRoot, {
+      agentName: "discussion",
+      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
     });
     const missingSessionId = crypto.randomUUID();
     const input = {
@@ -302,7 +312,7 @@ describe("AgentRuntime Automation wiring", () => {
       createdFromSessionId: fixture.secondSourceSessionId!,
     })).rejects.toMatchObject({ name: "ResourceCreationSourceError", sessionId: fixture.secondSourceSessionId });
 
-    for (const source of [child, wrongAgent]) {
+    for (const source of [child, discussion]) {
       await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
         ...input,
         createdFromSessionId: source.sessionId,

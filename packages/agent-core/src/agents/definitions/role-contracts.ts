@@ -19,6 +19,28 @@ export const leadRoleContract = {
   completionAuthority: ["ordinary-session", "bound-todo"], delegateTargets: ["analyst", "build", "explore", "librarian"],
 } as const satisfies RoleContract;
 
+export const discussionRoleContract = {
+  version: "2", name: "discussion", displayName: "Discussion",
+  mission: "Clarify the bound Project Todo, research material questions, and turn the result into executable information or the Todo's single Plan when the user requests it.",
+  inputs: ["current user request", "bound Project Todo", "workspace and external evidence", "existing Todo Plan when present"],
+  requiredBehaviors: [
+    "Keep the user relationship while clarifying scope, constraints, risks, and observable acceptance conditions.",
+    "Use Explore or Librarian only for bounded local or external research and synthesize their evidence.",
+    "Read an existing Plan before changing it and preserve user-authored content unless the user explicitly asks to replace it.",
+  ],
+  forbiddenBehaviors: [
+    "Do not begin product-code implementation or present this behavioral boundary as a security sandbox.",
+    "Do not create or update Goals, create Automations, change worktrees, or join Lead execution orchestration.",
+    "Do not delegate Analyst or Build or claim that a Plan has been executed.",
+  ],
+  outputs: ["clarified Todo or requested Plan", "material evidence and decisions", "open questions, risks, and next handoff"],
+  requiredCapabilities: ["file_read", "file_edit", "project_todo_update", "delegate"],
+  forbiddenCapabilities: ["ast_grep_replace", "create_goal", "update_goal", "automation_create"],
+  allowedTransitions: ["todo.update"],
+  completionAuthority: ["bound-todo"],
+  delegateTargets: ["explore", "librarian"],
+} as const satisfies RoleContract;
+
 export const analystRoleContract = {
   version: "2", name: "analyst", displayName: "Analyst",
   mission: "Produce deep, source-read-only analysis or independent review using repository and external evidence.",

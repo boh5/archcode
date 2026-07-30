@@ -134,7 +134,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       const session = sessions.get(key);
       if (!session) throw new MissingSessionFileError();
       if (session.parentSessionId !== undefined || session.rootSessionId !== session.sessionId) {
-        throw new SessionModelSelectionNotAllowedError(session.sessionId, "not_root_lead");
+        throw new SessionModelSelectionNotAllowedError(session.sessionId, "not_user_facing_root");
       }
       const revision = (modelSelectionRevisions.get(key) ?? input.expectedRevision) + 1;
       modelSelectionRevisions.set(key, revision);
@@ -559,11 +559,11 @@ describe("sessions routes", () => {
     expect(await response.json()).toEqual({
       error: {
         code: "BAD_REQUEST",
-        message: expect.stringContaining("root Lead Session"),
+        message: expect.stringContaining("user-facing root Session"),
         details: {
           scopeCode: "SESSION_MODEL_SELECTION_NOT_ALLOWED",
           sessionId: "child-session",
-          reason: "not_root_lead",
+          reason: "not_user_facing_root",
         },
       },
     });

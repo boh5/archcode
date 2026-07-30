@@ -250,6 +250,72 @@ describe("messages routes", () => {
     expect(response.status).toBe(409);
   });
 
+  test("maps code-identical command conflicts across hot-reload class identities", async () => {
+    const { app, project, runtime } = await createTestApp("command-conflict-reload");
+    (runtime.acceptSessionMessage as unknown as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw Object.assign(new Error("commands require an idle root Session"), {
+        code: "SESSION_COMMAND_CONFLICT",
+        sessionId: "session-1",
+      });
+    });
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        text: "/skill use plan-work",
+        attachmentIds: [],
+        clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        requestedModelSelection,
+      }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.details).toEqual({
+      scopeCode: "SESSION_COMMAND_CONFLICT",
+      sessionId: "session-1",
+    });
+  });
+
+  test("maps an active HITL tool batch to a stable conflict", async () => {
+    const { app, project, runtime } = await createTestApp("active-hitl");
+    const activeHitlError = Object.assign(
+      new Error(
+        "Session \"session-1\" is waiting for a human-in-the-loop response: hitl-1.",
+      ),
+      {
+        code: "SESSION_TOOL_BATCH_ACTIVE",
+        sessionId: "session-1",
+        hitlIds: ["hitl-1"],
+      },
+    );
+    (runtime.acceptSessionMessage as unknown as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw activeHitlError;
+    });
+    const response = await app.request(`/api/projects/${project.slug}/sessions/session-1/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        text: "/skill use plan-work",
+        attachmentIds: [],
+        clientRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        requestedModelSelection,
+      }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "BAD_REQUEST",
+        message: activeHitlError.message,
+        details: {
+          scopeCode: "SESSION_TOOL_BATCH_ACTIVE",
+          sessionId: "session-1",
+          hitlIds: ["hitl-1"],
+        },
+      },
+    });
+  });
+
   test("returns a stable indeterminate command outcome without authorizing replay", async () => {
     const { app, project, runtime } = await createTestApp("command-indeterminate");
     (runtime.acceptSessionMessage as unknown as ReturnType<typeof mock>).mockImplementation(async () => {

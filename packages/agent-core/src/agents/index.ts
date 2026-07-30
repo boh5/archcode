@@ -24,8 +24,17 @@ export type {
 } from "./factory-types";
 export { AGENT_NAMES } from "./names";
 export {
+  ROOT_AGENT_NAMES,
+  isRootAgentName,
+  isRootLeadSession,
+  isUserFacingRootSession,
+  sessionIdentityInvariantError,
+} from "./root-session-identity";
+export type { RootAgentName } from "./root-session-identity";
+export {
   buildAgentDefinition,
   defaultAgentDefinitions,
+  discussionAgentDefinition,
   exploreAgentDefinition,
   librarianAgentDefinition,
   leadAgentDefinition,

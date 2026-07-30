@@ -17,6 +17,7 @@ import {
 import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition, AgentName } from "./factory-types";
 import { leadRoleContract } from "./definitions/role-contracts";
+import { discussionAgentDefinition } from "./definitions";
 import { silentLogger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import { createTestTempRoot } from "../testing/test-temp-root";
@@ -144,12 +145,31 @@ describe("createAgentFactory", () => {
     expect(typeof agent.run).toBe("function");
   });
 
+  test("creates Discussion only from a Todo-bound root store", () => {
+    const factory = makeFactory([definition(), discussionAgentDefinition]);
+    const store = storeManager.create(`factory-discussion-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, {
+      agentName: "discussion",
+      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+    });
+
+    expect(factory.createRootAgent("discussion", { store }).store).toBe(store);
+    expect(() => factory.createRootAgent("discussion")).toThrow(
+      "Discussion Sessions require a Discussion Project Todo source",
+    );
+  });
+
   test("rejects an Agent definition that conflicts with persisted Session identity", () => {
     const factory = makeFactory([
       definition(),
       definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
-    const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "explore" });
+    const parentSessionId = crypto.randomUUID();
+    storeManager.create(parentSessionId, TEST_WORKSPACE_ROOT, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
+      agentName: "explore",
+      parentSessionId,
+      rootSessionId: parentSessionId,
+    });
 
     expect(() => factory.createAgent("lead", { store })).toThrow(AgentStoreIdentityMismatchError);
     expect(store.getState().agentName).toBe("explore");
@@ -199,7 +219,12 @@ describe("createAgentFactory", () => {
     ]);
 
     const rootStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "lead", title: "Root Title" });
-    const childStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "explore", title: "Child Title" });
+    const childStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
+      agentName: "explore",
+      title: "Child Title",
+      parentSessionId: rootStore.getState().sessionId,
+      rootSessionId: rootStore.getState().sessionId,
+    });
     const root = factory.createRootAgent("lead", { store: rootStore });
     const child = factory.createAgent("explore", { store: childStore });
 

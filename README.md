@@ -15,7 +15,8 @@ verified results. Click for the full-resolution MP4.*
 1. **Capture an idea** — save anything you may want to build, fix, investigate,
    or improve as a Project Todo.
 2. **Shape the work** — discuss the Todo with an Agent until the scope and
-   expected outcome are clear.
+   expected outcome are clear; generate or refine its single Markdown Plan when
+   the work needs one.
 3. **Mark it Ready** — keep rough ideas separate from work that is ready to run.
 4. **Start the work** — launch a fresh Lead Session or an Automation from the
    Todo.
@@ -75,6 +76,7 @@ without mixing everything into one conversation.
 | Agent | Responsibility | Model Profile |
 |---|---|---|
 | Lead | Owns the outcome, works directly, and coordinates other Agents | `principal` |
+| Discussion | Shapes one Todo and its optional Plan without implementing it | `principal` |
 | Analyst | Deep analysis, planning support, and review | `deep` |
 | Build | Implementation and verification | `deep` or `fast` |
 | Explore | Fast codebase investigation | `fast` |
@@ -90,8 +92,8 @@ ArchCode separates Agent responsibility from model choice. Configure
 judgment matters and fast or local models for exploration and routine work.
 
 Connect official AI SDK providers, custom OpenAI-compatible endpoints, or
-Responses-compatible endpoints. A root Lead Session can also override its model
-without changing the Agent's tools or responsibility. See [provider and model
+Responses-compatible endpoints. A user-facing root Session can also override
+its model without changing the Agent's tools or responsibility. See [provider and model
 configuration](docs/configuration.md).
 
 ## Stay in control

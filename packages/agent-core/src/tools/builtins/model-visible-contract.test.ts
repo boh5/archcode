@@ -409,9 +409,9 @@ const resolved = registry.resolveForAgent(leadAgentDefinition.tools.tools);
 const aiTools = resolved.toAITools();
 
 describe("Lead model-visible Tool Contract", () => {
-  it("preserves the exact 34-tool Lead definition order", () => {
+  it("preserves the exact 33-tool Lead definition order", () => {
     const expected = [...leadAgentDefinition.tools.tools];
-    expect(expected).toHaveLength(34);
+    expect(expected).toHaveLength(33);
     expect(resolved.descriptors.map((descriptor) => descriptor.name)).toEqual(expected);
     expect(Object.keys(aiTools)).toEqual(expected);
   });

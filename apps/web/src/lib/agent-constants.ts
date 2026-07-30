@@ -6,6 +6,7 @@ import type { AgentDescriptor } from "@archcode/protocol";
 
 export const AGENT_TYPES = [
   "lead",
+  "discussion",
   "analyst",
   "build",
   "explore",

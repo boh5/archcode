@@ -29,7 +29,7 @@ afterAll(async () => {
 function context(options: { readonly discussion?: boolean } = {}): ToolExecutionContext {
   const sessionId = crypto.randomUUID();
   const store = storeManager.create(sessionId, tempRoot.path, {
-    agentName: "lead",
+    agentName: options.discussion === true ? "discussion" : "lead",
     ...(options.discussion === true
       ? { projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const } }
       : {}),
@@ -46,7 +46,7 @@ function context(options: { readonly discussion?: boolean } = {}): ToolExecution
     runOrdinal: 0,
     toolBatchId: "test-tool-batch",
     abort: new AbortController().signal,
-    agentName: "lead",
+    agentName: store.getState().agentName,
     startedAt: Date.now(),
     allowedTools: new Set(["create_goal", "get_goal", "update_goal"]),
     projectContext,
@@ -211,12 +211,12 @@ describe("Session Goal model tools", () => {
     expect(goal?.tokenBudget).toBeUndefined();
   });
 
-  test("Discussion Lead cannot create a Goal", async () => {
+  test("Discussion cannot create a Goal", async () => {
     const objective = "Keep working until every test passes.";
     const ctx = context({ discussion: true });
     const result = await createGoalTool.execute({ objective }, ctx);
     expect(result.isError).toBe(true);
-    expect(text(result)).toContain("Discussion");
+    expect(text(result)).toContain("requires the current root Lead Session");
   });
 
   test("update_goal schema retains only complete and blocked Agent transitions", () => {

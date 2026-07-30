@@ -15,6 +15,15 @@ export const ProjectTodoSessionEntrySchema = z.enum(["discussion", "work", "auto
 export const CreateProjectTodoSessionSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
   entry: ProjectTodoSessionEntrySchema,
+  initialIntent: z.literal("plan").optional(),
+}).superRefine((input, context) => {
+  if (input.initialIntent !== undefined && input.entry !== "discussion") {
+    context.addIssue({
+      code: "custom",
+      path: ["initialIntent"],
+      message: "initialIntent is available only for Discussion Sessions",
+    });
+  }
 });
 
 export const ProjectTodoSchema = z.strictObject({
