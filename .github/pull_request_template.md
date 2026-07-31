@@ -13,6 +13,7 @@
 - [ ] `bun run typecheck`
 - [ ] `bun run test`
 - [ ] `bun run build` when the production package or Web UI is affected
+- [ ] `git diff --check`
 
 ## Documentation and security
 
