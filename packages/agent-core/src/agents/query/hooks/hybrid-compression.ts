@@ -75,7 +75,11 @@ export function createHybridCompressionHook(
     const pressure = getCompressionTokenPressure(ctx.store, ctx.binding.modelInfo.limit.context);
     if (pressure === null || pressure.ratio < SOFT_NUDGE_RATIO || pressure.ratio >= HARD_COMPACT_RATIO) return;
     const strength = pressure.ratio >= STRONG_NUDGE_RATIO ? "strong" : "soft";
-    ctx.messages.push(compressionNudgeMessage(strength, pressure.ratio));
+    ctx.messages.push(compressionNudgeMessage(
+      strength,
+      pressure.ratio,
+      ctx.store.getState().compression.activeBlockRefs,
+    ));
   };
 
   return { beforeModelBuild, beforeModelCall, circuitBreaker, scheduleToolOutputRecoveryNotice };
@@ -91,13 +95,20 @@ function toolOutputRecoveryNotice(count: number): ModelCallMessage {
   };
 }
 
-function compressionNudgeMessage(strength: "soft" | "strong", ratio: number): ModelCallMessage {
+function compressionNudgeMessage(
+  strength: "soft" | "strong",
+  ratio: number,
+  activeBlockRefs: readonly string[],
+): ModelCallMessage {
   const percent = Math.floor(ratio * 100);
   const guidance = strength === "strong"
     ? "Context pressure is high. Dynamic compression is an in-conversation tool action: use the compress tool on a safe older range only if it helps before the hard safety threshold. Do not compress the latest two rounds or protected content."
     : "Context pressure is rising. Keep responses concise and consider whether an older safe range should be dynamically compressed later.";
+  const blockGuidance = activeBlockRefs.length === 0
+    ? "There are no active compressed blocks."
+    : `Active compressed blocks: ${activeBlockRefs.join(", ")}. If a selected range contains one, place each required (bN) placeholder exactly once where its complete stored summary should be inserted.`;
   return {
     role: "user",
-    content: [{ type: "text", text: `<system-reminder>\nDynamic compression ${strength} nudge at ${percent}% context pressure. ${guidance}\n</system-reminder>` }],
+    content: [{ type: "text", text: `<system-reminder>\nDynamic compression ${strength} nudge at ${percent}% context pressure. ${guidance} ${blockGuidance}\n</system-reminder>` }],
   };
 }

@@ -70,7 +70,7 @@ export function resolveCompressionOriginalRange(
     status: block.status,
     strategy: block.strategy,
     trigger: block.trigger,
-    childBlockRefs: block.childBlockRefs,
+    childBlockRefs: [...block.childBlockRefs],
     range: block.range,
     coveredRefs: coveredEntries.map((entry) => entry.ref),
     coveredMessageIds: coveredEntries.map((entry) => entry.message.id),

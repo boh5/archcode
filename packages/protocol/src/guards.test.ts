@@ -549,6 +549,18 @@ describe("protocol event guards", () => {
     expect(isSessionEventPayload({ type: "compression.block_committed", block: { ...compressionBlock, range: { ...compressionBlock.range, endIndex: "0" } } })).toBe(false);
     expect(isSessionEventPayload({
       type: "compression.block_committed",
+      block: { ...compressionBlock, summary: compressionSummary("Unresolved (b1)") },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "compression.block_committed",
+      block: { ...compressionBlock, summary: compressionSummary("") },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "compression.block_committed",
+      block: { ...compressionBlock, childBlockRefs: ["b1", "b1"] },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "compression.block_committed",
       block: {
         ...compressionBlock,
         summary: {

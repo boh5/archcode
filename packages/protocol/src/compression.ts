@@ -25,3 +25,12 @@ export function renderCompressionSummarySnapshot(
     .map((section) => `## ${section}\n${summary.sections[section]}`)
     .join("\n\n");
 }
+
+export function isMaterializedCompressionSummarySnapshot(
+  summary: CompressionSummarySnapshot,
+): boolean {
+  return COMPRESSION_SUMMARY_SECTION_NAMES.every((section) => {
+    const content = summary.sections[section];
+    return content.length > 0 && !/\(b\d+\)/.test(content);
+  });
+}

@@ -48,16 +48,16 @@ const EXECUTABLE_DCP_PARITY_COVERAGE = {
       anchors: ["startId: \"m0001\"", "endId: \"m0004\"", "summary: summary()"],
     },
   ],
-  nested_blocks_with_placeholder_validation: [
+  nested_blocks_with_materialized_child_summaries: [
     {
       file: "packages/agent-core/src/compression/summary.test.ts",
-      testName: "summary requires child placeholders exactly once",
-      anchors: ["validateCompressionSummary(summary, [\"b1\"]).ok", "Resume Instructions"],
+      testName: "replaces a child placeholder with the complete stored summary",
+      anchors: ["CHILD_SENTINEL", "not.toContain(\"(b1)\")"],
     },
     {
       file: "packages/agent-core/src/compression/dynamic-range.test.ts",
-      testName: "nested parent requires child placeholder exactly once and supersedes the child",
-      anchors: ["summary([\"b1\"])", "supersededBy"],
+      testName: "three-level nesting stores a self-contained top summary",
+      anchors: ["LEVEL_THREE", "LEVEL_ONE_SENTINEL", "activeBlockRefs).toEqual([\"b3\"])"],
     },
   ],
   active_inactive_superseded_lifecycle: [

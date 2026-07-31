@@ -33,7 +33,7 @@ export const DCP_PARITY_ITEMS = [
   "stable_session_local_block_refs",
   "range_compression_by_start_end_ref",
   "model_callable_compress_contract",
-  "nested_blocks_with_placeholder_validation",
+  "nested_blocks_with_materialized_child_summaries",
   "active_inactive_superseded_lifecycle",
   "protected_content_contracts",
   "user_messages_preserve_canonical_originals",

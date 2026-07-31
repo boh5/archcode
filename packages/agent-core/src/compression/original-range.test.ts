@@ -6,7 +6,7 @@ import {
 } from "@archcode/protocol";
 import { createEmptyCompressionState, prepareDynamicRangeCompression } from "./index";
 import { resolveCompressionOriginalRange } from "./original-range";
-import type { CompressionSummary } from "./types";
+import type { BlockRef, CompressionSummaryTemplate } from "./types";
 import type { SessionFile } from "../store/helpers";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 
@@ -29,9 +29,8 @@ function finalizedResult(
   };
 }
 
-function summary(childBlockRefs: CompressionSummary["childBlockRefs"] = []): CompressionSummary {
+function summary(childBlockRefs: BlockRef[] = []): CompressionSummaryTemplate {
   return {
-    childBlockRefs,
     sections: {
       "Current Objective": childBlockRefs.length > 0 ? "Continue task after child blocks" : "Continue task",
       "User Constraints": "Preserve constraints",

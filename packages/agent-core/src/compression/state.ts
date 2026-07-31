@@ -1,11 +1,11 @@
 import { rangeContains, rangesPartiallyOverlap } from "./coverage";
 import { createEmptyCompressionRefMap, ensureBlockRef } from "./refs";
-import { assertValidCompressionSummary } from "./summary";
+import { assertValidCompressionSummaryLineage } from "./summary";
 import type { BlockRef, CompressionBlock, CompressionBlockDraft, CompressionState } from "./types";
 
 export class CompressionStateError extends Error {
   constructor(
-    public readonly code: "partial_active_overlap" | "nested_child_missing" | "unknown_child_block" | "child_not_active",
+    public readonly code: "partial_active_overlap" | "nested_child_missing" | "unknown_child_block" | "child_not_active" | "duplicate_child_block",
     message: string,
   ) {
     super(message);
@@ -30,8 +30,10 @@ export function commitCompressionBlock(state: CompressionState, draft: Compressi
 
   const blockRefResult = ensureBlockRef(state.refMap, draft.canonicalBlockId);
   const ref = blockRefResult.ref;
-  const childBlockRefs = draft.childBlockRefs ?? [];
-  assertValidCompressionSummary(draft.summary, childBlockRefs);
+  const childBlockRefs = Object.freeze([...draft.childBlockRefs]) as BlockRef[];
+  const summary: CompressionBlock["summary"] = Object.freeze({
+    sections: Object.freeze({ ...draft.summary.sections }),
+  });
 
   const timestamp = draft.createdAt;
   const childRefsToSupersede = new Set(childBlockRefs);
@@ -58,8 +60,8 @@ export function commitCompressionBlock(state: CompressionState, draft: Compressi
     strategy: draft.strategy,
     trigger: draft.trigger,
     range: draft.range,
-    summary: draft.summary,
-    protectedRefs: draft.protectedRefs ?? [],
+    summary,
+    protectedRefs: [...(draft.protectedRefs ?? [])],
     childBlockRefs,
     ...(draft.tokenEstimate ? { tokenEstimate: draft.tokenEstimate } : {}),
     createdAt: timestamp,
@@ -84,7 +86,10 @@ export function recordCompressionFailure(
 }
 
 export function validateCompressionBlockDraft(state: CompressionState, draft: CompressionBlockDraft): void {
-  const childRefs = new Set(draft.childBlockRefs ?? []);
+  const childRefs = new Set(draft.childBlockRefs);
+  if (childRefs.size !== draft.childBlockRefs.length) {
+    throw new CompressionStateError("duplicate_child_block", "Compression child block refs must be unique");
+  }
   for (const childRef of childRefs) {
     const child = state.blocksByRef[childRef];
     if (!child) {
@@ -125,6 +130,8 @@ export function validateCompressionBlockDraft(state: CompressionState, draft: Co
       `Draft range is inside active block ${activeRef}; the current contract only allows consuming whole child blocks`,
     );
   }
+
+  assertValidCompressionSummaryLineage(draft.summary, draft.childBlockRefs, state.blocksByRef);
 }
 
 function normalizeCompressionState(state: CompressionState): CompressionState {

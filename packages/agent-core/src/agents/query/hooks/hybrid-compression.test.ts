@@ -51,7 +51,6 @@ beforeEach(() => {
 
 function summary(childBlockRefs: string[] = []) {
   return {
-    childBlockRefs,
     sections: {
       "Current Objective": childBlockRefs.length === 0 ? "Continue the current task" : `Continue after (${childBlockRefs[0]})`,
       "User Constraints": "Preserve explicit user constraints",
@@ -174,6 +173,26 @@ describe("hybrid compression hooks", () => {
     const strong = callCtx(makeStore(), 700);
     await hook.beforeModelCall(strong);
     expect(JSON.stringify(strong.messages)).toContain("strong nudge");
+  });
+
+  test("lists active block refs and explains materialization in compression nudges", async () => {
+    const store = makeStore(8);
+    const child = prepareDynamicRangeCompression(
+      store.getState(),
+      { startId: "m0002", endId: "m0003", summary: summary() },
+      1000,
+    );
+    expect(child.ok).toBe(true);
+    if (!child.ok) throw new Error("expected child compression success");
+    store.setState({ compression: child.state });
+    const hook = createHybridCompressionHook(silentLogger);
+    const call = callCtx(store, 550);
+
+    await hook.beforeModelCall(call);
+
+    const rendered = JSON.stringify(call.messages);
+    expect(rendered).toContain("Active compressed blocks: b1");
+    expect(rendered).toContain("complete stored summary should be inserted");
   });
 
   test("runs forced hard compact at exactly 85% when a safe range exists", async () => {

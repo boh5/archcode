@@ -37,10 +37,8 @@ export const CompressInputSchema = z.strictObject({
   endId: z.string().describe("Projection end ref, e.g. m0004 or a known block ref like b1."),
   summary: z.strictObject({
     sections: CompressionSummarySectionsSchema
-      .describe("All ten required semantic sections that preserve the compressed range's continuation context."),
-    childBlockRefs: z.array(z.string().regex(/^b\d+$/))
-      .describe("Required nested refs in the range: list each once, no unknown refs, and mention each exactly once as (bN) across the sections."),
-  }).describe("Strict structured compression summary with all required sections."),
+      .describe("All ten required semantic sections that preserve the compressed range's continuation context. If the range contains active compression blocks, place each required (bN) placeholder exactly once where that block's complete stored summary should be inserted. The runtime derives the required child refs."),
+  }).describe("Strict structured compression summary template. A (bN) placeholder represents the complete previously compressed conversation segment and surrounding text must remain coherent after expansion."),
 });
 
 export type CompressInput = z.infer<typeof CompressInputSchema>;
@@ -48,7 +46,7 @@ export type CompressInput = z.infer<typeof CompressInputSchema>;
 export const compressTool = defineTool({
   name: TOOL_COMPRESS,
   description:
-    "Compresses a visible transcript range by projection refs. Validates the model-authored structured summary and commits compression metadata without changing canonical transcript text.",
+    "Compresses a visible transcript range by projection refs. Previously compressed blocks inside the range are materialized into the new summary before commit, while canonical transcript text remains unchanged.",
   inputSchema: CompressInputSchema,
   traits: COMPRESS_TOOL_TRAITS,
   outputPolicy: { kind: "inline", previewDirection: "head" },

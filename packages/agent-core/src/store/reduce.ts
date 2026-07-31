@@ -194,7 +194,7 @@ function compressionBlockFromSnapshot(block: CompressionBlockSnapshot): Compress
       startIndex: block.range.startIndex,
       endIndex: block.range.endIndex,
     },
-    summary: summaryFromSnapshot(block.summary, block.childBlockRefs as BlockRef[]),
+    summary: summaryFromSnapshot(block.summary),
     protectedRefs,
     childBlockRefs: block.childBlockRefs as BlockRef[],
     ...(block.tokenEstimate === undefined ? {} : { tokenEstimate: block.tokenEstimate }),
@@ -207,13 +207,9 @@ function compressionBlockFromSnapshot(block: CompressionBlockSnapshot): Compress
 
 function summaryFromSnapshot(
   summary: CompressionSummarySnapshot,
-  childBlockRefs: BlockRef[],
 ): CompressionSummary {
-  const result = {
-    sections: { ...summary.sections },
-    childBlockRefs,
-  };
-  assertValidCompressionSummary(result, childBlockRefs);
+  const result = { sections: { ...summary.sections } };
+  assertValidCompressionSummary(result);
   return result;
 }
 

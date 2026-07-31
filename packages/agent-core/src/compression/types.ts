@@ -50,11 +50,14 @@ export interface ProtectedRef {
   readonly partId?: string;
 }
 
-export type CompressionSummarySections = Record<CompressionSummarySectionName, string>;
+export type CompressionSummarySections = Readonly<Record<CompressionSummarySectionName, string>>;
+
+export interface CompressionSummaryTemplate {
+  readonly sections: CompressionSummarySections;
+}
 
 export interface CompressionSummary {
   readonly sections: CompressionSummarySections;
-  readonly childBlockRefs: BlockRef[];
 }
 
 export interface CompressionBlock {
@@ -108,7 +111,7 @@ export interface CompressionBlockDraft {
   readonly range: CompressionRange;
   readonly summary: CompressionSummary;
   readonly protectedRefs?: ProtectedRef[];
-  readonly childBlockRefs?: BlockRef[];
+  readonly childBlockRefs: BlockRef[];
   readonly tokenEstimate?: CompressionTokenEstimate;
   readonly createdAt: number;
 }

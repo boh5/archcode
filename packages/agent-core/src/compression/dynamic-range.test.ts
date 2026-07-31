@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { createEmptyCompressionState, prepareDynamicRangeCompression, purgeRepeatedOldErrors } from "./index";
-import type { CompressionSummary } from "./types";
+import {
+  createEmptyCompressionState,
+  prepareDynamicRangeCompression,
+  purgeRepeatedOldErrors,
+  renderCompressionSummary,
+} from "./index";
+import type { CompressionSummaryTemplate } from "./types";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 import {
   createEmptySessionStats,
@@ -8,11 +13,10 @@ import {
   type UserSessionPart,
 } from "@archcode/protocol";
 
-function summary(childBlockRefs: string[] = []): CompressionSummary {
+function summary(childBlockRefs: string[] = [], objective?: string): CompressionSummaryTemplate {
   return {
-    childBlockRefs: childBlockRefs as CompressionSummary["childBlockRefs"],
     sections: {
-      "Current Objective": childBlockRefs.length > 0 ? "Continue after nested child block" : "Continue task",
+      "Current Objective": objective ?? (childBlockRefs.length > 0 ? "Continue after nested child block" : "Continue task"),
       "User Constraints": "Preserve user constraints",
       "Decisions Made": "Dynamic range compression is model-authored",
       "Open Tasks": "Continue implementation",
@@ -199,9 +203,13 @@ describe("dynamic range compression", () => {
     expect(result.event.type).toBe("compression.block_failed");
   });
 
-  test("nested parent requires child placeholder exactly once and supersedes the child", () => {
+  test("nested parent materializes the child summary and supersedes its lineage block", () => {
     const state = baseState(fourMessages());
-    const child = prepareDynamicRangeCompression(state, { startId: "m0002", endId: "m0003", summary: summary() }, 1000);
+    const child = prepareDynamicRangeCompression(state, {
+      startId: "m0002",
+      endId: "m0003",
+      summary: summary([], "CHILD_SUMMARY_SENTINEL"),
+    }, 1000);
     expect(child.ok).toBe(true);
     if (!child.ok) throw new Error("expected child success");
 
@@ -214,6 +222,116 @@ describe("dynamic range compression", () => {
     expect(parent.state.blocksByRef.b2?.status).toBe("active");
     expect(parent.state.blocksByRef.b1?.supersededBy).toBe("b2");
     expect(parent.state.activeBlockRefs).toEqual(["b2"]);
+    expect(parent.block.summary.sections["Child Block Refs"]).toContain("CHILD_SUMMARY_SENTINEL");
+    expect(JSON.stringify(parent.block.summary)).not.toContain("(b1)");
+  });
+
+  test("nested parent rejects a summary that omits its runtime-derived child placeholder", () => {
+    const state = baseState(fourMessages());
+    const child = prepareDynamicRangeCompression(state, {
+      startId: "m0002",
+      endId: "m0003",
+      summary: summary([], "OMITTED_CHILD_SENTINEL"),
+    }, 1000);
+    expect(child.ok).toBe(true);
+    if (!child.ok) throw new Error("expected child success");
+
+    const parent = prepareDynamicRangeCompression(
+      { ...state, compression: child.state },
+      { startId: "m0001", endId: "m0004", summary: summary() },
+      2000,
+    );
+
+    expect(parent.ok).toBe(false);
+    if (parent.ok) throw new Error("expected parent rejection");
+    expect(parent.code).toBe("summary_rejected");
+    expect(parent.issues[0]?.message).toContain("Required child placeholder (b1) must appear exactly once; found 0");
+  });
+
+  test("three-level nesting stores a self-contained top summary", () => {
+    const state = baseState(fourMessages());
+    const child = prepareDynamicRangeCompression(state, {
+      startId: "m0002",
+      endId: "m0003",
+      summary: summary([], "LEVEL_ONE_SENTINEL"),
+    }, 1000);
+    expect(child.ok).toBe(true);
+    if (!child.ok) throw new Error("expected child success");
+    const parent = prepareDynamicRangeCompression(
+      { ...state, compression: child.state },
+      { startId: "m0001", endId: "m0004", summary: summary(["b1"], "LEVEL_TWO") },
+      2000,
+    );
+    expect(parent.ok).toBe(true);
+    if (!parent.ok) throw new Error("expected parent success");
+    const grandparent = prepareDynamicRangeCompression(
+      { ...state, compression: parent.state },
+      { startId: "b2", endId: "b2", summary: summary(["b2"], "LEVEL_THREE") },
+      3000,
+    );
+
+    expect(grandparent.ok).toBe(true);
+    if (!grandparent.ok) throw new Error("expected grandparent success");
+    const rendered = JSON.stringify(grandparent.block.summary);
+    expect(rendered).toContain("LEVEL_THREE");
+    expect(rendered).toContain("LEVEL_TWO");
+    expect(rendered).toContain("LEVEL_ONE_SENTINEL");
+    expect(rendered).not.toMatch(/\(b[12]\)/);
+    expect(grandparent.state.activeBlockRefs).toEqual(["b3"]);
+    expect(grandparent.state.blocksByRef.b2?.supersededBy).toBe("b3");
+  });
+
+  test("nested token estimate counts sibling child summaries once plus only uncovered messages", () => {
+    const messages = fourMessages();
+    messages.push(
+      message("msg-7", "user", [text("t7", "seven")]),
+      message("msg-8", "assistant", [output("t8", "eight")]),
+    );
+    messages[1] = message("msg-2", "assistant", [output("t2-large", "x".repeat(8_000))]);
+    messages[2] = message("msg-3", "user", [text("t3-large", "y".repeat(8_000))]);
+    messages[3] = message("msg-4", "assistant", [output("t4-large", "z".repeat(8_000))]);
+    messages[4] = message("msg-5", "user", [text("t5-large", "w".repeat(8_000))]);
+    const state = baseState(messages);
+    const firstChild = prepareDynamicRangeCompression(state, {
+      startId: "m0002",
+      endId: "m0003",
+      summary: summary([], "FIRST_CONDENSED_CHILD"),
+    }, 1000);
+    expect(firstChild.ok).toBe(true);
+    if (!firstChild.ok) throw new Error("expected first child success");
+    const secondChild = prepareDynamicRangeCompression(
+      { ...state, compression: firstChild.state },
+      {
+        startId: "m0004",
+        endId: "m0005",
+        summary: summary([], "SECOND_CONDENSED_CHILD"),
+      },
+      1500,
+    );
+    expect(secondChild.ok).toBe(true);
+    if (!secondChild.ok) throw new Error("expected second child success");
+    const parent = prepareDynamicRangeCompression(
+      { ...state, compression: secondChild.state },
+      { startId: "m0001", endId: "m0006", summary: summary(["b1", "b2"]) },
+      2000,
+    );
+    expect(parent.ok).toBe(true);
+    if (!parent.ok) throw new Error("expected parent success");
+
+    const expectedOriginalChars = renderCompressionSummary(firstChild.block.summary).length
+      + renderCompressionSummary(secondChild.block.summary).length
+      + JSON.stringify(messages[0]!.parts).length
+      + JSON.stringify(messages[5]!.parts).length;
+    expect(parent.block.tokenEstimate).toEqual({
+      originalTokens: Math.ceil(expectedOriginalChars / 4),
+      summaryTokens: Math.ceil(renderCompressionSummary(parent.block.summary).length / 4),
+      savedTokens: Math.max(
+        0,
+        Math.ceil(expectedOriginalChars / 4)
+          - Math.ceil(renderCompressionSummary(parent.block.summary).length / 4),
+      ),
+      estimatedAt: 2000,
+    });
   });
 
   test("rejects partial active overlap", () => {

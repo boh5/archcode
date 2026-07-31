@@ -7,7 +7,7 @@ import type {
   ProtectedRef,
 } from "./types";
 import { commitCompressionBlock, createEmptyCompressionState, recordCompressionFailure, CompressionStateError } from "./state";
-import { renderCompressionSummary } from "./summary";
+import { materializeCompressionSummaryTemplate, renderCompressionSummary } from "./summary";
 import { collectProtectedRefsForRange } from "./protection";
 import { deduplicateCompletedToolOutputs, type DeduplicatedToolOutputGroup } from "./deduplication";
 import { purgeRepeatedOldErrors, type PurgedRepeatedErrorGroup } from "./purge-errors";
@@ -75,16 +75,34 @@ export function prepareDynamicRangeCompression(
     );
   }
 
+  let materializedSummary: CompressionSummary;
+  try {
+    materializedSummary = materializeCompressionSummaryTemplate(
+      summary.summary,
+      resolved.value.requiredChildRefs,
+      stateWithRefs.blocksByRef,
+    );
+  } catch (error) {
+    const issue = stateIssue(error);
+    return reject(stateWithRefs, issue.code, issue.message, [issue], [], input, now);
+  }
+
   const draft: CompressionBlockDraft = {
     id: crypto.randomUUID(),
     canonicalBlockId: crypto.randomUUID(),
     strategy: "dynamic-range",
     trigger: "model_tool_call",
     range: resolved.value.range,
-    summary: summary.summary,
+    summary: materializedSummary,
     protectedRefs: [],
-    childBlockRefs: summary.summary.childBlockRefs,
-    tokenEstimate: estimateCompressionTokens(storeState, resolved.value.range, summary.summary, now),
+    childBlockRefs: resolved.value.requiredChildRefs,
+    tokenEstimate: estimateCompressionTokens(
+      storeState,
+      resolved.value.range,
+      resolved.value.requiredChildRefs,
+      materializedSummary,
+      now,
+    ),
     createdAt: now,
   };
 
@@ -135,7 +153,7 @@ export function compressionBlockSnapshot(block: CompressionBlock): CompressionBl
     trigger: block.trigger,
     range: block.range,
     summary: { sections: { ...block.summary.sections } },
-    childBlockRefs: block.childBlockRefs,
+    childBlockRefs: [...block.childBlockRefs],
     protectedRefs: block.protectedRefs.map((ref) => ref.ref),
     ...(block.tokenEstimate === undefined ? {} : { tokenEstimate: block.tokenEstimate }),
     createdAt: block.createdAt,
@@ -192,13 +210,28 @@ function compressionFailureSnapshot(failure: CompressionFailure): CompressionFai
 function estimateCompressionTokens(
   storeState: SessionStoreState,
   range: CompressionBlockDraft["range"],
+  childBlockRefs: readonly CompressionBlock["ref"][],
   summary: CompressionSummary,
   now: number,
 ): CompressionBlockDraft["tokenEstimate"] {
-  const originalChars = storeState.messages
-    .slice(range.startIndex, range.endIndex + 1)
-    .map((message) => JSON.stringify(message.parts))
-    .join("\n").length;
+  const childBlocks = childBlockRefs
+    .map((ref) => storeState.compression?.blocksByRef[ref])
+    .filter((block): block is CompressionBlock => block !== undefined);
+  const coveredIndexes = new Set<number>();
+  for (const child of childBlocks) {
+    for (let index = child.range.startIndex; index <= child.range.endIndex; index += 1) {
+      coveredIndexes.add(index);
+    }
+  }
+
+  let originalChars = childBlocks
+    .map((child) => renderCompressionSummary(child.summary).length)
+    .reduce((total, length) => total + length, 0);
+  for (let index = range.startIndex; index <= range.endIndex; index += 1) {
+    if (coveredIndexes.has(index)) continue;
+    const message = storeState.messages[index];
+    if (message !== undefined) originalChars += JSON.stringify(message.parts).length;
+  }
   const summaryChars = renderCompressionSummary(summary).length;
   const originalTokens = Math.ceil(originalChars / 4);
   const summaryTokens = Math.ceil(summaryChars / 4);
