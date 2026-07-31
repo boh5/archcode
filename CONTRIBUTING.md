@@ -68,8 +68,11 @@ Validation order is `typecheck` before `test`.
 ```sh
 bun run typecheck
 bun run test
-git diff --check
+git diff --check origin/main...HEAD
 ```
+
+The command above uses `origin` for the canonical repository. Replace it with
+`upstream` when contributing from a fork.
 
 For changes that affect the production package or Web UI, also run:
 
@@ -106,6 +109,9 @@ The merged PR becomes one commit on `main`, and GitHub deletes the merged head
 branch automatically.
 
 After merge, synchronize the local default branch without rewriting it:
+
+The commands below use `origin` for the canonical repository. Replace it with
+`upstream` when contributing from a fork.
 
 ```sh
 git fetch origin
