@@ -1,11 +1,10 @@
-import { COMPRESSION_SUMMARY_SECTION_NAMES } from "./constants";
 import { buildMessageRefMap } from "./refs";
-import { validateCompressionSummary } from "./summary";
+import { validateCompressionSummaryTemplate } from "./summary";
 import type {
   BlockRef,
   CompressionRange,
   CompressionState,
-  CompressionSummary,
+  CompressionSummaryTemplate,
   MessageRef,
 } from "./types";
 import type { StoredMessage } from "../store/types";
@@ -90,17 +89,13 @@ export function resolveCompressionRange(
 export function validateDynamicCompressionSummary(
   summary: unknown,
   requiredChildRefs: readonly BlockRef[],
-): { ok: true; summary: CompressionSummary } | { ok: false; issues: CompressionValidationIssue[] } {
-  const result = validateCompressionSummary(summary, requiredChildRefs);
+): { ok: true; summary: CompressionSummaryTemplate } | { ok: false; issues: CompressionValidationIssue[] } {
+  const result = validateCompressionSummaryTemplate(summary, requiredChildRefs);
   if (!result.ok) {
     return { ok: false, issues: result.errors.map((message) => ({ code: "invalid_summary", message })) };
   }
 
-  return { ok: true, summary: summary as CompressionSummary };
-}
-
-export function compressionSummaryZodShape(): Record<string, unknown> {
-  return Object.fromEntries(COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [section, section]));
+  return { ok: true, summary: summary as CompressionSummaryTemplate };
 }
 
 interface BoundaryResolution {

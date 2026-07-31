@@ -23,6 +23,8 @@ import {
   COMPRESSION_TRIGGERS,
   PROTECTED_CONTENT_KINDS,
   createEmptyCompressionState,
+  validateCompressionSummaryLineage,
+  validateCompressionSummary,
 } from "../compression";
 import { AGENT_NAMES, type AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
@@ -835,8 +837,15 @@ const CompressionSummarySchema = z.strictObject({
   sections: z.strictObject(Object.fromEntries(
     COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [section, z.string()]),
   ) as Record<(typeof COMPRESSION_SUMMARY_SECTION_NAMES)[number], z.ZodString>),
-  childBlockRefs: z.array(BlockRefSchema),
+}).superRefine((summary, ctx) => {
+  const validation = validateCompressionSummary(summary);
+  for (const message of validation.errors) ctx.addIssue({ code: "custom", message });
 });
+
+const CompressionChildBlockRefsSchema = z.array(BlockRefSchema).refine(
+  (refs) => new Set(refs).size === refs.length,
+  "Compression child block refs must be unique",
+);
 
 const CompressionBlockSchema = z.strictObject({
   id: z.string(),
@@ -847,7 +856,7 @@ const CompressionBlockSchema = z.strictObject({
   range: CompressionRangeSchema,
   summary: CompressionSummarySchema,
   protectedRefs: z.array(ProtectedRefSchema),
-  childBlockRefs: z.array(BlockRefSchema),
+  childBlockRefs: CompressionChildBlockRefsSchema,
   tokenEstimate: CompressionTokenEstimateSchema.optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -873,6 +882,21 @@ const CompressionStateSchema = z.strictObject({
   protectedRefs: z.array(ProtectedRefSchema),
   failures: z.array(CompressionFailureSchema),
   updatedAt: z.number().optional(),
+}).superRefine((state, ctx) => {
+  for (const [ref, block] of Object.entries(state.blocksByRef)) {
+    const validation = validateCompressionSummaryLineage(
+      block.summary,
+      block.childBlockRefs,
+      state.blocksByRef,
+    );
+    for (const message of validation.errors) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["blocksByRef", ref, "summary"],
+        message,
+      });
+    }
+  }
 });
 
 const PromptTraceSnapshotSchema = z.strictObject({

@@ -19,7 +19,11 @@ import type {
   SystemNoticePart,
   TextPart,
 } from "./types";
-import { createEmptyCompressionState, type CompressionState } from "../compression";
+import {
+  createEmptyCompressionState,
+  materializeCompressionSummaryTemplate,
+  type CompressionState,
+} from "../compression";
 import type { AssistantOutputPart, DelegationRequest } from "@archcode/protocol";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "helpers", crypto.randomUUID());
@@ -452,7 +456,6 @@ function appendCanonicalUserMessage(store: { getState(): SessionStoreState }, co
 
 function compressionSummary(childBlockRefs: CompressionState["activeBlockRefs"] = []) {
   return {
-    childBlockRefs,
     sections: {
       "Current Objective": "Keep the implementation moving",
       "User Constraints": "Stay inside store scope",
@@ -1844,6 +1847,53 @@ describe("compaction and meta transcript round-trip", () => {
     expect(loadedCompression).toEqual(compression);
     expect(loadedCompression.blocksByRef.b1?.tokenEstimate?.savedTokens).toBe(1000);
     expect(loadedCompression.protectedRefs[0]?.kind).toBe("latest_tail");
+  });
+
+  test("session files reject non-materialized summaries and duplicate child lineage", () => {
+    const compression = richCompressionState();
+    const active = compression.blocksByRef.b1!;
+    const state = persistedState(uniqueSessionId("invalid-compression-state"));
+    const file = sessionFileInternals.toSessionFile({ ...state, compression });
+    const withActiveBlock = (block: typeof active) => ({
+      ...file,
+      compression: {
+        ...file.compression,
+        blocksByRef: { ...file.compression.blocksByRef, b1: block },
+      },
+    });
+
+    expect(SessionFileSchema.safeParse(withActiveBlock({
+      ...active,
+      summary: {
+        sections: { ...active.summary.sections, "Current Objective": "Unresolved (b2)" },
+      },
+    })).success).toBe(false);
+    expect(SessionFileSchema.safeParse(withActiveBlock({
+      ...active,
+      childBlockRefs: ["b2", "b2"],
+    })).success).toBe(false);
+
+    expect(SessionFileSchema.safeParse(withActiveBlock({
+      ...active,
+      childBlockRefs: ["b99"],
+    })).success).toBe(false);
+
+    expect(SessionFileSchema.safeParse(withActiveBlock({
+      ...active,
+      childBlockRefs: ["b2"],
+    })).success).toBe(false);
+
+    const materializedParent = materializeCompressionSummaryTemplate({
+      sections: {
+        ...active.summary.sections,
+        "Child Block Refs": "(b2)",
+      },
+    }, ["b2"], compression.blocksByRef);
+    expect(SessionFileSchema.safeParse(withActiveBlock({
+      ...active,
+      summary: materializedParent,
+      childBlockRefs: ["b2"],
+    })).success).toBe(true);
   });
 
   test("session files without compression are rejected", async () => {

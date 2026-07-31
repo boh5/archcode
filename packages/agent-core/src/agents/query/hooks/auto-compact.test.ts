@@ -38,7 +38,6 @@ beforeEach(() => {
 
 function summary() {
   return {
-    childBlockRefs: [],
     sections: {
       "Current Objective": "Continue the current task",
       "User Constraints": "Preserve explicit user constraints",

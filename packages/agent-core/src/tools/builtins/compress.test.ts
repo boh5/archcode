@@ -101,7 +101,6 @@ function message(
 
 function summary(childBlockRefs: string[] = []) {
   return {
-    childBlockRefs,
     sections: {
       "Current Objective": childBlockRefs.length > 0 ? `Continue after (${childBlockRefs[0]})` : "Continue task",
       "User Constraints": "Preserve constraints",

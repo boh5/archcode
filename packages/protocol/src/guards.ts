@@ -8,7 +8,11 @@ import type {
   ToolChildSessionLinkStatus,
 } from "./types";
 import type { GlobalSSEUpdateChangedEvent, UpdateStatus } from "./update";
-import { COMPRESSION_SUMMARY_SECTION_NAMES } from "./compression";
+import {
+  COMPRESSION_SUMMARY_SECTION_NAMES,
+  isMaterializedCompressionSummarySnapshot,
+  type CompressionSummarySnapshot,
+} from "./compression";
 import {
   SESSION_GOAL_BLOCKED_REASON_MAX_LENGTH,
   SESSION_GOAL_OBJECTIVE_MAX_LENGTH,
@@ -1031,7 +1035,8 @@ function isCompressionSummary(value: unknown): boolean {
       const sections = record(summary.sections);
       return sections !== undefined
         && exact(sections, COMPRESSION_SUMMARY_SECTION_NAMES)
-        && COMPRESSION_SUMMARY_SECTION_NAMES.every((section) => isString(sections[section]));
+        && COMPRESSION_SUMMARY_SECTION_NAMES.every((section) => isString(sections[section]))
+        && isMaterializedCompressionSummarySnapshot(summary as unknown as CompressionSummarySnapshot);
     })();
 }
 
@@ -1049,6 +1054,7 @@ function isCompressionBlock(value: unknown): boolean {
     && oneOf(block.trigger, ["model_tool_call", "soft_nudge_response", "strong_nudge_response"])
     && isCompressionRange(block.range) && isCompressionSummary(block.summary)
     && arrayOf(block.childBlockRefs, isBlockRef)
+    && new Set(block.childBlockRefs as string[]).size === (block.childBlockRefs as string[]).length
     && arrayOf(block.protectedRefs, (item) => isMessageRef(item) || isBlockRef(item))
     && (block.tokenEstimate === undefined || isCompressionTokenEstimate(block.tokenEstimate))
     && isFiniteNumber(block.createdAt) && isFiniteNumber(block.updatedAt)

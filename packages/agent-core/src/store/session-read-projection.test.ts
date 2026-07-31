@@ -39,7 +39,6 @@ function block(input: {
         "Child Block Refs": "None",
         "Resume Instructions": "Continue",
       },
-      childBlockRefs: [],
     },
     protectedRefs: [],
     childBlockRefs: [],

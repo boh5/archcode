@@ -270,7 +270,6 @@ function storedMessage(
 
 function compressionSummary(childBlockRefs: CompressionState["activeBlockRefs"] = []) {
   return {
-    childBlockRefs,
     sections: {
       "Current Objective": "Compressed old implementation discussion",
       "User Constraints": "Do not mutate canonical message text",
@@ -280,7 +279,7 @@ function compressionSummary(childBlockRefs: CompressionState["activeBlockRefs"] 
       "Tool Results": "No tool result required",
       "Errors/Unknown Results": "None",
       "Protected Refs": "m0003 remains visible",
-      "Child Block Refs": childBlockRefs.length === 0 ? "None" : childBlockRefs.map((ref) => `(${ref})`).join(" "),
+      "Child Block Refs": childBlockRefs.length === 0 ? "None" : childBlockRefs.map((ref) => `Materialized ${ref}`).join(" "),
       "Resume Instructions": "Resume after the tail question",
     },
   };
@@ -1222,17 +1221,25 @@ describe("toModelMessagesFromStoredMessages compression projection", () => {
     expect(serialized).not.toContain("m0001");
   });
 
-  test("child block refs are present exactly once through the validated summary", () => {
+  test("model projection carries materialized child content without unresolved placeholders", () => {
     const messages: StoredMessage[] = [
       { ...storedMessage("user", [textPart("old")]), id: "msg-old-user" },
       { ...storedMessage("assistant", [outputPart("older")]), id: "msg-old-assistant" },
     ];
-    const compression = compressionStateForProjection({ childBlockRefs: ["b2"], summary: compressionSummary(["b2"]) });
+    const materialized = compressionSummary(["b2"]);
+    const compression = compressionStateForProjection({
+      childBlockRefs: ["b2"],
+      summary: {
+        ...materialized,
+        sections: { ...materialized.sections, "Child Block Refs": "MATERIALIZED_CHILD_SENTINEL" },
+      },
+    });
 
     const projected = toModelMessagesFromStoredMessages(messages, { compression });
     const serialized = JSON.stringify(projected);
 
-    expect(serialized.match(/\(b2\)/g)).toHaveLength(1);
+    expect(serialized).toContain("MATERIALIZED_CHILD_SENTINEL");
+    expect(serialized).not.toContain("(b2)");
   });
 
   test("fresh compression state injects projection refs for uncompressed messages", () => {

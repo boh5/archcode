@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { commitCompressionBlock, createEmptyCompressionState, CompressionStateError } from "./state";
-import type { BlockRef, CompressionBlockDraft, CompressionRange, CompressionSummary } from "./types";
+import { materializeCompressionSummaryTemplate } from "./summary";
+import type { BlockRef, CompressionBlockDraft, CompressionRange, CompressionState, CompressionSummary } from "./types";
 
 function range(startIndex: number, endIndex: number): CompressionRange {
   return {
@@ -15,9 +16,8 @@ function range(startIndex: number, endIndex: number): CompressionRange {
 
 function summary(childBlockRefs: BlockRef[] = []): CompressionSummary {
   return {
-    childBlockRefs,
     sections: {
-      "Current Objective": childBlockRefs.length > 0 ? `Continue after (${childBlockRefs[0]})` : "Continue task",
+      "Current Objective": childBlockRefs.length > 0 ? `Continue after materialized ${childBlockRefs[0]}` : "Continue task",
       "User Constraints": "Preserve constraints",
       "Decisions Made": "Use contracts first",
       "Open Tasks": "Implement later runtime tasks",
@@ -44,10 +44,28 @@ function draft(canonicalBlockId: string, blockRange: CompressionRange, childBloc
   };
 }
 
+function nestedDraft(
+  state: CompressionState,
+  canonicalBlockId: string,
+  blockRange: CompressionRange,
+  childBlockRefs: BlockRef[],
+): CompressionBlockDraft {
+  const template = {
+    sections: {
+      ...summary().sections,
+      "Child Block Refs": childBlockRefs.map((ref) => `(${ref})`).join(" "),
+    },
+  };
+  return {
+    ...draft(canonicalBlockId, blockRange, childBlockRefs),
+    summary: materializeCompressionSummaryTemplate(template, childBlockRefs, state.blocksByRef),
+  };
+}
+
 describe("compression nested block DAG", () => {
   test("nested parent allows whole-child nesting and preserves superseded child resolvability", () => {
     const childState = commitCompressionBlock(createEmptyCompressionState(), draft("child", range(1, 2)));
-    const parentState = commitCompressionBlock(childState, draft("parent", range(0, 4), ["b1"]));
+    const parentState = commitCompressionBlock(childState, nestedDraft(childState, "parent", range(0, 4), ["b1"]));
 
     expect(parentState.blocksByRef.b1).toBeDefined();
     expect(parentState.blocksByRef.b1?.status).toBe("superseded");
@@ -67,5 +85,31 @@ describe("compression nested block DAG", () => {
     const childState = commitCompressionBlock(createEmptyCompressionState(), draft("child", range(1, 2)));
 
     expect(() => commitCompressionBlock(childState, draft("parent", range(0, 4)))).toThrow(CompressionStateError);
+  });
+
+  test("rejects duplicate child lineage before committing state", () => {
+    const childState = commitCompressionBlock(createEmptyCompressionState(), draft("child", range(1, 2)));
+
+    expect(() => commitCompressionBlock(childState, draft("parent", range(0, 4), ["b1", "b1"])))
+      .toThrow(new CompressionStateError("duplicate_child_block", "Compression child block refs must be unique"));
+  });
+
+  test("committed lineage is isolated from the caller-owned draft array", () => {
+    const childState = commitCompressionBlock(createEmptyCompressionState(), draft("child", range(1, 2)));
+    const childBlockRefs: BlockRef[] = ["b1"];
+    const parentDraft = nestedDraft(childState, "parent", range(0, 4), childBlockRefs);
+
+    const parentState = commitCompressionBlock(childState, parentDraft);
+    childBlockRefs.push("b1");
+
+    expect(parentState.blocksByRef.b2?.childBlockRefs).toEqual(["b1"]);
+    expect(Object.isFrozen(parentState.blocksByRef.b2?.childBlockRefs)).toBe(true);
+  });
+
+  test("nested parent rejects lineage without the materialized child payload", () => {
+    const childState = commitCompressionBlock(createEmptyCompressionState(), draft("child", range(1, 2)));
+
+    expect(() => commitCompressionBlock(childState, draft("parent", range(0, 4), ["b1"])))
+      .toThrow("Materialized child block b1 must appear exactly once; found 0");
   });
 });
