@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultAgentDefinitions } from "./agents";
+import { defaultAgentDefinitions, isUserFacingRootSession } from "./agents";
 import type { AgentName } from "./agents";
 import { AgentRunningError } from "./agents/errors";
 import { SessionAgentManager } from "./agents/session-agent-manager";
@@ -590,7 +590,7 @@ export async function createRuntime(
         if (
           file.parentSessionId !== undefined
           || file.rootSessionId !== rootSessionId
-          || file.agentName !== "lead"
+          || !isUserFacingRootSession(file)
         ) {
           throw new NotRootSessionError(
             rootSessionId,
@@ -775,9 +775,6 @@ export async function createRuntime(
       createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
       logger: runtimeLogger.child({ module: "projects" }),
     });
-    const isDiscussionSession = async (workspaceRoot: string, sessionId: string): Promise<boolean> => (
-      await sessionStoreManager.getSessionFile(workspaceRoot, sessionId)
-    ).projectTodo?.entry === "discussion";
     const sessionModelSelectionService = new SessionModelSelectionService(sessionStoreManager);
     executionScopeValidator = new SessionExecutionScopeValidator();
     let executionManager!: SessionExecutionManager;
@@ -837,7 +834,6 @@ export async function createRuntime(
       cancelSessionToolBatch: (sessionId, workspaceRoot, reason) => (
         cancelSessionBatchAndHitl(sessionId, workspaceRoot, reason)
       ),
-      isDiscussionSession,
       sessionInputService,
       trackSession,
       untrackSession,
@@ -1627,12 +1623,6 @@ export async function createRuntime(
           `Creation source Session ${sessionId} must be an ordinary root Lead Session`,
         );
       }
-      if (session.projectTodo?.entry === "discussion") {
-        throw new ResourceCreationSourceError(
-          sessionId,
-          `Creation source Session ${sessionId} is bound to a Todo Discussion`,
-        );
-      }
       return session;
     }
 
@@ -2280,7 +2270,7 @@ export async function createRuntime(
 
 function assertRuntimeSessionAgentScope(options: CreateRuntimeSessionOptions): void {
   if (options.agentName !== "lead") {
-    throw new Error(`Root Sessions require agentName "lead", got "${options.agentName}"`);
+    throw new Error(`Ordinary Session creation requires agentName "lead", got "${options.agentName}"`);
   }
 }
 

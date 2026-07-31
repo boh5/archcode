@@ -147,6 +147,8 @@ export class SessionCwdTransitionInProgressError extends Error {
 }
 
 export class SessionToolBatchActiveError extends Error {
+  readonly code = "SESSION_TOOL_BATCH_ACTIVE";
+
   constructor(
     public readonly sessionId: string,
     public readonly hitlIds: readonly string[],

@@ -36,7 +36,7 @@ function makeContext(
   const store = createMockStore({
     sessionId,
     rootSessionId: sessionId,
-    agentName: "lead",
+    agentName: "discussion",
     projectTodo: { todoId, entry: "discussion" },
     ...overrides,
   });
@@ -127,7 +127,7 @@ describe("project_todo_update", () => {
     expect(jsonSchema).toContain("mark_ready");
   });
 
-  test("derives the Todo binding authorization from the current bound root Lead Session", async () => {
+  test("derives authorization from the current bound root Discussion identity", async () => {
     const { ctx, updateFromDiscussion } = makeContext();
 
     const result = await projectTodoUpdateTool.execute(input, ctx);
@@ -137,7 +137,7 @@ describe("project_todo_update", () => {
       authorization: {
         sessionId,
         rootSessionId: sessionId,
-        agentName: "lead",
+        agentName: "discussion",
         projectSlug: "test-project",
         projectTodo: { todoId, entry: "discussion" },
       },
@@ -213,7 +213,7 @@ describe("project_todo_update", () => {
       authorization: {
         sessionId,
         rootSessionId: sessionId,
-        agentName: "lead",
+        agentName: "discussion",
         projectSlug: "test-project",
         projectTodo: { todoId, entry: "discussion" },
       },
@@ -226,12 +226,12 @@ describe("project_todo_update", () => {
     });
   });
 
-  test("rejects non-Lead and child Sessions before reaching the Todo service", async () => {
+  test("rejects non-Discussion, child, and unbound Sessions before reaching the Todo service", async () => {
     for (const overrides of [
       { agentName: "analyst" as const },
       { rootSessionId: crypto.randomUUID() },
       { parentSessionId: crypto.randomUUID() },
-      { projectTodo: { todoId, entry: "work" as const } },
+      { projectTodo: undefined },
     ]) {
       const { ctx, updateFromDiscussion } = makeContext(overrides);
 

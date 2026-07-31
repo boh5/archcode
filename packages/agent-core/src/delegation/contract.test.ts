@@ -30,7 +30,9 @@ describe("DelegationRequestSchema", () => {
     ] as const) {
       expect(DelegationRequestSchema.parse(request({ agent_type, profile })).agent_type).toBe(agent_type);
     }
-    expect(() => DelegationRequestSchema.parse(request({ agent_type: "unknown" }))).toThrow();
+    for (const agent_type of ["lead", "discussion", "unknown"]) {
+      expect(() => DelegationRequestSchema.parse(request({ agent_type, profile: "deep" }))).toThrow();
+    }
   });
 
   test("enforces the target Profile matrix before child creation", () => {

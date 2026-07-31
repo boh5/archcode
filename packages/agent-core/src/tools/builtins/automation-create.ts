@@ -22,7 +22,7 @@ export const automationCreateTool = defineTool({
     const agentName = ctx.agentName ?? state.agentName;
     const isOrdinaryRoot = state.sessionId === state.rootSessionId
       && state.parentSessionId === undefined;
-    if (agentName !== "lead" || !isOrdinaryRoot || state.projectTodo?.entry === "discussion") {
+    if (agentName !== "lead" || !isOrdinaryRoot) {
       return createToolErrorResult({
         kind: "permission-denied",
         code: "AUTOMATION_CREATE_DENIED",

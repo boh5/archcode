@@ -1,10 +1,15 @@
 # Multi-Agent Architecture
 
-ArchCode has five closed Agent identities. Agent identity owns tools, delegation targets, depth, and stable responsibility. Profile owns model selection. Skill owns task-specific guidance. These three axes are independent: neither a Profile nor a Skill can grant tools or widen delegation.
+ArchCode has five execution and collaboration identities plus one dedicated user-facing
+Discussion identity. Agent identity owns tools, delegation targets, depth, and
+stable responsibility. Profile owns model selection. Skill owns task-specific
+guidance. These three axes are independent: neither a Profile nor a Skill can
+grant tools or widen delegation.
 
 | ID | Profile | Purpose |
 |---|---|---|
-| `lead` | root default `principal` | Sole user entry and final technical owner. Works directly or coordinates bounded children. |
+| `lead` | root default `principal` | Ordinary user-work entry and final technical owner. Works directly or coordinates bounded children. |
+| `discussion` | root default `principal` | Shapes one bound Todo and its optional Plan without implementing product work. |
 | `analyst` | `deep` | Source-read-only architecture analysis, planning support, gap analysis, and independent review. |
 | `build` | `deep` or `fast` | Source-writing implementation and verification specialist. |
 | `explore` | `fast` | Terminal read-only local-code investigation. |
@@ -20,26 +25,33 @@ Lead ─┬─ Analyst ─┬─ Explore
       ├─ Build ────── Explore
       ├─ Explore
       └─ Librarian
+
+Discussion ─┬─ Explore
+            └─ Librarian
 ```
 
 - Lead has maximum depth 3 and may delegate Analyst, Build, Explore, or Librarian.
 - Analyst has maximum depth 2 and may delegate Explore or Librarian.
 - Build has maximum depth 2 and may delegate Explore.
 - Explore and Librarian are terminal.
-- A Todo-bound Discussion is a restricted root Lead that may delegate only Explore or Librarian at maximum depth 2.
+- Discussion has maximum depth 2 and may delegate only Explore or Librarian.
 - Target, Profile, Skill existence, depth, direct-child ownership, and family boundaries are enforced before child creation.
 
 `delegate` accepts only `{ agent_type, profile, title, objective, skills, background }`. A child persists this identity and `resume_session` cannot change its Agent, Profile, Skills, or responsibility. General Session concurrency applies; there is no Build path lease or owned-scope protocol.
 
 ## Skills instead of role proliferation
 
-Stable Agent prompts describe identity and authority. Workflow methods live in Skills, including `orchestrate-work`, `plan-work`, `run-goal`, `shape-todo`, `review-work`, and `goal-review`. Analyst can combine analysis and review Skills without creating a new Agent identity for every professional role.
+Stable Agent prompts describe identity and authority. Workflow methods live in Skills, including `orchestrate-work`, `plan-work`, `execute-plan`, `run-goal`, `shape-todo`, `review-work`, and `goal-review`. Analyst can combine analysis and review Skills without creating a new Agent identity for every professional role.
 
 A Plan is an ordinary Markdown file under `.archcode/plans/`, not a service, state machine, Session identity, or Goal dependency.
 
 ## Sessions, Todos, and Goals
 
-Every user-facing Session is rooted at Lead. A Todo-originated root carries an immutable `{ todoId, entry }` identity. A `discussion` entry derives the restricted Lead capability surface and activates `shape-todo`; it may update only that source Todo. A `work` or `automation` entry is otherwise an ordinary root Lead Session. Todo identity never propagates to child Sessions.
+Every user-facing Session is rooted at Lead or Discussion. A Todo-originated
+root carries an immutable `{ todoId, entry }` identity. A `discussion` entry
+must use the Discussion identity, activates `shape-todo`, and may update only
+that source Todo. A `work` or `automation` entry must use Lead. Todo identity
+never propagates to child Sessions.
 
 `Session.goal` is an optional persistent protocol on a root Lead Session. Before creating it, Lead asks with ordinary `ask_user` and interprets the answer semantically. Goal is independent of Plan.
 
@@ -47,6 +59,11 @@ Before Goal completion, Lead creates a fresh direct `analyst + deep + goal-revie
 
 ## UI metadata and configuration
 
-`AgentDefinition.displayName` is the display-name source. Runtime exposes the five definitions through `GET /api/agents`; Session and child surfaces also expose immutable Profile and active Skills.
+`AgentDefinition.displayName` is the display-name source. Runtime exposes all
+six definitions through `GET /api/agents`; Session and child surfaces also
+expose immutable Profile and active Skills.
 
-The server-wide `~/.archcode/config.json` requires exactly `profiles.principal`, `profiles.deep`, and `profiles.fast`. A root Lead Session may override its next model selection without changing Agent identity. Missing, unknown, or removed per-Agent configuration fails strict validation.
+The server-wide `~/.archcode/config.json` requires exactly `profiles.principal`,
+`profiles.deep`, and `profiles.fast`. A user-facing root Session may override
+its next model selection without changing Agent identity. Missing, unknown, or
+removed per-Agent configuration fails strict validation.

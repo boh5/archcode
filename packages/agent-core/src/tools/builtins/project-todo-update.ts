@@ -42,7 +42,7 @@ export const ProjectTodoUpdateInputSchema = z.strictObject({
 
 export const projectTodoUpdateTool = defineTool({
   name: TOOL_PROJECT_TODO_UPDATE,
-  description: "Update the Project Todo bound to this root Lead Discussion. The current Todo is inferred from the Session; no Todo ID is accepted. Every update must make one explicit keep-current, Idea, Ready, or Reject decision with a rationale.",
+  description: "Update the Project Todo bound to this root Discussion. The current Todo is inferred from the Session; no Todo ID is accepted. Every update must make one explicit keep-current, Idea, Ready, or Reject decision with a rationale.",
   inputSchema: ProjectTodoUpdateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   outputPolicy: { kind: "inline", previewDirection: "head" },
@@ -51,11 +51,11 @@ export const projectTodoUpdateTool = defineTool({
     const agentName = ctx.agentName ?? state.agentName;
     const isRootSession = state.sessionId === state.rootSessionId && state.parentSessionId === undefined;
 
-    if (agentName !== "lead" || !isRootSession || state.projectTodo?.entry !== "discussion") {
+    if (agentName !== "discussion" || !isRootSession || state.projectTodo === undefined) {
       return createToolErrorResult({
         kind: "permission-denied",
         code: "PROJECT_TODO_UPDATE_DENIED",
-        message: `project_todo_update requires a bound root Lead Discussion, got ${agentName ?? "unknown"}/${isRootSession ? "root" : "child"}`,
+        message: `project_todo_update requires a bound root Discussion, got ${agentName ?? "unknown"}/${isRootSession ? "root" : "child"}`,
       });
     }
 

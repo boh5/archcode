@@ -6,6 +6,7 @@ import researchDocs from "./research-docs/SKILL.md" with { type: "text" };
 import automationCreate from "./automation-create/SKILL.md" with { type: "text" };
 import orchestrateWork from "./orchestrate-work/SKILL.md" with { type: "text" };
 import planWork from "./plan-work/SKILL.md" with { type: "text" };
+import executePlan from "./execute-plan/SKILL.md" with { type: "text" };
 import runGoal from "./run-goal/SKILL.md" with { type: "text" };
 import shapeTodo from "./shape-todo/SKILL.md" with { type: "text" };
 import goalReview from "./goal-review/SKILL.md" with { type: "text" };
@@ -21,6 +22,7 @@ export const BUILTIN_SKILL_BODIES = {
   "automation-create": automationCreate,
   "orchestrate-work": orchestrateWork,
   "plan-work": planWork,
+  "execute-plan": executePlan,
   "run-goal": runGoal,
   "shape-todo": shapeTodo,
   "goal-review": goalReview,

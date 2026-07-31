@@ -8,6 +8,7 @@ import {
   agentDefinitions,
   analystAgentDefinition,
   buildAgentDefinition,
+  discussionAgentDefinition,
   exploreAgentDefinition,
   leadAgentDefinition,
   librarianAgentDefinition,
@@ -50,7 +51,36 @@ const EXPECTED_TOOL_MATRIX = {
     "get_goal",
     "update_goal",
     "automation_create",
+    "skill_list",
+    "skill_read",
+  ],
+  discussion: [
+    "file_read",
+    "file_write",
+    "file_edit",
+    "grep",
+    "glob",
+    "ast_grep_search",
+    "git_status",
+    "git_diff",
+    "bash",
+    "todo_write",
+    "ask_user",
+    "lsp_diagnostics",
+    "lsp_goto_definition",
+    "lsp_find_references",
+    "lsp_symbols",
+    "web_fetch",
+    "memory_read",
+    "memory_write",
     "project_todo_update",
+    "delegate",
+    "resume_session",
+    "background_output",
+    "wait_for_reminder",
+    "output_read",
+    "output_search",
+    "compress",
     "skill_list",
     "skill_read",
   ],
@@ -143,20 +173,22 @@ const EXPECTED_TOOL_MATRIX = {
   ],
 } as const;
 
-describe("Lead Agent catalog", () => {
-  test("defines the complete five-Agent catalog", () => {
+describe("Agent catalog", () => {
+  test("defines five execution Agents plus the Todo Discussion entry Agent", () => {
     expect(agentDefinitions.map(({ name, displayName }) => ({ name, displayName }))).toEqual([
       { name: "lead", displayName: "Lead" },
+      { name: "discussion", displayName: "Discussion" },
       { name: "analyst", displayName: "Analyst" },
       { name: "build", displayName: "Build" },
       { name: "explore", displayName: "Explore" },
       { name: "librarian", displayName: "Librarian" },
     ]);
-    expect(new Set(agentDefinitions.map((definition) => definition.name)).size).toBe(5);
+    expect(new Set(agentDefinitions.map((definition) => definition.name)).size).toBe(6);
   });
 
   test("binds each identity to only its valid Profile choices", () => {
     expect(leadAgentDefinition.profiles).toEqual(["principal"]);
+    expect(discussionAgentDefinition.profiles).toEqual(["principal"]);
     expect(analystAgentDefinition.profiles).toEqual(["deep"]);
     expect(buildAgentDefinition.profiles).toEqual(["deep", "fast"]);
     expect(exploreAgentDefinition.profiles).toEqual(["fast"]);
@@ -165,6 +197,8 @@ describe("Lead Agent catalog", () => {
 
   test("preserves the locked target and depth matrix", () => {
     expect(leadAgentDefinition.tools.delegateTargets).toEqual(["analyst", "build", "explore", "librarian"]);
+    expect(discussionAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
+    expect(discussionAgentDefinition.mcpTools).toEqual([]);
     expect(analystAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
     expect("delegateTargets" in exploreAgentDefinition.tools).toBe(false);
@@ -172,6 +206,7 @@ describe("Lead Agent catalog", () => {
 
     for (const [definition, maxDepth] of [
       [leadAgentDefinition, 3],
+      [discussionAgentDefinition, 2],
       [analystAgentDefinition, 2],
       [buildAgentDefinition, 2],
     ] as const) {
@@ -185,7 +220,7 @@ describe("Lead Agent catalog", () => {
     }
   });
 
-  test("locks the exact ordered tool authority matrix for all five Agents", () => {
+  test("locks the exact ordered tool authority matrix for every Agent", () => {
     expect(Object.fromEntries(
       agentDefinitions.map((definition) => [definition.name, [...definition.tools.tools]]),
     ) as unknown).toEqual(EXPECTED_TOOL_MATRIX);
@@ -198,11 +233,15 @@ describe("Lead Agent catalog", () => {
       expect("allowedTools" in definition).toBe(false);
     }
 
-    for (const name of ["orchestrate-work", "plan-work", "run-goal", "shape-todo", "review-work", "goal-review"] as const) {
+    for (const name of ["orchestrate-work", "plan-work", "execute-plan", "run-goal", "shape-todo", "review-work", "goal-review"] as const) {
       expect(BUILTIN_SKILL_BODIES[name]).toBeString();
     }
     expect(leadAgentDefinition.skills).toEqual(expect.arrayContaining([
-      "orchestrate-work", "plan-work", "run-goal", "shape-todo", "review-work",
+      "orchestrate-work", "plan-work", "execute-plan", "run-goal", "review-work",
+    ]));
+    expect(leadAgentDefinition.skills).not.toContain("shape-todo");
+    expect(discussionAgentDefinition.skills).toEqual(expect.arrayContaining([
+      "shape-todo", "plan-work",
     ]));
     expect(analystAgentDefinition.skills).toEqual(expect.arrayContaining([
       "analyze-work", "review-change", "goal-review",
@@ -212,6 +251,10 @@ describe("Lead Agent catalog", () => {
 
   test("Role contracts contain stable boundaries rather than workflow recipes", () => {
     expect(leadAgentDefinition.roleContract.delegateTargets).toEqual(["analyst", "build", "explore", "librarian"]);
+    expect(discussionAgentDefinition.roleContract.delegateTargets).toEqual(["explore", "librarian"]);
+    expect(discussionAgentDefinition.roleContract.forbiddenCapabilities).toEqual(expect.arrayContaining([
+      "ast_grep_replace", "create_goal", "update_goal", "automation_create",
+    ]));
     expect(analystAgentDefinition.roleContract.forbiddenCapabilities).toEqual(expect.arrayContaining([
       "file_write", "file_edit", "ast_grep_replace",
     ]));

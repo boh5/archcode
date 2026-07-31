@@ -22,7 +22,6 @@ import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { Agent } from "../agents/types";
 import type { AgentChildPolicy } from "../agents/factory-types";
-import { DISCUSSION_LEAD_DELEGATE_TARGETS, DISCUSSION_LEAD_MAX_DEPTH } from "../agents/definitions/lead";
 import type { ProfileName } from "../config";
 import {
   AgentChildPolicyMissingError,
@@ -298,7 +297,6 @@ interface SessionExecutionManagerConfig {
     workspaceRoot: string,
     reason: string,
   ) => Promise<void>;
-  readonly isDiscussionSession: (workspaceRoot: string, sessionId: string) => Promise<boolean>;
   readonly sessionInputService: Pick<
     SessionInputService,
     "beginQueueExecution" | "beginDirectExecution" | "claimSteer" | "commitSteers" | "rollbackSteers" | "getPendingMessages" | "recordQueueDispatchBarrier"
@@ -1916,13 +1914,6 @@ export class SessionExecutionManager {
     }
 
     const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, currentDepth);
-    const isDiscussion = parentAgentName === "lead"
-      && parentState.parentSessionId === undefined
-      && parentState.rootSessionId === parentState.sessionId
-      && await this.#config.isDiscussionSession(workspaceRoot, parentState.sessionId);
-    if (isDiscussion && !(DISCUSSION_LEAD_DELEGATE_TARGETS as readonly AgentName[]).includes(targetAgentName)) {
-      throw new DelegateTargetNotAllowedError(parentAgentName, targetAgentName, currentDepth);
-    }
     if (!delegateTargets.includes(targetAgentName)) {
       throw new DelegateTargetNotAllowedError(parentAgentName, targetAgentName, currentDepth);
     }
@@ -1932,7 +1923,7 @@ export class SessionExecutionManager {
     if (configuredChildPolicy === undefined) {
       throw new AgentChildPolicyMissingError(parentAgentName);
     }
-    const childPolicy = effectiveChildPolicy(configuredChildPolicy, isDiscussion);
+    const childPolicy = configuredChildPolicy;
 
     if (currentDepth >= childPolicy.maxDepth) {
       throw new DepthLimitError(currentDepth);
@@ -3864,11 +3855,7 @@ export class SessionExecutionManager {
       const childDepth = await this.#config.resolveSessionDepth(workspaceRoot, childState.sessionId);
       const configuredChildPolicy = parentDefinition.childPolicy;
       if (configuredChildPolicy === undefined) throw new AgentChildPolicyMissingError(parentState.agentName);
-      const isDiscussion = parentState.agentName === "lead"
-        && parentState.parentSessionId === undefined
-        && parentState.rootSessionId === parentState.sessionId
-        && await this.#config.isDiscussionSession(workspaceRoot, parentState.sessionId);
-      const childPolicy = effectiveChildPolicy(configuredChildPolicy, isDiscussion);
+      const childPolicy = configuredChildPolicy;
       if (parentDepth >= childPolicy.maxDepth || childDepth !== parentDepth + 1 || childDepth > childPolicy.maxDepth) {
         throw new DepthLimitError(parentDepth);
       }
@@ -3877,10 +3864,6 @@ export class SessionExecutionManager {
         throw new DelegationToolNotAllowedError(parentState.agentName, parentDepth);
       }
       const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, parentDepth);
-      if (isDiscussion
-        && !(DISCUSSION_LEAD_DELEGATE_TARGETS as readonly AgentName[]).includes(childState.agentName)) {
-        throw new DelegateTargetNotAllowedError(parentState.agentName, childState.agentName, parentDepth);
-      }
       if (!delegateTargets.includes(childState.agentName)) {
         throw new DelegateTargetNotAllowedError(parentState.agentName, childState.agentName, parentDepth);
       }
@@ -4007,15 +3990,6 @@ export class SessionExecutionManager {
     });
   }
 
-}
-
-function effectiveChildPolicy(
-  configured: AgentChildPolicy,
-  isDiscussion: boolean,
-): AgentChildPolicy {
-  return isDiscussion
-    ? { ...configured, maxDepth: Math.min(configured.maxDepth, DISCUSSION_LEAD_MAX_DEPTH) }
-    : configured;
 }
 
 function sanitizeBindingError(error: unknown, binding: ExecutionModelBinding): Error {

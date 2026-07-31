@@ -1,12 +1,14 @@
-import type {
-  CreateProjectTodoSessionInput,
-  CreateProjectTodoSessionResponse,
-  ProjectTodo,
-  ProjectTodoCreateInput,
-  ProjectTodoDiscussionUpdatePatch,
-  ProjectTodoSessionSource,
-  ProjectTodoUpdateInput,
+import {
+  PROJECT_STATE_DIR_NAME,
+  type CreateProjectTodoSessionInput,
+  type CreateProjectTodoSessionResponse,
+  type ProjectTodo,
+  type ProjectTodoCreateInput,
+  type ProjectTodoDiscussionUpdatePatch,
+  type ProjectTodoSessionSource,
+  type ProjectTodoUpdateInput,
 } from "@archcode/protocol";
+import { join } from "node:path";
 
 import { ProjectTodoDiscussionAuthorizationError } from "./errors";
 import {
@@ -18,7 +20,7 @@ import { ProjectTodoStateManager } from "./state-manager";
 export interface ProjectTodoSessionCapability {
   createRootSession(input: {
     readonly workspaceRoot: string;
-    readonly agentName: "lead";
+    readonly agentName: "lead" | "discussion";
     readonly title: string;
     readonly projectTodo: ProjectTodoSessionSource;
   }): Promise<{ readonly sessionId: string }>;
@@ -93,16 +95,26 @@ export class ProjectTodoService {
       ? await this.#state.readCurrentTodo(todoId, request.expectedRevision)
       : await this.#state.beginWork(todoId, request.expectedRevision);
     const projectTodo: ProjectTodoSessionSource = { todoId, entry: request.entry };
+    const planRelativePath = `${PROJECT_STATE_DIR_NAME}/plans/${todoId}.md`;
+    const hasPlan = request.entry === "work"
+      ? await Bun.file(join(this.workspaceRoot, planRelativePath)).exists()
+      : false;
     const { sessionId } = await this.#sessions.createRootSession({
       workspaceRoot: this.workspaceRoot,
-      agentName: "lead",
+      agentName: request.entry === "discussion" ? "discussion" : "lead",
       title: request.entry === "discussion" ? `Discussion: ${todo.title}` : todo.title,
       projectTodo,
     });
     await this.#sessions.acceptMessage({
       workspaceRoot: this.workspaceRoot,
       sessionId,
-      text: sessionMessage(todo, todo.revision, request.entry),
+      text: sessionMessage(
+        todo,
+        todo.revision,
+        request.entry,
+        hasPlan ? planRelativePath : undefined,
+        "initialIntent" in request ? request.initialIntent : undefined,
+      ),
       clientRequestId: crypto.randomUUID(),
     });
     return { todo, sessionId };
@@ -110,8 +122,8 @@ export class ProjectTodoService {
 
   async updateFromDiscussion(input: ProjectTodoDiscussionUpdateInput): Promise<ProjectTodo> {
     const authorization = input.authorization;
-    if (authorization.agentName !== "lead") {
-      throw new ProjectTodoDiscussionAuthorizationError("only Lead may update through a bound Discussion");
+    if (authorization.agentName !== "discussion") {
+      throw new ProjectTodoDiscussionAuthorizationError("only Discussion may update its bound Todo");
     }
     if (authorization.sessionId !== authorization.rootSessionId) {
       throw new ProjectTodoDiscussionAuthorizationError("Discussion must be a root Session");
@@ -119,8 +131,8 @@ export class ProjectTodoService {
     if (authorization.projectSlug !== this.projectSlug) {
       throw new ProjectTodoDiscussionAuthorizationError("Discussion belongs to another Project");
     }
-    if (authorization.projectTodo?.entry !== "discussion") {
-      throw new ProjectTodoDiscussionAuthorizationError("Session is not a Project Todo Discussion");
+    if (authorization.projectTodo === undefined) {
+      throw new ProjectTodoDiscussionAuthorizationError("Discussion is not bound to a Project Todo");
     }
     const patch = ProjectTodoDiscussionUpdatePatchSchema.parse(input.patch);
     return this.#state.updateTodo(authorization.projectTodo.todoId, {
@@ -134,6 +146,8 @@ function sessionMessage(
   todo: ProjectTodo,
   revision: number,
   entry: CreateProjectTodoSessionInput["entry"],
+  planPath?: string,
+  initialIntent?: "plan",
 ): string {
   const source = [
     `Todo ID: ${todo.id}`,
@@ -143,14 +157,24 @@ function sessionMessage(
     todo.body,
   ].join("\n");
   if (entry === "discussion") {
+    if (initialIntent === "plan") {
+      return [
+        `/skill use plan-work Create or improve the implementation Plan for this bound Todo at ${PROJECT_STATE_DIR_NAME}/plans/${todo.id}.md. Preserve one Plan file, read it before editing when it exists, and do not start implementation.`,
+        source,
+      ].join("\n\n");
+    }
     return [
-      "Discuss and shape the bound Project Todo. Do not start implementation or produce an implementation plan.",
+      "Discuss and shape the bound Project Todo. Do not start product code implementation.",
+      `When the user asks for a Plan, you may create or improve the unique implementation Plan at ${PROJECT_STATE_DIR_NAME}/plans/${todo.id}.md.`,
       "Use project_todo_update to write confirmed corrections and decisions back to this same Todo.",
       source,
     ].join("\n\n");
   }
   if (entry === "automation") {
     return `/skill use automation-create Create an Automation from the following Project Todo.\n\n${source}`;
+  }
+  if (planPath !== undefined) {
+    return `/skill use execute-plan Execute the Project Todo using the Plan at ${planPath}. Check the Plan, ask whether to create a Goal, then follow the user's decision.\n\n${source}`;
   }
   return `Implement the following Project Todo as an ordinary Lead Session.\n\n${source}`;
 }

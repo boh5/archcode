@@ -11,7 +11,10 @@ import {
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
   PROJECT_TODO_TITLE_MAX_LENGTH,
 } from "@archcode/protocol";
-import type { AgentRuntime } from "@archcode/agent-core";
+import {
+  CreateProjectTodoSessionSchema,
+  type AgentRuntime,
+} from "@archcode/agent-core";
 import { z } from "zod/v4";
 
 import { BadRequestError, ServerError } from "../errors";
@@ -44,11 +47,6 @@ const ProjectTodoUpdateBodySchema = z.strictObject({
     context.addIssue({ code: "custom", path: ["archived"], message: "archived cannot be combined with other Todo fields" });
   }
 });
-const CreateProjectTodoSessionBodySchema = z.strictObject({
-  expectedRevision: z.number().int().positive(),
-  entry: z.enum(["discussion", "work", "automation"]),
-});
-
 export interface ProjectTodoServiceLike {
   listTodos(): Promise<readonly ProjectTodo[]>;
   createTodo(input: ProjectTodoCreateInput): Promise<ProjectTodo>;
@@ -106,7 +104,7 @@ export function createTodosRoutes(runtime: AgentRuntime): Hono {
   app.post(
     "/:slug/todos/:todoId/sessions",
     zValidator("param", ProjectTodoParamsSchema),
-    zValidator("json", CreateProjectTodoSessionBodySchema),
+    zValidator("json", CreateProjectTodoSessionSchema),
     async (c) => {
       const { slug, todoId } = c.req.valid("param");
       const project = await resolveProject(runtime, slug);

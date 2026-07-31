@@ -81,6 +81,22 @@ describe("Project Todo routes", () => {
         entry,
       });
     }
+
+    const planDiscussion = await fixture.app.request(base, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        expectedRevision: 1,
+        entry: "discussion",
+        initialIntent: "plan",
+      }),
+    });
+    expect(planDiscussion.status).toBe(201);
+    expect(fixture.createSession).toHaveBeenLastCalledWith(todo.id, {
+      expectedRevision: 1,
+      entry: "discussion",
+      initialIntent: "plan",
+    });
   });
 
   test("strictly validates flat mutation and Session request bodies", async () => {
@@ -103,10 +119,20 @@ describe("Project Todo routes", () => {
       headers,
       body: JSON.stringify({ expectedRevision: 1, entry: "invalid" }),
     });
+    const invalidPlanIntent = await fixture.app.request(`${base}/${fixture.todo.id}/sessions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: 1,
+        entry: "work",
+        initialIntent: "plan",
+      }),
+    });
 
     expect(emptyMutation.status).toBe(400);
     expect(mixedArchive.status).toBe(400);
     expect(invalidEntry.status).toBe(400);
+    expect(invalidPlanIntent.status).toBe(400);
   });
 
   test("maps not-found and current-domain conflicts", async () => {

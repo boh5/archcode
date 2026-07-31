@@ -49,6 +49,7 @@ function childHandle(parentSessionId: string, value: DelegationRequest): ChildEx
   const store = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, {
     agentName: value.agent_type,
     parentSessionId,
+    rootSessionId: parentSessionId,
     delegationRequest: value,
     title: value.title,
   });

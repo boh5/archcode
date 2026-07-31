@@ -70,14 +70,16 @@ describe("SkillService", () => {
   });
 
   test("reserved lifecycle Skills cannot be shadowed or loaded by an ineligible Agent", async () => {
-    for (const name of ["orchestrate-work", "plan-work", "run-goal", "shape-todo", "review-work", "goal-review"]) {
+    for (const name of ["orchestrate-work", "plan-work", "execute-plan", "run-goal", "shape-todo", "review-work", "goal-review"]) {
       await writeSkill(projectSkillsRoot, name, skillMarkdown(name, `project ${name}`));
       await writeSkill(userSkillsRoot, name, skillMarkdown(name, `user ${name}`));
     }
     const service = new SkillService({ userSkillsRoot });
 
     expect((await service.readForAgent(projectRoot, "goal-review", ["goal-review"]))?.source).toBe("builtin");
+    expect((await service.readForAgent(projectRoot, "execute-plan", ["execute-plan"]))?.source).toBe("builtin");
     expect(await service.readForAgent(projectRoot, "goal-review", ["codemap"])).toBeNull();
+    expect(await service.readForAgent(projectRoot, "execute-plan", ["codemap"])).toBeNull();
     const listed = await service.listForAgent(projectRoot, ["codemap"]);
     expect(listed.map((entry) => entry.name)).not.toContain("goal-review");
   });

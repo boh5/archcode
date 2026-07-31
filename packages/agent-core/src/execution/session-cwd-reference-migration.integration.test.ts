@@ -274,7 +274,10 @@ describe("SessionCwdReferenceMigrationService", () => {
     expect(result).toEqual({ removed: true, marker: "removed" });
     expect(leaseEvents).toEqual(["acquire", "release"]);
     expect(releasedAgents.sort()).toEqual([oldRootId, oldChildId, retryRootId].sort());
-    expect(stores.create(crypto.randomUUID(), PROJECT_ROOT, { cwd: WORKTREE_ROOT, agentName: "lead" }).getState().cwd).toBe(WORKTREE_ROOT);
+    expect((await stores.createSessionFile(PROJECT_ROOT, {
+      cwd: WORKTREE_ROOT,
+      agentName: "lead",
+    })).cwd).toBe(WORKTREE_ROOT);
   });
 
   test("rolls every migrated Session back when removal fails while the worktree still exists", async () => {

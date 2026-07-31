@@ -60,7 +60,7 @@ export function mapAttachmentHttpError(
   if (error instanceof NotRootSessionError) {
     return new ServerError(
       "ATTACHMENT_INVALID",
-      `Session "${sessionId}" is not a root Lead Session`,
+      `Session "${sessionId}" is not a user-facing root Session`,
       400,
     );
   }

@@ -15,9 +15,10 @@ describe("mapMcpServerStatusForPrompt", () => {
 
 test("buildLifecycleCurrentContext snapshots Todo intent without Session Goal state", () => {
   expect(buildLifecycleCurrentContext(
-    { id: "todo-1", title: "Prompt architecture", body: "Keep compiler pure" },
+    { id: "todo-1", revision: 4, title: "Prompt architecture", body: "Keep compiler pure" },
   )).toEqual([
     "todoId=todo-1",
+    "todoRevision=4",
     'todoTitle="Prompt architecture"',
     'todoBody="Keep compiler pure"',
   ]);

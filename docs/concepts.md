@@ -16,9 +16,10 @@ project-scoped memory.
 ## Session
 
 A Session is the durable conversation and execution history for one Agent.
-Ordinary user work starts in a root Lead Session. The Session keeps its model
-Profile, working directory, messages, tool activity, approvals, and terminal
-state.
+Ordinary user work starts in a root Lead Session. A Todo Discussion starts in a
+root Discussion Session dedicated to shaping that Todo and its optional Plan.
+The Session keeps its model Profile, working directory, messages, tool activity,
+approvals, and terminal state.
 
 ## Execution
 
@@ -51,13 +52,21 @@ a dedicated Discussion to clarify and shape it, then freely organize it among
 Idea, Ready, In Progress, and Done; Rejected and Archived are separate from the
 main board.
 
-A Ready or In Progress Todo can start any number of fresh ordinary Lead work
-Sessions or an Automation setup Session. Starting work from Ready moves the
-Todo to In Progress; opening or continuing an existing Session does not change
-the Todo. Each direct root Session keeps its own immutable Todo source, while
-an Automation keeps its own optional Todo association. The Todo itself never
-stores Session or Automation IDs. You can also start a Session directly without
-creating a Todo.
+When a Todo needs a Plan, **Generate / Improve Plan** reuses its latest
+Discussion only when that Session is idle and maintains one ordinary Markdown
+file at `.archcode/plans/<todo-id>.md`. If no Discussion exists, the latest one
+is busy or suspended, it was deleted, or an idle reuse loses the acceptance
+race, ArchCode creates a new Discussion with Plan work as its first message.
+The UI never races a generic Discussion execution with a second Plan command.
+A Ready or In Progress Todo can start any number of fresh
+ordinary Lead work Sessions or an Automation setup Session. At that one start
+boundary, ArchCode checks whether the Plan file exists: if it does, the Lead
+begins with `execute-plan`; otherwise it follows the ordinary work path.
+Starting work from Ready moves the Todo to In Progress; opening or continuing
+an existing Session does not change the Todo. Each direct root Session keeps
+its own immutable Todo source, while an Automation keeps its own optional Todo
+association. The Todo itself never stores Session, Plan, or Automation IDs. You
+can also start a Session directly without creating a Todo.
 
 ## Goal
 
@@ -77,11 +86,13 @@ the conversation.
 
 ## Agent identities
 
-ArchCode ships with five stable Agent identities:
+ArchCode ships with five execution and collaboration identities plus a dedicated
+user-facing Discussion identity:
 
 | Agent | Responsibility |
 |---|---|
 | Lead | User entry point, direct work, delegation, integration, and delivery |
+| Discussion | Shapes one bound Todo and its optional Plan; does not implement the work |
 | Analyst | Read-only deep analysis, planning support, and review |
 | Build | File changes, commands, and implementation |
 | Explore | Local codebase search and inspection |
@@ -94,9 +105,9 @@ specialized responsibility is useful.
 
 Profiles choose model resources. ArchCode requires `principal`, `deep`, and
 `fast` Profiles so different kinds of work can use intentional model budgets.
-Root Lead defaults to `principal`; Analyst uses `deep`; Explore and Librarian
-use `fast`; Build can use `deep` or `fast`. Profiles do not change Agent tools
-or authority.
+Root Lead and Discussion default to `principal`; Analyst uses `deep`; Explore
+and Librarian use `fast`; Build can use `deep` or `fast`. Profiles do not change
+Agent tools or authority.
 
 Skills provide task-specific working methods. They guide behavior without
 granting additional tools or permissions.

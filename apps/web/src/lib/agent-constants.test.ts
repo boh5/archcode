@@ -9,18 +9,19 @@ import {
 describe("AGENT_TYPES", () => {
   test("contains all expected agent types", () => {
     expect(AGENT_TYPES).toEqual([
-      "lead", "analyst", "build", "explore", "librarian",
+      "lead", "discussion", "analyst", "build", "explore", "librarian",
     ]);
   });
 
   test("is a readonly tuple", () => {
-    expect(AGENT_TYPES.length).toBe(5);
+    expect(AGENT_TYPES.length).toBe(6);
   });
 });
 
 describe("isValidAgentType", () => {
   test("returns true for valid agent types", () => {
     expect(isValidAgentType("lead")).toBe(true);
+    expect(isValidAgentType("discussion")).toBe(true);
     expect(isValidAgentType("analyst")).toBe(true);
     expect(isValidAgentType("build")).toBe(true);
     expect(isValidAgentType("explore")).toBe(true);

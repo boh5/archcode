@@ -1,5 +1,6 @@
 export const AGENT_NAMES = [
   "lead",
+  "discussion",
   "analyst",
   "build",
   "explore",

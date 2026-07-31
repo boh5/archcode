@@ -7,6 +7,13 @@ import { createStore } from "zustand/vanilla";
 
 const originals = new Map<string, PropertyDescriptor | undefined>();
 const hitlStore = createStore(() => ({ views: {} }));
+let hitlNoticeEntries: Array<{
+  projectSlug: string;
+  view: {
+    displayPayload: { title: string };
+    source: { type: "ask_user" };
+  };
+}> = [];
 
 mock.module("../components/features/ProjectBar", () => ({
   ProjectBar: () => <nav aria-label="Projects" data-testid="project-bar">Projects</nav>,
@@ -25,8 +32,8 @@ mock.module("../context/settings-modal", () => ({
   useSettingsModal: () => ({ openSettingsModal: () => {} }),
 }));
 mock.module("../context/global-sse", () => ({
-  useGlobalSSE: () => ({ hitlNoticeIdentities: [] }),
-  resolveHitlNoticeEntries: () => [],
+  useGlobalSSE: () => ({ hitlNoticeIdentities: hitlNoticeEntries.map(() => "hitl") }),
+  resolveHitlNoticeEntries: () => hitlNoticeEntries,
 }));
 mock.module("../store/hitl-store", () => ({
   hitlStore,
@@ -129,9 +136,38 @@ function restoreDom(): void {
   originals.clear();
 }
 
-afterEach(restoreDom);
+afterEach(() => {
+  hitlNoticeEntries = [];
+  restoreDom();
+});
 
 describe("RootLayout persistent project shell", () => {
+  test("keeps live HITL notices above the composer action area", async () => {
+    hitlNoticeEntries = [{
+      projectSlug: "demo",
+      view: {
+        displayPayload: { title: "Execution Goal" },
+        source: { type: "ask_user" },
+      },
+    }];
+    const dom = installDom();
+    const container = document.getElementById("root")!;
+    const root = createRoot(container);
+    const router = createMemoryRouter([{
+      element: <RootLayout />,
+      children: [{ path: "/projects/:slug/sessions/:sessionId", element: <Canvas>Session canvas</Canvas> }],
+    }], { initialEntries: ["/projects/demo/sessions/root"] });
+
+    await act(async () => root.render(<RouterProvider router={router} />));
+
+    const notice = container.querySelector('[data-testid="hitl-live-toast"]')!;
+    expect(notice.parentElement?.className).toContain("top-16");
+    expect(notice.parentElement?.className).not.toContain("bottom-4");
+
+    await act(async () => root.unmount());
+    dom.window.close();
+  });
+
   test("keeps Project Bar, Sidebar DOM and local state while only the routed canvas changes", async () => {
     const dom = installDom();
     const container = document.getElementById("root")!;

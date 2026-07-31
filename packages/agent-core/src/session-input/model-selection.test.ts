@@ -19,6 +19,7 @@ import { EMPTY_SESSION_ATTACHMENT_RESOLVER } from "./test-helpers";
 const WORKSPACE = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const SESSION_ID = "00000000-0000-4000-8000-000000000101";
 const CHILD_SESSION_ID = "00000000-0000-4000-8000-000000000102";
+const DISCUSSION_SESSION_ID = "00000000-0000-4000-8000-000000000103";
 const requested: RequestedModelSelection = {
   mode: "profile_default",
   selection: { model: "test:model" },
@@ -94,7 +95,11 @@ describe("Session model selection protocol", () => {
     });
   });
 
-  test("allows only a root Lead to set or clear a durable override", async () => {
+  test("allows Lead and Discussion roots, but not children, to own a durable override", async () => {
+    await manager.createSessionFile(WORKSPACE, {
+      agentName: "discussion",
+      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+    }, DISCUSSION_SESSION_ID);
     await manager.createSessionFile(WORKSPACE, {
       agentName: "explore",
       rootSessionId: SESSION_ID,
@@ -119,7 +124,7 @@ describe("Session model selection protocol", () => {
         requestedModelSelection,
       })).rejects.toMatchObject({
         name: "SessionModelSelectionNotAllowedError",
-        reason: "not_root_lead",
+        reason: "not_user_facing_root",
       });
     }
     expect(await selections.get(CHILD_SESSION_ID, WORKSPACE)).toEqual({ revision: 0 });
@@ -136,6 +141,12 @@ describe("Session model selection protocol", () => {
       expectedRevision: 1,
       requestedModelSelection: requested,
     })).toEqual({ revision: 2 });
+    expect(await selections.patch({
+      sessionId: DISCUSSION_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      expectedRevision: 0,
+      requestedModelSelection: overrideRequested,
+    })).toEqual({ revision: 1, override: overrideRequested.selection });
   });
 
   test("cold load rejects mutable model selection state on a child Session", async () => {

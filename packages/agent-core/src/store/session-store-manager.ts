@@ -8,6 +8,7 @@ import {
 } from "@archcode/protocol";
 import type { AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
+import { sessionIdentityInvariantError } from "../agents/root-session-identity";
 import { collectSessionTreeIds } from "../execution/session-tree";
 import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
@@ -199,11 +200,15 @@ export class SessionStoreManager {
     if (existing) return existing;
 
     const rootSessionId = options.rootSessionId ?? sessionId;
-    if (options.projectTodo !== undefined
-      && (options.agentName !== "lead"
-        || options.parentSessionId !== undefined
-        || rootSessionId !== sessionId)) {
-      throw new Error("Project Todo source requires a root Lead Session");
+    const identityError = sessionIdentityInvariantError({
+      sessionId,
+      rootSessionId,
+      parentSessionId: options.parentSessionId,
+      agentName: options.agentName,
+      projectTodo: options.projectTodo,
+    });
+    if (identityError !== undefined) {
+      throw new Error(identityError);
     }
     const cwd = options.cwd ?? workspaceRoot;
     if (!isAbsolute(cwd)) throw new InvalidSessionCwdError(cwd, "must be an absolute path");

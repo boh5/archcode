@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CreateProjectTodoSessionInput } from "@archcode/protocol";
 
 import {
   ProjectTodoDiscussionAuthorizationError,
@@ -61,6 +62,17 @@ async function readyTodo(service: ProjectTodoService, title = "Ship it", body = 
 }
 
 describe("ProjectTodoService", () => {
+  test("does not expose Plan intent on Work or Automation inputs", () => {
+    const invalid: CreateProjectTodoSessionInput = {
+      expectedRevision: 1,
+      entry: "work",
+      // @ts-expect-error Work requests must omit Discussion-only initialIntent.
+      initialIntent: undefined,
+    };
+
+    expect(invalid.entry).toBe("work");
+  });
+
   test("creates multiple independent Discussion Sessions without changing Todo state", async () => {
     const { service, sessions } = fixture();
     const todo = await service.createTodo({ title: "Discuss", body: "Questions" });
@@ -81,11 +93,38 @@ describe("ProjectTodoService", () => {
       todoId: todo.id,
       entry: "discussion",
     });
+    expect(sessions.sessions.get(first.sessionId)?.agentName).toBe("discussion");
     expect(sessions.messages.get(first.sessionId)?.text).toContain("Revision: 1");
     expect(sessions.messages.get(first.sessionId)?.text).toContain("Questions");
+    expect(sessions.messages.get(first.sessionId)?.text).toContain(
+      `.archcode/plans/${todo.id}.md`,
+    );
+    expect(sessions.messages.get(first.sessionId)?.text).toContain(
+      "may create or improve",
+    );
   });
 
-  test("moves Ready to In Progress once and permits multiple Work or Automation Sessions", async () => {
+  test("starts a new Plan Discussion with the Plan command as its first accepted message", async () => {
+    const { service, sessions } = fixture();
+    const todo = await service.createTodo({
+      title: "Plan safely",
+      body: "Avoid racing the initial Discussion execution.",
+    });
+
+    const discussion = await service.createSession(todo.id, {
+      expectedRevision: todo.revision,
+      entry: "discussion",
+      initialIntent: "plan",
+    });
+
+    expect(sessions.messages.get(discussion.sessionId)?.text).toStartWith(
+      `/skill use plan-work Create or improve the implementation Plan for this bound Todo at .archcode/plans/${todo.id}.md.`,
+    );
+    expect(sessions.messages.get(discussion.sessionId)?.text).toContain("Plan safely");
+    expect(discussion.todo).toEqual(todo);
+  });
+
+  test("moves Ready to In Progress once and keeps ordinary Work when no Plan exists", async () => {
     const { service, sessions } = fixture();
     const ready = await readyTodo(service, "Implement", "Acceptance");
 
@@ -97,7 +136,11 @@ describe("ProjectTodoService", () => {
       status: "in_progress",
       revision: ready.revision + 1,
     });
+    expect(sessions.sessions.get(first.sessionId)?.agentName).toBe("lead");
     expect(sessions.messages.get(first.sessionId)?.text).toContain(`Revision: ${first.todo.revision}`);
+    expect(sessions.messages.get(first.sessionId)?.text).toStartWith(
+      "Implement the following Project Todo as an ordinary Lead Session.",
+    );
 
     const second = await service.createSession(ready.id, {
       expectedRevision: first.todo.revision,
@@ -116,6 +159,27 @@ describe("ProjectTodoService", () => {
     expect(sessions.messages.get(automation.sessionId)?.text).toStartWith("/skill use automation-create ");
   });
 
+  test("routes Work through execute-plan when the Todo Plan exists", async () => {
+    const { service, sessions } = fixture();
+    const ready = await readyTodo(service, "Implement from Plan", "Acceptance");
+    const planPath = join(TMP_ROOT, ".archcode", "plans", `${ready.id}.md`);
+    await mkdir(join(TMP_ROOT, ".archcode", "plans"), { recursive: true });
+    await Bun.write(planPath, "# Plan\n");
+
+    const created = await service.createSession(ready.id, {
+      expectedRevision: ready.revision,
+      entry: "work",
+    });
+
+    expect(sessions.sessions.get(created.sessionId)?.agentName).toBe("lead");
+    expect(sessions.messages.get(created.sessionId)?.text).toStartWith(
+      `/skill use execute-plan Execute the Project Todo using the Plan at .archcode/plans/${ready.id}.md.`,
+    );
+    expect(sessions.messages.get(created.sessionId)?.text).toContain(
+      `Todo ID: ${ready.id}`,
+    );
+  });
+
   test("enforces entry state and current revision before creating a Session", async () => {
     const { service, sessions } = fixture();
     const idea = await service.createTodo({ title: "Not ready" });
@@ -128,6 +192,11 @@ describe("ProjectTodoService", () => {
       expectedRevision: idea.revision + 1,
       entry: "discussion",
     })).rejects.toBeInstanceOf(ProjectTodoRevisionConflictError);
+    await expect(service.createSession(idea.id, {
+      expectedRevision: idea.revision,
+      entry: "work",
+      initialIntent: "plan",
+    } as unknown as Parameters<ProjectTodoService["createSession"]>[1])).rejects.toThrow();
     expect(sessions.sessions.size).toBe(0);
   });
 
@@ -153,14 +222,14 @@ describe("ProjectTodoService", () => {
     expect(sessions.messages.size).toBe(0);
   });
 
-  test("authorizes Discussion updates from immutable current Session source", async () => {
+  test("authorizes Discussion updates from root identity and immutable Todo binding", async () => {
     const { service } = fixture();
     const todo = await service.createTodo({ title: "Shape" });
     const sessionId = crypto.randomUUID();
     const authorization = {
       sessionId,
       rootSessionId: sessionId,
-      agentName: "lead",
+      agentName: "discussion",
       projectSlug: "project-a",
       projectTodo: { todoId: todo.id, entry: "discussion" as const },
     };
@@ -173,10 +242,9 @@ describe("ProjectTodoService", () => {
     expect(updated).toMatchObject({ title: "Shaped", status: "ready", revision: 2 });
 
     for (const invalidAuthorization of [
-      { ...authorization, agentName: "build" },
+      { ...authorization, agentName: "lead" },
       { ...authorization, rootSessionId: crypto.randomUUID() },
       { ...authorization, projectSlug: "project-b" },
-      { ...authorization, projectTodo: { todoId: todo.id, entry: "work" as const } },
       { ...authorization, projectTodo: undefined },
     ]) {
       await expect(service.updateFromDiscussion({

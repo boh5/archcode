@@ -91,8 +91,8 @@ describe("Tool Output Plane architecture matrix", () => {
     expect(descriptor.outputPolicy).toEqual({ kind: "artifact", previewDirection: "head-tail" });
   });
 
-  test("all five agents expose both bounded recovery tools", () => {
-    expect(defaultAgentDefinitions).toHaveLength(5);
+  test("every formal Agent exposes both bounded recovery tools", () => {
+    expect(defaultAgentDefinitions).toHaveLength(6);
     for (const definition of defaultAgentDefinitions) {
       expect(definition.tools.tools).toContain("output_read");
       expect(definition.tools.tools).toContain("output_search");

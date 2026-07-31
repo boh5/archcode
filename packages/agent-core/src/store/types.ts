@@ -248,7 +248,7 @@ export interface SessionStoreState {
   parentSessionId?: string;
   /** Only ordinary root Lead Sessions may own a Goal. */
   goal?: SessionGoal;
-  /** Immutable Project Todo source, valid only for root Lead Sessions. */
+  /** Immutable Project Todo source, valid only for user-facing root Sessions. */
   projectTodo?: ProjectTodoSessionSource;
 
   // Running state

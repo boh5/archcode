@@ -6,7 +6,7 @@
 
 ## Purpose
 
-Project Todos capture intent, shape it with Lead, and connect it to execution.
+Project Todos capture intent, shape it in Discussion, and connect it to execution.
 They are project-owned lifecycle entities, not Session-local checklists.
 
 ## Shared Structure
@@ -48,6 +48,9 @@ Lane rules:
   Automations, and lifecycle actions live in the detail drawer.
 - Selection changes the card border to indigo.
 - Lifecycle state uses its matching status icon plus text; color is secondary.
+- Pointer and touch dragging target the lane under the pointer rather than the
+  dragged card rectangle; keyboard dragging retains geometric collision
+  fallback.
 
 ## Rejected Surface
 
@@ -81,6 +84,39 @@ The drawer preserves:
 - Todo body and editing controls;
 - linked Discussions, work Sessions, and Automations;
 - lifecycle-appropriate primary and secondary actions.
+
+Keep `Edit` with the Todo body. Put workflow and lifecycle controls in one
+`Actions` section, using visible labels and flat spacing rather than nested
+cards, menus, or collapsible groups:
+
+- `Discuss & Plan` contains Continue Discussion when available, New Discussion,
+  and Generate / Improve Plan;
+- `Execution` contains Start Work, Continue Work when available, and Create
+  Automation, and appears only in lifecycle states where those actions are
+  already valid;
+- `Lifecycle` contains state movement, Reject/Restore, and Archive/Restore.
+
+Plan shaping remains one fixed secondary action inside `Discuss & Plan`:
+
+- label it `Generate / Improve Plan` without probing whether a Plan file exists;
+- reuse the most recently updated linked Discussion and send
+  `/skill use plan-work` when it is idle;
+- when none exists, create the Discussion with Plan work as its first accepted
+  message; never start a generic Discussion and then race it with a second
+  command;
+- when the latest Discussion has an unfinished Execution, including a suspended
+  tool batch, create a new Plan Discussion instead of disabling the action or
+  injecting a command into the busy Session;
+- if an apparently idle Discussion is deleted or becomes busy before the Plan
+  command is accepted, fall back to a new Plan Discussion instead of surfacing
+  the Session conflict as the user's failure;
+- while this action is resolving, keep the drawer in place, show explicit
+  `Opening Plan…` feedback, prevent only a duplicate Plan action, and place any
+  unrecoverable error directly inside the `Discuss & Plan` group;
+- open the resulting Discussion;
+- keep Plan generation independent from lifecycle state changes, Start Work,
+  Goal creation, Automation creation, and persistent Plan-specific workflow
+  state.
 
 The entity and its actions are mandatory. Visual redesign may reorder or
 reweight actions, but must not silently remove them.

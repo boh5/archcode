@@ -97,7 +97,10 @@ describe("automation_create", () => {
       { rootSessionId: crypto.randomUUID() },
       { parentSessionId: crypto.randomUUID() },
       { agentName: "explore" as const },
-      { projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const } },
+      {
+        agentName: "discussion" as const,
+        projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const },
+      },
     ]) {
       const { ctx, createAutomation } = makeContext(override);
       const result = await automationCreateTool.execute(input, ctx);

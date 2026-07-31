@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   DragOverlay,
@@ -7,9 +8,11 @@ import {
   PointerSensor,
   TouchSensor,
   closestCorners,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
@@ -22,10 +25,15 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import {
+  isSessionMessageUnavailableCode,
+  type RequestedModelSelection,
+} from "@archcode/protocol";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Archive, Check, GripVertical, MessageCircle, Plus, RotateCcw, Save, Send, X } from "lucide-react";
-import { useCreateProjectTodo, useCreateProjectTodoSession, useUpdateProjectTodo } from "../api/mutations";
-import { useAutomations, useProjectTodos, useSessions } from "../api/queries";
+import { Archive, Check, FileText, GripVertical, LoaderCircle, MessageCircle, Plus, RotateCcw, Save, Send, X } from "lucide-react";
+import { ApiError } from "../api/client";
+import { useCreateProjectTodo, useCreateProjectTodoSession, usePostMessage, useUpdateProjectTodo } from "../api/mutations";
+import { sessionQueryOptions, useAutomations, useProjectTodos, useSessions } from "../api/queries";
 import type { Automation, ProjectTodo, ProjectTodoStatus, ProjectTodoUpdateInput, SessionSummary } from "../api/types";
 import { STATUS_TONE_CLASS, type StatusTone } from "../lib/status-visuals";
 import {
@@ -38,6 +46,7 @@ import { SidebarToggleButton } from "../components/features/SidebarToggleButton"
 type View = "board" | "rejected" | "archived";
 type BoardOrder = Record<ProjectTodoLane, string[]>;
 const LANES: readonly ProjectTodoLane[] = ["idea", "ready", "in_progress", "done"];
+export const TODO_PLAN_ACTION_LABEL = "Generate / Improve Plan";
 
 export function deriveProjectTodoGroups(todos: readonly ProjectTodo[]): Record<ProjectTodoLane, ProjectTodo[]> {
   const groups: Record<ProjectTodoLane, ProjectTodo[]> = { idea: [], ready: [], in_progress: [], done: [] };
@@ -71,10 +80,74 @@ export function moveTodoInBoard(order: BoardOrder, todoId: string, destination: 
   return next;
 }
 
+/**
+ * Pointer and touch drags target what the user is actually pointing at.
+ * Keyboard drags have no pointer coordinates, so they retain geometric
+ * collision detection.
+ */
+export const pointerFirstCollisionDetection: CollisionDetection = (args) => {
+  return args.pointerCoordinates === null
+    ? closestCorners(args)
+    : pointerWithin(args);
+};
+
 export function continueWorkUpdateInput(todo: ProjectTodo): ProjectTodoUpdateInput | undefined {
   return todo.status === "ready"
     ? { expectedRevision: todo.revision, status: "in_progress" }
     : undefined;
+}
+
+export function planWorkCommand(todoId: string): string {
+  return `/skill use plan-work Create or improve the implementation Plan for this bound Todo at .archcode/plans/${todoId}.md. Preserve one Plan file, read it before editing when it exists, and do not start implementation.`;
+}
+
+export async function coordinateTodoPlanWork(input: {
+  todoId: string;
+  existingDiscussionSessionId?: string;
+  createPlanDiscussion: () => Promise<string>;
+  loadExistingDiscussion: (sessionId: string) => Promise<{
+    isBusy: boolean;
+    requestedModelSelection: RequestedModelSelection;
+  } | undefined>;
+  sendCommand: (
+    sessionId: string,
+    command: string,
+    selection: RequestedModelSelection,
+  ) => Promise<"sent" | "unavailable">;
+  openSession: (sessionId: string) => void;
+}): Promise<string> {
+  const createAndOpen = async (): Promise<string> => {
+    const sessionId = await input.createPlanDiscussion();
+    input.openSession(sessionId);
+    return sessionId;
+  };
+
+  if (input.existingDiscussionSessionId === undefined) {
+    return createAndOpen();
+  }
+  const sessionId = input.existingDiscussionSessionId;
+  const existing = await input.loadExistingDiscussion(sessionId);
+  if (existing === undefined || existing.isBusy) {
+    return createAndOpen();
+  }
+  const disposition = await input.sendCommand(
+    sessionId,
+    planWorkCommand(input.todoId),
+    existing.requestedModelSelection,
+  );
+  if (disposition === "unavailable") {
+    return createAndOpen();
+  }
+  input.openSession(sessionId);
+  return sessionId;
+}
+
+function isUnavailablePlanDiscussion(cause: unknown): boolean {
+  if (!(cause instanceof ApiError)) return false;
+  if (cause.status === 404) return cause.code === "SESSION_NOT_FOUND";
+  if (cause.status !== 409 || typeof cause.details !== "object" || cause.details === null) return false;
+  const scopeCode = Reflect.get(cause.details, "scopeCode");
+  return isSessionMessageUnavailableCode(scopeCode);
 }
 
 export function ProjectTodosRoute() {
@@ -218,7 +291,7 @@ export function ProjectTodosRoute() {
       </div>
       <main className="min-h-0 flex-1 overflow-auto px-4 py-4 min-[621px]:px-6">
         {view === "board" ? (
-          <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel} accessibility={{ announcements }}>
+          <DndContext sensors={sensors} collisionDetection={pointerFirstCollisionDetection} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel} accessibility={{ announcements }}>
             <div className={`mx-auto grid max-w-[1500px] grid-cols-1 gap-3 min-[700px]:grid-cols-2 min-[1100px]:grid-cols-4 ${draggedId ? "cursor-grabbing [&_*]:cursor-grabbing" : ""}`} data-testid="todo-board">
               {LANES.map((lane) => <TodoLane key={lane} lane={lane} order={boardOrder[lane]} todoById={todoById} selectedId={selectedId} onSelect={selectTodo} />)}
             </div>
@@ -263,16 +336,21 @@ function TodoFlatList({ view, todos, selectedId, onSelect }: { view: Exclude<Vie
 
 function TodoDetailDrawer({ todo, slug, sessions, automations, navigate, onClose, createSession, updateTodo }: { todo?: ProjectTodo; slug: string; sessions: SessionSummary[]; automations: Automation[]; navigate: ReturnType<typeof useNavigate>; onClose: () => void; createSession: ReturnType<typeof useCreateProjectTodoSession>; updateTodo: ReturnType<typeof useUpdateProjectTodo> }) {
   if (!todo) return null;
-  return <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) onClose(); }}><DialogPrimitive.Portal><DialogPrimitive.Overlay forceMount className="fixed inset-0 z-[60] bg-black/45" /><DialogPrimitive.Content forceMount data-testid="todo-detail-drawer" className="fixed inset-y-0 right-0 z-[61] flex w-[min(430px,calc(100%-18px))] flex-col border-l border-border-strong bg-bg-elevated shadow-2xl focus:outline-none"><TodoDetailPanel key={todo.id} todo={todo} slug={slug} sessions={sessions} automations={automations} navigate={navigate} createSession={createSession} updateTodo={updateTodo} /><DialogPrimitive.Close asChild><button type="button" aria-label="Close Todo details" className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover"><X size={15} /></button></DialogPrimitive.Close></DialogPrimitive.Content></DialogPrimitive.Portal></DialogPrimitive.Root>;
+  return <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) onClose(); }}><DialogPrimitive.Portal><DialogPrimitive.Overlay forceMount className="fixed inset-0 z-[60] bg-black/45" /><DialogPrimitive.Content forceMount data-testid="todo-detail-drawer" className="fixed inset-y-0 right-0 z-[61] flex w-[min(430px,calc(100%_-_18px))] flex-col border-l border-border-strong bg-bg-elevated shadow-2xl focus:outline-none"><TodoDetailPanel key={todo.id} todo={todo} slug={slug} sessions={sessions} automations={automations} navigate={navigate} createSession={createSession} updateTodo={updateTodo} /><DialogPrimitive.Close asChild><button type="button" aria-label="Close Todo details" className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><X size={15} /></button></DialogPrimitive.Close></DialogPrimitive.Content></DialogPrimitive.Portal></DialogPrimitive.Root>;
 }
 
 function TodoDetailPanel({ todo, slug, sessions, automations, navigate, createSession, updateTodo }: { todo: ProjectTodo; slug: string; sessions: SessionSummary[]; automations: Automation[]; navigate: ReturnType<typeof useNavigate>; createSession: ReturnType<typeof useCreateProjectTodoSession>; updateTodo: ReturnType<typeof useUpdateProjectTodo> }) {
+  const queryClient = useQueryClient();
+  const postMessage = usePostMessage();
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(todo.title);
   const [body, setBody] = useState(todo.body);
   const [reason, setReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [isOpeningPlan, setIsOpeningPlan] = useState(false);
+  const planActionInFlight = useRef(false);
   const associatedSessions = sessions.filter((session) => session.projectTodo?.todoId === todo.id).sort((left, right) => right.updatedAt - left.updatedAt);
   const discussionSessions = associatedSessions.filter((session) => session.projectTodo?.entry === "discussion");
   const workSessions = associatedSessions.filter((session) => session.projectTodo?.entry === "work");
@@ -286,6 +364,65 @@ function TodoDetailPanel({ todo, slug, sessions, automations, navigate, createSe
   const start = (entry: "discussion" | "work" | "automation") => {
     setActionError(null);
     createSession.mutate({ slug, todoId: todo.id, input: { expectedRevision: todo.revision, entry } }, { onSuccess: ({ sessionId }) => navigate(`/projects/${slug}/sessions/${sessionId}`), onError: (cause) => setActionError(messageFor(cause)) });
+  };
+  const openPlan = async () => {
+    if (planActionInFlight.current) return;
+    planActionInFlight.current = true;
+    setPlanError(null);
+    setIsOpeningPlan(true);
+    try {
+      await coordinateTodoPlanWork({
+        todoId: todo.id,
+        ...(discussionSessions[0]?.sessionId === undefined
+          ? {}
+          : { existingDiscussionSessionId: discussionSessions[0].sessionId }),
+        createPlanDiscussion: async () => (await createSession.mutateAsync({
+          slug,
+          todoId: todo.id,
+          input: {
+            expectedRevision: todo.revision,
+            entry: "discussion",
+            initialIntent: "plan",
+          },
+        })).sessionId,
+        loadExistingDiscussion: async (sessionId) => {
+          try {
+            const session = await queryClient.fetchQuery({
+              ...sessionQueryOptions(slug, sessionId),
+              staleTime: 0,
+            });
+            return {
+              isBusy: session.currentExecutionId !== undefined,
+              requestedModelSelection: session.nextModelSelection.requested,
+            };
+          } catch (cause) {
+            if (isUnavailablePlanDiscussion(cause)) return undefined;
+            throw cause;
+          }
+        },
+        sendCommand: async (sessionId, content, requestedModelSelection) => {
+          try {
+            await postMessage.mutateAsync({
+              slug,
+              sessionId,
+              content,
+              attachmentIds: [],
+              requestedModelSelection,
+            });
+            return "sent";
+          } catch (cause) {
+            if (isUnavailablePlanDiscussion(cause)) return "unavailable";
+            throw cause;
+          }
+        },
+        openSession: (sessionId) => navigate(`/projects/${slug}/sessions/${sessionId}`),
+      });
+    } catch (cause) {
+      setPlanError(messageFor(cause));
+    } finally {
+      planActionInFlight.current = false;
+      setIsOpeningPlan(false);
+    }
   };
   const reject = () => {
     const rejectionReason = reason.trim();
@@ -303,11 +440,114 @@ function TodoDetailPanel({ todo, slug, sessions, automations, navigate, createSe
     }
     navigateToSession();
   };
-  return <><header className="shrink-0 border-b border-border-default px-5 pb-4 pr-14 pt-4"><span className={`inline-flex items-center gap-2 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}><presentation.Icon size={13} />{presentation.label}</span><DialogPrimitive.Title className="mt-2 text-[18px] font-semibold leading-6 text-text-primary">{todo.title}</DialogPrimitive.Title><DialogPrimitive.Description className="mt-1 text-[11px] leading-4 text-text-tertiary">A Todo can source multiple discussions, work sessions, and automations.</DialogPrimitive.Description></header><div className="min-h-0 flex-1 overflow-y-auto px-5 py-4"><div className="space-y-5"><section aria-label="Todo content">{editing ? <div className="space-y-2"><input aria-label="Todo title" value={title} onChange={(event) => setTitle(event.target.value)} className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px]" /><textarea aria-label="Todo body" rows={4} value={body} onChange={(event) => setBody(event.target.value)} className="w-full resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[12px]" /><div className="flex gap-2"><TodoActionButton variant="primary" onClick={() => update({ expectedRevision: todo.revision, title: title.trim(), body }, () => setEditing(false))}><Save size={12} />Save</TodoActionButton><TodoActionButton onClick={() => setEditing(false)}>Cancel</TodoActionButton></div></div> : <><p className="whitespace-pre-wrap text-[12px] leading-5 text-text-secondary">{todo.body || "No additional details."}</p><div className="mt-3 flex flex-wrap gap-2"><TodoActionButton onClick={() => setEditing(true)}>Edit</TodoActionButton>{!isArchived && discussionSessions[0] ? <TodoActionButton onClick={() => navigate(`/projects/${slug}/sessions/${discussionSessions[0]!.sessionId}`)}>Continue Discussion</TodoActionButton> : null}{!isArchived ? <TodoActionButton variant="brand" onClick={() => start("discussion")} disabled={createSession.isPending}><MessageCircle size={12} />New Discussion</TodoActionButton> : null}</div></>}</section><section className="border-t border-border-subtle pt-4" aria-label="Linked sessions"><h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Sessions</h3><AssociatedSessions slug={slug} sessions={associatedSessions} /></section><section className="border-t border-border-subtle pt-4" aria-label="Linked automations"><h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Automations</h3>{associatedAutomations.length ? <div className="space-y-2">{associatedAutomations.map((automation) => <Link key={automation.id} to={`/projects/${slug}/automations/${automation.id}`} className="block text-[12px] text-brand hover:underline">{automation.name}</Link>)}</div> : <p className="text-[12px] text-text-tertiary">No automations yet.</p>}</section><section className="border-t border-border-subtle pt-4" aria-label="Todo actions"><h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Actions</h3><div className="flex flex-wrap gap-2">{!isArchived && (todo.status === "ready" || todo.status === "in_progress") ? <><TodoActionButton variant="primary" onClick={() => start("work")} disabled={createSession.isPending}><Send size={12} />Start Work</TodoActionButton>{workSessions[0] ? <TodoActionButton onClick={continueWork} disabled={updateTodo.isPending}>Continue Work</TodoActionButton> : null}<TodoActionButton onClick={() => start("automation")} disabled={createSession.isPending}>Create Automation</TodoActionButton></> : null}{!isArchived && todo.status === "rejected" ? <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, status: "idea" })}><RotateCcw size={12} />Restore to Ideas</TodoActionButton> : null}{!isArchived && todo.status !== "rejected" ? <TodoActionButton onClick={() => setRejecting(true)}>Reject</TodoActionButton> : null}{!isArchived && todo.status !== "rejected" && LANES.filter((status) => status !== todo.status).map((status) => <TodoActionButton key={status} onClick={() => update({ expectedRevision: todo.revision, status })}>Move to {labelForStatus(status)}</TodoActionButton>)}{!isArchived ? <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, archived: true })}><Archive size={12} />Archive</TodoActionButton> : <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, archived: false })}><RotateCcw size={12} />Restore</TodoActionButton>}</div>{rejecting ? <div className="mt-3 border-y border-warning/30 bg-warning-muted p-3"><textarea autoFocus aria-label="Rejection reason" rows={2} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why should this Todo be rejected?" className="w-full resize-none bg-transparent text-[12px] outline-none" /><div className="mt-2 flex justify-end gap-2"><TodoActionButton onClick={() => setRejecting(false)}>Cancel</TodoActionButton><TodoActionButton variant="danger" onClick={reject}>Reject Todo</TodoActionButton></div></div> : null}</section></div></div>{actionError ? <p role="alert" className="shrink-0 border-t border-error/20 bg-error-muted px-5 py-3 text-[11px] text-error">{actionError}</p> : null}</>;
+  return (
+    <>
+      <header className="shrink-0 border-b border-border-default px-5 pb-4 pr-14 pt-4">
+        <span className={`inline-flex items-center gap-2 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}>
+          <presentation.Icon size={13} />
+          {presentation.label}
+        </span>
+        <DialogPrimitive.Title className="mt-2 text-[18px] font-semibold leading-6 text-text-primary">
+          {todo.title}
+        </DialogPrimitive.Title>
+        <DialogPrimitive.Description className="mt-1 text-[11px] leading-4 text-text-tertiary">
+          A Todo can source multiple discussions, work sessions, and automations.
+        </DialogPrimitive.Description>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="space-y-5">
+          <section aria-label="Todo content">
+            {editing ? (
+              <div className="space-y-2">
+                <input aria-label="Todo title" value={title} onChange={(event) => setTitle(event.target.value)} className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px]" />
+                <textarea aria-label="Todo body" rows={4} value={body} onChange={(event) => setBody(event.target.value)} className="w-full resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[12px]" />
+                <div className="flex gap-2">
+                  <TodoActionButton variant="primary" onClick={() => update({ expectedRevision: todo.revision, title: title.trim(), body }, () => setEditing(false))}><Save size={12} />Save</TodoActionButton>
+                  <TodoActionButton onClick={() => setEditing(false)}>Cancel</TodoActionButton>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="whitespace-pre-wrap text-[12px] leading-5 text-text-secondary">{todo.body || "No additional details."}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <TodoActionButton onClick={() => setEditing(true)}>Edit</TodoActionButton>
+                </div>
+              </>
+            )}
+          </section>
+          <section className="border-t border-border-subtle pt-4" aria-label="Todo actions">
+            <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Actions</h3>
+            <div className="space-y-4">
+              {!isArchived ? (
+                <TodoActionGroup
+                  label="Discuss & Plan"
+                  feedback={planError ? <p role="alert" className="mt-2 text-[11px] leading-4 text-error">{planError}</p> : null}
+                >
+                  {discussionSessions[0] ? (
+                    <TodoActionButton onClick={() => navigate(`/projects/${slug}/sessions/${discussionSessions[0]!.sessionId}`)}>Continue Discussion</TodoActionButton>
+                  ) : null}
+                  <TodoActionButton variant="brand" onClick={() => start("discussion")} disabled={createSession.isPending}><MessageCircle size={12} />New Discussion</TodoActionButton>
+                  <TodoActionButton onClick={() => void openPlan()} disabled={isOpeningPlan}>
+                    {isOpeningPlan ? <LoaderCircle aria-hidden="true" className="animate-activity" size={12} /> : <FileText size={12} />}
+                    {isOpeningPlan ? "Opening Plan…" : TODO_PLAN_ACTION_LABEL}
+                  </TodoActionButton>
+                </TodoActionGroup>
+              ) : null}
+              {!isArchived && (todo.status === "ready" || todo.status === "in_progress") ? (
+                <TodoActionGroup label="Execution">
+                  <TodoActionButton variant="primary" onClick={() => start("work")} disabled={createSession.isPending}><Send size={12} />Start Work</TodoActionButton>
+                  {workSessions[0] ? <TodoActionButton onClick={continueWork} disabled={updateTodo.isPending}>Continue Work</TodoActionButton> : null}
+                  <TodoActionButton onClick={() => start("automation")} disabled={createSession.isPending}>Create Automation</TodoActionButton>
+                </TodoActionGroup>
+              ) : null}
+              <TodoActionGroup label="Lifecycle">
+                {!isArchived && todo.status === "rejected" ? <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, status: "idea" })}><RotateCcw size={12} />Restore to Ideas</TodoActionButton> : null}
+                {!isArchived && todo.status !== "rejected" ? <TodoActionButton onClick={() => setRejecting(true)}>Reject</TodoActionButton> : null}
+                {!isArchived && todo.status !== "rejected" && LANES.filter((status) => status !== todo.status).map((status) => <TodoActionButton key={status} onClick={() => update({ expectedRevision: todo.revision, status })}>Move to {labelForStatus(status)}</TodoActionButton>)}
+                {!isArchived ? <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, archived: true })}><Archive size={12} />Archive</TodoActionButton> : <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, archived: false })}><RotateCcw size={12} />Restore</TodoActionButton>}
+              </TodoActionGroup>
+            </div>
+            {rejecting ? (
+              <div className="mt-3 border-y border-warning/30 bg-warning-muted p-3">
+                <textarea autoFocus aria-label="Rejection reason" rows={2} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why should this Todo be rejected?" className="w-full resize-none bg-transparent text-[12px] outline-none" />
+                <div className="mt-2 flex justify-end gap-2">
+                  <TodoActionButton onClick={() => setRejecting(false)}>Cancel</TodoActionButton>
+                  <TodoActionButton variant="danger" onClick={reject}>Reject Todo</TodoActionButton>
+                </div>
+              </div>
+            ) : null}
+          </section>
+          <section className="border-t border-border-subtle pt-4" aria-label="Linked sessions">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Sessions</h3>
+            <AssociatedSessions slug={slug} sessions={associatedSessions} />
+          </section>
+          <section className="border-t border-border-subtle pt-4" aria-label="Linked automations">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Automations</h3>
+            {associatedAutomations.length ? (
+              <div className="space-y-2">
+                {associatedAutomations.map((automation) => <Link key={automation.id} to={`/projects/${slug}/automations/${automation.id}`} className="block text-[12px] text-brand hover:underline">{automation.name}</Link>)}
+              </div>
+            ) : <p className="text-[12px] text-text-tertiary">No automations yet.</p>}
+          </section>
+        </div>
+      </div>
+      {actionError ? <p role="alert" className="shrink-0 border-t border-error/20 bg-error-muted px-5 py-3 text-[11px] text-error">{actionError}</p> : null}
+    </>
+  );
+}
+
+function TodoActionGroup({ label, children, feedback }: { label: string; children: React.ReactNode; feedback?: React.ReactNode }) {
+  return (
+    <div role="group" aria-label={label}>
+      <h4 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">{label}</h4>
+      <div className="mt-2 flex flex-wrap gap-2">{children}</div>
+      {feedback}
+    </div>
+  );
 }
 
 function AssociatedSessions({ slug, sessions }: { slug: string; sessions: SessionSummary[] }) { return sessions.length ? <div className="space-y-2">{sessions.map((session) => <Link key={session.sessionId} className="flex items-center justify-between gap-3 text-[12px] text-brand hover:underline" to={`/projects/${slug}/sessions/${session.sessionId}`}><span className="truncate">{session.title || session.sessionId}</span><span className="shrink-0 text-[11px] text-text-tertiary">{entryLabel(session.projectTodo?.entry)}</span></Link>)}</div> : <p className="text-[12px] text-text-tertiary">No sessions yet.</p>; }
-function TodoActionButton({ children, onClick, disabled, variant = "default" }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; variant?: "default" | "primary" | "brand" | "danger" }) { const tone = variant === "primary" ? "bg-brand text-bg-overlay hover:bg-brand-hover" : variant === "brand" ? "border-brand/40 bg-brand-subtle text-brand hover:bg-brand/15" : variant === "danger" ? "border-error/30 bg-error-muted text-error hover:bg-error/15" : "border-border-default bg-bg-active text-text-secondary hover:bg-bg-hover hover:text-text-primary"; return <button type="button" onClick={onClick} disabled={disabled} className={`inline-flex h-8 items-center gap-1.5 rounded-sm border px-2.5 text-[12px] font-medium disabled:opacity-40 ${tone}`}>{children}</button>; }
+function TodoActionButton({ children, onClick, disabled, title, variant = "default" }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; title?: string; variant?: "default" | "primary" | "brand" | "danger" }) { const tone = variant === "primary" ? "bg-brand text-bg-overlay hover:bg-brand-hover" : variant === "brand" ? "border-brand/40 bg-brand-subtle text-brand hover:bg-brand/15" : variant === "danger" ? "border-error/30 bg-error-muted text-error hover:bg-error/15" : "border-border-default bg-bg-active text-text-secondary hover:bg-bg-hover hover:text-text-primary"; return <button type="button" onClick={onClick} disabled={disabled} title={title} className={`inline-flex h-8 items-center gap-1.5 rounded-sm border px-2.5 text-[12px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11 ${tone}`}>{children}</button>; }
 function ViewButton({ children, active, onClick }: { children: React.ReactNode; active: boolean; onClick: () => void }) { return <button type="button" onClick={onClick} className={`h-7 rounded-md px-2.5 text-[11px] font-medium ${active ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"}`}>{children}</button>; }
 function entryLabel(entry?: "discussion" | "work" | "automation"): string { return entry === "discussion" ? "Discussion" : entry === "automation" ? "Automation setup" : "Work"; }
 function labelForStatus(status: ProjectTodoLane): string { return status === "idea" ? "Ideas" : status === "ready" ? "Ready" : status === "in_progress" ? "In Progress" : "Done"; }

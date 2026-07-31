@@ -2,6 +2,7 @@ import {
   PROJECT_TODO_BODY_MAX_LENGTH,
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
   PROJECT_TODO_TITLE_MAX_LENGTH,
+  type CreateProjectTodoSessionInput,
   type ProjectTodo,
   type ProjectTodoUpdateInput,
 } from "@archcode/protocol";
@@ -12,10 +13,21 @@ export const ProjectTodoBodySchema = z.string().max(PROJECT_TODO_BODY_MAX_LENGTH
 export const ProjectTodoRejectionReasonSchema = z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH);
 export const ProjectTodoStatusSchema = z.enum(["idea", "ready", "in_progress", "done", "rejected"]);
 export const ProjectTodoSessionEntrySchema = z.enum(["discussion", "work", "automation"]);
-export const CreateProjectTodoSessionSchema = z.strictObject({
-  expectedRevision: z.number().int().positive(),
-  entry: ProjectTodoSessionEntrySchema,
-});
+export const CreateProjectTodoSessionSchema = z.discriminatedUnion("entry", [
+  z.strictObject({
+    expectedRevision: z.number().int().positive(),
+    entry: z.literal("discussion"),
+    initialIntent: z.literal("plan").optional(),
+  }),
+  z.strictObject({
+    expectedRevision: z.number().int().positive(),
+    entry: z.literal("work"),
+  }),
+  z.strictObject({
+    expectedRevision: z.number().int().positive(),
+    entry: z.literal("automation"),
+  }),
+]) satisfies z.ZodType<CreateProjectTodoSessionInput>;
 
 export const ProjectTodoSchema = z.strictObject({
   id: z.uuid(),

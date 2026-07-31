@@ -26,6 +26,7 @@ import {
 } from "../compression";
 import { AGENT_NAMES, type AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
+import { sessionIdentityInvariantError } from "../agents/root-session-identity";
 import type { ProfileName } from "../config";
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
 import { atomicWrite } from "../utils/safe-file";
@@ -1132,11 +1133,9 @@ export const SessionFileSchema = z.strictObject({
       || session.agentName !== "lead")) {
     ctx.addIssue({ code: "custom", path: ["goal"], message: "Only root Lead Sessions may own a Goal" });
   }
-  if (session.projectTodo !== undefined
-    && (session.parentSessionId !== undefined
-      || session.rootSessionId !== session.sessionId
-      || session.agentName !== "lead")) {
-    ctx.addIssue({ code: "custom", path: ["projectTodo"], message: "Only root Lead Sessions may have a Project Todo source" });
+  const identityError = sessionIdentityInvariantError(session);
+  if (identityError !== undefined) {
+    ctx.addIssue({ code: "custom", path: ["agentName"], message: identityError });
   }
   const goalNoticeError = sessionGoalNoticeInvariantError(session);
   if (goalNoticeError !== undefined) {

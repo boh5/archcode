@@ -5,20 +5,15 @@ import {
   SKILL_ACCESS_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
-import { leadRoleContract } from "./role-contracts";
+import { discussionRoleContract } from "./role-contracts";
 import {
   TOOL_ASK_USER,
-  TOOL_AUTOMATION_CREATE,
-  TOOL_AST_GREP_REPLACE,
   TOOL_AST_GREP_SEARCH,
   TOOL_BASH,
-  TOOL_CANCEL_SESSION,
   TOOL_COMPRESS,
-  TOOL_CREATE_GOAL,
   TOOL_FILE_EDIT,
   TOOL_FILE_READ,
   TOOL_FILE_WRITE,
-  TOOL_GET_GOAL,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
   TOOL_GLOB,
@@ -31,16 +26,16 @@ import {
   TOOL_MEMORY_WRITE,
   TOOL_OUTPUT_READ,
   TOOL_OUTPUT_SEARCH,
+  TOOL_PROJECT_TODO_UPDATE,
   TOOL_TODO_WRITE,
-  TOOL_UPDATE_GOAL,
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
-export const leadAgentDefinition = {
-  name: "lead",
-  displayName: "Lead",
+export const discussionAgentDefinition = {
+  name: "discussion",
+  displayName: "Discussion",
   profiles: ["principal"],
-  roleContract: leadRoleContract,
+  roleContract: discussionRoleContract,
   tools: {
     tools: [
       TOOL_FILE_READ,
@@ -49,7 +44,6 @@ export const leadAgentDefinition = {
       TOOL_GREP,
       TOOL_GLOB,
       TOOL_AST_GREP_SEARCH,
-      TOOL_AST_GREP_REPLACE,
       TOOL_GIT_STATUS,
       TOOL_GIT_DIFF,
       TOOL_BASH,
@@ -60,22 +54,18 @@ export const leadAgentDefinition = {
       TOOL_LSP_FIND_REFERENCES,
       TOOL_LSP_SYMBOLS,
       TOOL_WEB_FETCH,
+      TOOL_MEMORY_READ,
+      TOOL_MEMORY_WRITE,
+      TOOL_PROJECT_TODO_UPDATE,
       ...DELEGATION_CORE_TOOLS,
-      TOOL_CANCEL_SESSION,
       TOOL_OUTPUT_READ,
       TOOL_OUTPUT_SEARCH,
       TOOL_COMPRESS,
-      TOOL_MEMORY_READ,
-      TOOL_MEMORY_WRITE,
-      TOOL_CREATE_GOAL,
-      TOOL_GET_GOAL,
-      TOOL_UPDATE_GOAL,
-      TOOL_AUTOMATION_CREATE,
       ...SKILL_ACCESS_TOOLS,
     ],
-    delegateTargets: ["analyst", "build", "explore", "librarian"],
+    delegateTargets: ["explore", "librarian"],
   },
-  mcpTools: ["context7", "exa"],
+  mcpTools: [],
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,
@@ -86,7 +76,7 @@ export const leadAgentDefinition = {
     titleGeneration: "enabled",
   },
   childPolicy: {
-    maxDepth: 3,
+    maxDepth: 2,
     maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
     timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
     abortCascade: true,
@@ -94,15 +84,9 @@ export const leadAgentDefinition = {
   },
   includeMemoryInPrompt: true,
   skills: [
-    "orchestrate-work",
+    "shape-todo",
     "plan-work",
-    "execute-plan",
-    "run-goal",
-    "review-work",
-    "git-master",
-    "safe-refactor",
     "codemap",
     "research-docs",
-    "automation-create",
   ],
 } as const satisfies AgentDefinition;

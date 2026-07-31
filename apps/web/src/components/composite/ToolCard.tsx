@@ -211,7 +211,7 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
                 className="h-8 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 onClick={() => setViewerOpen((value) => !value)}
               >
-                {viewerOpen ? "关闭输出" : "查看输出"}
+                {viewerOpen ? "Hide output" : "View output"}
               </button>
               <span className="ml-2 text-[11px] text-text-tertiary">expires {new Date(artifactRecovery.expiresAt).toLocaleString()}</span>
             </div>

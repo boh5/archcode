@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildRoleContract,
+  discussionRoleContract,
   leadRoleContract,
   exploreRoleContract,
   librarianRoleContract,
@@ -129,11 +130,23 @@ describe("PromptContractCompiler", () => {
   test("compiles every formal Agent in a legal mode", async () => {
     const cases: Array<Pick<PromptContractV2, "role" | "allowedTools"> & { runtime: RuntimePromptEnvelope }> = [
       { role: leadRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime() },
+      {
+        role: discussionRoleContract,
+        allowedTools: ["file_read", "file_write", "file_edit", "project_todo_update", "delegate"],
+        runtime: runtime({
+          agentName: "discussion",
+          todo: { id: "todo-1", mode: "bound" },
+          allowedDelegateTargets: ["explore", "librarian"],
+          remainingDepth: 2,
+        }),
+      },
       { role: analystRoleContract, allowedTools: ["file_read", "delegate"], runtime: child("analyst", "lead", { allowedDelegateTargets: ["explore", "librarian"] }) },
       { role: buildRoleContract, allowedTools: ["file_read", "file_edit", "delegate"], runtime: child("build", "lead", { allowedDelegateTargets: ["explore"] }) },
       { role: exploreRoleContract, allowedTools: ["file_read"], runtime: child("explore", "lead") },
       { role: librarianRoleContract, allowedTools: ["web_fetch"], runtime: child("librarian", "lead") },
-      { role: leadRoleContract, allowedTools: ["file_read", "project_todo_update", "delegate"], runtime: runtime({ agentName: "lead", todo: { id: "todo-1", mode: "bound" }, allowedDelegateTargets: ["explore", "librarian"] }) },
+      { role: exploreRoleContract, allowedTools: ["file_read"], runtime: child("explore", "discussion") },
+      { role: librarianRoleContract, allowedTools: ["web_fetch"], runtime: child("librarian", "discussion") },
+      { role: leadRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime({ todo: { id: "todo-1", mode: "bound" } }) },
     ];
 
     for (const item of cases) {
@@ -146,6 +159,11 @@ describe("PromptContractCompiler", () => {
     await expect(new PromptContractCompiler().compile(contract({
       role: analystRoleContract,
       runtime: runtime({ agentName: "analyst" }),
+      allowedTools: ["file_read", "delegate"],
+    }))).rejects.toBeInstanceOf(IllegalPromptExecutionModeError);
+    await expect(new PromptContractCompiler().compile(contract({
+      role: analystRoleContract,
+      runtime: child("analyst", "discussion"),
       allowedTools: ["file_read", "delegate"],
     }))).rejects.toBeInstanceOf(IllegalPromptExecutionModeError);
   });

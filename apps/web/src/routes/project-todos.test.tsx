@@ -4,13 +4,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import type { ProjectTodo } from "../api/types";
-import { continueWorkUpdateInput, createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, ProjectTodosRoute } from "./project-todos";
+import type { ProjectTodo, SessionSummary } from "../api/types";
+import { continueWorkUpdateInput, coordinateTodoPlanWork, createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, planWorkCommand, pointerFirstCollisionDetection, ProjectTodosRoute, TODO_PLAN_ACTION_LABEL } from "./project-todos";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
 
 let dom: JSDOM;
 let root: Root;
 let client: QueryClient;
+let sessionSummaries: SessionSummary[];
 
 const todos: ProjectTodo[] = [
   todo("idea", "Idea", "idea"),
@@ -25,6 +26,19 @@ function todo(id: string, title: string, status: ProjectTodo["status"]): Project
 }
 
 beforeEach(() => {
+  sessionSummaries = [{
+    sessionId: "work-0",
+    rootSessionId: "work-0",
+    cwd: "/tmp",
+    agentName: "lead",
+    profile: "principal",
+    activeSkillNames: [],
+    modelSelection: { revision: 0 },
+    title: "Existing work",
+    projectTodo: { todoId: "ready", entry: "work" },
+    createdAt: 1,
+    updatedAt: 2,
+  }];
   dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { url: "http://localhost/projects/demo/todos?todo=ready" });
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, Node: dom.window.Node, Event: dom.window.Event, CustomEvent: dom.window.CustomEvent, MouseEvent: dom.window.MouseEvent, KeyboardEvent: dom.window.KeyboardEvent, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), IS_REACT_ACT_ENVIRONMENT: true });
   Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class { observe() {} unobserve() {} disconnect() {} } });
@@ -32,9 +46,31 @@ beforeEach(() => {
   Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: clearTimeout });
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(typeof input === "string" ? input : input.toString(), "http://localhost").pathname;
-    if (init?.method === "POST" && path.endsWith("/sessions")) return Response.json({ todo: todos[1], sessionId: "work-1" });
+    const method = init?.method ?? "GET";
+    if (method === "POST" && path.endsWith("/messages")) {
+      return Response.json({ clientRequestId: "plan-command", status: "command" });
+    }
+    if (method === "POST" && path.endsWith("/sessions")) {
+      return Response.json({ todo: todos[1], sessionId: "discussion-new" });
+    }
     if (path.endsWith("/todos")) return Response.json({ todos });
-    if (path.endsWith("/sessions")) return Response.json({ sessions: [{ sessionId: "work-0", rootSessionId: "work-0", cwd: "/tmp", agentName: "lead", profile: "principal", activeSkillNames: [], modelSelection: {}, title: "Existing work", projectTodo: { todoId: "ready", entry: "work" }, createdAt: 1, updatedAt: 2 }] });
+    if (path.endsWith("/sessions")) return Response.json({ sessions: sessionSummaries });
+    if (path.includes("/sessions/")) {
+      return Response.json({
+        nextModelSelection: {
+          requested: { mode: "profile_default", selection: { model: "test:model" } },
+          resolved: {
+            selection: { model: "test:model" },
+            providerId: "test",
+            modelId: "model",
+            providerDisplayName: "Test",
+            modelDisplayName: "Model",
+            resolution: "profile_default",
+            modelRuntimeRevision: "runtime-1",
+          },
+        },
+      });
+    }
     if (path.endsWith("/automations")) return Response.json({ automations: [{ id: "auto-1", projectSlug: "demo", createdFromSessionId: "work-0", projectTodoId: "ready", name: "Nightly", trigger: { kind: "once", at: "2026-01-01" }, action: { kind: "start_session", message: "go", location: "project" }, status: "active", createdAt: "2026-01-01", updatedAt: "2026-01-02" }] });
     return new Response("not found", { status: 404 });
   }) });
@@ -100,4 +136,225 @@ describe("Project Todos board", () => {
     expect(document.querySelector('[data-testid="todo-open-ready"]')?.className).toContain("cursor-pointer");
   });
 
+  test("uses the pointer position to target another lane on a narrow board", () => {
+    const leftLane = rect(0, 0, 120, 500);
+    const leftCard = rect(0, 0, 120, 100);
+    const rightLane = rect(140, 0, 120, 500);
+    const rightCard = rect(140, 0, 120, 100);
+    const droppableRects = new Map([
+      ["idea", leftLane],
+      ["left-card", leftCard],
+      ["ready", rightLane],
+      ["right-card", rightCard],
+    ]);
+    const droppableContainers = Array.from(droppableRects, ([id, currentRect]) => ({
+      id,
+      key: id,
+      data: { current: {} },
+      disabled: false,
+      node: { current: null },
+      rect: { current: currentRect },
+    }));
+    const collisions = pointerFirstCollisionDetection({
+      active: {
+        id: "right-card",
+        data: { current: {} },
+        rect: { current: { initial: rightCard, translated: rightCard } },
+      },
+      collisionRect: rightCard,
+      droppableRects,
+      droppableContainers,
+      pointerCoordinates: { x: 60, y: 300 },
+    });
+
+    expect(collisions[0]?.id).toBe("idea");
+  });
+
+  test("does not infer a pointer target from the dragged card in a lane gap", () => {
+    const leftLane = rect(0, 0, 120, 500);
+    const rightLane = rect(140, 0, 120, 500);
+    const dragged = rect(140, 0, 120, 100);
+    const droppableRects = new Map([
+      ["idea", leftLane],
+      ["ready", rightLane],
+    ]);
+    const droppableContainers = Array.from(droppableRects, ([id, currentRect]) => ({
+      id,
+      key: id,
+      data: { current: {} },
+      disabled: false,
+      node: { current: null },
+      rect: { current: currentRect },
+    }));
+
+    expect(pointerFirstCollisionDetection({
+      active: {
+        id: "right-card",
+        data: { current: {} },
+        rect: { current: { initial: dragged, translated: dragged } },
+      },
+      collisionRect: dragged,
+      droppableRects,
+      droppableContainers,
+      pointerCoordinates: { x: 130, y: 300 },
+    })).toEqual([]);
+
+    expect(pointerFirstCollisionDetection({
+      active: {
+        id: "right-card",
+        data: { current: {} },
+        rect: { current: { initial: dragged, translated: dragged } },
+      },
+      collisionRect: dragged,
+      droppableRects,
+      droppableContainers,
+      pointerCoordinates: null,
+    })[0]?.id).toBe("ready");
+  });
+
+  test("builds one deterministic plan-work command for the Todo", () => {
+    expect(TODO_PLAN_ACTION_LABEL).toBe("Generate / Improve Plan");
+    expect(planWorkCommand("ready")).toContain("/skill use plan-work");
+    expect(planWorkCommand("ready")).toContain(".archcode/plans/ready.md");
+    expect(planWorkCommand("ready")).toContain("do not start implementation");
+  });
+
+  test("reuses an existing Discussion for Plan work without creating another", async () => {
+    const created: string[] = [];
+    const sent: Array<{ sessionId: string; command: string }> = [];
+    const opened: string[] = [];
+    const sessionId = await coordinateTodoPlanWork({
+      todoId: "ready",
+      existingDiscussionSessionId: "discussion-latest",
+      createPlanDiscussion: async () => {
+        created.push("called");
+        return "discussion-new";
+      },
+      loadExistingDiscussion: async () => ({
+        isBusy: false,
+        requestedModelSelection: {
+          mode: "profile_default",
+          selection: { model: "test:model" },
+        },
+      }),
+      sendCommand: async (targetSessionId, command) => {
+        sent.push({ sessionId: targetSessionId, command });
+        return "sent";
+      },
+      openSession: (targetSessionId) => opened.push(targetSessionId),
+    });
+
+    expect(sessionId).toBe("discussion-latest");
+    expect(created).toEqual([]);
+    expect(sent).toEqual([{
+      sessionId: "discussion-latest",
+      command: planWorkCommand("ready"),
+    }]);
+    expect(opened).toEqual(["discussion-latest"]);
+  });
+
+  test("creates a Discussion with atomic initial Plan work when none exists", async () => {
+    const sentTo: string[] = [];
+    const opened: string[] = [];
+    const sessionId = await coordinateTodoPlanWork({
+      todoId: "ready",
+      createPlanDiscussion: async () => "discussion-new",
+      loadExistingDiscussion: async () => ({
+        isBusy: false,
+        requestedModelSelection: {
+          mode: "profile_default",
+          selection: { model: "test:model" },
+        },
+      }),
+      sendCommand: async (targetSessionId, command) => {
+        sentTo.push(`${targetSessionId}:${command}`);
+        return "sent";
+      },
+      openSession: (targetSessionId) => opened.push(targetSessionId),
+    });
+
+    expect(sessionId).toBe("discussion-new");
+    expect(sentTo).toEqual([]);
+    expect(opened).toEqual(["discussion-new"]);
+  });
+
+  test("starts a new Plan Discussion when the existing Discussion is busy", async () => {
+    const created: string[] = [];
+    const sent: string[] = [];
+    const opened: string[] = [];
+
+    const sessionId = await coordinateTodoPlanWork({
+      todoId: "ready",
+      existingDiscussionSessionId: "discussion-running",
+      createPlanDiscussion: async () => {
+        created.push("called");
+        return "discussion-new";
+      },
+      loadExistingDiscussion: async () => ({
+        isBusy: true,
+        requestedModelSelection: {
+          mode: "profile_default",
+          selection: { model: "test:model" },
+        },
+      }),
+      sendCommand: async (sessionId) => {
+        sent.push(sessionId);
+        return "sent";
+      },
+      openSession: (sessionId) => opened.push(sessionId),
+    });
+
+    expect(sessionId).toBe("discussion-new");
+    expect(created).toEqual(["called"]);
+    expect(sent).toEqual([]);
+    expect(opened).toEqual(["discussion-new"]);
+  });
+
+  test("starts a new Plan Discussion when the linked Discussion disappears", async () => {
+    const opened: string[] = [];
+    const sessionId = await coordinateTodoPlanWork({
+      todoId: "ready",
+      existingDiscussionSessionId: "discussion-missing",
+      createPlanDiscussion: async () => "discussion-new",
+      loadExistingDiscussion: async () => undefined,
+      sendCommand: async () => "sent",
+      openSession: (targetSessionId) => opened.push(targetSessionId),
+    });
+
+    expect(sessionId).toBe("discussion-new");
+    expect(opened).toEqual(["discussion-new"]);
+  });
+
+  test("starts a new Plan Discussion when an idle reuse loses the acceptance race", async () => {
+    const opened: string[] = [];
+    const sessionId = await coordinateTodoPlanWork({
+      todoId: "ready",
+      existingDiscussionSessionId: "discussion-raced",
+      createPlanDiscussion: async () => "discussion-new",
+      loadExistingDiscussion: async () => ({
+        isBusy: false,
+        requestedModelSelection: {
+          mode: "profile_default",
+          selection: { model: "test:model" },
+        },
+      }),
+      sendCommand: async () => "unavailable",
+      openSession: (targetSessionId) => opened.push(targetSessionId),
+    });
+
+    expect(sessionId).toBe("discussion-new");
+    expect(opened).toEqual(["discussion-new"]);
+  });
+
 });
+
+function rect(left: number, top: number, width: number, height: number) {
+  return {
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+  };
+}

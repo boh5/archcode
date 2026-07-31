@@ -13,7 +13,7 @@ export interface RequestedModelSelection {
   selection: ModelSelectionRef;
 }
 
-/** Durable root Lead Session selection state. Absence of override means principal Profile. */
+/** Durable user-facing root Session selection state. Absence of override means principal Profile. */
 export interface SessionModelSelection {
   revision: number;
   override?: ModelSelectionRef;

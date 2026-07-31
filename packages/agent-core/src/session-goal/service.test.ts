@@ -578,11 +578,24 @@ describe("SessionGoalService", () => {
       )).toBe(true);
     }
 
-    const analystId = crypto.randomUUID();
-    await manager.createSessionFile(TMP_DIR, { agentName: "analyst" }, analystId);
-    const analyst = await manager.getSessionFile(TMP_DIR, analystId);
+    const childId = crypto.randomUUID();
+    await manager.createSessionFile(TMP_DIR, {
+      agentName: "explore",
+      rootSessionId: materialized.sessionId,
+      parentSessionId: materialized.sessionId,
+      activeSkillNames: [],
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Goal invariant child",
+        objective: "Exercise non-root Goal notice ownership.",
+        skills: [],
+        background: false,
+      },
+    }, childId);
+    const child = await manager.getSessionFile(TMP_DIR, childId);
     const nonRoot = SessionFileSchema.safeParse({
-      ...analyst,
+      ...child,
       reminders: materialized.reminders,
       messages: materialized.messages,
     });
@@ -736,9 +749,12 @@ describe("SessionGoalService", () => {
     await expect(service.create({ workspaceRoot: TMP_DIR, sessionId, authority: agent, objective: "Denied" }))
       .rejects.toBeInstanceOf(SessionGoalServiceError);
 
-    const analystId = crypto.randomUUID();
-    await manager.createSessionFile(TMP_DIR, { agentName: "analyst" }, analystId);
-    await expect(service.create({ workspaceRoot: TMP_DIR, sessionId: analystId, authority: user, objective: "Denied" }))
+    const discussionId = crypto.randomUUID();
+    await manager.createSessionFile(TMP_DIR, {
+      agentName: "discussion",
+      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+    }, discussionId);
+    await expect(service.create({ workspaceRoot: TMP_DIR, sessionId: discussionId, authority: user, objective: "Denied" }))
       .rejects.toMatchObject({ code: "NOT_ROOT_LEAD" });
   });
 

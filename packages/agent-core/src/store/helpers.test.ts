@@ -888,14 +888,18 @@ describe("session transcript serialization", () => {
 
   test("save/load roundtrips agentName", async () => {
     const sessionId = uniqueSessionId("agent-name");
-    const state: PersistedSessionState = { ...persistedState(sessionId), agentName: "explore" };
+    const state = {
+      ...persistedState(sessionId),
+      agentName: "discussion" as const,
+      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const },
+    };
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
     const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
-    expect(raw.agentName).toBe("explore");
+    expect(raw.agentName).toBe("discussion");
 
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-    expect(loaded.getState().agentName).toBe("explore");
+    expect(loaded.getState().agentName).toBe("discussion");
   });
 
   test("load rejects files without agentName", async () => {
@@ -988,7 +992,7 @@ describe("session transcript serialization", () => {
     }).success).toBe(true);
   });
 
-  test("Project Todo source is persisted only on a root Lead Session and projected in summaries", async () => {
+  test("Project Todo source enforces the Lead and Discussion root identity boundary", async () => {
     const sessionId = uniqueSessionId("project-todo-source");
     const todoId = crypto.randomUUID();
     await sessionFileInternals.saveSessionTranscript({
@@ -1003,8 +1007,47 @@ describe("session transcript serialization", () => {
 
     expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(crypto.randomUUID()),
-      agentName: "analyst",
+      agentName: "discussion",
       projectTodo: { todoId, entry: "discussion" },
+    })).success).toBe(true);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      agentName: "lead",
+      projectTodo: { todoId, entry: "discussion" },
+    })).success).toBe(false);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      agentName: "discussion",
+      projectTodo: { todoId, entry: "work" },
+    })).success).toBe(false);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      agentName: "discussion",
+    })).success).toBe(false);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      agentName: "analyst",
+    })).success).toBe(false);
+    const malformedRootId = crypto.randomUUID();
+    const malformedChildId = crypto.randomUUID();
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(
+        malformedChildId,
+        sampleMessages(),
+        sampleSteps(),
+        sampleTodos(),
+        createEmptySessionStats(),
+        [],
+        [],
+        malformedChildId,
+        malformedRootId,
+      ),
+      agentName: "explore",
+    })).success).toBe(false);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(malformedChildId),
+      agentName: "explore",
+      rootSessionId: malformedRootId,
     })).success).toBe(false);
     expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(
@@ -1018,6 +1061,7 @@ describe("session transcript serialization", () => {
         sessionId,
         sessionId,
       ),
+      agentName: "explore",
       projectTodo: { todoId, entry: "discussion" },
     })).success).toBe(false);
   });

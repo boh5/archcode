@@ -1394,7 +1394,7 @@ export interface SessionSummary {
   parentSessionId?: string;
   delegationRequest?: DelegationRequest;
   agentName: string;
-  /** Principal for root Lead Sessions; explicit immutable selection for children. */
+  /** Principal for user-facing root Sessions; explicit immutable selection for children. */
   profile: ProfileName;
   /** Persisted Skill identity; execution resolves these names against current policy. */
   activeSkillNames: string[];
@@ -1402,7 +1402,7 @@ export interface SessionSummary {
   title: string | null;
   /** Present only on a root Lead Session with a current Goal. */
   goal?: SessionGoal;
-  /** Immutable source of a Project Todo root Lead Session. */
+  /** Immutable source of a Project Todo user-facing root Session. */
   projectTodo?: ProjectTodoSessionSource;
   createdAt: number;
   updatedAt: number;
@@ -1441,7 +1441,7 @@ export interface Session {
   title: string | null;
   /** Present only on a root Lead Session with a current Goal. */
   goal?: SessionGoal;
-  /** Immutable source of a Project Todo root Lead Session. */
+  /** Immutable source of a Project Todo user-facing root Session. */
   projectTodo?: ProjectTodoSessionSource;
   createdAt: number;
   updatedAt: number;
@@ -1466,7 +1466,7 @@ export interface Session {
   nextModelSelection: SessionNextModelSelection;
   activeModelBinding?: ExecutionModelBindingSummary;
   agentName: string;
-  /** Principal for root Lead Sessions; explicit immutable selection for children. */
+  /** Principal for user-facing root Sessions; explicit immutable selection for children. */
   profile: ProfileName;
   activeSkillNames: string[];
 }
