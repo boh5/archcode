@@ -147,7 +147,7 @@ function sessionMessage(
   revision: number,
   entry: CreateProjectTodoSessionInput["entry"],
   planPath?: string,
-  initialIntent?: CreateProjectTodoSessionInput["initialIntent"],
+  initialIntent?: "plan",
 ): string {
   const source = [
     `Todo ID: ${todo.id}`,

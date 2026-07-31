@@ -60,7 +60,6 @@ export type CreateProjectTodoSessionInput =
   | {
       readonly expectedRevision: number;
       readonly entry: "work" | "automation";
-      readonly initialIntent?: never;
     };
 
 export interface ProjectTodoListResponse {

@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CreateProjectTodoSessionInput } from "@archcode/protocol";
 
 import {
   ProjectTodoDiscussionAuthorizationError,
@@ -61,6 +62,17 @@ async function readyTodo(service: ProjectTodoService, title = "Ship it", body = 
 }
 
 describe("ProjectTodoService", () => {
+  test("does not expose Plan intent on Work or Automation inputs", () => {
+    const invalid: CreateProjectTodoSessionInput = {
+      expectedRevision: 1,
+      entry: "work",
+      // @ts-expect-error Work requests must omit Discussion-only initialIntent.
+      initialIntent: undefined,
+    };
+
+    expect(invalid.entry).toBe("work");
+  });
+
   test("creates multiple independent Discussion Sessions without changing Todo state", async () => {
     const { service, sessions } = fixture();
     const todo = await service.createTodo({ title: "Discuss", body: "Questions" });
