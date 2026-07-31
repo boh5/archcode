@@ -631,6 +631,43 @@ describe("ConfiguredAgent", () => {
     expect(store.getState().activeSkillNames).toEqual([]);
   });
 
+  test("refreshes the bound Todo snapshot before every Discussion run", async () => {
+    const streamFn = setupMockStreamText("discussion refreshed");
+    const sessionId = crypto.randomUUID();
+    const projectContextResolver = createTestProjectContextResolver(storeManager);
+    const projectContext = await projectContextResolver.resolve(tmpRoot);
+    const todo = await projectContext.todos.createTodo({
+      title: "Original title",
+      body: "Original body",
+    });
+    const store = createStore(sessionId, tmpRoot, {
+      agentName: "discussion",
+      projectTodo: { todoId: todo.id, entry: "discussion" },
+    });
+    const agent = createAgent({
+      definition: discussionAgentDefinition,
+      store,
+      projectContextResolver,
+    });
+
+    await runAgent(agent, "first discussion");
+    const updated = await projectContext.todos.updateTodo(todo.id, {
+      expectedRevision: todo.revision,
+      title: "Current title",
+      body: "Current body",
+    });
+    await runAgent(agent, "second discussion");
+
+    const firstSystem = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    const secondSystem = (streamFn.mock.calls[1]![0] as { system: string }).system;
+    expect(firstSystem).toContain(`todoRevision=${todo.revision}`);
+    expect(firstSystem).toContain('todoTitle="Original title"');
+    expect(secondSystem).toContain(`todoRevision=${updated.revision}`);
+    expect(secondSystem).toContain('todoTitle="Current title"');
+    expect(secondSystem).toContain('todoBody="Current body"');
+    expect(secondSystem).not.toContain('todoTitle="Original title"');
+  });
+
   test("keeps Discussion extraTools within its Definition allowlist", async () => {
     const streamFn = setupMockStreamText("should not run");
     const store = createStore(crypto.randomUUID(), tmpRoot, {

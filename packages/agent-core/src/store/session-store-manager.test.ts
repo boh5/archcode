@@ -1709,6 +1709,29 @@ describe("SessionStoreManager", () => {
     expect(childFile).toMatchObject({ sessionId: childSessionId, rootSessionId, parentSessionId: rootSessionId });
   });
 
+  test("create() rejects malformed root and parent identity tuples", () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    manager.create(rootSessionId, TMP_DIR, { agentName: "lead" });
+
+    expect(() => manager.create(childSessionId, TMP_DIR, {
+      agentName: "explore",
+      rootSessionId: childSessionId,
+      parentSessionId: rootSessionId,
+    })).toThrow("Child Sessions cannot own their root Session identity");
+    expect(() => manager.create(sessionId(), TMP_DIR, {
+      agentName: "explore",
+      rootSessionId,
+    })).toThrow("Parentless Sessions must own their root Session identity");
+    const selfParentId = sessionId();
+    expect(() => manager.create(selfParentId, TMP_DIR, {
+      agentName: "explore",
+      rootSessionId,
+      parentSessionId: selfParentId,
+    })).toThrow("Child Sessions cannot be their own parent");
+  });
+
   test("getSessionFile() reuses the lazy index after the first scan", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
@@ -1916,10 +1939,9 @@ describe("SessionStoreManager", () => {
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
     const duplicateDirSessionId = sessionId();
     await writeRawSessionFile(duplicateDirSessionId, JSON.stringify(sessionFileInternals.toSessionFile(persistedSession(rootSessionId, {
-      agentName: "explore",
+      agentName: "lead",
       title: "duplicate-root",
       rootSessionId,
-      parentSessionId: rootSessionId,
     }))));
 
     await expect(manager.buildSessionTree(TMP_DIR, rootSessionId)).rejects.toMatchObject({
@@ -1983,7 +2005,8 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const childSessionId = sessionId();
     const parentSessionId = sessionId();
-    await writeSessionFile({ sessionId: childSessionId, rootSessionId: childSessionId, parentSessionId, title: "child-as-root-file" });
+    await writeSessionFile({ sessionId: parentSessionId, title: "root" });
+    await writeSessionFile({ sessionId: childSessionId, rootSessionId: parentSessionId, parentSessionId, title: "child" });
 
     await expect(manager.buildSessionTree(TMP_DIR, childSessionId)).rejects.toThrow(NotRootSessionError);
     try {
@@ -2091,19 +2114,24 @@ describe("SessionStoreManager", () => {
 
   test("resolveSessionDepth fails closed on a cycle in the requested ancestor chain", async () => {
     const rootSessionId = sessionId();
-    const childSessionId = sessionId();
+    const firstChildSessionId = sessionId();
+    const secondChildSessionId = sessionId();
     await writeSessionFile({
       sessionId: rootSessionId,
       rootSessionId,
-      parentSessionId: childSessionId,
     });
     await writeSessionFile({
-      sessionId: childSessionId,
+      sessionId: firstChildSessionId,
       rootSessionId,
-      parentSessionId: rootSessionId,
+      parentSessionId: secondChildSessionId,
+    });
+    await writeSessionFile({
+      sessionId: secondChildSessionId,
+      rootSessionId,
+      parentSessionId: firstChildSessionId,
     });
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
-    await expect(restarted.resolveSessionDepth(TMP_DIR, childSessionId)).rejects.toThrow(SessionTreeIntegrityError);
+    await expect(restarted.resolveSessionDepth(TMP_DIR, firstChildSessionId)).rejects.toThrow(SessionTreeIntegrityError);
   });
 });

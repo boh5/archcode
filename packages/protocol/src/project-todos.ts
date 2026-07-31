@@ -50,12 +50,18 @@ export interface ProjectTodoDiscussionUpdatePatch {
   readonly rejectionReason?: string;
 }
 
-export interface CreateProjectTodoSessionInput {
-  readonly expectedRevision: number;
-  readonly entry: ProjectTodoSessionEntry;
-  /** Makes the new Discussion's first message the deterministic Plan request. */
-  readonly initialIntent?: "plan";
-}
+export type CreateProjectTodoSessionInput =
+  | {
+      readonly expectedRevision: number;
+      readonly entry: "discussion";
+      /** Makes the new Discussion's first message the deterministic Plan request. */
+      readonly initialIntent?: "plan";
+    }
+  | {
+      readonly expectedRevision: number;
+      readonly entry: "work" | "automation";
+      readonly initialIntent?: never;
+    };
 
 export interface ProjectTodoListResponse {
   readonly todos: readonly ProjectTodo[];

@@ -114,7 +114,7 @@ Discussion Definition 集中声明：
 ### 第 3 步：提供 Plan 产品入口
 
 1. 在 Todo 详情的 Discussion 区域增加固定文案的次级操作“Generate / Improve Plan”；UI 不探测 Plan 是否存在。
-2. 点击后优先进入该 Todo 最近一次 Discussion；不存在时创建新的 Discussion Session，并把 Plan 请求作为该 Session 的首条消息原子提交，不得先启动普通 Discussion 再补发第二条命令。
+2. 点击后仅复用该 Todo 最近一次可接受消息的空闲 Discussion；不存在、忙碌、暂停、已删除或复用竞争失败时创建新的 Discussion Session，并把 Plan 请求作为该 Session 的首条消息原子提交，不得先启动普通 Discussion 再补发第二条命令。
 3. 已有 Discussion 发送 `/skill use plan-work ...` 和确定的 Plan 路径；新 Discussion 的首条消息使用同一 Skill 请求。命令校验 Skill 并向模型注入 `skill_read` 指令。验收 tool trace 必须在任何文件写入前调用 `skill_read`，Plan 已存在时还必须先调用 `file_read`；最终内容须与当前绑定 Todo 一致。
 4. 自然语言“为这个 Todo 做/改 Plan”不增加意图分类器；验收其是否读写同一确定路径并产出同样的内容契约，不验收内部是否调用了 Skill。
 5. 不改变 Todo 状态，不因生成 Plan 自动 Mark Ready，也不新增 Plan 页面或状态徽标。
@@ -182,7 +182,7 @@ Definition 级测试必须精确证明：
 - 第二次操作基于原内容编辑，不静默覆盖；
 - 文件包含目标与背景、范围与非目标、实施步骤、依赖与顺序、验收标准、验证方法、风险与待确认项；
 - 每条验收标准都描述可观察结果与判定方法，不使用“基本完成”“适当处理”“视情况”等无法判定的表述；
-- 生成/完善 Plan 不改变 Todo 状态，也不自动启动 Session、Goal 或 Automation；
+- 生成/完善 Plan 不改变 Todo 状态，也不自动启动 Work Session、Goal 或 Automation；首次操作可以按既定流程创建专用 Discussion Session；
 - 系统没有 Plan service/API/schema/status/version/link/watch/lock，也没有 Todo DTO 的 `planExists` 字段或 `.gitignore` 检查/修改逻辑；
 - 内容是否满足七类信息与无模糊验收，由产物 Review 人工判定，不伪装成可穷举的字符串测试。
 
@@ -191,7 +191,7 @@ Definition 级测试必须精确证明：
 浏览器验证必须证明：
 
 - 所有可讨论的 Todo 都显示固定操作“Generate / Improve Plan”，前端不请求 Plan 存在性；
-- 有 Discussion 时进入最近一次 Discussion，无 Discussion 时创建正式 `discussion` Session，且其首条接受消息就是 Plan 请求；
+- 最近一次 Discussion 空闲时复用并进入该 Session；不存在、忙碌、暂停、已删除或空闲复用竞争失败时，创建正式 `discussion` Session，且其首条接受消息就是 Plan 请求；
 - 按钮确定性调用 `plan-work`，新建场景不产生与初始执行冲突的第二条命令；命令成功且 tool trace 显示写文件前调用 `skill_read({ name: "plan-work" })`，自然语言请求则以同一路径和同一内容契约的最终产物验收；
 - Todo 原有四个状态、状态迁移和其他操作没有变化。
 

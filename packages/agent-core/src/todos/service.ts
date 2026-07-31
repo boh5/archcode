@@ -113,7 +113,7 @@ export class ProjectTodoService {
         todo.revision,
         request.entry,
         hasPlan ? planRelativePath : undefined,
-        request.initialIntent,
+        "initialIntent" in request ? request.initialIntent : undefined,
       ),
       clientRequestId: crypto.randomUUID(),
     });

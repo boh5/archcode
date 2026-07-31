@@ -1028,6 +1028,27 @@ describe("session transcript serialization", () => {
       ...persistedState(crypto.randomUUID()),
       agentName: "analyst",
     })).success).toBe(false);
+    const malformedRootId = crypto.randomUUID();
+    const malformedChildId = crypto.randomUUID();
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(
+        malformedChildId,
+        sampleMessages(),
+        sampleSteps(),
+        sampleTodos(),
+        createEmptySessionStats(),
+        [],
+        [],
+        malformedChildId,
+        malformedRootId,
+      ),
+      agentName: "explore",
+    })).success).toBe(false);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(malformedChildId),
+      agentName: "explore",
+      rootSessionId: malformedRootId,
+    })).success).toBe(false);
     expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(
         crypto.randomUUID(),

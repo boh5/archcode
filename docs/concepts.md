@@ -52,11 +52,13 @@ a dedicated Discussion to clarify and shape it, then freely organize it among
 Idea, Ready, In Progress, and Done; Rejected and Archived are separate from the
 main board.
 
-When a Todo needs a Plan, **Generate / Improve Plan** opens or reuses its latest
-Discussion and maintains one ordinary Markdown file at
-`.archcode/plans/<todo-id>.md`. A newly created Discussion accepts Plan work as
-its first message, so the UI does not race a generic Discussion execution with
-a second Plan command. A Ready or In Progress Todo can start any number of fresh
+When a Todo needs a Plan, **Generate / Improve Plan** reuses its latest
+Discussion only when that Session is idle and maintains one ordinary Markdown
+file at `.archcode/plans/<todo-id>.md`. If no Discussion exists, the latest one
+is busy or suspended, it was deleted, or an idle reuse loses the acceptance
+race, ArchCode creates a new Discussion with Plan work as its first message.
+The UI never races a generic Discussion execution with a second Plan command.
+A Ready or In Progress Todo can start any number of fresh
 ordinary Lead work Sessions or an Automation setup Session. At that one start
 boundary, ArchCode checks whether the Plan file exists: if it does, the Lead
 begins with `execute-plan`; otherwise it follows the ordinary work path.

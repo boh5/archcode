@@ -25,7 +25,10 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { RequestedModelSelection } from "@archcode/protocol";
+import {
+  isSessionMessageUnavailableCode,
+  type RequestedModelSelection,
+} from "@archcode/protocol";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Archive, Check, FileText, GripVertical, LoaderCircle, MessageCircle, Plus, RotateCcw, Save, Send, X } from "lucide-react";
 import { ApiError } from "../api/client";
@@ -139,19 +142,12 @@ export async function coordinateTodoPlanWork(input: {
   return sessionId;
 }
 
-const PLAN_DISCUSSION_CONFLICT_CODES = new Set([
-  "SESSION_FAMILY_ACTIVE",
-  "SESSION_FAMILY_STOP_IN_PROGRESS",
-  "SESSION_TOOL_BATCH_ACTIVE",
-  "SESSION_COMMAND_CONFLICT",
-]);
-
 function isUnavailablePlanDiscussion(cause: unknown): boolean {
   if (!(cause instanceof ApiError)) return false;
-  if (cause.status === 404) return true;
+  if (cause.status === 404) return cause.code === "SESSION_NOT_FOUND";
   if (cause.status !== 409 || typeof cause.details !== "object" || cause.details === null) return false;
   const scopeCode = Reflect.get(cause.details, "scopeCode");
-  return typeof scopeCode === "string" && PLAN_DISCUSSION_CONFLICT_CODES.has(scopeCode);
+  return isSessionMessageUnavailableCode(scopeCode);
 }
 
 export function ProjectTodosRoute() {

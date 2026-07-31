@@ -34,7 +34,7 @@ export const discussionRoleContract = {
     "Do not delegate Analyst or Build or claim that a Plan has been executed.",
   ],
   outputs: ["clarified Todo or requested Plan", "material evidence and decisions", "open questions, risks, and next handoff"],
-  requiredCapabilities: ["file_read", "file_edit", "project_todo_update", "delegate"],
+  requiredCapabilities: ["file_read", "file_write", "file_edit", "project_todo_update", "delegate"],
   forbiddenCapabilities: ["ast_grep_replace", "create_goal", "update_goal", "automation_create"],
   allowedTransitions: ["todo.update"],
   completionAuthority: ["bound-todo"],

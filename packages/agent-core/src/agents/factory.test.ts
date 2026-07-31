@@ -239,7 +239,11 @@ describe("createAgentFactory", () => {
     ]);
 
     const parentSessionId = "parent-session";
-    const store = storeManager.create(crypto.randomUUID(), "/test", { parentSessionId, agentName: "explore" });
+    const store = storeManager.create(crypto.randomUUID(), "/test", {
+      parentSessionId,
+      rootSessionId: parentSessionId,
+      agentName: "explore",
+    });
     const child = factory.createAgent("explore", { store });
 
     expect(child.store.getState().parentSessionId).toBe(parentSessionId);

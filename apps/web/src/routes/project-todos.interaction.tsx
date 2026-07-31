@@ -396,6 +396,7 @@ describe("Project Todos Plan interactions", () => {
     expect(requests.filter((request) =>
       request.method === "POST" && request.path.endsWith("/messages"),
     )).toHaveLength(0);
+    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
   });
 
   test("keeps Plan available for a busy Discussion and creates one atomic replacement", async () => {
@@ -420,6 +421,7 @@ describe("Project Todos Plan interactions", () => {
     expect(requests.filter((request) =>
       request.method === "POST" && request.path.endsWith("/messages"),
     )).toHaveLength(0);
+    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
   });
 
   test("reuses an idle Discussion with exactly one Plan command", async () => {
@@ -443,6 +445,7 @@ describe("Project Todos Plan interactions", () => {
         selection: { model: "test:model" },
       },
     });
+    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
   });
 
   test("falls back to a new Plan Discussion when idle reuse loses the acceptance race", async () => {
@@ -470,12 +473,13 @@ describe("Project Todos Plan interactions", () => {
     expect(creates).toHaveLength(1);
     expect(creates[0]?.body).toMatchObject({ entry: "discussion", initialIntent: "plan" });
     expect(document.querySelector('[role="alert"]')).toBeNull();
+    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
   });
 
   test("falls back to a new Plan Discussion when the linked Session is stale", async () => {
     addDiscussionSummary();
     sessionDetailResponse = () => Response.json({
-      error: { code: "NOT_FOUND", message: "Session not found" },
+      error: { code: "SESSION_NOT_FOUND", message: "Session not found" },
     }, { status: 404 });
     await renderSelectedTodo();
 
@@ -487,6 +491,24 @@ describe("Project Todos Plan interactions", () => {
     expect(requests.filter((request) =>
       request.method === "POST" && request.path.endsWith("/messages"),
     )).toHaveLength(0);
+    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
+  });
+
+  test("does not replace an unavailable project with a new Plan Discussion", async () => {
+    addDiscussionSummary();
+    sessionDetailResponse = () => Response.json({
+      error: { code: "PROJECT_NOT_FOUND", message: "Project not found" },
+    }, { status: 404 });
+    await renderSelectedTodo();
+
+    await click(findPlanButton());
+
+    expect(requests.filter((request) =>
+      request.method === "POST" && request.path.endsWith("/todos/ready/sessions"),
+    )).toHaveLength(0);
+    expect(document.querySelector('[data-testid="session-page"]')).toBeNull();
+    const error = findActionGroup("Discuss & Plan").querySelector('[role="alert"]');
+    expect(error?.textContent).toBe("Project not found");
   });
 
   test("shows local progress, blocks a duplicate click, and recovers beside the Plan action", async () => {

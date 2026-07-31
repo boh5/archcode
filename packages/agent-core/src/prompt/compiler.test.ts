@@ -132,7 +132,7 @@ describe("PromptContractCompiler", () => {
       { role: leadRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime() },
       {
         role: discussionRoleContract,
-        allowedTools: ["file_read", "file_edit", "project_todo_update", "delegate"],
+        allowedTools: ["file_read", "file_write", "file_edit", "project_todo_update", "delegate"],
         runtime: runtime({
           agentName: "discussion",
           todo: { id: "todo-1", mode: "bound" },
@@ -144,6 +144,8 @@ describe("PromptContractCompiler", () => {
       { role: buildRoleContract, allowedTools: ["file_read", "file_edit", "delegate"], runtime: child("build", "lead", { allowedDelegateTargets: ["explore"] }) },
       { role: exploreRoleContract, allowedTools: ["file_read"], runtime: child("explore", "lead") },
       { role: librarianRoleContract, allowedTools: ["web_fetch"], runtime: child("librarian", "lead") },
+      { role: exploreRoleContract, allowedTools: ["file_read"], runtime: child("explore", "discussion") },
+      { role: librarianRoleContract, allowedTools: ["web_fetch"], runtime: child("librarian", "discussion") },
       { role: leadRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime({ todo: { id: "todo-1", mode: "bound" } }) },
     ];
 
@@ -157,6 +159,11 @@ describe("PromptContractCompiler", () => {
     await expect(new PromptContractCompiler().compile(contract({
       role: analystRoleContract,
       runtime: runtime({ agentName: "analyst" }),
+      allowedTools: ["file_read", "delegate"],
+    }))).rejects.toBeInstanceOf(IllegalPromptExecutionModeError);
+    await expect(new PromptContractCompiler().compile(contract({
+      role: analystRoleContract,
+      runtime: child("analyst", "discussion"),
       allowedTools: ["file_read", "delegate"],
     }))).rejects.toBeInstanceOf(IllegalPromptExecutionModeError);
   });

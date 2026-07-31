@@ -32,8 +32,16 @@ export function isRootLeadSession(identity: SessionIdentity): boolean {
 export function sessionIdentityInvariantError(
   identity: ProjectTodoBoundSessionIdentity,
 ): string | undefined {
-  const isRoot = identity.parentSessionId === undefined
-    && identity.rootSessionId === identity.sessionId;
+  const isRoot = identity.parentSessionId === undefined;
+  if (isRoot && identity.rootSessionId !== identity.sessionId) {
+    return "Parentless Sessions must own their root Session identity";
+  }
+  if (!isRoot && identity.rootSessionId === identity.sessionId) {
+    return "Child Sessions cannot own their root Session identity";
+  }
+  if (identity.parentSessionId === identity.sessionId) {
+    return "Child Sessions cannot be their own parent";
+  }
 
   if (isRoot && !isRootAgentName(identity.agentName)) {
     return "Root Sessions require a Lead or Discussion Agent";

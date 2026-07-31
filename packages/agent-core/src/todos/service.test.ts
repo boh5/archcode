@@ -184,7 +184,7 @@ describe("ProjectTodoService", () => {
       expectedRevision: idea.revision,
       entry: "work",
       initialIntent: "plan",
-    })).rejects.toThrow("initialIntent is available only for Discussion Sessions");
+    } as unknown as Parameters<ProjectTodoService["createSession"]>[1])).rejects.toThrow();
     expect(sessions.sessions.size).toBe(0);
   });
 

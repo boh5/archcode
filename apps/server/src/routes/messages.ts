@@ -9,8 +9,10 @@ import {
   type AgentRuntime,
 } from "@archcode/agent-core";
 import {
+  isSessionMessageUnavailableCode,
   MAX_ATTACHMENTS_PER_MESSAGE,
   type AttachmentDescriptor,
+  type SessionMessageUnavailableCode,
 } from "@archcode/protocol";
 import { Hono } from "hono";
 import { z } from "zod/v4";
@@ -206,17 +208,10 @@ function mapMessageMutationError(error: unknown, sessionId: string): unknown {
       ...(error.current === undefined ? {} : { current: error.current }),
     });
   }
-  const errorCode = codedErrorValue(error, "code");
-  if (
-    error instanceof SessionFamilyActiveError
-    || error instanceof SessionFamilyStopInProgressError
-    || error instanceof SessionToolBatchActiveError
-    || errorCode === "SESSION_FAMILY_ACTIVE"
-    || errorCode === "SESSION_FAMILY_STOP_IN_PROGRESS"
-    || errorCode === "SESSION_TOOL_BATCH_ACTIVE"
-  ) {
+  const unavailableCode = sessionMessageUnavailableCode(error);
+  if (unavailableCode !== undefined) {
     return new ServerError("BAD_REQUEST", errorMessage(error), 409, {
-      scopeCode: errorCode,
+      scopeCode: unavailableCode,
       sessionId: codedErrorValue(error, "sessionId") ?? sessionId,
       ...(codedErrorValue(error, "rootSessionId") === undefined
         ? {}
@@ -226,6 +221,7 @@ function mapMessageMutationError(error: unknown, sessionId: string): unknown {
         : { hitlIds: codedStringArray(error, "hitlIds") }),
     });
   }
+  const errorCode = codedErrorValue(error, "code");
   if (
     error instanceof SessionSteerUnavailableError
     || error instanceof SessionCommandConflictError
@@ -250,6 +246,22 @@ function mapMessageMutationError(error: unknown, sessionId: string): unknown {
     });
   }
   return error;
+}
+
+function sessionMessageUnavailableCode(
+  error: unknown,
+): SessionMessageUnavailableCode | undefined {
+  const code = codedErrorValue(error, "code");
+  if (isSessionMessageUnavailableCode(code)) return code;
+  if (
+    error instanceof SessionFamilyActiveError
+    || error instanceof SessionFamilyStopInProgressError
+    || error instanceof SessionToolBatchActiveError
+    || error instanceof SessionCommandConflictError
+  ) {
+    return error.code;
+  }
+  return undefined;
 }
 
 function codedErrorValue(error: unknown, key: string): string | undefined {
