@@ -68,7 +68,11 @@ Validation order is `typecheck` before `test`.
 ```sh
 bun run typecheck
 bun run test
+git diff --check origin/main...HEAD
 ```
+
+The command above uses `origin` for the canonical repository. Replace it with
+`upstream` when contributing from a fork.
 
 For changes that affect the production package or Web UI, also run:
 
@@ -93,8 +97,28 @@ They may add incremental feedback after new commits are pushed. Address
 actionable findings, explain intentional decisions when appropriate, and do not
 treat an AI approval as a substitute for maintainer judgment.
 
-Maintainers merge accepted PRs with squash merge. The merged PR becomes one
-commit on `main`, and GitHub deletes the merged head branch automatically.
+Checks and reviews apply to the current PR head. After every pushed fix, rerun
+the relevant local validation, wait for `Verify`, CodeQL, CodeRabbit, and Cubic
+on the new head commit, and inspect review conversations again. A pending AI
+review is neither a failure nor a merge-ready result.
+
+Immediately before merge, maintainers confirm that the reviewed head commit has
+not changed, the PR is mergeable, required gates pass, and every review
+conversation is resolved. Maintainers merge accepted PRs with squash merge.
+The merged PR becomes one commit on `main`, and GitHub deletes the merged head
+branch automatically.
+
+After merge, synchronize the local default branch without rewriting it:
+
+The commands below use `origin` for the canonical repository. Replace it with
+`upstream` when contributing from a fork.
+
+```sh
+git fetch origin
+git switch main
+git merge --ff-only origin/main
+git status --short --branch
+```
 
 ## Code conventions
 
