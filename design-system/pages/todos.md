@@ -12,13 +12,26 @@ They are project-owned lifecycle entities, not Session-local checklists.
 ## Shared Structure
 
 - Context Inspector is absent on Todos.
-- Keep the project rail and project navigation.
-- Header contains the title, purpose, and the three-way
+- Keep the project rail and project toolbar; `Todos` is the active project tab.
+- Do not repeat a visible `Todos` page title or product slogan below the toolbar.
+  The Todo surface begins with a shared `Filter Todos` field and the three-way
   `Board / Rejected / Archived` switcher.
 - Place quick capture directly below the header.
 - Main Todo content may use up to 1500px because Board lanes need horizontal
   working space.
 - A selected Todo opens a right detail drawer without navigating away.
+
+## Search and Filter
+
+- Project-rail `Search all work` is the only navigational search. The visible
+  Todo field is only an in-place filter for the selected Todo view; do not add
+  another search icon to the project toolbar.
+- `Filter Todos` matches stable ID, title, body/PRD text, and visible runtime
+  metadata without changing lifecycle state or opening the detail drawer.
+- Filtering the Board keeps all four lanes visible and updates lane counts to
+  the visible matches. Rejected and Archived filter only their selected lists.
+- Use the shared entity-filter component and show a no-results message without
+  replacing quick capture or the active view switcher.
 
 ## Board Surface
 
@@ -70,11 +83,17 @@ Lane rules:
 
 ## Quick Capture
 
-- Use one horizontal input surface at every width:
-  `plus icon → title input → Add`.
-- The input stays flexible; the 32px Add button remains visible and does not
-  imply that execution has started.
-- Capture creates intent only; it must not imply that execution has started.
+- Use one compact input surface with two explicit outcomes:
+  `plus icon → title input → Save / Run now`.
+- `Save` creates one Idea and starts no Agent work. Its confirmation says the
+  Todo was saved, never that work started.
+- `Run now` creates the minimal Todo, places it in In Progress, creates one bound
+  Lead Session, and opens that Session. It skips Discussion and Plan without
+  preventing the user from adding either later.
+- `Run now` is the single dominant action; `Save` remains a quiet secondary
+  action. Do not add `New Session` or a Todo-vs-Session chooser to capture.
+- At narrow widths the input keeps its full row and the two actions share the
+  row below it; both remain at least 44px touch targets.
 
 ## Todo Detail Drawer
 

@@ -111,9 +111,11 @@ that page's HTML instead of creating page-specific `.css` or `.js` files.
 
 The current references are:
 
-- Dashboard: `design-system/prototypes/dashboard.html`
-- Session: `design-system/prototypes/session.html`
+- Global Home: `design-system/prototypes/dashboard.html`
 - Todos: `design-system/prototypes/todos.html`
+- Automations: `design-system/prototypes/automations.html`
+- Sessions: `design-system/prototypes/sessions.html`
+- Session detail: `design-system/prototypes/session.html`
 
 When browser QA needs an HTTP origin, serve the prototype root without first
 changing into that directory:

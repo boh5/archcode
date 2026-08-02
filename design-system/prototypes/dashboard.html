@@ -3,52 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="ArchCode 当前 Dashboard 页面原型" />
-    <title>ArchCode — Dashboard Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=implementation-sync-2" />
+    <meta name="description" content="ArchCode 跨项目 Home 页面原型" />
+    <title>ArchCode — Home Prototype</title>
+    <link rel="stylesheet" href="./styles.css?v=theme-rail-1" />
     <style>
-      .dashboard-scroll {
+      .home-page .app-shell {
+        grid-template-columns: var(--rail-width) minmax(0, 1fr);
+      }
+
+      .home-page .work-canvas {
+        min-width: 0;
+        min-height: 0;
+        background: var(--bg-base);
+      }
+
+      .home-scroll {
         height: 100%;
         overflow: auto;
       }
 
-      .dashboard-content {
+      .home-content {
         width: min(100%, 1180px);
         margin: 0 auto;
-        padding: 44px clamp(24px, 5vw, 64px) 60px;
+        padding: 42px clamp(28px, 5vw, 64px) 64px;
       }
 
-      .dashboard-top {
-        display: grid;
-        grid-template-columns: 30px 48px minmax(0, 1fr);
-        gap: 12px;
-        align-items: start;
+      .home-header {
         margin-bottom: 34px;
       }
 
-      .dashboard-top .canvas-sidebar-toggle {
-        margin-top: 22px;
-      }
-
-      .dashboard-mark {
-        display: grid;
-        place-items: center;
-        width: 48px;
-        height: 48px;
-        margin-top: 19px;
-        border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border-default));
-        border-radius: 8px;
-        background: var(--brand-field);
-        color: var(--brand);
-      }
-
-      .dashboard-mark svg {
-        width: 22px;
-        height: 22px;
-      }
-
-      .eyebrow {
-        margin-bottom: 5px;
+      .home-eyebrow {
+        margin-bottom: 6px;
         color: var(--text-tertiary);
         font-size: 11px;
         font-weight: 700;
@@ -56,129 +41,129 @@
         text-transform: uppercase;
       }
 
-      .dashboard-top h1 {
-        font-size: clamp(25px, 3vw, 31px);
+      .home-header h1 {
+        font-size: clamp(26px, 3vw, 31px);
+        font-weight: 700;
         line-height: 1.15;
         letter-spacing: -0.035em;
       }
 
-      .dashboard-top p:last-child {
-        margin-top: 8px;
+      .home-header p:last-child {
+        max-width: 620px;
+        margin-top: 9px;
         color: var(--text-secondary);
         font-size: 14px;
+        line-height: 1.6;
       }
 
-      .dashboard-grid {
+      .home-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 28px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 30px 26px;
       }
 
-      .dashboard-grid.priority {
-        margin-bottom: 34px;
-      }
-
-      .dashboard-section {
+      .home-section {
         min-width: 0;
-      }
-
-      .priority-card {
-        min-height: 136px;
-        padding: 13px 18px 10px;
-        border-top: 3px solid var(--warning);
-        background: var(--bg-surface);
-      }
-
-      .priority-card.running {
-        border-top-color: var(--signal);
-      }
-
-      .priority-card .empty-state {
-        min-height: 72px;
-      }
-
-      .secondary-card {
-        min-height: 209px;
-        padding: 0 18px 6px;
         border-top: 1px solid var(--border-default);
         background: var(--bg-surface);
       }
 
-      .section-head {
+      .home-section.attention {
+        border-top: 3px solid var(--warning);
+      }
+
+      .home-section.running {
+        border-top: 3px solid var(--signal);
+      }
+
+      .home-section-header {
         display: grid;
-        grid-template-columns: 24px minmax(0, 1fr) auto;
+        grid-template-columns: 18px minmax(0, 1fr) auto;
         align-items: center;
-        gap: 9px;
-        min-height: 38px;
-        padding-bottom: 10px;
+        gap: 8px;
+        min-height: 42px;
+        padding: 0 12px;
         border-bottom: 1px solid var(--border-default);
       }
 
-      .section-head [data-icon] {
+      .home-section-header [data-icon],
+      .home-section-header .home-orbit {
         color: var(--text-tertiary);
       }
 
-      .section-head h2 {
-        font-size: 14px;
-        font-weight: 650;
+      .home-section-header h2 {
+        font-size: 13px;
+        font-weight: 660;
       }
 
-      .section-count {
+      .home-section-count {
         color: var(--text-tertiary);
-        font-size: 12px;
+        font-size: 11px;
         font-variant-numeric: tabular-nums;
       }
 
-      .empty-state {
-        display: grid;
-        place-items: center;
-        min-height: 116px;
-        padding: 22px;
-        color: var(--text-tertiary);
-        font-size: 12px;
-        text-align: center;
-      }
-
-      .dashboard-list {
+      .home-list {
         display: grid;
       }
 
-      .dashboard-row {
+      .home-row {
         display: grid;
-        grid-template-columns: 12px minmax(0, 1fr) auto;
+        grid-template-columns: 14px minmax(0, 1fr) auto;
         align-items: center;
         gap: 11px;
-        min-height: 66px;
-        padding: 10px 4px;
+        min-height: 68px;
+        padding: 10px 12px;
         border-bottom: 1px solid var(--border-subtle);
-        background: transparent;
         color: inherit;
         text-align: left;
+        transition: background var(--motion-hover) ease;
       }
 
-      .dashboard-row:hover {
-        background: linear-gradient(
-          90deg,
-          transparent,
-          var(--bg-hover) 4%,
-          var(--bg-hover) 96%,
-          transparent
-        );
+      .home-row:last-child {
+        border-bottom: 0;
       }
 
-      .state-orbit {
+      .home-row:hover {
+        background: var(--bg-hover);
+      }
+
+      .home-row.attention {
+        box-shadow: inset 3px 0 0 var(--warning);
+      }
+
+      .home-row.running {
+        box-shadow: inset 3px 0 0 var(--signal);
+      }
+
+      .home-orbit {
         width: 11px;
         height: 11px;
         border: 1px solid var(--text-tertiary);
         border-radius: 50%;
       }
 
-      .state-orbit.automation {
+      .home-orbit.attention {
+        border-color: var(--warning);
+        background: var(--warning-field);
+      }
+
+      .home-orbit.running {
+        border: 2px solid color-mix(in srgb, var(--signal) 35%, transparent);
+        border-top-color: var(--signal);
+        animation: home-spin 1.8s linear infinite;
+      }
+
+      .home-orbit.review {
+        border-color: var(--brand);
+        box-shadow: inset 0 0 0 3px var(--brand-field);
+      }
+
+      .home-orbit.automation {
         position: relative;
         border-color: var(--brand);
       }
 
-      .state-orbit.automation::after {
+      .home-orbit.automation::after {
         position: absolute;
         inset: 3px;
         border-radius: 50%;
@@ -186,223 +171,177 @@
         content: "";
       }
 
-      .row-copy {
+      .home-row-copy {
         min-width: 0;
       }
 
-      .row-copy strong,
-      .row-copy small {
+      .home-row-copy strong,
+      .home-row-copy small {
         display: block;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
-      .row-copy strong {
+      .home-row-copy strong {
         font-size: 13px;
-        font-weight: 620;
+        font-weight: 630;
       }
 
-      .row-copy small {
-        margin-top: 5px;
+      .home-row-copy small {
+        margin-top: 4px;
         color: var(--text-tertiary);
         font-size: 11px;
       }
 
-      .open-link {
-        padding: 6px 8px;
-        border-radius: 5px;
-        color: var(--text-secondary);
+      .home-row-state {
+        color: var(--text-tertiary);
         font-size: 11px;
-        font-weight: 600;
+        font-weight: 620;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
       }
 
-      .open-link:hover {
-        background: var(--bg-hover);
-        color: var(--text-primary);
+      .home-row-state.attention { color: var(--warning); }
+      .home-row-state.running { color: var(--signal-foreground); }
+      .home-row-state.review { color: var(--brand); }
+
+      @keyframes home-spin {
+        to { transform: rotate(360deg); }
       }
 
-      @media (min-width: 1001px) {
-        .dashboard-grid.priority {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          column-gap: 38px;
-        }
-
-        .dashboard-grid:not(.priority) {
-          grid-template-columns: minmax(0, 1.8fr) minmax(260px, 1fr);
-          column-gap: 20px;
+      @media (max-width: 860px) {
+        .home-grid {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 26px;
         }
       }
 
       @media (max-width: 760px) {
-        .dashboard-content {
-          padding: 24px 18px 40px;
+        .home-content {
+          padding: 26px 18px 44px;
         }
 
-        .dashboard-top {
-          gap: 10px;
+        .home-header {
           margin-bottom: 26px;
         }
 
-        .dashboard-mark {
-          display: none;
+        .home-row {
+          grid-template-columns: 14px minmax(0, 1fr);
+          min-height: 76px;
         }
 
-        .dashboard-top {
-          grid-template-columns: 30px minmax(0, 1fr);
+        .home-row-copy strong,
+        .home-row-copy small {
+          white-space: normal;
         }
 
-        .dashboard-top h1 {
-          font-size: 25px;
-        }
-
-        .dashboard-grid,
-        .dashboard-grid.priority {
-          gap: 26px;
-          margin-bottom: 26px;
+        .home-row-state {
+          grid-column: 2;
+          justify-self: start;
         }
       }
+
+      @media (pointer: coarse) {
+        .home-row { min-height: 76px; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .home-orbit.running { animation: none; }
+      }
     </style>
-    <script src="./app.js?v=implementation-sync-2" defer></script>
+    <script src="./app.js?v=rail-search-1" defer></script>
   </head>
-  <body class="dashboard-page">
+  <body class="home-page">
     <a class="skip-link" href="#work-canvas">跳到工作区</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
-        <button class="brand-mark" aria-label="Open dashboard" data-action="打开全局 Dashboard"><span>A</span></button>
-        <button class="rail-project active" aria-label="Open archcode">ar</button>
-        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
-        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
+        <a class="brand-mark" href="./dashboard.html?v=home-shell-1" aria-label="Home, current page" aria-current="page"><span>A</span></a>
+        <a class="rail-project" href="./todos.html?v=project-shell-1" aria-label="Open archcode">ar</a>
+        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace" data-action="打开 archcode-readme-demo-workspace 的 Todos">ar</button>
+        <button class="rail-project" aria-label="Open specra-test-projects" data-action="打开 specra-test-projects 的 Todos">sp</button>
         <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
         <div class="rail-spacer"></div>
         <div class="rail-separator"></div>
-        <button class="rail-icon" aria-label="Open requests needing attention" data-action="打开待处理请求" data-icon="bell"></button>
+        <button class="rail-icon rail-search" aria-label="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
+        <button class="rail-icon" aria-label="Open 3 requests needing attention" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
         <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
         <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
       </nav>
 
-      <aside class="project-sidebar" aria-label="Project navigation">
-        <div class="project-sidebar-inner">
-          <header class="sidebar-header">
-            <div class="project-copy">
-              <strong>archcode</strong>
-              <span>/workspace/archcode</span>
-            </div>
-            <button class="icon-button" aria-label="Project actions" data-action="打开项目操作" data-icon="more"></button>
-            <button class="icon-button mobile-close" aria-label="Close project navigation" data-close-overlay data-icon="close"></button>
-          </header>
-
-          <nav class="sidebar-nav" aria-label="Project pages">
-            <a class="active" href="./dashboard.html" aria-current="page">
-              <span data-icon="dashboard"></span><span>Project Dashboard</span><span data-icon="chevron"></span>
-            </a>
-            <a href="./todos.html">
-              <span data-icon="todo"></span><span>Todos</span><span class="nav-count">1</span>
-            </a>
-          </nav>
-
-          <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
-            <button role="tab" aria-selected="true" data-sidebar-tab="sessions">Sessions</button>
-            <button role="tab" aria-selected="false" data-sidebar-tab="automations">Automations</button>
-          </div>
-
-          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="sessions">
-            <div class="sidebar-toolbar">
-              <label class="search-field">
-                <span data-icon="search"></span>
-                <span class="sr-only">Search sessions</span>
-                <input type="search" placeholder="Search sessions..." />
-              </label>
-              <button class="new-session" data-action="创建 Session">＋ New session</button>
-            </div>
-            <div class="session-group">
-              <div class="session-group-label"><span>Recent</span><span>2</span></div>
-              <a class="session-item" href="./session.html" aria-label="Brief Greeting Session · Idle · 2h ago">
-                <span class="session-state"></span><span class="session-title">Brief Greeting Session</span><time class="session-time">2h</time><span></span>
-              </a>
-              <button class="session-item" data-action="打开项目状态与重点问题汇报">
-                <span class="session-state"></span><span class="session-title">项目状态与重点问题汇报</span><time class="session-time">3h</time><span></span>
-              </button>
-            </div>
-          </section>
-
-          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="automations" hidden>
-            <div class="sidebar-toolbar">
-              <label class="search-field">
-                <span data-icon="search"></span>
-                <span class="sr-only">Search automations</span>
-                <input type="search" placeholder="Search automations..." />
-              </label>
-              <button class="new-session" data-action="创建 Automation">＋ New</button>
-            </div>
-            <div class="session-group">
-              <div class="session-group-label"><span>Automations</span><span>1</span></div>
-              <button class="session-item" data-action="打开每日项目状态检查">
-                <span class="state-orbit automation"></span><span class="session-title">每日项目状态检查</span><time class="session-time">09:00</time><span></span>
-              </button>
-            </div>
-          </section>
-        </div>
-        <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuemin="210" aria-valuemax="340" aria-valuenow="264" data-resize-sidebar></div>
-      </aside>
-
-      <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
-        <div class="dashboard-scroll">
-          <div class="dashboard-content">
-            <header class="dashboard-top">
-              <button class="canvas-sidebar-toggle" aria-label="Open project navigation" data-open-sidebar data-icon="panel"></button>
-              <span class="dashboard-mark" data-icon="dashboard"></span>
-              <div>
-                <p class="eyebrow">Project overview</p>
-                <h1>Dashboard</h1>
-                <p>What needs you, what is moving, and where to continue.</p>
-              </div>
+      <main class="work-canvas" id="work-canvas" aria-label="Global Home" tabindex="-1">
+        <div class="home-scroll">
+          <div class="home-content">
+            <header class="home-header">
+              <p class="home-eyebrow">Across all projects</p>
+              <h1>Home</h1>
+              <p>Decisions that need you, work that is moving, results ready to review, and the next scheduled runs.</p>
             </header>
 
-            <div class="dashboard-grid priority">
-              <section class="dashboard-section priority-card">
-                <header class="section-head">
-                  <span data-icon="bell"></span><h2>Needs attention</h2><span class="section-count">0</span>
+            <div class="home-grid">
+              <section class="home-section attention" aria-labelledby="home-needs-you">
+                <header class="home-section-header">
+                  <span data-icon="bell"></span><h2 id="home-needs-you">Needs you</h2><span class="home-section-count">2</span>
                 </header>
-                <div class="empty-state">Nothing needs your attention.</div>
-              </section>
-
-              <section class="dashboard-section priority-card running">
-                <header class="section-head">
-                  <span class="state-orbit"></span><h2>Running now</h2><span class="section-count">0</span>
-                </header>
-                <div class="empty-state">No sessions are running.</div>
-              </section>
-            </div>
-
-            <div class="dashboard-grid">
-              <section class="dashboard-section secondary-card">
-                <header class="section-head">
-                  <span data-icon="app"></span><h2>Continue working</h2><span class="section-count">2</span>
-                </header>
-                <div class="dashboard-list">
-                  <a class="dashboard-row" href="./session.html">
-                    <span class="state-orbit"></span>
-                    <span class="row-copy"><strong>Brief Greeting Session</strong><small>Idle · Updated 2h ago</small></span>
-                    <span class="open-link">Open</span>
+                <div class="home-list">
+                  <a class="home-row attention" href="./session.html?todo=todo-profile-defaults&amp;session=sess-profile-implementation" aria-label="Implementation Session, archcode, Permission">
+                    <span class="home-orbit attention"></span>
+                    <span class="home-row-copy"><strong>Implementation Session</strong><small>archcode · Session · Model profile defaults per project</small></span>
+                    <span class="home-row-state attention">Permission</span>
                   </a>
-                  <button class="dashboard-row" data-action="打开项目状态与重点问题汇报">
-                    <span class="state-orbit"></span>
-                    <span class="row-copy"><strong>项目状态与重点问题汇报</strong><small>Idle · Updated 3h ago</small></span>
-                    <span class="open-link">Open</span>
+                  <a class="home-row attention" href="./session.html?automation=aut-health&amp;session=sess-aut-health-failed&amp;title=Daily%20project%20health%20check" aria-label="Daily project health check, archcode, Failed run">
+                    <span class="home-orbit attention"></span>
+                    <span class="home-row-copy"><strong>Daily project health check</strong><small>archcode · Automation invocation · latest run stopped</small></span>
+                    <span class="home-row-state attention">Failed run</span>
+                  </a>
+                </div>
+              </section>
+
+              <section class="home-section running" aria-labelledby="home-running">
+                <header class="home-section-header">
+                  <span class="home-orbit running"></span><h2 id="home-running">Running</h2><span class="home-section-count">2</span>
+                </header>
+                <div class="home-list">
+                  <a class="home-row running" href="./session.html?todo=todo-live-recovery&amp;session=sess-live-recovery" aria-label="Live execution recovery, archcode, Running 12 minutes">
+                    <span class="home-orbit running"></span>
+                    <span class="home-row-copy"><strong>Live execution recovery</strong><small>archcode · Todo-bound Session · Lead → Explore</small></span>
+                    <span class="home-row-state running">12m</span>
+                  </a>
+                  <button class="home-row running" data-action="打开 archcode-readme-demo-workspace 的 README verification Session">
+                    <span class="home-orbit running"></span>
+                    <span class="home-row-copy"><strong>README verification</strong><small>archcode-readme-demo-workspace · Direct Session · Lead</small></span>
+                    <span class="home-row-state running">3m</span>
                   </button>
                 </div>
               </section>
 
-              <section class="dashboard-section secondary-card">
-                <header class="section-head">
-                  <span data-icon="app"></span><h2>Upcoming</h2><span class="section-count">1</span>
+              <section class="home-section" aria-labelledby="home-review">
+                <header class="home-section-header">
+                  <span data-icon="check"></span><h2 id="home-review">Ready to review</h2><span class="home-section-count">1</span>
                 </header>
-                <div class="dashboard-list">
-                  <button class="dashboard-row" data-action="打开每日项目状态检查">
-                    <span class="state-orbit automation"></span>
-                    <span class="row-copy"><strong>每日项目状态检查</strong><small>Next run 2026/7/31 09:00:00</small></span>
-                    <span class="open-link">Open</span>
+                <div class="home-list">
+                  <a class="home-row" href="./todos.html#todo=todo-work-search" aria-label="Unify project work search, archcode, Result ready">
+                    <span class="home-orbit review"></span>
+                    <span class="home-row-copy"><strong>Unify project work search</strong><small>archcode · Todo · Lead + Build result attached</small></span>
+                    <span class="home-row-state review">Review</span>
+                  </a>
+                </div>
+              </section>
+
+              <section class="home-section" aria-labelledby="home-upcoming">
+                <header class="home-section-header">
+                  <span data-icon="app"></span><h2 id="home-upcoming">Upcoming</h2><span class="home-section-count">2</span>
+                </header>
+                <div class="home-list">
+                  <a class="home-row" href="./automations.html?automation=aut-regression" aria-label="Regression check, archcode, Tomorrow at 09:00">
+                    <span class="home-orbit automation"></span>
+                    <span class="home-row-copy"><strong>Regression check</strong><small>archcode · Automation · Weekdays at 09:00</small></span>
+                    <span class="home-row-state">Tomorrow 09:00</span>
+                  </a>
+                  <button class="home-row" data-action="打开 specra-test-projects 的 weekly fixture audit Automation">
+                    <span class="home-orbit automation"></span>
+                    <span class="home-row-copy"><strong>Weekly fixture audit</strong><small>specra-test-projects · Automation · Monday at 10:00</small></span>
+                    <span class="home-row-state">Mon 10:00</span>
                   </button>
                 </div>
               </section>
@@ -412,7 +351,6 @@
       </main>
     </div>
 
-    <button class="scrim" aria-label="Close overlay" data-close-overlay></button>
     <div class="toast" role="status" aria-live="polite"></div>
   </body>
 </html>

@@ -1,0 +1,903 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ArchCode Automation management prototype" />
+    <title>ArchCode — Automations Prototype</title>
+    <link rel="stylesheet" href="./styles.css?v=theme-rail-1" />
+    <style>
+      [hidden] { display: none !important; }
+
+      .automation-page-shell {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+      }
+
+      .automation-header {
+        display: grid;
+        grid-template-columns: minmax(220px, 420px) auto;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex: 0 0 auto;
+        min-height: 58px;
+        padding: 12px 24px;
+        border-bottom: 1px solid var(--border-default);
+        background: var(--bg-surface);
+      }
+
+      .primary-button,
+      .secondary-button,
+      .quiet-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 0 13px;
+        border-radius: 5px;
+        font-size: 11px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .primary-button {
+        border: 1px solid var(--brand);
+        background: var(--brand);
+        color: var(--brand-ink);
+      }
+
+      .secondary-button {
+        border: 1px solid var(--border-default);
+        background: var(--bg-elevated);
+        color: var(--text-secondary);
+      }
+
+      .quiet-button {
+        border: 0;
+        background: transparent;
+        color: var(--text-tertiary);
+      }
+
+      .primary-button:hover { background: var(--brand-hover); }
+      .secondary-button:hover,
+      .quiet-button:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+      .automation-layout {
+        display: grid;
+        grid-template-columns: minmax(430px, 0.88fr) minmax(420px, 1.12fr);
+        min-height: 0;
+        flex: 1 1 auto;
+      }
+
+      .automation-list-pane,
+      .automation-detail-pane {
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+      }
+
+      .automation-list-pane {
+        border-right: 1px solid var(--border-default);
+        background: var(--bg-base);
+      }
+
+      .automation-list-inner {
+        width: min(100%, 760px);
+        margin: 0 auto;
+        padding: 22px 24px 48px;
+      }
+
+      .automation-summary {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1px;
+        margin-bottom: 22px;
+        overflow: hidden;
+        border: 1px solid var(--border-default);
+        border-radius: 7px;
+        background: var(--border-default);
+      }
+
+      .automation-summary div {
+        padding: 11px 12px;
+        background: var(--bg-surface);
+      }
+
+      .automation-summary strong,
+      .automation-summary span { display: block; }
+
+      .automation-summary strong {
+        font-size: 17px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .automation-summary span {
+        margin-top: 3px;
+        color: var(--text-tertiary);
+        font-size: 9px;
+        text-transform: uppercase;
+      }
+
+      .automation-group + .automation-group {
+        margin-top: 24px;
+      }
+
+      .automation-group-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 2px 8px;
+      }
+
+      .automation-group-header h2 {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .automation-group-header span {
+        color: var(--text-tertiary);
+        font-size: 10px;
+      }
+
+      .automation-rows {
+        border-top: 1px solid var(--border-default);
+      }
+
+      .automation-row {
+        display: grid;
+        grid-template-columns: 13px minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 10px;
+        width: 100%;
+        min-height: 70px;
+        padding: 13px 8px;
+        border-bottom: 1px solid var(--border-subtle);
+        background: transparent;
+        color: var(--text-secondary);
+        text-align: left;
+      }
+
+      .automation-row:hover,
+      .automation-row[aria-selected="true"] {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .automation-row[aria-selected="true"] {
+        box-shadow: inset 2px 0 0 var(--brand);
+      }
+
+      .automation-orbit {
+        width: 10px;
+        height: 10px;
+        margin-top: 3px;
+        border: 1px solid var(--text-tertiary);
+        border-radius: 50%;
+      }
+
+      .automation-orbit.running {
+        border-color: var(--signal);
+        background: var(--signal);
+        box-shadow: inset 0 0 0 2px var(--bg-surface);
+      }
+
+      .automation-orbit.attention {
+        border-color: var(--warning);
+        background: var(--warning);
+      }
+
+      .automation-orbit.paused { border-color: var(--text-tertiary); }
+
+      .automation-row strong,
+      .automation-row small { display: block; }
+
+      .automation-row strong {
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .automation-row small {
+        margin-top: 5px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+        line-height: 1.45;
+      }
+
+      .automation-row-state {
+        color: var(--text-tertiary);
+        font-size: 9px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .automation-row-state.attention { color: var(--warning); }
+      .automation-row-state.running { color: var(--signal-foreground); }
+
+      .automation-detail-pane {
+        background: var(--bg-surface);
+      }
+
+      .automation-detail {
+        width: min(100%, 820px);
+        margin: 0 auto;
+        padding: 24px 32px 64px;
+      }
+
+      .detail-kicker {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-tertiary);
+        font-size: 9px;
+        font-weight: 680;
+        text-transform: uppercase;
+      }
+
+      .detail-status {
+        display: inline-flex;
+        align-items: center;
+        min-height: 22px;
+        padding: 0 7px;
+        border-radius: 10px;
+        background: var(--signal-field);
+        color: var(--signal-foreground);
+      }
+
+      .detail-status.attention { background: var(--warning-field); color: var(--warning); }
+      .detail-status.paused { background: var(--bg-muted); color: var(--text-tertiary); }
+
+      .detail-title-row {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 18px;
+        margin-top: 10px;
+        padding-bottom: 20px;
+        border-bottom: 1px solid var(--border-default);
+      }
+
+      .detail-title-row h2 {
+        font-size: 24px;
+        line-height: 1.2;
+        letter-spacing: -0.03em;
+      }
+
+      .detail-title-row p {
+        max-width: 600px;
+        margin-top: 7px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .detail-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+      }
+
+      .detail-section {
+        padding: 20px 0;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .detail-section h3 {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .detail-section-copy {
+        margin-top: 10px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.65;
+      }
+
+      .detail-facts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1px;
+        margin-top: 12px;
+        overflow: hidden;
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        background: var(--border-default);
+      }
+
+      .detail-fact {
+        padding: 12px;
+        background: var(--bg-base);
+      }
+
+      .detail-fact span,
+      .detail-fact strong { display: block; }
+
+      .detail-fact span {
+        color: var(--text-tertiary);
+        font-size: 9px;
+        text-transform: uppercase;
+      }
+
+      .detail-fact strong {
+        margin-top: 5px;
+        overflow: hidden;
+        font-family: var(--font-stack-mono);
+        font-size: 10px;
+        font-weight: 560;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .linked-todo {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 10px;
+        padding: 11px 12px;
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        color: var(--text-secondary);
+      }
+
+      .linked-todo:hover { border-color: var(--brand); color: var(--text-primary); }
+
+      .linked-todo span,
+      .linked-todo small { display: block; }
+      .linked-todo span { font-size: 11px; font-weight: 640; }
+      .linked-todo small { margin-top: 3px; color: var(--text-tertiary); font-size: 9px; }
+
+      .run-list { margin-top: 10px; border-top: 1px solid var(--border-subtle); }
+
+      .run-row {
+        display: grid;
+        grid-template-columns: 10px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 43px;
+        border-bottom: 1px solid var(--border-subtle);
+        color: var(--text-secondary);
+        font-size: 10px;
+      }
+
+      .run-row time { color: var(--text-tertiary); font-size: 9px; }
+
+      .automation-mobile-back { display: none; }
+
+      .automation-run-empty {
+        padding: 14px 0;
+        color: var(--text-tertiary);
+        font-size: 11px;
+      }
+
+      .automation-editor {
+        width: min(560px, calc(100vw - 32px));
+        padding: 0;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--bg-overlay);
+        color: var(--text-primary);
+        box-shadow: var(--elevation-lg);
+      }
+
+      .automation-editor::backdrop { background: rgba(8, 10, 8, 0.56); }
+
+      .automation-editor header {
+        padding: 16px 18px 12px;
+        border-bottom: 1px solid var(--border-default);
+      }
+
+      .automation-editor h2 { font-size: 15px; }
+      .automation-editor header p { margin-top: 4px; color: var(--text-tertiary); font-size: 11px; }
+
+      .automation-editor-fields { display: grid; gap: 14px; padding: 16px 18px; }
+
+      .automation-editor label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 11px; font-weight: 640; }
+
+      .automation-editor input,
+      .automation-editor textarea {
+        width: 100%;
+        border: 1px solid var(--control-border);
+        border-radius: 5px;
+        background: var(--bg-base);
+        color: var(--text-primary);
+        font-size: 13px;
+      }
+
+      .automation-editor input { height: 40px; padding: 0 10px; }
+      .automation-editor textarea { min-height: 104px; padding: 10px; resize: vertical; line-height: 1.5; }
+
+      .automation-editor-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 12px 18px 16px;
+        border-top: 1px solid var(--border-default);
+      }
+
+      @media (max-width: 1040px) {
+        .automation-layout { grid-template-columns: minmax(360px, 0.9fr) minmax(360px, 1.1fr); }
+        .automation-detail { padding-right: 22px; padding-left: 22px; }
+      }
+
+      @media (max-width: 840px) {
+        .automation-layout { display: block; overflow: auto; }
+        .automation-list-pane,
+        .automation-detail-pane { overflow: visible; }
+        .automation-list-pane { border-right: 0; }
+        .automation-detail-pane { display: none; }
+        body.automation-detail-open .automation-list-pane { display: none; }
+        body.automation-detail-open .automation-detail-pane { display: block; }
+        .automation-mobile-back {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          min-height: 44px;
+          margin-bottom: 8px;
+          color: var(--text-secondary);
+          font-size: 11px;
+        }
+        .automation-mobile-back [data-icon] { transform: rotate(180deg); }
+      }
+
+      @media (max-width: 760px) {
+        .automation-header {
+          grid-template-columns: minmax(0, 1fr) auto;
+          min-height: 64px;
+          padding: 14px 12px;
+        }
+
+        .automation-header .primary-button { min-height: 44px; padding-right: 10px; padding-left: 10px; }
+        .automation-list-inner { padding: 18px 12px 36px; }
+        .automation-summary div { padding: 10px 8px; }
+        .automation-row { min-height: 74px; padding-right: 6px; padding-left: 6px; }
+        .automation-detail { padding: 22px 12px 48px; }
+        .detail-title-row { display: block; }
+        .detail-title-row h2 { font-size: 21px; }
+        .detail-actions { margin-top: 14px; }
+        .detail-actions button { min-height: 44px; }
+        .detail-facts { grid-template-columns: minmax(0, 1fr); }
+      }
+    </style>
+    <script src="./app.js?v=rail-search-1" defer></script>
+  </head>
+  <body class="automation-page todo-first-shell">
+    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+    <div class="app-shell">
+      <nav class="project-rail" aria-label="Projects">
+        <a class="brand-mark" href="./dashboard.html?v=home-shell-1" aria-label="Open Home"><span>A</span></a>
+        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
+        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
+        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
+        <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
+        <div class="rail-spacer"></div>
+        <div class="rail-separator"></div>
+        <button class="rail-icon rail-search" aria-label="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
+        <button class="rail-icon" aria-label="Open 3 requests needing attention" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
+        <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
+        <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
+      </nav>
+
+      <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
+        <header class="project-toolbar">
+          <div class="project-identity">
+            <span class="project-identity-mark">ar</span>
+            <div class="project-identity-copy"><h1>archcode</h1><span>/workspace/archcode</span></div>
+          </div>
+          <nav class="project-toolbar-nav" aria-label="Project pages">
+            <a href="./todos.html"><span>Todos</span></a>
+            <a class="active" href="./automations.html" aria-current="page"><span>Automations</span></a>
+            <a href="./sessions.html"><span>Sessions</span></a>
+          </nav>
+          <div class="project-toolbar-actions">
+            <button class="icon-button" aria-label="Project actions" data-project-actions data-action="打开项目操作" data-icon="more"></button>
+          </div>
+        </header>
+
+        <div class="project-view">
+          <div class="automation-page-shell">
+            <header class="automation-header">
+              <label class="surface-filter">
+                <span data-icon="search"></span>
+                <span class="sr-only">Filter Automations</span>
+                <input type="search" placeholder="Filter Automations…" autocomplete="off" data-automation-search />
+              </label>
+              <button class="primary-button" data-new-automation>New Automation</button>
+            </header>
+
+            <div class="automation-layout">
+              <section class="automation-list-pane" aria-label="Automation list">
+                <div class="automation-list-inner">
+                  <p class="surface-filter-empty" hidden aria-live="polite" data-automation-filter-empty><strong data-automation-filter-empty-title>No Automations match this filter.</strong><span>Try another name, instruction, schedule, or stable ID.</span></p>
+                  <section class="automation-group" aria-labelledby="attention-title">
+                    <header class="automation-group-header"><h2 id="attention-title">Needs attention</h2><span>1</span></header>
+                    <div class="automation-rows">
+                      <button class="automation-row" aria-selected="false" data-automation-row="aut-health">
+                        <span class="automation-orbit attention"></span>
+                        <span><strong>Daily project health check</strong><small>Every day at 09:00 · last run failed before final report</small></span>
+                        <span class="automation-row-state attention">Needs you</span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section class="automation-group" aria-labelledby="scheduled-title">
+                    <header class="automation-group-header"><h2 id="scheduled-title">Scheduled</h2><span>2</span></header>
+                    <div class="automation-rows">
+                      <button class="automation-row" aria-selected="true" data-automation-row="aut-regression">
+                        <span class="automation-orbit running"></span>
+                        <span><strong>Regression check</strong><small>Weekdays at 09:00 · linked to Model profile defaults per project</small></span>
+                        <span class="automation-row-state running">Tomorrow 09:00</span>
+                      </button>
+                      <button class="automation-row" aria-selected="false" data-automation-row="aut-release-report">
+                        <span class="automation-orbit running"></span>
+                        <span><strong>Release report</strong><small>Friday at 18:00 · summarizes merged work and verification</small></span>
+                        <span class="automation-row-state">Fri 18:00</span>
+                      </button>
+                    </div>
+                  </section>
+
+                  <section class="automation-group" aria-labelledby="paused-title">
+                    <header class="automation-group-header"><h2 id="paused-title">Paused</h2><span>1</span></header>
+                    <div class="automation-rows">
+                      <button class="automation-row" aria-selected="false" data-automation-row="aut-dependencies">
+                        <span class="automation-orbit paused"></span>
+                        <span><strong>Dependency update</strong><small>Monthly · paused after an incompatible Agent Core update</small></span>
+                        <span class="automation-row-state">Paused</span>
+                      </button>
+                    </div>
+                  </section>
+                </div>
+              </section>
+
+              <section class="automation-detail-pane" aria-label="Selected Automation detail">
+                <article class="automation-detail">
+                  <button class="automation-mobile-back" type="button" data-automation-back><span data-icon="chevron"></span>Automations</button>
+                  <div class="detail-kicker"><span class="detail-status" data-detail-status>Scheduled</span><span data-detail-id>aut-regression</span><span>Updated 2h ago</span></div>
+                  <div class="detail-title-row">
+                    <div>
+                      <h2 tabindex="-1" data-detail-title>Regression check</h2>
+                      <p data-detail-summary>Run the focused verification suite against the current Todo implementation and return only actionable failures.</p>
+                    </div>
+                    <div class="detail-actions">
+                      <button class="secondary-button" data-edit-automation>Edit</button>
+                      <button class="primary-button" data-run-automation>Run now</button>
+                    </div>
+                  </div>
+
+                  <section class="detail-section">
+                    <h3>Schedule & execution</h3>
+                    <div class="detail-facts">
+                      <div class="detail-fact"><span>Trigger</span><strong data-detail-trigger>Weekdays at 09:00</strong></div>
+                      <div class="detail-fact"><span>Next run</span><strong data-detail-next>Tomorrow, 09:00</strong></div>
+                      <div class="detail-fact"><span>Agent</span><strong>Lead · principal</strong></div>
+                      <div class="detail-fact"><span>Workspace</span><strong>/workspace/archcode</strong></div>
+                    </div>
+                  </section>
+
+                  <section class="detail-section">
+                    <h3>Instructions</h3>
+                    <p class="detail-section-copy" data-detail-instructions>Read the linked Todo and its Plan, run the focused package checks, and create a durable Session containing the exact result and any failure evidence. Do not change the Todo lifecycle automatically.</p>
+                  </section>
+
+                  <section class="detail-section" data-linked-todo-section>
+                    <h3>Linked Todo</h3>
+                    <a class="linked-todo" href="./todos.html#todo=todo-profile-defaults" data-linked-todo-link>
+                      <span><span data-linked-todo>Model profile defaults per project</span><small>Ready · PRD and Plan available</small></span><span>Open →</span>
+                    </a>
+                  </section>
+
+                  <section class="detail-section">
+                    <h3>Recent runs</h3>
+                    <div class="run-list" data-run-list>
+                      <a class="run-row" href="./session.html?automation=aut-regression&amp;session=sess-aut-regression-20260801"><span class="automation-orbit running"></span><span>Verification passed · sess-aut-regression-20260801</span><time>Yesterday 09:04</time></a>
+                      <a class="run-row" href="./session.html?automation=aut-regression&amp;session=sess-aut-regression-20260731"><span class="automation-orbit running"></span><span>Verification passed · sess-aut-regression-20260731</span><time>Mon 09:03</time></a>
+                    </div>
+                  </section>
+                </article>
+              </section>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <dialog class="automation-editor" data-automation-editor aria-labelledby="automation-editor-title">
+      <form data-automation-editor-form>
+        <header><h2 id="automation-editor-title" data-automation-editor-title>New Automation</h2><p>Define repeated work once; every invocation will create its own Session.</p></header>
+        <div class="automation-editor-fields">
+          <label>Name<input name="name" autocomplete="off" required /></label>
+          <label>Schedule<input name="schedule" autocomplete="off" placeholder="Weekdays at 09:00" required /></label>
+          <label>Instructions<textarea name="instructions" required></textarea></label>
+        </div>
+        <div class="automation-editor-actions"><button class="secondary-button" type="button" data-cancel-automation>Cancel</button><button class="primary-button" type="submit">Save Automation</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast" role="status" aria-live="polite"></div>
+    <script>
+      const automationSamples = {
+        "aut-health": {
+          id: "aut-health",
+          name: "Daily project health check",
+          status: "Needs you",
+          tone: "attention",
+          summary: "Check repository health, surface failed verification, and ask for a decision only when an exact recovery path is known.",
+          trigger: "Every day at 09:00",
+          next: "Blocked pending review",
+          instructions: "Inspect current checks and recent Sessions. If a failure is actionable, preserve the exact logs and ask the user before any destructive recovery.",
+          linkedTodo: null,
+          runs: [
+            { sessionId: "sess-aut-health-failed", label: "Run stopped before final report", time: "Today 09:02", status: "Needs you", tone: "attention" },
+          ],
+        },
+        "aut-regression": {
+          id: "aut-regression",
+          name: "Regression check",
+          status: "Scheduled",
+          tone: "",
+          summary: "Run the focused verification suite against the current Todo implementation and return only actionable failures.",
+          trigger: "Weekdays at 09:00",
+          next: "Tomorrow, 09:00",
+          instructions: "Read the linked Todo and its Plan, run the focused package checks, and create a durable Session containing the exact result and any failure evidence. Do not change the Todo lifecycle automatically.",
+          linkedTodo: { id: "todo-profile-defaults", title: "Model profile defaults per project", meta: "Ready · PRD and Plan available" },
+          runs: [
+            { sessionId: "sess-aut-regression-20260801", label: "Verification passed", time: "Yesterday 09:04", status: "Done", tone: "running" },
+            { sessionId: "sess-aut-regression-20260731", label: "Verification passed", time: "Mon 09:03", status: "Done", tone: "running" },
+          ],
+        },
+        "aut-release-report": {
+          id: "aut-release-report",
+          name: "Release report",
+          status: "Scheduled",
+          tone: "",
+          summary: "Summarize merged work, verification evidence, and unresolved risk for the weekly release handoff.",
+          trigger: "Friday at 18:00",
+          next: "Friday, 18:00",
+          instructions: "Read merged commits and verified results from the current week. Separate shipped work from local or pending changes.",
+          linkedTodo: null,
+          runs: [
+            { sessionId: "sess-aut-release-20260725", label: "Weekly report completed", time: "Last Fri 18:03", status: "Done", tone: "running" },
+          ],
+        },
+        "aut-dependencies": {
+          id: "aut-dependencies",
+          name: "Dependency update",
+          status: "Paused",
+          tone: "paused",
+          summary: "Review bounded dependency updates without silently widening the package or runtime scope.",
+          trigger: "Monthly on day 1",
+          next: "Paused",
+          instructions: "Inspect available package updates, isolate breaking changes, and stop before applying any migration that changes runtime contracts.",
+          linkedTodo: null,
+          runs: [],
+        },
+      };
+
+      const automationList = document.querySelector(".automation-list-pane");
+      const scheduledRows = document.querySelector("#scheduled-title")?.closest(".automation-group")?.querySelector(".automation-rows");
+      const detailTitle = document.querySelector("[data-detail-title]");
+      const detailStatus = document.querySelector("[data-detail-status]");
+      const detailId = document.querySelector("[data-detail-id]");
+      const detailSummary = document.querySelector("[data-detail-summary]");
+      const detailTrigger = document.querySelector("[data-detail-trigger]");
+      const detailNext = document.querySelector("[data-detail-next]");
+      const detailInstructions = document.querySelector("[data-detail-instructions]");
+      const linkedTodoSection = document.querySelector("[data-linked-todo-section]");
+      const linkedTodo = document.querySelector("[data-linked-todo]");
+      const linkedTodoLink = document.querySelector("[data-linked-todo-link]");
+      const runList = document.querySelector("[data-run-list]");
+      const totalCount = document.querySelector("[data-automation-total]");
+      const scheduledCount = document.querySelector("[data-automation-scheduled]");
+      const toolbarCount = document.querySelector(".project-toolbar-nav a.active .toolbar-count");
+      const automationSearch = document.querySelector("[data-automation-search]");
+      const automationFilterEmpty = document.querySelector("[data-automation-filter-empty]");
+      const automationFilterEmptyTitle = document.querySelector("[data-automation-filter-empty-title]");
+      const automationEditor = document.querySelector("[data-automation-editor]");
+      const automationEditorForm = document.querySelector("[data-automation-editor-form]");
+      const automationEditorTitle = document.querySelector("[data-automation-editor-title]");
+      let currentAutomationId = "aut-regression";
+      let editingAutomationId = null;
+
+      function escapeAutomationHtml(value) {
+        return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
+      }
+
+      function notify(message) {
+        if (typeof window.showToast === "function") window.showToast(message);
+      }
+
+      function automationHref(id) {
+        const url = new URL(location.href);
+        url.search = `automation=${encodeURIComponent(id)}`;
+        url.hash = "";
+        return `${url.pathname}${url.search}`;
+      }
+
+      function runHref(sample, run) {
+        return `./session.html?automation=${encodeURIComponent(sample.id)}&session=${encodeURIComponent(run.sessionId)}&title=${encodeURIComponent(sample.name)}`;
+      }
+
+      function renderRuns(sample) {
+        runList.innerHTML = sample.runs.length ? sample.runs.map((run) => `
+          <a class="run-row" href="${runHref(sample, run)}"><span class="automation-orbit ${escapeAutomationHtml(run.tone || "")}"></span><span>${escapeAutomationHtml(run.label)} · ${escapeAutomationHtml(run.sessionId)}</span><time>${escapeAutomationHtml(run.time)}</time></a>`).join("") : '<p class="automation-run-empty">No runs yet. Run now will create the first durable Session.</p>';
+      }
+
+      function rowMarkup(sample) {
+        return `<button class="automation-row" aria-selected="false" data-automation-row="${escapeAutomationHtml(sample.id)}">
+          <span class="automation-orbit running"></span>
+          <span><strong>${escapeAutomationHtml(sample.name)}</strong><small>${escapeAutomationHtml(sample.trigger)} · no runs yet</small></span>
+          <span class="automation-row-state running">${escapeAutomationHtml(sample.next)}</span>
+        </button>`;
+      }
+
+      function refreshCounts() {
+        const total = String(Object.keys(automationSamples).length);
+        const scheduled = String(Object.values(automationSamples).filter((sample) => sample.status === "Scheduled").length);
+        if (totalCount) totalCount.textContent = total;
+        if (toolbarCount) toolbarCount.textContent = total;
+        if (scheduledCount) scheduledCount.textContent = scheduled;
+        const scheduledHeaderCount = document.querySelector("#scheduled-title")?.nextElementSibling;
+        if (scheduledHeaderCount) scheduledHeaderCount.textContent = scheduled;
+      }
+
+      function applyAutomationFilter() {
+        const rawQuery = automationSearch?.value.trim() || "";
+        const query = rawQuery.toLowerCase();
+        let totalVisible = 0;
+        document.querySelectorAll(".automation-group").forEach((group) => {
+          let visible = 0;
+          group.querySelectorAll(".automation-row").forEach((row) => {
+            const id = row.dataset.automationRow;
+            const sample = automationSamples[id];
+            const linkedTodo = sample?.linkedTodo ? `${sample.linkedTodo.id} ${sample.linkedTodo.title} ${sample.linkedTodo.meta}` : "";
+            const haystack = `${id || ""} ${sample?.name || ""} ${sample?.summary || ""} ${sample?.instructions || ""} ${sample?.trigger || ""} ${sample?.next || ""} ${sample?.status || ""} ${linkedTodo} ${row.textContent}`.toLowerCase();
+            const matches = !query || haystack.includes(query);
+            row.hidden = !matches;
+            if (matches) {
+              visible += 1;
+              totalVisible += 1;
+            }
+          });
+          group.hidden = visible === 0;
+          const count = group.querySelector(".automation-group-header > span");
+          if (count) count.textContent = String(visible);
+        });
+        if (automationFilterEmpty) automationFilterEmpty.hidden = !query || totalVisible > 0;
+        if (automationFilterEmptyTitle) automationFilterEmptyTitle.textContent = `No Automations match “${rawQuery}”.`;
+      }
+
+      automationSearch?.addEventListener("input", applyAutomationFilter);
+
+      function selectAutomation(id, { updateHistory = true, openDetail = true } = {}) {
+        const sample = automationSamples[id];
+        if (!sample) {
+          notify(`Automation ${id} was not found`);
+          return false;
+        }
+        currentAutomationId = id;
+        document.querySelectorAll("[data-automation-row]").forEach((row) => row.setAttribute("aria-selected", String(row.dataset.automationRow === id)));
+        detailTitle.textContent = sample.name;
+        detailStatus.textContent = sample.status;
+        detailStatus.className = `detail-status${sample.tone ? ` ${sample.tone}` : ""}`;
+        detailId.textContent = sample.id;
+        detailSummary.textContent = sample.summary;
+        detailTrigger.textContent = sample.trigger;
+        detailNext.textContent = sample.next;
+        detailInstructions.textContent = sample.instructions;
+        linkedTodoSection.hidden = !sample.linkedTodo;
+        if (sample.linkedTodo) {
+          linkedTodo.textContent = sample.linkedTodo.title;
+          linkedTodo.nextElementSibling.textContent = sample.linkedTodo.meta;
+          linkedTodoLink.href = `./todos.html#todo=${encodeURIComponent(sample.linkedTodo.id)}`;
+        }
+        renderRuns(sample);
+        if (updateHistory) history.pushState({ automationDetail: true, automation: id }, "", automationHref(id));
+        const mobileDetail = openDetail && window.matchMedia("(max-width: 840px)").matches;
+        document.body.classList.toggle("automation-detail-open", mobileDetail);
+        if (mobileDetail && updateHistory) requestAnimationFrame(() => detailTitle.focus());
+        return true;
+      }
+
+      function openEditor(id = null) {
+        editingAutomationId = id;
+        const sample = id ? automationSamples[id] : null;
+        automationEditorTitle.textContent = sample ? "Edit Automation" : "New Automation";
+        automationEditorForm.elements.name.value = sample?.name || "";
+        automationEditorForm.elements.schedule.value = sample?.trigger || "";
+        automationEditorForm.elements.instructions.value = sample?.instructions || "";
+        automationEditor.showModal();
+        requestAnimationFrame(() => automationEditorForm.elements.name.focus());
+      }
+
+      automationList.addEventListener("click", (event) => {
+        const row = event.target.closest("[data-automation-row]");
+        if (row) selectAutomation(row.dataset.automationRow);
+      });
+
+      document.querySelector("[data-new-automation]")?.addEventListener("click", () => openEditor());
+      document.querySelector("[data-edit-automation]")?.addEventListener("click", () => openEditor(currentAutomationId));
+      document.querySelector("[data-cancel-automation]")?.addEventListener("click", () => automationEditor.close());
+      automationEditor.addEventListener("click", (event) => {
+        if (event.target === automationEditor) automationEditor.close();
+      });
+
+      automationEditorForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const values = new FormData(automationEditorForm);
+        const name = String(values.get("name") || "").trim();
+        const trigger = String(values.get("schedule") || "").trim();
+        const instructions = String(values.get("instructions") || "").trim();
+        if (!name || !trigger || !instructions) return;
+        if (editingAutomationId) {
+          const sample = automationSamples[editingAutomationId];
+          sample.name = name;
+          sample.trigger = trigger;
+          sample.instructions = instructions;
+          sample.summary = instructions;
+          const row = document.querySelector(`[data-automation-row="${CSS.escape(editingAutomationId)}"]`);
+          row.querySelector("strong").textContent = name;
+          row.querySelector("small").textContent = `${trigger} · ${sample.runs.length ? `${sample.runs.length} recent run${sample.runs.length === 1 ? "" : "s"}` : "no runs yet"}`;
+          selectAutomation(editingAutomationId, { updateHistory: false });
+          applyAutomationFilter();
+          notify(`Updated “${name}”`);
+        } else {
+          const id = `aut-local-${Date.now()}`;
+          automationSamples[id] = { id, name, status: "Scheduled", tone: "", summary: instructions, trigger, next: "Upcoming", instructions, linkedTodo: null, runs: [] };
+          scheduledRows.insertAdjacentHTML("beforeend", rowMarkup(automationSamples[id]));
+          refreshCounts();
+          selectAutomation(id);
+          applyAutomationFilter();
+          notify(`Created “${name}”`);
+        }
+        automationEditor.close();
+      });
+
+      document.querySelector("[data-run-automation]")?.addEventListener("click", () => {
+        const sample = automationSamples[currentAutomationId];
+        const sessionId = `sess-${currentAutomationId}-manual-${Date.now()}`;
+        const href = `./session.html?automation=${encodeURIComponent(currentAutomationId)}&session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(sample.name)}`;
+        const sessions = window.readArchcodePrototypeSessions?.() || [];
+        sessions.unshift({ group: "Running", tone: "running", state: "Running", title: `${sample.name} · Manual run`, sessionId, meta: `Automation · ${sample.name}`, href });
+        localStorage.setItem("archcode-prototype-sessions", JSON.stringify(sessions.slice(0, 6)));
+        location.href = href;
+      });
+
+      document.querySelector("[data-automation-back]")?.addEventListener("click", () => {
+        if (history.state?.automationDetail) {
+          history.back();
+          return;
+        }
+        const url = new URL(location.href);
+        url.searchParams.delete("automation");
+        history.replaceState({}, "", `${url.pathname}${url.search}`);
+        document.body.classList.remove("automation-detail-open");
+        document.querySelector(`[data-automation-row="${CSS.escape(currentAutomationId)}"]`)?.focus();
+      });
+
+      window.addEventListener("popstate", () => {
+        const requested = new URLSearchParams(location.search).get("automation");
+        if (requested && automationSamples[requested]) selectAutomation(requested, { updateHistory: false, openDetail: true });
+        else {
+          document.body.classList.remove("automation-detail-open");
+          selectAutomation(currentAutomationId, { updateHistory: false, openDetail: false });
+        }
+      });
+
+      refreshCounts();
+      applyAutomationFilter();
+      const requestedAutomation = new URLSearchParams(location.search).get("automation");
+      if (!requestedAutomation || !selectAutomation(requestedAutomation, { updateHistory: false, openDetail: true })) {
+        selectAutomation("aut-regression", { updateHistory: false, openDetail: false });
+      }
+    </script>
+  </body>
+</html>

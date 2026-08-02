@@ -1,14 +1,18 @@
 # Signal Workbench Design System
 
-> Synchronized from the current product UI and implementation on 2026-07-30.
+> Target UI specification synchronized with the current effective prototypes on
+> 2026-08-02. Until product implementation catches up, current product code
+> remains authoritative for existing runtime behavior and state mechanics.
 >
 > When designing or implementing a page, read this file first and then read
 > `pages/[page-name].md`. A page file overrides this Master only where it says
 > so. The current product UI is authoritative. When a current prototype exists,
 > use it as a supporting rendered reference:
 > [`dashboard.html`](prototypes/dashboard.html),
-> [`session.html`](prototypes/session.html), or
-> [`todos.html`](prototypes/todos.html).
+> [`todos.html`](prototypes/todos.html),
+> [`automations.html`](prototypes/automations.html),
+> [`sessions.html`](prototypes/sessions.html), or
+> [`session.html`](prototypes/session.html).
 
 ## Product Fit
 
@@ -108,9 +112,12 @@ scheme in prototypes.
 | `--selection-field` | `#eeedf8` | Quiet selected row |
 | `--running-field` | `#f1f4e7` | Quiet running row |
 | `--attention-field` | `#f8f2e8` | Quiet attention band |
-| `--rail` | `#191c19` | Project rail |
-| `--rail-ink` | `#f4f5f1` | Active rail content |
-| `--rail-muted` | `#939a91` | Inactive rail content |
+| `--rail` | `#eceeea` | Light project rail |
+| `--rail-ink` | `#171917` | Active rail content |
+| `--rail-muted` | `#626a62` | Inactive rail content |
+| `--rail-hover` | `#e1e3df` | Rail hover field |
+| `--rail-active` | `#d7dbd4` | Active project field |
+| `--rail-border` | `#cdd1ca` | Rail boundaries and separators |
 | `--terminal-bg` | `#252620` | Bash output surface |
 | `--terminal-text` | `#d7d6cd` | Bash output foreground |
 | `--terminal-muted` | `#aaa99f` | Bash process metadata |
@@ -159,6 +166,9 @@ scheme in prototypes.
 | `--rail` | `#0c0e0c` | Project rail |
 | `--rail-ink` | `#f2f4ef` | Active rail content |
 | `--rail-muted` | `#858c83` | Inactive rail content |
+| `--rail-hover` | `#1c201c` | Rail hover field |
+| `--rail-active` | `#232723` | Active project field |
+| `--rail-border` | `#363c36` | Rail boundaries and separators |
 | `--terminal-bg` | `#0f100e` | Bash output surface |
 | `--terminal-text` | `#dad9d1` | Bash output foreground |
 | `--terminal-muted` | `#aaa99f` | Bash process metadata |
@@ -206,7 +216,7 @@ Type scale:
 | User message | 15px | 400–500 | User intent |
 | Final response | 15px | 400–600 | Agent outcome and supporting detail |
 | Session / Todos title | 20px | 600 | Active work or page identity |
-| Dashboard title | 26px | 700 | Operational overview identity |
+| Global Home title | 26px | 700 | Cross-project operational identity |
 
 Rules:
 
@@ -266,19 +276,22 @@ Layer scale:
 Desktop shell defaults:
 
 ```text
-52px project rail | 264px project navigation | flexible work canvas | 312px inspector
+project pages: 52px project rail | flexible work canvas
+Session detail: 52px project rail | flexible Session canvas | 312px inspector
 ```
 
-- Project navigation is resizable from 210–340px.
 - Context Inspector is resizable from 280–460px.
-- User-adjusted widths persist across visits. Collapse and focus mode never
-  discard the last expanded width.
+- User-adjusted Inspector width persists across visits. Collapse and focus mode
+  never discard the last expanded width.
+- Every project page begins with one 48px project toolbar containing the
+  project identity, the `Todos / Automations / Sessions` navigation, and project
+  actions. Do not duplicate this hierarchy in a persistent project sidebar.
 - Workbench headers use a 64px minimum height and expand when their two-line
   content needs more room.
 - Conversation structure follows the flexible work canvas with safe horizontal
   gutters; prose inside Agent responses uses a 65–72ch reading measure and user
   messages remain capped at 660px.
-- Dashboard content max: 1180px.
+- Global Home content max: 1180px.
 - Todos content max: 1500px.
 - Main regions scroll independently only where the product structure requires it.
 
@@ -286,9 +299,9 @@ Responsive behavior:
 
 | Breakpoint | Behavior |
 |---|---|
-| `>1180px` | Four-region Session shell; inspector and sidebar may collapse |
-| `761–1180px` | 52px rail + persisted/resizable sidebar + canvas; inspector becomes a right overlay below the 64px header |
-| `≤760px` | 48px rail + canvas; project sidebar and inspector become overlays |
+| `>1180px` | Project rail + canvas; Session detail also shows the resizable Inspector |
+| `761–1180px` | 52px rail + canvas; Session Inspector becomes a right overlay below the Session header |
+| `≤760px` | 48px rail + canvas; project toolbar wraps to two rows when needed and the Session Inspector becomes an overlay |
 | `<700px` | Todo Board becomes one column |
 
 Narrow-screen rules:
@@ -308,9 +321,40 @@ Narrow-screen rules:
   outline SVG icons.
 - Active project uses a lime edge marker because it represents the live
   workspace; active in-project navigation uses indigo.
-- Project Dashboard and Todos remain explicit destinations above the
-  Sessions/Automations switcher.
-- Session and Automation lists use one compact row per item:
+- The project rail is theme-adaptive: warm neutral in light mode and graphite
+  in dark mode. Its brand mark, hover fields, selected project, separators, and
+  icon contrast use the matching `--rail-*` tokens; never leave a permanently
+  black rail inside the light theme.
+- The lower rail utility order is global search, Needs you, Settings, then the
+  theme switch. Global search sits immediately above Needs you after the rail
+  separator.
+- The brand mark opens global Home. Home is a cross-project attention and
+  resumption surface; it never becomes a second project inventory.
+- Opening a project enters Todos by default. The stable project-level
+  navigation order is `Todos / Automations / Sessions`; do not add a separate
+  Project Dashboard that restates the same project work.
+- On project inventory pages, the project name is the visible page `h1`. The
+  active project tab labels the work surface, so do not repeat `Todos`,
+  `Automations`, or `Sessions` as a second visible page title below the toolbar.
+  Session detail instead uses the Session title as its page `h1`.
+- Do not show ordinary entity totals in the project tabs. Session totals grow
+  without a useful decision boundary, and mismatched Todo, Automation, and
+  Session count semantics make the navigation harder to interpret.
+- Search has two explicit scopes and never relies on placement alone:
+  - the project rail opens `Search all work` across every registered project
+    with `Command/Ctrl+K`;
+  - each inventory page exposes one visible `Filter {entity}` field that only
+    narrows the current Todo, Automation, or Session surface.
+- Use `Search` for navigational result dialogs and `Filter` for in-place list
+  narrowing. Global results identify their project and entity type and keep
+  urgency grouping within a project. Do not duplicate the global-search icon
+  in the project toolbar.
+- Todo, Automation, and Session filters share one component: 36px high on
+  precise pointers, at least 44px on coarse pointers, a search icon, visible
+  focus ring, the same border/radius/type, and a helpful no-results state.
+  Page-specific source or view controls may sit beside it without restyling the
+  field.
+- Session and Automation pages use one compact row per item:
   `state icon → single-line title → optional goal/attention/time marker`.
 - Use icons for running, completed, Goal, permission, question, and Automation
   states. Reserve short text tags for states that require immediate user action,
@@ -318,13 +362,30 @@ Narrow-screen rules:
 - Do not repeat ordinary state and time in a second descriptive line. Put the
   full state explanation in the accessible name and tooltip.
 - Organize Sessions by decision value: `Needs you`, `Running`, then `Recent`.
+- The Sessions page is the full project execution inventory and the only
+  visible place for the primary `New Session` action. Creating one opens a
+  direct root Lead Session without first creating a Todo.
+- `Direct` describes how a Session was started, not the size or complexity of
+  its work. Do not describe Direct Sessions as `No Todo`, `Quick`, or small
+  work; show the root Agent identity as their neutral source context.
+- A Todo `Run now` creates and opens a Todo-bound Session; an Automation
+  invocation creates and opens an Automation-bound Session. Every Session row
+  and detail header identifies its source as `Todo`, `Automation`, or `Direct`.
+- Todo quick capture presents two explicit outcomes in one surface:
+  - `Save` captures one Idea without starting Agent work;
+  - `Run now` creates the minimal Todo, moves it into active work, creates its
+    bound Lead Session, and opens that Session. Discussion and Plan are optional,
+    not gates for simple work.
+- A Session detail always marks `Sessions` as the active project tab. Its
+  breadcrumb and source metadata preserve the originating Todo or Automation.
 - Mark the currently open Session with `aria-current="page"` and move that
   attribute whenever the user changes Sessions.
 - The theme switch stays at the bottom of the project rail.
-- Project navigation and Context Inspector retain resize, collapse, persisted
-  width, and focus-mode behavior on desktop.
-- On mobile, navigation becomes off-canvas; do not replace it with an unrelated
-  bottom-tab model.
+- Context Inspector retains resize, collapse, persisted width, and focus-mode
+  behavior on desktop.
+- On mobile, keep all three project tabs reachable in a second toolbar row when
+  they do not fit beside the project identity. Do not replace them with an
+  unrelated bottom-tab model or hide Sessions in overflow.
 
 ## Status Language
 
@@ -356,7 +417,7 @@ pulse, and terminal cursor may loop.
 
 ### Rows and Cards
 
-- Dashboard and archived/rejected items are rows separated by rules.
+- Global Home and archived/rejected items are rows separated by rules.
 - Todo cards are one card level only; never nest a card inside another card.
 - Selection uses a 2px indigo inset rule plus border change.
 - Running or attention rows may use a semantic field and 3px inset rule.
@@ -546,6 +607,8 @@ Motion explains state changes; it is not decoration.
 - [ ] Verify light and dark modes independently.
 - [ ] Verify 390px, 760px, 1024px, and 1440px widths.
 - [ ] Confirm no document-level horizontal overflow.
+- [ ] Confirm global Home is cross-project and no project page reintroduces a
+      Project Dashboard or persistent Sessions/Automations sidebar.
 - [ ] Confirm the Composer Dock, headers, and drawers do not hide content.
 - [ ] Confirm pending HITL is the first Composer decision surface and Goal uses
       no progress bar.
