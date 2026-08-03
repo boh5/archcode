@@ -109,6 +109,9 @@ function buildLiveEvalContract(
       ? "none"
       : "lead",
     depth: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? 0 : 1,
+    source: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe"
+      ? { kind: "direct" }
+      : "child",
     allowedDelegateTargets: scenario.agent === "analyst" ? ["explore", "librarian"] : scenario.agent === "lead" ? ["analyst", "build", "explore", "librarian"] : ["explore"],
     todo: "none",
     remainingDepth: scenario.executionMode === "ordinary-root" || scenario.executionMode === "goal-activation-probe" ? 3 : 1,

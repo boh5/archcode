@@ -1,6 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { USER_DATA_DIR_NAME, type McpServerStatus, type ProjectTodo, type PromptTraceSnapshot } from "@archcode/protocol";
+import {
+  PROJECT_STATE_DIR_NAME,
+  USER_DATA_DIR_NAME,
+  type McpServerStatus,
+  type ProjectTodo,
+  type PromptTraceSnapshot,
+} from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
@@ -123,12 +129,21 @@ function durablePromptTrace(trace: CompiledPromptContract["trace"]): PromptTrace
 }
 
 export function buildLifecycleCurrentContext(
-  todo: Pick<ProjectTodo, "id" | "content" | "revision"> | undefined,
+  todo: Pick<ProjectTodo, "id" | "content" | "revision" | "status" | "rejectionReason" | "archivedAt"> | undefined,
+  plan: {
+    readonly path: string;
+    readonly state: "present" | "absent";
+  } | undefined,
 ): string[] {
   return [
     `todoId=${todo?.id ?? "none"}`,
     `todoRevision=${todo?.revision ?? "none"}`,
+    `todoStatus=${todo?.status ?? "none"}`,
+    `todoArchived=${todo === undefined ? "none" : todo.archivedAt === undefined ? "false" : "true"}`,
+    `todoRejectionReason=${todo?.rejectionReason === undefined ? "none" : JSON.stringify(todo.rejectionReason)}`,
     `todoContent=${todo === undefined ? "none" : JSON.stringify(todo.content)}`,
+    `todoPlanPath=${plan === undefined ? "none" : JSON.stringify(plan.path)}`,
+    `todoPlanState=${plan?.state ?? "none"}`,
   ];
 }
 
@@ -468,9 +483,26 @@ export class ConfiguredAgent implements Agent {
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
-    const todo = this.definition.name === "discussion" && state.source?.kind === "todo"
-      ? await input.projectContext.todos.readTodo(state.source.todoId)
-      : undefined;
+    const todoId =
+      state.parentSessionId !== undefined
+        ? undefined
+        : state.source?.kind === "todo"
+          ? state.source.todoId
+          : state.source?.kind === "automation" && state.source.todoId !== null
+            ? state.source.todoId
+            : undefined;
+    const todo = todoId === undefined
+      ? undefined
+      : await input.projectContext.todos.readTodo(todoId);
+    const planPath = todo === undefined
+      ? undefined
+      : `${PROJECT_STATE_DIR_NAME}/plans/${todo.id}.md`;
+    const plan = planPath === undefined
+      ? undefined
+      : {
+          path: planPath,
+          state: await Bun.file(join(this.projectRoot, planPath)).exists() ? "present" as const : "absent" as const,
+        };
     const parentAgentName = state.parentSessionId === undefined
       ? "none"
       : this.storeManager.get(state.parentSessionId, this.projectRoot)?.getState().agentName;
@@ -488,6 +520,7 @@ export class ConfiguredAgent implements Agent {
       parentSessionId: state.parentSessionId ?? "none",
       parentAgentName,
       depth: this.depth,
+      source: state.source ?? "child",
       allowedDelegateTargets,
       todo: todo === undefined ? "none" : { id: todo.id, mode: "bound" },
       remainingDepth: Math.max(0, effectiveMaxDepth - this.depth),
@@ -507,7 +540,7 @@ export class ConfiguredAgent implements Agent {
       },
       agentsMd: this.agentsMd,
       memory: input.memory,
-      currentContext: buildLifecycleCurrentContext(todo),
+      currentContext: buildLifecycleCurrentContext(todo, plan),
       delegationRequest: state.delegationRequest ?? "none",
       env: input.env,
     };

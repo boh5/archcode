@@ -1,5 +1,5 @@
 import type { AgentName } from "../agents/names";
-import type { BuiltinToolName, DelegationRequest } from "@archcode/protocol";
+import type { BuiltinToolName, DelegationRequest, RootSessionSource } from "@archcode/protocol";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
 import type { VersionControl } from "../version-control/detector";
 
@@ -39,6 +39,7 @@ export interface RuntimePromptEnvelope {
   readonly parentAgentName: AgentName | "none";
   readonly depth: number;
   readonly allowedDelegateTargets: readonly AgentName[];
+  readonly source: RootSessionSource | "child";
   readonly todo: { readonly id: string; readonly mode: "bound" } | "none";
   readonly remainingDepth: number;
   readonly maxConcurrentChildren: number;

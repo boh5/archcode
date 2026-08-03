@@ -1,3 +1,5 @@
+import { lstat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
@@ -50,6 +52,14 @@ export const globTool = defineTool({
   permissions: [createWorkspacePermission()],
   async execute(input, ctx): Promise<RawToolResult> {
     try {
+      if (input.path && !(await searchPathExists(ctx.cwd, input.path))) {
+        return createLineSourcePage({
+          lines: [],
+          offset: 0,
+          nextInput: () => input,
+          emptyText: `Search path does not exist: ${input.path}`,
+        });
+      }
       const rgPath = await rgService.ensure();
       const runner = createProcessRunner();
 
@@ -92,6 +102,23 @@ export const globTool = defineTool({
     }
   },
 });
+
+async function searchPathExists(cwd: string, path: string): Promise<boolean> {
+  try {
+    await lstat(resolve(cwd, path));
+    return true;
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return false;
+    throw error;
+  }
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === code;
+}
 
 function getProcessRunnerStdout(
   result: ProcessRunnerResult,
