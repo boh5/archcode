@@ -51,7 +51,7 @@ describe("AgentRuntime Automation worktree wiring", () => {
       name: "isolated check",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check in isolation", location: "worktree" },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
 
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -99,7 +99,7 @@ async function runtimeFixture(): Promise<{
     automationSchedulerTimer: new FakeTimer(clock),
   });
   activeRuntime = runtime;
-  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
   return { runtime, workspaceRoot, sourceSessionId: sourceSession.sessionId };
 }
 

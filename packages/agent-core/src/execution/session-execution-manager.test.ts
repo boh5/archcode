@@ -71,7 +71,9 @@ class TestSessionStoreManager extends SessionStoreManager {
     root: string,
     options: Parameters<SessionStoreManager["create"]>[2],
   ) {
-    const normalizedOptions = options;
+    const normalizedOptions = options.parentSessionId === undefined && options.source === undefined
+      ? { ...options, source: { kind: "direct" } as const }
+      : options;
     if (normalizedOptions.parentSessionId === undefined || normalizedOptions.delegationRequest !== undefined) {
       return super.create(sessionId, root, normalizedOptions);
     }
@@ -190,7 +192,9 @@ function createTestSession(
   root: string,
   options: Parameters<SessionStoreManager["create"]>[2],
 ) {
-  const normalizedOptions = options;
+  const normalizedOptions = options.parentSessionId === undefined && options.source === undefined
+    ? { ...options, source: { kind: "direct" } as const }
+    : options;
   if (normalizedOptions.parentSessionId === undefined || normalizedOptions.delegationRequest !== undefined) {
     return manager.create(sessionId, root, normalizedOptions);
   }
@@ -683,7 +687,7 @@ async function writeSessionFile(input: {
   toolBatches?: SessionFile["toolBatches"];
   agentName?: AgentName;
   delegationRequest?: DelegationRequest;
-  projectTodo?: SessionFile["projectTodo"];
+  source?: SessionFile["source"];
 }): Promise<void> {
   const rootSessionId = input.rootSessionId ?? input.sessionId;
   const request = input.parentSessionId === undefined
@@ -717,7 +721,9 @@ async function writeSessionFile(input: {
     eventCursor: -1,
     ...(request === undefined ? {} : { delegationRequest: request }),
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
-    ...(input.projectTodo === undefined ? {} : { projectTodo: input.projectTodo }),
+    ...(input.parentSessionId !== undefined
+      ? {}
+      : { source: input.source ?? { kind: "direct" as const } }),
   };
   await mkdir(getSessionDir(workspaceRoot, input.sessionId), { recursive: true });
   await Bun.write(getSessionPath(workspaceRoot, input.sessionId), JSON.stringify(file, null, 2));
@@ -1171,7 +1177,7 @@ describe("SessionExecutionManager", () => {
 
   test("same command join preserves a failure that happened before a durable receipt", async () => {
     const rootId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({});
     const failGate = deferred<void>();
     const failure = new SessionInputConflictError("state", "blocked before command claim");
@@ -1199,7 +1205,7 @@ describe("SessionExecutionManager", () => {
 
   test("Stop aborts an active command, barriers queued work, and writes no unrelated execution fact", async () => {
     const rootId = crypto.randomUUID();
-    const store = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "queued result", steps: 1 }), workspaceRoot);
     const { manager } = createManager({ [rootId]: rootAgent });
     const service = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
@@ -1276,7 +1282,7 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const childRun = deferred<MockAgentResult>();
-    storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     storeManager.create(childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
@@ -1323,7 +1329,7 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const childRun = deferred<MockAgentResult>();
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    const rootStore = storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     storeManager.create(childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
@@ -1362,7 +1368,7 @@ describe("SessionExecutionManager", () => {
     const childId = crypto.randomUUID();
     const siblingId = crypto.randomUUID();
     const siblingRun = deferred<MockAgentResult>();
-    storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childStore = storeManager.create(childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
@@ -1399,7 +1405,7 @@ describe("SessionExecutionManager", () => {
   test("rejects a loaded child passed to the root-only family Stop contract", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     storeManager.create(childId, workspaceRoot, { rootSessionId: rootId, parentSessionId: rootId, agentName: "explore" });
     const { manager } = createManager({});
 
@@ -1702,7 +1708,7 @@ describe("SessionExecutionManager", () => {
 
   test("commits a claimed Steer at the next safe point and publishes its execution fence", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const enteredRun = deferred<void>();
     const releaseSafePoint = deferred<void>();
     const agent: Agent = {
@@ -1764,7 +1770,7 @@ describe("SessionExecutionManager", () => {
 
   test("commits an accepted Steer before yielding to a HITL tool-batch continuation", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const enteredRun = deferred<void>();
     const releaseHitlBoundary = deferred<void>();
     let invocation = 0;
@@ -1860,7 +1866,7 @@ describe("SessionExecutionManager", () => {
 
   test("Stop still rolls back a HITL-boundary Steer before its durable commit", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const enteredRun = deferred<void>();
     const releaseHitlBoundary = deferred<void>();
     const commitEntered = deferred<void>();
@@ -1987,7 +1993,7 @@ describe("SessionExecutionManager", () => {
 
   test("Stop invalidates an in-flight Steer commit before its durable CAS", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const enteredRun = deferred<void>();
     const releaseSafePoint = deferred<void>();
     const commitEntered = deferred<void>();
@@ -2057,7 +2063,7 @@ describe("SessionExecutionManager", () => {
 
   test("keeps Todo query-loop continuations inside one durable execution", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       todos: [{ id: "todo-1", content: "finish the task", status: "pending" }],
     });
@@ -2246,7 +2252,7 @@ describe("SessionExecutionManager", () => {
 
   test("HITL suspends and resumes the same logical Execution with a fresh run binding", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const modelRuntime = makeModelRuntime(true, "test:model", "runtime-before-hitl");
     const bindings: ExecutionModelBinding[] = [];
     let invocation = 0;
@@ -2317,7 +2323,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const executionId = `execution-${childId}`;
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const originalLink = makeChildLink(parentId, childId, "explore");
     parentStore.setState({
       childSessionLinks: [{
@@ -2419,7 +2425,7 @@ describe("SessionExecutionManager", () => {
       const childExecutionId = `child-${childState}`;
       const batchId = `batch-${childState}`;
       const toolCallId = `delegate-${childState}`;
-      const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+      const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
       const parentAgent = {
         store: parentStore,
         cwd: workspaceRoot,
@@ -2632,6 +2638,7 @@ describe("SessionExecutionManager", () => {
     const childId = crypto.randomUUID();
     const grandchildId = crypto.randomUUID();
     const rootStore = storeManager.create(rootId, workspaceRoot, {
+      source: { kind: "direct" },
       agentName: "lead",
       title: "Root",
     });
@@ -2842,6 +2849,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
       agentName: "lead",
       title: "Parent",
     });
@@ -3005,7 +3013,7 @@ describe("SessionExecutionManager", () => {
 
   test("atomically rejects duplicate starts while agent creation is pending", async () => {
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const sessionAgentManager = createFakeManager({});
     const pendingManager = new SessionExecutionManager({
       sessionAgentManager: {
@@ -3230,7 +3238,7 @@ describe("SessionExecutionManager", () => {
 
   test("stopSessionFamily force-terminalizes a hung child and frees its concurrency slot", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, {
       sessionFamilyStopTimeoutMs: 50,
       factory: makeFactoryWithChildPolicy({ maxConcurrent: 1 }),
@@ -3295,7 +3303,7 @@ describe("SessionExecutionManager", () => {
 
   test("stopSessionFamily force-settles a hung session command completion", async () => {
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, { sessionFamilyStopTimeoutMs: 50 });
 
     const commandStarted = deferred<void>();
@@ -3335,7 +3343,7 @@ describe("SessionExecutionManager", () => {
 
   test("family stop generation blocks every new owner and drains an already pending child launch", async () => {
     const rootId = crypto.randomUUID();
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    const rootStore = storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const skillResolution = deferred<readonly []>();
     const skillResolutionStarted = deferred<void>();
     const factory = makeFactory({
@@ -3406,7 +3414,7 @@ describe("SessionExecutionManager", () => {
 
   test("closes all new Runtime admission when restart maintenance claims an idle manager", async () => {
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const agent = new MockAgent(
       sessionId,
       Promise.resolve({ text: "must not run", steps: 1 }),
@@ -3543,7 +3551,7 @@ describe("SessionExecutionManager", () => {
   test("startChildExecution validates through factory and runs a child session", async () => {
     const parentId = crypto.randomUUID();
     const worktreeCwd = `${workspaceRoot}.worktrees/child-inheritance`;
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead", cwd: worktreeCwd });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead", cwd: worktreeCwd });
     const factory = makeFactory();
     const { manager, sessionAgentManager } = createManager({}, {
       factory,
@@ -3592,7 +3600,7 @@ describe("SessionExecutionManager", () => {
 
   test("running-link write failure prevents child run and releases reserved slot", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     parentStore.setState({
       append: mock(() => { throw new Error("link write failed"); }),
     } as Partial<SessionStoreState>);
@@ -3626,7 +3634,7 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const middleId = crypto.randomUUID();
     const parentId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     storeManager.create(middleId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
@@ -3661,7 +3669,7 @@ describe("SessionExecutionManager", () => {
 
   test("startChildExecution appends link and canonical prompt before model execution", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const factory = makeFactory();
     let linkStatusesAtRunStart: string[] = [];
     let promptsAtRunStart: string[] = [];
@@ -3696,7 +3704,7 @@ describe("SessionExecutionManager", () => {
 
   test("startChildExecution persists child identity before exposing its parent link or running it", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const flush = deferred<void>();
     const flushStarted = deferred<void>();
     let flushedChildSessionId: string | undefined;
@@ -3743,7 +3751,7 @@ describe("SessionExecutionManager", () => {
 
   test("sync child execution exposes live parent link and canonical prompt before resolving", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childRun = deferred<MockAgentResult>();
     const childCanonicalReady = deferred<void>();
     let linkWhileRunning: ToolChildSessionLink | undefined;
@@ -3800,7 +3808,7 @@ describe("SessionExecutionManager", () => {
 
   test("child HITL pause remains non-terminal, then family Stop converges its link once", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, {
       factory: makeFactory(),
       childRun: Promise.resolve({
@@ -3851,7 +3859,7 @@ describe("SessionExecutionManager", () => {
 
   test("startChildExecution maps failure and a triggered deadline to terminal link statuses", async () => {
     const failedParentId = crypto.randomUUID();
-    const failedParentStore = storeManager.create(failedParentId, workspaceRoot, { agentName: "lead" });
+    const failedParentStore = storeManager.create(failedParentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const failedRun = Promise.reject(new Error("child exploded"));
     // The child snapshot durability barrier adds an async boundary before run().
     void failedRun.catch(() => undefined);
@@ -3869,7 +3877,7 @@ describe("SessionExecutionManager", () => {
     expect(failedParentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "failed", error: "child exploded" });
 
     const timedParentId = crypto.randomUUID();
-    const timedParentStore = storeManager.create(timedParentId, workspaceRoot, { agentName: "lead" });
+    const timedParentStore = storeManager.create(timedParentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const timed = createManager({}, {
       factory: makeFactory({
         getDefinition: mock((name: string) => {
@@ -3902,7 +3910,7 @@ describe("SessionExecutionManager", () => {
 
   test("startChildExecution enforces delegate targets and child concurrency", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const factory = makeFactory();
     const childRun = new Promise<AgentResult>(() => undefined);
     const { manager } = createManager({}, { factory, childRun });
@@ -3939,7 +3947,7 @@ describe("SessionExecutionManager", () => {
 
   test("two legal Build children can be running concurrently", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childRun = new Promise<AgentResult>(() => undefined);
     const { manager } = createManager({}, { factory: makeBuildFactory(), childRun });
 
@@ -3975,7 +3983,7 @@ describe("SessionExecutionManager", () => {
 
   test("child abort race marks link cancelling then cancelled and releases slot", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childRun = new Promise<AgentResult>(() => undefined);
     const { manager, sessionAgentManager } = createManager({}, { factory: makeFactory(), childRun });
 
@@ -4002,7 +4010,7 @@ describe("SessionExecutionManager", () => {
     const grandchildId = crypto.randomUUID();
     await writeSessionFile({
       sessionId: rootId,
-      projectTodo: { todoId: crypto.randomUUID(), entry: "work" },
+      source: { kind: "todo", todoId: crypto.randomUUID(), entry: "work" },
     });
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
@@ -4017,7 +4025,7 @@ describe("SessionExecutionManager", () => {
 
   test("deletion generation blocks execution, child launch, and cwd transition during preflight", async () => {
     const rootId = crypto.randomUUID();
-    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    const rootStore = storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     await storeManager.flushSession(rootId, workspaceRoot);
     const preflightEntered = deferred<void>();
     const releasePreflight = deferred<void>();
@@ -4059,7 +4067,7 @@ describe("SessionExecutionManager", () => {
 
   test("input mutation admission blocks deletion and remains visible to workspace close", async () => {
     const rootId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     await storeManager.flushSession(rootId, workspaceRoot);
     const mutationEntered = deferred<void>();
     const releaseMutation = deferred<void>();
@@ -4095,7 +4103,7 @@ describe("SessionExecutionManager", () => {
 
   test("family control and input mutation have one linearization point", async () => {
     const rootId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     await storeManager.flushSession(rootId, workspaceRoot);
     const controlEntered = deferred<void>();
     const releaseControl = deferred<void>();
@@ -4126,7 +4134,7 @@ describe("SessionExecutionManager", () => {
 
   test("delete performs lifecycle preparation after an in-flight execution quiesces", async () => {
     const rootId = crypto.randomUUID();
-    const store = storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     await storeManager.flushSession(rootId, workspaceRoot);
     const runEntered = deferred<void>();
     let ownerCreatedDuringAbort = false;
@@ -4553,7 +4561,7 @@ describe("SessionExecutionManager", () => {
     const rootId = crypto.randomUUID();
     const executionId = "execution-steer-recovery";
     const restarted = new SessionStoreManager({ logger: silentLogger });
-    const store = restarted.create(rootId, workspaceRoot, { agentName: "lead" });
+    const store = restarted.create(rootId, workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachment: AttachmentDescriptor = {
       id: crypto.randomUUID(),
       name: "steer-recovery.txt",
@@ -4777,7 +4785,7 @@ describe("SessionExecutionManager", () => {
 
   test("resumeChildExecution on completed session appends new messages and links the resume tool call", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const factory = makeFactory();
     const { manager } = createManager({}, { factory });
 
@@ -4825,7 +4833,7 @@ describe("SessionExecutionManager", () => {
 
   test("blocks cwd transitions for active descendants and never resumes an old child across checkouts", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childRun = deferred<MockAgentResult>();
     const childStarted = deferred<void>();
     let childRunCount = 0;
@@ -4889,7 +4897,7 @@ describe("SessionExecutionManager", () => {
 
   test("serializes child launches and resumes against the full cwd transition lease", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const skillResolution = deferred<readonly []>();
     const skillResolutionEntered = deferred<void>();
     let childRunCount = 0;
@@ -5005,7 +5013,7 @@ describe("SessionExecutionManager", () => {
   test("idle cwd transition leases reject an active root command", async () => {
     const sessionId = crypto.randomUUID();
     const commandGate = deferred<void>();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({});
     const command = manager.runSessionCommand({
       workspaceRoot,
@@ -5122,7 +5130,7 @@ describe("SessionExecutionManager", () => {
     for (const activation of cases) {
       const rootId = crypto.randomUUID();
       const childId = crypto.randomUUID();
-      storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+      storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
       const childStore = storeManager.create(childId, workspaceRoot, {
         rootSessionId: rootId,
         parentSessionId: rootId,
@@ -5147,7 +5155,7 @@ describe("SessionExecutionManager", () => {
     for (const warm of [false, true]) {
       const rootId = crypto.randomUUID();
       const childId = crypto.randomUUID();
-      storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+      storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
       const childStore = storeManager.create(childId, workspaceRoot, {
         rootSessionId: rootId,
         parentSessionId: rootId,
@@ -5244,7 +5252,7 @@ describe("SessionExecutionManager", () => {
 
   test("fails closed when Session cwd changes during asynchronous scope validation", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const validationStarted = deferred<void>();
     const allowValidation = deferred<void>();
     const { manager } = createManager({}, {
@@ -5276,7 +5284,7 @@ describe("SessionExecutionManager", () => {
 
   test("exposes an async checked-start claim before project close can observe a false idle workspace", async () => {
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const validationStarted = deferred<void>();
     const allowValidation = deferred<void>();
     const { manager } = createManager({}, {
@@ -5312,7 +5320,7 @@ describe("SessionExecutionManager", () => {
 
   test("fails closed when any persisted owner identity changes during scope validation", async () => {
     const sessionId = crypto.randomUUID();
-    const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const validationStarted = deferred<void>();
     const allowValidation = deferred<void>();
     const { manager } = createManager({}, {
@@ -5352,7 +5360,7 @@ describe("SessionExecutionManager", () => {
   test("re-checks the synchronous cwd-transition guard after cold root loading", async () => {
     const rootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    await storeManager.createSessionFile(workspaceRoot, { agentName: "lead" }, rootId);
+    await storeManager.createSessionFile(workspaceRoot, { source: { kind: "direct" }, agentName: "lead" }, rootId);
     const rootStore = await storeManager.getOrLoad(rootId, workspaceRoot);
     await storeManager.createSessionFile(workspaceRoot, {
       rootSessionId: rootId,
@@ -5405,7 +5413,7 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution exposes a running link for the current resume tool call", async () => {
     const parentId = crypto.randomUUID();
     const childSessionId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childStore = storeManager.create(childSessionId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
@@ -5493,7 +5501,7 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution uses the canonical child title instead of a stale link title", async () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childStore = storeManager.create(childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
@@ -5526,7 +5534,7 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution rejects a child without a canonical title", async () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     storeManager.create(childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
@@ -5549,7 +5557,7 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution rejects Skills that drift from the durable delegation request", async () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childStore = storeManager.create(childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
@@ -5580,7 +5588,7 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution rejects mutable child model selection instead of overriding its Profile", async () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childStore = storeManager.create(childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
@@ -5617,7 +5625,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const foreignRootId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     storeManager.create(childId, workspaceRoot, {
       rootSessionId: foreignRootId,
       parentSessionId: parentId,
@@ -5643,7 +5651,7 @@ describe("SessionExecutionManager", () => {
     const middleId = crypto.randomUUID();
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    storeManager.create(rootId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     storeManager.create(middleId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
@@ -5685,7 +5693,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const firstChildId = crypto.randomUUID();
     const secondChildId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const firstStore = storeManager.create(firstChildId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
@@ -5732,7 +5740,7 @@ describe("SessionExecutionManager", () => {
     const timedChildId = crypto.randomUUID();
     const uncascadedChildId = crypto.randomUUID();
     const cascadedChildId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const timedStore = storeManager.create(timedChildId, workspaceRoot, {
       rootSessionId: parentId, parentSessionId: parentId, agentName: "explore", title: "Timed child",
     });
@@ -5793,7 +5801,7 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution supports background links and terminal reminders", async () => {
     const parentId = crypto.randomUUID();
     const childSessionId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childStore = storeManager.create(childSessionId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
@@ -5869,7 +5877,7 @@ describe("SessionExecutionManager", () => {
 
   test("resumeChildExecution on running session throws AgentRunningError", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childRun = deferred<MockAgentResult>();
     const { manager } = createManager({}, { factory: makeFactory(), childRun: childRun.promise });
 
@@ -5901,7 +5909,7 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution rejects a child with an unresolved durable HITL blocker", async () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childStore = storeManager.create(childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
@@ -5928,7 +5936,7 @@ describe("SessionExecutionManager", () => {
 
   test("resumeChildExecution on non-existent session throws ChildSessionNotFoundError", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, { factory: makeFactory() });
 
     await expect(manager.resumeChildExecution(workspaceRoot, {
@@ -5946,8 +5954,8 @@ describe("SessionExecutionManager", () => {
   test("resumeChildExecution with wrong parent throws ChildSessionParentMismatchError", async () => {
     const parentId = crypto.randomUUID();
     const otherParentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
-    const otherParentStore = storeManager.create(otherParentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const otherParentStore = storeManager.create(otherParentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, { factory: makeFactory() });
 
     const first = await manager.startChildExecution(workspaceRoot, {
@@ -5974,7 +5982,7 @@ describe("SessionExecutionManager", () => {
 
   test("cancelChildSession on running descendant aborts, marks link cancelled, appends reminder", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childRun = deferred<MockAgentResult>();
     const { manager } = createManager({}, { factory: makeFactory(), childRun: childRun.promise });
 
@@ -6002,8 +6010,8 @@ describe("SessionExecutionManager", () => {
   test("cancelChildSession on non-descendant throws ChildSessionNotDescendantError", async () => {
     const parentId = crypto.randomUUID();
     const strangerId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
-    storeManager.create(strangerId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    storeManager.create(strangerId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, { factory: makeFactory() });
 
     expect(() => manager.cancelChildSession(workspaceRoot, parentId, strangerId)).toThrow(ChildSessionNotDescendantError);
@@ -6011,7 +6019,7 @@ describe("SessionExecutionManager", () => {
 
   test("cancelChildSession on non-running session returns false", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "lead" });
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, { factory: makeFactory() });
 
     const child = await manager.startChildExecution(workspaceRoot, {

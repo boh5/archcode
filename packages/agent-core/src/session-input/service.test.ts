@@ -117,7 +117,7 @@ describe("SessionInputService", () => {
     manager = new SessionStoreManager({ logger: silentLogger });
     resolveDescriptors.mockClear();
     service = new SessionInputService(manager, { resolveDescriptors });
-    await manager.createSessionFile(WORKSPACE, { agentName: "lead" }, ROOT_SESSION_ID);
+    await manager.createSessionFile(WORKSPACE, { source: { kind: "direct" }, agentName: "lead" }, ROOT_SESSION_ID);
   });
 
   afterEach(async () => {
@@ -156,6 +156,28 @@ describe("SessionInputService", () => {
     expect(retry).toEqual(first);
     expect((await manager.getSessionFile(WORKSPACE, ROOT_SESSION_ID)).pendingMessages.map((message) => message.content))
       .toEqual(["B", "C"]);
+  });
+
+  test("owns the durable message receipt lookup used by composed commands", async () => {
+    expect(await service.hasDurableMessage({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      clientRequestId: "durable-message",
+    })).toBe(false);
+    await service.acceptMessage({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "Persist this input",
+      attachmentIds: [],
+      clientRequestId: "durable-message",
+      source: "user",
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    });
+    expect(await service.hasDurableMessage({
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      clientRequestId: "durable-message",
+    })).toBe(true);
   });
 
   test("concurrent acceptMessage replay waits for and shares the first durable acceptance", async () => {

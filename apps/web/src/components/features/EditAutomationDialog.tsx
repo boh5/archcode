@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AUTOMATION_MESSAGE_MAX_LENGTH,
   AUTOMATION_NAME_MAX_LENGTH,
@@ -17,7 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { useUpdateAutomation } from "../../api/mutations";
+import { useCreateAutomation, useUpdateAutomation } from "../../api/mutations";
 import type {
   Automation,
   AutomationAction,
@@ -60,7 +60,7 @@ interface EditAutomationDialogProps {
   open: boolean;
   onClose: () => void;
   slug: string;
-  automation: Automation;
+  automation?: Automation;
 }
 
 export function EditAutomationDialog({
@@ -70,6 +70,27 @@ export function EditAutomationDialog({
   automation,
 }: EditAutomationDialogProps) {
   const update = useUpdateAutomation();
+  const create = useCreateAutomation();
+  const initial = useMemo(() => {
+    const interval = automation?.trigger.kind === "interval"
+      ? intervalFromMilliseconds(automation.trigger.everyMs)
+      : { value: 1, unit: "minutes" as const };
+    return {
+      name: automation?.name ?? "",
+      triggerKind: automation?.trigger.kind ?? "interval" as const,
+      onceAt: automation?.trigger.kind === "once" ? automation.trigger.at.slice(0, 16) : "",
+      intervalValue: interval.value,
+      intervalUnit: interval.unit,
+      cron: automation?.trigger.kind === "cron" ? automation.trigger.expression : "*/15 * * * *",
+      timezone: automation?.trigger.kind === "cron"
+        ? automation.trigger.timezone
+        : Intl.DateTimeFormat().resolvedOptions().timeZone,
+      actionKind: automation?.action.kind ?? "start_session" as const,
+      message: automation?.action.message ?? "",
+      sessionId: automation?.action.kind === "send_message" ? automation.action.sessionId : "",
+      location: automation?.action.kind === "start_session" ? automation.action.location : "project" as const,
+    };
+  }, [automation]);
   const [name, setName] = useState("");
   const [triggerKind, setTriggerKind] = useState<AutomationTrigger["kind"]>("interval");
   const [onceAt, setOnceAt] = useState("");
@@ -84,27 +105,37 @@ export function EditAutomationDialog({
 
   useEffect(() => {
     if (!open) return;
-    const interval = automation.trigger.kind === "interval"
-      ? intervalFromMilliseconds(automation.trigger.everyMs)
-      : { value: 1, unit: "minutes" as const };
+    setName(initial.name);
+    setTriggerKind(initial.triggerKind);
+    setOnceAt(initial.onceAt);
+    setIntervalValue(initial.intervalValue);
+    setIntervalUnit(initial.intervalUnit);
+    setCron(initial.cron);
+    setTimezone(initial.timezone);
+    setActionKind(initial.actionKind);
+    setMessage(initial.message);
+    setSessionId(initial.sessionId);
+    setLocation(initial.location);
+  }, [initial, open]);
 
-    setName(automation.name);
-    setTriggerKind(automation.trigger.kind);
-    setOnceAt(automation.trigger.kind === "once" ? automation.trigger.at.slice(0, 16) : "");
-    setIntervalValue(interval.value);
-    setIntervalUnit(interval.unit);
-    setCron(automation.trigger.kind === "cron" ? automation.trigger.expression : "*/15 * * * *");
-    setTimezone(automation.trigger.kind === "cron"
-      ? automation.trigger.timezone
-      : Intl.DateTimeFormat().resolvedOptions().timeZone);
-    setActionKind(automation.action.kind);
-    setMessage(automation.action.message);
-    setSessionId(automation.action.kind === "send_message" ? automation.action.sessionId : "");
-    setLocation(automation.action.kind === "start_session" ? automation.action.location : "project");
-  }, [open, automation.id]);
-
-  const pending = update.isPending;
-  const error = update.error;
+  const pending = update.isPending || create.isPending;
+  const error = update.error ?? create.error;
+  const dirty = name !== initial.name
+    || triggerKind !== initial.triggerKind
+    || onceAt !== initial.onceAt
+    || intervalValue !== initial.intervalValue
+    || intervalUnit !== initial.intervalUnit
+    || cron !== initial.cron
+    || timezone !== initial.timezone
+    || actionKind !== initial.actionKind
+    || message !== initial.message
+    || sessionId !== initial.sessionId
+    || location !== initial.location;
+  const requestClose = () => {
+    if (pending) return;
+    if (dirty && !window.confirm("Discard unsaved Automation changes?")) return;
+    onClose();
+  };
   const everyMs = intervalToMilliseconds(intervalValue, intervalUnit);
   const valid = name.trim().length > 0
     && name.trim().length <= AUTOMATION_NAME_MAX_LENGTH
@@ -130,7 +161,8 @@ export function EditAutomationDialog({
       ? { kind: "start_session", message: message.trim(), location }
       : { kind: "send_message", message: message.trim(), sessionId: sessionId.trim() };
     const payload: Required<UpdateAutomationPayload> = { name: name.trim(), trigger, action };
-    update.mutate({ slug, automationId: automation.id, ...payload }, { onSuccess: onClose });
+    if (automation) update.mutate({ slug, automationId: automation.id, ...payload }, { onSuccess: onClose });
+    else create.mutate({ slug, ...payload }, { onSuccess: onClose });
   };
 
   const errorMessage = error
@@ -140,7 +172,7 @@ export function EditAutomationDialog({
     : null;
 
   return (
-    <DialogRoot open={open} onOpenChange={(next) => { if (!next && !pending) onClose(); }}>
+    <DialogRoot open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
       <DialogContent size="large" className="overflow-hidden p-0">
         <form onSubmit={submit} className="flex max-h-[calc(100vh-32px)] flex-col">
           <header className="flex shrink-0 items-center gap-3 border-b border-border-subtle px-5 py-4">
@@ -149,7 +181,7 @@ export function EditAutomationDialog({
             </div>
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-base font-semibold text-text-primary">
-                Edit Automation
+                {automation ? "Edit Automation" : "New Automation"}
               </DialogTitle>
               <DialogDescription className="mt-1 text-[12px] text-text-tertiary">
                 Schedule an ordinary Session message. The Session keeps its existing tools and permissions.
@@ -157,10 +189,10 @@ export function EditAutomationDialog({
             </div>
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={pending}
               aria-label="Close"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
             >
               <X size={15} aria-hidden="true" />
             </button>
@@ -348,6 +380,7 @@ export function EditAutomationDialog({
                           onChange={() => setLocation("worktree")}
                         />
                       </div>
+                      <FieldHint>Every run starts a root Lead Session with the principal profile.</FieldHint>
                     </fieldset>
                   ) : (
                     <div>
@@ -389,18 +422,18 @@ export function EditAutomationDialog({
             <div className="flex shrink-0 items-center gap-2">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={requestClose}
                 disabled={pending}
-                className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:h-11"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!valid || pending}
-                className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:h-11"
               >
-                {pending ? "Saving…" : "Save changes"}
+                {pending ? "Saving…" : automation ? "Save changes" : "Create Automation"}
               </button>
             </div>
           </footer>

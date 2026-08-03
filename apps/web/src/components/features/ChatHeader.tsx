@@ -2,7 +2,6 @@ import { Link } from "react-router-dom";
 import { useSessionStore } from "../../store/session-store";
 import { TodoProgressButton } from "./TodoProgressButton";
 import { InspectorToggleButton } from "./InspectorToggleButton";
-import { SidebarToggleButton } from "./SidebarToggleButton";
 import {
   executionVisualKind,
   presentExecutionStatus,
@@ -66,7 +65,6 @@ export function ChatHeader({
 
   return (
     <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border-default bg-bg-surface px-4 py-2.5 sm:px-6">
-      <SidebarToggleButton />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="min-w-0 truncate text-[20px] font-semibold leading-7 tracking-[-0.025em] text-text-primary">

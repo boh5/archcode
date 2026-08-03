@@ -26,7 +26,7 @@ function request(overrides: Partial<DelegationRequest> = {}): DelegationRequest 
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
-    store: storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "lead" }),
+    store: storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" }),
     storeManager,
     toolName: "delegate",
     toolCallId: "delegate-call",
@@ -82,7 +82,7 @@ describe("delegate request", () => {
   });
 
   it("passes one canonical request and returns ordinary final output", async () => {
-    const parentStore = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { agentName: "lead" });
+    const parentStore = storeManager.create(crypto.randomUUID(), WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
     const value = request();
     const handle = childHandle(parentStore.getState().sessionId, value);
     let childRequest: ChildExecutionRequest | undefined;

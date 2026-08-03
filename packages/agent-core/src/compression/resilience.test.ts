@@ -89,7 +89,7 @@ function compactableMessages(): StoredMessage[] {
 }
 
 function makeStore(sessionId = `compression-resilience-${crypto.randomUUID()}`) {
-  const store = storeManager.create(sessionId, TEST_WORKSPACE_ROOT, { agentName: "lead" });
+  const store = storeManager.create(sessionId, TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
   store.setState({ messages: compactableMessages() });
   return store;
 }

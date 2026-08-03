@@ -240,7 +240,7 @@ describe("AddProjectModal", () => {
     expect("name" in (addProjectMutate.mock.calls[0]?.[0] as Record<string, unknown>)).toBe(false);
   });
 
-  test("opens a successfully registered project's Dashboard", () => {
+  test("opens a successfully registered project's Todos", () => {
     const tree = renderWithState(["", "", "/workspace/archcode", -1]);
     const submit = findAll(
       tree,
@@ -256,7 +256,7 @@ describe("AddProjectModal", () => {
       addedAt: "2026-01-01T00:00:00.000Z",
     });
 
-    expect(navigate).toHaveBeenCalledWith("/projects/archcode");
+    expect(navigate).toHaveBeenCalledWith("/projects/archcode/todos");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

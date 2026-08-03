@@ -37,7 +37,7 @@ function descriptor(
 
 function context() {
   const workspaceRoot = join(ROOT, "workspace");
-  const store = storeManager.create(`finalizer-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead" });
+  const store = storeManager.create(`finalizer-${crypto.randomUUID()}`, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
   return createToolExecutionContext({
     store,
     storeManager,

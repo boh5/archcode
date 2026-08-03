@@ -99,7 +99,6 @@ describe("ChatHeader", () => {
     );
     expect(status?.textContent).toContain("Needs you");
     expect(status?.getAttribute("data-product-status")).toBe("needs_you");
-    expect(container.querySelector('header > button[aria-label="Collapse project sidebar"]')).not.toBeNull();
     expect(container.querySelector('header button[aria-label="Expand context inspector"]')).not.toBeNull();
   });
 });

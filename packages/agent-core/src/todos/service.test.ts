@@ -2,10 +2,12 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CreateProjectTodoSessionInput } from "@archcode/protocol";
+import type { CreateProjectTodoSessionInput, RootSessionSummary } from "@archcode/protocol";
 
 import {
   ProjectTodoDiscussionAuthorizationError,
+  ProjectTodoRunNowConflictError,
+  ProjectTodoRunNowRecoveryError,
   ProjectTodoRevisionConflictError,
   ProjectTodoSessionStateError,
 } from "./errors";
@@ -31,6 +33,9 @@ class FakeSessions implements ProjectTodoSessionCapability {
   readonly messages = new Map<string, Parameters<ProjectTodoSessionCapability["acceptMessage"]>[0]>();
   failCreate = 0;
   failAccept = 0;
+  failAcceptAfterDurable = 0;
+  failDurableRead = 0;
+  failDelete = 0;
 
   async createRootSession(input: Parameters<ProjectTodoSessionCapability["createRootSession"]>[0]) {
     if (this.failCreate-- > 0) throw new Error("injected Session creation failure");
@@ -42,6 +47,36 @@ class FakeSessions implements ProjectTodoSessionCapability {
   async acceptMessage(input: Parameters<ProjectTodoSessionCapability["acceptMessage"]>[0]): Promise<void> {
     if (this.failAccept-- > 0) throw new Error("injected message acceptance failure");
     this.messages.set(input.sessionId, input);
+    if (this.failAcceptAfterDurable-- > 0) throw new Error("injected wake-up failure");
+  }
+
+  async readRootSession(input: Parameters<ProjectTodoSessionCapability["readRootSession"]>[0]): Promise<RootSessionSummary> {
+    const session = this.sessions.get(input.sessionId);
+    if (session === undefined) throw new Error("missing Session");
+    return {
+      sessionId: input.sessionId,
+      cwd: session.workspaceRoot,
+      rootSessionId: input.sessionId,
+      agentName: session.agentName,
+      profile: "principal",
+      activeSkillNames: [],
+      modelSelection: { revision: 0 },
+      title: session.title,
+      source: session.source,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+  }
+
+  async hasDurableMessage(input: Parameters<ProjectTodoSessionCapability["hasDurableMessage"]>[0]): Promise<boolean> {
+    if (this.failDurableRead-- > 0) throw new Error("injected durable receipt read failure");
+    return this.messages.get(input.sessionId)?.clientRequestId === input.clientRequestId;
+  }
+
+  async deleteSession(input: Parameters<ProjectTodoSessionCapability["deleteSession"]>[0]): Promise<void> {
+    if (this.failDelete-- > 0) throw new Error("injected Session delete failure");
+    this.sessions.delete(input.sessionId);
+    this.messages.delete(input.sessionId);
   }
 }
 
@@ -89,7 +124,8 @@ describe("ProjectTodoService", () => {
     expect(first.todo).toEqual(todo);
     expect(second.todo).toEqual(todo);
     expect(first.sessionId).not.toBe(second.sessionId);
-    expect(sessions.sessions.get(first.sessionId)?.projectTodo).toEqual({
+    expect(sessions.sessions.get(first.sessionId)?.source).toEqual({
+      kind: "todo",
       todoId: todo.id,
       entry: "discussion",
     });
@@ -154,8 +190,8 @@ describe("ProjectTodoService", () => {
     expect(second.todo).toEqual(first.todo);
     expect(automation.todo).toEqual(first.todo);
     expect(new Set([first.sessionId, second.sessionId, automation.sessionId]).size).toBe(3);
-    expect(sessions.sessions.get(second.sessionId)?.projectTodo.entry).toBe("work");
-    expect(sessions.sessions.get(automation.sessionId)?.projectTodo.entry).toBe("automation");
+    expect(sessions.sessions.get(second.sessionId)?.source).toMatchObject({ kind: "todo", entry: "work" });
+    expect(sessions.sessions.get(automation.sessionId)?.source).toMatchObject({ kind: "todo", entry: "automation" });
     expect(sessions.messages.get(automation.sessionId)?.text).toStartWith("/skill use automation-create ");
   });
 
@@ -222,6 +258,91 @@ describe("ProjectTodoService", () => {
     expect(sessions.messages.size).toBe(0);
   });
 
+  test("runs now once across concurrent and sequential idempotent retries", async () => {
+    const { service, sessions } = fixture();
+    const clientRequestId = crypto.randomUUID();
+    const request = { clientRequestId, title: "Fix the type", body: "Change the field." };
+
+    const [first, concurrent] = await Promise.all([
+      service.runNow(request),
+      service.runNow(request),
+    ]);
+    const replay = await service.runNow(request);
+
+    expect(concurrent).toEqual(first);
+    expect(replay).toEqual(first);
+    expect(first.todo).toMatchObject({ status: "in_progress", revision: 1 });
+    expect(first.session.source).toEqual({ kind: "todo", todoId: first.todo.id, entry: "work" });
+    expect(sessions.sessions.size).toBe(1);
+    expect(sessions.messages.size).toBe(1);
+    expect(await service.listTodos()).toHaveLength(1);
+    await expect(service.runNow({ ...request, title: "Different" }))
+      .rejects.toBeInstanceOf(ProjectTodoRunNowConflictError);
+  });
+
+  test("compensates failed run-now creation and non-durable acceptance", async () => {
+    const { service, sessions } = fixture();
+
+    sessions.failCreate = 1;
+    const createRequest = { clientRequestId: crypto.randomUUID(), title: "Create fails" };
+    await expect(service.runNow(createRequest)).rejects.toThrow("Session creation failure");
+    expect(await service.listTodos()).toEqual([]);
+
+    sessions.failAccept = 1;
+    const acceptRequest = { clientRequestId: crypto.randomUUID(), title: "Accept fails" };
+    await expect(service.runNow(acceptRequest)).rejects.toThrow("message acceptance failure");
+    expect(await service.listTodos()).toEqual([]);
+    expect(sessions.sessions.size).toBe(0);
+
+    const retried = await service.runNow(acceptRequest);
+    expect(retried.todo.status).toBe("in_progress");
+    expect(await service.listTodos()).toHaveLength(1);
+  });
+
+  test("keeps durable accepted work when execution wake-up fails", async () => {
+    const { service, sessions } = fixture();
+    sessions.failAcceptAfterDurable = 1;
+
+    const result = await service.runNow({
+      clientRequestId: crypto.randomUUID(),
+      title: "Accepted before wake-up",
+    });
+
+    expect(result.todo.status).toBe("in_progress");
+    expect(sessions.sessions.has(result.session.sessionId)).toBe(true);
+    expect(sessions.messages.has(result.session.sessionId)).toBe(true);
+  });
+
+  test("returns recovery identifiers when compensation cannot delete partial work", async () => {
+    const { service, sessions } = fixture();
+    sessions.failAccept = 1;
+    sessions.failDelete = 1;
+
+    const error = await service.runNow({
+      clientRequestId: crypto.randomUUID(),
+      title: "Needs recovery",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ProjectTodoRunNowRecoveryError);
+    expect(error).toMatchObject({ todoId: expect.any(String), sessionId: expect.any(String) });
+  });
+
+  test("returns typed recovery identifiers when durable acceptance cannot be determined", async () => {
+    const { service, sessions } = fixture();
+    sessions.failAccept = 1;
+    sessions.failDurableRead = 1;
+
+    const error = await service.runNow({
+      clientRequestId: crypto.randomUUID(),
+      title: "Acceptance is indeterminate",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ProjectTodoRunNowRecoveryError);
+    expect(error).toMatchObject({ todoId: expect.any(String), sessionId: expect.any(String) });
+    expect(sessions.sessions.size).toBe(1);
+    expect(await service.listTodos()).toHaveLength(1);
+  });
+
   test("authorizes Discussion updates from root identity and immutable Todo binding", async () => {
     const { service } = fixture();
     const todo = await service.createTodo({ title: "Shape" });
@@ -231,7 +352,7 @@ describe("ProjectTodoService", () => {
       rootSessionId: sessionId,
       agentName: "discussion",
       projectSlug: "project-a",
-      projectTodo: { todoId: todo.id, entry: "discussion" as const },
+      source: { kind: "todo" as const, todoId: todo.id, entry: "discussion" as const },
     };
 
     const updated = await service.updateFromDiscussion({
@@ -245,7 +366,7 @@ describe("ProjectTodoService", () => {
       { ...authorization, agentName: "lead" },
       { ...authorization, rootSessionId: crypto.randomUUID() },
       { ...authorization, projectSlug: "project-b" },
-      { ...authorization, projectTodo: undefined },
+      { ...authorization, source: undefined },
     ]) {
       await expect(service.updateFromDiscussion({
         authorization: invalidAuthorization,

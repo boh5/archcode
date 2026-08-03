@@ -1,6 +1,6 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { AgentDescriptor, DashboardProjection, DashboardScope, ModelRuntimeCatalog } from "@archcode/protocol";
+import type { AgentDescriptor, HomeResponse, ModelRuntimeCatalog, WorkSearchResponse } from "@archcode/protocol";
 import type {
   DiffFile,
   DirectoryListResponse,
@@ -10,6 +10,9 @@ import type {
   Project,
   Session,
   SessionSummary,
+  ProjectSessionInventoryItem,
+  ProjectAutomationInventoryItem,
+  ProjectTodoPlan,
   SessionTreeResponse,
   ProjectTodo,
 } from "./types";
@@ -22,9 +25,8 @@ export const queryKeys = {
   modelRuntime: ["config", "model-runtime"] as const,
   update: ["update"] as const,
   projects: ["projects"] as const,
-  dashboardProjection: (scope: DashboardScope) => scope.kind === "global"
-    ? ["dashboard", "global"] as const
-    : ["dashboard", "project", scope.projectSlug] as const,
+  home: ["home"] as const,
+  workSearch: (query: string) => ["search", query] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
@@ -66,11 +68,24 @@ export function projectsQueryOptions() {
   });
 }
 
+export function homeQueryOptions() {
+  return queryOptions({ queryKey: queryKeys.home, queryFn: () => apiFetch<HomeResponse>("/api/home") });
+}
+
+export function workSearchQueryOptions(query: string) {
+  const normalized = query.trim();
+  return queryOptions({
+    queryKey: queryKeys.workSearch(normalized),
+    queryFn: () => apiFetch<WorkSearchResponse>(`/api/search?q=${encodeURIComponent(normalized)}`),
+    enabled: normalized.length > 0 && normalized.length <= 200,
+  });
+}
+
 export function sessionsQueryOptions(slug: string) {
   return queryOptions({
     queryKey: queryKeys.sessions(slug),
     queryFn: async () => {
-      const response = await apiFetch<{ sessions: SessionSummary[] }>(
+      const response = await apiFetch<{ sessions: ProjectSessionInventoryItem[] }>(
         `/api/projects/${encodeURIComponent(slug)}/sessions`,
       );
       return response.sessions;
@@ -107,15 +122,6 @@ export function focusedSessionQueryOptions(slug: string, focusSessionId: string 
   });
 }
 
-export function dashboardProjectionQueryOptions(scope: DashboardScope) {
-  return queryOptions({
-    queryKey: queryKeys.dashboardProjection(scope),
-    queryFn: () => apiFetch<DashboardProjection>(scope.kind === "global"
-      ? "/api/dashboard"
-      : `/api/projects/${encodeURIComponent(scope.projectSlug)}/dashboard`),
-  });
-}
-
 export function diffQueryOptions(slug: string, sessionId?: string) {
   const scopedSessionId = sessionId?.trim() || undefined;
   return queryOptions({
@@ -138,6 +144,14 @@ export function useProjects() {
   return useQuery(projectsQueryOptions());
 }
 
+export function useHome() {
+  return useQuery(homeQueryOptions());
+}
+
+export function useWorkSearch(query: string) {
+  return useQuery(workSearchQueryOptions(query));
+}
+
 export function useAgents() {
   return useQuery(agentsQueryOptions());
 }
@@ -147,6 +161,10 @@ export function useModelRuntime() {
 }
 
 export function useSessions(slug: string) {
+  return useQuery({ ...sessionsQueryOptions(slug), select: (items) => items.map((item) => item.session) });
+}
+
+export function useSessionInventory(slug: string) {
   return useQuery(sessionsQueryOptions(slug));
 }
 
@@ -173,11 +191,6 @@ export function useFocusedSession(slug: string, focusSessionId: string | null) {
 
 export function useSessionTree(slug: string, rootSessionId: string) {
   return useQuery(sessionTreeQueryOptions(slug, rootSessionId));
-}
-
-/** Fetches the raw server read projection; UI composition remains local and transient. */
-export function useDashboardReadProjection(scope: DashboardScope) {
-  return useQuery(dashboardProjectionQueryOptions(scope));
 }
 
 export function useDiff(
@@ -223,7 +236,7 @@ export function automationsQueryOptions(slug: string) {
   return queryOptions({
     queryKey: queryKeys.projectAutomations(slug),
     queryFn: async () => {
-      const response = await apiFetch<{ automations: Automation[] }>(
+      const response = await apiFetch<{ automations: ProjectAutomationInventoryItem[] }>(
         `/api/projects/${encodeURIComponent(slug)}/automations`,
       );
       return response.automations;
@@ -261,6 +274,10 @@ export function automationInvocationsQueryOptions(slug: string, automationId: st
 // ─── Automation hooks ───
 
 export function useAutomations(slug: string) {
+  return useQuery({ ...automationsQueryOptions(slug), select: (items) => items.map((item) => item.automation) });
+}
+
+export function useAutomationInventory(slug: string) {
   return useQuery(automationsQueryOptions(slug));
 }
 
@@ -287,4 +304,18 @@ export function projectTodosQueryOptions(slug: string) {
 
 export function useProjectTodos(slug: string) {
   return useQuery(projectTodosQueryOptions(slug));
+}
+
+export function projectTodoPlanQueryOptions(slug: string, todoId: string) {
+  return queryOptions({
+    queryKey: ["projects", slug, "todos", todoId, "plan"] as const,
+    queryFn: () => apiFetch<{ plan: ProjectTodoPlan | null }>(
+      `/api/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(todoId)}/plan`,
+    ).then((response) => response.plan),
+    enabled: slug.length > 0 && todoId.length > 0,
+  });
+}
+
+export function useProjectTodoPlan(slug: string, todoId: string) {
+  return useQuery(projectTodoPlanQueryOptions(slug, todoId));
 }

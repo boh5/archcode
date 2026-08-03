@@ -13,10 +13,12 @@ import {
   SessionModelSelectionNotAllowedError,
 } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
+import type { ProjectSessionInventoryResponse } from "@archcode/protocol";
 import { z } from "zod/v4";
 import { BadRequestError, ConflictError, ServerError, SessionNotFoundError, SessionStopConflictHttpError } from "../errors";
 import { resolveProject } from "../resolve";
 import { zValidator } from "../validation";
+import { readProjectSessionInventory } from "../project-inventory-read";
 
 const ProjectParamsSchema = z.strictObject({ slug: z.string().min(1) });
 const SessionParamsSchema = z.strictObject({
@@ -51,15 +53,18 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
 
   app.get("/", zValidator("param", ProjectParamsSchema), async (c) => {
     const project = await resolveProject(runtime, c.req.valid("param").slug);
-    const sessions = await runtime.listSessions(project.workspaceRoot);
+    const sessions = await readProjectSessionInventory(runtime, project.workspaceRoot);
 
-    return c.json({ sessions });
+    return c.json({ sessions } satisfies ProjectSessionInventoryResponse);
   });
 
   app.post("/", zValidator("param", ProjectParamsSchema), async (c) => {
     await rejectRequestBody(c.req.text());
     const project = await resolveProject(runtime, c.req.valid("param").slug);
-    return c.json(await runtime.createSession(project.workspaceRoot, { agentName: "lead" }), 201);
+    return c.json(await runtime.createSession(project.workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "direct" },
+    }), 201);
   });
 
   app.get("/:sessionId", zValidator("param", SessionParamsSchema), async (c) => {

@@ -14,6 +14,15 @@ async function productionSources(): Promise<Array<{ path: string; source: string
 }
 
 describe("visual contract", () => {
+  test("keeps RootLayout as the single work-canvas main landmark", async () => {
+    const rootLayout = await Bun.file(`${sourceRoot}/routes/root-layout.tsx`).text();
+    expect(rootLayout.match(/<main\b/g)).toHaveLength(1);
+    for (const path of ["home.tsx", "project-todos.tsx", "project-sessions.tsx", "automations.tsx", "automation-detail.tsx"]) {
+      const route = await Bun.file(`${sourceRoot}/routes/${path}`).text();
+      expect(route).not.toContain("<main");
+    }
+  });
+
   test("locks the dense 2/4px geometry unit and named type scale independently of root font size", async () => {
     const globals = await Bun.file(`${sourceRoot}/styles/globals.css`).text();
     expect(globals).toContain("--spacing: 4px;");
@@ -49,7 +58,6 @@ describe("visual contract", () => {
     const violations: string[] = [];
     const roundedLgAllowlist = new Map<string, number>([
       ["routes/root-layout.tsx", 1],
-      ["routes/dashboard.tsx", 1],
       ["routes/project-todos.tsx", 2],
       ["components/ui/ContextMenu.tsx", 1],
       ["components/ui/DropdownMenu.tsx", 1],
@@ -60,6 +68,7 @@ describe("visual contract", () => {
       ["components/features/TodoProgressButton.tsx", 1],
       ["components/features/HitlBell.tsx", 1],
       ["components/features/ProjectBar.tsx", 2],
+      ["components/features/WorkSearchDialog.tsx", 1],
       ["components/primitives/IconAction.tsx", 1],
       ["components/composite/Toast.tsx", 1],
       ["components/composite/ExecutionWorkstream.tsx", 1],

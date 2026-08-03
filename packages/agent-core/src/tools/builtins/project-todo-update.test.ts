@@ -37,7 +37,7 @@ function makeContext(
     sessionId,
     rootSessionId: sessionId,
     agentName: "discussion",
-    projectTodo: { todoId, entry: "discussion" },
+    source: { kind: "todo", todoId, entry: "discussion" },
     ...overrides,
   });
   const projectContext = {
@@ -139,7 +139,7 @@ describe("project_todo_update", () => {
         rootSessionId: sessionId,
         agentName: "discussion",
         projectSlug: "test-project",
-        projectTodo: { todoId, entry: "discussion" },
+        source: { kind: "todo", todoId, entry: "discussion" },
       },
       expectedRevision: 4,
       patch: {
@@ -215,7 +215,7 @@ describe("project_todo_update", () => {
         rootSessionId: sessionId,
         agentName: "discussion",
         projectSlug: "test-project",
-        projectTodo: { todoId, entry: "discussion" },
+        source: { kind: "todo", todoId, entry: "discussion" },
       },
       expectedRevision: 4,
       patch: {
@@ -231,7 +231,7 @@ describe("project_todo_update", () => {
       { agentName: "analyst" as const },
       { rootSessionId: crypto.randomUUID() },
       { parentSessionId: crypto.randomUUID() },
-      { projectTodo: undefined },
+      { source: undefined },
     ]) {
       const { ctx, updateFromDiscussion } = makeContext(overrides);
 

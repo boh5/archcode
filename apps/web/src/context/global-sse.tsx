@@ -408,7 +408,7 @@ export function handleSSEEvent(
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
         deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
-        if (store.getState().rootSessionId === envelope.sessionId) invalidateDashboardProjectionQueries(deps, envelope.slug);
+        if (store.getState().rootSessionId === envelope.sessionId) invalidateHomeQuery(deps);
       }
 
       if (envelope.payload.type === "session.goal_changed") {
@@ -419,7 +419,7 @@ export function handleSSEEvent(
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
         deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
-        invalidateDashboardProjectionQueries(deps, envelope.slug);
+        invalidateHomeQuery(deps);
       }
 
       if (
@@ -449,7 +449,7 @@ export function handleSSEEvent(
     case "reset": {
       const reset = parsed as GlobalSSEResetEvent;
       deps.invalidateQueries({ queryKey: queryKeys.session(reset.slug, reset.sessionId) });
-      invalidateDashboardProjectionQueries(deps, reset.slug);
+      invalidateHomeQuery(deps);
       deps.refreshMcpStatus();
       break;
     }
@@ -457,7 +457,7 @@ export function handleSSEEvent(
       invalidateControlPlaneReadiness();
       beginSessionSnapshotRecovery();
       deps.refreshSessionSnapshots();
-      deps.invalidateQueries({ queryKey: ["dashboard"] });
+      deps.invalidateQueries({ queryKey: queryKeys.home });
       deps.requestReconnect();
       break;
     }
@@ -487,6 +487,7 @@ export function handleSSEEvent(
     case "hitl.event": {
       const hitlEvent = parsed as GlobalSSEHitlRealtimeEvent;
       hitlStore.getState().applyRealtimeEvent(hitlEvent);
+      invalidateHomeQuery(deps);
       const entry = deps.hitlNotificationGate?.observeRealtimeEvent(hitlEvent);
       if (entry) deps.onLiveHitlRequest?.(entry);
       break;
@@ -510,6 +511,7 @@ export function handleSSEEvent(
         queryKey: queryKeys.session(change.projectSlug, change.rootSessionId),
       });
       deps.invalidateQueries({ queryKey: queryKeys.sessions(change.projectSlug) });
+      invalidateHomeQuery(deps);
       break;
     }
     case "update.changed": {
@@ -522,12 +524,13 @@ export function handleSSEEvent(
 function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSEResourceChangedEvent): void {
   if (event.resourceType === "automation") {
     invalidateAutomationQueries(deps, event.projectSlug, event.resourceId);
-    invalidateDashboardProjectionQueries(deps, event.projectSlug);
+    invalidateHomeQuery(deps);
     return;
   }
 
   if (event.resourceType === "todo") {
     deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
+    invalidateHomeQuery(deps);
     return;
   }
 
@@ -537,7 +540,7 @@ function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSERe
   deps.invalidateQueries({ queryKey: queryKeys.sessions(event.projectSlug) });
   deps.invalidateQueries({ queryKey: queryKeys.tree(event.projectSlug, event.resourceId) });
   deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
-  invalidateDashboardProjectionQueries(deps, event.projectSlug);
+  invalidateHomeQuery(deps);
 }
 
 function invalidateAutomationQueries(
@@ -550,12 +553,10 @@ function invalidateAutomationQueries(
   deps.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) });
 }
 
-function invalidateDashboardProjectionQueries(
+function invalidateHomeQuery(
   deps: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
-  projectSlug: string,
 ): void {
-  deps.invalidateQueries({ queryKey: queryKeys.dashboardProjection({ kind: "global" }) });
-  deps.invalidateQueries({ queryKey: queryKeys.dashboardProjection({ kind: "project", projectSlug }) });
+  deps.invalidateQueries({ queryKey: queryKeys.home });
 }
 
 export function GlobalSSEProvider({ children }: { children: ReactNode }) {
@@ -603,8 +604,8 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
     });
   }, [queryClient]);
 
-  const refreshDashboardProjections = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  const refreshHome = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.home });
   }, [queryClient]);
 
   const handleEvent = useCallback(
@@ -673,7 +674,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         reconnectStateRef.current.requested = false;
         watchdogRef.current?.connectionOpened();
         refreshSessionSnapshots();
-        refreshDashboardProjections();
+        refreshHome();
         void queryClient.invalidateQueries({ queryKey: queryKeys.modelRuntime });
         void queryClient.invalidateQueries({ queryKey: queryKeys.update });
         void refreshProjectTodoQueriesAfterSSEOpen(queryClient);
@@ -694,7 +695,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
       abortRef.current = null;
       client.abort();
     };
-  }, [handleEvent, handleError, queryClient, reconnectEpoch, refreshDashboardProjections, refreshSessionSnapshots]);
+  }, [handleEvent, handleError, queryClient, reconnectEpoch, refreshHome, refreshSessionSnapshots]);
 
   useEffect(() => {
     refreshMcpStatus();

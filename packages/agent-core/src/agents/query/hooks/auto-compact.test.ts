@@ -84,7 +84,7 @@ function message(index: number): StoredMessage {
 }
 
 function createStore(messageCount = 6) {
-  const store = storeManager.create(`auto-compact-wrapper-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "lead" });
+  const store = storeManager.create(`auto-compact-wrapper-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
   store.setState({ messages: Array.from({ length: messageCount }, (_, index) => message(index + 1)) });
   return store;
 }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createSession, deleteSession, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, setSessionGoalBudget, stopSessionFamily, uploadSessionAttachment } from "./mutations";
+import { createSession, deleteSession, invalidateProjectCatalog, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, setSessionGoalBudget, stopSessionFamily, uploadSessionAttachment } from "./mutations";
+import { queryKeys } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -8,6 +9,18 @@ const TEST_PROJECT_SLUG = "test-project";
 afterEach(() => {
   globalThis.fetch = originalFetch;
   globalThis.document = originalDocument;
+});
+
+describe("project catalog mutation invalidation", () => {
+  test("refreshes both the Project Rail and global Home projection", async () => {
+    const invalidateQueries = mock(async () => undefined);
+
+    await invalidateProjectCatalog({ invalidateQueries } as never);
+
+    expect(invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.projects });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.home });
+  });
 });
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {

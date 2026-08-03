@@ -4,6 +4,7 @@ import {
   PROJECT_TODO_TITLE_MAX_LENGTH,
   type CreateProjectTodoSessionInput,
   type ProjectTodo,
+  type ProjectTodoRunNowInput,
   type ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import { z } from "zod/v4";
@@ -51,10 +52,19 @@ export const ProjectTodoSchema = z.strictObject({
   }
 }) satisfies z.ZodType<ProjectTodo>;
 
+export const ProjectTodoRunNowReceiptSchema = z.strictObject({
+  clientRequestId: z.uuid(),
+  requestHash: z.string().length(64),
+  todoId: z.uuid(),
+  sessionId: z.uuid(),
+});
+
 export const ProjectTodoStateFileSchema = z.strictObject({
   todos: z.array(ProjectTodoSchema),
+  runNowReceipts: z.array(ProjectTodoRunNowReceiptSchema),
 }).superRefine((state, context) => {
   addUniqueIssues(state.todos.map((todo) => todo.id), "Todo id", context);
+  addUniqueIssues(state.runNowReceipts.map((receipt) => receipt.clientRequestId), "Run-now clientRequestId", context);
 });
 
 export type ProjectTodoStateFile = z.infer<typeof ProjectTodoStateFileSchema>;
@@ -63,6 +73,12 @@ export const ProjectTodoCreateSchema = z.strictObject({
   title: ProjectTodoTitleSchema,
   body: ProjectTodoBodySchema.optional(),
 });
+
+export const ProjectTodoRunNowSchema = z.strictObject({
+  clientRequestId: z.uuid(),
+  title: ProjectTodoTitleSchema,
+  body: ProjectTodoBodySchema.optional(),
+}) satisfies z.ZodType<ProjectTodoRunNowInput>;
 
 export const ProjectTodoUpdateSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),

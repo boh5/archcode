@@ -30,7 +30,10 @@ function makeCtx(secretLiterals: string[] = []): ToolExecutionContext {
     hitl: new ProjectHitlQueue({ workspaceRoot, codec }),
   };
   return {
-    store: createSessionStore(crypto.randomUUID(), workspaceRoot),
+    store: storeManager.create(crypto.randomUUID(), workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "direct" },
+    }),
     toolName: "ask_user",
     toolCallId: "call-1",
     input: {},

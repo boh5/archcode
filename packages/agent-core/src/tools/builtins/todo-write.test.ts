@@ -30,7 +30,7 @@ function settled(outcome: RegistryExecutionOutcome) {
 }
 
 function makeStore(): StoreApi<SessionStoreState> {
-  return storeManager.create(`todo-test-${crypto.randomUUID()}`, testDir, { agentName: "lead" });
+  return storeManager.create(`todo-test-${crypto.randomUUID()}`, testDir, { source: { kind: "direct" }, agentName: "lead" });
 }
 
 function makeCtx(store: StoreApi<SessionStoreState>): ToolExecutionContext {

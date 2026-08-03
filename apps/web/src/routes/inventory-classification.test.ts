@@ -1,0 +1,106 @@
+import { describe, expect, test } from "bun:test";
+import type { ProjectAutomationInventoryItem, ProjectSessionInventoryItem } from "../api/types";
+import { classifyAutomationInventory, matchesAutomationInventory } from "./automations";
+import { classifySessionInventory, presentSessionInventoryStatus, sessionAttentionLabels } from "./project-sessions";
+
+const automation = (id: string, status: "active" | "paused" | "disabled", invocationStatus?: "failed" | "missed" | "dispatched"): ProjectAutomationInventoryItem => ({
+  automation: {
+    id,
+    projectSlug: "demo",
+    origin: { kind: "direct" },
+    name: id,
+    trigger: { kind: "interval", everyMs: 60_000 },
+    action: { kind: "start_session", message: "Run", location: "project" },
+    status,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: `2026-08-0${id.length}T00:00:00.000Z`,
+  },
+  latestInvocation: invocationStatus ? {
+    id: `${id}-invocation`, automationId: id, dueAt: "2026-08-03T00:00:00.000Z", status: invocationStatus, createdAt: "2026-08-03T00:00:00.000Z",
+  } : null,
+});
+
+describe("inventory classification", () => {
+  test("assigns each Automation to exactly one operational group", () => {
+    const groups = classifyAutomationInventory([
+      automation("failed", "active", "failed"),
+      automation("scheduled", "active", "dispatched"),
+      automation("paused", "paused"),
+      automation("inactive", "disabled"),
+    ]);
+    expect(Object.fromEntries(Object.entries(groups).map(([key, items]) => [key, items.map((item) => item.automation.id)]))).toEqual({
+      "needs-attention": ["failed"], scheduled: ["scheduled"], paused: ["paused"], inactive: ["inactive"],
+    });
+  });
+
+  test("filters Automations by schedule, linked Todo title, and latest run state", () => {
+    const item = automation("linked", "active", "dispatched");
+    const linked = {
+      ...item,
+      automation: {
+        ...item.automation,
+        origin: { kind: "todo" as const, todoId: "todo-1", sessionId: "session-1" },
+        trigger: { kind: "cron" as const, expression: "0 9 * * 1", timezone: "Asia/Shanghai" },
+      },
+    };
+    const todoNames = new Map([["todo-1", "Weekly dependency review"]]);
+
+    expect(matchesAutomationInventory(linked, "Asia/Shanghai", todoNames)).toBe(true);
+    expect(matchesAutomationInventory(linked, "dependency review", todoNames)).toBe(true);
+    expect(matchesAutomationInventory(linked, "dispatched", todoNames)).toBe(true);
+    expect(matchesAutomationInventory(linked, "unrelated", todoNames)).toBe(false);
+  });
+
+  test("gives attention precedence over running activity for Sessions", () => {
+    const item = {
+      session: { sessionId: "session-1", updatedAt: 1 },
+      latestExecution: null,
+    } as ProjectSessionInventoryItem;
+    const groups = classifySessionInventory([item], new Map([["session-1", "running"]]), new Set(["session-1"]));
+    expect(groups["needs-you"]).toEqual([item]);
+    expect(groups.running).toEqual([]);
+    expect(groups.recent).toEqual([]);
+  });
+
+  test("keeps failed and timed-out Sessions in Needs you instead of Recent", () => {
+    const failed = {
+      session: { sessionId: "failed", updatedAt: 2 },
+      latestExecution: { id: "execution-failed", status: "failed", startedAt: 1, endedAt: 2 },
+    } as ProjectSessionInventoryItem;
+    const timedOut = {
+      session: { sessionId: "timed-out", updatedAt: 1 },
+      latestExecution: { id: "execution-timeout", status: "timed_out", startedAt: 1, endedAt: 2 },
+    } as ProjectSessionInventoryItem;
+
+    const groups = classifySessionInventory([timedOut, failed], new Map(), new Set());
+
+    expect(groups["needs-you"]).toEqual([failed, timedOut]);
+    expect(groups.running).toEqual([]);
+    expect(groups.recent).toEqual([]);
+  });
+
+  test("preserves Permission and Question labels for Session attention", () => {
+    const labels = sessionAttentionLabels([
+      { rootSessionId: "question", view: { source: { type: "ask_user" } } },
+      { rootSessionId: "permission", view: { source: { type: "tool_permission" } } },
+    ]);
+
+    expect([...labels]).toEqual([
+      ["question", "Question"],
+      ["permission", "Permission"],
+    ]);
+  });
+
+  test("presents every durable terminal and suspended Session state without calling it Idle", () => {
+    const item = (status: NonNullable<ProjectSessionInventoryItem["latestExecution"]>["status"]) => ({
+      session: { sessionId: status, updatedAt: 1 },
+      latestExecution: { id: `execution-${status}`, status, startedAt: 1, ...(status === "running" || status === "suspended" ? {} : { endedAt: 2 }) },
+    } as ProjectSessionInventoryItem);
+
+    expect(presentSessionInventoryStatus(item("max_steps"), "idle")).toEqual({ label: "Stopped · Max steps", kind: "failed" });
+    expect(presentSessionInventoryStatus(item("aborted"), "idle")).toEqual({ label: "Stopped · Aborted", kind: "stopped" });
+    expect(presentSessionInventoryStatus(item("cancelled"), "idle")).toEqual({ label: "Stopped · Cancelled", kind: "stopped" });
+    expect(presentSessionInventoryStatus(item("interrupted"), "idle")).toEqual({ label: "Stopped · Interrupted", kind: "stopped" });
+    expect(presentSessionInventoryStatus(item("suspended"), "idle")).toEqual({ label: "Suspended", kind: "blocked" });
+  });
+});

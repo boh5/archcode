@@ -38,6 +38,7 @@ import {
 import {
   effectiveSessionFocusId,
   hasSessionSnapshotRecoveryOwner,
+  presentRootSessionSource,
   SessionRoute,
 } from "./session";
 import { WorkbenchLayoutProvider, useWorkbenchLayout } from "../context/workbench-layout";
@@ -52,6 +53,33 @@ function applySnapshot(
     currentSessionSnapshotGeneration(),
   );
 }
+
+describe("root Session source presentation", () => {
+  test("maps every source kind and never presents missing source as Direct", () => {
+    expect(presentRootSessionSource({ source: { kind: "direct" }, slug: "demo" })).toMatchObject({
+      label: "Direct",
+      title: "Direct Session",
+    });
+    expect(presentRootSessionSource({
+      source: { kind: "todo", todoId: "todo-1", entry: "work" },
+      slug: "demo",
+      todoTitle: "Implement source contract",
+    })).toMatchObject({ label: "Work Todo", title: "Implement source contract" });
+    expect(presentRootSessionSource({
+      source: { kind: "automation", automationId: "auto-1", invocationId: "run-1" },
+      slug: "demo",
+    })).toEqual({
+      label: "Automation",
+      title: "auto-1 · unavailable",
+      to: "/projects/demo/automations/auto-1?invocation=run-1",
+    });
+    expect(presentRootSessionSource({ source: undefined, slug: "demo" })).toEqual({
+      label: "Source",
+      title: "Source unavailable",
+      to: "/projects/demo/sessions",
+    });
+  });
+});
 
 function createSession(input: {
   id: string;
@@ -271,6 +299,12 @@ describe("SessionRoute store-level behavior", () => {
     expect(sessionSource).toContain("<InspectorToggleButton");
     expect(panelToggleSource).toContain("max-[760px]:hidden");
     expect(panelToggleSource).not.toContain("max-[799px]:hidden");
+  });
+
+  test("wires the Invocation client request id to canonical and queued message owners", async () => {
+    const sessionSource = await Bun.file(new URL("./session.tsx", import.meta.url)).text();
+    expect(sessionSource).toContain('searchParams.get("invocation")');
+    expect(sessionSource.match(/focusClientRequestId=\{focusClientRequestId\}/g)).toHaveLength(4);
   });
 
   test("markSessionForeground(true) pins the store against eviction", () => {
@@ -551,9 +585,7 @@ describe("SessionRoute focused view store behavior", () => {
     dom.window.localStorage.setItem(
       "archcode.workbench.layout",
       JSON.stringify({
-        sidebarWidth: 280,
         inspectorWidth: 360,
-        sidebarCollapsed: false,
         inspectorCollapsed: true,
       }),
     );
@@ -1062,10 +1094,9 @@ describe("SessionRoute focused view store behavior", () => {
       rootSessionId: "root-session",
       title: "Shape offline mode",
       messages: [],
-    }) as ReturnType<typeof createSession> & {
-      projectTodo: { todoId: string; entry: "discussion" };
-    };
-    rootSession.projectTodo = {
+    });
+    rootSession.source = {
+      kind: "todo",
       todoId: "todo-offline-mode",
       entry: "discussion",
     };

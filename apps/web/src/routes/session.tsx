@@ -1,17 +1,17 @@
 import { useEffect, useRef } from "react";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import type { RootSessionSource } from "@archcode/protocol";
 import {
   ExecutionWorkstream,
   retainExecutionWorkstreamUiState,
 } from "../components/composite/ExecutionWorkstream";
-import { ChatHeader } from "../components/features/ChatHeader";
+import { ChatHeader, type ChatHeaderSource } from "../components/features/ChatHeader";
 import { SessionComposerDock } from "../components/features/SessionComposerDock";
 import { DiffTab } from "../components/features/DiffTab";
 import { TodoProgressButton } from "../components/features/TodoProgressButton";
 import { InspectorToggleButton } from "../components/features/InspectorToggleButton";
-import { SidebarToggleButton } from "../components/features/SidebarToggleButton";
-import { useAgents, useFocusedSession, useProjectTodos, useSession } from "../api/queries";
+import { useAgents, useAutomation, useFocusedSession, useProjectTodos, useSession } from "../api/queries";
 import {
   beginSessionSnapshotRecovery,
   getWebSessionStore,
@@ -92,7 +92,49 @@ export function effectiveSessionFocusId(
     : requestedFocusSessionId;
 }
 
+export function presentRootSessionSource(input: {
+  source: RootSessionSource | undefined;
+  slug: string;
+  todoTitle?: string;
+  automationTitle?: string;
+}): ChatHeaderSource {
+  const projectPath = `/projects/${encodeURIComponent(input.slug)}`;
+  const source = input.source;
+  if (source?.kind === "direct") {
+    return {
+      label: "Direct",
+      title: "Direct Session",
+      to: `${projectPath}/sessions`,
+    };
+  }
+  if (source?.kind === "todo") {
+    const label = source.entry === "discussion"
+      ? "Discussion Todo"
+      : source.entry === "automation"
+        ? "Automation setup Todo"
+        : "Work Todo";
+    return {
+      label,
+      title: input.todoTitle ?? `${source.todoId} · unavailable`,
+      to: `${projectPath}/todos?todo=${encodeURIComponent(source.todoId)}`,
+    };
+  }
+  if (source?.kind === "automation") {
+    return {
+      label: "Automation",
+      title: input.automationTitle ?? `${source.automationId} · unavailable`,
+      to: `${projectPath}/automations/${encodeURIComponent(source.automationId)}?invocation=${encodeURIComponent(source.invocationId)}`,
+    };
+  }
+  return {
+    label: "Source",
+    title: "Source unavailable",
+    to: `${projectPath}/sessions`,
+  };
+}
+
 export function SessionRoute() {
+  const location = useLocation();
   const { slug = "", sessionId = "" } = useParams<{
     slug: string;
     sessionId: string;
@@ -114,15 +156,12 @@ export function SessionRoute() {
   const { data: projectTodos = [] } = useProjectTodos(slug);
   const { data: agents = [] } = useAgents();
   const rootSessionId = session?.rootSessionId ?? sessionId;
-  const sessionSource = session?.projectTodo;
-  const linkedProjectTodo = sessionSource
+  const sessionSource = session?.source;
+  const linkedProjectTodo = sessionSource?.kind === "todo"
     ? projectTodos.find((todo) => todo.id === sessionSource.todoId)
     : undefined;
-  const linkedProjectTodoContext = sessionSource?.entry === "discussion"
-    ? "Discussion Todo"
-    : sessionSource?.entry === "automation"
-      ? "Automation setup Todo"
-      : "Work Todo";
+  const automationId = sessionSource?.kind === "automation" ? sessionSource.automationId : "";
+  const sourceAutomation = useAutomation(slug, automationId);
   const focusSessionId = effectiveSessionFocusId(
     sessionId,
     searchParams.get("focus"),
@@ -149,6 +188,7 @@ export function SessionRoute() {
     refetch: refetchFocusedSession,
   });
   const focusHitlId = searchParams.get("hitl");
+  const focusClientRequestId = searchParams.get("invocation");
   const inspectModelAudit = (messageId: string) => {
     const next = new URLSearchParams(searchParams);
     next.set("message", messageId);
@@ -246,7 +286,7 @@ export function SessionRoute() {
     && sessionError.code === "SESSION_NOT_FOUND";
   useEffect(() => {
     if (!sessionMissing) return;
-    navigate(`/projects/${encodeURIComponent(slug)}`, { replace: true });
+    navigate(`/projects/${encodeURIComponent(slug)}/sessions`, { replace: true });
   }, [navigate, sessionMissing, slug]);
 
   if (sessionMissing) {
@@ -300,7 +340,6 @@ export function SessionRoute() {
     return (
       <div className="flex h-full flex-col">
         <div className="flex min-h-16 items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-4 py-2 text-[13px] sm:px-5">
-          <SidebarToggleButton />
           <button
             type="button"
             className="inline-flex items-center gap-1 text-text-secondary transition-colors duration-[var(--motion-hover)] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -354,11 +393,13 @@ export function SessionRoute() {
               }}
               agents={agents}
               onInspectModelAudit={inspectModelAudit}
+              focusClientRequestId={focusClientRequestId}
             />
             <SessionComposerDock
               slug={slug}
               sessionId={rootSessionId}
               focusHitlId={focusHitlId}
+              focusClientRequestId={focusClientRequestId}
             />
           </div>
         )}
@@ -371,15 +412,12 @@ export function SessionRoute() {
       <ChatHeader
         slug={slug}
         sessionId={rootSessionId}
-        source={
-          linkedProjectTodo
-            ? {
-                label: linkedProjectTodoContext,
-                title: linkedProjectTodo.title,
-                to: `/projects/${encodeURIComponent(slug)}/todos?todo=${encodeURIComponent(linkedProjectTodo.id)}`,
-              }
-            : undefined
-        }
+        source={presentRootSessionSource({
+          source: sessionSource,
+          slug,
+          todoTitle: linkedProjectTodo?.title,
+          automationTitle: sourceAutomation.data?.name,
+        })}
         onToggleInspector={toggleInspectorSurface}
         inspectorExpanded={layout.inspectorExpanded}
       />
@@ -434,11 +472,14 @@ export function SessionRoute() {
             }}
             agents={agents}
             onInspectModelAudit={inspectModelAudit}
+            focusClientRequestId={focusClientRequestId}
           />
           <SessionComposerDock
             slug={slug}
             sessionId={rootSessionId}
             focusHitlId={focusHitlId}
+            focusComposer={location.state?.focusComposer === true}
+            focusClientRequestId={focusClientRequestId}
           />
         </div>
       )}

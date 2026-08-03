@@ -1,4 +1,4 @@
-import type { ProjectTodoSessionSource } from "@archcode/protocol";
+import type { RootSessionSource } from "@archcode/protocol";
 import type { AgentName } from "./names";
 
 export const ROOT_AGENT_NAMES = ["lead", "discussion"] as const;
@@ -11,8 +11,8 @@ interface SessionIdentity {
   readonly agentName: AgentName;
 }
 
-interface ProjectTodoBoundSessionIdentity extends SessionIdentity {
-  readonly projectTodo?: ProjectTodoSessionSource;
+interface SourceBoundSessionIdentity extends SessionIdentity {
+  readonly source?: RootSessionSource;
 }
 
 export function isRootAgentName(agentName: AgentName): agentName is RootAgentName {
@@ -30,7 +30,7 @@ export function isRootLeadSession(identity: SessionIdentity): boolean {
 }
 
 export function sessionIdentityInvariantError(
-  identity: ProjectTodoBoundSessionIdentity,
+  identity: SourceBoundSessionIdentity,
 ): string | undefined {
   const isRoot = identity.parentSessionId === undefined;
   if (isRoot && identity.rootSessionId !== identity.sessionId) {
@@ -49,14 +49,17 @@ export function sessionIdentityInvariantError(
   if (!isRoot && isRootAgentName(identity.agentName)) {
     return "Lead and Discussion Agents require a root Session";
   }
-  if (identity.projectTodo !== undefined && !isRoot) {
-    return "Project Todo source requires a root Session";
+  if (identity.source !== undefined && !isRoot) {
+    return "Session source requires a root Session";
+  }
+  if (isRoot && identity.source === undefined) {
+    return "Root Sessions require an immutable source";
   }
   if (identity.agentName === "discussion") {
-    if (identity.projectTodo?.entry !== "discussion") {
+    if (identity.source?.kind !== "todo" || identity.source.entry !== "discussion") {
       return "Discussion Sessions require a Discussion Project Todo source";
     }
-  } else if (identity.projectTodo?.entry === "discussion") {
+  } else if (identity.source?.kind === "todo" && identity.source.entry === "discussion") {
     return "Discussion Project Todo sources require the Discussion Agent";
   }
   return undefined;

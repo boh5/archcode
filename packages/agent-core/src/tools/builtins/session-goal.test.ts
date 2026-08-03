@@ -30,9 +30,9 @@ function context(options: { readonly discussion?: boolean } = {}): ToolExecution
   const sessionId = crypto.randomUUID();
   const store = storeManager.create(sessionId, tempRoot.path, {
     agentName: options.discussion === true ? "discussion" : "lead",
-    ...(options.discussion === true
-      ? { projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const } }
-      : {}),
+    source: options.discussion === true
+      ? { kind: "todo", todoId: crypto.randomUUID(), entry: "discussion" as const }
+      : { kind: "direct" as const },
   });
   const projectContext = createTestProjectContext(tempRoot.path);
   return {

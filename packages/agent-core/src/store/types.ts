@@ -16,7 +16,7 @@ import type {
   PromptTraceSnapshot,
   FinalizedToolResult,
   SessionGoal,
-  ProjectTodoSessionSource,
+  RootSessionSource,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
 import type { AgentName } from "../agents/names";
@@ -248,8 +248,8 @@ export interface SessionStoreState {
   parentSessionId?: string;
   /** Only ordinary root Lead Sessions may own a Goal. */
   goal?: SessionGoal;
-  /** Immutable Project Todo source, valid only for user-facing root Sessions. */
-  projectTodo?: ProjectTodoSessionSource;
+  /** Required for user-facing roots and absent for delegated children. */
+  source?: RootSessionSource;
 
   // Running state
   executionCount: number;

@@ -75,6 +75,7 @@ const useState = mock(<T,>(initial: T): [T, (value: T | ((previous: T) => T)) =>
 ]);
 const useCallback = mock(<T extends (...args: never[]) => unknown>(callback: T) => callback);
 const useNavigate = mock(() => navigate);
+const useLocation = mock(() => ({ pathname: "/projects/demo-project/todos" }));
 const useParams = mock(() => ({ slug: "demo-project" }));
 const useProjects = mock(() => ({ data: [project] }));
 const toggleTheme = mock(() => {});
@@ -99,10 +100,12 @@ mock.module("react/jsx-dev-runtime", () => ({
 
 mock.module("react-router-dom", () => ({
   useNavigate,
+  useLocation,
   useParams,
 }));
 
 mock.module("lucide-react", () => ({
+  Search: "Search",
   Moon: "Moon",
   Plus: "Plus",
   Settings: "Settings",
@@ -175,7 +178,7 @@ function projectNode(tree: unknown) {
 describe("ProjectBar", () => {
   beforeEach(() => {
     attentionVisibleHitl = [];
-    for (const fn of [navigate, onAddProject, onSettings, setState, useState, useCallback, useNavigate, useParams, useProjects, toggleTheme]) {
+    for (const fn of [navigate, onAddProject, onSettings, setState, useState, useCallback, useNavigate, useLocation, useParams, useProjects, toggleTheme]) {
       fn.mockClear();
     }
   });
@@ -210,7 +213,7 @@ describe("ProjectBar", () => {
     expect(textContent(node)).toContain("de");
 
     node.props.onClick({ ctrlKey: false, metaKey: false });
-    expect(navigate).toHaveBeenCalledWith("/projects/demo-project");
+    expect(navigate).toHaveBeenCalledWith("/projects/demo-project/todos");
   });
 
   test("add project affordance is a native button", () => {

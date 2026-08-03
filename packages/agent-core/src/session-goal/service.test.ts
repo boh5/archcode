@@ -30,7 +30,7 @@ afterEach(async () => {
 async function rootSession(): Promise<string> {
   await mkdir(TMP_DIR, { recursive: true });
   const sessionId = crypto.randomUUID();
-  await manager.createSessionFile(TMP_DIR, { agentName: "lead" }, sessionId);
+  await manager.createSessionFile(TMP_DIR, { source: { kind: "direct" }, agentName: "lead" }, sessionId);
   return sessionId;
 }
 
@@ -752,7 +752,7 @@ describe("SessionGoalService", () => {
     const discussionId = crypto.randomUUID();
     await manager.createSessionFile(TMP_DIR, {
       agentName: "discussion",
-      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+      source: { kind: "todo", todoId: crypto.randomUUID(), entry: "discussion" },
     }, discussionId);
     await expect(service.create({ workspaceRoot: TMP_DIR, sessionId: discussionId, authority: user, objective: "Denied" }))
       .rejects.toMatchObject({ code: "NOT_ROOT_LEAD" });

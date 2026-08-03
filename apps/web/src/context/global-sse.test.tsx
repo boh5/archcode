@@ -707,11 +707,7 @@ describe("handleSSEEvent", () => {
     ).toEqual([
       queryKeys.session("my-project", "session-1"),
       queryKeys.sessions("my-project"),
-      queryKeys.dashboardProjection({ kind: "global" }),
-      queryKeys.dashboardProjection({
-        kind: "project",
-        projectSlug: "my-project",
-      }),
+      queryKeys.home,
     ]);
   });
 
@@ -843,12 +839,11 @@ describe("handleSSEEvent", () => {
       queryKeys.sessions("proj"),
       queryKeys.tree("proj", "root-session"),
       queryKeys.projectTodos("proj"),
-      queryKeys.dashboardProjection({ kind: "global" }),
-      queryKeys.dashboardProjection({ kind: "project", projectSlug: "proj" }),
+      queryKeys.home,
     ]);
   });
 
-  test("stores the scoped hitl.event view without touching query caches", () => {
+  test("stores the scoped hitl.event view and invalidates Home", () => {
     const event = hitlRealtimeEvent({
       projectSlug: "proj",
       hitlId: "hitl-1",
@@ -862,7 +857,7 @@ describe("handleSSEEvent", () => {
       rootSessionId: event.rootSessionId,
       view: event.view,
     });
-    expect(mockInvalidateQueries).not.toHaveBeenCalled();
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.home });
   });
 
   test("atomically applies the authoritative hitl.snapshot and marks projects initialized", () => {
@@ -908,13 +903,7 @@ describe("handleSSEEvent", () => {
       queryKey: ["projects", "my-project", "sessions", "session-1"],
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.dashboardProjection({ kind: "global" }),
-    });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.dashboardProjection({
-        kind: "project",
-        projectSlug: "my-project",
-      }),
+      queryKey: queryKeys.home,
     });
   });
 
@@ -958,7 +947,7 @@ describe("handleSSEEvent", () => {
 
     expect(mockOnShutdown).not.toHaveBeenCalled();
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["dashboard"],
+      queryKey: queryKeys.home,
     });
     expect(mockFindWebSessionStore).not.toHaveBeenCalled();
     expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
@@ -1077,6 +1066,9 @@ describe("handleSSEEvent", () => {
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: queryKeys.sessions("proj"),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.home,
     });
 
     const idle: GlobalSSESessionRuntimeChangedEvent = {

@@ -48,7 +48,10 @@ function createStore(
   options: Parameters<SessionStoreManager["create"]>[2],
 ) {
   sessions.set(`${workspaceRoot}\0${sessionId}`, { sessionId, workspaceRoot });
-  return storeManager.create(sessionId, workspaceRoot, options);
+  const normalizedOptions = options.parentSessionId === undefined && options.source === undefined
+    ? { ...options, source: { kind: "direct" as const } }
+    : options;
+  return storeManager.create(sessionId, workspaceRoot, normalizedOptions);
 }
 
 function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
@@ -614,7 +617,7 @@ describe("ConfiguredAgent", () => {
     const todo = await projectContext.todos.createTodo({ title: "Shape runtime architecture" });
     const store = createStore(sessionId, tmpRoot, {
       agentName: "discussion",
-      projectTodo: { todoId: todo.id, entry: "discussion" },
+      source: { kind: "todo", todoId: todo.id, entry: "discussion" },
     });
 
     await runAgent(createAgent({
@@ -642,7 +645,7 @@ describe("ConfiguredAgent", () => {
     });
     const store = createStore(sessionId, tmpRoot, {
       agentName: "discussion",
-      projectTodo: { todoId: todo.id, entry: "discussion" },
+      source: { kind: "todo", todoId: todo.id, entry: "discussion" },
     });
     const agent = createAgent({
       definition: discussionAgentDefinition,
@@ -672,7 +675,7 @@ describe("ConfiguredAgent", () => {
     const streamFn = setupMockStreamText("should not run");
     const store = createStore(crypto.randomUUID(), tmpRoot, {
       agentName: "discussion",
-      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+      source: { kind: "todo", todoId: crypto.randomUUID(), entry: "discussion" },
     });
     const agent = createAgent({
       definition: discussionAgentDefinition,

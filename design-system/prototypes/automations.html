@@ -519,12 +519,17 @@
                 <div class="automation-list-inner">
                   <p class="surface-filter-empty" hidden aria-live="polite" data-automation-filter-empty><strong data-automation-filter-empty-title>No Automations match this filter.</strong><span>Try another name, instruction, schedule, or stable ID.</span></p>
                   <section class="automation-group" aria-labelledby="attention-title">
-                    <header class="automation-group-header"><h2 id="attention-title">Needs attention</h2><span>1</span></header>
+                    <header class="automation-group-header"><h2 id="attention-title">Needs attention</h2><span>2</span></header>
                     <div class="automation-rows">
                       <button class="automation-row" aria-selected="false" data-automation-row="aut-health">
                         <span class="automation-orbit attention"></span>
-                        <span><strong>Daily project health check</strong><small>Every day at 09:00 · last run failed before final report</small></span>
-                        <span class="automation-row-state attention">Needs you</span>
+                        <span><strong>Daily project health check</strong><small>Every day at 09:00 · definition inactive · last run failed</small></span>
+                        <span class="automation-row-state attention">Needs attention</span>
+                      </button>
+                      <button class="automation-row" aria-selected="false" data-automation-row="aut-disabled">
+                        <span class="automation-orbit attention"></span>
+                        <span><strong>Legacy dependency update</strong><small>Monthly · definition disabled · last run missed</small></span>
+                        <span class="automation-row-state attention">Needs attention</span>
                       </button>
                     </div>
                   </section>
@@ -555,6 +560,17 @@
                       </button>
                     </div>
                   </section>
+
+                  <section class="automation-group" aria-labelledby="inactive-title">
+                    <header class="automation-group-header"><h2 id="inactive-title">Inactive</h2><span>1</span></header>
+                    <div class="automation-rows">
+                      <button class="automation-row" aria-selected="false" data-automation-row="aut-archived">
+                        <span class="automation-orbit paused"></span>
+                        <span><strong>Archived release reminder</strong><small>Friday at 18:00 · definition disabled · no pending run</small></span>
+                        <span class="automation-row-state">Inactive</span>
+                      </button>
+                    </div>
+                  </section>
                 </div>
               </section>
 
@@ -578,7 +594,7 @@
                     <div class="detail-facts">
                       <div class="detail-fact"><span>Trigger</span><strong data-detail-trigger>Weekdays at 09:00</strong></div>
                       <div class="detail-fact"><span>Next run</span><strong data-detail-next>Tomorrow, 09:00</strong></div>
-                      <div class="detail-fact"><span>Agent</span><strong>Lead · principal</strong></div>
+                      <div class="detail-fact"><span>Action</span><strong>start_session · Lead + principal (fixed)</strong></div>
                       <div class="detail-fact"><span>Workspace</span><strong>/workspace/archcode</strong></div>
                     </div>
                   </section>
@@ -597,6 +613,7 @@
 
                   <section class="detail-section">
                     <h3>Recent runs</h3>
+                    <p class="detail-section-copy">Invocation state is separate from Session result: <code>dispatched</code> is never <code>Completed</code>.</p>
                     <div class="run-list" data-run-list>
                       <a class="run-row" href="./session.html?automation=aut-regression&amp;session=sess-aut-regression-20260801"><span class="automation-orbit running"></span><span>Verification passed · sess-aut-regression-20260801</span><time>Yesterday 09:04</time></a>
                       <a class="run-row" href="./session.html?automation=aut-regression&amp;session=sess-aut-regression-20260731"><span class="automation-orbit running"></span><span>Verification passed · sess-aut-regression-20260731</span><time>Mon 09:03</time></a>
@@ -612,7 +629,7 @@
 
     <dialog class="automation-editor" data-automation-editor aria-labelledby="automation-editor-title">
       <form data-automation-editor-form>
-        <header><h2 id="automation-editor-title" data-automation-editor-title>New Automation</h2><p>Define repeated work once; every invocation will create its own Session.</p></header>
+        <header><h2 id="automation-editor-title" data-automation-editor-title>New Automation</h2><p>Define repeated work once; every invocation opens its associated Session.</p><p>Prototype only · <strong>start_session · Lead + principal (fixed)</strong></p></header>
         <div class="automation-editor-fields">
           <label>Name<input name="name" autocomplete="off" required /></label>
           <label>Schedule<input name="schedule" autocomplete="off" placeholder="Weekdays at 09:00" required /></label>
@@ -628,7 +645,9 @@
         "aut-health": {
           id: "aut-health",
           name: "Daily project health check",
-          status: "Needs you",
+          status: "Needs attention",
+          definitionStatus: "Inactive",
+          latestInvocation: "failed",
           tone: "attention",
           summary: "Check repository health, surface failed verification, and ask for a decision only when an exact recovery path is known.",
           trigger: "Every day at 09:00",
@@ -636,7 +655,7 @@
           instructions: "Inspect current checks and recent Sessions. If a failure is actionable, preserve the exact logs and ask the user before any destructive recovery.",
           linkedTodo: null,
           runs: [
-            { sessionId: "sess-aut-health-failed", label: "Run stopped before final report", time: "Today 09:02", status: "Needs you", tone: "attention" },
+            { sessionId: "sess-aut-health-failed", label: "Run stopped before final report", time: "Today 09:02", status: "Needs attention", tone: "attention" },
           ],
         },
         "aut-regression": {
@@ -677,6 +696,36 @@
           trigger: "Monthly on day 1",
           next: "Paused",
           instructions: "Inspect available package updates, isolate breaking changes, and stop before applying any migration that changes runtime contracts.",
+          linkedTodo: null,
+          runs: [],
+        },
+        "aut-disabled": {
+          id: "aut-disabled",
+          name: "Legacy dependency update",
+          status: "Needs attention",
+          definitionStatus: "Inactive",
+          latestInvocation: "missed",
+          tone: "attention",
+          summary: "The disabled definition missed its last scheduled run; inspect the associated Session before re-enabling it.",
+          trigger: "Monthly on day 1",
+          next: "Inactive",
+          instructions: "Review the missed invocation and preserve its Session evidence before changing the definition status.",
+          linkedTodo: null,
+          runs: [
+            { sessionId: "sess-aut-disabled-missed", label: "Run missed", time: "Last month 09:00", status: "missed", tone: "attention" },
+          ],
+        },
+        "aut-archived": {
+          id: "aut-archived",
+          name: "Archived release reminder",
+          status: "Inactive",
+          definitionStatus: "Inactive",
+          latestInvocation: null,
+          tone: "paused",
+          summary: "An intentionally disabled reminder with no pending invocation.",
+          trigger: "Friday at 18:00",
+          next: "Inactive",
+          instructions: "Re-enable only when the release handoff needs a scheduled reminder again.",
           linkedTodo: null,
           runs: [],
         },
@@ -759,7 +808,7 @@
             const id = row.dataset.automationRow;
             const sample = automationSamples[id];
             const linkedTodo = sample?.linkedTodo ? `${sample.linkedTodo.id} ${sample.linkedTodo.title} ${sample.linkedTodo.meta}` : "";
-            const haystack = `${id || ""} ${sample?.name || ""} ${sample?.summary || ""} ${sample?.instructions || ""} ${sample?.trigger || ""} ${sample?.next || ""} ${sample?.status || ""} ${linkedTodo} ${row.textContent}`.toLowerCase();
+            const haystack = `${id || ""} ${sample?.name || ""} ${sample?.summary || ""} ${sample?.instructions || ""} ${sample?.trigger || ""} ${sample?.next || ""} ${sample?.status || ""} ${sample?.definitionStatus || ""} ${sample?.latestInvocation || ""} ${linkedTodo} ${row.textContent}`.toLowerCase();
             const matches = !query || haystack.includes(query);
             row.hidden = !matches;
             if (matches) {

@@ -59,6 +59,7 @@ export interface ChatInputProps {
   activity: SessionFamilyActivity | undefined;
   hitlReady: boolean;
   hasPendingHitl: boolean;
+  focusOnReady?: boolean;
 }
 
 function composerStatus(
@@ -85,6 +86,7 @@ export function ChatInput({
   activity,
   hitlReady,
   hasPendingHitl,
+  focusOnReady = false,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -94,6 +96,7 @@ export function ChatInput({
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string>();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const focusOnReadyAppliedRef = useRef(false);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef<DraftAttachment[]>([]);
@@ -153,6 +156,12 @@ export function ChatInput({
   useEffect(() => {
     if (!hasPendingHitl) setHitlComposerExpanded(false);
   }, [hasPendingHitl]);
+
+  useEffect(() => {
+    if (!focusOnReady || !canCompose || focusOnReadyAppliedRef.current) return;
+    focusOnReadyAppliedRef.current = true;
+    textareaRef.current?.focus();
+  }, [canCompose, focusOnReady]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

@@ -21,7 +21,7 @@ describe("resolveCommittedAttachmentReadPaths", () => {
   test("authorizes only consistent completed canonical attachment parts", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = crypto.randomUUID();
-    const store = manager.create(rootSessionId, WORKSPACE, { agentName: "lead" });
+    const store = manager.create(rootSessionId, WORKSPACE, { source: { kind: "direct" }, agentName: "lead" });
     const committed = descriptor("committed.bin");
     const pending = descriptor("pending.bin");
     const incomplete = descriptor("incomplete.bin");
@@ -87,7 +87,7 @@ describe("resolveCommittedAttachmentReadPaths", () => {
   test("omits objects rejected by storage validation", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = crypto.randomUUID();
-    const store = manager.create(rootSessionId, WORKSPACE, { agentName: "lead" });
+    const store = manager.create(rootSessionId, WORKSPACE, { source: { kind: "direct" }, agentName: "lead" });
     const committed = descriptor("missing.bin");
     store.getState().append({
       type: "session.messages_committed",

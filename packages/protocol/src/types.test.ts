@@ -525,7 +525,7 @@ describe("Automation types", () => {
     const automation: Automation = {
       id: "automation-1",
       projectSlug: "project-1",
-      createdFromSessionId: "session-source",
+      origin: { kind: "direct" },
       name: "Weekly review",
       status: "active",
       trigger,

@@ -40,8 +40,9 @@ describe("ProjectTodoStateManager", () => {
     expect(await new ProjectTodoStateManager(TMP_ROOT).listTodos()).toEqual([todo]);
 
     const path = projectRuntimePath(TMP_ROOT, "todos", "state.json");
-    const raw = await Bun.file(path).json() as { todos: unknown[] };
+    const raw = await Bun.file(path).json() as { todos: unknown[]; runNowReceipts: unknown[] };
     expect(raw.todos).toEqual([todo]);
+    expect(raw.runNowReceipts).toEqual([]);
   });
 
   test("allows free status movement while enforcing rejection and revision invariants", async () => {
@@ -177,6 +178,26 @@ describe("ProjectTodoStateManager", () => {
     const started = await manager.beginWork(ready.id, ready.revision);
     expect(started).toMatchObject({ status: "in_progress", revision: ready.revision + 1 });
     expect(await manager.beginWork(started.id, started.revision)).toEqual(started);
+  });
+
+  test("persists run-now receipts and supports scoped compensation deletion", async () => {
+    const manager = new ProjectTodoStateManager(TMP_ROOT);
+    const todo = await manager.createRunNowTodo({ title: "Run now" });
+    const receipt = {
+      clientRequestId: crypto.randomUUID(),
+      requestHash: "a".repeat(64),
+      todoId: todo.id,
+      sessionId: crypto.randomUUID(),
+    };
+
+    expect(todo.status).toBe("in_progress");
+    expect(await manager.commitRunNowReceipt(receipt)).toEqual(receipt);
+    expect(await manager.commitRunNowReceipt(receipt)).toEqual(receipt);
+    expect(await new ProjectTodoStateManager(TMP_ROOT).readRunNowReceipt(receipt.clientRequestId)).toEqual(receipt);
+
+    const compensated = await manager.createRunNowTodo({ title: "Compensate" });
+    await manager.deleteRunNowTodo(compensated.id);
+    expect((await manager.listTodos()).map((item) => item.id)).toEqual([todo.id]);
   });
 });
 

@@ -12,10 +12,14 @@ export function SessionComposerDock({
   slug,
   sessionId,
   focusHitlId,
+  focusComposer = false,
+  focusClientRequestId,
 }: {
   slug: string;
   sessionId: string;
   focusHitlId?: string | null;
+  focusComposer?: boolean;
+  focusClientRequestId?: string | null;
 }) {
   const activity = useSessionFamilyActivity(slug, sessionId);
   const goal = useSessionStore(sessionId, (state) => state.goal, slug);
@@ -90,7 +94,7 @@ export function SessionComposerDock({
               </div>
             )}
             <SessionGoalSummaryRow slug={slug} sessionId={sessionId} goal={goal} />
-            <ComposerQueueList slug={slug} sessionId={sessionId} />
+            <ComposerQueueList slug={slug} sessionId={sessionId} focusClientRequestId={focusClientRequestId} />
             <div className="shrink-0 pt-1.5" data-testid="composer-input-slot">
               <ChatInput
                 slug={slug}
@@ -98,6 +102,7 @@ export function SessionComposerDock({
                 activity={activity}
                 hitlReady={hitlReady}
                 hasPendingHitl={hasPendingHitl}
+                focusOnReady={focusComposer}
               />
             </div>
           </SessionThreadColumn>

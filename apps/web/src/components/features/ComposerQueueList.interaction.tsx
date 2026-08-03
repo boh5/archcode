@@ -83,6 +83,7 @@ beforeEach(async () => {
   Object.defineProperties(dom.window.HTMLElement.prototype, {
     attachEvent: { configurable: true, value: () => {} },
     detachEvent: { configurable: true, value: () => {} },
+    scrollIntoView: { configurable: true, value: () => {} },
   });
   for (const [name, value] of Object.entries({
     window: dom.window,
@@ -206,7 +207,7 @@ describe("ComposerQueueList", () => {
     client.setQueryData(queryKeys.modelRuntime, modelRuntime);
 
     await act(async () => {
-      root.render(<QueryClientProvider client={client}><ComposerQueueList slug="project-1" sessionId="session-queue" /></QueryClientProvider>);
+      root.render(<QueryClientProvider client={client}><ComposerQueueList slug="project-1" sessionId="session-queue" focusClientRequestId="queued-client" /></QueryClientProvider>);
       await Promise.resolve();
     });
 
@@ -231,6 +232,9 @@ describe("ComposerQueueList", () => {
     expect(localModel?.className).toContain("max-[560px]:max-w-16");
 
     const queuedRow = container.querySelector('[data-testid="composer-queue-queued-row"]');
+    expect(queuedRow?.getAttribute("data-client-request-id")).toBe("queued-client");
+    expect(queuedRow?.className).toContain("ring-brand");
+    expect(document.activeElement).toBe(queuedRow);
     expect(queuedRow?.textContent).toContain("Steer");
     expect(queuedRow?.textContent).toContain("Edit");
     expect(queuedRow?.textContent).toContain("Delete");

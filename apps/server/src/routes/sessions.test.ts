@@ -9,12 +9,16 @@ const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
 
 interface SessionSummaryBody {
   sessions: Array<{
-    sessionId: string;
-    rootSessionId: string;
-    parentSessionId?: string;
-    title?: string | null;
-    createdAt: number;
-    updatedAt: number;
+    session: {
+      sessionId: string;
+      rootSessionId: string;
+      parentSessionId?: string;
+      title?: string | null;
+      source: { kind: "direct" };
+      createdAt: number;
+      updatedAt: number;
+    };
+    latestExecution: null | { id: string; status: string; startedAt: number; endedAt?: number };
   }>;
 }
 
@@ -36,6 +40,8 @@ type StoredSessionBody = SessionFileBody & {
   reminders: unknown[];
   rootSessionId: string;
   parentSessionId?: string;
+  source?: { kind: "direct" };
+  executions: Array<{ id: string; status: string; startedAt: number; endedAt?: number }>;
 };
 
 class MissingSessionFileError extends Error {
@@ -62,6 +68,8 @@ function createStoredSession(input: {
     reminders: [],
     rootSessionId: input.rootSessionId ?? sessionId,
     ...(input.parentSessionId !== undefined ? { parentSessionId: input.parentSessionId } : {}),
+    ...(input.parentSessionId === undefined ? { source: { kind: "direct" as const } } : {}),
+    executions: [],
   };
 }
 
@@ -114,10 +122,34 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
           rootSessionId: session.rootSessionId,
           ...(session.parentSessionId === undefined ? {} : { parentSessionId: session.parentSessionId }),
           title: session.title,
+          ...(session.source === undefined ? {} : { source: session.source }),
           createdAt: session.createdAt,
           updatedAt: session.updatedAt,
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
+    },
+    listSessionInventory: async (workspaceRoot: string) => {
+      calls.listSessions += 1;
+      return [...sessions.entries()]
+        .filter(([key]) => key.startsWith(`${workspaceRoot}\0`))
+        .filter(([, session]) => session.parentSessionId === undefined)
+        .map(([, session]) => ({
+          session: {
+            sessionId: session.sessionId,
+            cwd: workspaceRoot,
+            rootSessionId: session.rootSessionId,
+            agentName: "lead",
+            profile: "principal",
+            activeSkillNames: [],
+            modelSelection: { revision: 0 },
+            title: session.title,
+            source: session.source!,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+          },
+          latestExecution: session.executions.at(-1) ?? null,
+        }))
+        .sort((a, b) => b.session.updatedAt - a.session.updatedAt);
     },
     getSessionModelState: async (workspaceRoot: string, sessionId: string) => {
       const key = `${workspaceRoot}\0${sessionId}`;
@@ -416,15 +448,17 @@ describe("sessions routes", () => {
     const body = (await res.json()) as SessionSummaryBody;
 
     expect(res.status).toBe(200);
-    expect(body.sessions).toEqual([
-      {
+    expect(body.sessions).toEqual([{
+      session: expect.objectContaining({
         sessionId: session.sessionId,
         rootSessionId: session.sessionId,
         title: null,
+        source: { kind: "direct" },
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
-      },
-    ]);
+      }),
+      latestExecution: null,
+    }]);
   });
 
   test("GET /api/projects/:slug/sessions/:sessionId returns full session data", async () => {
@@ -617,7 +651,7 @@ describe("sessions routes", () => {
     const body = (await res.json()) as SessionSummaryBody;
 
     expect(res.status).toBe(200);
-    expect(body.sessions.map((session) => session.sessionId)).toEqual(["newer", "older"]);
+    expect(body.sessions.map((item) => item.session.sessionId)).toEqual(["newer", "older"]);
   });
 
   test("GET /api/projects/:slug/sessions returns only root sessions with identity fields", async () => {
@@ -629,15 +663,35 @@ describe("sessions routes", () => {
     const body = (await res.json()) as SessionSummaryBody;
 
     expect(res.status).toBe(200);
-    expect(body.sessions).toEqual([
-      {
+    expect(body.sessions).toEqual([{
+      session: expect.objectContaining({
         sessionId: "root-session",
         rootSessionId: "root-session",
         title: "Root",
+        source: { kind: "direct" },
         createdAt: 1_000,
         updatedAt: 1_000,
-      },
-    ]);
+      }),
+      latestExecution: null,
+    }]);
+  });
+
+  test("GET /api/projects/:slug/sessions composes the latest Execution digest", async () => {
+    const { app, project, workspaceRoot, sessions, calls } = await createTestApp("session-execution-digest");
+    const session = createStoredSession({ sessionId: "root-session", createdAt: 1_000, title: "Root" });
+    session.executions.push(
+      { id: "execution-1", status: "failed", startedAt: 1_100, endedAt: 1_200 },
+      { id: "execution-2", status: "completed", startedAt: 1_300, endedAt: 1_400 },
+    );
+    sessions.set(`${workspaceRoot}\0root-session`, session);
+
+    const response = await app.request(`/api/projects/${project.slug}/sessions`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      sessions: [{ latestExecution: { id: "execution-2", status: "completed", startedAt: 1_300, endedAt: 1_400 } }],
+    });
+    expect(calls.getSessionFile).toBe(0);
   });
 
   test("DELETE /api/projects/:slug/sessions/:sessionId delegates cleanup to runtime", async () => {

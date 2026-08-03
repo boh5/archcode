@@ -13,6 +13,8 @@ export interface SessionMessageDispatchIdentity {
 export type SessionDispatchInput =
   | (SessionMessageDispatchIdentity & {
     readonly kind: "start_session";
+    readonly automationId: string;
+    readonly invocationId: string;
     readonly message: string;
     readonly location: "project" | "worktree";
   })
@@ -163,11 +165,13 @@ function invocationIdentity(
   workspaceRoot: string,
   projectSlug: string,
   invocation: AutomationInvocation,
-): SessionMessageDispatchIdentity {
+): SessionMessageDispatchIdentity & { readonly automationId: string; readonly invocationId: string } {
   return {
     workspaceRoot,
     projectSlug,
     sessionId: requiredSessionId(invocation),
     clientRequestId: invocation.id,
+    automationId: invocation.automationId,
+    invocationId: invocation.id,
   };
 }

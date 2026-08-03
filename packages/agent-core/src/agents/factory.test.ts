@@ -136,7 +136,7 @@ describe("createAgentFactory", () => {
 
   test("creates root agents through the factory API with a supplied store", () => {
     const factory = makeFactory();
-    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { agentName: "lead" });
+    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
 
     const agent = factory.createRootAgent("lead", { store });
 
@@ -149,11 +149,14 @@ describe("createAgentFactory", () => {
     const factory = makeFactory([definition(), discussionAgentDefinition]);
     const store = storeManager.create(`factory-discussion-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, {
       agentName: "discussion",
-      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+      source: { kind: "todo", todoId: crypto.randomUUID(), entry: "discussion" },
     });
 
     expect(factory.createRootAgent("discussion", { store }).store).toBe(store);
-    expect(() => factory.createRootAgent("discussion")).toThrow(
+    expect(() => storeManager.create(`factory-discussion-invalid-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, {
+      agentName: "discussion",
+      source: { kind: "direct" },
+    })).toThrow(
       "Discussion Sessions require a Discussion Project Todo source",
     );
   });
@@ -164,7 +167,7 @@ describe("createAgentFactory", () => {
       definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
     const parentSessionId = crypto.randomUUID();
-    storeManager.create(parentSessionId, TEST_WORKSPACE_ROOT, { agentName: "lead" });
+    storeManager.create(parentSessionId, TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
     const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
       agentName: "explore",
       parentSessionId,
@@ -177,8 +180,12 @@ describe("createAgentFactory", () => {
 
   test("root agents default to no active skills", () => {
     const factory = makeFactory();
+    const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
+      agentName: "lead",
+      source: { kind: "direct" },
+    });
 
-    const agent = factory.createRootAgent("lead");
+    const agent = factory.createRootAgent("lead", { store });
 
     expect(agent).toBeInstanceOf(ConfiguredAgent);
     expect(agent.store.getState().activeSkillNames).toEqual([]);
@@ -203,6 +210,7 @@ describe("createAgentFactory", () => {
 
     const store = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
       agentName: "lead",
+      source: { kind: "direct" },
       activeSkillNames: ["git-master"],
     });
     const agent = factory.createAgent("lead", { store });
@@ -218,7 +226,7 @@ describe("createAgentFactory", () => {
       definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
-    const rootStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "lead", title: "Root Title" });
+    const rootStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead", title: "Root Title" });
     const childStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, {
       agentName: "explore",
       title: "Child Title",

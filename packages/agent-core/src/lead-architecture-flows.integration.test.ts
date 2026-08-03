@@ -200,7 +200,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       sessionId: discussionSessionId,
       rootSessionId: discussionSessionId,
       agentName: "discussion",
-      projectTodo: { todoId: idea.id, entry: "discussion" },
+      source: { kind: "todo", todoId: idea.id, entry: "discussion" },
     });
     expect(discussionSession.parentSessionId).toBeUndefined();
 
@@ -210,7 +210,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
         rootSessionId: discussionSessionId,
         agentName: "discussion",
         projectSlug: fixture.projectSlug,
-        projectTodo: discussionSession.projectTodo,
+        source: discussionSession.source,
       },
       expectedRevision: discussion.todo.revision,
       patch: {
@@ -238,7 +238,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       sessionId: workSessionId,
       rootSessionId: workSessionId,
       agentName: "lead",
-      projectTodo: { todoId: ready.id, entry: "work" },
+      source: { kind: "todo", todoId: ready.id, entry: "work" },
     });
     expect(workSession.parentSessionId).toBeUndefined();
     const acceptedWorkInputs = [
@@ -503,6 +503,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     const root = await fixture.runtime.createSession(fixture.workspaceRoot, {
       agentName: "lead",
       title: "Goal architecture flow",
+      source: { kind: "direct" },
     });
     const unsubscribe = fixture.runtime.subscribeSessionEvents((event) => {
       if (event.payload.type !== "tool-child-session-link") return;

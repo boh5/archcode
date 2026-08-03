@@ -2,22 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import { WorkbenchLayoutProvider, useWorkbenchLayout } from "./workbench-layout";
-import { focusElementAfterLayoutChange } from "../lib/focus-control";
+import { WorkbenchLayoutProvider, useWorkbenchLayout, useWorkbenchPanelSizes } from "./workbench-layout";
 
 const originals = new Map<string, PropertyDescriptor | undefined>();
 
-interface MutableMediaQuery {
-  media: MediaQueryList;
-  setMatches: (matches: boolean) => void;
-  flushAnimationFrames: (count: number) => void;
-}
-
-function installDom(initialMatches = true): JSDOM & { mutableMedia: MutableMediaQuery } {
+function installDom(initialMatches = true): JSDOM {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
-  const animationFrames = new Map<number, FrameRequestCallback>();
-  let animationFrameId = 0;
   const media = {
     matches: initialMatches,
     media: "(max-width: 760px)",
@@ -36,35 +27,11 @@ function installDom(initialMatches = true): JSDOM & { mutableMedia: MutableMedia
     HTMLElement: dom.window.HTMLElement,
     MouseEvent: dom.window.MouseEvent,
     IS_REACT_ACT_ENVIRONMENT: true,
-    requestAnimationFrame: (callback: FrameRequestCallback) => {
-      animationFrameId += 1;
-      animationFrames.set(animationFrameId, callback);
-      return animationFrameId;
-    },
-    cancelAnimationFrame: (id: number) => {
-      animationFrames.delete(id);
-    },
   })) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
     Object.defineProperty(globalThis, name, { value, configurable: true });
   }
-  return Object.assign(dom, {
-    mutableMedia: {
-      media: media as unknown as MediaQueryList,
-      setMatches: (matches: boolean) => {
-        media.matches = matches;
-        const event = { matches, media: media.media } as MediaQueryListEvent;
-        for (const listener of listeners) listener(event);
-      },
-      flushAnimationFrames: (count: number) => {
-        for (let frame = 0; frame < count; frame += 1) {
-          const pending = Array.from(animationFrames.values());
-          animationFrames.clear();
-          for (const callback of pending) callback(frame);
-        }
-      },
-    },
-  });
+  return dom;
 }
 
 function restoreDom(): void {
@@ -77,187 +44,54 @@ function restoreDom(): void {
 
 function Probe() {
   const layout = useWorkbenchLayout();
+  const sizes = useWorkbenchPanelSizes();
   return (
     <>
-      <button type="button" aria-expanded={layout.inspectorExpanded} onClick={() => layout.setMobileInspectorOpen(true)}>Open</button>
-      <button type="button" onClick={layout.openInspectorSurface}>Open inspector surface</button>
-      {layout.mobileInspectorOpen && <button type="button" onClick={() => layout.setMobileInspectorOpen(false)}>Close</button>}
-      <output data-testid="return-focus">{layout.mobileInspectorReturnFocusRef.current?.textContent ?? "none"}</output>
+      <button type="button" aria-expanded={layout.inspectorExpanded} onClick={layout.openInspectorSurface}>Open inspector</button>
+      <button type="button" onClick={layout.toggleInspectorSurface}>Toggle inspector</button>
+      <button type="button" onClick={() => sizes.setInspectorWidth(420)}>Resize inspector</button>
       <output data-testid="mobile-mode">{String(layout.isMobile)}</output>
-      <output data-testid="navigation-open">{String(layout.mobileNavigationOpen)}</output>
       <output data-testid="inspector-open">{String(layout.mobileInspectorOpen)}</output>
-      <button type="button" onClick={() => layout.setMobileNavigationOpen(true)}>Open navigation</button>
-      <nav aria-label="Projects"><button type="button" aria-label="Open dashboard">Desktop dashboard</button></nav>
-      <button type="button" data-state={layout.inspectorCollapsed ? "collapsed" : "expanded"} aria-controls="context-inspector">Desktop inspector</button>
-      <aside id="context-inspector"><button type="button" role="tab" tabIndex={0}>Inspector active tab</button></aside>
-      <button type="button" aria-label="Open work navigation">Compact navigation</button>
-      <button type="button" aria-label="Open context inspector">Compact inspector</button>
-      <div role="separator" tabIndex={0} aria-controls="project-sidebar">Project sidebar resize</div>
-      <div role="separator" tabIndex={0} aria-controls="context-inspector">Context inspector resize</div>
+      <output data-testid="inspector-collapsed">{String(layout.inspectorCollapsed)}</output>
+      <output data-testid="inspector-width">{String(sizes.inspectorWidth)}</output>
+      <output data-testid="return-focus">{layout.mobileInspectorReturnFocusRef.current?.textContent ?? "none"}</output>
     </>
   );
 }
 
 afterEach(restoreDom);
 
-describe("WorkbenchLayout mobile inspector", () => {
-  test("announces the drawer state and records the actual opener for focus restoration", async () => {
+describe("WorkbenchLayout inspector state", () => {
+  test("opens the mobile inspector and remembers its actual opener", async () => {
     const dom = installDom();
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
+    const root = createRoot(document.getElementById("root")!);
     await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
 
-    const open = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Open")!;
-    expect(open.getAttribute("aria-expanded")).toBe("false");
-    expect(container.querySelector('[data-testid="mobile-mode"]')?.textContent).toBe("true");
-    open.focus();
-    await act(async () => open.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    expect(open.getAttribute("aria-expanded")).toBe("true");
-    expect(container.querySelector('[data-testid="return-focus"]')?.textContent).toBe("Open");
-
-    const close = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Close")!;
-    close.focus();
-    await act(async () => close.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    expect(open.getAttribute("aria-expanded")).toBe("false");
-    expect(container.querySelector('[data-testid="return-focus"]')?.textContent).toBe("Open");
-
-    await act(async () => root.unmount());
-    dom.window.close();
-  });
-
-  test("opens the inspector surface idempotently on mobile", async () => {
-    const dom = installDom();
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
-    await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
-
-    const opener = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent === "Open inspector surface")!;
+    const opener = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "Open inspector")!;
     opener.focus();
     await act(async () => opener.click());
-    expect(container.querySelector('[data-testid="inspector-open"]')?.textContent).toBe("true");
-    expect(container.querySelector('[data-testid="return-focus"]')?.textContent).toBe("Open inspector surface");
 
-    await act(async () => opener.click());
-    expect(container.querySelector('[data-testid="inspector-open"]')?.textContent).toBe("true");
-
-    await act(async () => root.unmount());
-    dom.window.close();
-  });
-
-  test("closes mobile surfaces when the viewport leaves the mobile breakpoint", async () => {
-    const dom = installDom();
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
-    await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
-
-    const buttons = Array.from(container.querySelectorAll("button"));
-    const openNavigation = buttons.find((button) => button.textContent === "Open navigation")!;
-    await act(async () => openNavigation.click());
-    expect(container.querySelector('[data-testid="inspector-open"]')?.textContent).toBe("false");
-    expect(container.querySelector('[data-testid="navigation-open"]')?.textContent).toBe("true");
-    openNavigation.focus();
-
-    await act(async () => dom.mutableMedia.setMatches(false));
-    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
-    expect(container.querySelector('[data-testid="mobile-mode"]')?.textContent).toBe("false");
-    expect(container.querySelector('[data-testid="navigation-open"]')?.textContent).toBe("false");
-    expect(container.querySelector('[data-testid="inspector-open"]')?.textContent).toBe("false");
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Open dashboard");
+    expect(document.querySelector('[data-testid="mobile-mode"]')?.textContent).toBe("true");
+    expect(document.querySelector('[data-testid="inspector-open"]')?.textContent).toBe("true");
+    expect(document.querySelector('[data-testid="return-focus"]')?.textContent).toBe("Open inspector");
 
     await act(async () => root.unmount());
     dom.window.close();
   });
 
-  test("moves focus from a mobile inspector to its visible desktop surface at the breakpoint", async () => {
-    const dom = installDom();
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
-    await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
-
-    const openInspector = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Open")!;
-    await act(async () => openInspector.click());
-    openInspector.focus();
-    await act(async () => dom.mutableMedia.setMatches(false));
-    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
-    expect(document.activeElement?.textContent).toBe("Inspector active tab");
-
-    await act(async () => root.unmount());
-    dom.window.close();
-  });
-
-  test("moves desktop navigation focus to the compact navigation trigger at the mobile breakpoint", async () => {
+  test("retains desktop inspector collapse and width preferences", async () => {
     const dom = installDom(false);
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
+    const root = createRoot(document.getElementById("root")!);
     await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
 
-    const dashboard = container.querySelector('button[aria-label="Open dashboard"]') as HTMLButtonElement;
-    dashboard.focus();
-    await act(async () => dom.mutableMedia.setMatches(true));
-    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Open work navigation");
+    const buttons = Array.from(document.querySelectorAll("button"));
+    await act(async () => buttons.find((button) => button.textContent === "Toggle inspector")!.click());
+    await act(async () => buttons.find((button) => button.textContent === "Resize inspector")!.click());
+
+    expect(document.querySelector('[data-testid="inspector-collapsed"]')?.textContent).toBe("true");
+    expect(document.querySelector('[data-testid="inspector-width"]')?.textContent).toBe("420");
 
     await act(async () => root.unmount());
-    dom.window.close();
-  });
-
-  test("moves desktop inspector focus to the compact inspector trigger at the mobile breakpoint", async () => {
-    const dom = installDom(false);
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
-    await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
-
-    const inspectorTab = Array.from(container.querySelectorAll('[role="tab"]')).find((element) => element.textContent === "Inspector active tab") as HTMLButtonElement;
-    inspectorTab.focus();
-    await act(async () => dom.mutableMedia.setMatches(true));
-    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Open context inspector");
-
-    await act(async () => root.unmount());
-    dom.window.close();
-  });
-
-  test("moves desktop sidebar resize focus to compact navigation at the mobile breakpoint", async () => {
-    const dom = installDom(false);
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
-    await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
-
-    (container.querySelector('[role="separator"][aria-controls="project-sidebar"]') as HTMLElement).focus();
-    await act(async () => dom.mutableMedia.setMatches(true));
-    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Open work navigation");
-
-    await act(async () => root.unmount());
-    dom.window.close();
-  });
-
-  test("moves desktop inspector resize focus to compact inspector at the mobile breakpoint", async () => {
-    const dom = installDom(false);
-    const container = document.getElementById("root")!;
-    const root = createRoot(container);
-    await act(async () => root.render(<WorkbenchLayoutProvider><Probe /></WorkbenchLayoutProvider>));
-
-    (container.querySelector('[role="separator"][aria-controls="context-inspector"]') as HTMLElement).focus();
-    await act(async () => dom.mutableMedia.setMatches(true));
-    await act(async () => dom.mutableMedia.flushAnimationFrames(2));
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Open context inspector");
-
-    await act(async () => root.unmount());
-    dom.window.close();
-  });
-
-  test("hands focus to the replacement control after a desktop layout transition", async () => {
-    const dom = installDom();
-    const replacement = document.createElement("button");
-    replacement.setAttribute("aria-label", "Expand project sidebar");
-    document.body.append(replacement);
-
-    focusElementAfterLayoutChange('button[aria-label="Expand project sidebar"]');
-    await act(async () => dom.mutableMedia.flushAnimationFrames(1));
-    expect(document.activeElement).toBe(replacement);
-
     dom.window.close();
   });
 });

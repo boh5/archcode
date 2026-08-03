@@ -174,6 +174,7 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
       const session = await runtime.createSession(originalWorkspace, {
         agentName: "lead",
         title: "Retained Session",
+        source: { kind: "direct" },
       });
       const canonicalRoot = await realpath(originalWorkspace);
       const expectedIdentity = createHash("sha256").update(canonicalRoot, "utf8").digest("hex");

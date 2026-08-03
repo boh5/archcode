@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import type {
   ExecutionModelBindingSummary,
@@ -30,7 +30,7 @@ type QueueEntry =
   | { kind: "durable"; message: PendingSessionMessage; time: number; order: number }
   | { kind: "local"; message: LocalSendingMessage; time: number; order: number };
 
-export function ComposerQueueList({ slug, sessionId }: { slug: string; sessionId: string }) {
+export function ComposerQueueList({ slug, sessionId, focusClientRequestId }: { slug: string; sessionId: string; focusClientRequestId?: string | null }) {
   const pendingMessages = useSessionStore(sessionId, (state) => state.pendingMessages, slug);
   const localSendingMessages = useSessionStore(sessionId, (state) => state.localSendingMessages, slug);
   const activeModelBinding = useSessionStore(sessionId, (state) => state.activeModelBinding, slug);
@@ -58,6 +58,7 @@ export function ComposerQueueList({ slug, sessionId }: { slug: string; sessionId
           sessionId={sessionId}
           slug={slug}
           steerTargetExecutionId={steerTargetExecutionId}
+          focused={entry.message.clientRequestId === focusClientRequestId}
         />
       ) : (
         <LocalQueueRow key={`local-${entry.message.clientRequestId}`} message={entry.message} sessionId={sessionId} slug={slug} />
@@ -90,6 +91,7 @@ function DurableQueueRow({
   activeModelBinding,
   modelRuntime,
   nextModelSelection,
+  focused,
 }: {
   message: PendingSessionMessage;
   slug: string;
@@ -98,6 +100,7 @@ function DurableQueueRow({
   activeModelBinding?: ExecutionModelBindingSummary;
   modelRuntime?: ModelRuntimeCatalog;
   nextModelSelection?: SessionNextModelSelection;
+  focused: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
@@ -118,6 +121,13 @@ function DurableQueueRow({
   const mutationError = queueMutationError(editMessage.error, deleteMessage.error, steerMessage.error);
   const busy = editMessage.isPending || deleteMessage.isPending || steerMessage.isPending;
   const nextDraft = draft.trim();
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!focused || !rowRef.current) return;
+    rowRef.current.scrollIntoView({ block: "nearest" });
+    rowRef.current.focus({ preventScroll: true });
+  }, [focused, message.id]);
 
   const openEditor = () => {
     editMessage.reset();
@@ -127,9 +137,12 @@ function DurableQueueRow({
 
   return (
     <div
-      className="grid min-h-9 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-border-subtle px-1 py-1.5 last:border-b-0 max-[560px]:gap-1"
+      ref={rowRef}
+      className={`grid min-h-9 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-border-subtle px-1 py-1.5 last:border-b-0 max-[560px]:gap-1 ${focused ? "ring-2 ring-inset ring-brand" : ""}`}
+      data-client-request-id={message.clientRequestId}
       data-queue-state={message.state}
       data-testid={`composer-queue-${message.id}`}
+      tabIndex={focused ? -1 : undefined}
     >
       {message.state === "steering" ? (
         <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-info" data-queue-visual="steering">

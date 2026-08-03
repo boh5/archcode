@@ -98,9 +98,7 @@ export function SessionContextDetails() {
           ])
         : [["Requests", "No associated user requests"]];
   const relatedAutomations = (automations ?? []).filter(
-    (automation) =>
-      (automation as unknown as { createdFromSessionId: string })
-        .createdFromSessionId === focused,
+    (automation) => automation.origin.kind !== "direct" && automation.origin.sessionId === focused,
   );
   return (
     <div className="space-y-4">

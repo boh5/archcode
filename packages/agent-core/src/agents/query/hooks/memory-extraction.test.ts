@@ -96,7 +96,7 @@ describe("createMemoryExtractionHook", () => {
   test("dispatches memory-extraction task when enough content", async () => {
     const now = Date.now();
     const longText = "A".repeat(1000);
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage(longText, now),
@@ -125,7 +125,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("skips dispatch when fewer than MIN_MESSAGES_FOR_EXTRACTION user messages", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [makeUserMessage("Hi", now)],
     });
@@ -143,7 +143,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("skips dispatch when total content length below MIN_CONTENT_LENGTH_FOR_EXTRACTION", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("Hi", now),
@@ -165,7 +165,7 @@ describe("createMemoryExtractionHook", () => {
   test("dispatches with correct memory roots derived from workspace", async () => {
     const now = Date.now();
     const longText = "A".repeat(1000);
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage(longText, now),
@@ -194,7 +194,7 @@ describe("createMemoryExtractionHook", () => {
   test("does not skip when exactly at MIN_MESSAGES_FOR_EXTRACTION threshold", async () => {
     const now = Date.now();
     const longText = "A".repeat(1000);
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage(longText, now),
@@ -218,7 +218,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("skips messages before lastExtractionIndex", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       lastExtractionIndex: 2,
       messages: [
@@ -239,7 +239,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("dispatches based on new messages after lastExtractionIndex", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       lastExtractionIndex: 2,
       messages: [
@@ -261,7 +261,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("updates lastExtractionIndex and lastExtractionTime after dispatch", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("A".repeat(300), now),
@@ -281,7 +281,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("skips dispatch during cooldown after last completed task", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("A".repeat(300), now),
@@ -306,7 +306,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("dispatches when cooldown has elapsed or no completion recorded", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("A".repeat(300), now),
@@ -325,7 +325,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("uses custom threshold values", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [makeUserMessage("A".repeat(150), now)],
     });
@@ -345,7 +345,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("uses default threshold values when config is absent", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [makeUserMessage("A".repeat(150), now)],
     });
@@ -363,7 +363,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("respects cooldown between dispatches", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [makeUserMessage("A".repeat(150), now)],
     });
@@ -384,7 +384,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("does not advance cursor when dispatch returns false (dedup)", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("A".repeat(300), now),
@@ -405,7 +405,7 @@ describe("createMemoryExtractionHook", () => {
 
   test("passes config thresholds to extraction task", async () => {
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [makeUserMessage("A".repeat(150), now)],
     });

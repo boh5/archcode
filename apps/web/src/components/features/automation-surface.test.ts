@@ -7,13 +7,6 @@ async function source(path: string): Promise<string> {
 }
 
 describe("Automation navigation and detail actions", () => {
-  test("Sidebar routes Automation navigation and creation through the Automation surface", async () => {
-    const sidebar = await source("components/features/Sidebar.tsx");
-    expect(sidebar).toContain('"automations"');
-    expect(sidebar).toContain('/automations/${clickedAutomationId}');
-    expect(sidebar).toContain('automation-create');
-  });
-
   test("detail exposes only Automation controls and Session-linked invocation history", async () => {
     const detail = await source("routes/automation-detail.tsx");
     expect(detail).toContain("Run now");
@@ -25,27 +18,26 @@ describe("Automation navigation and detail actions", () => {
     expect(detail).toContain("scrollIntoView");
   });
 
-  test("Automation creation starts its conversation Skill", async () => {
+  test("Automation creation uses the direct structured API", async () => {
     const automations = await source("routes/automations.tsx");
-    const sidebar = await source("components/features/Sidebar.tsx");
-    expect(automations).toContain('content: "/skill use automation-create"');
-    expect(sidebar).toContain('content: `/skill use ${skill}`');
-    expect(automations).toContain("usePostMessage");
-    expect(sidebar).toContain("usePostMessage");
+    const dialog = await source("components/features/EditAutomationDialog.tsx");
+    expect(automations).toContain("<EditAutomationDialog");
+    expect(dialog).toContain("useCreateAutomation");
+    expect(automations).not.toContain("usePostMessage");
   });
 
   test("Automation displays creation provenance", async () => {
     const automation = await source("routes/automation-detail.tsx");
     const context = await source("components/features/context-inspector/SessionContextDetails.tsx");
     expect(automation).toContain("Created from");
+    expect(automation).toContain("todos?todo=${encodeURIComponent(automation.origin.todoId)}");
+    expect(automation).toContain("linkedTodo?.title");
     expect(context).toContain("Created here");
   });
 
   test("Automation enablement uses static domain status glyphs", async () => {
-    const sidebar = await source("components/features/Sidebar.tsx");
     const list = await source("routes/automations.tsx");
     const detail = await source("routes/automation-detail.tsx");
-    expect(sidebar).toContain("automationVisualKind");
     expect(list).toContain("automationVisualKind(automation.status)");
     expect(detail).toContain("automationVisualKind(automation.status)");
   });
@@ -61,15 +53,30 @@ describe("Automation navigation and detail actions", () => {
     expect(detail).toContain('className="inline-flex h-8 shrink-0 items-center');
   });
 
-  test("list header and creation controls use the locked page and control scale", async () => {
+  test("list keeps one compact filter and direct creation control", async () => {
     const list = await source("routes/automations.tsx");
-    expect(list).toContain('<h1 className="text-[16px] font-semibold leading-[22px] text-text-primary">Automations</h1>');
-    expect(list.match(/inline-flex h-8 items-center/g)?.length).toBe(2);
-    expect(list).toContain('text-[11px] leading-4 text-text-tertiary');
+    const detail = await source("routes/automation-detail.tsx");
+    expect(list).toContain('placeholder="Filter Automations…"');
+    expect(list).toContain("New Automation");
+    expect(list).toContain("detailSearch={detailSearch}");
+    expect(list).toContain('aria-current={selected ? "page" : undefined}');
+    expect(list).toContain("restoreRowRef.current?.focus()");
+    expect(detail).toContain("to={automationsHref}");
+    expect(detail).toContain("state={{ restoreAutomationId: automation.id }}");
+    expect(detail).toContain("<AutomationsRoute />");
+    expect(list).not.toContain("<main");
+    expect(list).not.toContain("<h1");
   });
 
   test("detail keeps schedule and due metadata readable", async () => {
     const detail = await source("routes/automation-detail.tsx");
     expect(detail.match(/text-\[11px\] leading-4 text-text-tertiary/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(detail).toContain('min-[841px]:block');
+    expect(detail).not.toContain('min-[980px]:block');
+    expect(detail).toContain('label="Stable ID"');
+    expect(detail).toContain('label="Updated"');
+    expect(detail).toContain('label="Workspace"');
+    expect(detail).toContain('latestInvocation?.status === "failed" || latestInvocation?.status === "missed"');
+    expect(detail).toContain("?invocation=${encodeURIComponent(item.id)}");
   });
 });

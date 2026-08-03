@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { Moon, Plus, Settings, Sun } from "lucide-react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Moon, Plus, Search, Settings, Sun } from "lucide-react";
 import { useProjects } from "../../api/queries";
 import type { Theme } from "../../hooks/use-theme";
 import { useAttentionVisibleScopedHitl } from "../../store/hitl-store";
@@ -13,6 +13,8 @@ import type { Project } from "../../api/types";
 interface ProjectBarProps {
   onAddProject?: () => void;
   onSettings?: () => void;
+  onSearch?: () => void;
+  searchTriggerRef?: React.RefObject<HTMLButtonElement | null>;
   showBell?: boolean;
   theme: Theme;
   toggleTheme: () => void;
@@ -22,8 +24,9 @@ function getInitials(slug: string): string {
   return slug.slice(0, 2).toLowerCase();
 }
 
-export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, toggleTheme }: ProjectBarProps) {
+export function ProjectBar({ onAddProject, onSettings, onSearch, searchTriggerRef, showBell = true, theme, toggleTheme }: ProjectBarProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { slug: activeSlug } = useParams<{ slug: string }>();
   const { data: projects } = useProjects();
   const attentionVisibleHitl = useAttentionVisibleScopedHitl();
@@ -34,7 +37,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
   const handleProjectClick = (slug: string, e?: React.MouseEvent) => {
     // Ctrl-click / Cmd-click should not navigate — context menu handles it
     if (e && (e.ctrlKey || e.metaKey)) return;
-    navigate(`/projects/${slug}`);
+    navigate(`/projects/${slug}/todos`);
   };
 
   const handleAddProject = () => {
@@ -50,7 +53,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
       if (project.slug === activeSlug) {
         const remaining = projects?.filter((p) => p.slug !== project.slug);
         if (remaining && remaining.length > 0) {
-          navigate(`/projects/${remaining[0].slug}`);
+          navigate(`/projects/${remaining[0].slug}/todos`);
         } else {
           navigate("/");
         }
@@ -67,8 +70,9 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
     >
       <button
         type="button"
-        aria-label="Open dashboard"
-        className="mb-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-rail-ink/8 text-rail-ink transition-colors duration-[var(--motion-hover)] hover:bg-rail-ink/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        aria-label="Open Home"
+        aria-current={location.pathname === "/" ? "page" : undefined}
+        className="mb-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-rail-ink/8 text-rail-ink transition-colors duration-[var(--motion-hover)] hover:bg-rail-ink/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
         onClick={() => navigate("/")}
       >
         <img src="/logo.svg" alt="ArchCode" width={20} height={20} />
@@ -89,7 +93,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
               aria-label={`Open ${project.name}`}
               aria-current={isActive ? "page" : undefined}
               aria-describedby={`project-tooltip-${project.slug}`}
-              className={`group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold transition-[background-color,color] duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+              className={`group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold transition-[background-color,color] duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${
                 isActive
                   ? "bg-rail-ink/10 text-rail-ink"
                   : "text-rail-muted hover:bg-rail-ink/8 hover:text-rail-ink"
@@ -116,7 +120,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
       <button
         type="button"
         aria-label="Open project"
-        className="group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-[13px] font-semibold text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
         onClick={handleAddProject}
       >
         <Plus size={16} aria-hidden="true" />
@@ -128,10 +132,21 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
       <div className="flex-1" />
 
       <div className="mt-2 flex flex-col items-center gap-1 border-t border-rail-ink/10 pt-2">
+        <button
+          ref={searchTriggerRef}
+          type="button"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+          title="Search all work (⌘K)"
+          aria-label="Search all work"
+          aria-keyshortcuts="Meta+K Control+K"
+          onClick={onSearch}
+        >
+          <Search size={15} aria-hidden="true" />
+        </button>
         {showBell && <HitlBell variant="rail" />}
         <button
           type="button"
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
           title="Settings"
           aria-label="Settings"
           onClick={handleSettingsClick}
@@ -140,7 +155,7 @@ export function ProjectBar({ onAddProject, onSettings, showBell = true, theme, t
         </button>
         <button
           type="button"
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
           title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           onClick={toggleTheme}

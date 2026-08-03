@@ -38,7 +38,7 @@ afterEach(async () => { await rm(TMP_DIR, { recursive: true, force: true }); });
 async function createHarness() {
   const storeManager = new SessionStoreManager({ logger: silentLogger });
   const sessionId = crypto.randomUUID();
-  const store = storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
+  const store = storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
   store.getState().append(testExecutionStart("test-execution", "tool_call"));
   store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
   await storeManager.flushSession(sessionId, TMP_DIR);

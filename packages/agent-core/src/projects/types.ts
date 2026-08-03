@@ -26,7 +26,7 @@ export interface ProjectContext {
     readonly name: string;
     readonly trigger: AutomationTrigger;
     readonly action: AutomationAction;
-    readonly createdFromSessionId: string;
+    readonly sourceSessionId: string;
   }): Promise<Automation>;
   todos: ProjectTodoService;
   hitl: ProjectHitlQueue;

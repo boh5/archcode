@@ -22,7 +22,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "/skill use analyze-work", location: "project" },
@@ -41,6 +41,8 @@ describe("AutomationDispatcher", () => {
       projectSlug: "project-a",
       sessionId: invocation.sessionId,
       clientRequestId: invocation.id,
+      automationId: automation.id,
+      invocationId: invocation.id,
       message: "/skill use analyze-work",
       location: "project",
     }]);
@@ -50,7 +52,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Continue", location: "project" },
@@ -73,7 +75,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Continue", location: "project" },
@@ -104,7 +106,7 @@ describe("AutomationDispatcher", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "run",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Continue", location: "project" },

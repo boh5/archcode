@@ -30,8 +30,10 @@ They are project-owned lifecycle entities, not Session-local checklists.
   metadata without changing lifecycle state or opening the detail drawer.
 - Filtering the Board keeps all four lanes visible and updates lane counts to
   the visible matches. Rejected and Archived filter only their selected lists.
-- Use the shared entity-filter component and show a no-results message without
-  replacing quick capture or the active view switcher.
+- Follow the shared filter visual/interaction contract while keeping the filter
+  page-local; do not introduce a generic `EntityFilter` component. Show a
+  no-results message without replacing quick capture or the active view
+  switcher.
 
 ## Board Surface
 
@@ -39,7 +41,7 @@ Desktop uses four lanes:
 
 1. Ideas — captured intent that still needs shaping.
 2. Ready — clear enough to start or hand off.
-3. In Progress — connected to active Session or Automation work.
+3. In Progress — work has started, even when its current processing is idle.
 4. Done — completed intent that may be reopened or archived.
 
 Responsive columns:
@@ -57,10 +59,26 @@ Lane rules:
   lanes remain content-sized with a 160px minimum.
 - Lane headers use a status orbit, title, short explanation, and count.
 - Cards use one border, 6px radius, and no elevation.
-- Card order is state → title → optional body preview. Linked Sessions,
-  Automations, and lifecycle actions live in the detail drawer.
+- Card order is lifecycle state → title → optional body preview → optional
+  operational line. Linked Sessions, Automations, and lifecycle actions live
+  in the detail drawer.
 - Selection changes the card border to indigo.
 - Lifecycle state uses its matching status icon plus text; color is secondary.
+- Only In Progress cards may show the compact derived operational line. It is
+  not another Todo lifecycle state and is never persisted. Derive it from the
+  linked Work Session, Todo-origin Automation run, unresolved HITL, Goal,
+  Execution, and Automation inventory already loaded by the page.
+- Do not render a provisional operational line until Session and Automation
+  inventory plus runtime and HITL snapshots are authoritative. Once ready, use
+  this precedence: `Needs you` for unresolved HITL or blocked/budget-limited
+  Goals; `Working` for live work; `Needs attention` for the latest stopped or
+  failed result; `Ready to review` for the latest completed result; `Scheduled`
+  for a future active Automation; otherwise `Idle`. A newer active or terminal
+  attempt supersedes an older failure, while an Automation dispatch alone is
+  never completion.
+- The operational line uses one icon plus visible text and an optional short
+  detail after a separator. Keep it inside the existing card boundary without
+  a badge stack, nested card, action, or lifecycle control.
 - Pointer and touch dragging target the lane under the pointer rather than the
   dragged card rectangle; keyboard dragging retains geometric collision
   fallback.
@@ -110,9 +128,11 @@ cards, menus, or collapsible groups:
 
 - `Discuss & Plan` contains Continue Discussion when available, New Discussion,
   and Generate / Improve Plan;
-- `Execution` contains Start Work, Continue Work when available, and Create
-  Automation, and appears only in lifecycle states where those actions are
-  already valid;
+- `Execution` has one state-aware primary action and appears only in lifecycle
+  states where execution actions are valid. With no linked Work Session, show
+  primary `Start Work`. Once a Work Session exists, replace it with primary
+  `Continue Work` and expose secondary `New Work Session`; `Create Automation`
+  remains secondary. Never show `Start Work` and `Continue Work` together;
 - `Lifecycle` contains state movement, Reject/Restore, and Archive/Restore.
 
 Plan shaping remains one fixed secondary action inside `Discuss & Plan`:

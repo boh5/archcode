@@ -11,7 +11,7 @@ import { createConfigRoutes } from "./routes/config";
 import { createAgentsRoutes } from "./routes/agents";
 import { createCompressionRoutes } from "./routes/compression";
 import { createDirectoriesRoutes } from "./routes/directories";
-import { createDashboardRoutes } from "./routes/dashboard";
+import { createGlobalWorkRoutes } from "./routes/global-work";
 import { createFilesRoutes } from "./routes/files";
 import { createGlobalEventsRoutes } from "./routes/global-events";
 import { createHitlRoutes } from "./routes/hitl";
@@ -60,7 +60,7 @@ export function createRuntimeApp(
       globalEventBus.emit(snapshot.hitl);
     },
   });
-  const dashboard = createDashboardRoutes(serverRuntime);
+  const globalWork = createGlobalWorkRoutes(serverRuntime);
   const projectHitl = createHitlRoutes(serverRuntime);
   const automations = createAutomationsRoutes(serverRuntime);
   const todos = createTodosRoutes(serverRuntime);
@@ -85,7 +85,7 @@ export function createRuntimeApp(
   const mcp = createMcpRoutes(serverRuntime);
   const config = createConfigRoutes(serverRuntime.configService);
 
-  app.route("/api", dashboard);
+  app.route("/api", globalWork);
   app.route("/api/projects", projects);
   app.route("/api/projects", automations);
   app.route("/api/projects", todos);

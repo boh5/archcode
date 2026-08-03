@@ -469,8 +469,8 @@ export class ConfiguredAgent implements Agent {
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
-    const todo = this.definition.name === "discussion" && state.projectTodo !== undefined
-      ? await input.projectContext.todos.readTodo(state.projectTodo.todoId)
+    const todo = this.definition.name === "discussion" && state.source?.kind === "todo"
+      ? await input.projectContext.todos.readTodo(state.source.todoId)
       : undefined;
     const parentAgentName = state.parentSessionId === undefined
       ? "none"

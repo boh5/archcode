@@ -98,7 +98,15 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
           : await this.#prepareWorktree(input.workspaceRoot, input.sessionId);
         session = await this.#sessions.createSessionFile(
           input.workspaceRoot,
-          { agentName: "lead", cwd },
+          {
+            agentName: "lead",
+            cwd,
+            source: {
+              kind: "automation",
+              automationId: input.automationId,
+              invocationId: input.invocationId,
+            },
+          },
           input.sessionId,
         );
       }

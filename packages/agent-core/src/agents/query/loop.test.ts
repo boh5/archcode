@@ -166,7 +166,7 @@ async function createHarness() {
   await mkdir(workspaceRoot, { recursive: true });
   const storeManager = new SessionStoreManager({ logger: silentLogger });
   const sessionId = crypto.randomUUID();
-  const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+  const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
   const projectContext = createTestProjectContext(workspaceRoot, storeManager);
   const redactionPolicy = new SecretRedactionPolicy([]);
   const artifactStore = new ToolOutputArtifactStore({ rootDir: join(workspaceRoot, "outputs") });

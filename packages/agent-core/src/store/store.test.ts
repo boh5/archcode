@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats, type CompressionBlockSnapshot, type FinalizedToolResult } from "@archcode/protocol";
 import { InvalidExecutionTransitionError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
-import { createSessionStore, storeManager } from "./store";
+import { storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
 import { silentLogger } from "../logger";
 import { __setSessionsDirForTest } from "./sessions-dir";
@@ -31,6 +31,13 @@ const TEST_MODEL_AUDIT = {
   requested: TEST_REQUESTED_MODEL_SELECTION,
   actual: TEST_BINDING.selection,
 };
+
+function createSessionStore(sessionId: string, workspaceRoot: string) {
+  return storeManager.create(sessionId, workspaceRoot, {
+    agentName: "lead",
+    source: { kind: "direct" },
+  });
+}
 
 function executionStart(executionId: string = crypto.randomUUID()) {
   return {
@@ -104,7 +111,7 @@ function uniqueSessionId(label: string): string {
 function createFreshStore(label: string) {
   usesInMemoryPersistence = true;
   sessionFileInternals.saveSessionTranscript = async () => {};
-  return storeManager.create(uniqueSessionId(label), TMP_DIR, { agentName: "lead" });
+  return storeManager.create(uniqueSessionId(label), TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
 }
 
 function finalizedResult(
@@ -253,7 +260,7 @@ function onlyStep(steps: StepInfo[]): StepInfo {
 describe("SessionStoreManager", () => {
   test("create returns initialized session state with empty events log", () => {
     const sessionId = uniqueSessionId("creation");
-    const store = storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    const store = storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     const state = store.getState();
 
     expect(state.sessionId).toBe(sessionId);
@@ -359,7 +366,7 @@ describe("SessionStoreManager", () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-stats-executions");
     const persistenceManager = new SessionStoreManager({ logger: silentLogger });
-    const store = persistenceManager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    const store = persistenceManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     const state = store.getState();
 
     state.append(executionStart("run-one"));
@@ -392,13 +399,13 @@ describe("SessionStoreManager", () => {
 
   test("create returns the same store for the same session id", () => {
     const sessionId = uniqueSessionId("same-store");
-    expect(storeManager.create(sessionId, TMP_DIR, { agentName: "lead" })).toBe(storeManager.create(sessionId, TMP_DIR, { agentName: "lead" }));
+    expect(storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" })).toBe(storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" }));
   });
 
   test("create scopes stores by workspace root", () => {
     const sessionId = uniqueSessionId("scoped-store");
-    const left = storeManager.create(sessionId, "/workspace/left", { agentName: "lead" });
-    const right = storeManager.create(sessionId, "/workspace/right", { agentName: "lead" });
+    const left = storeManager.create(sessionId, "/workspace/left", { source: { kind: "direct" }, agentName: "lead" });
+    const right = storeManager.create(sessionId, "/workspace/right", { source: { kind: "direct" }, agentName: "lead" });
 
     expect(left).not.toBe(right);
     expect(storeManager.get(sessionId, "/workspace/left")).toBe(left);
@@ -408,20 +415,20 @@ describe("SessionStoreManager", () => {
   test("get returns undefined for unknown sessions and existing stores after creation", () => {
     const sessionId = uniqueSessionId("registry");
     expect(storeManager.get(sessionId, TMP_DIR)).toBeUndefined();
-    const store = storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    const store = storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     expect(storeManager.get(sessionId, TMP_DIR)).toBe(store);
   });
 
   test("has returns true for registered stores and false for unknown ones", () => {
     const sessionId = uniqueSessionId("has-check");
     expect(storeManager.has(sessionId, TMP_DIR)).toBe(false);
-    storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     expect(storeManager.has(sessionId, TMP_DIR)).toBe(true);
   });
 
   test("delete removes a store from the registry", () => {
     const sessionId = uniqueSessionId("delete-store");
-    storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     expect(storeManager.has(sessionId, TMP_DIR)).toBe(true);
 
     const result = storeManager.delete(sessionId, TMP_DIR);
@@ -440,7 +447,7 @@ describe("SessionStoreManager", () => {
       uniqueSessionId("clear-b"),
       uniqueSessionId("clear-c"),
     ];
-    for (const sessionId of sessionIds) storeManager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    for (const sessionId of sessionIds) storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
 
     storeManager.clearAll();
 
@@ -452,7 +459,7 @@ describe("SessionStoreManager", () => {
   test("clearAll on a fresh manager leaves no stores", () => {
     const fresh = new SessionStoreManager({ logger: silentLogger });
     const sessionId = uniqueSessionId("fresh-store");
-    fresh.create(sessionId, TMP_DIR, { agentName: "lead" });
+    fresh.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     fresh.clearAll();
     expect(fresh.has(sessionId, TMP_DIR)).toBe(false);
   });

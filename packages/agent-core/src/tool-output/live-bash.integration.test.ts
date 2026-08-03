@@ -502,6 +502,7 @@ async function createHarness(options: {
   const storeManager = new SessionStoreManager({ logger: silentLogger });
   const sessionId = crypto.randomUUID();
   const store = storeManager.create(sessionId, workspace, {
+    source: { kind: "direct" },
     agentName: "lead",
     cwd: workspace,
   });

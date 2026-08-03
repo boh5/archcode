@@ -5,6 +5,20 @@ export const PROJECT_TODO_REJECTION_REASON_MAX_LENGTH = 4_000;
 export type ProjectTodoStatus = "idea" | "ready" | "in_progress" | "done" | "rejected";
 export type ProjectTodoSessionEntry = "discussion" | "work" | "automation";
 
+/** Immutable origin of every user-facing root Session. */
+export type RootSessionSource =
+  | { readonly kind: "direct" }
+  | {
+      readonly kind: "todo";
+      readonly todoId: string;
+      readonly entry: ProjectTodoSessionEntry;
+    }
+  | {
+      readonly kind: "automation";
+      readonly automationId: string;
+      readonly invocationId: string;
+    };
+
 /** Project-owned intent, separate from a Session-scoped execution checklist. */
 export interface ProjectTodo {
   readonly id: string;
@@ -18,15 +32,25 @@ export interface ProjectTodo {
   readonly updatedAt: number;
 }
 
-/** Immutable source identity owned by a user-facing root Session. */
-export interface ProjectTodoSessionSource {
-  readonly todoId: string;
-  readonly entry: ProjectTodoSessionEntry;
-}
-
 export interface ProjectTodoCreateInput {
   readonly title: string;
   readonly body?: string;
+}
+
+export interface ProjectTodoRunNowInput {
+  readonly clientRequestId: string;
+  readonly title: string;
+  readonly body?: string;
+}
+
+export interface ProjectTodoPlan {
+  readonly path: string;
+  readonly markdown: string;
+  readonly updatedAt: number;
+}
+
+export interface ProjectTodoPlanResponse {
+  readonly plan: ProjectTodoPlan | null;
 }
 
 /**

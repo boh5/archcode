@@ -1,13 +1,11 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type {
   AgentDescriptor,
-  DashboardProjection,
   SessionGoal,
   SessionSummary,
 } from "@archcode/protocol";
 import {
   agentsQueryOptions,
-  dashboardProjectionQueryOptions,
   diffQueryOptions,
   queryKeys,
   sessionsQueryOptions,
@@ -96,55 +94,6 @@ describe("web Session Goal query contracts", () => {
         >
       ).queryFn(),
     ).toEqual(sessions);
-  });
-
-  test("fetches the shared Dashboard projection in global scope", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const projection: DashboardProjection = {
-      scope: { kind: "global" },
-      sessions: [],
-      automations: [],
-      errors: [],
-    };
-    globalThis.fetch = mock(async (input) => {
-      expect(String(input)).toBe("/api/dashboard");
-      return jsonResponse(projection);
-    }) as unknown as typeof fetch;
-    const options = dashboardProjectionQueryOptions({ kind: "global" });
-    expect([...options.queryKey]).toEqual(["dashboard", "global"]);
-    expect(
-      await (
-        options as unknown as QueryOptionWithFn<DashboardProjection>
-      ).queryFn(),
-    ).toEqual(projection);
-  });
-
-  test("fetches the same Dashboard projection contract in project scope", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const projection: DashboardProjection = {
-      scope: { kind: "project", projectSlug: "demo space" },
-      sessions: [],
-      automations: [],
-      errors: [],
-    };
-    globalThis.fetch = mock(async (input) => {
-      expect(String(input)).toBe("/api/projects/demo%20space/dashboard");
-      return jsonResponse(projection);
-    }) as unknown as typeof fetch;
-    const options = dashboardProjectionQueryOptions({
-      kind: "project",
-      projectSlug: "demo space",
-    });
-    expect([...options.queryKey]).toEqual([
-      "dashboard",
-      "project",
-      "demo space",
-    ]);
-    expect(
-      await (
-        options as unknown as QueryOptionWithFn<DashboardProjection>
-      ).queryFn(),
-    ).toEqual(projection);
   });
 
   test("keeps Diff scoped to a Session", async () => {

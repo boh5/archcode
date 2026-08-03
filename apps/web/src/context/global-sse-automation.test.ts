@@ -17,12 +17,11 @@ describe("global SSE Automation invalidation", () => {
       queryKeys.automation("demo", "a1"),
       queryKeys.automationInvocations("demo", "a1"),
       queryKeys.projectAutomations("demo"),
-      queryKeys.dashboardProjection({ kind: "global" }),
-      queryKeys.dashboardProjection({ kind: "project", projectSlug: "demo" }),
+      queryKeys.home,
     ]);
   });
 
-  test("invalidates only Todo caches for the checkpoint-time Todo resource change", () => {
+  test("invalidates Todo and Home caches for a Todo resource change", () => {
     const calls: unknown[] = [];
     handleSSEEvent({ event: "resource.changed", data: JSON.stringify({
       type: "resource.changed", projectSlug: "demo", resourceType: "todo", resourceId: "t1", createdAt: 1,
@@ -34,9 +33,9 @@ describe("global SSE Automation invalidation", () => {
     });
     expect(calls).toEqual([
       queryKeys.projectTodos("demo"),
+      queryKeys.home,
     ]);
     expect(calls).not.toContainEqual(queryKeys.sessions("demo"));
-    expect(calls).not.toContainEqual(queryKeys.dashboardProjection({ kind: "global" }));
     expect(calls).not.toContainEqual(queryKeys.projectAutomations("demo"));
   });
 });

@@ -65,7 +65,10 @@ import type {
   SessionGoal,
   SessionProjection,
   SessionTreeResponse,
-  ProjectTodoSessionSource,
+  RootSessionSource,
+  RootSessionSummary,
+  ProjectSessionInventoryItem,
+  ProjectAutomationInventoryItem,
 } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, createToolExecutionContext, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import {
@@ -256,7 +259,16 @@ export interface CreateRuntimeSessionOptions {
   /** Current execution directory; Session persistence remains under workspaceRoot. */
   readonly cwd?: string;
   readonly title?: string;
-  readonly projectTodo?: ProjectTodoSessionSource;
+  readonly source: RootSessionSource;
+}
+
+export type RuntimeAutomationDefinitionInput = Pick<
+  CreateAutomationInput,
+  "name" | "trigger" | "action"
+>;
+
+export interface SessionAutomationCreateInput extends RuntimeAutomationDefinitionInput {
+  readonly sourceSessionId: string;
 }
 
 export interface ProjectControlPlaneSnapshot {
@@ -370,6 +382,7 @@ export interface AgentRuntime {
   searchToolOutputs(workspaceRoot: string, sessionId: string, input: ScopedOutputSearchInput): ReturnType<ToolOutputAccessService["search"]>;
   resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
+  listSessionInventory(workspaceRoot: string): Promise<ProjectSessionInventoryItem[]>;
   /** Durably accepts a root Session message; execution dispatch is a separate best-effort consequence. */
   acceptSessionMessage(input: AcceptSessionMessageInput): Promise<SessionMessageAcceptance>;
   editPendingSessionMessage(input: {
@@ -403,8 +416,10 @@ export interface AgentRuntime {
   disposeAllSessionAgents(): void;
   isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
   listAutomations(workspaceRoot: string): Promise<Automation[]>;
+  listAutomationInventory(workspaceRoot: string): Promise<ProjectAutomationInventoryItem[]>;
   readAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
-  createAutomation(workspaceRoot: string, input: Omit<CreateAutomationInput, "projectSlug">): Promise<Automation>;
+  createAutomation(workspaceRoot: string, input: SessionAutomationCreateInput): Promise<Automation>;
+  createDirectAutomation(workspaceRoot: string, input: RuntimeAutomationDefinitionInput): Promise<Automation>;
   updateAutomation(workspaceRoot: string, automationId: string, input: UpdateAutomationInput): Promise<Automation>;
   deleteAutomation(workspaceRoot: string, automationId: string): Promise<void>;
   pauseAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
@@ -750,7 +765,7 @@ export async function createRuntime(
               agentName: input.agentName,
               title: input.title,
               cwd: input.workspaceRoot,
-              projectTodo: input.projectTodo,
+              source: input.source,
             });
             return { sessionId: session.sessionId };
           },
@@ -769,6 +784,14 @@ export async function createRuntime(
               source: "user",
               requestedModelSelection: session.nextModelSelection.requested,
             });
+          },
+          readRootSession: async (input) => {
+            const file = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
+            return projectRootSessionSummary(file);
+          },
+          hasDurableMessage: async (input) => await sessionInputService.hasDurableMessage(input),
+          deleteSession: async (input) => {
+            await executionManager.deleteSession(input.workspaceRoot, input.sessionId);
           },
         },
       }),
@@ -1577,26 +1600,45 @@ export async function createRuntime(
       return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.listAutomations();
     }
 
+    async function listAutomationInventory(workspaceRoot: string): Promise<ProjectAutomationInventoryItem[]> {
+      return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.listInventory();
+    }
+
     async function readAutomation(workspaceRoot: string, automationId: string): Promise<Automation> {
       return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.readAutomation(automationId);
     }
 
     async function createAutomation(
       workspaceRoot: string,
-      input: Omit<CreateAutomationInput, "projectSlug">,
+      input: SessionAutomationCreateInput,
     ): Promise<Automation> {
       const project = await projectRegistry.getByWorkspace(workspaceRoot);
       if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
-      const sourceSession = await assertResourceCreationSource(workspaceRoot, input.createdFromSessionId);
+      const sourceSession = await assertResourceCreationSource(workspaceRoot, input.sourceSessionId);
       await assertAutomationWorktreeSupported(workspaceRoot, input.action);
+      const { sourceSessionId: _, ...definition } = input;
       const automation = await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
-        ...input,
+        ...definition,
         projectSlug: project.slug,
-        ...(sourceSession.projectTodo === undefined
-          ? {}
-          : { projectTodoId: sourceSession.projectTodo.todoId }),
+        origin: sourceSession.source?.kind === "todo"
+          ? { kind: "todo", todoId: sourceSession.source.todoId, sessionId: sourceSession.sessionId }
+          : { kind: "session", sessionId: sourceSession.sessionId },
       });
       return automation;
+    }
+
+    async function createDirectAutomation(
+      workspaceRoot: string,
+      input: RuntimeAutomationDefinitionInput,
+    ): Promise<Automation> {
+      const project = await projectRegistry.getByWorkspace(workspaceRoot);
+      if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
+      await assertAutomationWorktreeSupported(workspaceRoot, input.action);
+      return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
+        ...input,
+        projectSlug: project.slug,
+        origin: { kind: "direct" },
+      });
     }
 
     async function assertResourceCreationSource(
@@ -2145,6 +2187,7 @@ export async function createRuntime(
       ),
       resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
+      listSessionInventory: (workspaceRoot) => sessionStoreManager.listSessionInventory(workspaceRoot),
       acceptSessionMessage,
       editPendingSessionMessage: (input) => executionManager.runSessionInputMutation({
         workspaceRoot: input.workspaceRoot,
@@ -2223,8 +2266,10 @@ export async function createRuntime(
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),
       isSessionTombstoned: (workspaceRoot, sessionId) => sessionAgentManager.isTombstoned(workspaceRoot, sessionId),
       listAutomations,
+      listAutomationInventory,
       readAutomation,
       createAutomation,
+      createDirectAutomation,
       updateAutomation,
       deleteAutomation: async (workspaceRoot, automationId) => {
         await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.deleteAutomation(automationId);
@@ -2272,6 +2317,26 @@ function assertRuntimeSessionAgentScope(options: CreateRuntimeSessionOptions): v
   if (options.agentName !== "lead") {
     throw new Error(`Ordinary Session creation requires agentName "lead", got "${options.agentName}"`);
   }
+}
+
+function projectRootSessionSummary(file: SessionFile): RootSessionSummary {
+  if (file.parentSessionId !== undefined || file.rootSessionId !== file.sessionId || file.source === undefined) {
+    throw new Error(`Session ${file.sessionId} is not a sourced root Session`);
+  }
+  return {
+    sessionId: file.sessionId,
+    cwd: file.cwd,
+    rootSessionId: file.rootSessionId,
+    source: file.source,
+    agentName: file.agentName,
+    profile: resolveSessionProfile(file),
+    activeSkillNames: file.activeSkillNames,
+    modelSelection: file.modelSelection,
+    title: file.title,
+    ...(file.goal === undefined ? {} : { goal: file.goal }),
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
+  };
 }
 
 /**

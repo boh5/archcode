@@ -1,13 +1,15 @@
 import { Hono } from "hono";
 import {
+  AutomationCreateSchema,
   AutomationUpdateSchema,
   type AgentRuntime,
 } from "@archcode/agent-core";
-import type { Automation } from "@archcode/protocol";
+import type { Automation, ProjectAutomationInventoryResponse } from "@archcode/protocol";
 import { z } from "zod/v4";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 import { zValidator } from "../validation";
+import { readProjectAutomationInventory } from "../project-inventory-read";
 
 const AutomationIdSchema = z.uuid();
 const AutomationListParamsSchema = z.strictObject({ slug: z.string().min(1) });
@@ -28,8 +30,22 @@ export function createAutomationsRoutes(runtime: AgentRuntime): Hono {
 
   app.get("/:slug/automations", zValidator("param", AutomationListParamsSchema), async (c) => {
     const project = await resolveProject(runtime, c.req.valid("param").slug);
-    return c.json({ automations: await runtime.listAutomations(project.workspaceRoot) });
+    return c.json({
+      automations: await readProjectAutomationInventory(runtime, project.workspaceRoot),
+    } satisfies ProjectAutomationInventoryResponse);
   });
+
+  app.post(
+    "/:slug/automations",
+    zValidator("param", AutomationListParamsSchema),
+    zValidator("json", AutomationCreateSchema),
+    async (c) => {
+      const project = await resolveProject(runtime, c.req.valid("param").slug);
+      return c.json({
+        automation: await runtime.createDirectAutomation(project.workspaceRoot, c.req.valid("json")),
+      }, 201);
+    },
+  );
 
   app.get("/:slug/automations/:automationId", zValidator("param", AutomationParamsSchema), async (c) => {
     const { slug, automationId } = c.req.valid("param");

@@ -25,7 +25,7 @@ describe("AutomationScheduler", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => now });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
@@ -78,7 +78,7 @@ describe("AutomationScheduler", () => {
     });
     const automation = await scheduler.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
@@ -105,7 +105,7 @@ describe("AutomationScheduler", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => now });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "send_message", sessionId: crypto.randomUUID(), message: "Continue" },
@@ -135,7 +135,7 @@ describe("AutomationScheduler", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => START });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
@@ -160,7 +160,7 @@ describe("AutomationScheduler", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => START });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
@@ -205,7 +205,7 @@ describe("AutomationScheduler", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => START });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },

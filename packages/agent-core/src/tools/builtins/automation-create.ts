@@ -35,7 +35,7 @@ export const automationCreateTool = defineTool({
         name: input.name,
         trigger: input.trigger,
         action: input.action,
-        createdFromSessionId: state.sessionId,
+        sourceSessionId: state.sessionId,
       });
       return createTextToolResult(JSON.stringify(automation, null, 2));
     } catch (error) {

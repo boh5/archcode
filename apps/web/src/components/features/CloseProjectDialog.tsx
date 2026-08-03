@@ -71,7 +71,7 @@ export function CloseProjectDialog({
           </p>
           <p className="mt-3 text-[12px] leading-4 text-text-tertiary">
             The workspace folder will <strong>not</strong> be deleted. This only
-            removes the project from the sidebar.
+            removes the project from ArchCode.
           </p>
         </div>
 

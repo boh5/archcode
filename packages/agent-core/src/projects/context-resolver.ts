@@ -27,7 +27,7 @@ export interface ProjectContextResolverOptions {
     readonly name: string;
     readonly trigger: AutomationTrigger;
     readonly action: AutomationAction;
-    readonly createdFromSessionId: string;
+    readonly sourceSessionId: string;
   }) => Promise<Automation>;
   /** Factory primarily for testing alternate ProjectHitlQueue construction. */
   hitlFactory?: (options: ProjectHitlQueueOptions) => ProjectHitlQueue;

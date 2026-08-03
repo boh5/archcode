@@ -349,11 +349,12 @@ Narrow-screen rules:
   narrowing. Global results identify their project and entity type and keep
   urgency grouping within a project. Do not duplicate the global-search icon
   in the project toolbar.
-- Todo, Automation, and Session filters share one component: 36px high on
-  precise pointers, at least 44px on coarse pointers, a search icon, visible
-  focus ring, the same border/radius/type, and a helpful no-results state.
-  Page-specific source or view controls may sit beside it without restyling the
-  field.
+- Todo, Automation, and Session filters share one visual/interaction contract:
+  36px high on precise pointers, at least 44px on coarse pointers, a search
+  icon, visible focus ring, the same border/radius/type, and a helpful
+  no-results state. Implement each page's filter locally; do not pre-build a
+  generic `EntityFilter` component. Page-specific source or view controls may
+  sit beside it without restyling the field.
 - Session and Automation pages use one compact row per item:
   `state icon → single-line title → optional goal/attention/time marker`.
 - Use icons for running, completed, Goal, permission, question, and Automation
@@ -368,9 +369,11 @@ Narrow-screen rules:
 - `Direct` describes how a Session was started, not the size or complexity of
   its work. Do not describe Direct Sessions as `No Todo`, `Quick`, or small
   work; show the root Agent identity as their neutral source context.
-- A Todo `Run now` creates and opens a Todo-bound Session; an Automation
-  invocation creates and opens an Automation-bound Session. Every Session row
-  and detail header identifies its source as `Todo`, `Automation`, or `Direct`.
+- A Todo `Run now` creates and opens a Todo-bound Session. An Automation
+  `start_session` invocation creates and opens its Automation-source Session;
+  `send_message` opens the exact target Session and invocation deep link without
+  changing that Session's source. Every Session row and detail header identifies
+  its source as `Todo`, `Automation`, or `Direct`.
 - Todo quick capture presents two explicit outcomes in one surface:
   - `Save` captures one Idea without starting Agent work;
   - `Run now` creates the minimal Todo, moves it into active work, creates its
@@ -400,6 +403,10 @@ the complete state in the accessible name:
 | Selected/active | Indigo field or inset rule |
 | Idle/neutral | Outline neutral orbit |
 | Error/destructive | Red icon/field and recovery wording |
+
+Automation invocation state is not Session or Execution completion: a
+`dispatched` invocation remains visibly `Dispatched` and must never be labeled
+`Completed` without a terminal result from the relevant Session/Execution.
 
 Avoid decorative status animation. Only a running Session spinner, live Work
 pulse, and terminal cursor may loop.

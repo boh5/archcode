@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ProjectRegistry, silentLogger } from "@archcode/agent-core";
-import type { Automation, AutomationInvocation } from "@archcode/protocol";
+import type { Automation, AutomationInvocation, ProjectAutomationInventoryItem } from "@archcode/protocol";
 import { errorHandler } from "../error-handler";
 import { createAutomationsRoutes } from "./automations";
 
@@ -12,7 +12,7 @@ function automation(): Automation {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     projectSlug: "project",
-    createdFromSessionId: "44444444-4444-4444-8444-444444444444",
+    origin: { kind: "direct" },
     name: "Daily check",
     status: "active",
     trigger: { kind: "cron", expression: "0 9 * * 1", timezone: "Asia/Shanghai" },
@@ -33,7 +33,9 @@ async function fixture(name: string) {
   const runtime = {
     projectRegistry,
     listAutomations: mock(async () => [item]),
+    listAutomationInventory: mock(async (): Promise<ProjectAutomationInventoryItem[]> => [{ automation: item, latestInvocation: null }]),
     readAutomation: mock(async () => item),
+    createDirectAutomation: mock(async (_root: string, input: Pick<Automation, "name" | "trigger" | "action">) => ({ ...item, ...input })),
     updateAutomation: mock(async (_root: string, _id: string, input: Partial<Pick<Automation, "name" | "trigger" | "action">>) => ({ ...item, ...input })),
     deleteAutomation: mock(async () => undefined),
     pauseAutomation: mock(async () => ({ ...item, status: "paused" as const })),
@@ -45,7 +47,7 @@ async function fixture(name: string) {
       status: "pending",
       createdAt: "2026-07-13T00:00:00.000Z",
     })),
-    listAutomationInvocations: mock(async () => []),
+    listAutomationInvocations: mock(async (): Promise<AutomationInvocation[]> => []),
   };
   const app = createAutomationsRoutes(runtime as unknown as Parameters<typeof createAutomationsRoutes>[0]);
   app.onError(errorHandler);
@@ -71,16 +73,58 @@ describe("automation routes", () => {
     expect(runtime.runAutomationNow).toHaveBeenCalledWith(project.workspaceRoot, item.id);
   });
 
-  test("rejects provenance changes through the update route", async () => {
+  test("creates a direct Automation while keeping origin server-owned", async () => {
+    const { app, item, project, runtime } = await fixture("direct-create");
+    const input = { name: item.name, trigger: item.trigger, action: item.action };
+    const response = await app.request(`/${project.slug}/automations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ automation: item });
+    expect(runtime.createDirectAutomation).toHaveBeenCalledWith(project.workspaceRoot, input);
+
+    const forged = await app.request(`/${project.slug}/automations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...input, origin: { kind: "session", sessionId: crypto.randomUUID() } }),
+    });
+    expect(forged.status).toBe(400);
+    expect(runtime.createDirectAutomation).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects origin changes through the update route", async () => {
     const { app, item, project, runtime } = await fixture("immutable-provenance");
     const res = await app.request(`/${project.slug}/automations/${item.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ createdFromSessionId: crypto.randomUUID() }),
+      body: JSON.stringify({ origin: { kind: "direct" } }),
     });
 
     expect(res.status).toBe(400);
     expect(runtime.updateAutomation).not.toHaveBeenCalled();
+  });
+
+  test("lists each Automation with its complete latest Invocation snapshot", async () => {
+    const { app, item, project, runtime } = await fixture("inventory");
+    const latest: AutomationInvocation = {
+      id: "33333333-3333-4333-8333-333333333333",
+      automationId: item.id,
+      dueAt: "2026-07-13T00:00:00.000Z",
+      status: "failed",
+      createdAt: "2026-07-13T00:00:00.000Z",
+      completedAt: "2026-07-13T00:01:00.000Z",
+      error: "dispatch failed",
+    };
+    runtime.listAutomationInventory.mockResolvedValueOnce([{ automation: item, latestInvocation: latest }]);
+
+    const response = await app.request(`/${project.slug}/automations`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ automations: [{ automation: item, latestInvocation: latest }] });
+    expect(runtime.listAutomationInventory).toHaveBeenCalledWith(project.workspaceRoot);
   });
 
   test("rejects malformed JSON, invalid IDs, and invalid invocation limits", async () => {

@@ -32,6 +32,13 @@ const BOARD_STATUSES: ReadonlySet<ProjectTodoStatus> = new Set([
 
 type MutableProjectTodo = { -readonly [Key in keyof ProjectTodo]: ProjectTodo[Key] };
 
+export interface ProjectTodoRunNowReceipt {
+  readonly clientRequestId: string;
+  readonly requestHash: string;
+  readonly todoId: string;
+  readonly sessionId: string;
+}
+
 export interface ProjectTodoStateManagerOptions {
   readonly now?: () => number;
   readonly onCommitted?: (todo: ProjectTodo) => void | Promise<void>;
@@ -79,6 +86,47 @@ export class ProjectTodoStateManager {
       };
       state.todos.push(todo);
       return structuredClone(todo);
+    }, (todo) => todo);
+  }
+
+  async createRunNowTodo(input: ProjectTodoCreateInput): Promise<ProjectTodo> {
+    const validated = ProjectTodoCreateSchema.parse(input);
+    return this.#mutate((state) => {
+      const now = this.#now();
+      const todo: ProjectTodo = {
+        id: crypto.randomUUID(),
+        title: validated.title,
+        body: validated.body ?? "",
+        status: "in_progress",
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.todos.push(todo);
+      return structuredClone(todo);
+    }, (todo) => todo);
+  }
+
+  async readRunNowReceipt(clientRequestId: string): Promise<ProjectTodoRunNowReceipt | undefined> {
+    const receipt = (await this.#read()).runNowReceipts.find((item) => item.clientRequestId === clientRequestId);
+    return receipt === undefined ? undefined : structuredClone(receipt);
+  }
+
+  async commitRunNowReceipt(receipt: ProjectTodoRunNowReceipt): Promise<ProjectTodoRunNowReceipt> {
+    return this.#mutate((state) => {
+      const existing = state.runNowReceipts.find((item) => item.clientRequestId === receipt.clientRequestId);
+      if (existing !== undefined) return structuredClone(existing);
+      requiredTodo(state, receipt.todoId);
+      state.runNowReceipts.push(structuredClone(receipt));
+      return structuredClone(receipt);
+    });
+  }
+
+  async deleteRunNowTodo(todoId: string): Promise<void> {
+    await this.#mutate((state) => {
+      const index = state.todos.findIndex((todo) => todo.id === todoId);
+      if (index < 0) throw new ProjectTodoNotFoundError(todoId);
+      state.todos.splice(index, 1);
     });
   }
 
@@ -111,7 +159,7 @@ export class ProjectTodoStateManager {
       if (shouldReorder) reorderTodo(state.todos, todo, finalStatus, update.beforeTodoId ?? null);
       touch(todo, this.#now());
       return structuredClone(todo);
-    });
+    }, (todo) => todo);
   }
 
   /** Reads a Todo and verifies its revision inside the serialized mutation lane. */
@@ -121,7 +169,7 @@ export class ProjectTodoStateManager {
       assertMutable(todo);
       assertRevision(todo, expectedRevision);
       return structuredClone(todo);
-    });
+    }, (todo) => todo);
   }
 
   /**
@@ -143,7 +191,7 @@ export class ProjectTodoStateManager {
       reorderTodo(state.todos, todo, "in_progress", null);
       touch(todo, this.#now());
       return structuredClone(todo);
-    });
+    }, (todo) => todo);
   }
 
   async #read(): Promise<ProjectTodoStateFile> {
@@ -155,14 +203,17 @@ export class ProjectTodoStateManager {
     if (this.#state !== undefined) return this.#state;
     const file = Bun.file(this.#filePath);
     if (!(await file.exists())) {
-      this.#state = { todos: [] };
+      this.#state = { todos: [], runNowReceipts: [] };
       return this.#state;
     }
     this.#state = ProjectTodoStateFileSchema.parse(await file.json());
     return this.#state;
   }
 
-  #mutate<T extends ProjectTodo>(mutation: (state: ProjectTodoStateFile) => T | Promise<T>): Promise<T> {
+  #mutate<T>(
+    mutation: (state: ProjectTodoStateFile) => T | Promise<T>,
+    committedTodo?: (result: T) => ProjectTodo | undefined,
+  ): Promise<T> {
     const operation = this.#mutation.then(async () => {
       const state = structuredClone(await this.#load());
       const before = JSON.stringify(state);
@@ -171,7 +222,8 @@ export class ProjectTodoStateManager {
       if (JSON.stringify(parsed) === before) return result;
       await atomicWrite(this.#filePath, `${JSON.stringify(parsed, null, 2)}\n`);
       this.#state = parsed;
-      this.#notifyCommitted(result);
+      const todo = committedTodo?.(result);
+      if (todo !== undefined) this.#notifyCommitted(todo);
       return result;
     });
     this.#mutation = operation.then(() => undefined, () => undefined);

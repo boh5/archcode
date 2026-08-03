@@ -22,7 +22,7 @@ const sessionIds = new Set<string>();
 
 function createStore(sessionId = crypto.randomUUID()) {
   sessionIds.add(sessionId);
-  return storeManager.create(sessionId, WORKSPACE_ROOT, { agentName: "lead" });
+  return storeManager.create(sessionId, WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
 }
 
 function makeModelInfo(): ModelInfo {

@@ -21,8 +21,11 @@ describe("AutomationStateManager", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: "11111111-1111-4111-8111-111111111111",
-      projectTodoId: "22222222-2222-4222-8222-222222222222",
+      origin: {
+        kind: "todo",
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        todoId: "22222222-2222-4222-8222-222222222222",
+      },
       name: "daily check",
       trigger: { kind: "interval", everyMs: 60_000 },
       action: { kind: "start_session", message: "Review the project", location: "project" },
@@ -31,22 +34,29 @@ describe("AutomationStateManager", () => {
 
     const reloaded = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     expect((await reloaded.listAutomations()).map((item) => item.id)).toEqual([automation.id]);
-    expect((await reloaded.readAutomation(automation.id)).createdFromSessionId).toBe("11111111-1111-4111-8111-111111111111");
-    expect((await reloaded.readAutomation(automation.id)).projectTodoId).toBe("22222222-2222-4222-8222-222222222222");
+    expect((await reloaded.readAutomation(automation.id)).origin).toEqual({
+      kind: "todo",
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      todoId: "22222222-2222-4222-8222-222222222222",
+    });
     expect((await reloaded.listInvocations(automation.id))[0]).toEqual(invocation);
+    expect(await reloaded.listInventory()).toEqual([{
+      automation,
+      latestInvocation: invocation,
+    }]);
     expect(await Bun.file(join(TMP_ROOT, ".archcode", "runtime", "automations", "state.json")).exists()).toBe(true);
 
     await expect(manager.updateAutomation(automation.id, {
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
     } as never)).rejects.toThrow();
-    expect((await manager.readAutomation(automation.id)).createdFromSessionId).toBe("11111111-1111-4111-8111-111111111111");
+    expect((await manager.readAutomation(automation.id)).origin).toEqual(automation.origin);
   });
 
   test("rejects over-limit create and update inputs before persistence", async () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     await expect(manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "n".repeat(201),
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
@@ -55,12 +65,12 @@ describe("AutomationStateManager", () => {
 
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "valid",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
     });
-    expect(automation.projectTodoId).toBeUndefined();
+    expect(automation.origin).toEqual({ kind: "direct" });
     await expect(manager.updateAutomation(automation.id, {
       action: { kind: "start_session", message: "x".repeat(10_001), location: "project" },
     })).rejects.toThrow();
@@ -71,7 +81,7 @@ describe("AutomationStateManager", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
@@ -90,7 +100,7 @@ describe("AutomationStateManager", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => now });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "watch",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "send_message", sessionId: crypto.randomUUID(), message: "Continue" },
@@ -113,7 +123,7 @@ describe("AutomationStateManager", () => {
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
     const automation = await manager.createAutomation({
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" },
       name: "expired",
       trigger: { kind: "once", at: "2026-07-12T23:59:00.000Z" },
       action: { kind: "start_session", message: "Too late", location: "project" },

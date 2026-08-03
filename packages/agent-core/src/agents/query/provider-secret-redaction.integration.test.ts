@@ -77,7 +77,7 @@ describe("Provider secret redaction integration", () => {
           modelRuntimeRevision: "integration-revision",
         },
       };
-      const store = storeManager.create(crypto.randomUUID(), testRoot.path, { agentName: "lead" });
+      const store = storeManager.create(crypto.randomUUID(), testRoot.path, { source: { kind: "direct" }, agentName: "lead" });
       const messageId = crypto.randomUUID();
       store.getState().append({
         type: "execution-start",

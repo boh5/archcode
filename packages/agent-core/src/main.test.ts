@@ -58,7 +58,7 @@ function makeFakeMcpManager(result: McpDiscoveryResult | Error, secrets: readonl
   const policy = new SecretRedactionPolicy(secrets);
   return { discover: mock(async () => { if (result instanceof Error) throw result; return result; }), closeAll: mock(async () => []), getStatus: mock(() => new Map()), onStatusChange: mock(() => () => {}), startBackgroundDiscovery: mock((onDescriptors: (d: AnyToolDescriptor[]) => void, onWarning: (w: McpWarning) => void) => { if (result instanceof Error) { onWarning({ message: policy.redactString(`Failed to discover MCP tools during startup: ${result.message}`) }); return; } for (const warning of result.warnings) onWarning(warning); if (result.descriptors.length) onDescriptors(result.descriptors); }) } as unknown as McpManager;
 }
-function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead" }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, executionId: crypto.randomUUID(), runOrdinal: 0, toolBatchId: crypto.randomUUID(), abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
+function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead", source: { kind: "direct" } }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, executionId: crypto.randomUUID(), runOrdinal: 0, toolBatchId: crypto.randomUUID(), abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
 type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation">;
 async function createRuntime(options: RuntimeTestOptions) {
   const result = await options.configService.activateForStartup();
@@ -267,7 +267,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Queued input" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", title: "Queued input" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" }, title: "Queued input" });
     expect(session).toMatchObject({
       executionCount: 0,
       isRunning: false,
@@ -312,7 +312,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "HITL create failure" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime.contextResolver.resolve(workspaceRoot);
     const originalCreate = context.hitl.create.bind(context.hitl);
     let createAttempts = 0;
@@ -389,7 +389,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Input release retry" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const originalResolve = runtime.contextResolver.resolve.bind(runtime.contextResolver);
     let resolveAttempts = 0;
     runtime.contextResolver.resolve = async (root) => {
@@ -437,7 +437,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Child release retry" });
-    const parent = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const parent = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     let resolveChildStarted!: () => void;
     const childStarted = new Promise<void>((resolve) => { resolveChildStarted = resolve; });
     let releaseChild!: () => void;
@@ -478,7 +478,7 @@ describe("createRuntime", () => {
 
     const queuedSessionId = crypto.randomUUID();
     const externalStoreManager = new SessionStoreManager({ logger: silentLogger });
-    externalStoreManager.create(queuedSessionId, workspaceRoot, { agentName: "lead" });
+    externalStoreManager.create(queuedSessionId, workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     await externalStoreManager.flushSession(queuedSessionId, workspaceRoot);
     const queuedClientRequestId = crypto.randomUUID();
     await new SessionInputService(externalStoreManager, EMPTY_SESSION_ATTACHMENT_RESOLVER).acceptMessage({
@@ -527,7 +527,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       name: "Attachment media type persistence",
     });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachmentId = crypto.randomUUID();
     const upload = await runtime.uploadSessionAttachment({
       workspaceRoot,
@@ -631,7 +631,7 @@ describe("createRuntime", () => {
         sessionId: discussion.sessionId,
         rootSessionId: discussion.sessionId,
         agentName: "discussion",
-        projectTodo: { todoId: todo.id, entry: "discussion" },
+        source: { kind: "todo", todoId: todo.id, entry: "discussion" },
       });
       expect(stored.messages).toContainEqual(expect.objectContaining({
         role: "user",
@@ -653,8 +653,8 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Lead collaboration" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", title: "Lead collaboration" });
-    expect(session.projectTodo).toBeUndefined();
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" }, title: "Lead collaboration" });
+    expect(session.source).toEqual({ kind: "direct" });
     const overriddenModel = await runtime.patchSessionModelSelection({
       workspaceRoot,
       sessionId: session.sessionId,
@@ -796,7 +796,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Command retry" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const clientRequestId = crypto.randomUUID();
     const input = {
       slug: project.slug,
@@ -827,7 +827,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Concurrent command retry" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const clientRequestId = crypto.randomUUID();
     const input = {
       slug: project.slug,
@@ -864,7 +864,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Command attachments" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     await expect(runtime.acceptSessionMessage({
       slug: project.slug,
       workspaceRoot,
@@ -910,7 +910,7 @@ describe("createRuntime", () => {
   test("registers MCP descriptors before agent runs", async () => { const descriptor = makeMcpDescriptor(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [descriptor], warnings: [] }) }); expect(runtime.toolRegistry.get(descriptor.name)).toBe(descriptor); });
   test("starts with no MCP config", async () => { let resolved: ResolvedMcpConfig | undefined; const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: (config) => { resolved = config; return makeFakeMcpManager({ descriptors: [], warnings: [] }); } }); expect(resolved).toEqual({ servers: {} }); expect(runtime.warnings).toEqual([]); });
   test("exposes project registry and shared context resolver", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.projectRegistry).toBeDefined(); expect(runtime.contextResolver).toBeDefined(); });
-  test("emits runtime snapshot without idle families", async () => { const workspaceRoot = await makeTempRoot(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" }); const session = await runtime.createSession(workspaceRoot, { agentName: "lead" }); const changes: GlobalSSESessionRuntimeChangedEvent[] = []; const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event)); const events = await runtime.listSessionRuntimeEvents(); expect(events[0]).toMatchObject({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }); await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined(); expect(changes.map(({ activity }) => activity)).toEqual(["stopping", "idle"]); unsubscribe(); });
+  test("emits runtime snapshot without idle families", async () => { const workspaceRoot = await makeTempRoot(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" }); const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } }); const changes: GlobalSSESessionRuntimeChangedEvent[] = []; const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event)); const events = await runtime.listSessionRuntimeEvents(); expect(events[0]).toMatchObject({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }); await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined(); expect(changes.map(({ activity }) => activity)).toEqual(["stopping", "idle"]); unsubscribe(); });
 
   test("startup continuation recovery preserves persisted Session recency and content", async () => {
     const workspaceRoot = await makeTempRoot();
@@ -924,7 +924,7 @@ describe("createRuntime", () => {
     await runtime1.projectRegistry.add({ workspaceRoot, name: "Stable recency" });
     const sessions = await Promise.all(
       ["oldest", "middle", "newest"].map((title) =>
-        runtime1.createSession(workspaceRoot, { agentName: "lead", title })),
+        runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" }, title })),
     );
     await runtime1.shutdown();
 
@@ -975,7 +975,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "HITL delivery failure" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime.contextResolver.resolve(workspaceRoot);
     const record = (await context.hitl.create({
       hitlId: secret,
@@ -1015,7 +1015,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Fast HITL answer" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime.contextResolver.resolve(workspaceRoot);
     const originalCreate = context.hitl.create.bind(context.hitl);
     let responsePromise: ReturnType<AgentRuntime["respondToHitl"]> | undefined;
@@ -1121,9 +1121,9 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot: healthyWorkspaceRoot, name: "Healthy project" });
-    await runtime.createSession(healthyWorkspaceRoot, { agentName: "lead" });
+    await runtime.createSession(healthyWorkspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     await runtime.projectRegistry.add({ workspaceRoot: failedWorkspaceRoot, name: "Failed project" });
-    const failedSession = await runtime.createSession(failedWorkspaceRoot, { agentName: "lead" });
+    const failedSession = await runtime.createSession(failedWorkspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime.contextResolver.resolve(failedWorkspaceRoot);
     const request = context.hitl.codec.createAskUserRequest({
       toolCallId: "missing-startup-call",
@@ -1186,7 +1186,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Goal restart" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
 
     const goalCreated = nextSessionEvent(
       runtime1,
@@ -1250,7 +1250,7 @@ describe("createRuntime", () => {
     const childSessionId = crypto.randomUUID();
     const childExecutionId = crypto.randomUUID();
     const seed = new SessionStoreManager({ logger: silentLogger });
-    await seed.createSessionFile(workspaceRoot, { agentName: "lead" }, rootSessionId);
+    await seed.createSessionFile(workspaceRoot, { agentName: "lead", source: { kind: "direct" } }, rootSessionId);
     const seedGoals = new SessionGoalService(seed);
     const goal = await seedGoals.create({
       workspaceRoot,
@@ -1339,7 +1339,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal continuation" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
 
     await runtime.acceptSessionMessage({
       slug: project.slug,
@@ -1382,7 +1382,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal failure" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
 
     const executionFailed = nextSessionEvent(
       runtime,
@@ -1423,7 +1423,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Repair answered HITL" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime1.contextResolver.resolve(workspaceRoot);
     const questionInput = {
       questions: [{
@@ -1572,7 +1572,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "HITL restart" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime1.contextResolver.resolve(workspaceRoot);
     const questionInput = {
       questions: [{
@@ -1728,7 +1728,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "HITL answer and Stop" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context1 = await runtime1.contextResolver.resolve(workspaceRoot);
     const input = {
       questions: [{
@@ -1873,7 +1873,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Concurrent HITL" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context1 = await runtime1.contextResolver.resolve(workspaceRoot);
     const concurrentDisplay = {
       title: "Continue",
@@ -1969,7 +1969,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment deletion" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachmentId = crypto.randomUUID();
     let releaseBody!: () => void;
     let bodyRead!: () => void;
@@ -2025,7 +2025,7 @@ describe("createRuntime", () => {
       attachmentRootRemover: cleanup,
     } as RuntimeTestOptions);
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment cleanup warning" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachmentId = crypto.randomUUID();
     await runtime.uploadSessionAttachment({
       workspaceRoot,
@@ -2053,7 +2053,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment child deletion" });
-    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const retainedId = crypto.randomUUID();
     await runtime.uploadSessionAttachment({
       workspaceRoot,
@@ -2124,7 +2124,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment failed deletion" });
-    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachmentId = crypto.randomUUID();
     await runtime.uploadSessionAttachment({
       workspaceRoot,
@@ -2173,7 +2173,7 @@ describe("createRuntime", () => {
       },
     } as RuntimeTestOptions);
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment delete first" });
-    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     await runtime.uploadSessionAttachment({
       workspaceRoot,
       rootSessionId: root.sessionId,

@@ -241,6 +241,7 @@ async function render(
   messages: SessionMessage[],
   execution: SessionExecutionRecord,
   steps: SessionStep[] = [],
+  focusClientRequestId?: string,
 ): Promise<void> {
   await act(async () => {
     createWebSessionStore("session", "project")
@@ -265,6 +266,7 @@ async function render(
             sessionId="session"
             sessionIdentity={{ agentName: "lead", profile: "principal" }}
             agents={[]}
+            focusClientRequestId={focusClientRequestId}
           />
         </QueryClientProvider>
       </StrictMode>,
@@ -417,6 +419,20 @@ describe("ExecutionWorkstream", () => {
       container.querySelector('[data-work-segment="work:execution:after:two"]')
         ?.textContent,
     ).toContain("Two");
+  });
+
+  test("focuses and highlights the canonical message matched by an Invocation client request id", async () => {
+    await render(
+      [{ ...(message("invocation-message", "user", "Automated instruction", 10) as Extract<SessionMessage, { role: "user" }>), clientRequestId: "invocation-1" }],
+      completed(),
+      [],
+      "invocation-1",
+    );
+
+    const target = container.querySelector<HTMLElement>('[data-client-request-id="invocation-1"]');
+    expect(target).not.toBeNull();
+    expect(target?.className).toContain("ring-brand");
+    expect(document.activeElement).toBe(target);
   });
 
   test("renders ordered independent Work Segments while final output stays with the last segment", async () => {

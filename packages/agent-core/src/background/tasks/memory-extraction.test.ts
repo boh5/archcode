@@ -191,7 +191,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("skip-few-messages");
     await setupDirs(roots);
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [makeUserMessage("Hi", now)],
     });
@@ -234,7 +234,7 @@ describe("createMemoryExtractionTask", () => {
       createdAt: now + index,
       completedAt: now + index,
     }));
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...internalNotices,
@@ -251,7 +251,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("skip-short-content");
     await setupDirs(roots);
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("Hi", now),
@@ -278,7 +278,7 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: makeUserMessages(5, longText, now),
     });
@@ -353,7 +353,7 @@ describe("createMemoryExtractionTask", () => {
     try {
       const now = Date.now();
       const longText = "A".repeat(300);
-      const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+      const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
       store.setState({
         messages: [
           ...makeUserMessages(5, longText, now),
@@ -384,7 +384,7 @@ describe("createMemoryExtractionTask", () => {
     const logger = createMockLogger();
     const retryScheduler = createFakeRetryScheduler();
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({ messages: makeUserMessages(5, "A".repeat(300), now) });
 
     await createMemoryExtractionTask(store, roots).run(makeTaskContext(store, { logger, retryScheduler }));
@@ -407,7 +407,7 @@ describe("createMemoryExtractionTask", () => {
     try {
       const now = Date.now();
       const longText = "A".repeat(300);
-      const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+      const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
       store.setState({
         messages: [
           ...makeUserMessages(5, longText, now),
@@ -468,7 +468,7 @@ describe("createMemoryExtractionTask", () => {
     try {
       const now = Date.now();
       const longText = "A".repeat(300);
-      const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+      const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
       store.setState({
         messages: [
           ...makeUserMessages(5, longText, now),
@@ -524,7 +524,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -564,7 +564,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -613,7 +613,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -639,7 +639,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -685,7 +685,7 @@ describe("createMemoryExtractionTask", () => {
     try {
       const now = Date.now();
       const longText = "A".repeat(300);
-      const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+      const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
       store.setState({
         messages: [
           ...makeUserMessages(5, longText, now),
@@ -721,7 +721,7 @@ describe("createMemoryExtractionTask", () => {
       messages.push(makeAssistantMessage(`Response ${i}`, now + i));
     }
 
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({ messages });
 
     const task = createMemoryExtractionTask(store, roots);
@@ -741,7 +741,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("from-index");
     await setupDirs(roots);
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("OLD_SHOULD_NOT_APPEAR".repeat(100), now),
@@ -765,7 +765,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("custom-config");
     await setupDirs(roots);
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("Short message", now),
@@ -785,7 +785,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("custom-config-min-messages");
     await setupDirs(roots);
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("A".repeat(300), now),
@@ -805,7 +805,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("custom-config-min-content");
     await setupDirs(roots);
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("Hi", now),
@@ -830,7 +830,7 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     mockGenerateText.mockImplementation(async () => makeGenerateTextResult({ memories: [] }));
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("A".repeat(300), now),
@@ -851,7 +851,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("filter-prompt");
     await setupDirs(roots);
     const now = Date.now();
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         makeUserMessage("User preference ".repeat(80), now),
@@ -952,7 +952,7 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -1023,7 +1023,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -1097,7 +1097,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -1153,7 +1153,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -1195,7 +1195,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" });
+    const store = storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" });
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
