@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Filter, Plus, Search } from "lucide-react";
-import type { SessionFamilyActivity } from "@archcode/protocol";
+import { projectTodoDisplayLabel, type SessionFamilyActivity } from "@archcode/protocol";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useCreateSession } from "../api/mutations";
 import { useAutomationInventory, useProjectTodos, useSessionInventory } from "../api/queries";
@@ -81,7 +81,7 @@ export function ProjectSessionsRoute() {
     ? requestedSource
     : "all";
 
-  const todoNames = useMemo(() => new Map(todos.map((todo) => [todo.id, todo.title])), [todos]);
+  const todoNames = useMemo(() => new Map(todos.map((todo) => [todo.id, projectTodoDisplayLabel(todo.content, todo.id)])), [todos]);
   const automationNames = useMemo(() => new Map((automationInventory.data ?? []).map((item) => [item.automation.id, item.automation.name])), [automationInventory.data]);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();

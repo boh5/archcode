@@ -63,7 +63,7 @@ describe("root Session source presentation", () => {
     expect(presentRootSessionSource({
       source: { kind: "todo", todoId: "todo-1", entry: "work" },
       slug: "demo",
-      todoTitle: "Implement source contract",
+      todoLabel: "Implement source contract",
     })).toMatchObject({ label: "Work Todo", title: "Implement source contract" });
     expect(presentRootSessionSource({
       source: { kind: "automation", automationId: "auto-1", invocationId: "run-1" },
@@ -1102,8 +1102,7 @@ describe("SessionRoute focused view store behavior", () => {
     };
     const projectTodo: ProjectTodo = {
       id: "todo-offline-mode",
-      title: "Add resilient offline mode",
-      body: "",
+      content: "Add resilient offline mode",
       status: "ready",
       revision: 3,
       createdAt: 1,
@@ -1154,7 +1153,7 @@ describe("SessionRoute focused view store behavior", () => {
                       element={<SessionRoute />}
                     />
                     <Route
-                      path="/projects/:slug/todos"
+                      path="/projects/:slug/todos/:todoId"
                       element={<LocationProbe />}
                     />
                   </Routes>
@@ -1170,7 +1169,7 @@ describe("SessionRoute focused view store behavior", () => {
       );
       expect(backlink?.textContent).toBe("Add resilient offline mode");
       expect(backlink?.getAttribute("href")).toBe(
-        "/projects/demo/todos?todo=todo-offline-mode",
+        "/projects/demo/todos/todo-offline-mode",
       );
       expect(container.textContent).toContain("Discussion Todo");
       expect(backlink?.closest("header")).not.toBeNull();
@@ -1190,7 +1189,7 @@ describe("SessionRoute focused view store behavior", () => {
 
       expect(
         container.querySelector('[data-testid="location"]')?.textContent,
-      ).toBe("/projects/demo/todos?todo=todo-offline-mode|PUSH");
+      ).toBe("/projects/demo/todos/todo-offline-mode|PUSH");
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();

@@ -1,8 +1,8 @@
 # Todos Page Overrides
 
 > Read [`../MASTER.md`](../MASTER.md) first. Todos contains three distinct
-> surfaces: Board, Rejected, and Archived. All three must be implemented and
-> remain reachable from the header switcher.
+> list surfaces: Board, Rejected, and Archived, plus an independent Todo detail
+> route. All list surfaces remain reachable from the header switcher.
 
 ## Purpose
 
@@ -19,15 +19,18 @@ They are project-owned lifecycle entities, not Session-local checklists.
 - Place quick capture directly below the header.
 - Main Todo content may use up to 1500px because Board lanes need horizontal
   working space.
-- A selected Todo opens a right detail drawer without navigating away.
+- A Todo opens `/projects/:slug/todos/:todoId`. The Board does not retain a
+  parallel drawer or selected-card detail state.
+- Returning from a Todo opened on the Board preserves the list query, selected
+  view, and scroll position.
 
 ## Search and Filter
 
 - Project-rail `Search all work` is the only navigational search. The visible
   Todo field is only an in-place filter for the selected Todo view; do not add
   another search icon to the project toolbar.
-- `Filter Todos` matches stable ID, title, body/PRD text, and visible runtime
-  metadata without changing lifecycle state or opening the detail drawer.
+- `Filter Todos` matches stable ID, canonical content/PRD text, and visible
+  runtime metadata without changing lifecycle state or opening the detail page.
 - Filtering the Board keeps all four lanes visible and updates lane counts to
   the visible matches. Rejected and Archived filter only their selected lists.
 - Follow the shared filter visual/interaction contract while keeping the filter
@@ -59,10 +62,11 @@ Lane rules:
   lanes remain content-sized with a 160px minimum.
 - Lane headers use a status orbit, title, short explanation, and count.
 - Cards use one border, 6px radius, and no elevation.
-- Card order is lifecycle state → title → optional body preview → optional
-  operational line. Linked Sessions, Automations, and lifecycle actions live
-  in the detail drawer.
-- Selection changes the card border to indigo.
+- Card order is lifecycle state → derived display label → optional remaining
+  content preview → optional operational line. Linked Sessions, Automations,
+  and lifecycle actions live on the detail route.
+- The display label is derived deterministically from the first meaningful
+  Markdown line, is never persisted, and is not independently editable.
 - Lifecycle state uses its matching status icon plus text; color is secondary.
 - Only In Progress cards may show the compact derived operational line. It is
   not another Todo lifecycle state and is never persisted. Derive it from the
@@ -86,7 +90,7 @@ Lane rules:
 ## Rejected Surface
 
 - Use a flat list at a maximum width of 980px.
-- Every row preserves the rejected title and reason.
+- Every row preserves the derived display label and rejection reason.
 - Primary recovery is `Restore to Idea`.
 - Use amber for the rejected/reconsideration signal, never destructive red.
 - Do not mix Rejected items back into the active Board.
@@ -94,15 +98,15 @@ Lane rules:
 ## Archived Surface
 
 - Use the same flat-list structure as Rejected for visual continuity.
-- Show the Todo title and a quiet `Archived` state label.
+- Show the derived display label and a quiet `Archived` state label.
 - Primary recovery is `Restore`.
 - Archived work remains recoverable but visually quiet.
 - Do not replace the list with a hidden archive menu.
 
 ## Quick Capture
 
-- Use one compact input surface with two explicit outcomes:
-  `plus icon → title input → Save / Run now`.
+- Use one compact Markdown input surface with two explicit outcomes:
+  `plus icon → content textarea → Save / Run now`.
 - `Save` creates one Idea and starts no Agent work. Its confirmation says the
   Todo was saved, never that work started.
 - `Run now` creates the minimal Todo, places it in In Progress, creates one bound
@@ -113,21 +117,31 @@ Lane rules:
 - At narrow widths the input keeps its full row and the two actions share the
   row below it; both remain at least 44px touch targets.
 
-## Todo Detail Drawer
+## Todo Detail Route
 
-The drawer preserves:
+The route preserves:
 
-- title and lifecycle state;
-- Todo body and editing controls;
+- derived display label and lifecycle state;
+- canonical Todo Markdown and one editing control;
 - linked Discussions, work Sessions, and Automations;
 - lifecycle-appropriate primary and secondary actions.
 
-Keep `Edit` with the Todo body. Put workflow and lifecycle controls in one
-`Actions` section, using visible labels and flat spacing rather than nested
-cards, menus, or collapsible groups:
+Use a two-region responsive layout: the readable main column owns `Brief / PRD`
+and `Plan`; the secondary column owns `Work`, linked Sessions and Automations,
+and `Lifecycle`. Stack these regions on narrower screens. Do not introduce tabs,
+collapsible groups, or a second Todo summary model.
 
-- `Discuss & Plan` contains Continue Discussion when available, New Discussion,
-  and Generate / Improve Plan;
+Keep `Edit` with the canonical content. Editing uses one Markdown textarea and
+one Save/Cancel pair. The derived display label represents the first meaningful
+Markdown line in the route header; render the remaining Markdown as the
+`Brief / PRD` body so the same line is not duplicated. Editing always exposes
+the complete canonical content, including that first line. A one-line capture
+shows a quiet empty-detail message rather than inventing a second summary.
+Demote rendered Brief and Plan headings beneath the route heading; fenced code
+content is never rewritten. Detail actions remain grouped by intent:
+
+- `Discuss & Plan` contains Continue Discussion when available and New Discussion;
+- `Plan` exposes Generate / Improve Plan beside the Plan itself;
 - `Execution` has one state-aware primary action and appears only in lifecycle
   states where execution actions are valid. With no linked Work Session, show
   primary `Start Work`. Once a Work Session exists, replace it with primary
@@ -135,7 +149,7 @@ cards, menus, or collapsible groups:
   remains secondary. Never show `Start Work` and `Continue Work` together;
 - `Lifecycle` contains state movement, Reject/Restore, and Archive/Restore.
 
-Plan shaping remains one fixed secondary action inside `Discuss & Plan`:
+Plan shaping remains one fixed secondary action inside `Plan`:
 
 - label it `Generate / Improve Plan` without probing whether a Plan file exists;
 - reuse the most recently updated linked Discussion and send
@@ -149,9 +163,9 @@ Plan shaping remains one fixed secondary action inside `Discuss & Plan`:
 - if an apparently idle Discussion is deleted or becomes busy before the Plan
   command is accepted, fall back to a new Plan Discussion instead of surfacing
   the Session conflict as the user's failure;
-- while this action is resolving, keep the drawer in place, show explicit
-  `Opening Plan…` feedback, prevent only a duplicate Plan action, and place any
-  unrecoverable error directly inside the `Discuss & Plan` group;
+- while this action is resolving, keep the detail route in place, show explicit
+  `Opening…` feedback, prevent only a duplicate Plan action, and place any
+  unrecoverable error directly inside the Plan section;
 - open the resulting Discussion;
 - keep Plan generation independent from lifecycle state changes, Start Work,
   Goal creation, Automation creation, and persistent Plan-specific workflow
@@ -160,11 +174,13 @@ Plan shaping remains one fixed secondary action inside `Discuss & Plan`:
 The entity and its actions are mandatory. Visual redesign may reorder or
 reweight actions, but must not silently remove them.
 
-Drawer behavior:
+Route behavior:
 
-- width is `min(430px, 100% - 18px)`;
-- full-height right-side overlay with scrim and visible close action;
-- use thin section rules instead of nested cards;
+- direct deep links render the same complete entity surface;
+- a visible back action returns to the originating Todo view when available;
+- the main content remains readable at approximately 820px while the whole
+  route may expand to 1280px;
+- use quiet bounded sections, not a modal, scrim, or nested card stack;
 
 ## Todos-Specific Avoidances
 
@@ -173,5 +189,5 @@ Drawer behavior:
 - drag-and-drop as the only way to change state;
 - large rounded lane containers;
 - hiding linked work or lifecycle actions;
-- converting the drawer into a modal card stack;
+- restoring a Board drawer or another competing detail surface;
 - presenting capture as an AI prompt.

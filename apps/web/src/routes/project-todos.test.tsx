@@ -5,7 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ProjectTodo, SessionSummary } from "../api/types";
-import { continueWorkUpdateInput, coordinateTodoPlanWork, createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, planWorkCommand, pointerFirstCollisionDetection, projectTodoRunNowRecovery, ProjectTodosRoute, TODO_PLAN_ACTION_LABEL, todoCaptureSearchParams, todoFlatListEmptyMessage } from "./project-todos";
+import { createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, pointerFirstCollisionDetection, projectTodoRunNowRecovery, ProjectTodosRoute, todoFlatListEmptyMessage } from "./project-todos";
+import { continueWorkUpdateInput, coordinateTodoPlanWork, planWorkCommand, TODO_PLAN_ACTION_LABEL } from "./project-todo-detail";
 import { ApiError } from "../api/client";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
 import { hitlStore } from "../store/hitl-store";
@@ -24,8 +25,8 @@ const todos: ProjectTodo[] = [
   todo("rejected", "Rejected", "rejected"),
 ];
 
-function todo(id: string, title: string, status: ProjectTodo["status"]): ProjectTodo {
-  return { id, title, body: "", status, ...(status === "rejected" ? { rejectionReason: "Not now" } : {}), revision: 1, createdAt: 1, updatedAt: 1 };
+function todo(id: string, content: string, status: ProjectTodo["status"]): ProjectTodo {
+  return { id, content, status, ...(status === "rejected" ? { rejectionReason: "Not now" } : {}), revision: 1, createdAt: 1, updatedAt: 1 };
 }
 
 beforeEach(() => {
@@ -44,7 +45,7 @@ beforeEach(() => {
     createdAt: 1,
     updatedAt: 2,
   }];
-  dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { url: "http://localhost/projects/demo/todos?todo=ready" });
+  dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { url: "http://localhost/projects/demo/todos" });
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, Node: dom.window.Node, Event: dom.window.Event, CustomEvent: dom.window.CustomEvent, MouseEvent: dom.window.MouseEvent, KeyboardEvent: dom.window.KeyboardEvent, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), IS_REACT_ACT_ENVIRONMENT: true });
   Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class { observe() {} unobserve() {} disconnect() {} } });
   Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0) });
@@ -92,18 +93,13 @@ afterEach(async () => {
 });
 
 async function render(): Promise<void> {
-  await act(async () => root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={["/projects/demo/todos?todo=ready"]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>));
+  await act(async () => root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={["/projects/demo/todos"]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
 describe("Project Todos board", () => {
   test("groups the four canonical board states and excludes rejected Todos", () => {
     expect(deriveProjectTodoGroups(todos)).toMatchObject({ idea: [todos[0]], ready: [todos[1]], in_progress: [todos[2]], done: [todos[3]] });
-  });
-
-  test("opens a captured Todo on Board with one atomic URL update", () => {
-    expect(todoCaptureSearchParams(new URLSearchParams("view=archived&q=needle&todo=old"), "new").toString())
-      .toBe("q=needle&todo=new");
   });
 
   test("gives Rejected and Archived views explicit empty and filtered states", () => {
@@ -122,7 +118,7 @@ describe("Project Todos board", () => {
     expect(moveTodoInBoard(order, "c", "idea", 0).idea).toEqual(["c", "a", "b"]);
   });
 
-  test("announces the Todo title, target lane, position, completion, and cancellation", () => {
+  test("announces the Todo display label, target lane, position, completion, and cancellation", () => {
     const order = { idea: ["idea"], ready: ["ready"], in_progress: ["progress"], done: ["done"] };
     const announcements = createDragAnnouncements(order, new Map(todos.map((todo) => [todo.id, todo])));
     const active = { id: "ready" };

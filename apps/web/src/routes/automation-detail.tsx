@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Pause, Play, Settings2, Trash2 } from "lucide-react";
+import { projectTodoDisplayLabel } from "@archcode/protocol";
 import { useAutomation, useAutomationInvocations, useProjectTodos, useSession } from "../api/queries";
 import { usePauseAutomation, useResumeAutomation, useRunAutomationNow } from "../api/mutations";
 import type { Automation, AutomationInvocation } from "../api/types";
@@ -94,8 +95,8 @@ function AutomationProvenance({ automation, slug }: { automation: Automation; sl
       ) : (
         <div className="mt-2 flex flex-col gap-1 text-sm">
           {automation.origin.kind === "todo" ? (
-            <Link className="text-brand hover:underline" to={`/projects/${encodeURIComponent(slug)}/todos?todo=${encodeURIComponent(automation.origin.todoId)}`}>
-              Todo · {linkedTodo?.title ?? `${automation.origin.todoId} · unavailable`}
+            <Link className="text-brand hover:underline" to={`/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(automation.origin.todoId)}`}>
+              Todo · {linkedTodo === undefined ? `${automation.origin.todoId} · unavailable` : projectTodoDisplayLabel(linkedTodo.content, linkedTodo.id)}
             </Link>
           ) : null}
           {source.isLoading ? (

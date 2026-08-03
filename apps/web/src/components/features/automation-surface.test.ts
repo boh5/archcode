@@ -30,8 +30,8 @@ describe("Automation navigation and detail actions", () => {
     const automation = await source("routes/automation-detail.tsx");
     const context = await source("components/features/context-inspector/SessionContextDetails.tsx");
     expect(automation).toContain("Created from");
-    expect(automation).toContain("todos?todo=${encodeURIComponent(automation.origin.todoId)}");
-    expect(automation).toContain("linkedTodo?.title");
+    expect(automation).toContain("todos/${encodeURIComponent(automation.origin.todoId)}");
+    expect(automation).toContain("projectTodoDisplayLabel(linkedTodo.content, linkedTodo.id)");
     expect(context).toContain("Created here");
   });
 

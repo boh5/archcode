@@ -585,8 +585,7 @@ describe("createRuntime", () => {
     });
     const context = await runtime.contextResolver.resolve(workspaceRoot);
     const todo = await context.todos.createTodo({
-      title: "Discuss attachment evidence",
-      body: "Confirm the attachment before work starts.",
+      content: "Discuss attachment evidence\n\nConfirm the attachment before work starts.",
     });
 
     installTestLlmAdapter();

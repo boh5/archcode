@@ -1,5 +1,6 @@
 import {
   PROJECT_STATE_DIR_NAME,
+  projectTodoDisplayLabel,
   type CreateProjectTodoSessionInput,
   type CreateProjectTodoSessionResponse,
   type ProjectTodo,
@@ -127,7 +128,9 @@ export class ProjectTodoService {
     const { sessionId } = await this.#sessions.createRootSession({
       workspaceRoot: this.workspaceRoot,
       agentName: request.entry === "discussion" ? "discussion" : "lead",
-      title: request.entry === "discussion" ? `Discussion: ${todo.title}` : todo.title,
+      title: request.entry === "discussion"
+        ? `Discussion: ${projectTodoDisplayLabel(todo.content, todo.id)}`
+        : projectTodoDisplayLabel(todo.content, todo.id),
       source,
     });
     await this.#sessions.acceptMessage({
@@ -147,7 +150,7 @@ export class ProjectTodoService {
 
   async runNow(input: ProjectTodoRunNowInput): Promise<ProjectTodoRunNowResponse> {
     const request = ProjectTodoRunNowSchema.parse(input);
-    const requestHash = hashRunNowRequest(request.title, request.body ?? "");
+    const requestHash = hashRunNowRequest(request.content);
     const inFlight = this.#runNowInFlight.get(request.clientRequestId);
     if (inFlight !== undefined) {
       if (inFlight.requestHash !== requestHash) {
@@ -185,16 +188,13 @@ export class ProjectTodoService {
       };
     }
 
-    const todo = await this.#state.createRunNowTodo({
-      title: request.title,
-      ...(request.body === undefined ? {} : { body: request.body }),
-    });
+    const todo = await this.#state.createRunNowTodo({ content: request.content });
     let sessionId: string | undefined;
     try {
       ({ sessionId } = await this.#sessions.createRootSession({
         workspaceRoot: this.workspaceRoot,
         agentName: "lead",
-        title: todo.title,
+        title: projectTodoDisplayLabel(todo.content, todo.id),
         source: { kind: "todo", todoId: todo.id, entry: "work" },
       }));
       try {
@@ -329,15 +329,14 @@ function todoSource(todo: ProjectTodo, revision: number = todo.revision): string
   return [
     `Todo ID: ${todo.id}`,
     `Revision: ${revision}`,
-    `Title: ${todo.title}`,
-    "Body:",
-    todo.body,
+    "Content:",
+    todo.content,
   ].join("\n");
 }
 
-function hashRunNowRequest(title: string, body: string): string {
+function hashRunNowRequest(content: string): string {
   return new Bun.CryptoHasher("sha256")
-    .update(JSON.stringify({ title, body }))
+    .update(JSON.stringify({ content }))
     .digest("hex");
 }
 

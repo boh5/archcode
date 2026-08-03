@@ -13,9 +13,8 @@ import type {
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import {
-  PROJECT_TODO_BODY_MAX_LENGTH,
+  PROJECT_TODO_CONTENT_MAX_LENGTH,
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
-  PROJECT_TODO_TITLE_MAX_LENGTH,
 } from "@archcode/protocol";
 import {
   CreateProjectTodoSessionSchema,
@@ -34,13 +33,11 @@ const ProjectTodoParamsSchema = z.strictObject({
   todoId: z.uuid(),
 });
 const ProjectTodoCreateBodySchema = z.strictObject({
-  title: z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH),
-  body: z.string().max(PROJECT_TODO_BODY_MAX_LENGTH).optional(),
+  content: z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH),
 });
 const ProjectTodoUpdateBodySchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
-  title: z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH).optional(),
-  body: z.string().max(PROJECT_TODO_BODY_MAX_LENGTH).optional(),
+  content: z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH).optional(),
   status: z.enum(["idea", "ready", "in_progress", "done", "rejected"]).optional(),
   rejectionReason: z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH).optional(),
   archived: z.boolean().optional(),

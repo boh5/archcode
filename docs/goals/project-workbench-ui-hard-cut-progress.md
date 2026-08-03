@@ -121,6 +121,47 @@
   as a quiet secondary line while preserving the lifecycle label, with no
   browser warnings or errors.
 
+### 2026-08-03 — Content-only Todo and independent detail route
+
+- Hard-cut Todo persistence, Protocol, HTTP, Agent tools, prompts, search and
+  Web mutations from `title + body` to one canonical Markdown `content` field.
+  No compatibility reader, migration, fallback, old-field fixture, or tombstone
+  test was added.
+- Added a deterministic display-only label from the first meaningful Markdown
+  line. It is bounded, never persisted or independently editable, and is used
+  only where compact identity is required, including Board cards, search,
+  linked entities and new Session title snapshots.
+- Replaced the Board drawer with the independent
+  `/projects/:slug/todos/:todoId` route. The route owns Brief/PRD, Plan, Work,
+  linked Sessions/Automations and lifecycle actions; Board owns only capture,
+  filtering, views and ordering. Board history preserves query, view and scroll.
+- Kept one visible projection of the first content line: the route header shows
+  the derived label while Brief renders the remaining Markdown. Editing always
+  exposes the complete canonical content. Embedded Brief and Plan headings are
+  demoted beneath the route `h1` without rewriting fenced code.
+- Synchronized the active Todo specification and prototype to the content-only
+  model. Prototype Todo fixtures no longer carry parallel summary/PRD fields.
+- Browser QA against the production Web build and isolated API data found and
+  fixed three presentation defects: nested `main`, duplicate route/Markdown
+  headings, and the cramped 390px capture row. At 1280x720 and 390x844, Board
+  and detail each had one `main`, one `h1`, no dialog/drawer, no horizontal
+  overflow, correct responsive stacking, and zero console warnings/errors.
+  Narrow capture renders its input row above two equal 44px actions.
+- Final verification: `bun run typecheck` passed 5/5 packages; `bun run test`
+  passed 8/8 Turbo tasks; `bun run web:build`, prototype inline-script parsing,
+  production-source hard-cut scans, and `git diff --check` passed.
+- Independent `gpt-5.6-sol` xhigh review completed a fix/review loop. The
+  accepted fixes made fenced Markdown heading projection respect delimiter
+  type and length, separated linked inventory loading/error/empty states,
+  disabled all Session-dependent Work and Plan creation while inventory is
+  non-authoritative, expanded the coarse-pointer Back target to 44px, aligned
+  search language, and made Automation filtering match linked Todo canonical
+  content while continuing to display only the derived label.
+- Final review result: `Clean`, with no P1/P2/P3 findings. The reviewer reran
+  the 25 focused interaction/projection tests; the final full `bun run test`
+  passed 8/8 Turbo tasks, and the final typecheck, production Web build,
+  prototype parse, hard-cut scans, and `git diff --check` all passed.
+
 ## Residual Risks / Preconditions
 
 - This intentionally rejects historical project runtime files. The user must delete the old project `.archcode/runtime/` data, including Session, Todo state, Automation and linked runtime records, before first launch; no migration, fallback, backup or cleanup code exists.

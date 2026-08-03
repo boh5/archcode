@@ -10,8 +10,7 @@ import { deriveProjectTodoOperationalState, type ProjectTodoOperationalFacts } f
 
 const todo: ProjectTodo = {
   id: "todo-1",
-  title: "Ship the work",
-  body: "",
+  content: "Ship the work",
   status: "in_progress",
   revision: 1,
   createdAt: 1,

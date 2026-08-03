@@ -33,7 +33,7 @@ describe("inventory classification", () => {
     });
   });
 
-  test("filters Automations by schedule, linked Todo title, and latest run state", () => {
+  test("filters Automations by schedule, linked Todo display label, and latest run state", () => {
     const item = automation("linked", "active", "dispatched");
     const linked = {
       ...item,
@@ -43,12 +43,13 @@ describe("inventory classification", () => {
         trigger: { kind: "cron" as const, expression: "0 9 * * 1", timezone: "Asia/Shanghai" },
       },
     };
-    const todoNames = new Map([["todo-1", "Weekly dependency review"]]);
+    const todoContents = new Map([["todo-1", "Weekly dependency review\n\n## Checks\nInspect lockfile drift"]]);
 
-    expect(matchesAutomationInventory(linked, "Asia/Shanghai", todoNames)).toBe(true);
-    expect(matchesAutomationInventory(linked, "dependency review", todoNames)).toBe(true);
-    expect(matchesAutomationInventory(linked, "dispatched", todoNames)).toBe(true);
-    expect(matchesAutomationInventory(linked, "unrelated", todoNames)).toBe(false);
+    expect(matchesAutomationInventory(linked, "Asia/Shanghai", todoContents)).toBe(true);
+    expect(matchesAutomationInventory(linked, "dependency review", todoContents)).toBe(true);
+    expect(matchesAutomationInventory(linked, "lockfile drift", todoContents)).toBe(true);
+    expect(matchesAutomationInventory(linked, "dispatched", todoContents)).toBe(true);
+    expect(matchesAutomationInventory(linked, "unrelated", todoContents)).toBe(false);
   });
 
   test("gives attention precedence over running activity for Sessions", () => {

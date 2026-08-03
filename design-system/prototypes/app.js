@@ -371,7 +371,7 @@ const globalSearch = createSearchDialog({
   shortcut: "⌘K",
   items: globalWorkSearchItems,
   groupOrder: ["Projects", currentProjectName],
-  emptyHint: "Try a project, Todo title, Session ID, or Automation name.",
+  emptyHint: "Try a project, Todo label, Session ID, or Automation name.",
 });
 
 window.addEventListener("keydown", (event) => {

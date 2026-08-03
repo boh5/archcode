@@ -614,7 +614,7 @@ describe("ConfiguredAgent", () => {
     const sessionId = crypto.randomUUID();
     const projectContextResolver = createTestProjectContextResolver(storeManager);
     const projectContext = await projectContextResolver.resolve(tmpRoot);
-    const todo = await projectContext.todos.createTodo({ title: "Shape runtime architecture" });
+    const todo = await projectContext.todos.createTodo({ content: "Shape runtime architecture" });
     const store = createStore(sessionId, tmpRoot, {
       agentName: "discussion",
       source: { kind: "todo", todoId: todo.id, entry: "discussion" },
@@ -640,8 +640,7 @@ describe("ConfiguredAgent", () => {
     const projectContextResolver = createTestProjectContextResolver(storeManager);
     const projectContext = await projectContextResolver.resolve(tmpRoot);
     const todo = await projectContext.todos.createTodo({
-      title: "Original title",
-      body: "Original body",
+      content: "Original content",
     });
     const store = createStore(sessionId, tmpRoot, {
       agentName: "discussion",
@@ -656,19 +655,17 @@ describe("ConfiguredAgent", () => {
     await runAgent(agent, "first discussion");
     const updated = await projectContext.todos.updateTodo(todo.id, {
       expectedRevision: todo.revision,
-      title: "Current title",
-      body: "Current body",
+      content: "Current content",
     });
     await runAgent(agent, "second discussion");
 
     const firstSystem = (streamFn.mock.calls[0]![0] as { system: string }).system;
     const secondSystem = (streamFn.mock.calls[1]![0] as { system: string }).system;
     expect(firstSystem).toContain(`todoRevision=${todo.revision}`);
-    expect(firstSystem).toContain('todoTitle="Original title"');
+    expect(firstSystem).toContain('todoContent="Original content"');
     expect(secondSystem).toContain(`todoRevision=${updated.revision}`);
-    expect(secondSystem).toContain('todoTitle="Current title"');
-    expect(secondSystem).toContain('todoBody="Current body"');
-    expect(secondSystem).not.toContain('todoTitle="Original title"');
+    expect(secondSystem).toContain('todoContent="Current content"');
+    expect(secondSystem).not.toContain('todoContent="Original content"');
   });
 
   test("keeps Discussion extraTools within its Definition allowlist", async () => {

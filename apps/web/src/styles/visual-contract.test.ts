@@ -17,7 +17,7 @@ describe("visual contract", () => {
   test("keeps RootLayout as the single work-canvas main landmark", async () => {
     const rootLayout = await Bun.file(`${sourceRoot}/routes/root-layout.tsx`).text();
     expect(rootLayout.match(/<main\b/g)).toHaveLength(1);
-    for (const path of ["home.tsx", "project-todos.tsx", "project-sessions.tsx", "automations.tsx", "automation-detail.tsx"]) {
+    for (const path of ["home.tsx", "project-todos.tsx", "project-todo-detail.tsx", "project-sessions.tsx", "automations.tsx", "automation-detail.tsx"]) {
       const route = await Bun.file(`${sourceRoot}/routes/${path}`).text();
       expect(route).not.toContain("<main");
     }
@@ -59,6 +59,7 @@ describe("visual contract", () => {
     const roundedLgAllowlist = new Map<string, number>([
       ["routes/root-layout.tsx", 1],
       ["routes/project-todos.tsx", 2],
+      ["routes/project-todo-detail.tsx", 3],
       ["components/ui/ContextMenu.tsx", 1],
       ["components/ui/DropdownMenu.tsx", 1],
       ["components/features/ChatInput.tsx", 1],

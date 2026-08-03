@@ -64,7 +64,7 @@ export function WorkSearchDialog({ open, onOpenChange, returnFocusRef }: {
             <DialogPrimitive.Close asChild><button type="button" aria-label="Close search" className="flex h-9 w-9 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><X size={16} /></button></DialogPrimitive.Close>
           </div>
           <div className="min-h-[180px] overflow-y-auto p-2" aria-live="polite">
-            {!query.trim() ? <p className="px-3 py-12 text-center text-[13px] text-text-tertiary">Search by title, stable ID, body, or source.</p> : null}
+            {!query.trim() ? <p className="px-3 py-12 text-center text-[13px] text-text-tertiary">Search by display label, canonical content, stable ID, or source.</p> : null}
             {isDebouncing || search.isLoading ? <p className="flex items-center justify-center gap-2 px-3 py-12 text-[13px] text-text-tertiary"><LoaderCircle className="animate-activity" size={14} /> Searching…</p> : null}
             {search.error ? <p role="alert" className="px-3 py-4 text-[12px] text-error">Search failed: {search.error.message}</p> : null}
             {search.data?.projectErrors.map((error) => <p role="alert" key={error.project.slug} className="px-3 py-2 text-[11px] text-error">{error.project.name}: {error.message}</p>)}

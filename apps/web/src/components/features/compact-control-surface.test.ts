@@ -109,8 +109,14 @@ describe("compact icon control contract", () => {
 
   test("Project Todo and Goal editors use control radius and 32px actions", async () => {
     const todos = await source("routes/project-todos.tsx");
+    const todoDetail = await source("routes/project-todo-detail.tsx");
     const goal = await source("components/features/SessionGoalSummaryRow.tsx");
-    expect(todos).toContain('aria-label="New Todo"');
+    expect(todos).toContain('aria-label="New Todo content"');
+    expect(todos).toContain("max-[620px]:basis-[calc(100%-24px)]");
+    expect(todos).toContain("max-[620px]:basis-full max-[620px]:grid max-[620px]:grid-cols-2");
+    expect(todos.match(/max-\[620px\]:h-11/g)).toHaveLength(2);
+    expect(todoDetail).toContain('aria-label="Todo content"');
+    expect(todoDetail).toContain("min-h-8 items-center gap-1.5 rounded-sm border");
     expect(goal).toContain("h-8 rounded-sm border px-3 text-[12px]");
   });
 });

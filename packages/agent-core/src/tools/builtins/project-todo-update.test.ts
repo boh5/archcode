@@ -14,8 +14,7 @@ const todoId = "11111111-1111-4111-8111-111111111111";
 const input = {
   expectedRevision: 4,
   patch: {
-    title: "Clarified intent",
-    body: "Outcome and constraints confirmed.",
+    content: "Clarified intent\n\nOutcome and constraints confirmed.",
     decision: {
       action: "mark_ready" as const,
       rationale: "The user explicitly confirmed this Todo is ready.",
@@ -27,8 +26,7 @@ function makeContext(
   overrides: Partial<SessionStoreState> = {},
   updateFromDiscussion = mock(async () => ({
     id: "11111111-1111-4111-8111-111111111111",
-    title: input.patch.title,
-    body: input.patch.body,
+    content: input.patch.content,
     status: "ready" as const,
     revision: 5,
   })),
@@ -73,7 +71,7 @@ describe("project_todo_update", () => {
     expect(ProjectTodoUpdateInputSchema.safeParse({
       expectedRevision: 4,
       patch: {
-        body: "One material question remains.",
+        content: "One material question remains.",
         decision: { action: "keep_current", rationale: "The current status remains correct." },
       },
     }).success).toBe(true);
@@ -143,8 +141,7 @@ describe("project_todo_update", () => {
       },
       expectedRevision: 4,
       patch: {
-        title: "Clarified intent",
-        body: "Outcome and constraints confirmed.",
+        content: "Clarified intent\n\nOutcome and constraints confirmed.",
         status: "ready",
       },
     });
@@ -155,7 +152,7 @@ describe("project_todo_update", () => {
     const ideaInput = {
       expectedRevision: 4,
       patch: {
-        body: "One question remains.",
+        content: "One question remains.",
         decision: {
           action: "mark_idea" as const,
           rationale: "The interaction surface is unresolved.",
@@ -168,7 +165,7 @@ describe("project_todo_update", () => {
 
     expect(updateFromDiscussion).toHaveBeenCalledWith(expect.objectContaining({
       patch: {
-        body: "One question remains.",
+        content: "One question remains.",
         status: "idea",
       },
     }));
@@ -178,7 +175,7 @@ describe("project_todo_update", () => {
     const keepInput = {
       expectedRevision: 4,
       patch: {
-        title: "Corrected wording",
+        content: "Corrected wording",
         decision: {
           action: "keep_current" as const,
           rationale: "The wording changed, not the confirmed status.",
@@ -190,7 +187,7 @@ describe("project_todo_update", () => {
     await projectTodoUpdateTool.execute(keepInput, ctx);
 
     expect(updateFromDiscussion).toHaveBeenCalledWith(expect.objectContaining({
-      patch: { title: "Corrected wording" },
+      patch: { content: "Corrected wording" },
     }));
   });
 
@@ -198,7 +195,7 @@ describe("project_todo_update", () => {
     const rejectInput = {
       expectedRevision: 4,
       patch: {
-        title: "Rejected intent",
+        content: "Rejected intent",
         decision: {
           action: "reject" as const,
           rationale: "No longer aligned",
@@ -219,7 +216,7 @@ describe("project_todo_update", () => {
       },
       expectedRevision: 4,
       patch: {
-        title: "Rejected intent",
+        content: "Rejected intent",
         status: "rejected",
         rejectionReason: "No longer aligned",
       },

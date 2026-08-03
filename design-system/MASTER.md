@@ -268,8 +268,7 @@ Layer scale:
 | Desktop navigation / resize | 40 | Project rail and resize affordances |
 | Mobile overlay | 50 | Mobile navigation and Inspector drawers |
 | Mobile project rail | 55 | Stable rail above mobile overlays |
-| Toast / Todo scrim | 60 | Attention toast and Todo detail scrim |
-| Todo drawer | 61 | Todo detail surface |
+| Toast | 60 | Attention and action feedback |
 
 ## Workbench Layout
 
@@ -523,7 +522,7 @@ Execution is a mandatory product entity, not an optional visual section.
 - The dock consumes layout space and never floats over Work or conversation
   content.
 
-### Inspector and Drawers
+### Inspector, Drawers, and Entity Detail
 
 - Context Inspector owns Agents, Changes, and Context; do not remove or merge
   these tabs.
@@ -531,8 +530,9 @@ Execution is a mandatory product entity, not an optional visual section.
   below 1181px.
 - Persistent desktop navigation and Inspector widths are user-resizable and
   restored after collapse or focus mode.
-- Todo detail is a right drawer with the Todo body, editing controls, linked
-  Sessions and Automations, and lifecycle actions.
+- Todo detail is an independent project route because it owns durable Markdown,
+  Plan, linked Sessions and Automations, and lifecycle actions. The Todo Board
+  never duplicates this surface in a drawer.
 - Overlays use a scrim and a visible close action.
 
 ### Feedback and Loading

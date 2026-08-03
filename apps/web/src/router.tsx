@@ -4,6 +4,7 @@ import { HomeRoute } from "./routes/home";
 import { ProjectLayout, ProjectRoute } from "./routes/project";
 import { ProjectSessionsRoute } from "./routes/project-sessions";
 import { ProjectTodosRoute } from "./routes/project-todos";
+import { ProjectTodoDetailRoute } from "./routes/project-todo-detail";
 import { SessionRoute } from "./routes/session";
 import { AutomationsRoute } from "./routes/automations";
 import { AutomationDetailRoute } from "./routes/automation-detail";
@@ -31,6 +32,7 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: <ProjectRoute /> },
               { path: "todos", element: <ProjectTodosRoute /> },
+              { path: "todos/:todoId", element: <ProjectTodoDetailRoute /> },
               { path: "automations", element: <AutomationsRoute /> },
               { path: "automations/:automationId", element: <AutomationDetailRoute /> },
               { path: "sessions", element: <ProjectSessionsRoute /> },

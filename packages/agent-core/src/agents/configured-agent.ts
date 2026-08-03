@@ -123,13 +123,12 @@ function durablePromptTrace(trace: CompiledPromptContract["trace"]): PromptTrace
 }
 
 export function buildLifecycleCurrentContext(
-  todo: Pick<ProjectTodo, "id" | "title" | "body" | "revision"> | undefined,
+  todo: Pick<ProjectTodo, "id" | "content" | "revision"> | undefined,
 ): string[] {
   return [
     `todoId=${todo?.id ?? "none"}`,
     `todoRevision=${todo?.revision ?? "none"}`,
-    `todoTitle=${todo === undefined ? "none" : JSON.stringify(todo.title)}`,
-    `todoBody=${todo === undefined ? "none" : JSON.stringify(todo.body)}`,
+    `todoContent=${todo === undefined ? "none" : JSON.stringify(todo.content)}`,
   ];
 }
 

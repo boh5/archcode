@@ -1,7 +1,6 @@
 import {
-  PROJECT_TODO_BODY_MAX_LENGTH,
+  PROJECT_TODO_CONTENT_MAX_LENGTH,
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
-  PROJECT_TODO_TITLE_MAX_LENGTH,
   type CreateProjectTodoSessionInput,
   type ProjectTodo,
   type ProjectTodoRunNowInput,
@@ -9,8 +8,7 @@ import {
 } from "@archcode/protocol";
 import { z } from "zod/v4";
 
-export const ProjectTodoTitleSchema = z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH);
-export const ProjectTodoBodySchema = z.string().max(PROJECT_TODO_BODY_MAX_LENGTH);
+export const ProjectTodoContentSchema = z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH);
 export const ProjectTodoRejectionReasonSchema = z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH);
 export const ProjectTodoStatusSchema = z.enum(["idea", "ready", "in_progress", "done", "rejected"]);
 export const ProjectTodoSessionEntrySchema = z.enum(["discussion", "work", "automation"]);
@@ -32,8 +30,7 @@ export const CreateProjectTodoSessionSchema = z.discriminatedUnion("entry", [
 
 export const ProjectTodoSchema = z.strictObject({
   id: z.uuid(),
-  title: ProjectTodoTitleSchema,
-  body: ProjectTodoBodySchema,
+  content: ProjectTodoContentSchema,
   status: ProjectTodoStatusSchema,
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
   revision: z.number().int().positive(),
@@ -70,20 +67,17 @@ export const ProjectTodoStateFileSchema = z.strictObject({
 export type ProjectTodoStateFile = z.infer<typeof ProjectTodoStateFileSchema>;
 
 export const ProjectTodoCreateSchema = z.strictObject({
-  title: ProjectTodoTitleSchema,
-  body: ProjectTodoBodySchema.optional(),
+  content: ProjectTodoContentSchema,
 });
 
 export const ProjectTodoRunNowSchema = z.strictObject({
   clientRequestId: z.uuid(),
-  title: ProjectTodoTitleSchema,
-  body: ProjectTodoBodySchema.optional(),
+  content: ProjectTodoContentSchema,
 }) satisfies z.ZodType<ProjectTodoRunNowInput>;
 
 export const ProjectTodoUpdateSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
-  title: ProjectTodoTitleSchema.optional(),
-  body: ProjectTodoBodySchema.optional(),
+  content: ProjectTodoContentSchema.optional(),
   status: ProjectTodoStatusSchema.optional(),
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
   archived: z.boolean().optional(),
@@ -99,8 +93,7 @@ export const ProjectTodoUpdateSchema = z.strictObject({
 }) satisfies z.ZodType<ProjectTodoUpdateInput>;
 
 export const ProjectTodoDiscussionUpdatePatchSchema = z.strictObject({
-  title: ProjectTodoTitleSchema.optional(),
-  body: ProjectTodoBodySchema.optional(),
+  content: ProjectTodoContentSchema.optional(),
   status: z.enum(["idea", "ready", "rejected"]).optional(),
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
 }).refine((input) => Object.keys(input).length > 0, { message: "At least one Todo field is required" });

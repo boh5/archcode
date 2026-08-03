@@ -1,18 +1,19 @@
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
-import type {
-  Automation,
-  GlobalSSEHitlEntry,
-  HomeResponse,
-  HomeSummaryItem,
-  ProjectAutomationInventoryItem,
-  ProjectSessionInventoryItem,
-  ProjectTodo,
-  RootSessionSummary,
-  SessionFamilyActivity,
-  SessionSummary,
-  WorkbenchProjectReadError,
-  WorkSearchResponse,
-  WorkSearchResult,
+import {
+  projectTodoDisplayLabel,
+  type Automation,
+  type GlobalSSEHitlEntry,
+  type HomeResponse,
+  type HomeSummaryItem,
+  type ProjectAutomationInventoryItem,
+  type ProjectSessionInventoryItem,
+  type ProjectTodo,
+  type RootSessionSummary,
+  type SessionFamilyActivity,
+  type SessionSummary,
+  type WorkbenchProjectReadError,
+  type WorkSearchResponse,
+  type WorkSearchResult,
 } from "@archcode/protocol";
 
 import {
@@ -223,7 +224,7 @@ function projectHomeProjection(facts: ProjectHomeFacts): Omit<HomeResponse, "pro
       kind: "todo",
       project,
       entityId: todo.id,
-      title: todo.title,
+      title: projectTodoDisplayLabel(todo.content, todo.id),
       status: "ready_to_review",
       href: todoHref(facts.project.slug, todo.id),
       sortAt: Math.max(todo.updatedAt, latest.session.updatedAt),
@@ -259,8 +260,8 @@ function searchProject(
     results.push({ kind: "project", project, entityId: facts.project.slug, title: facts.project.name, href: projectHref(facts.project.slug) });
   }
   for (const todo of facts.todos) {
-    if (!matches(needle, todo.id, todo.title, todo.body)) continue;
-    results.push({ kind: "todo", project, entityId: todo.id, title: todo.title, href: todoHref(facts.project.slug, todo.id), context: todo.status });
+    if (!matches(needle, todo.id, todo.content)) continue;
+    results.push({ kind: "todo", project, entityId: todo.id, title: projectTodoDisplayLabel(todo.content, todo.id), href: todoHref(facts.project.slug, todo.id), context: todo.status });
   }
   for (const session of facts.sessions) {
     if (!matches(needle, session.sessionId, session.title, session.source.kind, JSON.stringify(session.source))) continue;
@@ -323,7 +324,7 @@ function projectHref(projectSlug: string): string {
 }
 
 function todoHref(projectSlug: string, todoId: string): string {
-  return `${projectHref(projectSlug)}?todo=${encodeURIComponent(todoId)}`;
+  return `${projectHref(projectSlug)}/${encodeURIComponent(todoId)}`;
 }
 
 function sessionHref(projectSlug: string, sessionId: string, search?: URLSearchParams): string {

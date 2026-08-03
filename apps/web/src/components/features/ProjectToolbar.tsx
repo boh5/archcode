@@ -14,17 +14,18 @@ const PROJECT_PAGES = [
 ] as const;
 
 export function ProjectToolbar() {
-  const { slug = "", automationId, sessionId } = useParams<{
+  const { slug = "", automationId, sessionId, todoId } = useParams<{
     slug: string;
     automationId?: string;
     sessionId?: string;
+    todoId?: string;
   }>();
   const navigate = useNavigate();
   const { data: projects } = useProjects();
   const project = projects?.find((candidate) => candidate.slug === slug);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [closingProject, setClosingProject] = useState<Project | null>(null);
-  const ProjectName = automationId === undefined && sessionId === undefined ? "h1" : "p";
+  const ProjectName = automationId === undefined && sessionId === undefined && todoId === undefined ? "h1" : "p";
 
   const handleProjectClosed = useCallback((closedProject: Project) => {
     const remaining = projects?.filter((candidate) => candidate.slug !== closedProject.slug) ?? [];

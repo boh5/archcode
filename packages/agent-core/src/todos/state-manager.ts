@@ -77,8 +77,7 @@ export class ProjectTodoStateManager {
       const now = this.#now();
       const todo: ProjectTodo = {
         id: crypto.randomUUID(),
-        title: validated.title,
-        body: validated.body ?? "",
+        content: validated.content,
         status: "idea",
         revision: 1,
         createdAt: now,
@@ -95,8 +94,7 @@ export class ProjectTodoStateManager {
       const now = this.#now();
       const todo: ProjectTodo = {
         id: crypto.randomUUID(),
-        title: validated.title,
-        body: validated.body ?? "",
+        content: validated.content,
         status: "in_progress",
         revision: 1,
         createdAt: now,
@@ -146,8 +144,7 @@ export class ProjectTodoStateManager {
       validateRejection(todo, finalStatus, update.rejectionReason);
       validateAnchor(state, todo, finalStatus, update.beforeTodoId);
 
-      if (update.title !== undefined) todo.title = update.title;
-      if (update.body !== undefined) todo.body = update.body;
+      if (update.content !== undefined) todo.content = update.content;
       todo.status = finalStatus;
       if (finalStatus === "rejected") {
         todo.rejectionReason = update.rejectionReason ?? todo.rejectionReason;

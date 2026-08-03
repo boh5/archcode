@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import type { RootSessionSource } from "@archcode/protocol";
+import { projectTodoDisplayLabel, type RootSessionSource } from "@archcode/protocol";
 import {
   ExecutionWorkstream,
   retainExecutionWorkstreamUiState,
@@ -95,7 +95,7 @@ export function effectiveSessionFocusId(
 export function presentRootSessionSource(input: {
   source: RootSessionSource | undefined;
   slug: string;
-  todoTitle?: string;
+  todoLabel?: string;
   automationTitle?: string;
 }): ChatHeaderSource {
   const projectPath = `/projects/${encodeURIComponent(input.slug)}`;
@@ -115,8 +115,8 @@ export function presentRootSessionSource(input: {
         : "Work Todo";
     return {
       label,
-      title: input.todoTitle ?? `${source.todoId} · unavailable`,
-      to: `${projectPath}/todos?todo=${encodeURIComponent(source.todoId)}`,
+      title: input.todoLabel ?? `${source.todoId} · unavailable`,
+      to: `${projectPath}/todos/${encodeURIComponent(source.todoId)}`,
     };
   }
   if (source?.kind === "automation") {
@@ -415,7 +415,9 @@ export function SessionRoute() {
         source={presentRootSessionSource({
           source: sessionSource,
           slug,
-          todoTitle: linkedProjectTodo?.title,
+          todoLabel: linkedProjectTodo === undefined
+            ? undefined
+            : projectTodoDisplayLabel(linkedProjectTodo.content, linkedProjectTodo.id),
           automationTitle: sourceAutomation.data?.name,
         })}
         onToggleInspector={toggleInspectorSurface}

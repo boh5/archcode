@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
+import { projectTodoDisplayLabel } from "@archcode/protocol";
 import type { ProjectAutomationInventoryItem } from "../api/types";
 import { useAutomationInventory, useProjectTodos } from "../api/queries";
 import { EditAutomationDialog } from "../components/features/EditAutomationDialog";
@@ -30,12 +31,12 @@ export function classifyAutomationInventory(
 export function matchesAutomationInventory(
   item: ProjectAutomationInventoryItem,
   query: string,
-  todoNames: ReadonlyMap<string, string>,
+  todoContents: ReadonlyMap<string, string>,
 ): boolean {
   const needle = query.trim().toLocaleLowerCase();
   if (needle.length === 0) return true;
   const { automation, latestInvocation } = item;
-  const linkedTodo = automation.origin.kind === "todo" ? todoNames.get(automation.origin.todoId) : undefined;
+  const linkedTodoContent = automation.origin.kind === "todo" ? todoContents.get(automation.origin.todoId) : undefined;
   return [
     automation.name,
     automation.id,
@@ -48,7 +49,7 @@ export function matchesAutomationInventory(
     latestInvocation ? automationInvocationStatusLabel(latestInvocation.status) : "No runs",
     automation.origin.kind,
     automation.origin.kind === "todo" ? automation.origin.todoId : undefined,
-    linkedTodo,
+    linkedTodoContent,
   ].some((value) => value?.toLocaleLowerCase().includes(needle));
 }
 
@@ -59,11 +60,11 @@ export function AutomationsRoute() {
   const [creating, setCreating] = useState(false);
   const inventory = useAutomationInventory(slug);
   const todos = useProjectTodos(slug);
-  const todoNames = useMemo(() => new Map((todos.data ?? []).map((todo) => [todo.id, todo.title])), [todos.data]);
+  const todoContents = useMemo(() => new Map((todos.data ?? []).map((todo) => [todo.id, todo.content])), [todos.data]);
   const query = searchParams.get("q") ?? "";
   const filtered = useMemo(() => {
-    return (inventory.data ?? []).filter((item) => matchesAutomationInventory(item, query, todoNames));
-  }, [inventory.data, query, todoNames]);
+    return (inventory.data ?? []).filter((item) => matchesAutomationInventory(item, query, todoContents));
+  }, [inventory.data, query, todoContents]);
   const groups = useMemo(() => classifyAutomationInventory(filtered), [filtered]);
   const detailSearch = query ? `?q=${encodeURIComponent(query)}` : "";
   const restoreAutomationId = typeof location.state === "object" && location.state !== null && "restoreAutomationId" in location.state
@@ -105,7 +106,7 @@ export function AutomationsRoute() {
             restoreRowRef={restoreRowRef}
             selectedAutomationId={automationId}
             slug={slug}
-            todoNames={todoNames}
+            todoContents={todoContents}
           />
         ) : null)}
       </div>
@@ -114,7 +115,7 @@ export function AutomationsRoute() {
   );
 }
 
-function AutomationGroup({ detailSearch, group, items, restoreAutomationId, restoreRowRef, selectedAutomationId, slug, todoNames }: {
+function AutomationGroup({ detailSearch, group, items, restoreAutomationId, restoreRowRef, selectedAutomationId, slug, todoContents }: {
   detailSearch: string;
   group: AutomationInventoryGroup;
   items: readonly ProjectAutomationInventoryItem[];
@@ -122,7 +123,7 @@ function AutomationGroup({ detailSearch, group, items, restoreAutomationId, rest
   restoreRowRef: RefObject<HTMLAnchorElement | null>;
   selectedAutomationId?: string;
   slug: string;
-  todoNames: ReadonlyMap<string, string>;
+  todoContents: ReadonlyMap<string, string>;
 }) {
   const label = group === "needs-attention" ? "Needs attention" : group === "scheduled" ? "Scheduled" : group === "paused" ? "Paused" : "Inactive";
   return (
@@ -134,7 +135,12 @@ function AutomationGroup({ detailSearch, group, items, restoreAutomationId, rest
           const selected = automation.id === selectedAutomationId;
           const latestStatus = latestInvocation ? automationInvocationStatusLabel(latestInvocation.status) : "No runs";
           const definitionStatus = automationStatusLabel(automation.status);
-          const linkedTodo = automation.origin.kind === "todo" ? todoNames.get(automation.origin.todoId) ?? automation.origin.todoId : undefined;
+          const linkedTodoContent = automation.origin.kind === "todo" ? todoContents.get(automation.origin.todoId) : undefined;
+          const linkedTodo = automation.origin.kind === "todo"
+            ? linkedTodoContent === undefined
+              ? automation.origin.todoId
+              : projectTodoDisplayLabel(linkedTodoContent, automation.origin.todoId)
+            : undefined;
           return (
             <Link
               aria-current={selected ? "page" : undefined}

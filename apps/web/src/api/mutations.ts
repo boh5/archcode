@@ -551,10 +551,10 @@ export function useCreateProjectTodo() {
 export function useRunProjectTodoNow() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ slug, clientRequestId, title, body }: { slug: string; clientRequestId: string; title: string; body?: string }) =>
+    mutationFn: ({ slug, clientRequestId, content }: { slug: string; clientRequestId: string; content: string }) =>
       apiFetch<ProjectTodoRunNowResponse>(`${todoUrl(slug)}/run-now`, {
         method: "POST",
-        body: { clientRequestId, title, ...(body === undefined ? {} : { body }) },
+        body: { clientRequestId, content },
       }),
     onSettled: async (_data, _error, variables) => {
       await invalidateProjectTodoSession(queryClient, variables.slug);

@@ -26,12 +26,11 @@ afterAll(async () => {
 describe("ProjectTodoStateManager", () => {
   test("persists only the canonical Todo and reloads its array order", async () => {
     const manager = new ProjectTodoStateManager(TMP_ROOT, { now: () => 100 });
-    const todo = await manager.createTodo({ title: "  Capture this  " });
+    const todo = await manager.createTodo({ content: "  Capture this  " });
 
     expect(todo).toEqual({
       id: expect.any(String),
-      title: "Capture this",
-      body: "",
+      content: "Capture this",
       status: "idea",
       revision: 1,
       createdAt: 100,
@@ -48,7 +47,7 @@ describe("ProjectTodoStateManager", () => {
   test("allows free status movement while enforcing rejection and revision invariants", async () => {
     let now = 100;
     const manager = new ProjectTodoStateManager(TMP_ROOT, { now: () => ++now });
-    const idea = await manager.createTodo({ title: "Shape it" });
+    const idea = await manager.createTodo({ content: "Shape it" });
 
     const done = await manager.updateTodo(idea.id, { expectedRevision: idea.revision, status: "done" });
     const inProgress = await manager.updateTodo(done.id, { expectedRevision: done.revision, status: "in_progress" });
@@ -76,17 +75,17 @@ describe("ProjectTodoStateManager", () => {
 
     await expect(manager.updateTodo(reopened.id, {
       expectedRevision: rejected.revision,
-      body: "stale",
+      content: "stale",
     })).rejects.toBeInstanceOf(ProjectTodoRevisionConflictError);
     expect((await manager.readTodo(reopened.id)).revision).toBe(reopened.revision);
   });
 
   test("orders the target within its final lane without touching neighbour revisions", async () => {
     const manager = new ProjectTodoStateManager(TMP_ROOT);
-    const a = await manager.createTodo({ title: "A" });
-    const b = await manager.createTodo({ title: "B" });
-    const c = await manager.createTodo({ title: "C" });
-    const d = await manager.createTodo({ title: "D" });
+    const a = await manager.createTodo({ content: "A" });
+    const b = await manager.createTodo({ content: "B" });
+    const c = await manager.createTodo({ content: "C" });
+    const d = await manager.createTodo({ content: "D" });
 
     const readyA = await manager.updateTodo(a.id, { expectedRevision: a.revision, status: "ready" });
     const readyB = await manager.updateTodo(b.id, { expectedRevision: b.revision, status: "ready" });
@@ -116,8 +115,8 @@ describe("ProjectTodoStateManager", () => {
     expect(appendedA.revision).toBe(readyA.revision + 1);
     expect(movedD.revision).toBe(doneD.revision + 1);
 
-    const wrongLaneAnchor = await manager.createTodo({ title: "Wrong lane" });
-    const archiveCandidate = await manager.createTodo({ title: "Archived anchor" });
+    const wrongLaneAnchor = await manager.createTodo({ content: "Wrong lane" });
+    const archiveCandidate = await manager.createTodo({ content: "Archived anchor" });
     const readyArchiveCandidate = await manager.updateTodo(archiveCandidate.id, {
       expectedRevision: archiveCandidate.revision,
       status: "ready",
@@ -138,8 +137,8 @@ describe("ProjectTodoStateManager", () => {
 
   test("keeps archive position and makes archive direction exclusive", async () => {
     const manager = new ProjectTodoStateManager(TMP_ROOT, { now: () => 100 });
-    const first = await manager.createTodo({ title: "First" });
-    const second = await manager.createTodo({ title: "Second" });
+    const first = await manager.createTodo({ content: "First" });
+    const second = await manager.createTodo({ content: "Second" });
 
     const archived = await manager.updateTodo(first.id, {
       expectedRevision: first.revision,
@@ -148,7 +147,7 @@ describe("ProjectTodoStateManager", () => {
     expect(archived).toMatchObject({ status: "idea", archivedAt: 100, revision: 2 });
     await expect(manager.updateTodo(first.id, {
       expectedRevision: archived.revision,
-      body: "blocked",
+      content: "blocked",
     })).rejects.toBeInstanceOf(ProjectTodoArchivedError);
     await expect(manager.updateTodo(second.id, {
       expectedRevision: second.revision,
@@ -157,7 +156,7 @@ describe("ProjectTodoStateManager", () => {
     await expect(manager.updateTodo(second.id, {
       expectedRevision: second.revision,
       archived: true,
-      title: "Mixed",
+      content: "Mixed",
     })).rejects.toThrow("archived cannot be combined");
     expect(await manager.readTodo(second.id)).toEqual(second);
 
@@ -171,7 +170,7 @@ describe("ProjectTodoStateManager", () => {
 
   test("prepares work only from Ready or In Progress in the serialized state lane", async () => {
     const manager = new ProjectTodoStateManager(TMP_ROOT);
-    const idea = await manager.createTodo({ title: "Work" });
+    const idea = await manager.createTodo({ content: "Work" });
     await expect(manager.beginWork(idea.id, idea.revision)).rejects.toBeInstanceOf(ProjectTodoSessionStateError);
 
     const ready = await manager.updateTodo(idea.id, { expectedRevision: idea.revision, status: "ready" });
@@ -182,7 +181,7 @@ describe("ProjectTodoStateManager", () => {
 
   test("persists run-now receipts and supports scoped compensation deletion", async () => {
     const manager = new ProjectTodoStateManager(TMP_ROOT);
-    const todo = await manager.createRunNowTodo({ title: "Run now" });
+    const todo = await manager.createRunNowTodo({ content: "Run now" });
     const receipt = {
       clientRequestId: crypto.randomUUID(),
       requestHash: "a".repeat(64),
@@ -195,7 +194,7 @@ describe("ProjectTodoStateManager", () => {
     expect(await manager.commitRunNowReceipt(receipt)).toEqual(receipt);
     expect(await new ProjectTodoStateManager(TMP_ROOT).readRunNowReceipt(receipt.clientRequestId)).toEqual(receipt);
 
-    const compensated = await manager.createRunNowTodo({ title: "Compensate" });
+    const compensated = await manager.createRunNowTodo({ content: "Compensate" });
     await manager.deleteRunNowTodo(compensated.id);
     expect((await manager.listTodos()).map((item) => item.id)).toEqual([todo.id]);
   });

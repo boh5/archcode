@@ -41,7 +41,7 @@ const project: Project = {
   addedAt: "2026-01-01T00:00:00.000Z",
 };
 const navigate = mock((_to: string) => {});
-let routeParams: { slug: string; automationId?: string; sessionId?: string } = { slug: "archcode" };
+let routeParams: { slug: string; automationId?: string; sessionId?: string; todoId?: string } = { slug: "archcode" };
 const useState = mock(<T,>(initial: T) => [initial, mock(() => {})] as const);
 const Fragment = Symbol.for("react.fragment");
 const jsx = (type: unknown, props: Record<string, unknown> | null, key?: unknown) => ({ type, props: props ?? {}, key });
@@ -91,11 +91,17 @@ describe("ProjectToolbar", () => {
     expect((menu?.props?.trigger as ElementLike).props?.["aria-label"]).toBe("Project actions");
   });
 
-  test("leaves the page h1 to Session and Automation detail headers", () => {
-    routeParams = { slug: "archcode", sessionId: "session-1" };
-    const tree = ProjectToolbar();
+  test("leaves the page h1 to Todo, Session, and Automation detail headers", () => {
+    for (const detailParams of [
+      { todoId: "todo-1" },
+      { sessionId: "session-1" },
+      { automationId: "automation-1" },
+    ]) {
+      routeParams = { slug: "archcode", ...detailParams };
+      const tree = ProjectToolbar();
 
-    expect(findAll(tree, (element) => element.type === "h1")).toEqual([]);
-    expect(findAll(tree, (element) => element.type === "p").some((element) => textContent(element) === "ArchCode")).toBe(true);
+      expect(findAll(tree, (element) => element.type === "h1")).toEqual([]);
+      expect(findAll(tree, (element) => element.type === "p").some((element) => textContent(element) === "ArchCode")).toBe(true);
+    }
   });
 });

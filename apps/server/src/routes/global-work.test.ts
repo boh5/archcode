@@ -78,7 +78,7 @@ describe("global work read routes", () => {
       upcoming: [{ kind: "automation", entityId: automation.id, status: "scheduled" }],
       projectErrors: [{ project: { slug: "bad", name: "Bad Project" }, message: "corrupt project" }],
     });
-    expect(JSON.stringify(body)).not.toContain(todo.body);
+    expect(JSON.stringify(body)).not.toContain("Private PRD body");
   });
 
   test("a Goal-attention Session excludes its entire Todo work family from Ready to review", async () => {
@@ -123,11 +123,10 @@ describe("global work read routes", () => {
     expect(body.readyToReview).toEqual([]);
   });
 
-  test("GET /api/search matches hidden Todo body, caps at 100, and isolates project failures", async () => {
+  test("GET /api/search matches Todo content, caps at 100, and isolates project failures", async () => {
     const todos = Array.from({ length: 101 }, (_, index) => makeTodo({
       id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      title: `Todo ${index}`,
-      body: "hidden needle body",
+      content: `Todo ${index}\n\nhidden needle content`,
     }));
     const runtime = makeRuntime({
       projects: [goodProject, badProject],
@@ -152,10 +151,10 @@ describe("global work read routes", () => {
       project: { slug: "good", name: "Good Project" },
       entityId: todos[0]!.id,
       title: "Todo 0",
-      href: `/projects/good/todos?todo=${todos[0]!.id}`,
+      href: `/projects/good/todos/${todos[0]!.id}`,
       context: "in_progress",
     });
-    expect(body.results[0]).not.toHaveProperty("body");
+    expect(body.results[0]).not.toHaveProperty("content");
   });
 
   test("GET /api/search enforces the trimmed 1-200 character boundary", async () => {
@@ -279,8 +278,7 @@ function execution(status: "running" | "completed" | "failed", startedAt: number
 function makeTodo(overrides: Partial<ProjectTodo> = {}): ProjectTodo {
   return {
     id: "11111111-1111-4111-8111-111111111111",
-    title: "Review the completed work",
-    body: "Private PRD body",
+    content: "Review the completed work\n\nPrivate PRD body",
     status: "in_progress",
     revision: 1,
     createdAt: 1,

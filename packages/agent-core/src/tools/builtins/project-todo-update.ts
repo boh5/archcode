@@ -1,7 +1,6 @@
 import {
-  PROJECT_TODO_BODY_MAX_LENGTH,
+  PROJECT_TODO_CONTENT_MAX_LENGTH,
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
-  PROJECT_TODO_TITLE_MAX_LENGTH,
   TOOL_PROJECT_TODO_UPDATE,
 } from "@archcode/protocol";
 import { z } from "zod/v4";
@@ -12,10 +11,8 @@ import { createTextToolResult } from "../results";
 
 const ProjectTodoDiscussionPatchSchema = z
   .strictObject({
-    title: z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH).optional()
-      .describe("A corrected Todo title. Omit when the title is unchanged."),
-    body: z.string().max(PROJECT_TODO_BODY_MAX_LENGTH).optional()
-      .describe("The clarified Todo body. Omit when the body is unchanged."),
+    content: z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH).optional()
+      .describe("Corrected canonical Todo Markdown. Omit when the content is unchanged."),
     decision: z.strictObject({
       action: z.enum(["keep_current", "mark_idea", "mark_ready", "reject"])
         .describe("Use keep_current when the user did not explicitly confirm a status change; otherwise use the one explicitly confirmed status action."),
@@ -24,11 +21,11 @@ const ProjectTodoDiscussionPatchSchema = z
     }).describe("A required, single Todo decision. Only reject persists the rationale as rejectionReason."),
   })
   .superRefine((patch, context) => {
-    if (patch.decision.action === "keep_current" && patch.title === undefined && patch.body === undefined) {
+    if (patch.decision.action === "keep_current" && patch.content === undefined) {
       context.addIssue({
         code: "custom",
         path: ["decision", "action"],
-        message: "keep_current requires a title or body correction; omit project_todo_update when nothing changed",
+        message: "keep_current requires a content correction; omit project_todo_update when nothing changed",
       });
     }
   });

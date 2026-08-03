@@ -35,8 +35,7 @@ describe("Lead architecture full-runtime flows", () => {
     const fixture = await runtimeFixture("Todo Plan authoring flow");
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
     const idea = await context.todos.createTodo({
-      title: "Make durable execution visible",
-      body: "Expose execution progress without adding another work item state machine.",
+      content: "Make durable execution visible\n\nExpose execution progress without adding another work item state machine.",
     });
 
     const planPath = `.archcode/plans/${idea.id}.md`;
@@ -179,8 +178,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     const fixture = await runtimeFixture("Todo architecture flow");
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
     const idea = await context.todos.createTodo({
-      title: "Clarify the durable execution UX",
-      body: "Agree the outcome before implementation.",
+      content: "Clarify the durable execution UX\n\nAgree the outcome before implementation.",
     });
 
     const discussion = await context.todos.createSession(idea.id, {
@@ -214,7 +212,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       },
       expectedRevision: discussion.todo.revision,
       patch: {
-        body: "The outcome and acceptance boundary are confirmed.",
+        content: "Clarify the durable execution UX\n\nThe outcome and acceptance boundary are confirmed.",
         status: "ready",
       },
     });
@@ -258,8 +256,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     const fixture = await runtimeFixture("Plan execution without Goal");
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
     const idea = await context.todos.createTodo({
-      title: "Execute a reviewed Plan without Goal",
-      body: "The user wants an ordinary execution after reviewing the Plan.",
+      content: "Execute a reviewed Plan without Goal\n\nThe user wants an ordinary execution after reviewing the Plan.",
     });
     const ready = await context.todos.updateTodo(idea.id, {
       expectedRevision: idea.revision,
@@ -328,8 +325,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     const fixture = await runtimeFixture("Plan execution with Goal");
     const context = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
     const idea = await context.todos.createTodo({
-      title: "Execute a reviewed Plan with Goal",
-      body: "The user wants durable Goal supervision for the Plan.",
+      content: "Execute a reviewed Plan with Goal\n\nThe user wants durable Goal supervision for the Plan.",
     });
     const ready = await context.todos.updateTodo(idea.id, {
       expectedRevision: idea.revision,

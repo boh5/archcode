@@ -91,8 +91,8 @@ function fixture() {
   return { service, sessions };
 }
 
-async function readyTodo(service: ProjectTodoService, title = "Ship it", body = "Details") {
-  const idea = await service.createTodo({ title, body });
+async function readyTodo(service: ProjectTodoService, label = "Ship it", details = "Details") {
+  const idea = await service.createTodo({ content: `${label}\n\n${details}` });
   return service.updateTodo(idea.id, { expectedRevision: idea.revision, status: "ready" });
 }
 
@@ -110,7 +110,7 @@ describe("ProjectTodoService", () => {
 
   test("creates multiple independent Discussion Sessions without changing Todo state", async () => {
     const { service, sessions } = fixture();
-    const todo = await service.createTodo({ title: "Discuss", body: "Questions" });
+    const todo = await service.createTodo({ content: "Discuss\n\nQuestions" });
 
     const first = await service.createSession(todo.id, {
       expectedRevision: todo.revision,
@@ -143,8 +143,7 @@ describe("ProjectTodoService", () => {
   test("starts a new Plan Discussion with the Plan command as its first accepted message", async () => {
     const { service, sessions } = fixture();
     const todo = await service.createTodo({
-      title: "Plan safely",
-      body: "Avoid racing the initial Discussion execution.",
+      content: "Plan safely\n\nAvoid racing the initial Discussion execution.",
     });
 
     const discussion = await service.createSession(todo.id, {
@@ -218,7 +217,7 @@ describe("ProjectTodoService", () => {
 
   test("enforces entry state and current revision before creating a Session", async () => {
     const { service, sessions } = fixture();
-    const idea = await service.createTodo({ title: "Not ready" });
+    const idea = await service.createTodo({ content: "Not ready" });
 
     await expect(service.createSession(idea.id, {
       expectedRevision: idea.revision,
@@ -261,7 +260,7 @@ describe("ProjectTodoService", () => {
   test("runs now once across concurrent and sequential idempotent retries", async () => {
     const { service, sessions } = fixture();
     const clientRequestId = crypto.randomUUID();
-    const request = { clientRequestId, title: "Fix the type", body: "Change the field." };
+    const request = { clientRequestId, content: "Fix the type\n\nChange the field." };
 
     const [first, concurrent] = await Promise.all([
       service.runNow(request),
@@ -276,7 +275,7 @@ describe("ProjectTodoService", () => {
     expect(sessions.sessions.size).toBe(1);
     expect(sessions.messages.size).toBe(1);
     expect(await service.listTodos()).toHaveLength(1);
-    await expect(service.runNow({ ...request, title: "Different" }))
+    await expect(service.runNow({ ...request, content: "Different" }))
       .rejects.toBeInstanceOf(ProjectTodoRunNowConflictError);
   });
 
@@ -284,12 +283,12 @@ describe("ProjectTodoService", () => {
     const { service, sessions } = fixture();
 
     sessions.failCreate = 1;
-    const createRequest = { clientRequestId: crypto.randomUUID(), title: "Create fails" };
+    const createRequest = { clientRequestId: crypto.randomUUID(), content: "Create fails" };
     await expect(service.runNow(createRequest)).rejects.toThrow("Session creation failure");
     expect(await service.listTodos()).toEqual([]);
 
     sessions.failAccept = 1;
-    const acceptRequest = { clientRequestId: crypto.randomUUID(), title: "Accept fails" };
+    const acceptRequest = { clientRequestId: crypto.randomUUID(), content: "Accept fails" };
     await expect(service.runNow(acceptRequest)).rejects.toThrow("message acceptance failure");
     expect(await service.listTodos()).toEqual([]);
     expect(sessions.sessions.size).toBe(0);
@@ -305,7 +304,7 @@ describe("ProjectTodoService", () => {
 
     const result = await service.runNow({
       clientRequestId: crypto.randomUUID(),
-      title: "Accepted before wake-up",
+      content: "Accepted before wake-up",
     });
 
     expect(result.todo.status).toBe("in_progress");
@@ -320,7 +319,7 @@ describe("ProjectTodoService", () => {
 
     const error = await service.runNow({
       clientRequestId: crypto.randomUUID(),
-      title: "Needs recovery",
+      content: "Needs recovery",
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ProjectTodoRunNowRecoveryError);
@@ -334,7 +333,7 @@ describe("ProjectTodoService", () => {
 
     const error = await service.runNow({
       clientRequestId: crypto.randomUUID(),
-      title: "Acceptance is indeterminate",
+      content: "Acceptance is indeterminate",
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ProjectTodoRunNowRecoveryError);
@@ -345,7 +344,7 @@ describe("ProjectTodoService", () => {
 
   test("authorizes Discussion updates from root identity and immutable Todo binding", async () => {
     const { service } = fixture();
-    const todo = await service.createTodo({ title: "Shape" });
+    const todo = await service.createTodo({ content: "Shape" });
     const sessionId = crypto.randomUUID();
     const authorization = {
       sessionId,
@@ -358,9 +357,9 @@ describe("ProjectTodoService", () => {
     const updated = await service.updateFromDiscussion({
       authorization,
       expectedRevision: todo.revision,
-      patch: { title: "Shaped", status: "ready" },
+      patch: { content: "Shaped", status: "ready" },
     });
-    expect(updated).toMatchObject({ title: "Shaped", status: "ready", revision: 2 });
+    expect(updated).toMatchObject({ content: "Shaped", status: "ready", revision: 2 });
 
     for (const invalidAuthorization of [
       { ...authorization, agentName: "lead" },
@@ -371,7 +370,7 @@ describe("ProjectTodoService", () => {
       await expect(service.updateFromDiscussion({
         authorization: invalidAuthorization,
         expectedRevision: updated.revision,
-        patch: { body: "Denied" },
+        patch: { content: "Denied" },
       })).rejects.toBeInstanceOf(ProjectTodoDiscussionAuthorizationError);
     }
   });

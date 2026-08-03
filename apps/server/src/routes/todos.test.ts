@@ -37,7 +37,7 @@ describe("Project Todo routes", () => {
     const create = await fixture.app.request(base, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: "New idea", body: "Details" }),
+      body: JSON.stringify({ content: "New idea\n\nDetails" }),
     });
     const update = await fixture.app.request(`${base}/${todo.id}`, {
       method: "PATCH",
@@ -52,7 +52,7 @@ describe("Project Todo routes", () => {
     expect(list.status).toBe(200);
     expect(await list.json()).toEqual({ todos: [todo] });
     expect(create.status).toBe(201);
-    expect(fixture.createTodo).toHaveBeenCalledWith({ title: "New idea", body: "Details" });
+    expect(fixture.createTodo).toHaveBeenCalledWith({ content: "New idea\n\nDetails" });
     expect(update.status).toBe(200);
     expect(fixture.updateTodo).toHaveBeenCalledWith(todo.id, {
       expectedRevision: 1,
@@ -105,8 +105,7 @@ describe("Project Todo routes", () => {
     const fixture = createFixture(todo);
     const input: ProjectTodoRunNowInput = {
       clientRequestId: crypto.randomUUID(),
-      title: "Start now",
-      body: "Implement it.",
+      content: "Start now\n\nImplement it.",
     };
 
     const response = await fixture.app.request(`/api/projects/${fixture.project.slug}/todos/run-now`, {
@@ -136,7 +135,7 @@ describe("Project Todo routes", () => {
     const mixedArchive = await fixture.app.request(`${base}/${fixture.todo.id}`, {
       method: "PATCH",
       headers,
-      body: JSON.stringify({ expectedRevision: 1, archived: true, title: "Mixed" }),
+      body: JSON.stringify({ expectedRevision: 1, archived: true, content: "Mixed" }),
     });
     const invalidEntry = await fixture.app.request(`${base}/${fixture.todo.id}/sessions`, {
       method: "POST",
@@ -155,7 +154,7 @@ describe("Project Todo routes", () => {
     const invalidRunNow = await fixture.app.request(`${base}/run-now`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ clientRequestId: crypto.randomUUID(), title: "Start", origin: "forged" }),
+      body: JSON.stringify({ clientRequestId: crypto.randomUUID(), content: "Start", origin: "forged" }),
     });
 
     expect(emptyMutation.status).toBe(400);
@@ -173,7 +172,7 @@ describe("Project Todo routes", () => {
     const request = {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ clientRequestId, title: "Start" }),
+      body: JSON.stringify({ clientRequestId, content: "Start" }),
     };
     fixture.runNow.mockRejectedValueOnce(Object.assign(new Error("different input"), {
       code: "PROJECT_TODO_RUN_NOW_CONFLICT",
@@ -207,7 +206,7 @@ describe("Project Todo routes", () => {
     const missing = await fixture.app.request(base, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ expectedRevision: 1, body: "Change" }),
+      body: JSON.stringify({ expectedRevision: 1, content: "Change" }),
     });
     fixture.updateTodo.mockRejectedValueOnce(Object.assign(new Error("stale"), {
       code: "PROJECT_TODO_REVISION_CONFLICT",
@@ -216,7 +215,7 @@ describe("Project Todo routes", () => {
     const conflict = await fixture.app.request(base, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ expectedRevision: 1, body: "Change" }),
+      body: JSON.stringify({ expectedRevision: 1, content: "Change" }),
     });
 
     expect(missing.status).toBe(404);
@@ -315,7 +314,7 @@ function createFixture(todo: ProjectTodo) {
         profile: "principal" as const,
         activeSkillNames: [],
         modelSelection: { revision: 0 },
-        title: todo.title,
+        title: "Capture an idea",
         source: { kind: "todo" as const, todoId: todo.id, entry: "work" as const },
         createdAt: todo.createdAt,
         updatedAt: todo.updatedAt,
@@ -336,8 +335,7 @@ function makeTodo(overrides: Partial<ProjectTodo> = {}): ProjectTodo {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
-    title: "Capture an idea",
-    body: "Explore the idea.",
+    content: "Capture an idea\n\nExplore the idea.",
     status: "idea",
     revision: 1,
     createdAt: now,

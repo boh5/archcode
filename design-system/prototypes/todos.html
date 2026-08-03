@@ -96,18 +96,21 @@
         min-width: 0;
       }
 
-      .capture input {
+      .capture textarea {
         width: 100%;
         min-width: 0;
-        height: 34px;
-        padding: 0 4px;
+        min-height: 48px;
+        padding: 7px 4px;
         border: 0;
         outline: 0;
+        resize: vertical;
         background: transparent;
+        font: inherit;
         font-size: 13px;
+        line-height: 1.5;
       }
 
-      .capture input:focus {
+      .capture textarea:focus {
         box-shadow: none;
       }
 
@@ -501,14 +504,6 @@
 
       .detail-heading h2:focus {
         outline: none;
-      }
-
-      .detail-heading p {
-        max-width: 720px;
-        margin-top: 7px;
-        color: var(--text-secondary);
-        font-size: 12px;
-        line-height: 1.55;
       }
 
       .detail-inner {
@@ -925,8 +920,8 @@
               <form class="capture" data-capture-form>
                 <span data-icon="plus"></span>
                 <div class="capture-copy">
-                  <label class="sr-only" for="new-todo">New Todo</label>
-                  <input id="new-todo" placeholder="What needs to change?" autocomplete="off" />
+                  <label class="sr-only" for="new-todo">New Todo content</label>
+                  <textarea id="new-todo" rows="2" placeholder="Capture an idea, bug, feature, or paste a PRD…"></textarea>
                   <span class="capture-hint">Save it for later, or run it now with a Lead Agent.</span>
                 </div>
                 <div class="capture-actions">
@@ -935,7 +930,7 @@
                 </div>
               </form>
 
-              <p class="surface-filter-empty" hidden aria-live="polite" data-todo-filter-empty><strong data-todo-filter-empty-title>No Todos match this filter.</strong><span>Try another title, PRD term, or stable ID.</span></p>
+              <p class="surface-filter-empty" hidden aria-live="polite" data-todo-filter-empty><strong data-todo-filter-empty-title>No Todos match this filter.</strong><span>Try another content or PRD term, or a stable ID.</span></p>
 
               <section class="todo-board" data-todo-panel="board" aria-label="Todo board">
                 <section class="todo-lane" aria-label="Ideas">
@@ -1045,7 +1040,6 @@
               <div class="detail-heading">
                 <div class="detail-kicker"><span class="todo-state" data-detail-status>Ready</span><span data-detail-id>todo-profile-defaults</span><span data-detail-updated>Updated 18m ago</span></div>
                 <h2 id="todo-detail-title" tabindex="-1" data-detail-title>Model profile defaults per project</h2>
-                <p data-detail-summary>Allow a project to recommend a principal model profile while preserving the user's explicit Session override and the existing global configuration contract.</p>
               </div>
               <div class="detail-actions" aria-label="Todo actions">
                 <button class="secondary-button" data-discuss-todo>Discuss / Plan</button>
@@ -1199,12 +1193,12 @@
       const todoSamples = {
         "todo-context-presets": {
           id: "todo-context-presets",
-          title: "Add per-project context presets",
+          content: `# Add per-project context presets
+
+This is a captured idea, not committed work. Keep a small set of project-owned context presets without turning them into global configuration.`,
           status: "Idea",
           lane: "idea",
           updated: "Updated 3h ago",
-          summary: "Let each registered project keep a small, explicit set of context presets that a Lead Session can activate without repeating setup instructions.",
-          prd: "<p>This is a captured idea, not committed work. Keep a small set of project-owned context presets without turning them into global configuration.</p>",
           hasPlan: false,
           showPlanPrompt: false,
           primary: "Run now",
@@ -1212,12 +1206,24 @@
         },
         "todo-profile-defaults": {
           id: "todo-profile-defaults",
-          title: "Model profile defaults per project",
+          content: `# Model profile defaults per project
+
+## Problem
+Projects often prefer different model profiles, but a global default cannot express that preference without overriding the choice a user made for one Session.
+
+## Expected behavior
+- A project may recommend one existing profile for newly created work.
+- An explicit Session selection always wins and remains visible.
+- Unknown profiles fail with an actionable configuration error.
+- No project directory is searched for server configuration.
+
+## Acceptance
+1. The recommendation is visible before starting work.
+2. Existing Sessions preserve their immutable selection.
+3. Protocol and Web continue to use the canonical profile names.`,
           status: "Ready",
           lane: "ready",
           updated: "Updated 18m ago",
-          summary: "Allow a project to recommend a principal model profile while preserving the user's explicit Session override and the existing global configuration contract.",
-          prd: "<h3>Problem</h3><p>Projects often prefer different model profiles, but a global default cannot express that preference without overriding the choice a user made for one Session.</p><h3>Expected behavior</h3><ul><li>A project may recommend one existing profile for newly created work.</li><li>An explicit Session selection always wins and remains visible.</li><li>Unknown profiles fail with an actionable configuration error.</li><li>No project directory is searched for server configuration.</li></ul><h3>Acceptance</h3><ol><li>The recommendation is visible before starting work.</li><li>Existing Sessions preserve their immutable selection.</li><li>Protocol and Web continue to use the canonical profile names.</li></ol>",
           hasPlan: true,
           primary: "Start Work",
           work: "planned",
@@ -1227,12 +1233,18 @@
         },
         "todo-live-recovery": {
           id: "todo-live-recovery",
-          title: "Live execution recovery",
+          content: `# Live execution recovery
+
+## Outcome
+When an SSE event is missed, the next authoritative Session snapshot repairs the visible execution state without creating a continuation Execution.
+
+## Acceptance
+- One logical Execution keeps its identity across recovery.
+- The UI never invents duplicate running work.
+- Recovery remains visible in the Session transcript.`,
           status: "In Progress",
           lane: "in_progress",
           updated: "Updated now",
-          summary: "Recover authoritative live execution state from snapshots when an SSE event is missed, without fabricating a second execution.",
-          prd: "<h3>Outcome</h3><p>When an SSE event is missed, the next authoritative Session snapshot repairs the visible execution state without creating a continuation Execution.</p><h3>Acceptance</h3><ul><li>One logical Execution keeps its identity across recovery.</li><li>The UI never invents duplicate running work.</li><li>Recovery remains visible in the Session transcript.</li></ul>",
           hasPlan: true,
           primary: "Open Session",
           work: "running",
@@ -1241,12 +1253,18 @@
         },
         "todo-worktree-permission": {
           id: "todo-worktree-permission",
-          title: "Review worktree deletion permission",
+          content: `# Review worktree deletion permission
+
+## Guardrail
+Resolve the exact managed worktree before requesting deletion. Never use broad paths, unresolved variables, or destructive cleanup as a shortcut.
+
+## Acceptance
+- The request shows the exact target.
+- The user can deny without losing the Session.
+- Approved cleanup remains independently auditable.`,
           status: "In Progress",
           lane: "in_progress",
           updated: "Updated now",
-          summary: "Keep destructive worktree cleanup recoverable and ask for a decision only when the exact target has been resolved.",
-          prd: "<h3>Guardrail</h3><p>Resolve the exact managed worktree before requesting deletion. Never use broad paths, unresolved variables, or destructive cleanup as a shortcut.</p><h3>Acceptance</h3><ul><li>The request shows the exact target.</li><li>The user can deny without losing the Session.</li><li>Approved cleanup remains independently auditable.</li></ul>",
           hasPlan: false,
           showPlanPrompt: false,
           primary: "Open request",
@@ -1256,12 +1274,23 @@
         },
         "todo-work-search": {
           id: "todo-work-search",
-          title: "Unify project work search",
+          content: `# Unify project work search
+
+## Problem
+A Session-only finder makes the project look execution-first and forces users to know which runtime object holds the work they remember.
+
+## Expected behavior
+- Search returns Todos, Sessions, and Automations with an explicit type.
+- Empty search prioritizes Needs you, Running, and Ready to review.
+- Every result deep-links to the durable entity or exact execution.
+
+## Acceptance
+1. Users can recover work without knowing its entity type.
+2. Runtime urgency is visible before opening a Todo.
+3. Session remains the inspectable execution workbench.`,
           status: "In Progress",
           lane: "in_progress",
           updated: "Updated 4m ago",
-          summary: "Search Todos, Sessions, and Automations from one project-level surface while keeping every execution recoverable by stable Session ID.",
-          prd: "<h3>Problem</h3><p>A Session-only finder makes the project look execution-first and forces users to know which runtime object holds the work they remember.</p><h3>Expected behavior</h3><ul><li>Search returns Todos, Sessions, and Automations with an explicit type.</li><li>Empty search prioritizes Needs you, Running, and Ready to review.</li><li>Every result deep-links to the durable entity or exact execution.</li></ul><h3>Acceptance</h3><ol><li>Users can recover work from a title without knowing its entity type.</li><li>Runtime urgency is visible before opening a Todo.</li><li>Session remains the inspectable execution workbench.</li></ol>",
           hasPlan: true,
           plan: "<ol><li>Index Todo, Session, and Automation records with explicit result types and stable deep links.</li><li>Order empty search by decision urgency: Needs you, Running, Ready to review, then Recent.</li><li>Keep execution status on Todo cards and order action-required work first inside In Progress.</li><li>Verify keyboard search, narrow layouts, and Todo-to-Session recovery paths.</li></ol><h3>Verification</h3><p>Check typed and empty search, runtime ordering, Todo deep links, exact Session recovery, and 390px layout behavior.</p>",
           primary: "Open Session",
@@ -1272,12 +1301,18 @@
         },
         "todo-cwd-references": {
           id: "todo-cwd-references",
-          title: "Preserve Session cwd references",
+          content: `# Preserve Session cwd references
+
+## Delivered contract
+Session storage remains project-root owned while every managed worktree execution directory is validated before use.
+
+## Acceptance
+- Existing Session references remain readable.
+- Invalid managed worktrees fail with a recovery path.
+- Migration diagnostics are durable.`,
           status: "Done",
           lane: "done",
           updated: "Accepted yesterday",
-          summary: "Keep durable Session storage at the project root while validating every managed worktree execution directory.",
-          prd: "<h3>Delivered contract</h3><p>Session storage remains project-root owned while every managed worktree execution directory is validated before use.</p><h3>Acceptance</h3><ul><li>Existing Session references remain readable.</li><li>Invalid managed worktrees fail with a recovery path.</li><li>Migration diagnostics are durable.</li></ul>",
           hasPlan: true,
           primary: "Run again",
           work: "done",
@@ -1296,7 +1331,6 @@
       const boardRoute = document.querySelector("[data-board-route]");
       const detailRoute = document.querySelector("[data-detail-route]");
       const detailTitle = document.querySelector("[data-detail-title]");
-      const detailSummary = document.querySelector("[data-detail-summary]");
       const detailStatus = document.querySelector("[data-detail-status]");
       const detailId = document.querySelector("[data-detail-id]");
       const detailUpdated = document.querySelector("[data-detail-updated]");
@@ -1329,6 +1363,39 @@
         return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
       }
 
+      function displayLabel(sample) {
+        const firstLine = (sample?.content || "").split(/\r?\n/).find((line) => line.trim());
+        const cleaned = firstLine?.trim().replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/, "").replace(/^\[[ xX]\]\s*/, "");
+        return cleaned || `Todo ${(sample?.id || "unknown").slice(0, 8)}`;
+      }
+
+      function contentRemainder(content) {
+        const lines = (content || "").split(/\r?\n/);
+        const first = lines.findIndex((line) => line.trim());
+        return first < 0 ? "" : lines.slice(first + 1).join("\n").trim();
+      }
+
+      function contentPreview(content) {
+        return contentRemainder(content)
+          .split(/\r?\n/)
+          .map((line) => line.trim().replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/, "").replace(/^\[[ xX]\]\s*/, ""))
+          .filter(Boolean)
+          .join(" ");
+      }
+
+      function contentBodyHtml(content) {
+        const blocks = contentRemainder(content).split(/\n\s*\n/).filter(Boolean);
+        if (!blocks.length) return '<p class="empty-state">No additional detail yet.</p>';
+        return blocks.map((block) => {
+          const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+          const heading = lines[0]?.match(/^#{2,6}\s+(.+)$/);
+          if (heading && lines.length === 1) return `<h3>${escapeHtml(heading[1])}</h3>`;
+          if (lines.every((line) => /^[-+*]\s+/.test(line))) return `<ul>${lines.map((line) => `<li>${escapeHtml(line.replace(/^[-+*]\s+/, ""))}</li>`).join("")}</ul>`;
+          if (lines.every((line) => /^\d+[.)]\s+/.test(line))) return `<ol>${lines.map((line) => `<li>${escapeHtml(line.replace(/^\d+[.)]\s+/, ""))}</li>`).join("")}</ol>`;
+          return `<p>${lines.map(escapeHtml).join("<br>")}</p>`;
+        }).join("");
+      }
+
       function readStoredTodos() {
         try {
           const value = JSON.parse(localStorage.getItem(storedTodoKey) || "[]");
@@ -1359,28 +1426,21 @@
 
       function dynamicSample(record) {
         const running = record.lane === "in_progress";
+        const label = displayLabel(record);
         return {
           ...record,
           status: running ? "In Progress" : "Idea",
           updated: running ? "Started now" : "Saved now",
-          summary: running ? "Started immediately from quick capture. The Todo remains the durable source while work continues in its bound Session." : "Captured for later. No Agent work has started.",
-          prd: `<p>${escapeHtml(record.title)}</p><p>${running ? "This minimal Todo was created by Run now. Add more context here only if the work grows." : "This is a lightweight capture. Discuss, plan, or run it only when you decide to act."}</p>`,
           hasPlan: false,
           showPlanPrompt: false,
           primary: running ? "Open Session" : "Run now",
           work: running ? "running" : "none",
-          session: running ? { id: record.sessionId, title: record.title, summary: "Lead · started directly from quick capture", state: "Running" } : undefined,
+          session: running ? { id: record.sessionId, title: label, summary: "Lead · started directly from quick capture", state: "Running" } : undefined,
         };
       }
 
       function allSamples() {
         return { ...todoSamples, ...Object.fromEntries(readStoredTodos().map((record) => [record.id, dynamicSample(record)])) };
-      }
-
-      function plainText(value) {
-        const container = document.createElement("div");
-        container.innerHTML = value || "";
-        return container.textContent || "";
       }
 
       function applyTodoFilter() {
@@ -1391,7 +1451,7 @@
         document.querySelectorAll(".todo-card").forEach((card) => {
           const id = card.querySelector("[data-todo-id]")?.dataset.todoId;
           const sample = id ? samples[id] : null;
-          const haystack = `${id || ""} ${sample?.title || ""} ${sample?.summary || ""} ${plainText(sample?.prd)} ${sample?.status || ""} ${card.textContent}`.toLowerCase();
+          const haystack = `${id || ""} ${sample?.content || ""} ${sample?.status || ""} ${card.textContent}`.toLowerCase();
           const matches = !query || haystack.includes(query);
           card.hidden = !matches;
           if (matches) visibleCount += 1;
@@ -1406,6 +1466,7 @@
       }
 
       function cardMarkup(sample) {
+        const label = displayLabel(sample);
         const tone = sample.status === "Done" ? "done" : sample.status === "In Progress" ? "running" : "";
         const runtime = sample.work === "attention" ? "needs_you" : sample.work === "running" ? "running" : sample.work === "review" ? "review" : "";
         const badge = sample.work === "attention"
@@ -1417,11 +1478,11 @@
             : "";
         const meta = sample.work === "none" ? "No execution" : sample.work === "running" ? "Lead · 1 Session" : sample.work === "review" ? "Lead → Build · Result ready" : "Captured";
         return `<article class="todo-card" data-runtime="${runtime}">
-          <button class="drag-handle" aria-label="Drag ${escapeHtml(sample.title)}" data-action="拖动 Todo" data-icon="grip"></button>
+          <button class="drag-handle" aria-label="Drag ${escapeHtml(label)}" data-action="拖动 Todo" data-icon="grip"></button>
           <button class="todo-card-content" data-open-todo data-todo-id="${escapeHtml(sample.id)}">
             <span class="todo-card-top"><span class="todo-state"${tone ? ` data-tone="${tone}"` : ""}>${sample.status}</span>${badge}</span>
-            <span class="todo-name">${escapeHtml(sample.title)}</span>
-            <span class="todo-preview">${escapeHtml(sample.summary)}</span>
+            <span class="todo-name">${escapeHtml(label)}</span>
+            <span class="todo-preview">${escapeHtml(contentPreview(sample.content))}</span>
             <span class="todo-card-meta"><span>Brief</span><span>${meta}</span></span>
           </button>
         </article>`;
@@ -1475,13 +1536,12 @@
         if (!sample) return false;
         currentTodo = sample;
         const workMode = sample.work || "none";
-        detailTitle.textContent = sample.title;
-        detailSummary.textContent = sample.summary;
+        detailTitle.textContent = displayLabel(sample);
         detailStatus.textContent = sample.status;
         detailStatus.dataset.tone = sample.status === "Done" ? "done" : sample.status === "In Progress" ? "running" : "";
         detailId.textContent = sample.id;
         detailUpdated.textContent = sample.updated;
-        detailPrd.innerHTML = sample.prd;
+        detailPrd.innerHTML = contentBodyHtml(sample.content);
         detailPrimary.textContent = sample.primary;
         detailDiscuss.hidden = sample.status === "Done";
         detailAttention.hidden = !sample.attention;
@@ -1505,7 +1565,7 @@
           workDiscussion.querySelector("[data-work-discussion-state]").textContent = sample.discussion.state;
         }
         if (sample.session) {
-          workSession.href = `./session.html?todo=${encodeURIComponent(sample.id)}&session=${encodeURIComponent(sample.session.id)}&title=${encodeURIComponent(sample.title)}`;
+          workSession.href = `./session.html?todo=${encodeURIComponent(sample.id)}&session=${encodeURIComponent(sample.session.id)}&title=${encodeURIComponent(displayLabel(sample))}`;
           workSession.querySelector("[data-work-session-title]").textContent = sample.session.title;
           workSession.querySelector("[data-work-session-summary]").textContent = sample.session.summary;
           const sessionState = workSession.querySelector("[data-work-session-state]");
@@ -1556,13 +1616,13 @@
           record.sessionId = sessionId;
           localStorage.setItem(storedTodoKey, JSON.stringify(records));
         }
-        location.href = rememberRunningSession({ id: currentTodo.id, title: currentTodo.title, sessionId });
+        location.href = rememberRunningSession({ id: currentTodo.id, title: displayLabel(currentTodo), sessionId });
       });
 
       detailDiscuss?.addEventListener("click", () => {
         if (!currentTodo) return;
         const sessionId = currentTodo.discussion?.id || `sess-${currentTodo.id}-discussion-1`;
-        location.href = `./session.html?todo=${encodeURIComponent(currentTodo.id)}&session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(currentTodo.title)}&kind=discussion`;
+        location.href = `./session.html?todo=${encodeURIComponent(currentTodo.id)}&session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(displayLabel(currentTodo))}&kind=discussion`;
       });
 
       window.addEventListener("popstate", () => {
@@ -1586,27 +1646,28 @@
 
       document.querySelector("[data-capture-form]")?.addEventListener("submit", (event) => {
         event.preventDefault();
-        const input = event.currentTarget.querySelector("input");
-        const title = input.value.trim();
-        if (!title) {
+        const input = event.currentTarget.querySelector("textarea");
+        const content = input.value.trim();
+        if (!content) {
           input.focus();
-          showToast("Add a title first");
+          showToast("Add Todo content first");
           return;
         }
         const runNow = event.submitter?.value === "run";
         const id = `todo-local-${Date.now()}`;
         const sessionId = `sess-${id}-work-1`;
         const records = readStoredTodos();
-        const record = { id, title, lane: runNow ? "in_progress" : "idea", ...(runNow ? { sessionId } : {}) };
+        const record = { id, content, lane: runNow ? "in_progress" : "idea", ...(runNow ? { sessionId } : {}) };
+        const label = displayLabel(record);
         records.unshift(record);
         localStorage.setItem(storedTodoKey, JSON.stringify(records.slice(0, 8)));
         input.value = "";
         if (runNow) {
-          location.href = rememberRunningSession({ id, title, sessionId });
+          location.href = rememberRunningSession({ id, title: label, sessionId });
           return;
         }
         renderStoredTodos();
-        showToast(`Saved “${title}” to Ideas`);
+        showToast(`Saved “${label}” to Ideas`);
       });
 
       renderStoredTodos();
