@@ -1,3 +1,5 @@
+import type { AttachmentDescriptor } from "./attachments";
+
 export const PROJECT_TODO_CONTENT_MAX_LENGTH = 20_000;
 export const PROJECT_TODO_DISPLAY_LABEL_MAX_LENGTH = 120;
 export const PROJECT_TODO_REJECTION_REASON_MAX_LENGTH = 4_000;
@@ -17,12 +19,20 @@ export type RootSessionSource =
       readonly kind: "automation";
       readonly automationId: string;
       readonly invocationId: string;
+      readonly todoId: string | null;
     };
+
+export function rootSessionSourceTodoId(source: RootSessionSource): string | undefined {
+  if (source.kind === "todo") return source.todoId;
+  if (source.kind === "automation") return source.todoId ?? undefined;
+  return undefined;
+}
 
 /** Project-owned intent, separate from a Session-scoped execution checklist. */
 export interface ProjectTodo {
   readonly id: string;
   readonly content: string;
+  readonly attachmentIds: string[];
   readonly status: ProjectTodoStatus;
   readonly rejectionReason?: string;
   readonly revision: number;
@@ -87,6 +97,15 @@ export interface ProjectTodoListResponse {
 
 export interface ProjectTodoResponse {
   readonly todo: ProjectTodo;
+}
+
+export interface ProjectTodoAttachmentListResponse {
+  readonly todoRevision: number;
+  readonly attachments: readonly AttachmentDescriptor[];
+}
+
+export interface ProjectTodoAttachmentMutationResponse extends ProjectTodoResponse {
+  readonly attachment: AttachmentDescriptor;
 }
 
 export interface CreateProjectTodoSessionResponse extends ProjectTodoResponse {

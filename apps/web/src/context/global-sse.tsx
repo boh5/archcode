@@ -530,6 +530,7 @@ function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSERe
 
   if (event.resourceType === "todo") {
     deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
+    deps.invalidateQueries({ queryKey: queryKeys.projectTodoAttachments(event.projectSlug, event.resourceId) });
     invalidateHomeQuery(deps);
     return;
   }

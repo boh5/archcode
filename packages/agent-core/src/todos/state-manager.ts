@@ -4,6 +4,7 @@ import type {
   ProjectTodoStatus,
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
+import { MAX_ATTACHMENTS_PER_TODO } from "@archcode/protocol";
 
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
@@ -18,6 +19,7 @@ import {
 } from "./errors";
 import {
   ProjectTodoCreateSchema,
+  ProjectTodoAttachmentIdSchema,
   ProjectTodoStateFileSchema,
   ProjectTodoUpdateSchema,
   type ProjectTodoStateFile,
@@ -78,6 +80,7 @@ export class ProjectTodoStateManager {
       const todo: ProjectTodo = {
         id: crypto.randomUUID(),
         content: validated.content,
+        attachmentIds: [],
         status: "idea",
         revision: 1,
         createdAt: now,
@@ -95,6 +98,7 @@ export class ProjectTodoStateManager {
       const todo: ProjectTodo = {
         id: crypto.randomUUID(),
         content: validated.content,
+        attachmentIds: [],
         status: "in_progress",
         revision: 1,
         createdAt: now,
@@ -154,6 +158,50 @@ export class ProjectTodoStateManager {
 
       const shouldReorder = update.beforeTodoId !== undefined || finalStatus !== previousStatus;
       if (shouldReorder) reorderTodo(state.todos, todo, finalStatus, update.beforeTodoId ?? null);
+      touch(todo, this.#now());
+      return structuredClone(todo);
+    }, (todo) => todo);
+  }
+
+  async addAttachmentReference(
+    todoId: string,
+    attachmentId: string,
+    expectedRevision: number,
+  ): Promise<ProjectTodo> {
+    const validatedAttachmentId = ProjectTodoAttachmentIdSchema.parse(attachmentId);
+    return this.#mutate((state) => {
+      const todo = requiredTodo(state, todoId);
+      assertRevision(todo, expectedRevision);
+      if (todo.attachmentIds.includes(validatedAttachmentId)) return structuredClone(todo);
+      if (todo.attachmentIds.length >= MAX_ATTACHMENTS_PER_TODO) {
+        throw new ProjectTodoInvalidMutationError(
+          todo.id,
+          `Todo cannot retain more than ${MAX_ATTACHMENTS_PER_TODO} attachments`,
+        );
+      }
+      todo.attachmentIds.push(validatedAttachmentId);
+      touch(todo, this.#now());
+      return structuredClone(todo);
+    }, (todo) => todo);
+  }
+
+  async removeAttachmentReference(
+    todoId: string,
+    attachmentId: string,
+    expectedRevision: number,
+  ): Promise<ProjectTodo> {
+    const validatedAttachmentId = ProjectTodoAttachmentIdSchema.parse(attachmentId);
+    return this.#mutate((state) => {
+      const todo = requiredTodo(state, todoId);
+      assertRevision(todo, expectedRevision);
+      const index = todo.attachmentIds.indexOf(validatedAttachmentId);
+      if (index < 0) {
+        throw new ProjectTodoInvalidMutationError(
+          todo.id,
+          `Todo does not reference attachment: ${validatedAttachmentId}`,
+        );
+      }
+      todo.attachmentIds.splice(index, 1);
       touch(todo, this.#now());
       return structuredClone(todo);
     }, (todo) => todo);

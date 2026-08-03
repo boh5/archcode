@@ -17,6 +17,7 @@ import {
   TOOL_CREATE_GOAL,
   TOOL_FILE_EDIT,
   TOOL_FILE_READ,
+  TOOL_PDF_READ,
   TOOL_FILE_WRITE,
   TOOL_GET_GOAL,
   TOOL_GIT_DIFF,
@@ -44,6 +45,7 @@ export const leadAgentDefinition = {
   tools: {
     tools: [
       TOOL_FILE_READ,
+      TOOL_PDF_READ,
       TOOL_FILE_WRITE,
       TOOL_FILE_EDIT,
       TOOL_GREP,

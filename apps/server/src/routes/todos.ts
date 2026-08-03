@@ -4,7 +4,10 @@ import { isAbsolute, join, relative } from "node:path";
 import type {
   CreateProjectTodoSessionInput,
   CreateProjectTodoSessionResponse,
+  AttachmentDescriptor,
   ProjectTodo,
+  ProjectTodoAttachmentListResponse,
+  ProjectTodoAttachmentMutationResponse,
   ProjectTodoCreateInput,
   ProjectTodoPlan,
   ProjectTodoPlanResponse,
@@ -26,11 +29,19 @@ import { z } from "zod/v4";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 import { zValidator } from "../validation";
+import { mapAttachmentHttpError } from "./attachment-http-error";
+import { attachmentDisposition, parseDecimal } from "./attachments";
 
 const ProjectTodoListParamsSchema = z.strictObject({ slug: z.string().min(1) });
 const ProjectTodoParamsSchema = z.strictObject({
   slug: z.string().min(1),
   todoId: z.uuid(),
+});
+const ProjectTodoAttachmentParamsSchema = ProjectTodoParamsSchema.extend({
+  attachmentId: z.uuid(),
+});
+const ProjectTodoAttachmentDeleteBodySchema = z.strictObject({
+  expectedRevision: z.number().int().positive(),
 });
 const ProjectTodoCreateBodySchema = z.strictObject({
   content: z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH),
@@ -57,6 +68,26 @@ export interface ProjectTodoServiceLike {
   readTodo(todoId: string): Promise<ProjectTodo>;
   createTodo(input: ProjectTodoCreateInput): Promise<ProjectTodo>;
   updateTodo(todoId: string, input: ProjectTodoUpdateInput): Promise<ProjectTodo>;
+  listAttachments(todoId: string): Promise<ProjectTodoAttachmentListResponse>;
+  uploadAttachment(input: {
+    readonly todoId: string;
+    readonly attachmentId: string;
+    readonly expectedRevision: number;
+    readonly name: string;
+    readonly sizeBytes: number;
+    readonly mediaType?: string;
+    readonly contentLength?: number;
+    readonly body: ReadableStream<Uint8Array> | null;
+  }): Promise<ProjectTodoAttachmentMutationResponse>;
+  openAttachment(input: {
+    readonly todoId: string;
+    readonly attachmentId: string;
+  }): Promise<{ readonly descriptor: AttachmentDescriptor; readonly contentPath: string }>;
+  removeAttachment(input: {
+    readonly todoId: string;
+    readonly attachmentId: string;
+    readonly expectedRevision: number;
+  }): Promise<ProjectTodo>;
   createSession(
     todoId: string,
     input: CreateProjectTodoSessionInput,
@@ -103,6 +134,102 @@ export function createTodosRoutes(runtime: AgentRuntime): Hono {
         return c.json(await service.runNow(c.req.valid("json")), 201);
       } catch (error) {
         throw mapTodoError(error);
+      }
+    },
+  );
+
+  app.get(
+    "/:slug/todos/:todoId/attachments",
+    zValidator("param", ProjectTodoParamsSchema),
+    async (c) => {
+      const { slug, todoId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json(await service.listAttachments(todoId));
+      } catch (error) {
+        throw mapAttachmentOrTodoError(error);
+      }
+    },
+  );
+
+  app.put(
+    "/:slug/todos/:todoId/attachments/:attachmentId",
+    zValidator("param", ProjectTodoAttachmentParamsSchema),
+    async (c) => {
+      const { slug, todoId, attachmentId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      const name = c.req.query("name") ?? "";
+      const sizeBytes = parseDecimal(c.req.query("sizeBytes"), "sizeBytes");
+      const expectedRevision = parseDecimal(c.req.query("expectedRevision"), "expectedRevision");
+      const contentLengthHeader = c.req.header("content-length");
+      const contentLength = contentLengthHeader === undefined
+        ? undefined
+        : parseDecimal(contentLengthHeader, "Content-Length");
+      try {
+        return c.json(await service.uploadAttachment({
+          todoId,
+          attachmentId,
+          expectedRevision,
+          name,
+          sizeBytes,
+          mediaType: c.req.header("content-type"),
+          contentLength,
+          body: c.req.raw.body,
+        }));
+      } catch (error) {
+        throw mapAttachmentOrTodoError(error);
+      }
+    },
+  );
+
+  app.get(
+    "/:slug/todos/:todoId/attachments/:attachmentId",
+    zValidator("param", ProjectTodoAttachmentParamsSchema),
+    async (c) => {
+      const { slug, todoId, attachmentId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        const opened = await service.openAttachment({ todoId, attachmentId });
+        const inline = opened.descriptor.kind === "image"
+          || opened.descriptor.mediaType === "application/pdf";
+        return new Response(Bun.file(opened.contentPath), {
+          headers: {
+            "content-type": opened.descriptor.mediaType,
+            "content-length": String(opened.descriptor.sizeBytes),
+            "content-disposition": attachmentDisposition(
+              opened.descriptor.name,
+              inline ? "inline" : "attachment",
+            ),
+            "x-content-type-options": "nosniff",
+          },
+        });
+      } catch (error) {
+        throw mapAttachmentOrTodoError(error);
+      }
+    },
+  );
+
+  app.delete(
+    "/:slug/todos/:todoId/attachments/:attachmentId",
+    zValidator("param", ProjectTodoAttachmentParamsSchema),
+    zValidator("json", ProjectTodoAttachmentDeleteBodySchema),
+    async (c) => {
+      const { slug, todoId, attachmentId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json({
+          todo: await service.removeAttachment({
+            todoId,
+            attachmentId,
+            expectedRevision: c.req.valid("json").expectedRevision,
+          }),
+        });
+      } catch (error) {
+        throw mapAttachmentOrTodoError(error);
       }
     },
   );
@@ -238,6 +365,10 @@ function mapTodoError(error: unknown): Error {
     return new ServerError(error.code, error.message, 409, error);
   }
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function mapAttachmentOrTodoError(error: unknown): Error {
+  return mapAttachmentHttpError(error) ?? mapTodoError(error);
 }
 
 function hasCode(error: unknown, code: string): error is Error & { readonly code: string; readonly todoId?: string } {

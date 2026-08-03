@@ -66,7 +66,7 @@ describe("root Session source presentation", () => {
       todoLabel: "Implement source contract",
     })).toMatchObject({ label: "Work Todo", title: "Implement source contract" });
     expect(presentRootSessionSource({
-      source: { kind: "automation", automationId: "auto-1", invocationId: "run-1" },
+      source: { kind: "automation", automationId: "auto-1", invocationId: "run-1", todoId: null },
       slug: "demo",
     })).toEqual({
       label: "Automation",
@@ -1103,6 +1103,7 @@ describe("SessionRoute focused view store behavior", () => {
     const projectTodo: ProjectTodo = {
       id: "todo-offline-mode",
       content: "Add resilient offline mode",
+      attachmentIds: [],
       status: "ready",
       revision: 3,
       createdAt: 1,

@@ -7,6 +7,7 @@ import type {
 import {
   agentsQueryOptions,
   diffQueryOptions,
+  projectTodoAttachmentsQueryOptions,
   queryKeys,
   sessionsQueryOptions,
 } from "./queries";
@@ -109,5 +110,21 @@ describe("web Session Goal query contracts", () => {
         >
       ).queryFn(),
     ).toEqual([]);
+  });
+});
+
+describe("Todo reference query contract", () => {
+  test("reads the authoritative Todo revision and ordered descriptors", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const response = { todoRevision: 4, attachments: [{ id: "attachment-1", name: "brief.pdf", mediaType: "application/pdf", sizeBytes: 5, kind: "file" as const }] };
+    globalThis.fetch = mock(async (input) => {
+      expect(String(input)).toBe(`/api/projects/${slug}/todos/todo-1/attachments`);
+      return jsonResponse(response);
+    }) as unknown as typeof fetch;
+    expect(
+      await (
+        projectTodoAttachmentsQueryOptions(slug, "todo-1") as unknown as QueryOptionWithFn<typeof response>
+      ).queryFn(),
+    ).toEqual(response);
   });
 });

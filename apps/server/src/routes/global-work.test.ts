@@ -279,6 +279,7 @@ function makeTodo(overrides: Partial<ProjectTodo> = {}): ProjectTodo {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     content: "Review the completed work\n\nPrivate PRD body",
+    attachmentIds: [],
     status: "in_progress",
     revision: 1,
     createdAt: 1,

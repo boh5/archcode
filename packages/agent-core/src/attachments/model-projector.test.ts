@@ -178,4 +178,59 @@ describe("SessionAttachmentModelProjector", () => {
     expect(reader.readVerified).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(replacedMessages)).not.toContain('"type":"image"');
   });
+
+  test("re-reads current Todo references into transient user context on every projection", async () => {
+    const file = descriptor({ name: "brief.pdf", mediaType: "application/pdf", kind: "file" });
+    const image = descriptor({ id: crypto.randomUUID(), name: "flow.png" });
+    let current: AttachmentDescriptor[] = [file];
+    const resolveCurrent = mock(async () => ({
+      attachments: current,
+      resolveReadPath: async (item: AttachmentDescriptor) => `/project/.archcode/runtime/attachments/todos/todo/${item.id}/content`,
+      readVerified: async (item: AttachmentDescriptor) => ({
+        descriptor: item,
+        contentPath: `/project/.archcode/runtime/attachments/todos/todo/${item.id}/content`,
+        bytes: Uint8Array.of(1, 2, 3),
+      }),
+    }));
+    const projector = new SessionAttachmentModelProjector(readerFor(file), resolveCurrent);
+
+    const first: ModelMessage[] = [{ role: "user", content: "Implement the Todo" }];
+    await projector.project({
+      messages: first,
+      attachmentSlots: [],
+      workspaceRoot: WORKSPACE_ROOT,
+      rootSessionId: ROOT_SESSION_ID,
+      supportsImages: false,
+    });
+    expect(JSON.stringify(first)).toContain("Current Todo References (live user-provided data");
+    expect(JSON.stringify(first)).toContain(file.id);
+    expect(JSON.stringify(first)).toContain("Implement the Todo");
+    expect(JSON.stringify(first)).not.toContain('"type":"image"');
+
+    current = [file, image];
+    const second: ModelMessage[] = [{ role: "user", content: [{ type: "text", text: "Continue" }] }];
+    await projector.project({
+      messages: second,
+      attachmentSlots: [],
+      workspaceRoot: WORKSPACE_ROOT,
+      rootSessionId: ROOT_SESSION_ID,
+      supportsImages: true,
+    });
+    expect(JSON.stringify(second)).toContain(file.id);
+    expect(JSON.stringify(second)).toContain(image.id);
+    expect(JSON.stringify(second)).toContain('"type":"image"');
+
+    current = [image];
+    const third: ModelMessage[] = [{ role: "user", content: "Continue again" }];
+    await projector.project({
+      messages: third,
+      attachmentSlots: [],
+      workspaceRoot: WORKSPACE_ROOT,
+      rootSessionId: ROOT_SESSION_ID,
+      supportsImages: false,
+    });
+    expect(JSON.stringify(third)).not.toContain(file.id);
+    expect(JSON.stringify(third)).toContain(image.id);
+    expect(resolveCurrent).toHaveBeenCalledTimes(3);
+  });
 });

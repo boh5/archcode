@@ -13,6 +13,7 @@ import type {
   ProjectTodo,
   SessionFamilyActivity,
 } from "@archcode/protocol";
+import { rootSessionSourceTodoId } from "@archcode/protocol";
 import type { StatusTone, VisualStatusKind } from "../lib/status-visuals";
 
 export type ProjectTodoLane = "idea" | "ready" | "in_progress" | "done";
@@ -146,13 +147,15 @@ export function deriveProjectTodoOperationalState(
   const linkedAutomations = facts.automations.filter(({ automation }) => (
     automation.origin.kind === "todo" && automation.origin.todoId === facts.todo.id
   ));
-  const linkedAutomationIds = new Set(linkedAutomations.map(({ automation }) => automation.id));
   const workSessions = facts.sessions
     .filter(({ session }) => (
       (session.source.kind === "todo"
         && session.source.todoId === facts.todo.id
         && session.source.entry === "work")
-      || (session.source.kind === "automation" && linkedAutomationIds.has(session.source.automationId))
+      || (
+        session.source.kind === "automation"
+        && rootSessionSourceTodoId(session.source) === facts.todo.id
+      )
     ))
     .sort(compareSessionRecency);
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { projectTodoDisplayLabel, type RootSessionSource } from "@archcode/protocol";
+import { projectTodoDisplayLabel, rootSessionSourceTodoId, type RootSessionSource } from "@archcode/protocol";
 import {
   ExecutionWorkstream,
   retainExecutionWorkstreamUiState,
@@ -100,6 +100,7 @@ export function presentRootSessionSource(input: {
 }): ChatHeaderSource {
   const projectPath = `/projects/${encodeURIComponent(input.slug)}`;
   const source = input.source;
+  const hasLiveTodoReferences = source !== undefined && rootSessionSourceTodoId(source) !== undefined;
   if (source?.kind === "direct") {
     return {
       label: "Direct",
@@ -117,6 +118,7 @@ export function presentRootSessionSource(input: {
       label,
       title: input.todoLabel ?? `${source.todoId} · unavailable`,
       to: `${projectPath}/todos/${encodeURIComponent(source.todoId)}`,
+      usesLiveTodoReferences: true,
     };
   }
   if (source?.kind === "automation") {
@@ -124,6 +126,7 @@ export function presentRootSessionSource(input: {
       label: "Automation",
       title: input.automationTitle ?? `${source.automationId} · unavailable`,
       to: `${projectPath}/automations/${encodeURIComponent(source.automationId)}?invocation=${encodeURIComponent(source.invocationId)}`,
+      ...(hasLiveTodoReferences ? { usesLiveTodoReferences: true as const } : {}),
     };
   }
   return {

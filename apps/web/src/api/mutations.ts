@@ -1,7 +1,13 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { queryKeys } from "./queries";
-import type { AttachmentDescriptor, RequestedModelSelection, SessionModelState } from "@archcode/protocol";
+import type {
+  AttachmentDescriptor,
+  ProjectTodoAttachmentMutationResponse,
+  ProjectTodoResponse,
+  RequestedModelSelection,
+  SessionModelState,
+} from "@archcode/protocol";
 import {
   removeProjectControlPlane,
   removeSessionControlPlane,
@@ -520,6 +526,57 @@ async function invalidateProjectTodo(
   slug: string,
 ): Promise<void> {
   await queryClient.invalidateQueries({ queryKey: queryKeys.projectTodos(slug), exact: true, refetchType: "all" });
+}
+
+export interface UploadProjectTodoAttachmentInput {
+  slug: string;
+  todoId: string;
+  attachmentId: string;
+  expectedRevision: number;
+  file: File;
+}
+
+/** Upload one raw file and activate its Todo reference atomically on the server. */
+export function uploadProjectTodoAttachment({
+  slug,
+  todoId,
+  attachmentId,
+  expectedRevision,
+  file,
+}: UploadProjectTodoAttachmentInput): Promise<ProjectTodoAttachmentMutationResponse> {
+  const query = new URLSearchParams({
+    name: file.name,
+    sizeBytes: String(file.size),
+    expectedRevision: String(expectedRevision),
+  });
+  return apiFetch<ProjectTodoAttachmentMutationResponse>(
+    `${todoUrl(slug, todoId, "attachments")}/${encodeURIComponent(attachmentId)}?${query.toString()}`,
+    {
+      method: "PUT",
+      headers: file.type ? { "Content-Type": file.type } : undefined,
+      body: file,
+    },
+  );
+}
+
+export interface RemoveProjectTodoAttachmentInput {
+  slug: string;
+  todoId: string;
+  attachmentId: string;
+  expectedRevision: number;
+}
+
+/** Remove the Todo reference; physical cleanup remains a server concern. */
+export function removeProjectTodoAttachment({
+  slug,
+  todoId,
+  attachmentId,
+  expectedRevision,
+}: RemoveProjectTodoAttachmentInput): Promise<ProjectTodoResponse> {
+  return apiFetch<ProjectTodoResponse>(
+    `${todoUrl(slug, todoId, "attachments")}/${encodeURIComponent(attachmentId)}`,
+    { method: "DELETE", body: { expectedRevision } },
+  );
 }
 
 async function invalidateProjectTodoSession(

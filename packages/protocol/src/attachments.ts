@@ -1,5 +1,6 @@
 export const MAX_ATTACHMENT_SIZE_BYTES = 52_428_800;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10;
+export const MAX_ATTACHMENTS_PER_TODO = 10;
 
 const ATTACHMENT_MEDIA_TYPE_PATTERN =
   /^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/;

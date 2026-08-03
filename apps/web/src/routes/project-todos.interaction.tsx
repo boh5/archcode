@@ -44,7 +44,7 @@ const todos: ProjectTodo[] = [
 ];
 
 function todo(id: string, content: string, status: ProjectTodo["status"]): ProjectTodo {
-  return { id, content, status, revision: 3, createdAt: 1, updatedAt: 1 };
+  return { id, content, attachmentIds: [], status, revision: 3, createdAt: 1, updatedAt: 1 };
 }
 
 function installDomGlobals(target: JSDOM): void {
@@ -191,6 +191,27 @@ function addWorkSummary(sessionId = "work-latest"): void {
     source: { kind: "todo", todoId: "ready", entry: "work" },
     createdAt: 2,
     updatedAt: 4,
+  });
+}
+
+function addAutomationInvocationSummary(sessionId = "automation-invocation"): void {
+  sessionSummaries.push({
+    sessionId,
+    rootSessionId: sessionId,
+    cwd: "/tmp",
+    agentName: "lead",
+    profile: "principal",
+    activeSkillNames: ["orchestrate-work"],
+    modelSelection: { revision: 0 },
+    title: "Automated check",
+    source: {
+      kind: "automation",
+      automationId: "automation-1",
+      invocationId: "invocation-1",
+      todoId: "ready",
+    },
+    createdAt: 2,
+    updatedAt: 5,
   });
 }
 
@@ -464,6 +485,14 @@ describe("Project Todos Plan interactions", () => {
     await waitFor(() => findPanel("Sessions").textContent?.includes("No sessions yet.") === true);
     await waitFor(() => findPanel("Automations").textContent?.includes("No automations yet.") === true);
     expect(findPlanButton().disabled).toBe(false);
+  });
+
+  test("labels a Todo-origin Automation Session as an invocation", async () => {
+    addAutomationInvocationSummary();
+    await renderSelectedTodo();
+
+    expect(findPanel("Sessions").textContent).toContain("Automated checkAutomation invocation");
+    expect(findPanel("Sessions").textContent).not.toContain("Automated checkWork");
   });
 
   test("reports linked inventory failures without offering duplicate work actions", async () => {

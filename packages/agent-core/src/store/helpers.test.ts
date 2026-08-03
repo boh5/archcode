@@ -1036,6 +1036,20 @@ describe("session transcript serialization", () => {
       agentName: "discussion",
       source: { kind: "todo", todoId, entry: "work" },
     })).success).toBe(false);
+    const automationId = crypto.randomUUID();
+    const invocationId = crypto.randomUUID();
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      source: { kind: "automation", automationId, invocationId, todoId },
+    })).success).toBe(true);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      source: { kind: "automation", automationId, invocationId, todoId: null },
+    })).success).toBe(true);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      source: { kind: "automation", automationId, invocationId },
+    })).success).toBe(false);
     expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(crypto.randomUUID()),
       agentName: "discussion",

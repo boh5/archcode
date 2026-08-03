@@ -2011,6 +2011,312 @@ describe("createRuntime", () => {
     await expect(runtime.getSessionFile(workspaceRoot, session.sessionId)).rejects.toThrow();
   });
 
+  test("Session deletion and Todo lifecycle changes never delete Todo-owned references", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Todo attachment retention" });
+    const todos = (await runtime.contextResolver.resolve(workspaceRoot)).todos;
+    let todo = await todos.createTodo({ content: "Retain the PRD" });
+    const attachmentId = crypto.randomUUID();
+    const bytes = new TextEncoder().encode("durable Todo reference");
+    const uploaded = await todos.uploadAttachment({
+      todoId: todo.id,
+      attachmentId,
+      expectedRevision: todo.revision,
+      name: "prd.txt",
+      sizeBytes: bytes.byteLength,
+      mediaType: "text/plain",
+      body: new Response(bytes).body,
+    });
+    todo = uploaded.todo;
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+
+    await runtime.deleteSession(workspaceRoot, session.sessionId);
+    todo = await todos.updateTodo(todo.id, {
+      expectedRevision: todo.revision,
+      status: "rejected",
+      rejectionReason: "Keep for later",
+    });
+    todo = await todos.updateTodo(todo.id, {
+      expectedRevision: todo.revision,
+      archived: true,
+    });
+
+    expect(todo.attachmentIds).toEqual([attachmentId]);
+    const opened = await todos.openAttachment({ todoId: todo.id, attachmentId });
+    expect(await Bun.file(opened.contentPath).text()).toBe("durable Todo reference");
+  });
+
+  test("projects the Todo attachment set current at each model boundary without Session snapshots", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Live Todo references" });
+    const todos = (await runtime.contextResolver.resolve(workspaceRoot)).todos;
+    let todo = await todos.createTodo({ content: "Use current references" });
+    const firstId = crypto.randomUUID();
+    const secondId = crypto.randomUUID();
+    todo = (await todos.uploadAttachment({
+      todoId: todo.id,
+      attachmentId: firstId,
+      expectedRevision: todo.revision,
+      name: "first.txt",
+      sizeBytes: 1,
+      body: new Response(Uint8Array.of(1)).body,
+    })).todo;
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+    const modelCalls: string[] = [];
+    setLlmAdapterForTest({
+      streamText: mock((input: unknown) => {
+        modelCalls.push(JSON.stringify((input as { messages: unknown }).messages));
+        return createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "Live Todo references", toolCalls: [] })) as never,
+    });
+
+    try {
+      const run = async (text: string) => {
+        const idle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
+        await runtime.acceptSessionMessage({
+          slug: project.slug,
+          workspaceRoot,
+          sessionId: session.sessionId,
+          text,
+          attachmentIds: [],
+          clientRequestId: crypto.randomUUID(),
+          source: "user",
+          requestedModelSelection,
+        });
+        await idle;
+      };
+
+      await run("First boundary");
+      todo = (await todos.uploadAttachment({
+        todoId: todo.id,
+        attachmentId: secondId,
+        expectedRevision: todo.revision,
+        name: "second.txt",
+        sizeBytes: 1,
+        body: new Response(Uint8Array.of(2)).body,
+      })).todo;
+      await run("Second boundary");
+      todo = await todos.removeAttachment({
+        todoId: todo.id,
+        attachmentId: firstId,
+        expectedRevision: todo.revision,
+      });
+      await run("Third boundary");
+
+      expect(modelCalls).toHaveLength(3);
+      expect(modelCalls[0]).toContain(firstId);
+      expect(modelCalls[0]).not.toContain(secondId);
+      expect(modelCalls[1]).toContain(firstId);
+      expect(modelCalls[1]).toContain(secondId);
+      expect(modelCalls[2]).not.toContain(firstId);
+      expect(modelCalls[2]).toContain(secondId);
+      const stored = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+      expect(stored.messages.some((message) =>
+        message.parts.some((part) => part.type === "attachment")
+      )).toBe(false);
+      expect(await Bun.file(getAttachmentContentPath(
+        workspaceRoot,
+        session.sessionId,
+        secondId,
+      )).exists()).toBe(false);
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+      setLlmAdapterForTest(undefined);
+    }
+  });
+
+  test("projects the root Todo's current references into a delegated child model boundary", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Child live Todo references" });
+    const todos = (await runtime.contextResolver.resolve(workspaceRoot)).todos;
+    let todo = await todos.createTodo({ content: "Delegate with current references" });
+    const attachmentId = crypto.randomUUID();
+    todo = (await todos.uploadAttachment({
+      todoId: todo.id,
+      attachmentId,
+      expectedRevision: todo.revision,
+      name: "child-brief.txt",
+      sizeBytes: 1,
+      body: new Response(Uint8Array.of(1)).body,
+    })).todo;
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+    let rootCalls = 0;
+    let childMessages = "";
+    setLlmAdapterForTest({
+      streamText: mock((input: { tools?: Record<string, unknown>; messages?: unknown[] }) => {
+        if (input.tools?.create_goal !== undefined) {
+          rootCalls += 1;
+          return rootCalls === 1
+            ? createBackgroundDelegateStream("delegate-live-references")
+            : createStoppedStream();
+        }
+        childMessages = JSON.stringify(input.messages ?? []);
+        return createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "Child live Todo references", toolCalls: [] })) as never,
+    });
+
+    try {
+      const idle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
+      await runtime.acceptSessionMessage({
+        slug: project.slug,
+        workspaceRoot,
+        sessionId: session.sessionId,
+        text: "Delegate inspection of the brief",
+        attachmentIds: [],
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+        requestedModelSelection,
+      });
+      await idle;
+
+      expect(childMessages).toContain("Current Todo References (live user-provided data");
+      expect(childMessages).toContain(attachmentId);
+      const tree = await runtime.listSessionTree(workspaceRoot, session.sessionId);
+      expect(tree.root.children).toHaveLength(1);
+      expect(tree.root.children[0]!.session.rootSessionId).toBe(session.sessionId);
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+      setLlmAdapterForTest(undefined);
+    }
+  });
+
+  test("reprojects current Todo references after hard compact state is reloaded", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const configHome = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    await mkdir(join(configHome, ".archcode"), { recursive: true });
+    await Bun.write(resolveServerConfigPath(configHome), JSON.stringify(makeConfig({ servers: {} })));
+    const runtimeOptions = {
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    } as const;
+    const runtime1 = await createRuntime({
+      ...runtimeOptions,
+      configService: new ServerConfigService({ homeDir: configHome }),
+    });
+    const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Reloaded live Todo references" });
+    const todos1 = (await runtime1.contextResolver.resolve(workspaceRoot)).todos;
+    let todo = await todos1.createTodo({ content: "Keep references live after compact" });
+    const firstId = crypto.randomUUID();
+    todo = (await todos1.uploadAttachment({
+      todoId: todo.id,
+      attachmentId: firstId,
+      expectedRevision: todo.revision,
+      name: "before-compact.txt",
+      sizeBytes: 1,
+      body: new Response(Uint8Array.of(1)).body,
+    })).todo;
+    const session = await runtime1.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+
+    setLlmAdapterForTest({
+      streamText: mock(() => createStoppedStream()) as never,
+      generateText: mock(async () => ({ text: "Reloaded live Todo references", toolCalls: [] })) as never,
+    });
+    const firstIdle = nextFamilyActivity(runtime1, project.slug, session.sessionId, "idle");
+    await runtime1.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "First boundary",
+      attachmentIds: [],
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+    await firstIdle;
+    await runtime1.shutdown();
+
+    const persisted = new SessionStoreManager({ logger: silentLogger });
+    const persistedStore = await persisted.getOrLoad(session.sessionId, workspaceRoot);
+    const tailStartId = persistedStore.getState().messages.at(-1)?.id;
+    if (tailStartId === undefined) throw new Error("Expected a persisted message before compact");
+    persistedStore.getState().append({
+      type: "compact",
+      summary: "Prior work was compacted before restart.",
+      tailStartId,
+    });
+    await persisted.flushSession(session.sessionId, workspaceRoot);
+
+    const runtime2 = await createRuntime({
+      ...runtimeOptions,
+      configService: new ServerConfigService({ homeDir: configHome }),
+    });
+    const todos2 = (await runtime2.contextResolver.resolve(workspaceRoot)).todos;
+    todo = await todos2.removeAttachment({
+      todoId: todo.id,
+      attachmentId: firstId,
+      expectedRevision: todo.revision,
+    });
+    const secondId = crypto.randomUUID();
+    todo = (await todos2.uploadAttachment({
+      todoId: todo.id,
+      attachmentId: secondId,
+      expectedRevision: todo.revision,
+      name: "after-reload.txt",
+      sizeBytes: 1,
+      body: new Response(Uint8Array.of(2)).body,
+    })).todo;
+    let reloadedMessages = "";
+    setLlmAdapterForTest({
+      streamText: mock((input: { messages?: unknown[] }) => {
+        reloadedMessages = JSON.stringify(input.messages ?? []);
+        return createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "Reloaded live Todo references", toolCalls: [] })) as never,
+    });
+
+    try {
+      const idle = nextFamilyActivity(runtime2, project.slug, session.sessionId, "idle");
+      await runtime2.acceptSessionMessage({
+        slug: project.slug,
+        workspaceRoot,
+        sessionId: session.sessionId,
+        text: "Boundary after reload",
+        attachmentIds: [],
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+        requestedModelSelection,
+      });
+      await idle;
+
+      expect(reloadedMessages).toContain("Prior work was compacted before restart.");
+      expect(reloadedMessages).not.toContain(firstId);
+      expect(reloadedMessages).toContain(secondId);
+    } finally {
+      await runtime2.abortAllSessionExecutions();
+      await runtime2.shutdown();
+      setLlmAdapterForTest(undefined);
+    }
+  });
+
   test("attachment cleanup failure warns once without changing successful root deletion", async () => {
     const workspaceRoot = await makeTempRoot();
     const { logger, entries } = createInMemoryLogger();

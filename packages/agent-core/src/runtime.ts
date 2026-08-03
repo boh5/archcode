@@ -134,15 +134,16 @@ import {
 import { ToolOutputArtifactStore, computeProjectIdentity } from "./tool-output/artifact-store";
 import { ToolOutputFinalizer } from "./tool-output/finalizer";
 import { createRuntimeLogSafetyBoundary, SecretRedactionPolicy } from "./security";
-import { USER_DATA_DIR_NAME } from "@archcode/protocol";
+import { rootSessionSourceTodoId, USER_DATA_DIR_NAME } from "@archcode/protocol";
 import {
-  resolveCommittedAttachmentReadPaths,
+  resolveAttachmentReadPaths,
+  ProjectAttachmentStorage,
   SessionAttachmentModelProjector,
   SessionAttachmentService,
   type OpenSessionAttachmentInput,
-  type OpenSessionAttachmentResult,
+  type OpenProjectAttachmentResult,
   type UploadSessionAttachmentInput,
-  type UploadSessionAttachmentResult,
+  type UploadProjectAttachmentResult,
 } from "./attachments";
 
 interface ActiveGoalReconciliationSnapshot {
@@ -358,8 +359,8 @@ export interface AgentRuntime {
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
-  uploadSessionAttachment(input: UploadSessionAttachmentInput): Promise<UploadSessionAttachmentResult>;
-  openSessionAttachment(input: OpenSessionAttachmentInput): Promise<OpenSessionAttachmentResult>;
+  uploadSessionAttachment(input: UploadSessionAttachmentInput): Promise<UploadProjectAttachmentResult>;
+  openSessionAttachment(input: OpenSessionAttachmentInput): Promise<OpenProjectAttachmentResult>;
   createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<RuntimeSessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<RuntimeSessionFile>;
   updateSessionGoalControl(input: {
@@ -599,6 +600,9 @@ export async function createRuntime(
       if (project !== undefined) projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
     };
     const sessionStoreManager = new SessionStoreManager({ logger: runtimeLogger.child({ module: "sessions.store" }) });
+    const projectAttachmentStorage = new ProjectAttachmentStorage({
+      removeDirectory: internalOptions.attachmentRootRemover,
+    });
     const sessionAttachmentService = new SessionAttachmentService({
       validateRootSession: async (workspaceRoot, rootSessionId) => {
         const file = await sessionStoreManager.getSessionFile(workspaceRoot, rootSessionId);
@@ -613,11 +617,8 @@ export async function createRuntime(
           );
         }
       },
-      removeRootDirectory: internalOptions.attachmentRootRemover,
+      storage: projectAttachmentStorage,
     });
-    const attachmentProjector = new SessionAttachmentModelProjector(
-      sessionAttachmentService,
-    );
     const readProjectedSessionModels = async (
       workspaceRoot: string,
       sessionId: string,
@@ -727,9 +728,7 @@ export async function createRuntime(
       const rootSessionId = (await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId)).rootSessionId;
       return { projectSlug, hitlId: view.hitlId, ownerSessionId, rootSessionId, view };
     }));
-    let contextResolver!: ProjectContextResolver;
-    let executionScopeValidator!: SessionExecutionScopeValidator;
-    contextResolver = new ProjectContextResolver({
+    const contextResolver = new ProjectContextResolver({
       hitlCodec,
       projectInfoFactory: async (workspaceRoot) => {
         const project = await projectRegistry.getByWorkspace(workspaceRoot);
@@ -747,6 +746,8 @@ export async function createRuntime(
       projectTodoFactory: ({ workspaceRoot, project }) => new ProjectTodoService({
         workspaceRoot,
         projectSlug: project.slug,
+        attachmentStorage: projectAttachmentStorage,
+        logger: runtimeLogger.child({ module: "todos" }),
         state: new ProjectTodoStateManager(workspaceRoot, {
           logger: runtimeLogger.child({ module: "todos.state" }),
           onCommitted: (todo) => {
@@ -798,8 +799,42 @@ export async function createRuntime(
       createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
       logger: runtimeLogger.child({ module: "projects" }),
     });
+    const resolveCurrentTodoAttachments = async (input: {
+      readonly workspaceRoot: string;
+      readonly rootSessionId: string;
+    }) => {
+      const root = await sessionStoreManager.getSessionFile(
+        input.workspaceRoot,
+        input.rootSessionId,
+      );
+      const todoId = root.source === undefined
+        ? undefined
+        : rootSessionSourceTodoId(root.source);
+      if (todoId === undefined) return undefined;
+      const todos = (await contextResolver.resolve(input.workspaceRoot)).todos;
+      const current = await todos.listAttachments(todoId);
+      return {
+        attachments: current.attachments,
+        resolveReadPath: async (descriptor: import("@archcode/protocol").AttachmentDescriptor) => (
+          await todos.resolveAttachmentReadPath(
+            { todoId, attachmentId: descriptor.id },
+            descriptor,
+          )
+        ),
+        readVerified: async (descriptor: import("@archcode/protocol").AttachmentDescriptor) => (
+          await todos.readVerifiedAttachment(
+            { todoId, attachmentId: descriptor.id },
+            descriptor,
+          )
+        ),
+      };
+    };
+    const attachmentProjector = new SessionAttachmentModelProjector(
+      sessionAttachmentService,
+      resolveCurrentTodoAttachments,
+    );
     const sessionModelSelectionService = new SessionModelSelectionService(sessionStoreManager);
-    executionScopeValidator = new SessionExecutionScopeValidator();
+    const executionScopeValidator = new SessionExecutionScopeValidator();
     let executionManager!: SessionExecutionManager;
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
@@ -816,11 +851,12 @@ export async function createRuntime(
       ),
       attachmentProjector,
       resolveAttachmentReadPaths: (workspaceRoot, rootSessionId) => (
-        resolveCommittedAttachmentReadPaths({
+        resolveAttachmentReadPaths({
           workspaceRoot,
           rootSessionId,
           storeManager: sessionStoreManager,
           attachments: sessionAttachmentService,
+          resolveCurrentTodoAttachments,
         })
       ),
       logger: runtimeLogger.child({ module: "sessions.agents" }),
@@ -1617,11 +1653,18 @@ export async function createRuntime(
       const sourceSession = await assertResourceCreationSource(workspaceRoot, input.sourceSessionId);
       await assertAutomationWorktreeSupported(workspaceRoot, input.action);
       const { sourceSessionId: _, ...definition } = input;
+      const todoId = sourceSession.source === undefined
+        ? undefined
+        : rootSessionSourceTodoId(sourceSession.source);
       const automation = await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
         ...definition,
         projectSlug: project.slug,
-        origin: sourceSession.source?.kind === "todo"
-          ? { kind: "todo", todoId: sourceSession.source.todoId, sessionId: sourceSession.sessionId }
+        origin: todoId !== undefined
+          ? {
+            kind: "todo",
+            todoId,
+            sessionId: sourceSession.sessionId,
+          }
           : { kind: "session", sessionId: sourceSession.sessionId },
       });
       return automation;

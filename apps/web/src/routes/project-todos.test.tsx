@@ -26,7 +26,7 @@ const todos: ProjectTodo[] = [
 ];
 
 function todo(id: string, content: string, status: ProjectTodo["status"]): ProjectTodo {
-  return { id, content, status, ...(status === "rejected" ? { rejectionReason: "Not now" } : {}), revision: 1, createdAt: 1, updatedAt: 1 };
+  return { id, content, attachmentIds: [], status, ...(status === "rejected" ? { rejectionReason: "Not now" } : {}), revision: 1, createdAt: 1, updatedAt: 1 };
 }
 
 beforeEach(() => {

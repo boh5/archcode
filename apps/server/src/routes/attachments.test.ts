@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   NotRootSessionError,
+  ProjectAttachmentStorage,
   ProjectRegistry,
   SessionAttachmentService,
   silentLogger,
@@ -166,6 +167,7 @@ async function createFixture(name: string) {
   const rootSessionId = crypto.randomUUID();
   const validRoots = new Set<string>([rootSessionId]);
   const attachments = new SessionAttachmentService({
+    storage: new ProjectAttachmentStorage(),
     validateRootSession: async (_root, sessionId) => {
       if (validRoots.has(sessionId)) return;
       throw new NotRootSessionError(sessionId, rootSessionId);

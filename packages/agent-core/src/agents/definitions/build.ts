@@ -14,6 +14,7 @@ import {
   TOOL_COMPRESS,
   TOOL_FILE_EDIT,
   TOOL_FILE_READ,
+  TOOL_PDF_READ,
   TOOL_FILE_WRITE,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
@@ -39,6 +40,7 @@ export const buildAgentDefinition = {
   tools: {
     tools: [
       TOOL_FILE_READ,
+      TOOL_PDF_READ,
       TOOL_FILE_WRITE,
       TOOL_FILE_EDIT,
       TOOL_GREP,

@@ -31,6 +31,7 @@ describe("ProjectTodoStateManager", () => {
     expect(todo).toEqual({
       id: expect.any(String),
       content: "Capture this",
+      attachmentIds: [],
       status: "idea",
       revision: 1,
       createdAt: 100,
@@ -197,6 +198,36 @@ describe("ProjectTodoStateManager", () => {
     const compensated = await manager.createRunNowTodo({ content: "Compensate" });
     await manager.deleteRunNowTodo(compensated.id);
     expect((await manager.listTodos()).map((item) => item.id)).toEqual([todo.id]);
+  });
+
+  test("owns ordered attachment references behind revision-safe narrow mutations", async () => {
+    const manager = new ProjectTodoStateManager(TMP_ROOT, { now: () => 100 });
+    let todo = await manager.createTodo({ content: "Reference files" });
+    const attachmentIds = Array.from({ length: 10 }, () => crypto.randomUUID());
+
+    for (const attachmentId of attachmentIds) {
+      todo = await manager.addAttachmentReference(todo.id, attachmentId, todo.revision);
+    }
+    expect(todo.attachmentIds).toEqual(attachmentIds);
+    expect(todo.revision).toBe(11);
+    await expect(manager.addAttachmentReference(
+      todo.id,
+      crypto.randomUUID(),
+      todo.revision,
+    )).rejects.toBeInstanceOf(ProjectTodoInvalidMutationError);
+    await expect(manager.removeAttachmentReference(
+      todo.id,
+      attachmentIds[0]!,
+      todo.revision - 1,
+    )).rejects.toBeInstanceOf(ProjectTodoRevisionConflictError);
+
+    const removed = await manager.removeAttachmentReference(
+      todo.id,
+      attachmentIds[0]!,
+      todo.revision,
+    );
+    expect(removed.attachmentIds).toEqual(attachmentIds.slice(1));
+    expect(removed.revision).toBe(12);
   });
 });
 

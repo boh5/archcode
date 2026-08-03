@@ -1,6 +1,7 @@
 import {
   PROJECT_TODO_CONTENT_MAX_LENGTH,
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
+  MAX_ATTACHMENTS_PER_TODO,
   type CreateProjectTodoSessionInput,
   type ProjectTodo,
   type ProjectTodoRunNowInput,
@@ -11,6 +12,12 @@ import { z } from "zod/v4";
 export const ProjectTodoContentSchema = z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH);
 export const ProjectTodoRejectionReasonSchema = z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH);
 export const ProjectTodoStatusSchema = z.enum(["idea", "ready", "in_progress", "done", "rejected"]);
+export const ProjectTodoAttachmentIdSchema = z.uuid();
+export const ProjectTodoAttachmentIdsSchema = z.array(ProjectTodoAttachmentIdSchema)
+  .max(MAX_ATTACHMENTS_PER_TODO)
+  .superRefine((attachmentIds, context) => {
+    addUniqueIssues(attachmentIds, "Todo attachment id", context);
+  });
 export const ProjectTodoSessionEntrySchema = z.enum(["discussion", "work", "automation"]);
 export const CreateProjectTodoSessionSchema = z.discriminatedUnion("entry", [
   z.strictObject({
@@ -31,6 +38,7 @@ export const CreateProjectTodoSessionSchema = z.discriminatedUnion("entry", [
 export const ProjectTodoSchema = z.strictObject({
   id: z.uuid(),
   content: ProjectTodoContentSchema,
+  attachmentIds: ProjectTodoAttachmentIdsSchema,
   status: ProjectTodoStatusSchema,
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
   revision: z.number().int().positive(),

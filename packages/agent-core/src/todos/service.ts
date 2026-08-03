@@ -3,7 +3,10 @@ import {
   projectTodoDisplayLabel,
   type CreateProjectTodoSessionInput,
   type CreateProjectTodoSessionResponse,
+  type AttachmentDescriptor,
   type ProjectTodo,
+  type ProjectTodoAttachmentListResponse,
+  type ProjectTodoAttachmentMutationResponse,
   type ProjectTodoCreateInput,
   type ProjectTodoDiscussionUpdatePatch,
   type ProjectTodoRunNowInput,
@@ -13,6 +16,19 @@ import {
   type ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import { join } from "node:path";
+
+import {
+  ProjectAttachmentStorage,
+  type OpenProjectAttachmentResult,
+  type VerifiedProjectAttachment,
+} from "../attachments";
+import type { Logger } from "../logger";
+import {
+  ProjectTodoAttachmentService,
+  type OpenProjectTodoAttachmentInput,
+  type RemoveProjectTodoAttachmentInput,
+  type UploadProjectTodoAttachmentInput,
+} from "./attachments";
 
 import {
   ProjectTodoDiscussionAuthorizationError,
@@ -73,6 +89,8 @@ export interface ProjectTodoServiceOptions {
   readonly projectSlug: string;
   readonly sessions: ProjectTodoSessionCapability;
   readonly state?: ProjectTodoStateManager;
+  readonly attachmentStorage?: ProjectAttachmentStorage;
+  readonly logger?: Logger;
 }
 
 /**
@@ -84,6 +102,7 @@ export class ProjectTodoService {
   readonly projectSlug: string;
   readonly #state: ProjectTodoStateManager;
   readonly #sessions: ProjectTodoSessionCapability;
+  readonly #attachments: ProjectTodoAttachmentService;
   readonly #runNowInFlight = new Map<string, {
     readonly requestHash: string;
     readonly promise: Promise<ProjectTodoRunNowResponse>;
@@ -94,6 +113,12 @@ export class ProjectTodoService {
     this.projectSlug = requireProjectSlug(options.projectSlug);
     this.#state = options.state ?? new ProjectTodoStateManager(options.workspaceRoot);
     this.#sessions = options.sessions;
+    this.#attachments = new ProjectTodoAttachmentService({
+      workspaceRoot: options.workspaceRoot,
+      state: this.#state,
+      storage: options.attachmentStorage ?? new ProjectAttachmentStorage(),
+      logger: options.logger,
+    });
   }
 
   async listTodos(): Promise<ProjectTodo[]> {
@@ -110,6 +135,40 @@ export class ProjectTodoService {
 
   async updateTodo(todoId: string, input: ProjectTodoUpdateInput): Promise<ProjectTodo> {
     return this.#state.updateTodo(todoId, input);
+  }
+
+  async listAttachments(todoId: string): Promise<ProjectTodoAttachmentListResponse> {
+    return await this.#attachments.list(todoId);
+  }
+
+  async uploadAttachment(
+    input: UploadProjectTodoAttachmentInput,
+  ): Promise<ProjectTodoAttachmentMutationResponse> {
+    return await this.#attachments.upload(input);
+  }
+
+  async openAttachment(
+    input: OpenProjectTodoAttachmentInput,
+  ): Promise<OpenProjectAttachmentResult> {
+    return await this.#attachments.openDownload(input);
+  }
+
+  async resolveAttachmentReadPath(
+    input: OpenProjectTodoAttachmentInput,
+    expectedDescriptor: AttachmentDescriptor,
+  ): Promise<string> {
+    return await this.#attachments.resolveReadPath(input, expectedDescriptor);
+  }
+
+  async readVerifiedAttachment(
+    input: OpenProjectTodoAttachmentInput,
+    expectedDescriptor: AttachmentDescriptor,
+  ): Promise<VerifiedProjectAttachment> {
+    return await this.#attachments.readVerified(input, expectedDescriptor);
+  }
+
+  async removeAttachment(input: RemoveProjectTodoAttachmentInput): Promise<ProjectTodo> {
+    return await this.#attachments.remove(input);
   }
 
   async createSession(

@@ -4,6 +4,7 @@ import { SKILL_ACCESS_TOOLS } from "../constants";
 import {
   TOOL_COMPRESS,
   TOOL_FILE_READ,
+  TOOL_PDF_READ,
   TOOL_GLOB,
   TOOL_GREP,
   TOOL_MEMORY_READ,
@@ -21,6 +22,7 @@ export const librarianAgentDefinition = {
   tools: {
     tools: [
       TOOL_FILE_READ,
+      TOOL_PDF_READ,
       TOOL_GREP,
       TOOL_GLOB,
       TOOL_WEB_FETCH,

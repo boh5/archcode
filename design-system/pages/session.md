@@ -74,6 +74,10 @@ header and conversation. Do not move Execution into the inspector.
   pair visible beneath the title.
 - Todo/source context stays in this second line rather than consuming a separate
   row above the conversation.
+- For a Session bound to a Todo (including a Todo-origin Automation Session),
+  append the quiet static note `Using live Todo references` beside the existing
+  source link. Do not query, subscribe to, or display a reference count; do not
+  add a banner, card, tab, or navigation entry.
 
 ## Conversation Hierarchy
 

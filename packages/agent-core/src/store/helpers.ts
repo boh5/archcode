@@ -1132,6 +1132,7 @@ export const SessionFileSchema = z.strictObject({
       kind: z.literal("automation"),
       automationId: z.uuid(),
       invocationId: z.uuid(),
+      todoId: z.uuid().nullable(),
     }),
   ]).optional(),
   eventCursor: z.number().int().min(-1),

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type {
+  AttachmentDescriptor,
   CreateProjectTodoSessionInput,
   ProjectTodo,
   ProjectTodoCreateInput,
@@ -58,6 +59,75 @@ describe("Project Todo routes", () => {
       expectedRevision: 1,
       status: "in_progress",
       beforeTodoId: null,
+    });
+  });
+
+  test("serves Todo reference mutations and safe inline/download dispositions", async () => {
+    const todo = makeTodo();
+    const fixture = createFixture(todo);
+    const attachmentId = crypto.randomUUID();
+    const base = `/api/projects/${fixture.project.slug}/todos/${todo.id}/attachments`;
+    const bytes = new TextEncoder().encode("%PDF-1.7 fixture");
+
+    const list = await fixture.app.request(base);
+    expect(await list.json()).toEqual({ todoRevision: todo.revision, attachments: [] });
+
+    const upload = await fixture.app.request(
+      `${base}/${attachmentId}?name=brief.pdf&sizeBytes=${bytes.byteLength}&expectedRevision=${todo.revision}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/pdf" },
+        body: bytes,
+      },
+    );
+    expect(upload.status).toBe(200);
+    expect(fixture.uploadAttachment).toHaveBeenCalledWith(expect.objectContaining({
+      todoId: todo.id,
+      attachmentId,
+      expectedRevision: todo.revision,
+      name: "brief.pdf",
+      sizeBytes: bytes.byteLength,
+    }));
+
+    const contentPath = join(workspaceRoot, "opened-content");
+    await writeFile(contentPath, bytes);
+    fixture.openAttachment.mockResolvedValue({
+      descriptor: {
+        id: attachmentId,
+        name: "brief.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: bytes.byteLength,
+        kind: "file",
+      },
+      contentPath,
+    });
+    const opened = await fixture.app.request(`${base}/${attachmentId}`);
+    expect(opened.headers.get("content-disposition")).toStartWith("inline;");
+    expect(opened.headers.get("x-content-type-options")).toBe("nosniff");
+
+    fixture.openAttachment.mockResolvedValue({
+      descriptor: {
+        id: attachmentId,
+        name: "unsafe.html",
+        mediaType: "text/html",
+        sizeBytes: bytes.byteLength,
+        kind: "file",
+      },
+      contentPath,
+    });
+    const downloaded = await fixture.app.request(`${base}/${attachmentId}`);
+    expect(downloaded.headers.get("content-disposition")).toStartWith("attachment;");
+
+    const removed = await fixture.app.request(`${base}/${attachmentId}`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: todo.revision + 1 }),
+    });
+    expect(removed.status).toBe(200);
+    expect(fixture.removeAttachment).toHaveBeenCalledWith({
+      todoId: todo.id,
+      attachmentId,
+      expectedRevision: todo.revision + 1,
     });
   });
 
@@ -300,6 +370,24 @@ function createFixture(todo: ProjectTodo) {
     }),
     createTodo: mock(async (input: ProjectTodoCreateInput) => ({ ...todo, ...input })),
     updateTodo: mock(async (_todoId: string, _input: ProjectTodoUpdateInput) => todo),
+    listAttachments: mock(async () => ({ todoRevision: todo.revision, attachments: [] })),
+    uploadAttachment: mock(async (input) => ({
+      todo: { ...todo, revision: todo.revision + 1, attachmentIds: [...todo.attachmentIds, input.attachmentId] },
+      attachment: {
+        id: input.attachmentId,
+        name: input.name,
+        mediaType: input.mediaType ?? "application/octet-stream",
+        sizeBytes: input.sizeBytes,
+        kind: "file" as const,
+      },
+    })),
+    openAttachment: mock(async (): Promise<{
+      readonly descriptor: AttachmentDescriptor;
+      readonly contentPath: string;
+    }> => {
+      throw new Error("not configured");
+    }),
+    removeAttachment: mock(async () => todo),
     createSession: mock(async (_todoId: string, _input: CreateProjectTodoSessionInput) => ({
       todo,
       sessionId: "11111111-1111-4111-8111-111111111111",
@@ -336,6 +424,7 @@ function makeTodo(overrides: Partial<ProjectTodo> = {}): ProjectTodo {
   return {
     id: crypto.randomUUID(),
     content: "Capture an idea\n\nExplore the idea.",
+    attachmentIds: [],
     status: "idea",
     revision: 1,
     createdAt: now,

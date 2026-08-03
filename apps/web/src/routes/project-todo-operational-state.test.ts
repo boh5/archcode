@@ -11,6 +11,7 @@ import { deriveProjectTodoOperationalState, type ProjectTodoOperationalFacts } f
 const todo: ProjectTodo = {
   id: "todo-1",
   content: "Ship the work",
+  attachmentIds: [],
   status: "in_progress",
   revision: 1,
   createdAt: 1,
@@ -115,13 +116,18 @@ describe("Todo operational state", () => {
     }))).toEqual({ label: "Ready to review", kind: "completed" });
   });
 
-  test("links Automation-originated Sessions back through the Todo Automation", () => {
+  test("links Automation-originated Sessions through their durable Todo source after Automation removal", () => {
     const session = workSession("automation-run", Date.parse("2026-08-03T01:00:00.000Z"), null, {
-      source: { kind: "automation", automationId: "automation-1", invocationId: "invocation-1" },
+      source: {
+        kind: "automation",
+        automationId: "automation-1",
+        invocationId: "invocation-1",
+        todoId: todo.id,
+      },
     });
     expect(deriveProjectTodoOperationalState(facts({
       sessions: [session],
-      automations: [automation()],
+      automations: [],
       activityBySessionId: new Map([["automation-run", "running"]]),
     }))).toEqual({ label: "Working", detail: "Running", kind: "running" });
   });

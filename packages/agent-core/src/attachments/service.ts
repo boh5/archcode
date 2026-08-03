@@ -25,7 +25,7 @@ import {
 } from "./errors";
 import { AsyncKeyedMutex, SessionAttachmentRootGate } from "./gate";
 
-const ATTACHMENTS_SEGMENTS = [".archcode", "attachments"] as const;
+const ATTACHMENTS_SEGMENTS = [".archcode", "runtime", "attachments"] as const;
 const METADATA_FILE_NAME = "metadata.json";
 const CONTENT_FILE_NAME = "content";
 const DEFAULT_MEDIA_TYPE = "application/octet-stream";
@@ -54,7 +54,7 @@ export interface UploadSessionAttachmentInput {
   readonly body: ReadableStream<Uint8Array> | null;
 }
 
-export interface UploadSessionAttachmentResult {
+export interface UploadProjectAttachmentResult {
   readonly descriptor: AttachmentDescriptor;
   readonly created: boolean;
 }
@@ -71,12 +71,12 @@ export interface OpenSessionAttachmentInput {
   readonly attachmentId: string;
 }
 
-export interface OpenSessionAttachmentResult {
+export interface OpenProjectAttachmentResult {
   readonly descriptor: AttachmentDescriptor;
   readonly contentPath: string;
 }
 
-export interface VerifiedSessionAttachment extends OpenSessionAttachmentResult {
+export interface VerifiedProjectAttachment extends OpenProjectAttachmentResult {
   readonly bytes: Uint8Array;
 }
 
@@ -85,14 +85,45 @@ export interface SessionAttachmentServiceOptions {
     workspaceRoot: string,
     rootSessionId: string,
   ) => Promise<void>;
-  /** Narrow test seam for best-effort root cleanup failure coverage. */
-  readonly removeRootDirectory?: (path: string) => Promise<void>;
+  readonly storage: ProjectAttachmentStorage;
+}
+
+export type AttachmentOwner =
+  | { readonly kind: "session"; readonly id: string }
+  | { readonly kind: "todo"; readonly id: string };
+
+export interface UploadProjectAttachmentInput {
+  readonly workspaceRoot: string;
+  readonly owner: AttachmentOwner;
+  readonly attachmentId: string;
+  readonly name: string;
+  readonly sizeBytes: number;
+  readonly mediaType?: string;
+  readonly contentLength?: number;
+  readonly body: ReadableStream<Uint8Array> | null;
+}
+
+export interface ProjectAttachmentObjectInput {
+  readonly workspaceRoot: string;
+  readonly owner: AttachmentOwner;
+  readonly attachmentId: string;
+}
+
+export interface ResolveProjectAttachmentsInput {
+  readonly workspaceRoot: string;
+  readonly owner: AttachmentOwner;
+  readonly attachmentIds: readonly string[];
+}
+
+export interface ProjectAttachmentStorageOptions {
+  /** Narrow test seam for best-effort cleanup failure coverage. */
+  readonly removeDirectory?: (path: string) => Promise<void>;
 }
 
 interface AttachmentPaths {
   readonly projectRoot: string;
   readonly attachmentsRoot: string;
-  readonly rootDirectory: string;
+  readonly ownerDirectory: string;
   readonly finalDirectory: string;
   readonly metadataPath: string;
   readonly contentPath: string;
@@ -103,48 +134,38 @@ interface CompletedAttachment {
   readonly paths: AttachmentPaths;
 }
 
-export class SessionAttachmentService {
-  readonly #validateRootSession: SessionAttachmentServiceOptions["validateRootSession"];
-  readonly #removeRootDirectory: (path: string) => Promise<void>;
-  readonly #rootGate = new SessionAttachmentRootGate();
+export class ProjectAttachmentStorage {
+  readonly #removeDirectory: (path: string) => Promise<void>;
   readonly #attachmentMutex = new AsyncKeyedMutex();
 
-  constructor(options: SessionAttachmentServiceOptions) {
-    this.#validateRootSession = options.validateRootSession;
-    this.#removeRootDirectory = options.removeRootDirectory
+  constructor(options: ProjectAttachmentStorageOptions = {}) {
+    this.#removeDirectory = options.removeDirectory
       ?? (async (path) => rm(path, { recursive: true, force: true }));
   }
 
-  async upload(input: UploadSessionAttachmentInput): Promise<UploadSessionAttachmentResult> {
+  async upload(input: UploadProjectAttachmentInput): Promise<UploadProjectAttachmentResult> {
     validateAttachmentId(input.attachmentId);
+    validateOwner(input.owner);
     validateAttachmentName(input.name);
     validateDeclaredSize(input.sizeBytes);
     validateContentLength(input.contentLength, input.sizeBytes);
-    const workspaceKey = resolve(input.workspaceRoot);
-    const rootKey = `${workspaceKey}\0${input.rootSessionId}`;
-
-    return await this.#rootGate.withUpload(rootKey, async () => {
-      // This check deliberately happens after taking the lease. A delete that
-      // completed first cannot be followed by recreation of the attachment tree.
-      await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
-      const attachmentKey = `${rootKey}\0${input.attachmentId}`;
-      return await this.#attachmentMutex.withLock(
-        attachmentKey,
-        async () => await this.#uploadSerialized(input),
-      );
-    });
+    const attachmentKey = attachmentStorageKey(input);
+    return await this.#attachmentMutex.withLock(
+      attachmentKey,
+      async () => await this.#uploadSerialized(input),
+    );
   }
 
   async resolveDescriptors(
-    input: ResolveSessionAttachmentsInput,
+    input: ResolveProjectAttachmentsInput,
   ): Promise<AttachmentDescriptor[]> {
-    await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+    validateOwner(input.owner);
     const descriptors: AttachmentDescriptor[] = [];
     for (const attachmentId of input.attachmentIds) {
       validateAttachmentId(attachmentId);
       const completed = await this.#readCompletedAttachment(
         input.workspaceRoot,
-        input.rootSessionId,
+        input.owner,
         attachmentId,
       );
       descriptors.push(toDescriptor(completed.metadata));
@@ -153,13 +174,13 @@ export class SessionAttachmentService {
   }
 
   async openDownload(
-    input: OpenSessionAttachmentInput,
-  ): Promise<OpenSessionAttachmentResult> {
+    input: ProjectAttachmentObjectInput,
+  ): Promise<OpenProjectAttachmentResult> {
     validateAttachmentId(input.attachmentId);
-    await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+    validateOwner(input.owner);
     const completed = await this.#readCompletedAttachment(
       input.workspaceRoot,
-      input.rootSessionId,
+      input.owner,
       input.attachmentId,
     );
     return {
@@ -169,14 +190,14 @@ export class SessionAttachmentService {
   }
 
   async resolveReadPath(
-    input: OpenSessionAttachmentInput,
+    input: ProjectAttachmentObjectInput,
     expectedDescriptor: AttachmentDescriptor,
   ): Promise<string> {
     validateAttachmentId(input.attachmentId);
-    await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+    validateOwner(input.owner);
     const completed = await this.#readCompletedAttachment(
       input.workspaceRoot,
-      input.rootSessionId,
+      input.owner,
       input.attachmentId,
     );
     const descriptor = toDescriptor(completed.metadata);
@@ -190,14 +211,14 @@ export class SessionAttachmentService {
   }
 
   async readVerified(
-    input: OpenSessionAttachmentInput,
+    input: ProjectAttachmentObjectInput,
     expectedDescriptor?: AttachmentDescriptor,
-  ): Promise<VerifiedSessionAttachment> {
+  ): Promise<VerifiedProjectAttachment> {
     validateAttachmentId(input.attachmentId);
-    await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+    validateOwner(input.owner);
     const completed = await this.#readCompletedAttachment(
       input.workspaceRoot,
-      input.rootSessionId,
+      input.owner,
       input.attachmentId,
     );
     const descriptor = toDescriptor(completed.metadata);
@@ -218,36 +239,41 @@ export class SessionAttachmentService {
     return { descriptor, contentPath: completed.paths.contentPath, bytes };
   }
 
-  async withRootDeletionLease<T>(
-    workspaceRoot: string,
-    rootSessionId: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    const rootKey = `${resolve(workspaceRoot)}\0${rootSessionId}`;
-    return await this.#rootGate.withDelete(rootKey, operation);
+  async removeAttachment(input: ProjectAttachmentObjectInput): Promise<void> {
+    validateAttachmentId(input.attachmentId);
+    validateOwner(input.owner);
+    await this.#attachmentMutex.withLock(
+      attachmentStorageKey(input),
+      async () => {
+        const completed = await this.#readCompletedAttachment(
+          input.workspaceRoot,
+          input.owner,
+          input.attachmentId,
+        );
+        await this.#removeDirectory(completed.paths.finalDirectory);
+      },
+    );
   }
 
-  async cleanupRootAttachments(
-    workspaceRoot: string,
-    rootSessionId: string,
-  ): Promise<void> {
-    const paths = await this.#resolveRootPathsForCleanup(workspaceRoot, rootSessionId);
+  async removeOwner(workspaceRoot: string, owner: AttachmentOwner): Promise<void> {
+    validateOwner(owner);
+    const paths = await this.#resolveOwnerPathsForCleanup(workspaceRoot, owner);
     if (paths === undefined) return;
-    await this.#removeRootDirectory(paths.rootDirectory);
+    await this.#removeDirectory(paths.ownerDirectory);
   }
 
   async #uploadSerialized(
-    input: UploadSessionAttachmentInput,
-  ): Promise<UploadSessionAttachmentResult> {
+    input: UploadProjectAttachmentInput,
+  ): Promise<UploadProjectAttachmentResult> {
     const paths = await this.#prepareWritablePaths(
       input.workspaceRoot,
-      input.rootSessionId,
+      input.owner,
       input.attachmentId,
     );
-    await this.#removeStaleTemps(paths.rootDirectory, input.attachmentId);
+    await this.#removeStaleTemps(paths.ownerDirectory, input.attachmentId);
 
     const tempDirectory = join(
-      paths.rootDirectory,
+      paths.ownerDirectory,
       tempDirectoryName(input.attachmentId, crypto.randomUUID()),
     );
     assertContained(paths.projectRoot, tempDirectory);
@@ -263,11 +289,15 @@ export class SessionAttachmentService {
         expectedSize: input.sizeBytes,
       });
       const recognizedImageType = recognizeImageMediaType(streamed.prefix);
+      const declaredMediaType = normalizeDisplayMediaType(input.mediaType);
+      const recognizedMediaType = recognizedImageType
+        ?? recognizePdfMediaType(streamed.prefix)
+        ?? (declaredMediaType === "application/pdf" ? DEFAULT_MEDIA_TYPE : declaredMediaType);
       const metadata = StoredAttachmentMetadataSchema.parse({
         version: 1,
         id: input.attachmentId,
         name: input.name,
-        mediaType: recognizedImageType ?? normalizeDisplayMediaType(input.mediaType),
+        mediaType: recognizedMediaType,
         sizeBytes: streamed.sizeBytes,
         kind: recognizedImageType === undefined ? "file" : "image",
         digest: streamed.digest,
@@ -281,7 +311,7 @@ export class SessionAttachmentService {
       if (finalExists) {
         const existing = await this.#readCompletedAttachment(
           input.workspaceRoot,
-          input.rootSessionId,
+          input.owner,
           input.attachmentId,
         );
         await assertStoredDigest(existing);
@@ -298,7 +328,7 @@ export class SessionAttachmentService {
       await rename(tempDirectory, paths.finalDirectory);
       const completed = await this.#readCompletedAttachment(
         input.workspaceRoot,
-        input.rootSessionId,
+        input.owner,
         input.attachmentId,
       );
       return { descriptor: toDescriptor(completed.metadata), created: true };
@@ -310,7 +340,7 @@ export class SessionAttachmentService {
 
   async #prepareWritablePaths(
     workspaceRoot: string,
-    rootSessionId: string,
+    owner: AttachmentOwner,
     attachmentId: string,
   ): Promise<AttachmentPaths> {
     const projectRoot = await canonicalProjectRoot(workspaceRoot);
@@ -319,18 +349,23 @@ export class SessionAttachmentService {
       parent = await ensureOwnedDirectory(parent, segment, projectRoot);
     }
     const attachmentsRoot = parent;
-    const rootDirectory = await ensureOwnedDirectory(
+    const ownerTypeDirectory = await ensureOwnedDirectory(
       attachmentsRoot,
-      validatePathSegment(rootSessionId, "root Session ID"),
+      ownerDirectoryName(owner),
       projectRoot,
     );
-    const finalDirectory = join(rootDirectory, attachmentId);
+    const ownerDirectory = await ensureOwnedDirectory(
+      ownerTypeDirectory,
+      validatePathSegment(owner.id, "attachment owner ID"),
+      projectRoot,
+    );
+    const finalDirectory = join(ownerDirectory, attachmentId);
     assertContained(projectRoot, finalDirectory);
     if (await pathExists(finalDirectory)) await assertDirectory(finalDirectory);
     return {
       projectRoot,
       attachmentsRoot,
-      rootDirectory,
+      ownerDirectory,
       finalDirectory,
       metadataPath: join(finalDirectory, METADATA_FILE_NAME),
       contentPath: join(finalDirectory, CONTENT_FILE_NAME),
@@ -339,7 +374,7 @@ export class SessionAttachmentService {
 
   async #readCompletedAttachment(
     workspaceRoot: string,
-    rootSessionId: string,
+    owner: AttachmentOwner,
     attachmentId: string,
   ): Promise<CompletedAttachment> {
     const projectRoot = await canonicalProjectRoot(workspaceRoot);
@@ -349,13 +384,18 @@ export class SessionAttachmentService {
         parent = await openOwnedDirectory(parent, segment, projectRoot);
       }
       const attachmentsRoot = parent;
-      const rootDirectory = await openOwnedDirectory(
+      const ownerTypeDirectory = await openOwnedDirectory(
         attachmentsRoot,
-        validatePathSegment(rootSessionId, "root Session ID"),
+        ownerDirectoryName(owner),
+        projectRoot,
+      );
+      const ownerDirectory = await openOwnedDirectory(
+        ownerTypeDirectory,
+        validatePathSegment(owner.id, "attachment owner ID"),
         projectRoot,
       );
       const finalDirectory = await openOwnedDirectory(
-        rootDirectory,
+        ownerDirectory,
         attachmentId,
         projectRoot,
       );
@@ -403,7 +443,7 @@ export class SessionAttachmentService {
         paths: {
           projectRoot,
           attachmentsRoot,
-          rootDirectory,
+          ownerDirectory,
           finalDirectory,
           metadataPath,
           contentPath,
@@ -425,15 +465,15 @@ export class SessionAttachmentService {
     }
   }
 
-  async #removeStaleTemps(rootDirectory: string, attachmentId: string): Promise<void> {
+  async #removeStaleTemps(ownerDirectory: string, attachmentId: string): Promise<void> {
     const pattern = new RegExp(
       `^\\.${escapeRegExp(attachmentId)}\\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
       "i",
     );
-    const entries = await readdir(rootDirectory, { withFileTypes: true });
+    const entries = await readdir(ownerDirectory, { withFileTypes: true });
     for (const entry of entries) {
       if (!pattern.test(entry.name)) continue;
-      const path = join(rootDirectory, entry.name);
+      const path = join(ownerDirectory, entry.name);
       if (entry.isSymbolicLink() || !entry.isDirectory()) {
         throw new AttachmentPathSafetyError("Attachment temporary path is unsafe");
       }
@@ -441,10 +481,10 @@ export class SessionAttachmentService {
     }
   }
 
-  async #resolveRootPathsForCleanup(
+  async #resolveOwnerPathsForCleanup(
     workspaceRoot: string,
-    rootSessionId: string,
-  ): Promise<Pick<AttachmentPaths, "projectRoot" | "attachmentsRoot" | "rootDirectory"> | undefined> {
+    owner: AttachmentOwner,
+  ): Promise<Pick<AttachmentPaths, "projectRoot" | "attachmentsRoot" | "ownerDirectory"> | undefined> {
     const projectRoot = await canonicalProjectRoot(workspaceRoot);
     let parent = projectRoot;
     try {
@@ -452,17 +492,119 @@ export class SessionAttachmentService {
         parent = await openOwnedDirectory(parent, segment, projectRoot);
       }
       const attachmentsRoot = parent;
-      const rootDirectory = await openOwnedDirectory(
+      const ownerTypeDirectory = await openOwnedDirectory(
         attachmentsRoot,
-        validatePathSegment(rootSessionId, "root Session ID"),
+        ownerDirectoryName(owner),
         projectRoot,
       );
-      return { projectRoot, attachmentsRoot, rootDirectory };
+      const ownerDirectory = await openOwnedDirectory(
+        ownerTypeDirectory,
+        validatePathSegment(owner.id, "attachment owner ID"),
+        projectRoot,
+      );
+      return { projectRoot, attachmentsRoot, ownerDirectory };
     } catch (error) {
       if (isMissingPathError(error)) return undefined;
       throw error;
     }
   }
+}
+
+export class SessionAttachmentService {
+  readonly #validateRootSession: SessionAttachmentServiceOptions["validateRootSession"];
+  readonly #storage: ProjectAttachmentStorage;
+  readonly #rootGate = new SessionAttachmentRootGate();
+
+  constructor(options: SessionAttachmentServiceOptions) {
+    this.#validateRootSession = options.validateRootSession;
+    this.#storage = options.storage;
+  }
+
+  async upload(input: UploadSessionAttachmentInput): Promise<UploadProjectAttachmentResult> {
+    const rootKey = `${resolve(input.workspaceRoot)}\0${input.rootSessionId}`;
+    return await this.#rootGate.withUpload(rootKey, async () => {
+      // Validate after taking the lease so completed root deletion cannot be
+      // followed by recreation of its attachment tree.
+      await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+      return await this.#storage.upload({
+        workspaceRoot: input.workspaceRoot,
+        owner: { kind: "session", id: input.rootSessionId },
+        attachmentId: input.attachmentId,
+        name: input.name,
+        sizeBytes: input.sizeBytes,
+        mediaType: input.mediaType,
+        contentLength: input.contentLength,
+        body: input.body,
+      });
+    });
+  }
+
+  async resolveDescriptors(
+    input: ResolveSessionAttachmentsInput,
+  ): Promise<AttachmentDescriptor[]> {
+    await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+    return await this.#storage.resolveDescriptors({
+      workspaceRoot: input.workspaceRoot,
+      owner: { kind: "session", id: input.rootSessionId },
+      attachmentIds: input.attachmentIds,
+    });
+  }
+
+  async openDownload(input: OpenSessionAttachmentInput): Promise<OpenProjectAttachmentResult> {
+    await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+    return await this.#storage.openDownload(sessionObjectInput(input));
+  }
+
+  async resolveReadPath(
+    input: OpenSessionAttachmentInput,
+    expectedDescriptor: AttachmentDescriptor,
+  ): Promise<string> {
+    await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+    return await this.#storage.resolveReadPath(sessionObjectInput(input), expectedDescriptor);
+  }
+
+  async readVerified(
+    input: OpenSessionAttachmentInput,
+    expectedDescriptor?: AttachmentDescriptor,
+  ): Promise<VerifiedProjectAttachment> {
+    await this.#validateRootSession(input.workspaceRoot, input.rootSessionId);
+    return await this.#storage.readVerified(sessionObjectInput(input), expectedDescriptor);
+  }
+
+  async withRootDeletionLease<T>(
+    workspaceRoot: string,
+    rootSessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const rootKey = `${resolve(workspaceRoot)}\0${rootSessionId}`;
+    return await this.#rootGate.withDelete(rootKey, operation);
+  }
+
+  async cleanupRootAttachments(workspaceRoot: string, rootSessionId: string): Promise<void> {
+    await this.#storage.removeOwner(workspaceRoot, { kind: "session", id: rootSessionId });
+  }
+}
+
+function sessionObjectInput(input: OpenSessionAttachmentInput): ProjectAttachmentObjectInput {
+  return {
+    workspaceRoot: input.workspaceRoot,
+    owner: { kind: "session", id: input.rootSessionId },
+    attachmentId: input.attachmentId,
+  };
+}
+
+function validateOwner(owner: AttachmentOwner): void {
+  if (!z.uuid().safeParse(owner.id).success) {
+    throw new AttachmentValidationError(`${owner.kind} attachment owner ID must be a UUID`);
+  }
+}
+
+function ownerDirectoryName(owner: AttachmentOwner): "sessions" | "todos" {
+  return owner.kind === "session" ? "sessions" : "todos";
+}
+
+function attachmentStorageKey(input: ProjectAttachmentObjectInput): string {
+  return `${resolve(input.workspaceRoot)}\0${input.owner.kind}\0${input.owner.id}\0${input.attachmentId}`;
 }
 
 function validateAttachmentId(attachmentId: string): void {
@@ -530,6 +672,12 @@ function recognizeStoredImageMediaType(value: string): string | undefined {
     || value === "image/gif"
     || value === "image/webp"
     ? value
+    : undefined;
+}
+
+function recognizePdfMediaType(prefix: Uint8Array): "application/pdf" | undefined {
+  return startsWith(prefix, [0x25, 0x50, 0x44, 0x46, 0x2d])
+    ? "application/pdf"
     : undefined;
 }
 

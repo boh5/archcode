@@ -38,7 +38,8 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
       /larger than 10MB.*rejected/i,
       /invalid UTF-8.*NUL byte.*rejected/i,
       /Images, PDF, DOCX\/XLSX\/PPTX, ZIP, audio, video.*not decoded/i,
-      /Bash with an installed appropriate CLI/i,
+      /pdf_read for native PDF text/i,
+      /Bash with an installed appropriate CLI.*other supported formats/i,
       /no suitable parser.*report that limitation/i,
       /relative paths resolve from the current Session cwd/i,
     ],
@@ -46,6 +47,24 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
       { path: ["properties", "path"], descriptionPatterns: [/workspace-relative/, /packages\/agent-core\/src\/runtime\.ts/, /current Session cwd/i] },
       { path: ["properties", "offset"], descriptionPatterns: [/1-based/, /example 120/, /before the 50KB source window/] },
       { path: ["properties", "limit"], descriptionPatterns: [/Maximum number of lines/, /example 160/, /50KB source window/] },
+    ],
+  },
+  {
+    tool: "pdf_read",
+    competitorEvidenceIds: ["ARCHCODE:Todo PDF references"],
+    runtimeSourceIds: ["tools/builtins/pdf-read.ts"],
+    descriptionPatterns: [
+      /native text/i,
+      /without OCR, external commands, or network access/i,
+      /startPage is 1-based/,
+      /pageCount.*between 1 and 20/i,
+      /output artifact system.*output_read\/output_search/i,
+      /Encrypted.*damaged.*non-PDF.*textless/i,
+    ],
+    schema: [
+      { path: ["properties", "path"], descriptionPatterns: [/authorized local PDF/i] },
+      { path: ["properties", "startPage"], descriptionPatterns: [/1-based/, /Defaults to 1/] },
+      { path: ["properties", "pageCount"], descriptionPatterns: [/Defaults to 1/, /limited to 20/] },
     ],
   },
   {
@@ -409,9 +428,9 @@ const resolved = registry.resolveForAgent(leadAgentDefinition.tools.tools);
 const aiTools = resolved.toAITools();
 
 describe("Lead model-visible Tool Contract", () => {
-  it("preserves the exact 33-tool Lead definition order", () => {
+  it("preserves the exact 34-tool Lead definition order", () => {
     const expected = [...leadAgentDefinition.tools.tools];
-    expect(expected).toHaveLength(33);
+    expect(expected).toHaveLength(34);
     expect(resolved.descriptors.map((descriptor) => descriptor.name)).toEqual(expected);
     expect(Object.keys(aiTools)).toEqual(expected);
   });

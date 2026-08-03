@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   projectTodoDisplayLabel,
+  rootSessionSourceTodoId,
   isSessionMessageUnavailableCode,
   type RequestedModelSelection,
 } from "@archcode/protocol";
@@ -12,6 +13,7 @@ import { useCreateProjectTodoSession, usePostMessage, useUpdateProjectTodo } fro
 import { sessionQueryOptions, useAutomationInventory, useProjectTodoPlan, useProjectTodos, useSessionInventory } from "../api/queries";
 import type { Automation, ProjectTodo, ProjectTodoUpdateInput, SessionSummary } from "../api/types";
 import { MarkdownContent } from "../components/primitives/MarkdownContent";
+import { TodoReferences } from "../components/features/TodoReferences";
 import { STATUS_TONE_CLASS } from "../lib/status-visuals";
 import { demoteEmbeddedMarkdownHeadings, projectTodoContentRemainder, presentProjectTodoCard, type ProjectTodoLane } from "./project-todo-presentation";
 
@@ -144,7 +146,7 @@ function TodoDetailView({ todo, slug, sessions, sessionsLoading, sessionsError, 
   }, [editing, todo.content]);
 
   const associatedSessions = sessions
-    .filter((session) => session.source?.kind === "todo" && session.source.todoId === todo.id)
+    .filter((session) => session.source !== undefined && rootSessionSourceTodoId(session.source) === todo.id)
     .sort((left, right) => right.updatedAt - left.updatedAt);
   const discussionSessions = associatedSessions.filter((session) => session.source?.kind === "todo" && session.source.entry === "discussion");
   const workSessions = associatedSessions.filter((session) => session.source?.kind === "todo" && session.source.entry === "work");
@@ -263,6 +265,8 @@ function TodoDetailView({ todo, slug, sessions, sessionsLoading, sessionsError, 
                 : <p className="mt-4 text-[12px] text-text-tertiary">No additional detail yet.</p>}
             </section>
 
+            <TodoReferences slug={slug} todo={todo} />
+
             <section aria-labelledby="todo-plan-heading" className="rounded-lg border border-border-default bg-bg-elevated p-4 min-[621px]:p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div><h2 id="todo-plan-heading" className="text-[13px] font-semibold text-text-primary">Plan</h2><p className="mt-1 text-[11px] text-text-tertiary">Ordinary Markdown shaped through Discussion.</p></div>
@@ -330,7 +334,7 @@ function ActionGroup({ label, children }: { label: string; children: ReactNode }
   return <div role="group" aria-label={label}><h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">{label}</h3><div className="mt-2 flex flex-wrap gap-2">{children}</div></div>;
 }
 function AssociatedSessions({ slug, sessions }: { slug: string; sessions: SessionSummary[] }) {
-  return sessions.length ? <div className="space-y-2">{sessions.map((session) => <Link key={session.sessionId} className="flex items-center justify-between gap-3 text-[12px] text-brand hover:underline" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(session.sessionId)}`}><span className="truncate">{session.title || session.sessionId}</span><span className="shrink-0 text-[11px] text-text-tertiary">{entryLabel(session.source?.kind === "todo" ? session.source.entry : undefined)}</span></Link>)}</div> : <p className="text-[12px] text-text-tertiary">No sessions yet.</p>;
+  return sessions.length ? <div className="space-y-2">{sessions.map((session) => <Link key={session.sessionId} className="flex items-center justify-between gap-3 text-[12px] text-brand hover:underline" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(session.sessionId)}`}><span className="truncate">{session.title || session.sessionId}</span><span className="shrink-0 text-[11px] text-text-tertiary">{session.source?.kind === "automation" ? "Automation invocation" : entryLabel(session.source?.kind === "todo" ? session.source.entry : undefined)}</span></Link>)}</div> : <p className="text-[12px] text-text-tertiary">No sessions yet.</p>;
 }
 function TodoActionButton({ children, onClick, disabled, variant = "default" }: { children: ReactNode; onClick: () => void; disabled?: boolean; variant?: "default" | "primary" | "brand" | "danger" }) {
   const tone = variant === "primary" ? "border-brand bg-brand text-bg-overlay hover:bg-brand-hover" : variant === "brand" ? "border-brand/40 bg-brand-subtle text-brand hover:bg-brand/15" : variant === "danger" ? "border-error/30 bg-error-muted text-error hover:bg-error/15" : "border-border-default bg-bg-active text-text-secondary hover:bg-bg-hover hover:text-text-primary";

@@ -31,7 +31,10 @@ export function createWorkspacePermission(
       );
 
       if (!isWithinWorkspace) {
-        if (ctx.toolName === "file_read" && ctx.attachmentReadPaths?.has(resolved) === true) {
+        if (
+          (ctx.toolName === "file_read" || ctx.toolName === "pdf_read")
+          && ctx.attachmentReadPaths?.has(resolved) === true
+        ) {
           return { outcome: "allow" };
         }
         return {

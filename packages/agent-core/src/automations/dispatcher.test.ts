@@ -43,6 +43,7 @@ describe("AutomationDispatcher", () => {
       clientRequestId: invocation.id,
       automationId: automation.id,
       invocationId: invocation.id,
+      todoId: null,
       message: "/skill use analyze-work",
       location: "project",
     }]);

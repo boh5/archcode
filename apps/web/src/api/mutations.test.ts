@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createSession, deleteSession, invalidateProjectCatalog, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, setSessionGoalBudget, stopSessionFamily, uploadSessionAttachment } from "./mutations";
+import { createSession, deleteSession, invalidateProjectCatalog, invalidateSessionModelSelectionQuery, patchSessionModelSelection, postMessage, removeProjectTodoAttachment, setSessionGoalBudget, stopSessionFamily, uploadProjectTodoAttachment, uploadSessionAttachment } from "./mutations";
 import { queryKeys } from "./queries";
 
 const originalFetch = globalThis.fetch;
@@ -120,6 +120,45 @@ describe("web session runtime mutation API calls", () => {
       attachmentId: "11111111-1111-4111-8111-111111111111",
       file,
     })).resolves.toMatchObject({ id: "11111111-1111-4111-8111-111111111111", kind: "file" });
+  });
+
+  test("uploads a Todo reference with the authoritative expected revision", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const file = new File(["hello"], "brief.pdf", { type: "application/pdf" });
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/todos/todo-1/attachments/22222222-2222-4222-8222-222222222222?name=brief.pdf&sizeBytes=5&expectedRevision=7`);
+      expect(init?.method).toBe("PUT");
+      expect(init?.body).toBe(file);
+      expect(new Headers(init?.headers).get("Content-Type")).toBe(file.type);
+      return jsonResponse({ todo: { id: "todo-1", revision: 8 }, attachment: { id: "22222222-2222-4222-8222-222222222222", name: "brief.pdf", mediaType: "application/pdf", sizeBytes: 5, kind: "file" } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(uploadProjectTodoAttachment({
+      slug: TEST_PROJECT_SLUG,
+      todoId: "todo-1",
+      attachmentId: "22222222-2222-4222-8222-222222222222",
+      expectedRevision: 7,
+      file,
+    })).resolves.toMatchObject({ todo: { revision: 8 }, attachment: { kind: "file" } });
+  });
+
+  test("removes a Todo reference with the expected revision body", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/todos/todo-1/attachments/22222222-2222-4222-8222-222222222222`);
+      expect(init?.method).toBe("DELETE");
+      expect(JSON.parse(String(init?.body))).toEqual({ expectedRevision: 8 });
+      return jsonResponse({ todo: { id: "todo-1", revision: 9 } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(removeProjectTodoAttachment({
+      slug: TEST_PROJECT_SLUG,
+      todoId: "todo-1",
+      attachmentId: "22222222-2222-4222-8222-222222222222",
+      expectedRevision: 8,
+    })).resolves.toMatchObject({ todo: { revision: 9 } });
   });
 
   test("PATCH model selection sends optimistic revision and returns complete model state", async () => {

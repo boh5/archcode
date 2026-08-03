@@ -15,6 +15,7 @@ export type SessionDispatchInput =
     readonly kind: "start_session";
     readonly automationId: string;
     readonly invocationId: string;
+    readonly todoId: string | null;
     readonly message: string;
     readonly location: "project" | "worktree";
   })
@@ -104,6 +105,7 @@ export class AutomationDispatcher {
         ? {
           ...identity,
           kind: "start_session",
+          todoId: automation.origin.kind === "todo" ? automation.origin.todoId : null,
           message: automation.action.message,
           location: automation.action.location,
         }

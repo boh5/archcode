@@ -535,6 +535,17 @@ Execution is a mandatory product entity, not an optional visual section.
   never duplicates this surface in a drawer.
 - Overlays use a scrim and a visible close action.
 
+### Todo References and Live Source Context
+
+- Todo owns its current References; a bound Session uses them live without
+  copying them into Session history. Keep management on Todo detail only—never
+  add Board/Quick Capture controls, counts, or a separate attachment surface.
+- References remain a flat workbench region. File state and recovery stay inline;
+  safe image/PDF bytes may open, while active or unknown content downloads.
+- A Todo-bound Session may append the static `Using live Todo references` note to
+  existing source metadata. It never queries counts or adds a banner, card, tab,
+  drawer, or navigation entry.
+
 ### Feedback and Loading
 
 - For actions that exceed 300ms, keep the current context visible and show a

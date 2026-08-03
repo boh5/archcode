@@ -13,6 +13,7 @@ import type {
   ProjectSessionInventoryItem,
   ProjectAutomationInventoryItem,
   ProjectTodoPlan,
+  ProjectTodoAttachmentListResponse,
   SessionTreeResponse,
   ProjectTodo,
 } from "./types";
@@ -39,6 +40,7 @@ export const queryKeys = {
   automation: (slug: string, automationId: string) => ["projects", slug, "automations", automationId] as const,
   automationInvocations: (slug: string, automationId: string) => ["projects", slug, "automations", automationId, "invocations"] as const,
   projectTodos: (slug: string) => ["projects", slug, "todos"] as const,
+  projectTodoAttachments: (slug: string, todoId: string) => ["projects", slug, "todos", todoId, "attachments"] as const,
 };
 
 export function modelRuntimeQueryOptions() {
@@ -318,4 +320,18 @@ export function projectTodoPlanQueryOptions(slug: string, todoId: string) {
 
 export function useProjectTodoPlan(slug: string, todoId: string) {
   return useQuery(projectTodoPlanQueryOptions(slug, todoId));
+}
+
+export function projectTodoAttachmentsQueryOptions(slug: string, todoId: string) {
+  return queryOptions({
+    queryKey: queryKeys.projectTodoAttachments(slug, todoId),
+    queryFn: () => apiFetch<ProjectTodoAttachmentListResponse>(
+      `/api/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(todoId)}/attachments`,
+    ),
+    enabled: slug.length > 0 && todoId.length > 0,
+  });
+}
+
+export function useProjectTodoAttachments(slug: string, todoId: string) {
+  return useQuery(projectTodoAttachmentsQueryOptions(slug, todoId));
 }

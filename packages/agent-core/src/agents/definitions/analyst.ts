@@ -12,6 +12,7 @@ import {
   TOOL_BASH,
   TOOL_COMPRESS,
   TOOL_FILE_READ,
+  TOOL_PDF_READ,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
   TOOL_GLOB,
@@ -35,6 +36,7 @@ export const analystAgentDefinition = {
   tools: {
     tools: [
       TOOL_FILE_READ,
+      TOOL_PDF_READ,
       TOOL_GREP,
       TOOL_GLOB,
       TOOL_GIT_STATUS,

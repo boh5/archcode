@@ -17,6 +17,7 @@ export interface ChatHeaderSource {
   label: string;
   title: string;
   to: string;
+  usesLiveTodoReferences?: true;
 }
 
 interface ChatHeaderProps {
@@ -136,6 +137,11 @@ export function ChatHeader({
                 >
                   {source.title}
                 </Link>
+                {source.usesLiveTodoReferences ? (
+                  <span className="ml-1 text-text-tertiary" data-testid="session-source-annotation">
+                    · Using live Todo references
+                  </span>
+                ) : null}
               </span>
             </>
           )}

@@ -10,7 +10,7 @@ import {
   AttachmentValidationError,
 } from "./errors";
 import { getAttachmentContentPath } from "./paths";
-import { SessionAttachmentService } from "./service";
+import { ProjectAttachmentStorage, SessionAttachmentService } from "./service";
 
 const TEST_ROOT = resolve(
   "/tmp",
@@ -27,6 +27,7 @@ beforeEach(async () => {
   await mkdir(TEST_ROOT, { recursive: true });
   rootExists = true;
   service = new SessionAttachmentService({
+    storage: new ProjectAttachmentStorage(),
     validateRootSession: async () => {
       if (!rootExists) {
         const error = new Error("missing root") as Error & { code: string };
@@ -75,11 +76,11 @@ describe("SessionAttachmentService", () => {
       attachmentId,
     );
     expect(await Bun.file(contentPath).bytes()).toEqual(png);
-    const directoryNames = await readdir(join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID));
+    const directoryNames = await readdir(join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID));
     expect(directoryNames).toEqual([attachmentId]);
     expect(contentPath).not.toContain("diagram.png");
     const metadata = await Bun.file(
-      join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID, attachmentId, "metadata.json"),
+      join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID, attachmentId, "metadata.json"),
     ).json() as Record<string, unknown>;
     expect(metadata.digest).toMatch(/^[a-f0-9]{64}$/);
     expect(uploaded.descriptor).not.toHaveProperty("digest");
@@ -126,6 +127,27 @@ describe("SessionAttachmentService", () => {
       mediaType: "not a media type",
     });
     expect(invalidType.descriptor.mediaType).toBe("application/octet-stream");
+  });
+
+  test("recognizes PDF bytes and never trusts a declared PDF type for inline delivery", async () => {
+    const pdf = await uploadBytes({
+      attachmentId: crypto.randomUUID(),
+      name: "brief.pdf",
+      bytes: new TextEncoder().encode("%PDF-1.7\nfixture"),
+      mediaType: "text/plain",
+    });
+    expect(pdf.descriptor).toMatchObject({
+      mediaType: "application/pdf",
+      kind: "file",
+    });
+
+    const forged = await uploadBytes({
+      attachmentId: crypto.randomUUID(),
+      name: "forged.pdf",
+      bytes: new TextEncoder().encode("<html>active content</html>"),
+      mediaType: "application/pdf",
+    });
+    expect(forged.descriptor.mediaType).toBe("application/octet-stream");
   });
 
   test("recognizes JPEG, GIF87a, GIF89a, and WebP only at fixed offsets", async () => {
@@ -189,7 +211,7 @@ describe("SessionAttachmentService", () => {
       sizeBytes: 0,
       body: null,
     })).rejects.toBeInstanceOf(AttachmentValidationError);
-    expect(await Bun.file(join(TEST_ROOT, ".archcode", "attachments")).exists()).toBe(false);
+    expect(await Bun.file(join(TEST_ROOT, ".archcode", "runtime", "attachments")).exists()).toBe(false);
   });
 
   test("enforces declared size and Content-Length before or during streaming", async () => {
@@ -222,7 +244,7 @@ describe("SessionAttachmentService", () => {
       body: byteStream(Uint8Array.of(1)),
     })).rejects.toBeInstanceOf(AttachmentValidationError);
     expect(await Bun.file(
-      join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID, attachmentId),
+      join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID, attachmentId),
     ).exists()).toBe(false);
   });
 
@@ -246,9 +268,9 @@ describe("SessionAttachmentService", () => {
       }),
     })).rejects.toThrow("client disconnected");
     expect(await Bun.file(
-      join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID, attachmentId),
+      join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID, attachmentId),
     ).exists()).toBe(false);
-    expect((await readdir(join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID)))
+    expect((await readdir(join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID)))
       .some((entry) => entry.startsWith(`.${attachmentId}.tmp-`))).toBe(false);
   });
 
@@ -266,9 +288,9 @@ describe("SessionAttachmentService", () => {
       write.mockRestore();
     }
     expect(await Bun.file(
-      join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID, attachmentId),
+      join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID, attachmentId),
     ).exists()).toBe(false);
-    expect((await readdir(join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID)))
+    expect((await readdir(join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID)))
       .some((entry) => entry.startsWith(`.${attachmentId}.tmp-`))).toBe(false);
   });
 
@@ -308,9 +330,9 @@ describe("SessionAttachmentService", () => {
       file.mockRestore();
     }
     expect(await Bun.file(
-      join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID, attachmentId),
+      join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID, attachmentId),
     ).exists()).toBe(false);
-    expect((await readdir(join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID)))
+    expect((await readdir(join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID)))
       .some((entry) => entry.startsWith(`.${attachmentId}.tmp-`))).toBe(false);
   });
 
@@ -336,7 +358,7 @@ describe("SessionAttachmentService", () => {
       body: sizedByteStream(MAX_ATTACHMENT_SIZE_BYTES + 1),
     })).rejects.toBeInstanceOf(AttachmentTooLargeError);
     expect(await Bun.file(
-      join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID, tooLargeId),
+      join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID, tooLargeId),
     ).exists()).toBe(false);
   });
 
@@ -460,7 +482,7 @@ describe("SessionAttachmentService", () => {
   test("removes only same-ID service-named stale temp before retry", async () => {
     const attachmentId = crypto.randomUUID();
     const otherId = crypto.randomUUID();
-    const root = join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID);
+    const root = join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID);
     const stale = join(root, `.${attachmentId}.tmp-${crypto.randomUUID()}`);
     const other = join(root, `.${otherId}.tmp-${crypto.randomUUID()}`);
     await mkdir(stale, { recursive: true });
@@ -478,9 +500,9 @@ describe("SessionAttachmentService", () => {
 
   test("rejects symlinked storage ancestors and content", async () => {
     const outside = join(TEST_ROOT, "outside");
-    await mkdir(join(TEST_ROOT, ".archcode"), { recursive: true });
+    await mkdir(join(TEST_ROOT, ".archcode", "runtime"), { recursive: true });
     await mkdir(outside);
-    await symlink(outside, join(TEST_ROOT, ".archcode", "attachments"));
+    await symlink(outside, join(TEST_ROOT, ".archcode", "runtime", "attachments"));
     await expect(uploadBytes({
       attachmentId: crypto.randomUUID(),
       name: "blocked",
@@ -612,7 +634,7 @@ describe("SessionAttachmentService", () => {
     await deletion;
     await expect(lateUpload).rejects.toThrow("missing root");
     expect((await lstat(
-      join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID),
+      join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID),
     )).isDirectory()).toBe(true);
   });
 
@@ -625,6 +647,7 @@ describe("SessionAttachmentService", () => {
       mediaType: "application/octet-stream",
     });
     const otherService = new SessionAttachmentService({
+      storage: new ProjectAttachmentStorage(),
       validateRootSession: async () => undefined,
     });
     await otherService.upload({
@@ -637,9 +660,9 @@ describe("SessionAttachmentService", () => {
     });
 
     await service.cleanupRootAttachments(TEST_ROOT, ROOT_SESSION_ID);
-    expect(await Bun.file(join(TEST_ROOT, ".archcode", "attachments", ROOT_SESSION_ID)).exists())
+    expect(await Bun.file(join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", ROOT_SESSION_ID)).exists())
       .toBe(false);
-    expect((await lstat(join(TEST_ROOT, ".archcode", "attachments", otherRoot))).isDirectory())
+    expect((await lstat(join(TEST_ROOT, ".archcode", "runtime", "attachments", "sessions", otherRoot))).isDirectory())
       .toBe(true);
   });
 });

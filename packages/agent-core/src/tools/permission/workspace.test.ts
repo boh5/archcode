@@ -82,7 +82,7 @@ describe("createWorkspacePermission", () => {
     });
   });
 
-  test("allows only file_read for an exact canonical committed attachment path", async () => {
+  test("allows only file_read and pdf_read for an exact current attachment path", async () => {
     const outsideFile = join(testDir, "committed-attachment.txt");
     writeFileSync(outsideFile, "content", "utf-8");
     const canonical = realpathSync(outsideFile);
@@ -91,6 +91,11 @@ describe("createWorkspacePermission", () => {
     expect(await permission(
       { path: outsideFile },
       makeCtx({ toolName: "file_read", attachmentReadPaths: new Set([canonical]) }),
+    )).toEqual({ outcome: "allow" });
+
+    expect(await permission(
+      { path: outsideFile },
+      makeCtx({ toolName: "pdf_read", attachmentReadPaths: new Set([canonical]) }),
     )).toEqual({ outcome: "allow" });
 
     expect((await permission(

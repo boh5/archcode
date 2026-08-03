@@ -182,6 +182,27 @@ Route behavior:
   route may expand to 1280px;
 - use quiet bounded sections, not a modal, scrim, or nested card stack;
 
+### References
+
+- Todo detail places one flat `References` region in the main column between
+  `Brief / PRD` and `Plan`. It is not a Board card, drawer, tab, or separate
+  attachment page, and it does not add a count badge to the project surfaces.
+- `Add files` opens the native multi-file picker and the surrounding drop target
+  accepts drag-and-drop. The button remains the keyboard/touch alternative and
+  all uploads activate serially using the latest Todo revision from the prior
+  mutation response.
+- Rows preserve server order and show a file icon or safe image thumbnail, file
+  name, size, and an inline `Uploading…`, `Retry`, or error state. Images and
+  native PDFs expose one `Open` action; HTML/SVG and other active or unknown
+  content expose one `Download` action. Do not inline active content.
+- `Remove` requires confirmation and explains that the reference is unavailable
+  to associated Sessions on their next model or tool call. Archive, Reject, and
+  Session deletion do not remove Todo references; only this explicit action does.
+- Keep the helper copy visible but quiet: files stay in the local project,
+  current references can be read by Agent work, and images may be sent to the
+  selected model provider. Preserve keyboard focus rings, 44px coarse-pointer
+  targets, responsive stacking, and light/dark semantic tokens.
+
 ## Todos-Specific Avoidances
 
 - omitting Rejected or Archived because Board is the primary surface;

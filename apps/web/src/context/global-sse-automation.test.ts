@@ -33,6 +33,7 @@ describe("global SSE Automation invalidation", () => {
     });
     expect(calls).toEqual([
       queryKeys.projectTodos("demo"),
+      queryKeys.projectTodoAttachments("demo", "t1"),
       queryKeys.home,
     ]);
     expect(calls).not.toContainEqual(queryKeys.sessions("demo"));
