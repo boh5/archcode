@@ -16,6 +16,11 @@ They are project-owned lifecycle entities, not Session-local checklists.
 - Do not repeat a visible `Todos` page title or product slogan below the toolbar.
   The Todo surface begins with a shared `Filter Todos` field and the three-way
   `Board / Rejected / Archived` switcher.
+- Keep that command header as a stable two-column grid on desktop: the filter
+  occupies `minmax(240px, 420px)`, while the view switcher is `202px` wide with
+  three equal columns. At `≤760px`, stack them into two full-width rows. Do not
+  let the filter flex-grow beyond 420px or let the switcher size itself from its
+  labels.
 - Place quick capture directly below the header.
 - Main Todo content may use up to 1500px because Board lanes need horizontal
   working space.
@@ -57,11 +62,18 @@ Responsive columns:
 
 Lane rules:
 
-- Lanes are structural columns with one 1px boundary, an 8px radius, and the
-  surface background. At four columns they use a 500px minimum height; stacked
-  lanes remain content-sized with a 160px minimum.
-- Lane headers use a status orbit, title, short explanation, and count.
-- Cards use one border, 6px radius, and no elevation.
+- Lanes are open structural columns, not card containers. At four columns the
+  drop target still spans at least 500px; stacked lanes remain content-sized
+  with a 160px minimum. Do not draw a permanent lane perimeter, radius, or
+  large filled empty box. A current drag target may use one temporary quiet
+  field.
+- Lane headers use a status orbit, title, short explanation, one bottom rule,
+  and a plain tabular count. Do not box the count as a badge.
+- Todo cards are the Board's only persistent card layer. Use one quiet border,
+  6px radius, and no elevation.
+- Preserve the dedicated full-height drag activator and its 44px minimum hit
+  area. Keep the grip visible but quiet; do not make the activator look like a
+  frozen table column with a permanent vertical divider.
 - A Todo has no title. Each card shows only the first 80 characters of its
   canonical Markdown after mechanically removing line-leading Markdown markers
   and collapsing whitespace. Clamp this content excerpt to two lines; do not add
@@ -83,7 +95,10 @@ Lane rules:
   never completion.
 - The operational line uses one icon plus visible text and an optional short
   detail after a separator. Keep it inside the existing card boundary without
-  a badge stack, nested card, action, or lifecycle control.
+  a badge stack, nested card, action, lifecycle control, or full-width internal
+  divider.
+- Empty-lane guidance stays close to the lane header and aligns with card text;
+  do not center it inside the full desktop drop target.
 - Pointer and touch dragging target the lane under the pointer rather than the
   dragged card rectangle; keyboard dragging retains geometric collision
   fallback.
@@ -108,6 +123,9 @@ Lane rules:
 
 - Use one compact Markdown input surface with two explicit outcomes:
   `plus icon → content textarea → Save / Run now`.
+- On desktop keep the surface approximately 60–68px tall, with a quiet border
+  and no resting elevation. It is a compact workbench composer, not the page's
+  dominant card.
 - `Save` creates one Idea and starts no Agent work. Its confirmation says the
   Todo was saved, never that work started.
 - `Run now` creates the minimal Todo, places it in In Progress, creates one bound
@@ -127,9 +145,12 @@ The route preserves:
 - linked Discussions, work Sessions, and Automations;
 - lifecycle-appropriate primary and secondary actions.
 
-Use a two-region responsive layout: the readable main column owns `Brief / PRD`
-and `Plan`; the secondary column owns `Work`, linked Sessions and Automations,
-and `Lifecycle`. Stack these regions on narrower screens. Do not introduce tabs,
+Use a two-region responsive layout: the readable main column is one continuous
+document work surface owning `Brief / PRD`, `References`, `Plan`, and any
+`Result`; the secondary column is one continuous context rail owning `Work`,
+linked Sessions and Automations, and `Lifecycle`. Separate regions inside each
+column with typography and horizontal rules rather than individual rounded
+cards. Stack the two columns on narrower screens. Do not introduce tabs,
 collapsible groups, or a second Todo summary model.
 
 Keep `Edit` with the canonical content. Editing uses one Markdown textarea and
@@ -181,7 +202,8 @@ Route behavior:
 - a visible back action returns to the originating Todo view when available;
 - the main content remains readable at approximately 820px while the whole
   route may expand to 1280px;
-- use quiet bounded sections, not a modal, scrim, or nested card stack;
+- use one continuous document surface plus one context rail, not a modal,
+  scrim, repeated full-boundary panels, or nested card stack;
 
 ### References
 
@@ -210,6 +232,8 @@ Route behavior:
 - treating Todos as a generic Kanban clone;
 - drag-and-drop as the only way to change state;
 - large rounded lane containers;
+- boxed lane counts or a permanent divider around the drag activator;
+- rendering every Todo detail section as an equal rounded card;
 - hiding linked work or lifecycle actions;
 - restoring a Board drawer or another competing detail surface;
 - presenting capture as an AI prompt.

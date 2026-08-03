@@ -157,7 +157,11 @@ describe("Project Todos board", () => {
     expect(open?.querySelector("span")?.className).not.toContain("block");
     const viewButtons = document.querySelector('[aria-label="Todo views"]')?.querySelectorAll("button") ?? [];
     expect(viewButtons).toHaveLength(3);
-    for (const button of viewButtons) expect(button.className).toContain("[@media(pointer:coarse)]:h-11");
+    expect(Array.from(viewButtons, (button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+    for (const button of viewButtons) {
+      expect(button.className).toContain("max-[760px]:h-11");
+      expect(button.className).toContain("[@media(pointer:coarse)]:h-11");
+    }
   });
 
   test("adds a derived work line only after inventory and realtime facts are authoritative", async () => {

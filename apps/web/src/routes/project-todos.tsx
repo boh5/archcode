@@ -336,13 +336,13 @@ export function ProjectTodosRoute() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg-base">
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-4 py-2 min-[621px]:px-6">
-        <label className="relative min-w-[220px] flex-1 max-w-[520px]">
+      <header className="grid min-h-[58px] shrink-0 grid-cols-[minmax(240px,420px)_202px] items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-6 py-2.5 max-[760px]:min-h-[108px] max-[760px]:grid-cols-1 max-[760px]:gap-2 max-[760px]:px-3">
+        <label className="relative min-w-0 w-full max-w-[420px] max-[760px]:max-w-none">
           <span className="sr-only">Filter Todos</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={14} aria-hidden="true" />
-          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Todos…" className="h-9 w-full rounded-sm border border-control-border bg-bg-elevated pl-9 pr-3 text-[13px] outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle [@media(pointer:coarse)]:h-11" />
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Todos…" className="h-9 w-full rounded-sm border border-control-border bg-bg-elevated pl-9 pr-3 text-[12px] outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle max-[760px]:h-11 max-[760px]:text-[16px] [@media(pointer:coarse)]:h-11" />
         </label>
-        <div className="flex items-center rounded-md border border-border-default bg-bg-muted p-0.5" role="group" aria-label="Todo views">
+        <div className="grid w-[202px] grid-cols-3 items-center rounded-md border border-border-default bg-bg-muted p-0.5 max-[760px]:w-full" role="group" aria-label="Todo views">
           <ViewButton active={view === "board"} onClick={() => setView("board")}>Board</ViewButton>
           <ViewButton active={view === "rejected"} onClick={() => setView("rejected")}>Rejected</ViewButton>
           <ViewButton active={view === "archived"} onClick={() => setView("archived")}>Archived</ViewButton>
@@ -412,7 +412,7 @@ function TodoFlatList({ view, todos, onSelect, filtered }: { view: Exclude<View,
   return <section className="mx-auto max-w-[980px]" aria-label={title}><h2 className="border-b border-border-default pb-3 text-[14px] font-semibold text-text-primary">{title}</h2>{todos.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{todoFlatListEmptyMessage(view, filtered)}</p> : <div className="divide-y divide-border-subtle">{todos.map((todo) => <button key={todo.id} type="button" data-testid={`todo-${todo.id}`} onClick={() => onSelect(todo.id)} className="block w-full px-3 py-3 text-left hover:bg-bg-hover"><span className="line-clamp-2 text-[13px] font-medium leading-5 text-text-primary">{projectTodoContentExcerpt(todo.content)}</span><span className="mt-1 block text-[11px] text-text-tertiary">{view === "rejected" ? todo.rejectionReason : "Archived"}</span></button>)}</div>}</section>;
 }
 
-function ViewButton({ children, active, onClick }: { children: React.ReactNode; active: boolean; onClick: () => void }) { return <button type="button" onClick={onClick} className={`h-7 rounded-md px-2.5 text-[11px] font-medium [@media(pointer:coarse)]:h-11 ${active ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"}`}>{children}</button>; }
+function ViewButton({ children, active, onClick }: { children: React.ReactNode; active: boolean; onClick: () => void }) { return <button type="button" aria-pressed={active} onClick={onClick} className={`h-7 min-w-0 rounded-md px-2 text-[11px] font-semibold max-[760px]:h-11 [@media(pointer:coarse)]:h-11 ${active ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"}`}>{children}</button>; }
 function labelForStatus(status: ProjectTodoLane): string { return status === "idea" ? "Ideas" : status === "ready" ? "Ready" : status === "in_progress" ? "In Progress" : "Done"; }
 function isLane(value: string): value is ProjectTodoLane { return (LANES as readonly string[]).includes(value); }
 function messageFor(cause: unknown): string { return cause instanceof Error ? cause.message : "Action failed"; }

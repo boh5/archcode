@@ -13,6 +13,15 @@ async function productionSources(): Promise<Array<{ path: string; source: string
   return Promise.all(paths.sort().map(async (path) => ({ path, source: await Bun.file(`${sourceRoot}/${path}`).text() })));
 }
 
+function classNameForTagContaining(source: string, tag: string, marker: string): string {
+  const markerIndex = source.indexOf(marker);
+  const start = source.lastIndexOf(`<${tag}`, markerIndex);
+  const className = source.indexOf("className=", start);
+  const end = source.indexOf("\n", className);
+  if (markerIndex < 0 || start < 0 || className < 0 || end < 0) throw new Error(`Could not find className for <${tag}> containing ${marker}`);
+  return source.slice(className, end);
+}
+
 describe("visual contract", () => {
   test("keeps RootLayout as the single work-canvas main landmark", async () => {
     const rootLayout = await Bun.file(`${sourceRoot}/routes/root-layout.tsx`).text();
@@ -32,6 +41,32 @@ describe("visual contract", () => {
     expect(globals).toContain("--text-sm--line-height: 21px;");
     expect(globals).toContain("--text-base: 15px;");
     expect(globals).toContain("--text-base--line-height: 22px;");
+  });
+
+  test("keeps project command bars usable on narrow viewports", async () => {
+    const todos = await Bun.file(`${sourceRoot}/routes/project-todos.tsx`).text();
+    const automations = await Bun.file(`${sourceRoot}/routes/automations.tsx`).text();
+    const sessions = await Bun.file(`${sourceRoot}/routes/project-sessions.tsx`).text();
+
+    const todoSearch = classNameForTagContaining(todos, "input", 'placeholder="Filter Todos…"');
+    expect(todoSearch).toContain("max-[760px]:h-11");
+    expect(todoSearch).toContain("max-[760px]:text-[16px]");
+    expect(classNameForTagContaining(todos, "button", "aria-pressed={active}")).toContain("max-[760px]:h-11");
+
+    const automationSearch = classNameForTagContaining(automations, "input", 'placeholder="Filter Automations…"');
+    expect(automationSearch).toContain("max-[760px]:h-11");
+    expect(automationSearch).toContain("max-[760px]:text-[16px]");
+    expect(classNameForTagContaining(automations, "button", "setCreating(true)")).toContain("max-[760px]:h-11");
+
+    const sessionSearch = classNameForTagContaining(sessions, "input", 'placeholder="Filter Sessions…"');
+    expect(sessionSearch).toContain("max-[760px]:h-11");
+    expect(sessionSearch).toContain("max-[760px]:text-[16px]");
+    expect(classNameForTagContaining(sessions, "label", ">Session source<")).toContain("max-[760px]:h-11");
+    const sessionSource = classNameForTagContaining(sessions, "select", "value={source}");
+    expect(sessionSource).toContain("appearance-none");
+    expect(sessionSource).toContain("max-[760px]:text-[16px]");
+    expect(classNameForTagContaining(sessions, "button", "onClick={startDirectSession}")).toContain("max-[760px]:h-11");
+    expect(sessions).toContain("<ChevronDown");
   });
 
   test("enforces the current motion, radius, contrast, and status presentation rules", async () => {

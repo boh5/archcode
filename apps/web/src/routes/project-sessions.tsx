@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Filter, Plus, Search } from "lucide-react";
+import { ChevronDown, Filter, Plus, Search } from "lucide-react";
 import { projectTodoContentExcerpt, type SessionFamilyActivity } from "@archcode/protocol";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useCreateSession } from "../api/mutations";
@@ -123,10 +123,9 @@ export function ProjectSessionsRoute() {
   });
 
   return (
-    <div className="h-full overflow-y-auto bg-bg-base" aria-label="Sessions inventory">
-      <div className="mx-auto w-full max-w-[1080px] px-4 pb-12 pt-4 min-[761px]:px-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="relative min-w-0 flex-1 basis-full min-[560px]:basis-auto">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-bg-base" aria-label="Sessions inventory">
+      <header className="flex min-h-[58px] shrink-0 items-center gap-2 border-b border-border-default bg-bg-surface px-6 py-2.5 max-[760px]:grid max-[760px]:grid-cols-[minmax(0,1fr)_auto] max-[760px]:px-3">
+          <label className="relative min-w-0 w-full max-w-[420px] flex-[0_1_420px] max-[760px]:col-span-2 max-[760px]:max-w-none">
             <span className="sr-only">Filter Sessions</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={14} aria-hidden="true" />
             <input
@@ -134,51 +133,55 @@ export function ProjectSessionsRoute() {
               value={query}
               onChange={(event) => setParam("q", event.target.value)}
               placeholder="Filter Sessions…"
-              className="h-9 w-full rounded-sm border border-control-border bg-bg-elevated pl-9 pr-3 text-[13px] text-text-primary outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle [@media(pointer:coarse)]:h-11"
+              className="h-9 w-full rounded-sm border border-control-border bg-bg-elevated pl-9 pr-3 text-[12px] text-text-primary outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle max-[760px]:h-11 max-[760px]:text-[16px] [@media(pointer:coarse)]:h-11"
             />
           </label>
-          <label className="relative">
+          <label className="relative h-9 w-[142px] shrink-0 rounded-sm border border-control-border bg-bg-elevated hover:bg-bg-hover focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-subtle max-[760px]:h-11 max-[760px]:w-[150px] [@media(pointer:coarse)]:h-11">
             <span className="sr-only">Session source</span>
             <Filter className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={13} aria-hidden="true" />
             <select
               value={source}
               onChange={(event) => setParam("source", event.target.value === "all" ? "" : event.target.value)}
-              className="h-9 rounded-sm border border-control-border bg-bg-elevated pl-8 pr-8 text-[12px] text-text-secondary outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle [@media(pointer:coarse)]:h-11"
+              className="h-full w-full cursor-pointer appearance-none bg-transparent pl-8 pr-8 text-[12px] font-semibold text-text-secondary outline-none max-[760px]:text-[16px]"
             >
               <option value="all">All sources</option>
               <option value="todo">Todo</option>
               <option value="automation">Automation</option>
               <option value="direct">Direct</option>
             </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary" size={13} aria-hidden="true" />
           </label>
           <button
             type="button"
             onClick={startDirectSession}
             disabled={createSession.isPending}
-            className="ml-auto inline-flex h-9 items-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-semibold text-brand-ink hover:bg-brand-hover disabled:opacity-50 [@media(pointer:coarse)]:h-11"
+            className="ml-auto inline-flex h-9 shrink-0 items-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-semibold text-brand-ink hover:bg-brand-hover disabled:opacity-50 max-[760px]:ml-0 max-[760px]:h-11 [@media(pointer:coarse)]:h-11"
           >
             <Plus size={14} aria-hidden="true" /> New Session
           </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[1080px] px-4 pb-12 pt-4 min-[761px]:px-6">
+          {createSession.error && <p role="alert" className="text-[12px] text-error">{createSession.error.message}</p>}
+          {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Sessions…</p> : null}
+          {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Sessions</p> : null}
+          {!inventory.isLoading && !inventory.error && filtered.length === 0 ? (
+            <p className="py-16 text-center text-[13px] text-text-tertiary">{sessionInventoryEmptyMessage(inventory.data?.length ?? 0)}</p>
+          ) : null}
+          {(["needs-you", "running", "recent"] as const).map((group) => groups[group].length > 0 ? (
+            <SessionGroup
+              key={group}
+              group={group}
+              items={groups[group]}
+              activityBySessionId={activityBySessionId}
+              attentionSessionIds={attentionSessionIds}
+              attentionLabelsBySessionId={attentionLabelsBySessionId}
+              automationNames={automationNames}
+              todoNames={todoNames}
+              slug={slug}
+            />
+          ) : null)}
         </div>
-        {createSession.error && <p role="alert" className="mt-2 text-[12px] text-error">{createSession.error.message}</p>}
-        {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Sessions…</p> : null}
-        {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Sessions</p> : null}
-        {!inventory.isLoading && !inventory.error && filtered.length === 0 ? (
-          <p className="py-16 text-center text-[13px] text-text-tertiary">{sessionInventoryEmptyMessage(inventory.data?.length ?? 0)}</p>
-        ) : null}
-        {(["needs-you", "running", "recent"] as const).map((group) => groups[group].length > 0 ? (
-          <SessionGroup
-            key={group}
-            group={group}
-            items={groups[group]}
-            activityBySessionId={activityBySessionId}
-            attentionSessionIds={attentionSessionIds}
-            attentionLabelsBySessionId={attentionLabelsBySessionId}
-            automationNames={automationNames}
-            todoNames={todoNames}
-            slug={slug}
-          />
-        ) : null)}
       </div>
     </div>
   );

@@ -87,34 +87,36 @@ export function AutomationsRoute() {
   };
 
   return (
-    <div className="h-full overflow-y-auto bg-bg-base" aria-label="Automations workspace">
-      <div className="mx-auto w-full max-w-[1080px] px-4 pb-12 pt-4 min-[761px]:px-6">
-        <div className="flex items-center gap-2">
-          <label className="relative min-w-0 flex-1">
-            <span className="sr-only">Filter Automations</span>
-            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={14} aria-hidden="true" />
-            <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Automations…" className="h-9 w-full rounded-sm border border-control-border bg-bg-elevated pl-9 pr-3 text-[13px] outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle [@media(pointer:coarse)]:h-11" />
-          </label>
-          <button type="button" onClick={() => setCreating(true)} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-semibold text-brand-ink hover:bg-brand-hover [@media(pointer:coarse)]:h-11">
-            <Plus size={14} aria-hidden="true" /> New Automation
-          </button>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-bg-base" aria-label="Automations workspace">
+      <header className="grid min-h-[58px] shrink-0 grid-cols-[minmax(220px,420px)_auto] items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-6 py-3 max-[760px]:grid-cols-[minmax(0,1fr)_auto] max-[760px]:px-3">
+        <label className="relative min-w-0 w-full max-w-[420px]">
+          <span className="sr-only">Filter Automations</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={14} aria-hidden="true" />
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Automations…" className="h-9 w-full rounded-sm border border-control-border bg-bg-elevated pl-9 pr-3 text-[12px] outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle max-[760px]:h-11 max-[760px]:text-[16px] [@media(pointer:coarse)]:h-11" />
+        </label>
+        <button type="button" onClick={() => setCreating(true)} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-semibold text-brand-ink hover:bg-brand-hover max-[760px]:h-11 [@media(pointer:coarse)]:h-11">
+          <Plus size={14} aria-hidden="true" /> New Automation
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[1080px] px-4 pb-12 pt-4 min-[761px]:px-6">
+          {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Automations…</p> : null}
+          {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Automations</p> : null}
+          {!inventory.isLoading && !inventory.error && filtered.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{automationInventoryEmptyMessage(inventory.data?.length ?? 0)}</p> : null}
+          {(["needs-attention", "scheduled", "paused", "inactive"] as const).map((group) => groups[group].length > 0 ? (
+            <AutomationGroup
+              detailSearch={detailSearch}
+              group={group}
+              items={groups[group]}
+              key={group}
+              restoreAutomationId={restoreAutomationId}
+              restoreRowRef={restoreRowRef}
+              selectedAutomationId={automationId}
+              slug={slug}
+              todoContents={todoContents}
+            />
+          ) : null)}
         </div>
-        {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Automations…</p> : null}
-        {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Automations</p> : null}
-        {!inventory.isLoading && !inventory.error && filtered.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{automationInventoryEmptyMessage(inventory.data?.length ?? 0)}</p> : null}
-        {(["needs-attention", "scheduled", "paused", "inactive"] as const).map((group) => groups[group].length > 0 ? (
-          <AutomationGroup
-            detailSearch={detailSearch}
-            group={group}
-            items={groups[group]}
-            key={group}
-            restoreAutomationId={restoreAutomationId}
-            restoreRowRef={restoreRowRef}
-            selectedAutomationId={automationId}
-            slug={slug}
-            todoContents={todoContents}
-          />
-        ) : null)}
       </div>
       <EditAutomationDialog open={creating} onClose={() => setCreating(false)} slug={slug} />
     </div>

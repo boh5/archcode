@@ -1,7 +1,7 @@
 # Signal Workbench Design System
 
 > Target UI specification synchronized with the current effective prototypes on
-> 2026-08-02. Until product implementation catches up, current product code
+> 2026-08-03. Until product implementation catches up, current product code
 > remains authoritative for existing runtime behavior and state mechanics.
 >
 > When designing or implementing a page, read this file first and then read
