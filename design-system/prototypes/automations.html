@@ -887,6 +887,7 @@
         const instructions = String(values.get("instructions") || "").trim();
         if (!name || !trigger || !instructions) return;
         if (editingAutomationId) {
+          if (!Object.hasOwn(automationSamples, editingAutomationId)) return;
           const sample = automationSamples[editingAutomationId];
           sample.name = name;
           sample.trigger = trigger;
