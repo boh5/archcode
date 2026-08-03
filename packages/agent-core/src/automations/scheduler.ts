@@ -1,4 +1,4 @@
-import type { Automation, AutomationInvocation } from "@archcode/protocol";
+import type { Automation, AutomationInvocation, ProjectAutomationInventoryItem } from "@archcode/protocol";
 
 import { AutomationCoordinator } from "./coordinator";
 import { AutomationDispatcher, type AutomationChangeListener } from "./dispatcher";
@@ -30,6 +30,7 @@ export interface AutomationSchedulerOptions {
 
 export interface AutomationService {
   listAutomations(): Promise<Automation[]>;
+  listInventory(): Promise<ProjectAutomationInventoryItem[]>;
   readAutomation(automationId: string): Promise<Automation>;
   createAutomation(input: CreateAutomationInput): Promise<Automation>;
   updateAutomation(automationId: string, input: UpdateAutomationInput): Promise<Automation>;
@@ -104,6 +105,10 @@ export class AutomationScheduler implements AutomationService {
 
   listAutomations(): Promise<Automation[]> {
     return this.#stateManager.listAutomations();
+  }
+
+  listInventory(): Promise<ProjectAutomationInventoryItem[]> {
+    return this.#stateManager.listInventory();
   }
 
   readAutomation(automationId: string): Promise<Automation> {

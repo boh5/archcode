@@ -21,6 +21,7 @@ import { BUILTIN_SKILL_BODIES } from "../../skills";
 const EXPECTED_TOOL_MATRIX = {
   lead: [
     "file_read",
+    "pdf_read",
     "file_write",
     "file_edit",
     "grep",
@@ -56,6 +57,7 @@ const EXPECTED_TOOL_MATRIX = {
   ],
   discussion: [
     "file_read",
+    "pdf_read",
     "file_write",
     "file_edit",
     "grep",
@@ -86,6 +88,7 @@ const EXPECTED_TOOL_MATRIX = {
   ],
   analyst: [
     "file_read",
+    "pdf_read",
     "grep",
     "glob",
     "git_status",
@@ -112,6 +115,7 @@ const EXPECTED_TOOL_MATRIX = {
   ],
   build: [
     "file_read",
+    "pdf_read",
     "file_write",
     "file_edit",
     "grep",
@@ -142,6 +146,7 @@ const EXPECTED_TOOL_MATRIX = {
   ],
   explore: [
     "file_read",
+    "pdf_read",
     "grep",
     "glob",
     "git_status",
@@ -160,6 +165,7 @@ const EXPECTED_TOOL_MATRIX = {
   ],
   librarian: [
     "file_read",
+    "pdf_read",
     "grep",
     "glob",
     "web_fetch",

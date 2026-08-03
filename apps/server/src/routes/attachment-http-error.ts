@@ -13,7 +13,7 @@ import { ServerError, SessionNotFoundError } from "../errors";
 /** Maps attachment-domain failures at the HTTP boundary without owning storage policy. */
 export function mapAttachmentHttpError(
   error: unknown,
-  sessionId: string,
+  sessionId?: string,
 ): Error | undefined {
   if (error instanceof AttachmentTooLargeError) {
     return new ServerError(
@@ -57,14 +57,14 @@ export function mapAttachmentHttpError(
       409,
     );
   }
-  if (error instanceof NotRootSessionError) {
+  if (error instanceof NotRootSessionError && sessionId !== undefined) {
     return new ServerError(
       "ATTACHMENT_INVALID",
       `Session "${sessionId}" is not a user-facing root Session`,
       400,
     );
   }
-  if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
+  if (sessionId !== undefined && (error instanceof SessionFileNotFoundError || isMissingFileError(error))) {
     return new SessionNotFoundError(sessionId);
   }
   return undefined;

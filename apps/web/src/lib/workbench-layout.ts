@@ -1,6 +1,3 @@
-export const SIDEBAR_DEFAULT_WIDTH = 264;
-export const SIDEBAR_MIN_WIDTH = 210;
-export const SIDEBAR_MAX_WIDTH = 340;
 export const INSPECTOR_DEFAULT_WIDTH = 312;
 export const INSPECTOR_MIN_WIDTH = 280;
 export const INSPECTOR_MAX_WIDTH = 460;
@@ -9,25 +6,17 @@ export const WORKBENCH_PREFERENCES_KEY = "archcode.workbench.layout";
 export type InspectorKind = "session";
 
 export interface WorkbenchPreferences {
-  sidebarWidth: number;
   inspectorWidth: number;
-  sidebarCollapsed: boolean;
   inspectorCollapsed: boolean;
 }
 
 export const DEFAULT_WORKBENCH_PREFERENCES: WorkbenchPreferences = {
-  sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
   inspectorWidth: INSPECTOR_DEFAULT_WIDTH,
-  sidebarCollapsed: false,
   inspectorCollapsed: false,
 };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-export function clampSidebarWidth(value: number): number {
-  return clamp(value, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
 }
 
 export function clampInspectorWidth(value: number): number {
@@ -66,13 +55,9 @@ export function readWorkbenchPreferences(raw: string | null): WorkbenchPreferenc
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     return {
-      sidebarWidth: typeof parsed.sidebarWidth === "number" && Number.isFinite(parsed.sidebarWidth)
-        ? clampSidebarWidth(parsed.sidebarWidth)
-        : SIDEBAR_DEFAULT_WIDTH,
       inspectorWidth: typeof parsed.inspectorWidth === "number" && Number.isFinite(parsed.inspectorWidth)
         ? clampInspectorWidth(parsed.inspectorWidth)
         : INSPECTOR_DEFAULT_WIDTH,
-      sidebarCollapsed: parsed.sidebarCollapsed === true,
       inspectorCollapsed: parsed.inspectorCollapsed === true,
     };
   } catch {

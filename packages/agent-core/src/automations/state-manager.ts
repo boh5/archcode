@@ -1,4 +1,11 @@
-import type { Automation, AutomationAction, AutomationInvocation, AutomationTrigger } from "@archcode/protocol";
+import type {
+  Automation,
+  AutomationAction,
+  AutomationInvocation,
+  AutomationOrigin,
+  AutomationTrigger,
+  ProjectAutomationInventoryItem,
+} from "@archcode/protocol";
 import { z } from "zod/v4";
 
 import { projectRuntimePath } from "../projects/runtime-path";
@@ -26,8 +33,7 @@ export class AutomationInvocationNotFoundError extends Error {
 
 export interface CreateAutomationInput {
   readonly projectSlug: string;
-  readonly createdFromSessionId: string;
-  readonly projectTodoId?: string;
+  readonly origin: AutomationOrigin;
   readonly name: string;
   readonly trigger: AutomationTrigger;
   readonly action: AutomationAction;
@@ -61,6 +67,23 @@ export class AutomationStateManager {
     return structuredClone(state.automations);
   }
 
+  async listInventory(): Promise<ProjectAutomationInventoryItem[]> {
+    const state = await this.#read();
+    const latestByAutomation = new Map<string, AutomationInvocation>();
+    for (const invocation of state.invocations) {
+      const latest = latestByAutomation.get(invocation.automationId);
+      if (latest === undefined
+        || invocation.dueAt > latest.dueAt
+        || (invocation.dueAt === latest.dueAt && invocation.createdAt > latest.createdAt)) {
+        latestByAutomation.set(invocation.automationId, invocation);
+      }
+    }
+    return structuredClone(state.automations.map((automation) => ({
+      automation,
+      latestInvocation: latestByAutomation.get(automation.id) ?? null,
+    })));
+  }
+
   async readAutomation(automationId: string): Promise<Automation> {
     const state = await this.#read();
     const automation = state.automations.find((item) => item.id === automationId);
@@ -83,10 +106,7 @@ export class AutomationStateManager {
       const automation: Automation = {
         id: crypto.randomUUID(),
         projectSlug: requireProjectSlug(input.projectSlug),
-        createdFromSessionId: requireUuid(input.createdFromSessionId, "createdFromSessionId"),
-        ...(input.projectTodoId === undefined ? {} : {
-          projectTodoId: requireUuid(input.projectTodoId, "projectTodoId"),
-        }),
+        origin: validateAutomationOrigin(input.origin),
         name: validated.name,
         trigger,
         action,
@@ -303,6 +323,18 @@ export class AutomationStateManager {
     this.#mutation = operation.then(() => undefined, () => undefined);
     return operation;
   }
+}
+
+function validateAutomationOrigin(origin: AutomationOrigin): AutomationOrigin {
+  if (origin.kind === "direct") return { kind: "direct" };
+  if (origin.kind === "session") {
+    return { kind: "session", sessionId: requireUuid(origin.sessionId, "origin.sessionId") };
+  }
+  return {
+    kind: "todo",
+    todoId: requireUuid(origin.todoId, "origin.todoId"),
+    sessionId: requireUuid(origin.sessionId, "origin.sessionId"),
+  };
 }
 
 function requiredAutomation(state: AutomationStateFile, automationId: string): Automation {

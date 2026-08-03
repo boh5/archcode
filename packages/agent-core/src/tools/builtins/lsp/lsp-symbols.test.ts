@@ -8,10 +8,26 @@ import { createTestToolRegistryFixture } from "../../test-registry";
 import { expectBlockedRequest } from "../../test-results";
 import type { ToolExecutionContext } from "../../types";
 import { lspSymbolsTool } from "./lsp-symbols";
-import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
+import { createTestProjectContext } from "../../test-project-context";
 
 const testDir = path.join(tmpdir(), "archcode-lsp-symbols", crypto.randomUUID());
 const registryFixture = createTestToolRegistryFixture({ descriptors: [lspSymbolsTool] });
+
+async function createDurableTestSessionContext(
+  workspaceRoot: string,
+  sessionId = crypto.randomUUID(),
+) {
+  const store = storeManager.create(sessionId, workspaceRoot, {
+    agentName: "lead",
+    source: { kind: "direct" },
+  });
+  await storeManager.flushSession(sessionId, workspaceRoot);
+  return {
+    store,
+    storeManager,
+    projectContext: createTestProjectContext(workspaceRoot, storeManager),
+  };
+}
 
 beforeEach(async () => {
   await rm(testDir, { recursive: true, force: true });

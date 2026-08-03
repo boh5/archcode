@@ -1,18 +1,28 @@
 import { Hono } from "hono";
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative } from "node:path";
 import type {
   CreateProjectTodoSessionInput,
   CreateProjectTodoSessionResponse,
+  AttachmentDescriptor,
   ProjectTodo,
+  ProjectTodoAttachmentListResponse,
+  ProjectTodoAttachmentMutationResponse,
   ProjectTodoCreateInput,
+  ProjectTodoPlan,
+  ProjectTodoPlanResponse,
+  ProjectTodoRunNowInput,
+  ProjectTodoRunNowResponse,
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import {
-  PROJECT_TODO_BODY_MAX_LENGTH,
+  PROJECT_TODO_CONTENT_MAX_LENGTH,
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
-  PROJECT_TODO_TITLE_MAX_LENGTH,
 } from "@archcode/protocol";
 import {
   CreateProjectTodoSessionSchema,
+  ProjectTodoRunNowSchema,
   type AgentRuntime,
 } from "@archcode/agent-core";
 import { z } from "zod/v4";
@@ -20,20 +30,26 @@ import { z } from "zod/v4";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 import { zValidator } from "../validation";
+import { mapAttachmentHttpError } from "./attachment-http-error";
+import { attachmentDisposition, parseDecimal } from "./attachments";
 
 const ProjectTodoListParamsSchema = z.strictObject({ slug: z.string().min(1) });
 const ProjectTodoParamsSchema = z.strictObject({
   slug: z.string().min(1),
   todoId: z.uuid(),
 });
+const ProjectTodoAttachmentParamsSchema = ProjectTodoParamsSchema.extend({
+  attachmentId: z.uuid(),
+});
+const ProjectTodoAttachmentDeleteBodySchema = z.strictObject({
+  expectedRevision: z.number().int().positive(),
+});
 const ProjectTodoCreateBodySchema = z.strictObject({
-  title: z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH),
-  body: z.string().max(PROJECT_TODO_BODY_MAX_LENGTH).optional(),
+  content: z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH),
 });
 const ProjectTodoUpdateBodySchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
-  title: z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH).optional(),
-  body: z.string().max(PROJECT_TODO_BODY_MAX_LENGTH).optional(),
+  content: z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH).optional(),
   status: z.enum(["idea", "ready", "in_progress", "done", "rejected"]).optional(),
   rejectionReason: z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH).optional(),
   archived: z.boolean().optional(),
@@ -47,14 +63,37 @@ const ProjectTodoUpdateBodySchema = z.strictObject({
     context.addIssue({ code: "custom", path: ["archived"], message: "archived cannot be combined with other Todo fields" });
   }
 });
+const MAX_TODO_PLAN_BYTES = 1024 * 1024;
 export interface ProjectTodoServiceLike {
   listTodos(): Promise<readonly ProjectTodo[]>;
+  readTodo(todoId: string): Promise<ProjectTodo>;
   createTodo(input: ProjectTodoCreateInput): Promise<ProjectTodo>;
   updateTodo(todoId: string, input: ProjectTodoUpdateInput): Promise<ProjectTodo>;
+  listAttachments(todoId: string): Promise<ProjectTodoAttachmentListResponse>;
+  uploadAttachment(input: {
+    readonly todoId: string;
+    readonly attachmentId: string;
+    readonly expectedRevision: number;
+    readonly name: string;
+    readonly sizeBytes: number;
+    readonly mediaType?: string;
+    readonly contentLength?: number;
+    readonly body: ReadableStream<Uint8Array> | null;
+  }): Promise<ProjectTodoAttachmentMutationResponse>;
+  openAttachment(input: {
+    readonly todoId: string;
+    readonly attachmentId: string;
+  }): Promise<{ readonly descriptor: AttachmentDescriptor; readonly contentPath: string }>;
+  removeAttachment(input: {
+    readonly todoId: string;
+    readonly attachmentId: string;
+    readonly expectedRevision: number;
+  }): Promise<ProjectTodo>;
   createSession(
     todoId: string,
     input: CreateProjectTodoSessionInput,
   ): Promise<CreateProjectTodoSessionResponse>;
+  runNow(input: ProjectTodoRunNowInput): Promise<ProjectTodoRunNowResponse>;
 }
 
 export function createTodosRoutes(runtime: AgentRuntime): Hono {
@@ -79,6 +118,133 @@ export function createTodosRoutes(runtime: AgentRuntime): Hono {
       const service = await resolveTodos(runtime, project.workspaceRoot);
       try {
         return c.json({ todo: await service.createTodo(c.req.valid("json")) }, 201);
+      } catch (error) {
+        throw mapTodoError(error);
+      }
+    },
+  );
+
+  app.post(
+    "/:slug/todos/run-now",
+    zValidator("param", ProjectTodoListParamsSchema),
+    zValidator("json", ProjectTodoRunNowSchema),
+    async (c) => {
+      const project = await resolveProject(runtime, c.req.valid("param").slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json(await service.runNow(c.req.valid("json")), 201);
+      } catch (error) {
+        throw mapTodoError(error);
+      }
+    },
+  );
+
+  app.get(
+    "/:slug/todos/:todoId/attachments",
+    zValidator("param", ProjectTodoParamsSchema),
+    async (c) => {
+      const { slug, todoId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json(await service.listAttachments(todoId));
+      } catch (error) {
+        throw mapAttachmentOrTodoError(error);
+      }
+    },
+  );
+
+  app.put(
+    "/:slug/todos/:todoId/attachments/:attachmentId",
+    zValidator("param", ProjectTodoAttachmentParamsSchema),
+    async (c) => {
+      const { slug, todoId, attachmentId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      const name = c.req.query("name") ?? "";
+      const sizeBytes = parseDecimal(c.req.query("sizeBytes"), "sizeBytes");
+      const expectedRevision = parseDecimal(c.req.query("expectedRevision"), "expectedRevision");
+      const contentLengthHeader = c.req.header("content-length");
+      const contentLength = contentLengthHeader === undefined
+        ? undefined
+        : parseDecimal(contentLengthHeader, "Content-Length");
+      try {
+        return c.json(await service.uploadAttachment({
+          todoId,
+          attachmentId,
+          expectedRevision,
+          name,
+          sizeBytes,
+          mediaType: c.req.header("content-type"),
+          contentLength,
+          body: c.req.raw.body,
+        }));
+      } catch (error) {
+        throw mapAttachmentOrTodoError(error);
+      }
+    },
+  );
+
+  app.get(
+    "/:slug/todos/:todoId/attachments/:attachmentId",
+    zValidator("param", ProjectTodoAttachmentParamsSchema),
+    async (c) => {
+      const { slug, todoId, attachmentId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        const opened = await service.openAttachment({ todoId, attachmentId });
+        const inline = opened.descriptor.kind === "image"
+          || opened.descriptor.mediaType === "application/pdf";
+        return new Response(Bun.file(opened.contentPath), {
+          headers: {
+            "content-type": opened.descriptor.mediaType,
+            "content-length": String(opened.descriptor.sizeBytes),
+            "content-disposition": attachmentDisposition(
+              opened.descriptor.name,
+              inline ? "inline" : "attachment",
+            ),
+            "x-content-type-options": "nosniff",
+          },
+        });
+      } catch (error) {
+        throw mapAttachmentOrTodoError(error);
+      }
+    },
+  );
+
+  app.delete(
+    "/:slug/todos/:todoId/attachments/:attachmentId",
+    zValidator("param", ProjectTodoAttachmentParamsSchema),
+    zValidator("json", ProjectTodoAttachmentDeleteBodySchema),
+    async (c) => {
+      const { slug, todoId, attachmentId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json({
+          todo: await service.removeAttachment({
+            todoId,
+            attachmentId,
+            expectedRevision: c.req.valid("json").expectedRevision,
+          }),
+        });
+      } catch (error) {
+        throw mapAttachmentOrTodoError(error);
+      }
+    },
+  );
+
+  app.get(
+    "/:slug/todos/:todoId/plan",
+    zValidator("param", ProjectTodoParamsSchema),
+    async (c) => {
+      const { slug, todoId } = c.req.valid("param");
+      const project = await resolveProject(runtime, slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        await service.readTodo(todoId);
+        return c.json({ plan: await readTodoPlan(project.workspaceRoot, todoId) } satisfies ProjectTodoPlanResponse);
       } catch (error) {
         throw mapTodoError(error);
       }
@@ -120,6 +286,63 @@ export function createTodosRoutes(runtime: AgentRuntime): Hono {
   return app;
 }
 
+export async function readTodoPlan(
+  workspaceRoot: string,
+  todoId: string,
+): Promise<ProjectTodoPlan | null> {
+  const relativePath = join(".archcode", "plans", `${todoId}.md`);
+  const candidate = join(workspaceRoot, relativePath);
+  let handle;
+  try {
+    handle = await open(candidate, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    if (hasErrorCode(error, "ELOOP")) {
+      throw new ServerError("BAD_REQUEST", "Todo Plan must not be a symbolic link", 400, { scopeCode: "TODO_PLAN_UNSAFE_PATH" });
+    }
+    throw error;
+  }
+  try {
+    const [canonicalWorkspace, canonicalCandidate, fileInfo, pathInfo] = await Promise.all([
+      realpath(workspaceRoot),
+      realpath(candidate),
+      handle.stat(),
+      lstat(candidate),
+    ]);
+    const canonicalPlansRoot = join(canonicalWorkspace, ".archcode", "plans");
+    const relativeCandidate = relative(canonicalPlansRoot, canonicalCandidate);
+    const unsafePath = relativeCandidate !== `${todoId}.md`
+      || relativeCandidate.startsWith("..")
+      || isAbsolute(relativeCandidate)
+      || pathInfo.isSymbolicLink()
+      || pathInfo.dev !== fileInfo.dev
+      || pathInfo.ino !== fileInfo.ino;
+    if (unsafePath || !fileInfo.isFile()) {
+      throw new ServerError("BAD_REQUEST", "Todo Plan must be a regular file", 400, { scopeCode: "TODO_PLAN_UNSAFE_PATH" });
+    }
+    if (fileInfo.size > MAX_TODO_PLAN_BYTES) {
+      throw new ServerError("BAD_REQUEST", "Todo Plan exceeds the 1 MiB read limit", 413, { scopeCode: "TODO_PLAN_TOO_LARGE" });
+    }
+    const buffer = Buffer.allocUnsafe(MAX_TODO_PLAN_BYTES + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_TODO_PLAN_BYTES) {
+      throw new ServerError("BAD_REQUEST", "Todo Plan exceeds the 1 MiB read limit", 413, { scopeCode: "TODO_PLAN_TOO_LARGE" });
+    }
+    return {
+      path: relativePath,
+      markdown: buffer.subarray(0, bytesRead).toString("utf8"),
+      updatedAt: fileInfo.mtimeMs,
+    };
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR") || hasErrorCode(error, "ELOOP")) {
+      throw new ServerError("BAD_REQUEST", "Todo Plan path changed while it was being read", 400, { scopeCode: "TODO_PLAN_UNSAFE_PATH" });
+    }
+    throw error;
+  } finally {
+    await handle.close();
+  }
+}
+
 async function resolveTodos(runtime: AgentRuntime, workspaceRoot: string): Promise<ProjectTodoServiceLike> {
   const context = await runtime.contextResolver.resolve(workspaceRoot);
   return context.todos;
@@ -132,13 +355,34 @@ function mapTodoError(error: unknown): Error {
   if (hasCode(error, "PROJECT_TODO_NOT_FOUND")) {
     return new ServerError("PROJECT_TODO_NOT_FOUND", error.message, 404, { todoId: error.todoId });
   }
+  if (hasCode(error, "PROJECT_TODO_RUN_NOW_CONFLICT")) {
+    return new ServerError("BAD_REQUEST", error.message, 409, {
+      scopeCode: error.code,
+      clientRequestId: "clientRequestId" in error ? error.clientRequestId : undefined,
+    });
+  }
+  if (hasCode(error, "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED")) {
+    return new ServerError("INTERNAL_ERROR", error.message, 500, {
+      scopeCode: error.code,
+      todoId: error.todoId,
+      sessionId: "sessionId" in error ? error.sessionId : undefined,
+    });
+  }
   if (isProjectTodoConflict(error)) {
     return new ServerError(error.code, error.message, 409, error);
   }
   return error instanceof Error ? error : new Error(String(error));
 }
 
+function mapAttachmentOrTodoError(error: unknown): Error {
+  return mapAttachmentHttpError(error) ?? mapTodoError(error);
+}
+
 function hasCode(error: unknown, code: string): error is Error & { readonly code: string; readonly todoId?: string } {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 

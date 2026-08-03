@@ -95,7 +95,7 @@ const noAttachmentProjector: AttachmentModelProjector = {
 const inputSchema = z.object({ message: z.string().optional() }).strict();
 
 function createStore() {
-  return storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { agentName: "lead" });
+  return storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
 }
 
 function wrappedMessage(ref: string, text: string): string {

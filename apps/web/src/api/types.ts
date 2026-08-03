@@ -5,6 +5,10 @@ export type {
   DirectoryListResponse,
   DirectorySearchResponse,
   SessionSummary,
+  RootSessionSummary,
+  ProjectSessionInventoryItem,
+  ProjectAutomationInventoryItem,
+  ProjectTodoRunNowResponse,
   SessionTreeResponse,
   SessionTreeNode,
   SessionTreeDiagnostic,
@@ -35,17 +39,14 @@ export type {
   AutomationStatus,
   AutomationTrigger,
   ProjectTodo,
+  AttachmentDescriptor,
+  ProjectTodoResponse,
+  ProjectTodoAttachmentListResponse,
+  ProjectTodoAttachmentMutationResponse,
   ProjectTodoStatus,
   ProjectTodoCreateInput,
   ProjectTodoUpdateInput,
   CreateProjectTodoSessionInput,
-  DashboardScope,
-  DashboardProjection,
-  DashboardRootSession,
-  DashboardExecution,
-  DashboardAutomation,
-  DashboardAutomationInvocation,
-  DashboardProjectError,
 } from "@archcode/protocol";
 
 import type {
@@ -57,10 +58,16 @@ import type {
   SessionSummary,
 } from "@archcode/protocol";
 
+export interface ProjectTodoPlan {
+  path: string;
+  markdown: string;
+  updatedAt: number;
+}
+
 /** Complete persisted Session file returned by the Session detail endpoint. */
 export type Session = ProtocolSession & Pick<SessionProjection, "compression">;
 
-/** Visible Session-owned Goal projection, returned by Session and dashboard APIs. */
+/** Visible Session-owned Goal projection returned by Session and Home APIs. */
 export type SessionGoalView = SessionGoal;
 
 export type SessionWithGoal = Session & { goal?: SessionGoalView };

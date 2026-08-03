@@ -713,6 +713,7 @@ interface ExecutionTurnProps {
   onButtonRef: (segmentId: string, button: HTMLButtonElement | null) => void;
   onArticleRef: (segmentId: string, article: HTMLElement | null) => void;
   onInspectModelAudit?: (messageId: string) => void;
+  focusClientRequestId?: string | null;
 }
 
 const ExecutionTurn = memo(function ExecutionTurn({
@@ -724,6 +725,7 @@ const ExecutionTurn = memo(function ExecutionTurn({
   onInspectModelAudit,
   onButtonRef,
   onArticleRef,
+  focusClientRequestId,
 }: ExecutionTurnProps) {
   executionTurnRenderObserverForTest?.(execution.id);
 
@@ -736,9 +738,11 @@ const ExecutionTurn = memo(function ExecutionTurn({
         <section
           key={segment.id}
           ref={(section) => onArticleRef(segment.id, section)}
-          className="flex min-w-0 scroll-mt-4 flex-col gap-3"
+          className={`flex min-w-0 scroll-mt-4 flex-col gap-3 ${segment.inputMessage?.clientRequestId === focusClientRequestId ? "rounded-md ring-2 ring-brand ring-offset-2 ring-offset-bg-base" : ""}`}
+          data-client-request-id={segment.inputMessage?.clientRequestId}
           data-execution-navigation-target={segment.id}
           data-work-segment={segment.id}
+          tabIndex={segment.inputMessage?.clientRequestId === focusClientRequestId ? -1 : undefined}
         >
           {segment.inputMessage && (
             <MsgUser
@@ -828,6 +832,7 @@ export interface ExecutionWorkstreamProps {
   sessionIdentity: { agentName: string; profile: ProfileName };
   agents: readonly AgentDescriptor[];
   onInspectModelAudit?: (messageId: string) => void;
+  focusClientRequestId?: string | null;
 }
 
 export function ExecutionWorkstream({
@@ -837,6 +842,7 @@ export function ExecutionWorkstream({
   sessionIdentity,
   agents,
   onInspectModelAudit,
+  focusClientRequestId,
 }: ExecutionWorkstreamProps) {
   const messages = useSessionStore(sessionId, (state) => state.messages, slug);
   const executions = useSessionStore(
@@ -896,6 +902,12 @@ export function ExecutionWorkstream({
   const segments = useMemo(
     () => projection.executions.flatMap((execution) => execution.segments),
     [projection.executions],
+  );
+  const focusedSegmentId = useMemo(
+    () => focusClientRequestId === null || focusClientRequestId === undefined
+      ? undefined
+      : segments.find((segment) => segment.inputMessage?.clientRequestId === focusClientRequestId)?.id,
+    [focusClientRequestId, segments],
   );
 
   const uiSnapshotRef = useRef(
@@ -1628,6 +1640,18 @@ export function ExecutionWorkstream({
     [clearPendingInputDirection, clearTouchMomentum, setFollowLatest],
   );
 
+  const appliedClientRequestFocusRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (focusClientRequestId === null || focusClientRequestId === undefined || focusedSegmentId === undefined) return;
+    const focusKey = `${focusClientRequestId}\u0000${focusedSegmentId}`;
+    if (appliedClientRequestFocusRef.current === focusKey) return;
+    const target = articleByExecutionIdRef.current.get(focusedSegmentId);
+    if (!target) return;
+    appliedClientRequestFocusRef.current = focusKey;
+    jumpToExecution(focusedSegmentId, "auto");
+    target.focus({ preventScroll: true });
+  }, [focusClientRequestId, focusedSegmentId, jumpToExecution]);
+
   const isEmpty =
     projection.items.length === 0 && projection.diagnostics.length === 0;
 
@@ -1690,6 +1714,7 @@ export function ExecutionWorkstream({
                         onButtonRef={registerWorkButton}
                         onArticleRef={registerExecutionArticle}
                         onInspectModelAudit={onInspectModelAudit}
+                        focusClientRequestId={focusClientRequestId}
                       />
                     );
                   }

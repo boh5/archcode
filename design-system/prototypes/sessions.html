@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ArchCode project Sessions prototype" />
+    <title>ArchCode — Sessions Prototype</title>
+    <link rel="stylesheet" href="./styles.css?v=theme-rail-1" />
+    <style>
+      [hidden] { display: none !important; }
+
+      .sessions-route {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+        background: var(--bg-base);
+      }
+
+      .sessions-commandbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+        min-height: 58px;
+        padding: 10px 24px;
+        border-bottom: 1px solid var(--border-default);
+        background: var(--bg-surface);
+      }
+
+      .sessions-commandbar .surface-filter {
+        flex: 0 1 420px;
+      }
+
+      .sessions-source-control {
+        display: grid;
+        grid-template-columns: 15px minmax(0, 1fr) 12px;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 142px;
+        width: 142px;
+        height: 36px;
+        padding: 0 8px;
+        border: 1px solid var(--control-border);
+        border-radius: 5px;
+        background: var(--bg-elevated);
+        color: var(--text-tertiary);
+        transition:
+          border-color var(--motion-hover) ease,
+          background var(--motion-hover) ease,
+          box-shadow var(--motion-hover) ease;
+      }
+
+      .sessions-source-control:hover { background: var(--bg-hover); }
+
+      .sessions-source-control:focus-within {
+        border-color: var(--brand);
+        box-shadow: var(--focus);
+      }
+
+      .sessions-source-control [data-icon] svg {
+        width: 14px;
+        height: 14px;
+      }
+
+      .sessions-source-chevron {
+        display: grid;
+        place-items: center;
+        pointer-events: none;
+        transform: rotate(90deg);
+      }
+
+      .sessions-source {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        outline: 0;
+        appearance: none;
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 620;
+      }
+
+      .new-session-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 0 14px;
+        border: 1px solid var(--brand);
+        border-radius: 5px;
+        background: var(--brand);
+        color: var(--brand-ink);
+        font-size: 11px;
+        font-weight: 680;
+        white-space: nowrap;
+        margin-left: auto;
+      }
+
+      .new-session-button:hover { border-color: var(--brand-hover); background: var(--brand-hover); }
+
+      .sessions-scroll {
+        min-height: 0;
+        overflow: auto;
+      }
+
+      .sessions-inner {
+        width: min(100%, 1080px);
+        margin: 0 auto;
+        padding: 24px 24px 56px;
+      }
+
+      .session-group + .session-group { margin-top: 28px; }
+
+      .session-group-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 28px;
+        padding: 0 3px 8px;
+      }
+
+      .session-group-header h2 {
+        font-size: 11px;
+        font-weight: 720;
+        letter-spacing: 0.055em;
+        text-transform: uppercase;
+      }
+
+      .session-group-header span {
+        color: var(--text-tertiary);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .session-rows { border-top: 1px solid var(--border-default); }
+
+      .session-row {
+        display: grid;
+        grid-template-columns: 14px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 11px;
+        min-height: 68px;
+        padding: 11px 9px;
+        border-bottom: 1px solid var(--border-subtle);
+        color: var(--text-secondary);
+      }
+
+      .session-row:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .session-orbit {
+        width: 10px;
+        height: 10px;
+        border: 1.5px solid var(--neutral);
+        border-radius: 50%;
+      }
+
+      .session-orbit.attention {
+        border-color: var(--warning);
+        background: var(--warning-field);
+        box-shadow: inset 0 0 0 2px var(--bg-base);
+      }
+
+      .session-orbit.running {
+        border-color: var(--signal);
+        border-top-color: transparent;
+        animation: session-spin 1.2s linear infinite;
+      }
+
+      .session-orbit.done {
+        position: relative;
+        border-color: var(--success);
+        background: var(--success-field);
+      }
+
+      .session-orbit.done::after {
+        position: absolute;
+        top: 1px;
+        left: 2px;
+        width: 4px;
+        height: 2px;
+        border-bottom: 1.5px solid var(--success);
+        border-left: 1.5px solid var(--success);
+        transform: rotate(-45deg);
+        content: "";
+      }
+
+      @keyframes session-spin { to { transform: rotate(360deg); } }
+
+      .session-row-copy { min-width: 0; }
+
+      .session-row-copy strong,
+      .session-row-copy small { display: block; }
+
+      .session-row-copy strong {
+        overflow: hidden;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 650;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-row-copy small {
+        margin-top: 5px;
+        overflow: hidden;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-source-label {
+        display: inline-flex;
+        align-items: center;
+        min-height: 18px;
+        margin-right: 5px;
+        padding: 0 5px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 4px;
+        background: var(--bg-muted);
+        color: var(--text-secondary);
+        font-size: 9px;
+        font-weight: 680;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        vertical-align: 1px;
+      }
+
+      .session-row-state {
+        justify-self: end;
+        color: var(--text-tertiary);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .session-row-state.attention { color: var(--warning); font-weight: 680; }
+      .session-row-state.running { color: var(--signal-foreground); }
+      .session-row-state.done { color: var(--success); }
+
+      .sessions-empty {
+        display: grid;
+        place-items: center;
+        min-height: 260px;
+        padding: 40px 16px;
+        color: var(--text-tertiary);
+        text-align: center;
+      }
+
+      .sessions-empty strong,
+      .sessions-empty span { display: block; }
+      .sessions-empty strong { color: var(--text-secondary); font-size: 13px; }
+      .sessions-empty span { margin-top: 6px; font-size: 11px; }
+
+      @media (max-width: 760px) {
+        .sessions-commandbar {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 8px;
+          padding: 10px 12px 12px;
+        }
+
+        .sessions-commandbar .surface-filter { grid-column: 1 / -1; }
+        .sessions-source-control,
+        .new-session-button { min-height: 44px; }
+        .sessions-source-control { width: 150px; }
+        .new-session-button { margin-left: 0; }
+        .sessions-inner { padding: 18px 12px 40px; }
+        .session-row { min-height: 74px; padding-right: 6px; padding-left: 6px; }
+      }
+
+      @media (max-width: 520px) {
+        .session-row {
+          grid-template-columns: 14px minmax(0, 1fr);
+        }
+
+        .session-row-state {
+          grid-column: 2;
+          justify-self: start;
+          margin-top: -3px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .session-orbit.running { animation: none; border-top-color: var(--signal); }
+      }
+    </style>
+    <script src="./app.js?v=rail-search-1" defer></script>
+  </head>
+  <body class="sessions-page todo-first-shell">
+    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+    <div class="app-shell">
+      <nav class="project-rail" aria-label="Projects">
+        <a class="brand-mark" href="./dashboard.html?v=home-shell-1" aria-label="Open Home"><span>A</span></a>
+        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
+        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
+        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
+        <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
+        <div class="rail-spacer"></div>
+        <div class="rail-separator"></div>
+        <button class="rail-icon rail-search" aria-label="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
+        <button class="rail-icon" aria-label="Open 3 requests needing attention" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
+        <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
+        <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
+      </nav>
+
+      <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
+        <header class="project-toolbar">
+          <div class="project-identity">
+            <span class="project-identity-mark">ar</span>
+            <div class="project-identity-copy"><h1>archcode</h1><span>/workspace/archcode</span></div>
+          </div>
+          <nav class="project-toolbar-nav" aria-label="Project pages">
+            <a href="./todos.html"><span>Todos</span></a>
+            <a href="./automations.html"><span>Automations</span></a>
+            <a class="active" href="./sessions.html" aria-current="page"><span>Sessions</span></a>
+          </nav>
+          <div class="project-toolbar-actions">
+            <button class="icon-button" aria-label="Project actions" data-project-actions data-action="打开项目操作" data-icon="more"></button>
+          </div>
+        </header>
+
+        <section class="sessions-route" aria-label="Sessions">
+          <div class="sessions-commandbar">
+            <label class="surface-filter">
+              <span data-icon="search"></span>
+              <span class="sr-only">Filter Sessions</span>
+              <input type="search" placeholder="Filter Sessions…" autocomplete="off" data-session-search />
+            </label>
+            <label class="sessions-source-control">
+              <span class="sr-only">Filter by source</span>
+              <span data-icon="filter"></span>
+              <select class="sessions-source" data-session-source-filter>
+                <option value="all">All sources</option>
+                <option value="todo">Todo</option>
+                <option value="automation">Automation</option>
+                <option value="direct">Direct</option>
+              </select>
+              <span class="sessions-source-chevron" data-icon="chevron"></span>
+            </label>
+            <button class="new-session-button" type="button" data-new-session>New Session</button>
+          </div>
+
+          <div class="sessions-scroll">
+            <div class="sessions-inner" data-session-groups></div>
+            <div class="sessions-empty" hidden data-sessions-empty>
+              <p><strong>No Sessions match this filter.</strong><span>Try another title, source name, or stable ID.</span></p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" role="status" aria-live="polite"></div>
+
+    <script>
+      const staticSessions = [
+        { group: "Needs you", tone: "attention", state: "Permission · now", source: "Todo", title: "Implementation Session", sessionId: "sess-profile-implementation", parent: "Model profile defaults per project", agent: "Lead → Build", href: "./session.html?todo=todo-profile-defaults&session=sess-profile-implementation" },
+        { group: "Needs you", tone: "attention", state: "Failed · 8m", source: "Automation", title: "Daily project health", sessionId: "sess-aut-health-failed", parent: "Daily project health check", agent: "Lead", href: "./session.html?automation=aut-health&session=sess-aut-health-failed&title=Daily%20project%20health%20check" },
+        { group: "Running", tone: "running", state: "12m", source: "Todo", title: "Live execution recovery", sessionId: "sess-live-recovery", parent: "Live execution recovery", agent: "Lead → Explore", href: "./session.html?todo=todo-live-recovery&session=sess-live-recovery" },
+        { group: "Running", tone: "running", state: "34s", source: "Direct", title: "Fix incorrect model type", sessionId: "sess-direct-model-type", parent: "Lead", agent: "Lead", href: "./session.html?session=sess-direct-model-type&title=Fix%20incorrect%20model%20type" },
+        { group: "Recent", tone: "done", state: "Completed · 1h", source: "Todo", title: "Review Session", sessionId: "sess-profile-review", parent: "Model profile defaults per project", agent: "Analyst", href: "./session.html?todo=todo-profile-defaults&session=sess-profile-review" },
+        { group: "Recent", tone: "done", state: "Completed · Yesterday", source: "Automation", title: "Regression check · Aug 1", sessionId: "sess-aut-regression-20260801", parent: "Regression check", agent: "Lead", href: "./session.html?automation=aut-regression&session=sess-aut-regression-20260801&title=Regression%20check" },
+        { group: "Recent", tone: "done", state: "Completed · Jul 30", source: "Direct", title: "Audit project context loading", sessionId: "sess-legacy-context-audit", parent: "Lead", agent: "Lead", href: "./session.html?session=sess-legacy-context-audit" },
+      ];
+
+      const groupOrder = ["Needs you", "Running", "Recent"];
+      const groupsRoot = document.querySelector("[data-session-groups]");
+      const emptyState = document.querySelector("[data-sessions-empty]");
+      const searchInput = document.querySelector("[data-session-search]");
+      const sourceFilter = document.querySelector("[data-session-source-filter]");
+
+      function escapeSessionsHtml(value) {
+        return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
+      }
+
+      function storedSessions() {
+        const records = window.readArchcodePrototypeSessions?.() || [];
+        return records.map((record) => {
+          const href = record.href || `./session.html?session=${encodeURIComponent(record.sessionId)}&title=${encodeURIComponent(record.title || "Untitled Session")}`;
+          const source = record.source || (record.automationId || href.includes("automation=") ? "Automation" : record.todoId || href.includes("todo=") ? "Todo" : "Direct");
+          const sourceMeta = String(record.meta || "").replace(/^(Todo|Automation|Direct) · /, "");
+          return {
+            group: record.group || "Running",
+            tone: record.tone || "running",
+            state: record.state === "Running" ? "Started now" : record.state || "Running",
+            source,
+            title: record.title || "Untitled Session",
+            sessionId: record.sessionId,
+            parent: record.parent || sourceMeta || (source === "Todo" ? "Started with Run now" : source === "Automation" ? "Manual invocation" : "Lead"),
+            agent: record.agent || "Lead",
+            href,
+          };
+        });
+      }
+
+      function sessionItems() {
+        const dynamic = storedSessions();
+        const dynamicIds = new Set(dynamic.map((item) => item.sessionId));
+        return [...dynamic, ...staticSessions.filter((item) => !dynamicIds.has(item.sessionId))];
+      }
+
+      function sourceContext(item) {
+        return item.source === "Direct" ? item.parent || item.agent || "Lead" : `${item.parent} · ${item.agent}`;
+      }
+
+      function renderSessions() {
+        const query = searchInput.value.trim().toLowerCase();
+        const selectedSource = sourceFilter.value;
+        const matches = sessionItems().filter((item) => {
+          const matchesSource = selectedSource === "all" || item.source.toLowerCase() === selectedSource;
+          const haystack = `${item.title} ${item.sessionId} ${item.source} ${item.parent} ${item.agent}`.toLowerCase();
+          return matchesSource && (!query || haystack.includes(query));
+        });
+
+        groupsRoot.innerHTML = groupOrder.map((group) => {
+          const items = matches.filter((item) => item.group === group);
+          if (!items.length) return "";
+          return `<section class="session-group" aria-labelledby="sessions-${group.toLowerCase().replaceAll(" ", "-")}">
+            <header class="session-group-header"><h2 id="sessions-${group.toLowerCase().replaceAll(" ", "-")}">${group}</h2><span>${items.length}</span></header>
+            <div class="session-rows">${items.map((item) => `<a class="session-row" href="${escapeSessionsHtml(item.href)}" aria-label="${escapeSessionsHtml(`${item.title}, ${item.source}, ${item.state}`)}">
+              <span class="session-orbit ${escapeSessionsHtml(item.tone)}"></span>
+              <span class="session-row-copy"><strong>${escapeSessionsHtml(item.title)}</strong><small><span class="session-source-label">${escapeSessionsHtml(item.source)}</span>${escapeSessionsHtml(sourceContext(item))}</small></span>
+              <span class="session-row-state ${escapeSessionsHtml(item.tone)}">${escapeSessionsHtml(item.state)}</span>
+            </a>`).join("")}</div>
+          </section>`;
+        }).join("");
+
+        groupsRoot.hidden = matches.length === 0;
+        emptyState.hidden = matches.length !== 0;
+      }
+
+      searchInput.addEventListener("input", renderSessions);
+      sourceFilter.addEventListener("change", renderSessions);
+
+      document.querySelector("[data-new-session]").addEventListener("click", () => {
+        const sessionId = `sess-direct-${Date.now()}`;
+        const title = "Untitled Session";
+        const href = `./session.html?session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(title)}&compose=1`;
+        const records = window.readArchcodePrototypeSessions?.() || [];
+        records.unshift({ group: "Recent", tone: "", state: "Idle", source: "Direct", title, sessionId, parent: "Lead", agent: "Lead", href });
+        localStorage.setItem("archcode-prototype-sessions", JSON.stringify(records.slice(0, 12)));
+        location.href = href;
+      });
+
+      renderSessions();
+    </script>
+  </body>
+</html>

@@ -1,14 +1,13 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type {
   AgentDescriptor,
-  DashboardProjection,
   SessionGoal,
   SessionSummary,
 } from "@archcode/protocol";
 import {
   agentsQueryOptions,
-  dashboardProjectionQueryOptions,
   diffQueryOptions,
+  projectTodoAttachmentsQueryOptions,
   queryKeys,
   sessionsQueryOptions,
 } from "./queries";
@@ -98,55 +97,6 @@ describe("web Session Goal query contracts", () => {
     ).toEqual(sessions);
   });
 
-  test("fetches the shared Dashboard projection in global scope", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const projection: DashboardProjection = {
-      scope: { kind: "global" },
-      sessions: [],
-      automations: [],
-      errors: [],
-    };
-    globalThis.fetch = mock(async (input) => {
-      expect(String(input)).toBe("/api/dashboard");
-      return jsonResponse(projection);
-    }) as unknown as typeof fetch;
-    const options = dashboardProjectionQueryOptions({ kind: "global" });
-    expect([...options.queryKey]).toEqual(["dashboard", "global"]);
-    expect(
-      await (
-        options as unknown as QueryOptionWithFn<DashboardProjection>
-      ).queryFn(),
-    ).toEqual(projection);
-  });
-
-  test("fetches the same Dashboard projection contract in project scope", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const projection: DashboardProjection = {
-      scope: { kind: "project", projectSlug: "demo space" },
-      sessions: [],
-      automations: [],
-      errors: [],
-    };
-    globalThis.fetch = mock(async (input) => {
-      expect(String(input)).toBe("/api/projects/demo%20space/dashboard");
-      return jsonResponse(projection);
-    }) as unknown as typeof fetch;
-    const options = dashboardProjectionQueryOptions({
-      kind: "project",
-      projectSlug: "demo space",
-    });
-    expect([...options.queryKey]).toEqual([
-      "dashboard",
-      "project",
-      "demo space",
-    ]);
-    expect(
-      await (
-        options as unknown as QueryOptionWithFn<DashboardProjection>
-      ).queryFn(),
-    ).toEqual(projection);
-  });
-
   test("keeps Diff scoped to a Session", async () => {
     globalThis.document = { cookie: "" } as Document;
     globalThis.fetch = mock(async (input) => {
@@ -160,5 +110,21 @@ describe("web Session Goal query contracts", () => {
         >
       ).queryFn(),
     ).toEqual([]);
+  });
+});
+
+describe("Todo reference query contract", () => {
+  test("reads the authoritative Todo revision and ordered descriptors", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const response = { todoRevision: 4, attachments: [{ id: "attachment-1", name: "brief.pdf", mediaType: "application/pdf", sizeBytes: 5, kind: "file" as const }] };
+    globalThis.fetch = mock(async (input) => {
+      expect(String(input)).toBe(`/api/projects/${slug}/todos/todo-1/attachments`);
+      return jsonResponse(response);
+    }) as unknown as typeof fetch;
+    expect(
+      await (
+        projectTodoAttachmentsQueryOptions(slug, "todo-1") as unknown as QueryOptionWithFn<typeof response>
+      ).queryFn(),
+    ).toEqual(response);
   });
 });

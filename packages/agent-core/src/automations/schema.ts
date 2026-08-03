@@ -60,8 +60,11 @@ export const AutomationActionSchema = z.discriminatedUnion("kind", [
 export const AutomationSchema = z.strictObject({
   id: z.uuid(),
   projectSlug: NonEmptyTextSchema,
-  createdFromSessionId: z.uuid(),
-  projectTodoId: z.uuid().optional(),
+  origin: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("direct") }),
+    z.strictObject({ kind: z.literal("session"), sessionId: z.uuid() }),
+    z.strictObject({ kind: z.literal("todo"), todoId: z.uuid(), sessionId: z.uuid() }),
+  ]),
   name: AutomationNameSchema,
   trigger: AutomationTriggerSchema,
   action: AutomationActionSchema,

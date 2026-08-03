@@ -2,31 +2,24 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   WORKBENCH_PREFERENCES_KEY,
   clampInspectorWidth,
-  clampSidebarWidth,
   readWorkbenchPreferences,
 } from "../lib/workbench-layout";
 import { focusElementAfterLayoutChange } from "../lib/focus-control";
 
 export interface WorkbenchLayoutValue {
-  sidebarCollapsed: boolean;
   inspectorCollapsed: boolean;
-  mobileNavigationOpen: boolean;
   mobileInspectorOpen: boolean;
   isMobile: boolean;
   inspectorExpanded: boolean;
   mobileInspectorReturnFocusRef: RefObject<HTMLElement | null>;
-  toggleSidebar: () => void;
   toggleInspector: () => void;
   toggleInspectorSurface: () => void;
   openInspectorSurface: () => void;
-  setMobileNavigationOpen: (open: boolean) => void;
   setMobileInspectorOpen: (open: boolean) => void;
 }
 
 export interface WorkbenchPanelSizesValue {
-  sidebarWidth: number;
   inspectorWidth: number;
-  setSidebarWidth: (width: number) => void;
   setInspectorWidth: (width: number) => void;
 }
 
@@ -43,7 +36,6 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
       return readWorkbenchPreferences(null);
     }
   });
-  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => (
     typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -51,9 +43,7 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
       : false
   ));
   const mobileInspectorReturnFocusRef = useRef<HTMLElement | null>(null);
-  const mobileNavigationOpenRef = useRef(mobileNavigationOpen);
   const mobileInspectorOpenRef = useRef(mobileInspectorOpen);
-  mobileNavigationOpenRef.current = mobileNavigationOpen;
   mobileInspectorOpenRef.current = mobileInspectorOpen;
 
   useEffect(() => {
@@ -68,11 +58,8 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
       if (mobileFocusSelector) focusElementAfterLayoutChange(mobileFocusSelector, 2);
       if (!query.matches) {
         const focusSelector = mobileInspectorOpenRef.current
-          ? '#context-inspector [role="tab"][tabindex="0"], button[data-state="collapsed"][aria-controls~="context-inspector"]'
-          : mobileNavigationOpenRef.current
-            ? 'button[aria-label="Open dashboard"]'
-            : null;
-        setMobileNavigationOpen(false);
+          ? '#context-inspector [role="tab"][tabindex="0"], button[aria-controls~="context-inspector"]'
+          : null;
         setMobileInspectorOpen(false);
         if (focusSelector) focusElementAfterLayoutChange(focusSelector, 2);
       }
@@ -93,17 +80,9 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timeout);
   }, [preferences]);
 
-  const setSidebarWidth = useCallback((width: number) => setPreferences((current) => ({
-    ...current,
-    sidebarWidth: clampSidebarWidth(width),
-  })), []);
   const setInspectorWidth = useCallback((width: number) => setPreferences((current) => ({
     ...current,
     inspectorWidth: clampInspectorWidth(width),
-  })), []);
-  const toggleSidebar = useCallback(() => setPreferences((current) => ({
-    ...current,
-    sidebarCollapsed: !current.sidebarCollapsed,
   })), []);
   const toggleInspector = useCallback(() => setPreferences((current) => ({
     ...current,
@@ -120,7 +99,6 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
       if (!mobileInspectorOpen && document.activeElement instanceof HTMLElement) {
         mobileInspectorReturnFocusRef.current = document.activeElement;
       }
-      setMobileNavigationOpen(false);
       setMobileInspectorOpen((open) => !open);
       return;
     }
@@ -131,7 +109,6 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
       if (document.activeElement instanceof HTMLElement) {
         mobileInspectorReturnFocusRef.current = document.activeElement;
       }
-      setMobileNavigationOpen(false);
       setMobileInspectorOpen(true);
       return;
     }
@@ -141,38 +118,29 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
   }, [isMobile]);
 
   const layoutValue = useMemo<WorkbenchLayoutValue>(() => ({
-    sidebarCollapsed: preferences.sidebarCollapsed,
     inspectorCollapsed: preferences.inspectorCollapsed,
-    mobileNavigationOpen,
     mobileInspectorOpen,
     isMobile,
     inspectorExpanded: isMobile ? mobileInspectorOpen : !preferences.inspectorCollapsed,
     mobileInspectorReturnFocusRef,
-    toggleSidebar,
     toggleInspector,
     toggleInspectorSurface,
     openInspectorSurface,
-    setMobileNavigationOpen,
     setMobileInspectorOpen: updateMobileInspectorOpen,
   }), [
     isMobile,
     mobileInspectorOpen,
-    mobileNavigationOpen,
     preferences.inspectorCollapsed,
-    preferences.sidebarCollapsed,
     openInspectorSurface,
     toggleInspector,
     toggleInspectorSurface,
-    toggleSidebar,
     updateMobileInspectorOpen,
   ]);
 
   const panelSizesValue = useMemo<WorkbenchPanelSizesValue>(() => ({
-    sidebarWidth: preferences.sidebarWidth,
     inspectorWidth: preferences.inspectorWidth,
-    setSidebarWidth,
     setInspectorWidth,
-  }), [preferences.inspectorWidth, preferences.sidebarWidth, setInspectorWidth, setSidebarWidth]);
+  }), [preferences.inspectorWidth, setInspectorWidth]);
 
   return (
     <WorkbenchLayoutContext.Provider value={layoutValue}>
@@ -199,12 +167,11 @@ export function useWorkbenchLayout(): WorkbenchLayoutValue {
   return value;
 }
 
-export function useCloseMobileSurfacesOnNavigation(navigationKey: string): void {
-  const { setMobileInspectorOpen, setMobileNavigationOpen } = useWorkbenchLayout();
+export function useCloseMobileInspectorOnNavigation(navigationKey: string): void {
+  const { setMobileInspectorOpen } = useWorkbenchLayout();
   useEffect(() => {
-    setMobileNavigationOpen(false);
     setMobileInspectorOpen(false);
-  }, [navigationKey, setMobileInspectorOpen, setMobileNavigationOpen]);
+  }, [navigationKey, setMobileInspectorOpen]);
 }
 
 function getMobileBreakpointFocusSelector(activeElement: HTMLElement): string | null {
@@ -212,13 +179,7 @@ function getMobileBreakpointFocusSelector(activeElement: HTMLElement): string | 
     activeElement.closest("#context-inspector")
     || activeElement.matches('button[aria-controls~="context-inspector"], [role="separator"][aria-controls="context-inspector"]')
   ) {
-    return 'button[aria-label="Open context inspector"]';
-  }
-  if (
-    activeElement.closest('nav[aria-label="Projects"], #project-sidebar')
-    || activeElement.matches('button[aria-controls="project-sidebar"], [role="separator"][aria-controls="project-sidebar"]')
-  ) {
-    return 'button[aria-label="Open work navigation"]';
+    return 'button[aria-controls~="mobile-context-inspector"]';
   }
   return null;
 }

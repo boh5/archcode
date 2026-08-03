@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { AttachmentDescriptor } from "@archcode/protocol";
 import { silentLogger } from "../logger";
 import { SessionStoreManager } from "../store/session-store-manager";
-import { resolveCommittedAttachmentReadPaths } from "./read-paths";
+import { resolveAttachmentReadPaths } from "./read-paths";
 
 const WORKSPACE = join("/tmp", "archcode-attachment-read-paths");
 
@@ -17,11 +17,11 @@ function descriptor(name: string): AttachmentDescriptor {
   };
 }
 
-describe("resolveCommittedAttachmentReadPaths", () => {
+describe("resolveAttachmentReadPaths", () => {
   test("authorizes only consistent completed canonical attachment parts", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = crypto.randomUUID();
-    const store = manager.create(rootSessionId, WORKSPACE, { agentName: "lead" });
+    const store = manager.create(rootSessionId, WORKSPACE, { source: { kind: "direct" }, agentName: "lead" });
     const committed = descriptor("committed.bin");
     const pending = descriptor("pending.bin");
     const incomplete = descriptor("incomplete.bin");
@@ -72,7 +72,7 @@ describe("resolveCommittedAttachmentReadPaths", () => {
       input: { attachmentId: string },
       expected: AttachmentDescriptor,
     ) => join(WORKSPACE, input.attachmentId, expected.name));
-    const paths = await resolveCommittedAttachmentReadPaths({
+    const paths = await resolveAttachmentReadPaths({
       workspaceRoot: WORKSPACE,
       rootSessionId,
       storeManager: manager,
@@ -87,7 +87,7 @@ describe("resolveCommittedAttachmentReadPaths", () => {
   test("omits objects rejected by storage validation", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = crypto.randomUUID();
-    const store = manager.create(rootSessionId, WORKSPACE, { agentName: "lead" });
+    const store = manager.create(rootSessionId, WORKSPACE, { source: { kind: "direct" }, agentName: "lead" });
     const committed = descriptor("missing.bin");
     store.getState().append({
       type: "session.messages_committed",
@@ -107,7 +107,7 @@ describe("resolveCommittedAttachmentReadPaths", () => {
       }],
     });
 
-    const paths = await resolveCommittedAttachmentReadPaths({
+    const paths = await resolveAttachmentReadPaths({
       workspaceRoot: WORKSPACE,
       rootSessionId,
       storeManager: manager,
@@ -119,4 +119,38 @@ describe("resolveCommittedAttachmentReadPaths", () => {
     });
     expect(paths.size).toBe(0);
   });
+
+  test("recomputes the current Todo path set at each tool boundary", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = crypto.randomUUID();
+    manager.create(rootSessionId, WORKSPACE, {
+      source: { kind: "todo", todoId: crypto.randomUUID(), entry: "work" },
+      agentName: "lead",
+    });
+    const first = descriptor("first.pdf");
+    const second = descriptor("second.txt");
+    let current = [first, second];
+    const resolveCurrentTodoAttachments = async () => ({
+      attachments: current,
+      resolveReadPath: async (item: AttachmentDescriptor) => join(WORKSPACE, item.name),
+      readVerified: async () => { throw new Error("unused"); },
+    });
+    const input = {
+      workspaceRoot: WORKSPACE,
+      rootSessionId,
+      storeManager: manager,
+      attachments: { resolveReadPath: async () => { throw new Error("unused"); } },
+      resolveCurrentTodoAttachments,
+    };
+
+    expect(await resolveAttachmentReadPaths(input)).toEqual(new Set([
+      join(WORKSPACE, first.name),
+      join(WORKSPACE, second.name),
+    ]));
+    current = [second];
+    expect(await resolveAttachmentReadPaths(input)).toEqual(new Set([
+      join(WORKSPACE, second.name),
+    ]));
+  });
+
 });

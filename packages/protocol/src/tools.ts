@@ -2,6 +2,7 @@
 
 // File I/O
 export const TOOL_FILE_READ = "file_read";
+export const TOOL_PDF_READ = "pdf_read";
 export const TOOL_FILE_WRITE = "file_write";
 export const TOOL_FILE_EDIT = "file_edit";
 
@@ -77,6 +78,7 @@ export const TOOL_COMPRESS = "compress";
 // ─── BuiltinToolName Union (derived from constants) ───
 export type BuiltinToolName =
   | typeof TOOL_FILE_READ
+  | typeof TOOL_PDF_READ
   | typeof TOOL_FILE_WRITE
   | typeof TOOL_FILE_EDIT
   | typeof TOOL_GREP
@@ -142,6 +144,7 @@ export type ToolCategory =
 // ─── Category Map (exhaustive — covers every BuiltinToolName) ───
 export const TOOL_CATEGORY_MAP = {
   [TOOL_FILE_READ]: "fileRead",
+  [TOOL_PDF_READ]: "fileRead",
   [TOOL_FILE_WRITE]: "fileWrite",
   [TOOL_FILE_EDIT]: "fileWrite",
   [TOOL_GREP]: "search",

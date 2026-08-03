@@ -257,7 +257,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(undefined, storeManager);
     const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
 
     const [first, second] = await Promise.all([
       manager.getOrCreate(workspaceRoot, sessionId),
@@ -272,7 +272,7 @@ describe("SessionAgentManager", () => {
     const manager = createManager(undefined, storeManager);
     const workspaceRoot = TEST_WORKSPACE_ROOT;
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+    storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     await storeManager.flushSession(sessionId, workspaceRoot);
 
     manager.dispose(workspaceRoot, sessionId);
@@ -291,7 +291,7 @@ describe("SessionAgentManager", () => {
       const manager = createManager(25, storeManager);
       const workspaceRoot = TEST_WORKSPACE_ROOT;
       const sessionId = crypto.randomUUID();
-      storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+      storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
       await storeManager.flushSession(sessionId, workspaceRoot);
 
       manager.dispose(workspaceRoot, sessionId);
@@ -329,6 +329,7 @@ describe("SessionAgentManager", () => {
         agentName: depth === 0 ? "lead" : "explore",
         activeSkillNames: [IDENTITY_SKILL_NAME],
         rootSessionId,
+        ...(depth === 0 ? { source: { kind: "direct" as const } } : {}),
         ...(depth === 0 ? {} : {
           parentSessionId: rootSessionId,
           delegationRequest: childRequest,

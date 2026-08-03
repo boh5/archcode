@@ -55,7 +55,7 @@ function renderMenuItems(
 
 /**
  * Dropdown-triggered project action menu.
- * Use in Sidebar header button — renders a DropdownMenu with an explicit trigger element.
+ * Used by the ProjectToolbar action button with an explicit trigger element.
  */
 export function ProjectActionDropdown({
   project,

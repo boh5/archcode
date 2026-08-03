@@ -16,11 +16,12 @@ import type {
   SessionModelSelection,
   SessionTreeNode,
   SessionTreeResponse,
-  ProjectTodoSessionSource,
+  RootSessionSource,
   NormalizedUsage,
   SessionExecutionRecord,
   ExecutionLifecycleEvent,
   SessionProjection,
+  ProjectSessionInventoryItem,
   AssistantOutputPart,
   ReasoningPart,
   ToolPart,
@@ -128,7 +129,7 @@ export interface CreateSessionOptions {
   readonly delegationRequest?: DelegationRequest;
   readonly modelSelection?: SessionModelSelection;
   readonly title?: string;
-  readonly projectTodo?: ProjectTodoSessionSource;
+  readonly source?: RootSessionSource;
 }
 
 export interface SessionCwdReference {
@@ -205,7 +206,7 @@ export class SessionStoreManager {
       rootSessionId,
       parentSessionId: options.parentSessionId,
       agentName: options.agentName,
-      projectTodo: options.projectTodo,
+      source: options.source,
     });
     if (identityError !== undefined) {
       throw new Error(identityError);
@@ -272,7 +273,7 @@ export class SessionStoreManager {
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
       parentSessionId,
-      projectTodo: options.projectTodo === undefined ? undefined : { ...options.projectTodo },
+      source: options.source === undefined ? undefined : { ...options.source },
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -648,7 +649,7 @@ export class SessionStoreManager {
       agentName: options.agentName,
       activeSkillNames: [...new Set(options.activeSkillNames ?? [])],
       cwd: options.cwd ?? workspaceRoot,
-      projectTodo: options.projectTodo,
+      source: options.source,
     } as const;
     const actual = {
       sessionId: session.sessionId,
@@ -657,7 +658,7 @@ export class SessionStoreManager {
       agentName: session.agentName,
       activeSkillNames: session.activeSkillNames,
       cwd: session.cwd,
-      projectTodo: session.projectTodo,
+      source: session.source,
     } as const;
 
     for (const field of Object.keys(expected) as Array<keyof typeof expected>) {
@@ -665,8 +666,8 @@ export class SessionStoreManager {
         ? sameResolvedPath(String(expected[field]), String(actual[field]))
         : field === "activeSkillNames"
           ? JSON.stringify(expected.activeSkillNames) === JSON.stringify(actual.activeSkillNames)
-          : field === "projectTodo"
-            ? JSON.stringify(expected.projectTodo) === JSON.stringify(actual.projectTodo)
+          : field === "source"
+            ? sameSessionSource(expected.source, actual.source)
         : expected[field] === actual[field];
       if (!matches) {
         throw new SessionFileIdentityConflictError(sessionId, field, expected[field], actual[field]);
@@ -1108,6 +1109,10 @@ export class SessionStoreManager {
     return await sessionFileInternals.listSessionSummaries(workspaceRoot);
   }
 
+  async listSessionInventory(workspaceRoot: string): Promise<ProjectSessionInventoryItem[]> {
+    return await sessionFileInternals.listSessionInventory(workspaceRoot);
+  }
+
   /**
    * Resolves authoritative delegation depth from the persisted parent chain.
    * This intentionally ignores child-link and tool-batch display metadata.
@@ -1317,7 +1322,7 @@ export class SessionStoreManager {
         activeSkillNames: parsed.activeSkillNames,
         modelSelection: parsed.modelSelection,
         ...(parsed.title === null ? {} : { title: parsed.title }),
-        ...(parsed.projectTodo === undefined ? {} : { projectTodo: parsed.projectTodo }),
+        ...(parsed.source === undefined ? {} : { source: parsed.source }),
       });
       const nonterminalExecution = parsed.executions.find(
         (execution) => execution.status === "running" || execution.status === "suspended",
@@ -1354,7 +1359,7 @@ export class SessionStoreManager {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         goal: parsed.goal,
-        projectTodo: parsed.projectTodo,
+        source: parsed.source,
         isRunning: nonterminalExecution?.status === "running",
         isStreamingModel: false,
         currentExecutionId: nonterminalExecution?.id,
@@ -1459,6 +1464,21 @@ export class SessionStoreManager {
       this.#registerRootSessionId(summary.sessionId, workspaceRoot, summary.rootSessionId);
     }
   }
+}
+
+function sameSessionSource(
+  expected: HydratedSessionFile["source"],
+  actual: HydratedSessionFile["source"],
+): boolean {
+  if (expected?.kind !== actual?.kind) return false;
+  if (expected === undefined || actual === undefined) return expected === actual;
+  if (expected.kind === "direct" && actual.kind === "direct") return true;
+  if (expected.kind === "todo" && actual.kind === "todo") {
+    return expected.todoId === actual.todoId && expected.entry === actual.entry;
+  }
+  return expected.kind === "automation" && actual.kind === "automation"
+    && expected.automationId === actual.automationId
+    && expected.todoId === actual.todoId;
 }
 
 function reduceStoreEvent(
@@ -1599,7 +1619,7 @@ function toSessionSummary(file: HydratedSessionFile): SessionSummary {
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
     ...(file.goal === undefined ? {} : { goal: file.goal }),
-    ...(file.projectTodo === undefined ? {} : { projectTodo: file.projectTodo }),
+    ...(file.source === undefined ? {} : { source: file.source }),
     agentName: file.agentName,
     profile: resolveSessionProfile(file),
     activeSkillNames: file.activeSkillNames,

@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   INSPECTOR_DEFAULT_WIDTH,
-  SIDEBAR_DEFAULT_WIDTH,
   WORKBENCH_PREFERENCES_KEY,
   clampInspectorWidth,
-  clampSidebarWidth,
   getInspectorKind,
   getWorkbenchSurfaceNavigationKey,
   readWorkbenchPreferences,
@@ -16,10 +14,7 @@ describe("workbench layout", () => {
     expect(WORKBENCH_PREFERENCES_KEY).toBe("archcode.workbench.layout");
   });
 
-  test("clamps resizable panel widths to their supported ranges", () => {
-    expect(clampSidebarWidth(120)).toBe(210);
-    expect(clampSidebarWidth(320)).toBe(320);
-    expect(clampSidebarWidth(600)).toBe(340);
+  test("clamps the resizable inspector width to its supported range", () => {
     expect(clampInspectorWidth(120)).toBe(280);
     expect(clampInspectorWidth(420)).toBe(420);
     expect(clampInspectorWidth(900)).toBe(460);
@@ -51,27 +46,19 @@ describe("workbench layout", () => {
 
   test("falls back safely when persisted preferences are missing or malformed", () => {
     expect(readWorkbenchPreferences(null)).toEqual({
-      sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
       inspectorWidth: INSPECTOR_DEFAULT_WIDTH,
-      sidebarCollapsed: false,
       inspectorCollapsed: false,
     });
-    expect(readWorkbenchPreferences("not-json").sidebarWidth).toBe(SIDEBAR_DEFAULT_WIDTH);
-    expect(readWorkbenchPreferences(JSON.stringify({ sidebarWidth: null, inspectorWidth: null }))).toEqual({
-      sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
+    expect(readWorkbenchPreferences("not-json").inspectorWidth).toBe(INSPECTOR_DEFAULT_WIDTH);
+    expect(readWorkbenchPreferences(JSON.stringify({ inspectorWidth: null }))).toEqual({
       inspectorWidth: INSPECTOR_DEFAULT_WIDTH,
-      sidebarCollapsed: false,
       inspectorCollapsed: false,
     });
     expect(readWorkbenchPreferences(JSON.stringify({
-      sidebarWidth: 999,
       inspectorWidth: 10,
-      sidebarCollapsed: true,
       inspectorCollapsed: "no",
     }))).toEqual({
-      sidebarWidth: 340,
       inspectorWidth: 280,
-      sidebarCollapsed: true,
       inspectorCollapsed: false,
     });
   });

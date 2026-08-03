@@ -15,11 +15,11 @@ const input = {
   action: { kind: "start_session" as const, message: "Review the project", location: "project" as const },
 };
 
-function makeAutomation(createdFromSessionId: string): Automation {
+function makeAutomation(sourceSessionId: string): Automation {
   return {
     id: "11111111-1111-4111-8111-111111111111",
     projectSlug: "test-project",
-    createdFromSessionId,
+    origin: { kind: "session", sessionId: sourceSessionId },
     ...input,
     status: "active",
     createdAt: "2026-07-13T00:00:00.000Z",
@@ -29,7 +29,7 @@ function makeAutomation(createdFromSessionId: string): Automation {
 
 function makeContext(
   overrides: Partial<SessionStoreState> = {},
-  createAutomation = mock(async (creation: { createdFromSessionId: string }) => makeAutomation(creation.createdFromSessionId)),
+  createAutomation = mock(async (creation: { sourceSessionId: string }) => makeAutomation(creation.sourceSessionId)),
 ): { ctx: ToolExecutionContext; createAutomation: typeof createAutomation } {
   const store = createMockStore({
     sessionId: "22222222-2222-4222-8222-222222222222",
@@ -61,9 +61,8 @@ function makeContext(
 }
 
 describe("automation_create", () => {
-  test("model input is strict and excludes provenance", () => {
+  test("model input accepts the strict Automation definition", () => {
     expect(AutomationCreateSchema.safeParse(input).success).toBe(true);
-    expect(AutomationCreateSchema.safeParse({ ...input, createdFromSessionId: crypto.randomUUID() }).success).toBe(false);
     expect(AutomationCreateSchema.safeParse({ ...input, status: "active" }).success).toBe(false);
   });
 
@@ -75,14 +74,14 @@ describe("automation_create", () => {
     expect(result.isError).toBe(false);
     expect(createAutomation).toHaveBeenCalledWith({
       ...input,
-      createdFromSessionId: "22222222-2222-4222-8222-222222222222",
+      sourceSessionId: "22222222-2222-4222-8222-222222222222",
     });
   });
 
   test("allows Todo Work and Automation setup roots", async () => {
     for (const entry of ["work", "automation"] as const) {
       const { ctx, createAutomation } = makeContext({
-        projectTodo: { todoId: crypto.randomUUID(), entry },
+        source: { kind: "todo", todoId: crypto.randomUUID(), entry },
       });
 
       const result = await automationCreateTool.execute(input, ctx);
@@ -99,7 +98,7 @@ describe("automation_create", () => {
       { agentName: "explore" as const },
       {
         agentName: "discussion" as const,
-        projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const },
+        source: { kind: "todo" as const, todoId: crypto.randomUUID(), entry: "discussion" as const },
       },
     ]) {
       const { ctx, createAutomation } = makeContext(override);

@@ -1,6 +1,4 @@
-import { useMemo, useRef, useState } from "react";
-import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -25,28 +23,52 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  isSessionMessageUnavailableCode,
-  type RequestedModelSelection,
-} from "@archcode/protocol";
+import { projectTodoContentExcerpt } from "@archcode/protocol";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Archive, Check, FileText, GripVertical, LoaderCircle, MessageCircle, Plus, RotateCcw, Save, Send, X } from "lucide-react";
+import { GripVertical, Plus, Search } from "lucide-react";
 import { ApiError } from "../api/client";
-import { useCreateProjectTodo, useCreateProjectTodoSession, usePostMessage, useUpdateProjectTodo } from "../api/mutations";
-import { sessionQueryOptions, useAutomations, useProjectTodos, useSessions } from "../api/queries";
-import type { Automation, ProjectTodo, ProjectTodoStatus, ProjectTodoUpdateInput, SessionSummary } from "../api/types";
-import { STATUS_TONE_CLASS, type StatusTone } from "../lib/status-visuals";
+import { useCreateProjectTodo, useRunProjectTodoNow, useUpdateProjectTodo } from "../api/mutations";
+import { useAutomationInventory, useProjectTodos, useSessionInventory } from "../api/queries";
+import type { ProjectTodo } from "../api/types";
+import { createClientUuid } from "../lib/client-uuid";
+import { STATUS_TONE_CLASS } from "../lib/status-visuals";
+import { StatusGlyph } from "../components/primitives/StatusGlyph";
+import { useAttentionVisibleScopedHitl, useHitlProjectInitialized } from "../store/hitl-store";
+import { runtimeFamilyKey, useSessionRuntimeFamilies, useSessionRuntimeInitialized } from "../store/session-runtime-store";
 import {
+  deriveProjectTodoOperationalState,
   PROJECT_TODO_LANE_PRESENTATIONS,
-  presentProjectTodoCard,
+  type ProjectTodoAttentionLabel,
   type ProjectTodoLane,
+  type ProjectTodoOperationalState,
 } from "./project-todo-presentation";
-import { SidebarToggleButton } from "../components/features/SidebarToggleButton";
 
 type View = "board" | "rejected" | "archived";
 type BoardOrder = Record<ProjectTodoLane, string[]>;
 const LANES: readonly ProjectTodoLane[] = ["idea", "ready", "in_progress", "done"];
-export const TODO_PLAN_ACTION_LABEL = "Generate / Improve Plan";
+
+interface ProjectTodoRunNowRecovery {
+  readonly todoId: string;
+  readonly sessionId?: string;
+  readonly message: string;
+  readonly content?: string;
+}
+
+export function projectTodoRunNowRecovery(cause: unknown): ProjectTodoRunNowRecovery | null {
+  if (!(cause instanceof ApiError) || cause.details === null || typeof cause.details !== "object") return null;
+  const details = cause.details as Record<string, unknown>;
+  if (details.scopeCode !== "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED" || typeof details.todoId !== "string") return null;
+  return {
+    todoId: details.todoId,
+    ...(typeof details.sessionId === "string" ? { sessionId: details.sessionId } : {}),
+    message: cause.message,
+  };
+}
+
+export function todoFlatListEmptyMessage(view: Exclude<View, "board">, filtered: boolean): string {
+  const label = view === "rejected" ? "rejected" : "archived";
+  return filtered ? `No ${label} Todos match this filter.` : `No ${label} Todos yet.`;
+}
 
 export function deriveProjectTodoGroups(todos: readonly ProjectTodo[]): Record<ProjectTodoLane, ProjectTodo[]> {
   const groups: Record<ProjectTodoLane, ProjectTodo[]> = { idea: [], ready: [], in_progress: [], done: [] };
@@ -91,86 +113,84 @@ export const pointerFirstCollisionDetection: CollisionDetection = (args) => {
     : pointerWithin(args);
 };
 
-export function continueWorkUpdateInput(todo: ProjectTodo): ProjectTodoUpdateInput | undefined {
-  return todo.status === "ready"
-    ? { expectedRevision: todo.revision, status: "in_progress" }
-    : undefined;
-}
-
-export function planWorkCommand(todoId: string): string {
-  return `/skill use plan-work Create or improve the implementation Plan for this bound Todo at .archcode/plans/${todoId}.md. Preserve one Plan file, read it before editing when it exists, and do not start implementation.`;
-}
-
-export async function coordinateTodoPlanWork(input: {
-  todoId: string;
-  existingDiscussionSessionId?: string;
-  createPlanDiscussion: () => Promise<string>;
-  loadExistingDiscussion: (sessionId: string) => Promise<{
-    isBusy: boolean;
-    requestedModelSelection: RequestedModelSelection;
-  } | undefined>;
-  sendCommand: (
-    sessionId: string,
-    command: string,
-    selection: RequestedModelSelection,
-  ) => Promise<"sent" | "unavailable">;
-  openSession: (sessionId: string) => void;
-}): Promise<string> {
-  const createAndOpen = async (): Promise<string> => {
-    const sessionId = await input.createPlanDiscussion();
-    input.openSession(sessionId);
-    return sessionId;
-  };
-
-  if (input.existingDiscussionSessionId === undefined) {
-    return createAndOpen();
-  }
-  const sessionId = input.existingDiscussionSessionId;
-  const existing = await input.loadExistingDiscussion(sessionId);
-  if (existing === undefined || existing.isBusy) {
-    return createAndOpen();
-  }
-  const disposition = await input.sendCommand(
-    sessionId,
-    planWorkCommand(input.todoId),
-    existing.requestedModelSelection,
-  );
-  if (disposition === "unavailable") {
-    return createAndOpen();
-  }
-  input.openSession(sessionId);
-  return sessionId;
-}
-
-function isUnavailablePlanDiscussion(cause: unknown): boolean {
-  if (!(cause instanceof ApiError)) return false;
-  if (cause.status === 404) return cause.code === "SESSION_NOT_FOUND";
-  if (cause.status !== 409 || typeof cause.details !== "object" || cause.details === null) return false;
-  const scopeCode = Reflect.get(cause.details, "scopeCode");
-  return isSessionMessageUnavailableCode(scopeCode);
-}
-
 export function ProjectTodosRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: todos = [], isLoading, error } = useProjectTodos(slug);
-  const { data: sessions = [] } = useSessions(slug);
-  const { data: automations = [] } = useAutomations(slug);
+  const sessionInventory = useSessionInventory(slug);
+  const automationInventory = useAutomationInventory(slug);
+  const sessions = useMemo(() => (sessionInventory.data ?? []).map((item) => item.session), [sessionInventory.data]);
+  const automations = useMemo(() => (automationInventory.data ?? []).map((item) => item.automation), [automationInventory.data]);
+  const runtimeFamilies = useSessionRuntimeFamilies();
+  const runtimeInitialized = useSessionRuntimeInitialized(slug);
+  const attention = useAttentionVisibleScopedHitl([slug]);
+  const hitlInitialized = useHitlProjectInitialized(slug);
   const createTodo = useCreateProjectTodo();
+  const runNow = useRunProjectTodoNow();
   const updateTodo = useUpdateProjectTodo();
-  const createSession = useCreateProjectTodoSession();
-  const [view, setView] = useState<View>("board");
-  const [newTitle, setNewTitle] = useState("");
+  const requestedView = searchParams.get("view");
+  const view: View = requestedView === "rejected" || requestedView === "archived" ? requestedView : "board";
+  const query = searchParams.get("q") ?? "";
+  const [newContent, setNewContent] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  const [runNowRecovery, setRunNowRecovery] = useState<ProjectTodoRunNowRecovery | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [temporaryOrder, setTemporaryOrder] = useState<BoardOrder | null>(null);
   const [reorderError, setReorderError] = useState<string | null>(null);
-  const selectedId = searchParams.get("todo");
-  const selectedTodo = todos.find((todo) => todo.id === selectedId);
-  const canonicalOrder = useMemo(() => deriveBoardOrder(todos), [todos]);
+  const runNowRequestRef = useRef<{ requestId: string; content: string } | null>(null);
+  const boardScrollRef = useRef<HTMLDivElement>(null);
+  const scrollStorageKey = `archcode.todo-board-scroll:${slug}:${searchParams.get("view") ?? "board"}:${searchParams.get("q") ?? ""}`;
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem(scrollStorageKey);
+    if (saved !== null && boardScrollRef.current !== null) boardScrollRef.current.scrollTop = Number(saved) || 0;
+  }, [scrollStorageKey]);
+  const filteredTodos = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) return todos;
+    return todos.filter((todo) => {
+      const linkedSessions = sessions.filter((session) => session.source?.kind === "todo" && session.source.todoId === todo.id);
+      const linkedAutomations = automations.filter((automation) => automation.origin.kind === "todo" && automation.origin.todoId === todo.id);
+      return [todo.id, todo.content, ...linkedSessions.map((session) => session.title ?? session.sessionId), ...linkedAutomations.map((automation) => automation.name)]
+        .some((value) => value.toLocaleLowerCase().includes(needle));
+    });
+  }, [automations, query, sessions, todos]);
+  const canonicalOrder = useMemo(() => deriveBoardOrder(filteredTodos), [filteredTodos]);
   const boardOrder = temporaryOrder ?? canonicalOrder;
-  const todoById = useMemo(() => new Map(todos.map((todo) => [todo.id, todo])), [todos]);
+  const todoById = useMemo(() => new Map(filteredTodos.map((todo) => [todo.id, todo])), [filteredTodos]);
+  const activityBySessionId = useMemo(() => new Map((sessionInventory.data ?? []).map(({ session }) => [
+    session.sessionId,
+    runtimeFamilies[runtimeFamilyKey(slug, session.sessionId)]?.activity ?? "idle",
+  ])), [runtimeFamilies, sessionInventory.data, slug]);
+  const attentionBySessionId = useMemo(() => {
+    const labels = new Map<string, ProjectTodoAttentionLabel>();
+    for (const entry of attention) {
+      const label = entry.view.requiresInspection === true
+        ? "Inspection"
+        : entry.view.source.type === "tool_permission" ? "Permission" : "Question";
+      if (label === "Inspection" || label === "Permission" || !labels.has(entry.rootSessionId)) {
+        labels.set(entry.rootSessionId, label);
+      }
+    }
+    return labels;
+  }, [attention]);
+  const operationalStateByTodoId = useMemo(() => {
+    const authoritative = sessionInventory.isSuccess
+      && automationInventory.isSuccess
+      && runtimeInitialized
+      && hitlInitialized;
+    return new Map(todos.flatMap((todo) => {
+      const state = deriveProjectTodoOperationalState({
+        todo,
+        sessions: sessionInventory.data ?? [],
+        automations: automationInventory.data ?? [],
+        activityBySessionId,
+        attentionBySessionId,
+        authoritative,
+      });
+      return state === undefined ? [] : [[todo.id, state] as const];
+    }));
+  }, [activityBySessionId, attentionBySessionId, automationInventory.data, automationInventory.isSuccess, hitlInitialized, runtimeInitialized, sessionInventory.data, sessionInventory.isSuccess, todos]);
   const announcements = useMemo(() => createDragAnnouncements(boardOrder, todoById), [boardOrder, todoById]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -178,29 +198,75 @@ export function ProjectTodosRoute() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const selectTodo = (id: string | null) => {
+  const selectTodo = (id: string) => {
+    window.sessionStorage.setItem(scrollStorageKey, String(boardScrollRef.current?.scrollTop ?? 0));
+    navigate(`/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(id)}`, { state: { fromTodos: true } });
+  };
+
+  const setView = (nextView: View) => {
     const next = new URLSearchParams(searchParams);
-    if (id) next.set("todo", id);
-    else next.delete("todo");
+    if (nextView === "board") next.delete("view");
+    else next.set("view", nextView);
+    setSearchParams(next, { replace: true });
+  };
+
+  const setQuery = (value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set("q", value);
+    else next.delete("q");
     setSearchParams(next, { replace: true });
   };
 
   const create = () => {
-    const title = newTitle.trim();
-    if (!title) {
-      setCreateError("Title is required");
+    const content = newContent.trim();
+    if (!content) {
+      setCreateError("Todo content is required");
       return;
     }
     setCreateError(null);
-    createTodo.mutate({ slug, input: { title } }, {
+    createTodo.mutate({ slug, input: { content } }, {
       onSuccess: ({ todo }) => {
-        setNewTitle("");
-        setView("board");
-        selectTodo(todo.id);
+        setNewContent("");
+        navigate(`/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(todo.id)}`, { state: { fromTodos: true } });
       },
       onError: (cause) => setCreateError(messageFor(cause)),
     });
   };
+
+  const run = () => {
+    const content = newContent.trim();
+    if (!content) {
+      setCreateError("Todo content is required");
+      return;
+    }
+    const previous = runNowRequestRef.current;
+    const requestId = previous?.content === content ? previous.requestId : createClientUuid();
+    runNowRequestRef.current = { requestId, content };
+    setCreateError(null);
+    runNow.mutate({ slug, clientRequestId: requestId, content }, {
+      onSuccess: ({ session }) => {
+        runNowRequestRef.current = null;
+        setRunNowRecovery(null);
+        setNewContent("");
+        navigate(`/projects/${slug}/sessions/${session.sessionId}`);
+      },
+      onError: (cause) => {
+        const recovery = projectTodoRunNowRecovery(cause);
+        if (recovery !== null) {
+          runNowRequestRef.current = null;
+          setCreateError(null);
+          setRunNowRecovery({ ...recovery, content });
+          return;
+        }
+        setCreateError(messageFor(cause));
+      },
+    });
+  };
+
+  const resetCaptureFailure = () => {
+    setCreateError(null);
+  };
+  const blockedRunNowRecovery = runNowRecovery?.content === newContent.trim() ? runNowRecovery : null;
 
   const resolveDrop = (activeId: string, overId: string | null): { lane: ProjectTodoLane; index: number } | undefined => {
     if (!overId) return undefined;
@@ -263,299 +329,99 @@ export function ProjectTodosRoute() {
   if (error) return <div className="flex h-full items-center justify-center text-sm text-error">Failed to load Todos</div>;
 
   const visibleTodos = view === "archived"
-    ? todos.filter((todo) => todo.archivedAt !== undefined)
+    ? filteredTodos.filter((todo) => todo.archivedAt !== undefined)
     : view === "rejected"
-      ? todos.filter((todo) => todo.archivedAt === undefined && todo.status === "rejected")
+      ? filteredTodos.filter((todo) => todo.archivedAt === undefined && todo.status === "rejected")
       : [];
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg-base">
-      <header className="flex min-h-[68px] shrink-0 flex-wrap items-center justify-between gap-4 border-b border-border-default bg-bg-surface px-4 py-3 min-[621px]:px-6">
-        <div className="flex min-w-0 items-center gap-3">
-          <SidebarToggleButton />
-          <div><h1 className="text-[20px] font-semibold leading-7 tracking-[-0.02em] text-text-primary">Todos</h1><p className="mt-0.5 text-[12px] leading-5 text-text-tertiary">Shape intent, then start as many discussions or work sessions as useful.</p></div>
-        </div>
-        <div className="flex items-center rounded-md border border-border-default bg-bg-muted p-0.5" role="group" aria-label="Todo views">
+      <header className="grid min-h-[58px] shrink-0 grid-cols-[minmax(240px,420px)_202px] items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-6 py-2.5 max-[760px]:min-h-[108px] max-[760px]:grid-cols-1 max-[760px]:gap-2 max-[760px]:px-3">
+        <label className="relative min-w-0 w-full max-w-[420px] max-[760px]:max-w-none">
+          <span className="sr-only">Filter Todos</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={14} aria-hidden="true" />
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Todos…" className="h-9 w-full rounded-sm border border-control-border bg-bg-elevated pl-9 pr-3 text-[12px] outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle max-[760px]:h-11 max-[760px]:text-[16px] [@media(pointer:coarse)]:h-11" />
+        </label>
+        <div className="grid w-[202px] grid-cols-3 items-center rounded-md border border-border-default bg-bg-muted p-0.5 max-[760px]:w-full" role="group" aria-label="Todo views">
           <ViewButton active={view === "board"} onClick={() => setView("board")}>Board</ViewButton>
           <ViewButton active={view === "rejected"} onClick={() => setView("rejected")}>Rejected</ViewButton>
           <ViewButton active={view === "archived"} onClick={() => setView("archived")}>Archived</ViewButton>
         </div>
       </header>
       <div className="shrink-0 px-4 pt-4 min-[621px]:px-6">
-        <div className="mx-auto flex max-w-[1500px] gap-2 rounded-lg border border-border-control bg-bg-elevated p-2.5 shadow-sm focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-subtle">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap gap-2 rounded-lg border border-border-control bg-bg-elevated p-2.5 shadow-sm focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-subtle">
           <Plus size={15} className="shrink-0 self-center text-text-tertiary" aria-hidden="true" />
-          <input aria-label="New Todo" value={newTitle} onChange={(event) => { setNewTitle(event.target.value); setCreateError(null); }} onKeyDown={(event) => { if (event.key === "Enter") create(); }} placeholder="Capture a Todo…" className="h-8 min-w-0 flex-1 bg-transparent px-1 text-[13px] text-text-primary outline-none placeholder:text-text-muted" />
-          <button type="button" onClick={create} disabled={createTodo.isPending} className="h-8 rounded-sm bg-brand px-3 text-[12px] font-medium text-bg-overlay hover:bg-brand-hover disabled:opacity-40">Add</button>
+          <textarea aria-label="New Todo content" rows={2} value={newContent} onChange={(event) => { setNewContent(event.target.value); resetCaptureFailure(); }} placeholder="Capture an idea, bug, feature, or paste a PRD…" className="min-h-12 min-w-0 flex-1 resize-y bg-transparent px-1 py-1 text-[13px] leading-5 text-text-primary outline-none placeholder:text-text-muted max-[620px]:basis-[calc(100%-24px)]" />
+          <div className="ml-auto flex gap-2 max-[620px]:basis-full max-[620px]:grid max-[620px]:grid-cols-2">
+            <button type="button" onClick={create} disabled={createTodo.isPending || runNow.isPending || blockedRunNowRecovery !== null} className="h-8 rounded-sm border border-border-default bg-bg-active px-3 text-[12px] font-medium text-text-secondary hover:bg-bg-hover disabled:opacity-40 max-[620px]:h-11 [@media(pointer:coarse)]:h-11">Save</button>
+            <button type="button" onClick={run} disabled={createTodo.isPending || runNow.isPending || blockedRunNowRecovery !== null} className="h-8 rounded-sm bg-brand px-3 text-[12px] font-medium text-brand-ink hover:bg-brand-hover disabled:opacity-40 max-[620px]:h-11 [@media(pointer:coarse)]:h-11">{runNow.isPending ? "Starting…" : "Run now"}</button>
+          </div>
         </div>
         {createError ? <p role="alert" className="mx-auto mt-1 max-w-[1500px] text-[11px] text-error">{createError}</p> : null}
+        {blockedRunNowRecovery ? (
+          <div role="alert" className="mx-auto mt-2 max-w-[1500px] border-l-2 border-error bg-error-muted px-3 py-2 text-[11px] leading-5 text-error">
+            <p>{blockedRunNowRecovery.message} Do not retry this unchanged request; inspect the retained work first.</p>
+            <div className="flex flex-wrap gap-x-3">
+              <Link className="font-medium underline" to={`/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(blockedRunNowRecovery.todoId)}`}>Open Todo {blockedRunNowRecovery.todoId}</Link>
+              {blockedRunNowRecovery.sessionId ? <Link className="font-medium underline" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(blockedRunNowRecovery.sessionId)}`}>Open Session {blockedRunNowRecovery.sessionId}</Link> : null}
+            </div>
+            <p>Edit the Todo content before starting a different request.</p>
+          </div>
+        ) : null}
       </div>
-      <main className="min-h-0 flex-1 overflow-auto px-4 py-4 min-[621px]:px-6">
+      <div ref={boardScrollRef} className="min-h-0 flex-1 overflow-auto px-4 py-4 min-[621px]:px-6">
         {view === "board" ? (
           <DndContext sensors={sensors} collisionDetection={pointerFirstCollisionDetection} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel} accessibility={{ announcements }}>
             <div className={`mx-auto grid max-w-[1500px] grid-cols-1 gap-3 min-[700px]:grid-cols-2 min-[1100px]:grid-cols-4 ${draggedId ? "cursor-grabbing [&_*]:cursor-grabbing" : ""}`} data-testid="todo-board">
-              {LANES.map((lane) => <TodoLane key={lane} lane={lane} order={boardOrder[lane]} todoById={todoById} selectedId={selectedId} onSelect={selectTodo} />)}
+              {LANES.map((lane) => <TodoLane key={lane} lane={lane} order={boardOrder[lane]} todoById={todoById} operationalStateByTodoId={operationalStateByTodoId} onSelect={selectTodo} />)}
             </div>
             <DragOverlay dropAnimation={null}>{draggedId ? <DragPreview todo={todoById.get(draggedId)} /> : null}</DragOverlay>
           </DndContext>
-        ) : <TodoFlatList view={view} todos={visibleTodos} selectedId={selectedId} onSelect={selectTodo} />}
-      </main>
+        ) : <TodoFlatList view={view} todos={visibleTodos} onSelect={selectTodo} filtered={query.trim().length > 0} />}
+      </div>
       {reorderError ? <p role="alert" className="shrink-0 border-t border-error/20 bg-error-muted px-5 py-3 text-[11px] text-error">Could not move Todo: {reorderError}</p> : null}
-      <TodoDetailDrawer todo={selectedTodo} slug={slug} sessions={sessions} automations={automations} navigate={navigate} onClose={() => selectTodo(null)} createSession={createSession} updateTodo={updateTodo} />
     </div>
   );
 }
 
-function TodoLane({ lane, order, todoById, selectedId, onSelect }: { lane: ProjectTodoLane; order: string[]; todoById: Map<string, ProjectTodo>; selectedId: string | null; onSelect: (id: string) => void }) {
+function TodoLane({ lane, order, todoById, operationalStateByTodoId, onSelect }: { lane: ProjectTodoLane; order: string[]; todoById: Map<string, ProjectTodo>; operationalStateByTodoId: ReadonlyMap<string, ProjectTodoOperationalState>; onSelect: (id: string) => void }) {
   const presentation = PROJECT_TODO_LANE_PRESENTATIONS[lane];
   const { Icon } = presentation;
   const { setNodeRef } = useDroppable({ id: lane, data: { type: "lane", lane } });
   return <section ref={setNodeRef} className="min-h-40 rounded-lg border border-border-default bg-bg-surface p-3 min-[1100px]:min-h-[500px]" aria-label={presentation.title} data-testid={`todo-lane-${lane}`}>
     <header className="flex min-h-11 items-center justify-between gap-2 border-b border-border-subtle pb-2"><div className="flex items-center gap-2"><Icon size={14} className={STATUS_TONE_CLASS[presentation.tone]} /><div><h2 className="text-[14px] font-semibold text-text-primary">{presentation.title}</h2><p className="text-[11px] text-text-tertiary">{presentation.hint}</p></div></div><span className="border border-border-default bg-bg-muted px-1.5 py-0.5 text-[11px] text-text-tertiary">{order.length}</span></header>
-    <SortableContext items={order} strategy={verticalListSortingStrategy}><div className="mt-3 flex min-h-24 flex-col gap-2.5">{order.length ? order.map((id) => { const todo = todoById.get(id); return todo ? <SortableTodoCard key={id} todo={todo} selected={selectedId === id} onSelect={() => onSelect(id)} /> : null; }) : <div className="flex min-h-24 flex-col items-center justify-center px-3 text-center"><p className="text-[11px] font-medium text-text-tertiary">{presentation.emptyTitle}</p><p className="mt-1 text-[11px] text-text-tertiary">{presentation.emptyHint}</p></div>}</div></SortableContext>
+    <SortableContext items={order} strategy={verticalListSortingStrategy}><div className="mt-3 flex min-h-24 flex-col gap-2.5">{order.length ? order.map((id) => { const todo = todoById.get(id); return todo ? <SortableTodoCard key={id} todo={todo} operationalState={operationalStateByTodoId.get(id)} onSelect={() => onSelect(id)} /> : null; }) : <div className="flex min-h-24 flex-col items-center justify-center px-3 text-center"><p className="text-[11px] font-medium text-text-tertiary">{presentation.emptyTitle}</p><p className="mt-1 text-[11px] text-text-tertiary">{presentation.emptyHint}</p></div>}</div></SortableContext>
   </section>;
 }
 
-function SortableTodoCard({ todo, selected, onSelect }: { todo: ProjectTodo; selected: boolean; onSelect: () => void }) {
+function SortableTodoCard({ todo, operationalState, onSelect }: { todo: ProjectTodo; operationalState?: ProjectTodoOperationalState; onSelect: () => void }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: todo.id, data: { type: "todo", todo } });
-  const presentation = presentProjectTodoCard({ status: todo.status, ...(todo.archivedAt === undefined ? {} : { archivedAt: todo.archivedAt }) });
-  const { Icon } = presentation;
-  return <article ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`overflow-hidden rounded-md border bg-bg-elevated ${selected ? "border-brand" : "border-border-default"} ${isDragging ? "opacity-35" : ""}`} data-testid={`todo-${todo.id}`}>
-    <div className="flex min-h-11 items-stretch"><button ref={setActivatorNodeRef} type="button" className={`flex min-h-11 w-11 shrink-0 touch-none items-center justify-center border-r border-border-subtle text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${isDragging ? "cursor-grabbing bg-brand-subtle text-brand" : "cursor-grab active:cursor-grabbing"}`} aria-label={`Drag ${todo.title}`} {...attributes} {...listeners}><GripVertical size={16} /></button><button type="button" data-testid={`todo-open-${todo.id}`} className="min-w-0 flex-1 cursor-pointer p-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand" onClick={onSelect} aria-haspopup="dialog" aria-expanded={selected}><span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}><Icon size={12} />{presentation.label}</span><span className="mt-2 block text-[14px] font-semibold leading-5 text-text-primary">{todo.title}</span>{todo.body ? <span className="mt-1 line-clamp-2 block text-[12px] leading-5 text-text-tertiary">{todo.body}</span> : null}</button></div>
+  const excerpt = projectTodoContentExcerpt(todo.content);
+  return <article ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`overflow-hidden rounded-md border border-border-default bg-bg-elevated ${isDragging ? "opacity-35" : ""}`} data-testid={`todo-${todo.id}`}>
+    <div className="flex min-h-11 items-stretch"><button ref={setActivatorNodeRef} type="button" className={`flex min-h-11 w-11 shrink-0 touch-none items-center justify-center border-r border-border-subtle text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${isDragging ? "cursor-grabbing bg-brand-subtle text-brand" : "cursor-grab active:cursor-grabbing"}`} aria-label={`Drag ${excerpt}`} {...attributes} {...listeners}><GripVertical size={16} /></button><button type="button" data-testid={`todo-open-${todo.id}`} className="min-w-0 flex-1 cursor-pointer px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand" onClick={onSelect}><span className="line-clamp-2 text-[13px] font-medium leading-5 text-text-primary">{excerpt}</span>{operationalState ? <span className="mt-1.5 flex items-center gap-1.5 border-t border-border-subtle pt-1.5 text-[11px] leading-4 text-text-secondary" data-testid={`todo-operational-${todo.id}`}><StatusGlyph kind={operationalState.kind} size={12} /><span className="font-medium">{operationalState.label}</span>{operationalState.detail ? <span className="truncate text-text-tertiary">· {operationalState.detail}</span> : null}</span> : null}</button></div>
   </article>;
 }
 
 function DragPreview({ todo }: { todo?: ProjectTodo }) {
   if (!todo) return null;
-  return <div className="w-64 cursor-grabbing rounded-md border border-brand bg-bg-elevated p-3 shadow-lg"><p className="text-[13px] font-semibold text-text-primary">{todo.title}</p></div>;
+  return <div className="w-64 cursor-grabbing rounded-md border border-brand bg-bg-elevated p-3 shadow-lg"><p className="line-clamp-2 text-[13px] font-medium leading-5 text-text-primary">{projectTodoContentExcerpt(todo.content)}</p></div>;
 }
 
-function TodoFlatList({ view, todos, selectedId, onSelect }: { view: Exclude<View, "board">; todos: ProjectTodo[]; selectedId: string | null; onSelect: (id: string) => void }) {
+function TodoFlatList({ view, todos, onSelect, filtered }: { view: Exclude<View, "board">; todos: ProjectTodo[]; onSelect: (id: string) => void; filtered: boolean }) {
   const title = view === "rejected" ? "Rejected Todos" : "Archived Todos";
-  return <section className="mx-auto max-w-[980px]" aria-label={title}><h2 className="border-b border-border-default pb-3 text-[14px] font-semibold text-text-primary">{title}</h2><div className="divide-y divide-border-subtle">{todos.map((todo) => <button key={todo.id} type="button" data-testid={`todo-${todo.id}`} onClick={() => onSelect(todo.id)} className={`block w-full px-3 py-3 text-left hover:bg-bg-hover ${selectedId === todo.id ? "bg-brand-subtle" : ""}`}><span className="text-[13px] font-semibold text-text-primary">{todo.title}</span><span className="mt-1 block text-[11px] text-text-tertiary">{view === "rejected" ? todo.rejectionReason : "Archived"}</span></button>)}</div></section>;
+  return <section className="mx-auto max-w-[980px]" aria-label={title}><h2 className="border-b border-border-default pb-3 text-[14px] font-semibold text-text-primary">{title}</h2>{todos.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{todoFlatListEmptyMessage(view, filtered)}</p> : <div className="divide-y divide-border-subtle">{todos.map((todo) => <button key={todo.id} type="button" data-testid={`todo-${todo.id}`} onClick={() => onSelect(todo.id)} className="block w-full px-3 py-3 text-left hover:bg-bg-hover"><span className="line-clamp-2 text-[13px] font-medium leading-5 text-text-primary">{projectTodoContentExcerpt(todo.content)}</span><span className="mt-1 block text-[11px] text-text-tertiary">{view === "rejected" ? todo.rejectionReason : "Archived"}</span></button>)}</div>}</section>;
 }
 
-function TodoDetailDrawer({ todo, slug, sessions, automations, navigate, onClose, createSession, updateTodo }: { todo?: ProjectTodo; slug: string; sessions: SessionSummary[]; automations: Automation[]; navigate: ReturnType<typeof useNavigate>; onClose: () => void; createSession: ReturnType<typeof useCreateProjectTodoSession>; updateTodo: ReturnType<typeof useUpdateProjectTodo> }) {
-  if (!todo) return null;
-  return <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) onClose(); }}><DialogPrimitive.Portal><DialogPrimitive.Overlay forceMount className="fixed inset-0 z-[60] bg-black/45" /><DialogPrimitive.Content forceMount data-testid="todo-detail-drawer" className="fixed inset-y-0 right-0 z-[61] flex w-[min(430px,calc(100%_-_18px))] flex-col border-l border-border-strong bg-bg-elevated shadow-2xl focus:outline-none"><TodoDetailPanel key={todo.id} todo={todo} slug={slug} sessions={sessions} automations={automations} navigate={navigate} createSession={createSession} updateTodo={updateTodo} /><DialogPrimitive.Close asChild><button type="button" aria-label="Close Todo details" className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><X size={15} /></button></DialogPrimitive.Close></DialogPrimitive.Content></DialogPrimitive.Portal></DialogPrimitive.Root>;
-}
-
-function TodoDetailPanel({ todo, slug, sessions, automations, navigate, createSession, updateTodo }: { todo: ProjectTodo; slug: string; sessions: SessionSummary[]; automations: Automation[]; navigate: ReturnType<typeof useNavigate>; createSession: ReturnType<typeof useCreateProjectTodoSession>; updateTodo: ReturnType<typeof useUpdateProjectTodo> }) {
-  const queryClient = useQueryClient();
-  const postMessage = usePostMessage();
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(todo.title);
-  const [body, setBody] = useState(todo.body);
-  const [reason, setReason] = useState("");
-  const [rejecting, setRejecting] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [planError, setPlanError] = useState<string | null>(null);
-  const [isOpeningPlan, setIsOpeningPlan] = useState(false);
-  const planActionInFlight = useRef(false);
-  const associatedSessions = sessions.filter((session) => session.projectTodo?.todoId === todo.id).sort((left, right) => right.updatedAt - left.updatedAt);
-  const discussionSessions = associatedSessions.filter((session) => session.projectTodo?.entry === "discussion");
-  const workSessions = associatedSessions.filter((session) => session.projectTodo?.entry === "work");
-  const associatedAutomations = automations.filter((automation) => automation.projectTodoId === todo.id).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  const isArchived = todo.archivedAt !== undefined;
-  const presentation = presentProjectTodoCard({ status: todo.status, ...(isArchived ? { archivedAt: todo.archivedAt } : {}) });
-  const update = (input: ProjectTodoUpdateInput, onSuccess?: () => void) => {
-    setActionError(null);
-    updateTodo.mutate({ slug, todoId: todo.id, input }, { onSuccess, onError: (cause) => setActionError(messageFor(cause)) });
-  };
-  const start = (entry: "discussion" | "work" | "automation") => {
-    setActionError(null);
-    createSession.mutate({ slug, todoId: todo.id, input: { expectedRevision: todo.revision, entry } }, { onSuccess: ({ sessionId }) => navigate(`/projects/${slug}/sessions/${sessionId}`), onError: (cause) => setActionError(messageFor(cause)) });
-  };
-  const openPlan = async () => {
-    if (planActionInFlight.current) return;
-    planActionInFlight.current = true;
-    setPlanError(null);
-    setIsOpeningPlan(true);
-    try {
-      await coordinateTodoPlanWork({
-        todoId: todo.id,
-        ...(discussionSessions[0]?.sessionId === undefined
-          ? {}
-          : { existingDiscussionSessionId: discussionSessions[0].sessionId }),
-        createPlanDiscussion: async () => (await createSession.mutateAsync({
-          slug,
-          todoId: todo.id,
-          input: {
-            expectedRevision: todo.revision,
-            entry: "discussion",
-            initialIntent: "plan",
-          },
-        })).sessionId,
-        loadExistingDiscussion: async (sessionId) => {
-          try {
-            const session = await queryClient.fetchQuery({
-              ...sessionQueryOptions(slug, sessionId),
-              staleTime: 0,
-            });
-            return {
-              isBusy: session.currentExecutionId !== undefined,
-              requestedModelSelection: session.nextModelSelection.requested,
-            };
-          } catch (cause) {
-            if (isUnavailablePlanDiscussion(cause)) return undefined;
-            throw cause;
-          }
-        },
-        sendCommand: async (sessionId, content, requestedModelSelection) => {
-          try {
-            await postMessage.mutateAsync({
-              slug,
-              sessionId,
-              content,
-              attachmentIds: [],
-              requestedModelSelection,
-            });
-            return "sent";
-          } catch (cause) {
-            if (isUnavailablePlanDiscussion(cause)) return "unavailable";
-            throw cause;
-          }
-        },
-        openSession: (sessionId) => navigate(`/projects/${slug}/sessions/${sessionId}`),
-      });
-    } catch (cause) {
-      setPlanError(messageFor(cause));
-    } finally {
-      planActionInFlight.current = false;
-      setIsOpeningPlan(false);
-    }
-  };
-  const reject = () => {
-    const rejectionReason = reason.trim();
-    if (!rejectionReason) { setActionError("Rejection reason is required"); return; }
-    update({ expectedRevision: todo.revision, status: "rejected", rejectionReason }, () => setRejecting(false));
-  };
-  const continueWork = () => {
-    const sessionId = workSessions[0]?.sessionId;
-    if (!sessionId) return;
-    const navigateToSession = () => navigate(`/projects/${slug}/sessions/${sessionId}`);
-    const input = continueWorkUpdateInput(todo);
-    if (input) {
-      update(input, navigateToSession);
-      return;
-    }
-    navigateToSession();
-  };
-  return (
-    <>
-      <header className="shrink-0 border-b border-border-default px-5 pb-4 pr-14 pt-4">
-        <span className={`inline-flex items-center gap-2 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}>
-          <presentation.Icon size={13} />
-          {presentation.label}
-        </span>
-        <DialogPrimitive.Title className="mt-2 text-[18px] font-semibold leading-6 text-text-primary">
-          {todo.title}
-        </DialogPrimitive.Title>
-        <DialogPrimitive.Description className="mt-1 text-[11px] leading-4 text-text-tertiary">
-          A Todo can source multiple discussions, work sessions, and automations.
-        </DialogPrimitive.Description>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <div className="space-y-5">
-          <section aria-label="Todo content">
-            {editing ? (
-              <div className="space-y-2">
-                <input aria-label="Todo title" value={title} onChange={(event) => setTitle(event.target.value)} className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px]" />
-                <textarea aria-label="Todo body" rows={4} value={body} onChange={(event) => setBody(event.target.value)} className="w-full resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 text-[12px]" />
-                <div className="flex gap-2">
-                  <TodoActionButton variant="primary" onClick={() => update({ expectedRevision: todo.revision, title: title.trim(), body }, () => setEditing(false))}><Save size={12} />Save</TodoActionButton>
-                  <TodoActionButton onClick={() => setEditing(false)}>Cancel</TodoActionButton>
-                </div>
-              </div>
-            ) : (
-              <>
-                <p className="whitespace-pre-wrap text-[12px] leading-5 text-text-secondary">{todo.body || "No additional details."}</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <TodoActionButton onClick={() => setEditing(true)}>Edit</TodoActionButton>
-                </div>
-              </>
-            )}
-          </section>
-          <section className="border-t border-border-subtle pt-4" aria-label="Todo actions">
-            <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Actions</h3>
-            <div className="space-y-4">
-              {!isArchived ? (
-                <TodoActionGroup
-                  label="Discuss & Plan"
-                  feedback={planError ? <p role="alert" className="mt-2 text-[11px] leading-4 text-error">{planError}</p> : null}
-                >
-                  {discussionSessions[0] ? (
-                    <TodoActionButton onClick={() => navigate(`/projects/${slug}/sessions/${discussionSessions[0]!.sessionId}`)}>Continue Discussion</TodoActionButton>
-                  ) : null}
-                  <TodoActionButton variant="brand" onClick={() => start("discussion")} disabled={createSession.isPending}><MessageCircle size={12} />New Discussion</TodoActionButton>
-                  <TodoActionButton onClick={() => void openPlan()} disabled={isOpeningPlan}>
-                    {isOpeningPlan ? <LoaderCircle aria-hidden="true" className="animate-activity" size={12} /> : <FileText size={12} />}
-                    {isOpeningPlan ? "Opening Plan…" : TODO_PLAN_ACTION_LABEL}
-                  </TodoActionButton>
-                </TodoActionGroup>
-              ) : null}
-              {!isArchived && (todo.status === "ready" || todo.status === "in_progress") ? (
-                <TodoActionGroup label="Execution">
-                  <TodoActionButton variant="primary" onClick={() => start("work")} disabled={createSession.isPending}><Send size={12} />Start Work</TodoActionButton>
-                  {workSessions[0] ? <TodoActionButton onClick={continueWork} disabled={updateTodo.isPending}>Continue Work</TodoActionButton> : null}
-                  <TodoActionButton onClick={() => start("automation")} disabled={createSession.isPending}>Create Automation</TodoActionButton>
-                </TodoActionGroup>
-              ) : null}
-              <TodoActionGroup label="Lifecycle">
-                {!isArchived && todo.status === "rejected" ? <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, status: "idea" })}><RotateCcw size={12} />Restore to Ideas</TodoActionButton> : null}
-                {!isArchived && todo.status !== "rejected" ? <TodoActionButton onClick={() => setRejecting(true)}>Reject</TodoActionButton> : null}
-                {!isArchived && todo.status !== "rejected" && LANES.filter((status) => status !== todo.status).map((status) => <TodoActionButton key={status} onClick={() => update({ expectedRevision: todo.revision, status })}>Move to {labelForStatus(status)}</TodoActionButton>)}
-                {!isArchived ? <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, archived: true })}><Archive size={12} />Archive</TodoActionButton> : <TodoActionButton onClick={() => update({ expectedRevision: todo.revision, archived: false })}><RotateCcw size={12} />Restore</TodoActionButton>}
-              </TodoActionGroup>
-            </div>
-            {rejecting ? (
-              <div className="mt-3 border-y border-warning/30 bg-warning-muted p-3">
-                <textarea autoFocus aria-label="Rejection reason" rows={2} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why should this Todo be rejected?" className="w-full resize-none bg-transparent text-[12px] outline-none" />
-                <div className="mt-2 flex justify-end gap-2">
-                  <TodoActionButton onClick={() => setRejecting(false)}>Cancel</TodoActionButton>
-                  <TodoActionButton variant="danger" onClick={reject}>Reject Todo</TodoActionButton>
-                </div>
-              </div>
-            ) : null}
-          </section>
-          <section className="border-t border-border-subtle pt-4" aria-label="Linked sessions">
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Sessions</h3>
-            <AssociatedSessions slug={slug} sessions={associatedSessions} />
-          </section>
-          <section className="border-t border-border-subtle pt-4" aria-label="Linked automations">
-            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">Automations</h3>
-            {associatedAutomations.length ? (
-              <div className="space-y-2">
-                {associatedAutomations.map((automation) => <Link key={automation.id} to={`/projects/${slug}/automations/${automation.id}`} className="block text-[12px] text-brand hover:underline">{automation.name}</Link>)}
-              </div>
-            ) : <p className="text-[12px] text-text-tertiary">No automations yet.</p>}
-          </section>
-        </div>
-      </div>
-      {actionError ? <p role="alert" className="shrink-0 border-t border-error/20 bg-error-muted px-5 py-3 text-[11px] text-error">{actionError}</p> : null}
-    </>
-  );
-}
-
-function TodoActionGroup({ label, children, feedback }: { label: string; children: React.ReactNode; feedback?: React.ReactNode }) {
-  return (
-    <div role="group" aria-label={label}>
-      <h4 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">{label}</h4>
-      <div className="mt-2 flex flex-wrap gap-2">{children}</div>
-      {feedback}
-    </div>
-  );
-}
-
-function AssociatedSessions({ slug, sessions }: { slug: string; sessions: SessionSummary[] }) { return sessions.length ? <div className="space-y-2">{sessions.map((session) => <Link key={session.sessionId} className="flex items-center justify-between gap-3 text-[12px] text-brand hover:underline" to={`/projects/${slug}/sessions/${session.sessionId}`}><span className="truncate">{session.title || session.sessionId}</span><span className="shrink-0 text-[11px] text-text-tertiary">{entryLabel(session.projectTodo?.entry)}</span></Link>)}</div> : <p className="text-[12px] text-text-tertiary">No sessions yet.</p>; }
-function TodoActionButton({ children, onClick, disabled, title, variant = "default" }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; title?: string; variant?: "default" | "primary" | "brand" | "danger" }) { const tone = variant === "primary" ? "bg-brand text-bg-overlay hover:bg-brand-hover" : variant === "brand" ? "border-brand/40 bg-brand-subtle text-brand hover:bg-brand/15" : variant === "danger" ? "border-error/30 bg-error-muted text-error hover:bg-error/15" : "border-border-default bg-bg-active text-text-secondary hover:bg-bg-hover hover:text-text-primary"; return <button type="button" onClick={onClick} disabled={disabled} title={title} className={`inline-flex h-8 items-center gap-1.5 rounded-sm border px-2.5 text-[12px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11 ${tone}`}>{children}</button>; }
-function ViewButton({ children, active, onClick }: { children: React.ReactNode; active: boolean; onClick: () => void }) { return <button type="button" onClick={onClick} className={`h-7 rounded-md px-2.5 text-[11px] font-medium ${active ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"}`}>{children}</button>; }
-function entryLabel(entry?: "discussion" | "work" | "automation"): string { return entry === "discussion" ? "Discussion" : entry === "automation" ? "Automation setup" : "Work"; }
+function ViewButton({ children, active, onClick }: { children: React.ReactNode; active: boolean; onClick: () => void }) { return <button type="button" aria-pressed={active} onClick={onClick} className={`h-7 min-w-0 rounded-md px-2 text-[11px] font-semibold max-[760px]:h-11 [@media(pointer:coarse)]:h-11 ${active ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"}`}>{children}</button>; }
 function labelForStatus(status: ProjectTodoLane): string { return status === "idea" ? "Ideas" : status === "ready" ? "Ready" : status === "in_progress" ? "In Progress" : "Done"; }
 function isLane(value: string): value is ProjectTodoLane { return (LANES as readonly string[]).includes(value); }
 function messageFor(cause: unknown): string { return cause instanceof Error ? cause.message : "Action failed"; }
 
 export function createDragAnnouncements(order: BoardOrder, todoById: ReadonlyMap<string, ProjectTodo>) {
-  const titleFor = (id: string | number) => todoById.get(String(id))?.title ?? "Todo";
+  const titleFor = (id: string | number) => {
+    const todo = todoById.get(String(id));
+    return todo === undefined ? "Todo" : projectTodoContentExcerpt(todo.content);
+  };
   const describeTarget = (target: { lane: ProjectTodoLane; index: number } | undefined) => {
     if (!target) return undefined;
     const count = Math.max(1, order[target.lane].length, target.index + 1);

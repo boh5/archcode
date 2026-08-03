@@ -33,6 +33,7 @@ const INLINE = [
 ] as const;
 
 const ARTIFACT = [
+  "pdf_read",
   "file_write",
   "file_edit",
   "ast_grep_search",

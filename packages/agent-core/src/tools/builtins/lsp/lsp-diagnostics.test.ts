@@ -10,12 +10,30 @@ import { createTestToolRegistryFixture } from "../../test-registry";
 import { expectBlockedRequest, expectTextDraft } from "../../test-results";
 import type { RawToolResult, ToolExecutionContext } from "../../types";
 import { lspDiagnosticsTool } from "./lsp-diagnostics";
-import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
+import { createTestProjectContext } from "../../test-project-context";
 
 const testRoot = path.join(tmpdir(), `archcode-lsp-diagnostics-unit-${crypto.randomUUID()}`);
 const testDir = path.join(testRoot, "workspace");
 const canonicalProjectDir = path.join(testRoot, "project");
 const registryFixture = createTestToolRegistryFixture({ descriptors: [lspDiagnosticsTool] });
+
+async function createDurableTestSessionContext(
+  workspaceRoot: string,
+  sessionId = crypto.randomUUID(),
+  cwd = workspaceRoot,
+) {
+  const store = storeManager.create(sessionId, workspaceRoot, {
+    cwd,
+    agentName: "lead",
+    source: { kind: "direct" },
+  });
+  await storeManager.flushSession(sessionId, workspaceRoot);
+  return {
+    store,
+    storeManager,
+    projectContext: createTestProjectContext(workspaceRoot, storeManager),
+  };
+}
 
 beforeEach(async () => {
   await rm(testRoot, { recursive: true, force: true });

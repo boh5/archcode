@@ -38,6 +38,7 @@ import {
 import {
   effectiveSessionFocusId,
   hasSessionSnapshotRecoveryOwner,
+  presentRootSessionSource,
   SessionRoute,
 } from "./session";
 import { WorkbenchLayoutProvider, useWorkbenchLayout } from "../context/workbench-layout";
@@ -52,6 +53,33 @@ function applySnapshot(
     currentSessionSnapshotGeneration(),
   );
 }
+
+describe("root Session source presentation", () => {
+  test("maps every source kind and never presents missing source as Direct", () => {
+    expect(presentRootSessionSource({ source: { kind: "direct" }, slug: "demo" })).toMatchObject({
+      label: "Direct",
+      title: "Direct Session",
+    });
+    expect(presentRootSessionSource({
+      source: { kind: "todo", todoId: "todo-1", entry: "work" },
+      slug: "demo",
+      todoLabel: "Implement source contract",
+    })).toMatchObject({ label: "Work Todo", title: "Implement source contract" });
+    expect(presentRootSessionSource({
+      source: { kind: "automation", automationId: "auto-1", invocationId: "run-1", todoId: null },
+      slug: "demo",
+    })).toEqual({
+      label: "Automation",
+      title: "auto-1 · unavailable",
+      to: "/projects/demo/automations/auto-1?invocation=run-1",
+    });
+    expect(presentRootSessionSource({ source: undefined, slug: "demo" })).toEqual({
+      label: "Source",
+      title: "Source unavailable",
+      to: "/projects/demo/sessions",
+    });
+  });
+});
 
 function createSession(input: {
   id: string;
@@ -261,7 +289,7 @@ describe("SessionRoute store-level behavior", () => {
     __resetWebSessionStoresForTest();
   });
 
-  test("keeps the child Inspector reopen control aligned with the 760px layout boundary", async () => {
+  test("keeps the Inspector control available across the 760px layout boundary", async () => {
     const sessionSource = await Bun.file(
       new URL("./session.tsx", import.meta.url),
     ).text();
@@ -269,8 +297,15 @@ describe("SessionRoute store-level behavior", () => {
       new URL("../components/features/PanelToggleButton.tsx", import.meta.url),
     ).text();
     expect(sessionSource).toContain("<InspectorToggleButton");
-    expect(panelToggleSource).toContain("max-[760px]:hidden");
+    expect(panelToggleSource).not.toContain("max-[760px]:hidden");
     expect(panelToggleSource).not.toContain("max-[799px]:hidden");
+    expect(panelToggleSource).toContain("[@media(pointer:coarse)]:h-11");
+  });
+
+  test("wires the Invocation client request id to canonical and queued message owners", async () => {
+    const sessionSource = await Bun.file(new URL("./session.tsx", import.meta.url)).text();
+    expect(sessionSource).toContain('searchParams.get("invocation")');
+    expect(sessionSource.match(/focusClientRequestId=\{focusClientRequestId\}/g)).toHaveLength(4);
   });
 
   test("markSessionForeground(true) pins the store against eviction", () => {
@@ -551,9 +586,7 @@ describe("SessionRoute focused view store behavior", () => {
     dom.window.localStorage.setItem(
       "archcode.workbench.layout",
       JSON.stringify({
-        sidebarWidth: 280,
         inspectorWidth: 360,
-        sidebarCollapsed: false,
         inspectorCollapsed: true,
       }),
     );
@@ -1062,17 +1095,16 @@ describe("SessionRoute focused view store behavior", () => {
       rootSessionId: "root-session",
       title: "Shape offline mode",
       messages: [],
-    }) as ReturnType<typeof createSession> & {
-      projectTodo: { todoId: string; entry: "discussion" };
-    };
-    rootSession.projectTodo = {
+    });
+    rootSession.source = {
+      kind: "todo",
       todoId: "todo-offline-mode",
       entry: "discussion",
     };
     const projectTodo: ProjectTodo = {
       id: "todo-offline-mode",
-      title: "Add resilient offline mode",
-      body: "",
+      content: "Add resilient offline mode",
+      attachmentIds: [],
       status: "ready",
       revision: 3,
       createdAt: 1,
@@ -1123,7 +1155,7 @@ describe("SessionRoute focused view store behavior", () => {
                       element={<SessionRoute />}
                     />
                     <Route
-                      path="/projects/:slug/todos"
+                      path="/projects/:slug/todos/:todoId"
                       element={<LocationProbe />}
                     />
                   </Routes>
@@ -1139,7 +1171,7 @@ describe("SessionRoute focused view store behavior", () => {
       );
       expect(backlink?.textContent).toBe("Add resilient offline mode");
       expect(backlink?.getAttribute("href")).toBe(
-        "/projects/demo/todos?todo=todo-offline-mode",
+        "/projects/demo/todos/todo-offline-mode",
       );
       expect(container.textContent).toContain("Discussion Todo");
       expect(backlink?.closest("header")).not.toBeNull();
@@ -1159,7 +1191,7 @@ describe("SessionRoute focused view store behavior", () => {
 
       expect(
         container.querySelector('[data-testid="location"]')?.textContent,
-      ).toBe("/projects/demo/todos?todo=todo-offline-mode|PUSH");
+      ).toBe("/projects/demo/todos/todo-offline-mode|PUSH");
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();

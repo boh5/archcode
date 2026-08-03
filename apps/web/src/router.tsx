@@ -1,8 +1,10 @@
 import { createBrowserRouter, Outlet } from "react-router-dom";
 import { RootLayout } from "./routes/root-layout";
-import { Dashboard } from "./routes/dashboard";
-import { ProjectRoute } from "./routes/project";
+import { HomeRoute } from "./routes/home";
+import { ProjectLayout, ProjectRoute } from "./routes/project";
+import { ProjectSessionsRoute } from "./routes/project-sessions";
 import { ProjectTodosRoute } from "./routes/project-todos";
+import { ProjectTodoDetailRoute } from "./routes/project-todo-detail";
 import { SessionRoute } from "./routes/session";
 import { AutomationsRoute } from "./routes/automations";
 import { AutomationDetailRoute } from "./routes/automation-detail";
@@ -23,12 +25,20 @@ export const router = createBrowserRouter([
       {
         element: <RootLayout />,
         children: [
-          { path: "/", element: <Dashboard /> },
-          { path: "/projects/:slug", element: <ProjectRoute /> },
-          { path: "/projects/:slug/todos", element: <ProjectTodosRoute /> },
-          { path: "/projects/:slug/automations", element: <AutomationsRoute /> },
-          { path: "/projects/:slug/automations/:automationId", element: <AutomationDetailRoute /> },
-          { path: "/projects/:slug/sessions/:sessionId", element: <SessionRoute /> },
+          { path: "/", element: <HomeRoute /> },
+          {
+            path: "/projects/:slug",
+            element: <ProjectLayout />,
+            children: [
+              { index: true, element: <ProjectRoute /> },
+              { path: "todos", element: <ProjectTodosRoute /> },
+              { path: "todos/:todoId", element: <ProjectTodoDetailRoute /> },
+              { path: "automations", element: <AutomationsRoute /> },
+              { path: "automations/:automationId", element: <AutomationDetailRoute /> },
+              { path: "sessions", element: <ProjectSessionsRoute /> },
+              { path: "sessions/:sessionId", element: <SessionRoute /> },
+            ],
+          },
           { path: "*", element: <NotFoundRoute /> },
         ],
       },

@@ -59,6 +59,7 @@ export interface ChatInputProps {
   activity: SessionFamilyActivity | undefined;
   hitlReady: boolean;
   hasPendingHitl: boolean;
+  focusOnReady?: boolean;
 }
 
 function composerStatus(
@@ -69,7 +70,7 @@ function composerStatus(
   if (activity === undefined) return { label: "Connecting", kind: "running", tone: "neutral" };
   if (!hitlReady) return { label: "Syncing", kind: "running", tone: "info" };
   if (activity === "stopping") return { label: "Stopping", kind: "running", tone: "warning" };
-  if (hasPendingHitl) return { label: "Needs attention", kind: "needs_you" };
+  if (hasPendingHitl) return { label: "Needs you", kind: "needs_you" };
   if (activity === "running" || activity === "resuming") {
     return { label: sessionFamilyActivityLabel(activity), kind: "running" };
   }
@@ -85,6 +86,7 @@ export function ChatInput({
   activity,
   hitlReady,
   hasPendingHitl,
+  focusOnReady = false,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -94,6 +96,7 @@ export function ChatInput({
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string>();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const focusOnReadyAppliedRef = useRef(false);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef<DraftAttachment[]>([]);
@@ -153,6 +156,12 @@ export function ChatInput({
   useEffect(() => {
     if (!hasPendingHitl) setHitlComposerExpanded(false);
   }, [hasPendingHitl]);
+
+  useEffect(() => {
+    if (!focusOnReady || !canCompose || focusOnReadyAppliedRef.current) return;
+    focusOnReadyAppliedRef.current = true;
+    textareaRef.current?.focus();
+  }, [canCompose, focusOnReady]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {

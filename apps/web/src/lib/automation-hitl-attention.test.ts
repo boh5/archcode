@@ -6,7 +6,7 @@ import { automationHitlSessionCount, deriveAutomationHitlAttention } from "./aut
 const base = {
   id: "automation-1",
   projectSlug: "demo",
-  createdFromSessionId: "source",
+  origin: { kind: "session", sessionId: "source" },
   name: "Daily check",
   status: "active",
   trigger: { kind: "interval", everyMs: 60_000 },

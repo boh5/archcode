@@ -19,6 +19,7 @@ function runtime(overrides: Partial<RuntimePromptEnvelope> = {}): RuntimePromptE
     parentSessionId: "none",
     parentAgentName: "none",
     depth: 0,
+    source: { kind: "direct" },
     allowedDelegateTargets: ["analyst", "build", "explore", "librarian"],
     todo: "none",
     remainingDepth: 3,
@@ -40,6 +41,7 @@ function child(
     parentSessionId: "session-1",
     parentAgentName,
     depth: 1,
+    source: "child",
     allowedDelegateTargets: [],
     ...overrides,
   });
@@ -135,6 +137,7 @@ describe("PromptContractCompiler", () => {
         allowedTools: ["file_read", "file_write", "file_edit", "project_todo_update", "delegate"],
         runtime: runtime({
           agentName: "discussion",
+          source: { kind: "todo", todoId: "todo-1", entry: "discussion" },
           todo: { id: "todo-1", mode: "bound" },
           allowedDelegateTargets: ["explore", "librarian"],
           remainingDepth: 2,
@@ -146,7 +149,14 @@ describe("PromptContractCompiler", () => {
       { role: librarianRoleContract, allowedTools: ["web_fetch"], runtime: child("librarian", "lead") },
       { role: exploreRoleContract, allowedTools: ["file_read"], runtime: child("explore", "discussion") },
       { role: librarianRoleContract, allowedTools: ["web_fetch"], runtime: child("librarian", "discussion") },
-      { role: leadRoleContract, allowedTools: ["file_read", "delegate"], runtime: runtime({ todo: { id: "todo-1", mode: "bound" } }) },
+      {
+        role: leadRoleContract,
+        allowedTools: ["file_read", "delegate"],
+        runtime: runtime({
+          source: { kind: "todo", todoId: "todo-1", entry: "work" },
+          todo: { id: "todo-1", mode: "bound" },
+        }),
+      },
     ];
 
     for (const item of cases) {

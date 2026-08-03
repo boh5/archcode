@@ -13,6 +13,9 @@ export interface SessionMessageDispatchIdentity {
 export type SessionDispatchInput =
   | (SessionMessageDispatchIdentity & {
     readonly kind: "start_session";
+    readonly automationId: string;
+    readonly invocationId: string;
+    readonly todoId: string | null;
     readonly message: string;
     readonly location: "project" | "worktree";
   })
@@ -102,6 +105,7 @@ export class AutomationDispatcher {
         ? {
           ...identity,
           kind: "start_session",
+          todoId: automation.origin.kind === "todo" ? automation.origin.todoId : null,
           message: automation.action.message,
           location: automation.action.location,
         }
@@ -163,11 +167,13 @@ function invocationIdentity(
   workspaceRoot: string,
   projectSlug: string,
   invocation: AutomationInvocation,
-): SessionMessageDispatchIdentity {
+): SessionMessageDispatchIdentity & { readonly automationId: string; readonly invocationId: string } {
   return {
     workspaceRoot,
     projectSlug,
     sessionId: requiredSessionId(invocation),
     clientRequestId: invocation.id,
+    automationId: invocation.automationId,
+    invocationId: invocation.id,
   };
 }

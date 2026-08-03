@@ -49,7 +49,7 @@ describe("Session model selection protocol", () => {
     manager = new SessionStoreManager({ logger: silentLogger });
     input = new SessionInputService(manager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
     selections = new SessionModelSelectionService(manager);
-    await manager.createSessionFile(WORKSPACE, { agentName: "lead" }, SESSION_ID);
+    await manager.createSessionFile(WORKSPACE, { source: { kind: "direct" }, agentName: "lead" }, SESSION_ID);
   });
 
   afterEach(async () => {
@@ -98,7 +98,7 @@ describe("Session model selection protocol", () => {
   test("allows Lead and Discussion roots, but not children, to own a durable override", async () => {
     await manager.createSessionFile(WORKSPACE, {
       agentName: "discussion",
-      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+      source: { kind: "todo", todoId: crypto.randomUUID(), entry: "discussion" },
     }, DISCUSSION_SESSION_ID);
     await manager.createSessionFile(WORKSPACE, {
       agentName: "explore",

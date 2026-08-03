@@ -31,7 +31,7 @@ describe("SessionFamilyStopService", () => {
       skills: [],
       background: false,
     };
-    sessions.create(rootSessionId, TMP_ROOT, { agentName: "lead" });
+    sessions.create(rootSessionId, TMP_ROOT, { source: { kind: "direct" }, agentName: "lead" });
     sessions.create(childSessionId, TMP_ROOT, {
       agentName: "explore",
       rootSessionId,
@@ -76,7 +76,7 @@ describe("SessionFamilyStopService", () => {
   test("releases the stop lease when batch cancellation fails", async () => {
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = crypto.randomUUID();
-    sessions.create(rootSessionId, TMP_ROOT, { agentName: "lead" });
+    sessions.create(rootSessionId, TMP_ROOT, { source: { kind: "direct" }, agentName: "lead" });
     await sessions.flushSession(rootSessionId, TMP_ROOT);
     const release = mock(() => undefined);
     const service = new SessionFamilyStopService({

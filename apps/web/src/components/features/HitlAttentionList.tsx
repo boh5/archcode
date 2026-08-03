@@ -11,8 +11,8 @@ export function hitlAttentionLink(entry: ScopedHitlView): string {
 
 export function HitlAttentionList({
   entries,
-  emptyMessage = "No requests need your attention",
-  title = "Needs attention",
+  emptyMessage = "Nothing needs you",
+  title = "Needs you",
   maxItems,
   showProject = false,
   testId = "hitl-attention-list",

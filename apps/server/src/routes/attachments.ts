@@ -80,7 +80,7 @@ export function createAttachmentsRoutes(runtime: AgentRuntime): Hono {
   return app;
 }
 
-function parseDecimal(value: string | undefined, label: string): number {
+export function parseDecimal(value: string | undefined, label: string): number {
   if (value === undefined || !/^(0|[1-9][0-9]*)$/.test(value)) {
     throw new ServerError(
       "ATTACHMENT_INVALID",
@@ -99,7 +99,10 @@ function parseDecimal(value: string | undefined, label: string): number {
   return parsed;
 }
 
-export function attachmentDisposition(name: string): string {
+export function attachmentDisposition(
+  name: string,
+  disposition: "attachment" | "inline" = "attachment",
+): string {
   const asciiFilename = [...name]
     .map((character) => /[A-Za-z0-9._ -]/.test(character) ? character : "_")
     .join("")
@@ -108,5 +111,5 @@ export function attachmentDisposition(name: string): string {
     /['()*]/g,
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
-  return `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encoded}`;
+  return `${disposition}; filename="${asciiFilename}"; filename*=UTF-8''${encoded}`;
 }

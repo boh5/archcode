@@ -63,3 +63,26 @@ export class ProjectTodoDiscussionAuthorizationError extends Error {
     this.name = "ProjectTodoDiscussionAuthorizationError";
   }
 }
+
+export class ProjectTodoRunNowConflictError extends Error {
+  readonly code = "PROJECT_TODO_RUN_NOW_CONFLICT";
+
+  constructor(public readonly clientRequestId: string) {
+    super(`Run now request ${clientRequestId} was already used with different input`);
+    this.name = "ProjectTodoRunNowConflictError";
+  }
+}
+
+export class ProjectTodoRunNowRecoveryError extends Error {
+  readonly code = "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED";
+
+  constructor(
+    public readonly todoId: string,
+    public readonly sessionId: string | undefined,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "ProjectTodoRunNowRecoveryError";
+  }
+}

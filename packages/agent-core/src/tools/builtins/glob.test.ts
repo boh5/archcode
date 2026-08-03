@@ -74,6 +74,50 @@ describe("glob source pages", () => {
     expect(inferToolErrorKindFromResult(error)).toBe("glob-error");
   });
 
+  test("returns a non-error empty state when the requested search path is absent", async () => {
+    const runner = mock(() => processResult("unexpected"));
+    setProcessRunnerForTest(runner);
+
+    const result = await globTool.execute({
+      pattern: "*.md",
+      path: "missing-plans-directory",
+      offset: 0,
+      limit: 100,
+    }, ctx());
+
+    expect(result.isError).toBe(false);
+    expect(sourceDraftText(result)).toBe("Search path does not exist: missing-plans-directory");
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  test("treats a child below an existing file as an absent search path", async () => {
+    const runner = mock(() => processResult("unexpected"));
+    setProcessRunnerForTest(runner);
+    const path = `${import.meta.path}/child`;
+
+    const result = await globTool.execute({ pattern: "*.md", path, offset: 0, limit: 100 }, ctx());
+
+    expect(result.isError).toBe(false);
+    expect(sourceDraftText(result)).toBe(`Search path does not exist: ${path}`);
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  test("fails closed when search-path inspection fails for a reason other than absence", async () => {
+    const runner = mock(() => processResult("unexpected"));
+    setProcessRunnerForTest(runner);
+
+    const result = await globTool.execute({
+      pattern: "*.md",
+      path: "x".repeat(5_000),
+      offset: 0,
+      limit: 100,
+    }, ctx());
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_GLOB_ERROR");
+    expect(runner).not.toHaveBeenCalled();
+  });
+
   test("fails closed when one rg path record exceeds the bounded collector", async () => {
     setProcessRunnerForTest(mock(() => processResult(`before.ts\n${"x".repeat(70 * 1024)}.ts\n`)));
 

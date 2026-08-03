@@ -22,7 +22,7 @@ const automationTimezone = "Asia/Shanghai";
 const automation: Automation = {
   id: "automation-edit-limits",
   projectSlug: "archcode",
-  createdFromSessionId: "session-source",
+  origin: { kind: "session", sessionId: "session-source" },
   name: "Daily review",
   trigger: { kind: "cron", expression: "0 9 * * *", timezone: automationTimezone },
   action: { kind: "start_session", message: "Review current work.", location: "project" },
@@ -144,5 +144,37 @@ describe("EditAutomationDialog limits", () => {
       change(input, validValue);
       expect(saveButton().disabled).toBe(false);
     }
+  });
+
+  test("protects a dirty draft and states the fixed Lead principal contract", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    let closeCount = 0;
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <EditAutomationDialog open onClose={() => { closeCount += 1; }} slug="archcode" automation={automation} />
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("root Lead Session with the principal profile");
+    change(field("automation-name"), "Changed draft");
+    const cancel = [...document.querySelectorAll("button")]
+      .find((candidate) => candidate.textContent === "Cancel");
+    if (cancel === undefined) throw new Error("Missing Cancel button");
+
+    let confirmCount = 0;
+    dom.window.confirm = () => {
+      confirmCount += 1;
+      return false;
+    };
+    act(() => cancel.click());
+    expect(confirmCount).toBe(1);
+    expect(closeCount).toBe(0);
+
+    dom.window.confirm = () => true;
+    act(() => cancel.click());
+    expect(closeCount).toBe(1);
   });
 });

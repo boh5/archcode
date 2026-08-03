@@ -98,11 +98,20 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
           : await this.#prepareWorktree(input.workspaceRoot, input.sessionId);
         session = await this.#sessions.createSessionFile(
           input.workspaceRoot,
-          { agentName: "lead", cwd },
+          {
+            agentName: "lead",
+            cwd,
+            source: {
+              kind: "automation",
+              automationId: input.automationId,
+              invocationId: input.invocationId,
+              todoId: input.todoId,
+            },
+          },
           input.sessionId,
         );
       }
-      await this.#assertStartSessionIdentity(session, input.location, input.workspaceRoot);
+      await this.#assertStartSessionIdentity(session, input, input.workspaceRoot);
     } else {
       const session = await this.#readSession(input.workspaceRoot, input.sessionId);
       if (session === undefined) throw new SessionFileNotFoundError(input.sessionId);
@@ -139,7 +148,7 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
 
   async #assertStartSessionIdentity(
     session: HydratedSessionFile,
-    location: "project" | "worktree",
+    input: Extract<SessionDispatchInput, { kind: "start_session" }>,
     workspaceRoot: string,
   ): Promise<void> {
     if (
@@ -152,7 +161,18 @@ export class RuntimeSessionDispatchGateway implements SessionDispatchGateway {
         `Preallocated Automation Session ${session.sessionId} has an incompatible identity`,
       );
     }
-    if (location === "project") {
+    if (
+      session.source?.kind !== "automation"
+      || session.source.automationId !== input.automationId
+      || session.source.invocationId !== input.invocationId
+      || session.source.todoId !== input.todoId
+    ) {
+      throw new AutomationSessionIdentityError(
+        session.sessionId,
+        `Preallocated Automation Session ${session.sessionId} has an incompatible source`,
+      );
+    }
+    if (input.location === "project") {
       if (resolve(session.cwd) !== resolve(workspaceRoot)) {
         throw new AutomationSessionIdentityError(
           session.sessionId,

@@ -2,7 +2,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { GlobalSessionEventEnvelope, GlobalSSEResourceChangedEvent } from "@archcode/protocol";
+import type {
+  GlobalSessionEventEnvelope,
+  GlobalSSEResourceChangedEvent,
+} from "@archcode/protocol";
 
 import type { McpManager } from "./mcp";
 import { setLlmAdapterForTest } from "./llm";
@@ -53,7 +56,7 @@ describe("RuntimeSessionDispatchGateway", () => {
     const workspaceRoot = await tempDir("archcode-automation-gateway-");
     const sessionId = crypto.randomUUID();
     const stores = new SessionStoreManager({ logger: silentLogger });
-    await stores.createSessionFile(workspaceRoot, { agentName: "lead" }, sessionId);
+    await stores.createSessionFile(workspaceRoot, { agentName: "lead", source: { kind: "direct" } }, sessionId);
     const accepted: unknown[] = [];
 
     const gateway = new RuntimeSessionDispatchGateway({
@@ -92,41 +95,177 @@ describe("RuntimeSessionDispatchGateway", () => {
 });
 
 describe("AgentRuntime Automation wiring", () => {
-  test("copies Todo source to Automation without propagating it through Invocations", async () => {
+  test("persists Todo identity and resolves current references in Automation invocation Sessions", async () => {
     const fixture = await runtimeFixture();
-    const todoId = crypto.randomUUID();
+    const todos = (await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot)).todos;
+    let todo = await todos.createTodo({ content: "Use current Automation references" });
+    const firstAttachmentId = crypto.randomUUID();
+    todo = (await todos.uploadAttachment({
+      todoId: todo.id,
+      attachmentId: firstAttachmentId,
+      expectedRevision: todo.revision,
+      name: "first-reference.txt",
+      sizeBytes: 1,
+      mediaType: "text/plain",
+      body: new Response(Uint8Array.of(1)).body,
+    })).todo;
+    const todoId = todo.id;
     const source = await fixture.runtime.createSession(fixture.workspaceRoot, {
       agentName: "lead",
-      projectTodo: { todoId, entry: "automation" },
+      source: { kind: "todo", todoId, entry: "automation" },
     });
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "Todo automation",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check the project", location: "project" },
-      createdFromSessionId: source.sessionId,
+      sourceSessionId: source.sessionId,
     });
 
-    expect(automation.projectTodoId).toBe(todoId);
+    expect(automation.origin).toEqual({ kind: "todo", todoId, sessionId: source.sessionId });
+    const modelCalls: string[] = [];
+    let firstModelStarted!: () => void;
+    let secondModelStarted!: () => void;
+    let thirdModelStarted!: () => void;
+    let releaseFirstModel!: () => void;
+    let releaseSecondModel!: () => void;
+    let releaseThirdModel!: () => void;
+    const firstModelStartedPromise = new Promise<void>((resolve) => { firstModelStarted = resolve; });
+    const secondModelStartedPromise = new Promise<void>((resolve) => { secondModelStarted = resolve; });
+    const thirdModelStartedPromise = new Promise<void>((resolve) => { thirdModelStarted = resolve; });
+    const releaseFirstModelPromise = new Promise<void>((resolve) => { releaseFirstModel = resolve; });
+    const releaseSecondModelPromise = new Promise<void>((resolve) => { releaseSecondModel = resolve; });
+    const releaseThirdModelPromise = new Promise<void>((resolve) => { releaseThirdModel = resolve; });
+    setLlmAdapterForTest({
+      streamText: mock((input: unknown) => {
+        const callIndex = modelCalls.push(JSON.stringify((input as { messages: unknown }).messages)) - 1;
+        if (callIndex === 0) firstModelStarted();
+        if (callIndex === 1) secondModelStarted();
+        if (callIndex === 2) thirdModelStarted();
+        return {
+          fullStream: (async function* () {
+            if (callIndex === 0) await releaseFirstModelPromise;
+            if (callIndex === 1) await releaseSecondModelPromise;
+            if (callIndex === 2) await releaseThirdModelPromise;
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ totalTokens: 1 }),
+          text: Promise.resolve(""),
+          toolCalls: Promise.resolve([]),
+        };
+      }) as never,
+      generateText: mock(async () => ({ text: "Generated title" })) as never,
+    });
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
+    await firstModelStartedPromise;
     const invocationSession = await fixture.runtime.getSessionFile(
       fixture.workspaceRoot,
       invocation.sessionId!,
     );
-    expect(invocationSession.projectTodo).toBeUndefined();
+    expect(invocationSession.source).toEqual({
+      kind: "automation",
+      automationId: automation.id,
+      invocationId: invocation.id,
+      todoId,
+    });
+    expect(modelCalls[0]).toContain(firstAttachmentId);
 
-    const target = await fixture.runtime.createSession(fixture.workspaceRoot, {
-      agentName: "lead",
-      projectTodo: { todoId, entry: "work" },
+    const firstEvents = sessionEventProbe(fixture.runtime);
+    releaseFirstModel();
+    await firstEvents.waitFor((event) => event.sessionId === invocationSession.sessionId
+      && event.payload.type === "execution-end"
+      && event.payload.terminalStatus === "completed");
+    firstEvents.dispose();
+
+    todo = await todos.removeAttachment({
+      todoId,
+      attachmentId: firstAttachmentId,
+      expectedRevision: todo.revision,
     });
-    const send = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
-      name: "Continue Todo work",
+    const secondAttachmentId = crypto.randomUUID();
+    todo = (await todos.uploadAttachment({
+      todoId,
+      attachmentId: secondAttachmentId,
+      expectedRevision: todo.revision,
+      name: "second-reference.txt",
+      sizeBytes: 1,
+      mediaType: "text/plain",
+      body: new Response(Uint8Array.of(2)).body,
+    })).todo;
+
+    const secondInvocation = await fixture.runtime.runAutomationNow(
+      fixture.workspaceRoot,
+      automation.id,
+    );
+    await secondModelStartedPromise;
+    const secondInvocationSession = await fixture.runtime.getSessionFile(
+      fixture.workspaceRoot,
+      secondInvocation.sessionId!,
+    );
+    expect(secondInvocationSession.sessionId).not.toBe(invocationSession.sessionId);
+    expect(secondInvocationSession.source).toEqual({
+      kind: "automation",
+      automationId: automation.id,
+      invocationId: secondInvocation.id,
+      todoId,
+    });
+    expect(modelCalls[1]).not.toContain(firstAttachmentId);
+    expect(modelCalls[1]).toContain(secondAttachmentId);
+
+    const secondEvents = sessionEventProbe(fixture.runtime);
+    releaseSecondModel();
+    await secondEvents.waitFor((event) => event.sessionId === secondInvocationSession.sessionId
+      && event.payload.type === "execution-end"
+      && event.payload.terminalStatus === "completed");
+    secondEvents.dispose();
+
+    const chained = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      name: "Chained Todo automation",
       trigger: { kind: "interval", everyMs: 30_000 },
-      action: { kind: "send_message", sessionId: target.sessionId, message: "Continue" },
-      createdFromSessionId: source.sessionId,
+      action: { kind: "start_session", message: "Continue", location: "project" },
+      sourceSessionId: secondInvocationSession.sessionId,
     });
-    await fixture.runtime.runAutomationNow(fixture.workspaceRoot, send.id);
-    expect((await fixture.runtime.getSessionFile(fixture.workspaceRoot, target.sessionId)).projectTodo)
-      .toEqual({ todoId, entry: "work" });
+    expect(chained.origin).toEqual({
+      kind: "todo",
+      todoId,
+      sessionId: secondInvocationSession.sessionId,
+    });
+    const continueAutomation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
+      name: "Continue existing invocation",
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: {
+        kind: "send_message",
+        sessionId: secondInvocationSession.sessionId,
+        message: "Read the references again",
+      },
+      sourceSessionId: source.sessionId,
+    });
+
+    await fixture.runtime.deleteAutomation(fixture.workspaceRoot, automation.id);
+    todo = await todos.removeAttachment({
+      todoId,
+      attachmentId: secondAttachmentId,
+      expectedRevision: todo.revision,
+    });
+    const thirdAttachmentId = crypto.randomUUID();
+    todo = (await todos.uploadAttachment({
+      todoId,
+      attachmentId: thirdAttachmentId,
+      expectedRevision: todo.revision,
+      name: "third-reference.txt",
+      sizeBytes: 1,
+      mediaType: "text/plain",
+      body: new Response(Uint8Array.of(3)).body,
+    })).todo;
+    await fixture.runtime.runAutomationNow(fixture.workspaceRoot, continueAutomation.id);
+    await thirdModelStartedPromise;
+    const events = sessionEventProbe(fixture.runtime);
+    releaseThirdModel();
+    await events.waitFor((event) => event.sessionId === secondInvocationSession.sessionId
+      && event.payload.type === "execution-end"
+      && event.payload.terminalStatus === "completed");
+    events.dispose();
+    expect(modelCalls[2]).not.toContain(secondAttachmentId);
+    expect(modelCalls[2]).toContain(thirdAttachmentId);
   });
 
   test("creates a normal Lead Session with the preallocated dispatch identities", async () => {
@@ -135,7 +274,7 @@ describe("AgentRuntime Automation wiring", () => {
       name: "check project",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check the project", location: "project" },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
 
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -148,17 +287,23 @@ describe("AgentRuntime Automation wiring", () => {
       rootSessionId: invocation.sessionId,
       cwd: fixture.workspaceRoot,
       agentName: "lead",
+      source: {
+        kind: "automation",
+        automationId: automation.id,
+        invocationId: invocation.id,
+        todoId: null,
+      },
     });
   });
 
   test("routes send_message through the ordinary checked Session message entry point", async () => {
     const fixture = await runtimeFixture();
-    const session = await fixture.runtime.createSession(fixture.workspaceRoot, { agentName: "lead" });
+    const session = await fixture.runtime.createSession(fixture.workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "continue session",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "send_message", sessionId: session.sessionId, message: "/skill use git-master Review this." },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
 
     const events = sessionEventProbe(fixture.runtime);
@@ -178,7 +323,7 @@ describe("AgentRuntime Automation wiring", () => {
       name: "server events",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Report status", location: "project" },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
     const events = sessionEventProbe(fixture.runtime);
     const invocation = await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -202,14 +347,14 @@ describe("AgentRuntime Automation wiring", () => {
       name: "isolated check",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "worktree" },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     })).rejects.toMatchObject({ name: "WorktreeServiceError" });
 
     const projectAutomation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "project check",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
     await expect(fixture.runtime.updateAutomation(fixture.workspaceRoot, projectAutomation.id, {
       action: { kind: "start_session", message: "Check", location: "worktree" },
@@ -224,13 +369,13 @@ describe("AgentRuntime Automation wiring", () => {
       name: "first",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "First", location: "project" },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
     const second = await fixture.runtime.createAutomation(fixture.secondWorkspaceRoot!, {
       name: "second",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Second", location: "project" },
-      createdFromSessionId: fixture.secondSourceSessionId!,
+      sourceSessionId: fixture.secondSourceSessionId!,
     });
 
     await fixture.runtime.startAutomationScheduler(fixture.workspaceRoot);
@@ -258,7 +403,7 @@ describe("AgentRuntime Automation wiring", () => {
       name: "notifications",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Notify", location: "project" },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
     await fixture.runtime.updateAutomation(fixture.workspaceRoot, automation.id, { name: "renamed" });
     await fixture.runtime.runAutomationNow(fixture.workspaceRoot, automation.id);
@@ -293,7 +438,7 @@ describe("AgentRuntime Automation wiring", () => {
     });
     const discussion = await stores.createSessionFile(fixture.workspaceRoot, {
       agentName: "discussion",
-      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+      source: { kind: "todo", todoId: crypto.randomUUID(), entry: "discussion" },
     });
     const missingSessionId = crypto.randomUUID();
     const input = {
@@ -304,18 +449,18 @@ describe("AgentRuntime Automation wiring", () => {
 
     await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
       ...input,
-      createdFromSessionId: missingSessionId,
+      sourceSessionId: missingSessionId,
     })).rejects.toMatchObject({ name: "ResourceCreationSourceError", sessionId: missingSessionId });
 
     await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
       ...input,
-      createdFromSessionId: fixture.secondSourceSessionId!,
+      sourceSessionId: fixture.secondSourceSessionId!,
     })).rejects.toMatchObject({ name: "ResourceCreationSourceError", sessionId: fixture.secondSourceSessionId });
 
     for (const source of [child, discussion]) {
       await expect(fixture.runtime.createAutomation(fixture.workspaceRoot, {
         ...input,
-        createdFromSessionId: source.sessionId,
+        sourceSessionId: source.sessionId,
       })).rejects.toMatchObject({ name: "ResourceCreationSourceError", sessionId: source.sessionId });
     }
 
@@ -328,19 +473,20 @@ describe("AgentRuntime Automation wiring", () => {
       name: "durable provenance",
       trigger: { kind: "interval", everyMs: 30_000 },
       action: { kind: "start_session", message: "Check", location: "project" },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
 
     await fixture.runtime.deleteSession(fixture.workspaceRoot, fixture.sourceSessionId);
 
     expect(await fixture.runtime.readAutomation(fixture.workspaceRoot, automation.id))
-      .toMatchObject({ createdFromSessionId: fixture.sourceSessionId });
+      .toMatchObject({ origin: { kind: "session", sessionId: fixture.sourceSessionId } });
   });
 
   test("blocks deletion of an Automation target and publishes deletion after unlinking", async () => {
     const fixture = await runtimeFixture();
     const target = await fixture.runtime.createSession(fixture.workspaceRoot, {
       agentName: "lead",
+      source: { kind: "direct" },
     });
     const automation = await fixture.runtime.createAutomation(fixture.workspaceRoot, {
       name: "Continue target",
@@ -350,7 +496,7 @@ describe("AgentRuntime Automation wiring", () => {
         sessionId: target.sessionId,
         message: "Continue",
       },
-      createdFromSessionId: fixture.sourceSessionId,
+      sourceSessionId: fixture.sourceSessionId,
     });
     const changes: GlobalSSEResourceChangedEvent[] = [];
     const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => {
@@ -419,10 +565,10 @@ async function runtimeFixture(options: {
     automationSchedulerTimer: timer,
   });
   activeRuntimes.add(runtime);
-  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+  const sourceSession = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
   const secondSourceSession = secondWorkspaceRoot === undefined
     ? undefined
-    : await runtime.createSession(secondWorkspaceRoot, { agentName: "lead" });
+    : await runtime.createSession(secondWorkspaceRoot, { agentName: "lead", source: { kind: "direct" } });
   return {
     runtime,
     workspaceRoot,

@@ -9,6 +9,7 @@ import {
   validateExecutionFinalOutputSelection,
   type FinalizedToolResult,
   type JsonObject,
+  type ProjectSessionInventoryItem,
   type SessionModelSelection,
 } from "@archcode/protocol";
 import {
@@ -1120,10 +1121,20 @@ export const SessionFileSchema = z.strictObject({
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
   goal: SessionGoalSchema.optional(),
-  projectTodo: z.strictObject({
-    todoId: z.uuid(),
-    entry: z.enum(["discussion", "work", "automation"]),
-  }).optional(),
+  source: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("direct") }),
+    z.strictObject({
+      kind: z.literal("todo"),
+      todoId: z.uuid(),
+      entry: z.enum(["discussion", "work", "automation"]),
+    }),
+    z.strictObject({
+      kind: z.literal("automation"),
+      automationId: z.uuid(),
+      invocationId: z.uuid(),
+      todoId: z.uuid().nullable(),
+    }),
+  ]).optional(),
   eventCursor: z.number().int().min(-1),
 }).superRefine((session, ctx) => {
   const isChild = session.parentSessionId !== undefined;
@@ -1388,7 +1399,7 @@ export interface SessionSummary {
   parentSessionId?: string;
   delegationRequest?: z.output<typeof DelegationRequestSchema>;
   goal?: z.output<typeof SessionGoalSchema>;
-  projectTodo?: z.output<typeof SessionFileSchema>["projectTodo"];
+  source?: z.output<typeof SessionFileSchema>["source"];
   agentName: string;
   profile: ProfileName;
   activeSkillNames: string[];
@@ -1403,7 +1414,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "promptTraces" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationRequest" | "toolBatches" | "rootSessionId" | "nextEventId"
 > & Partial<Pick<
   SessionStoreState,
-  "parentSessionId" | "goal" | "projectTodo" | "queueDispatchBarrierAt"
+  "parentSessionId" | "goal" | "source" | "queueDispatchBarrierAt"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -1496,7 +1507,7 @@ async function saveSessionTranscript(
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goal === undefined ? {} : { goal: state.goal }),
-    ...(state.projectTodo === undefined ? {} : { projectTodo: state.projectTodo }),
+    ...(state.source === undefined ? {} : { source: state.source }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -1550,7 +1561,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goal === undefined ? {} : { goal: state.goal }),
-    ...(state.projectTodo === undefined ? {} : { projectTodo: state.projectTodo }),
+    ...(state.source === undefined ? {} : { source: state.source }),
   };
 }
 
@@ -1590,7 +1601,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
         ...(parsed.delegationRequest === undefined ? {} : { delegationRequest: parsed.delegationRequest }),
         ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
-        ...(parsed.projectTodo === undefined ? {} : { projectTodo: parsed.projectTodo }),
+        ...(parsed.source === undefined ? {} : { source: parsed.source }),
         agentName: parsed.agentName,
         profile: resolveSessionProfile(parsed),
         activeSkillNames: parsed.activeSkillNames,
@@ -1606,6 +1617,51 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
   return sessions
     .sort((left, right) => right.sortKey - left.sortKey)
     .map((session) => session.summary);
+}
+
+async function listSessionInventory(workspaceRoot: string): Promise<ProjectSessionInventoryItem[]> {
+  const dir = getSessionsDir(workspaceRoot);
+  const names = await readTopLevelSessionDirNames(dir);
+  const sessions: Array<{ item: ProjectSessionInventoryItem; sortKey: number }> = [];
+
+  for (const name of names) {
+    const parsed = await readSessionFile(name, workspaceRoot);
+    if (parsed.parentSessionId !== undefined || parsed.rootSessionId !== parsed.sessionId) continue;
+    if (parsed.source === undefined) throw new Error(`Root Session is missing source: ${parsed.sessionId}`);
+    const summary = {
+      sessionId: parsed.sessionId,
+      cwd: parsed.cwd,
+      rootSessionId: parsed.rootSessionId,
+      source: parsed.source,
+      ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
+      agentName: parsed.agentName,
+      profile: resolveSessionProfile(parsed),
+      activeSkillNames: parsed.activeSkillNames,
+      modelSelection: parsed.modelSelection,
+      title: parsed.title,
+      createdAt: parsed.createdAt,
+      updatedAt: parsed.updatedAt,
+    };
+    const latest = parsed.executions.at(-1);
+    sessions.push({
+      item: {
+        session: { ...summary, source: summary.source },
+        latestExecution: latest === undefined
+          ? null
+          : {
+            id: latest.id,
+            status: latest.status,
+            startedAt: latest.startedAt,
+            ...("endedAt" in latest ? { endedAt: latest.endedAt } : {}),
+          },
+      },
+      sortKey: parsed.updatedAt,
+    });
+  }
+
+  return sessions
+    .sort((left, right) => right.sortKey - left.sortKey)
+    .map(({ item }) => item);
 }
 
 async function scanDescendants(workspaceRoot: string, rootSessionId: string): Promise<Map<string, string>> {
@@ -1644,7 +1700,7 @@ async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSu
       rootSessionId: parsed.rootSessionId,
       ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
       ...(parsed.goal === undefined ? {} : { goal: parsed.goal }),
-      ...(parsed.projectTodo === undefined ? {} : { projectTodo: parsed.projectTodo }),
+      ...(parsed.source === undefined ? {} : { source: parsed.source }),
       agentName: parsed.agentName,
       profile: resolveSessionProfile(parsed),
       activeSkillNames: parsed.activeSkillNames,
@@ -1683,6 +1739,7 @@ export const sessionFileInternals = {
   readSessionFile,
   toSessionFile,
   listSessionSummaries,
+  listSessionInventory,
   scanAllSessionSummaries,
   scanDescendants,
   readTopLevelSessionDirNames,

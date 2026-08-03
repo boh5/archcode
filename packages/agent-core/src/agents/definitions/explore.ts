@@ -5,6 +5,7 @@ import {
   TOOL_AST_GREP_SEARCH,
   TOOL_COMPRESS,
   TOOL_FILE_READ,
+  TOOL_PDF_READ,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
   TOOL_GLOB,
@@ -26,6 +27,7 @@ export const exploreAgentDefinition = {
   tools: {
     tools: [
       TOOL_FILE_READ,
+      TOOL_PDF_READ,
       TOOL_GREP,
       TOOL_GLOB,
       TOOL_GIT_STATUS,

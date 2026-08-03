@@ -1,68 +1,74 @@
-# Dashboard Page Overrides
+# Global Home Page Overrides
 
-> Read [`../MASTER.md`](../MASTER.md) first. This file defines Project Dashboard
-> information architecture.
+> Read [`../MASTER.md`](../MASTER.md) first. `dashboard.html` is the global Home
+> prototype. It is not a Project Dashboard and never appears in the project-level
+> `Todos / Automations / Sessions` navigation.
 
 ## Purpose
 
-The Dashboard answers four operational questions:
+Home answers four cross-project questions:
 
-1. What needs me?
-2. What is running?
-3. Where can I continue?
-4. What is coming next?
+1. What needs me now?
+2. What is currently running?
+3. What is ready for review?
+4. What recurring work is coming next?
 
-It is a decision and resumption surface, not an analytics report.
+It is a small attention and resumption surface, not another inventory and not an
+analytics dashboard.
 
 ## Layout
 
-- Context Inspector is absent on this page.
-- Keep the project rail. The project-scoped Dashboard also keeps project
-  navigation; the global Dashboard does not add an empty project sidebar.
-- Main content width is at most 1180px.
-- Use 46px top, 40px horizontal, and 72px bottom padding on desktop.
-- At `≥1001px`, pair Needs attention with Running now in one priority row, then
-  pair Continue working with a narrower Upcoming region below it. At narrower
-  widths, all four regions stack in that order. These are compositional surface
-  bands, not KPI or Bento cards.
-- Keep 20px gaps between paired regions and 34px between major rows.
-- At `≤760px`, use 16px horizontal padding and reflow row metadata below the
-  main copy.
+- Keep only the theme-adaptive project rail and global work canvas. Do not render
+  a project toolbar, persistent project sidebar, or project-level New Session.
+- The ArchCode brand mark represents the current Home destination. Project icons
+  open each project's Todos page.
+- Main content width is at most 1180px with 40px desktop gutters and 18px narrow
+  gutters.
+- Pair `Needs you` with `Running` and `Ready to review` with `Upcoming` on wide
+  screens. Stack all four sections at narrower widths.
+- Sections are flat operational bands with rules, not KPI or Bento cards.
 
 ## Section Order
 
-1. Intro: `Dashboard` and the plain-language purpose.
-2. Needs attention.
-3. Running now.
-4. Continue working.
+1. Intro: `Home` and `Across all projects`.
+2. Needs you.
+3. Running.
+4. Ready to review.
 5. Upcoming.
 
-Do not lead with metrics, charts, usage totals, or a greeting hero.
+Do not add greetings, marketing copy, metrics, charts, or a global Todo board.
 
 ## Rows
 
-- Use full-width rows separated by thin rules inside each region, not a grid of
-  KPI cards.
-- Row structure:
-  `status orbit → title/explanation → time/state + Open`.
-- Needs-attention rows use amber field plus a 3px amber inset rule.
-- Running rows use lime field plus a 3px lime inset rule.
-- Ordinary resumable rows remain neutral and reveal the indigo action.
-- Preserve the explanation that tells the user why the item matters now.
+- Use one full-width row per actionable item:
+  `state icon → entity/title/project context → time or action state`.
+- Every row identifies its project and entity type because Home crosses project
+  boundaries.
+- Needs-you rows use amber plus the exact actionable state, including
+  `Inspection`, `Permission`, `Question`, `Blocked`, `Budget limited`,
+  `Failed`, or `Timed out`.
+  Running rows use the live orbit plus elapsed time. Review rows say what result
+  is awaiting review. Upcoming rows identify the Automation schedule.
+- Current-project rows use exact Todo, Automation, or Session deep links. Other
+  project rows may remain explicit prototype actions rather than fake deep links.
+- Prefer a few decision-worthy rows over exhaustive recent activity. Home must
+  never become a second Sessions, Automations, or Todos list.
 
-## Content Rules
+## Search and Attention
 
-- Prefer a small number of actionable items over exhaustive activity.
-- Counts belong in compact section badges.
-- Time and running duration use tabular or monospace figures.
-- Empty sections should explain that no action is required; never show a blank
-  chart or a zero-value KPI tile.
+- Project-rail `Search all work` remains the only navigational search and covers
+  all registered projects and work entities.
+- The rail `Needs you` control is the compact cross-project inbox for pending
+  permissions, questions, and manual inspections. Home's `Needs you` section is
+  broader and also includes failed Sessions, blocked Goals, and failed runs.
+- Home has no local filter because it is a curated decision surface, not an
+  inventory.
 
-## Dashboard-Specific Avoidances
+## Home-Specific Avoidances
 
-- Bento or KPI tile layouts;
-- velocity, productivity, token, or activity charts without a decision use;
-- generic AI recommendations;
-- decorative sparklines;
-- large marketing hero;
-- equal visual weight for attention, running, and inactive work.
+- a Project Dashboard destination;
+- a persistent Sessions/Automations sidebar;
+- New Session or New Todo actions in the Home header;
+- repeating every Todo simply because it exists;
+- Bento/KPI layouts, velocity charts, usage totals, or decorative sparklines;
+- equal visual weight for blocked, running, review-ready, and inactive work.

@@ -2,19 +2,25 @@ import type { AttachmentDescriptor, SessionMessage } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionAttachmentService } from "./service";
 
-export interface ResolveCommittedAttachmentReadPathsInput {
+type ResolveCurrentTodoReadPaths = (input: {
+  readonly workspaceRoot: string;
+  readonly rootSessionId: string;
+}) => Promise<{
+  readonly attachments: readonly AttachmentDescriptor[];
+  resolveReadPath(descriptor: AttachmentDescriptor): Promise<string>;
+} | undefined>;
+
+export interface ResolveAttachmentReadPathsInput {
   readonly workspaceRoot: string;
   readonly rootSessionId: string;
   readonly storeManager: SessionStoreManager;
   readonly attachments: Pick<SessionAttachmentService, "resolveReadPath">;
+  readonly resolveCurrentTodoAttachments?: ResolveCurrentTodoReadPaths;
 }
 
-/**
- * Resolves only attachment objects already committed to the root transcript.
- * Pending Queue input is intentionally absent from the canonical message list.
- */
-export async function resolveCommittedAttachmentReadPaths(
-  input: ResolveCommittedAttachmentReadPathsInput,
+/** Resolves committed Session inputs plus the Todo references current at this tool boundary. */
+export async function resolveAttachmentReadPaths(
+  input: ResolveAttachmentReadPathsInput,
 ): Promise<ReadonlySet<string>> {
   const store = await input.storeManager.getOrLoad(
     input.rootSessionId,
@@ -33,6 +39,24 @@ export async function resolveCommittedAttachmentReadPaths(
     } catch {
       // Missing, unsafe, or drifted objects must not widen the read exception.
     }
+  }
+
+  try {
+    const currentTodo = await input.resolveCurrentTodoAttachments?.({
+      workspaceRoot: input.workspaceRoot,
+      rootSessionId: input.rootSessionId,
+    });
+    if (currentTodo !== undefined) {
+      for (const descriptor of currentTodo.attachments) {
+        try {
+          paths.add(await currentTodo.resolveReadPath(descriptor));
+        } catch {
+          // Invalid Todo objects must not widen the exact read exception.
+        }
+      }
+    }
+  } catch {
+    // Missing or invalid Todo state must not widen the exact read exception.
   }
 
   return paths;

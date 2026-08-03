@@ -1,7 +1,13 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { queryKeys } from "./queries";
-import type { AttachmentDescriptor, RequestedModelSelection, SessionModelState } from "@archcode/protocol";
+import type {
+  AttachmentDescriptor,
+  ProjectTodoAttachmentMutationResponse,
+  ProjectTodoResponse,
+  RequestedModelSelection,
+  SessionModelState,
+} from "@archcode/protocol";
 import {
   removeProjectControlPlane,
   removeSessionControlPlane,
@@ -15,6 +21,11 @@ import type {
   Project,
   Session,
   SessionSummary,
+  ProjectSessionInventoryItem,
+  ProjectTodoRunNowResponse,
+  Automation,
+  AutomationAction,
+  AutomationTrigger,
   UpdateAutomationPayload,
   ProjectTodo,
   ProjectTodoCreateInput,
@@ -22,6 +33,15 @@ import type {
   ProjectTodoUpdateInput,
 } from "./types";
 import { createClientUuid } from "../lib/client-uuid";
+
+export async function invalidateProjectCatalog(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.projects }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.home }),
+  ]);
+}
 
 export function useUpdateProjectName() {
   const queryClient = useQueryClient();
@@ -33,7 +53,7 @@ export function useUpdateProjectName() {
         body: { name },
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      await invalidateProjectCatalog(queryClient);
     },
   });
 }
@@ -47,7 +67,7 @@ export function useAddProject() {
       body: { workspaceRoot: path, ...(name ? { name } : {}) },
     }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      await invalidateProjectCatalog(queryClient);
     },
   });
 }
@@ -61,7 +81,8 @@ export function useDeleteProject() {
     }),
     onSuccess: async (_data, slug) => {
       removeProjectControlPlane(slug);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+      queryClient.removeQueries({ queryKey: ["projects", slug] });
+      await invalidateProjectCatalog(queryClient);
     },
   });
 }
@@ -106,9 +127,9 @@ export function useDeleteSession() {
   return useMutation({
     mutationFn: (input: DeleteSessionInput) => deleteSession(input),
     onSuccess: (_data, variables) => {
-      queryClient.setQueryData<SessionSummary[]>(
+      queryClient.setQueryData<ProjectSessionInventoryItem[]>(
         queryKeys.sessions(variables.slug),
-        (sessions) => sessions?.filter((session) => session.sessionId !== variables.rootSessionId),
+        (items) => items?.filter((item) => item.session.sessionId !== variables.rootSessionId),
       );
       for (const deletedSessionId of new Set(variables.sessionIds)) {
         queryClient.removeQueries({
@@ -126,15 +147,7 @@ export function useDeleteSession() {
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.sessions(variables.slug) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.projectTodos(variables.slug) }),
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.dashboardProjection({ kind: "global" }),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.dashboardProjection({
-            kind: "project",
-            projectSlug: variables.slug,
-          }),
-        }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.home }),
       ]);
     },
   });
@@ -347,7 +360,7 @@ async function invalidateSessionGoalQueries(queryClient: QueryClient, slug: stri
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.session(slug, sessionId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
-    ...invalidateDashboardProjection(queryClient, slug),
+    queryClient.invalidateQueries({ queryKey: queryKeys.home }),
   ]);
 }
 
@@ -406,7 +419,7 @@ export function invalidateAutomation(
 ): Promise<void[]> {
   return Promise.all([
     qc.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) }),
-    ...invalidateDashboardProjection(qc, slug),
+    qc.invalidateQueries({ queryKey: queryKeys.home }),
     ...(automationId === undefined ? [] : [
       qc.invalidateQueries({ queryKey: queryKeys.automation(slug, automationId) }),
       qc.invalidateQueries({ queryKey: queryKeys.automationInvocations(slug, automationId) }),
@@ -478,6 +491,26 @@ export function useDeleteAutomation() {
   });
 }
 
+export interface CreateAutomationInput {
+  slug: string;
+  name: string;
+  trigger: AutomationTrigger;
+  action: AutomationAction;
+}
+
+export function useCreateAutomation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, ...input }: CreateAutomationInput) => apiFetch<{ automation: Automation }>(
+      `/api/projects/${encodeURIComponent(slug)}/automations`,
+      { method: "POST", body: input },
+    ),
+    onSuccess: async (_data, variables) => {
+      await invalidateAutomation(queryClient, variables.slug);
+    },
+  });
+}
+
 // ─── Project Todo mutations ───
 
 type TodoMutationVariables = { slug: string; todoId: string };
@@ -496,6 +529,57 @@ async function invalidateProjectTodo(
   await queryClient.invalidateQueries({ queryKey: queryKeys.projectTodos(slug), exact: true, refetchType: "all" });
 }
 
+export interface UploadProjectTodoAttachmentInput {
+  slug: string;
+  todoId: string;
+  attachmentId: string;
+  expectedRevision: number;
+  file: File;
+}
+
+/** Upload one raw file and activate its Todo reference atomically on the server. */
+export function uploadProjectTodoAttachment({
+  slug,
+  todoId,
+  attachmentId,
+  expectedRevision,
+  file,
+}: UploadProjectTodoAttachmentInput): Promise<ProjectTodoAttachmentMutationResponse> {
+  const query = new URLSearchParams({
+    name: file.name,
+    sizeBytes: String(file.size),
+    expectedRevision: String(expectedRevision),
+  });
+  return apiFetch<ProjectTodoAttachmentMutationResponse>(
+    `${todoUrl(slug, todoId, "attachments")}/${encodeURIComponent(attachmentId)}?${query.toString()}`,
+    {
+      method: "PUT",
+      headers: file.type ? { "Content-Type": file.type } : undefined,
+      body: file,
+    },
+  );
+}
+
+export interface RemoveProjectTodoAttachmentInput {
+  slug: string;
+  todoId: string;
+  attachmentId: string;
+  expectedRevision: number;
+}
+
+/** Remove the Todo reference; physical cleanup remains a server concern. */
+export function removeProjectTodoAttachment({
+  slug,
+  todoId,
+  attachmentId,
+  expectedRevision,
+}: RemoveProjectTodoAttachmentInput): Promise<ProjectTodoResponse> {
+  return apiFetch<ProjectTodoResponse>(
+    `${todoUrl(slug, todoId, "attachments")}/${encodeURIComponent(attachmentId)}`,
+    { method: "DELETE", body: { expectedRevision } },
+  );
+}
+
 async function invalidateProjectTodoSession(
   queryClient: ReturnType<typeof useQueryClient>,
   slug: string,
@@ -503,19 +587,9 @@ async function invalidateProjectTodoSession(
   await Promise.all([
     invalidateProjectTodo(queryClient, slug),
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
-    ...invalidateDashboardProjection(queryClient, slug),
+    queryClient.invalidateQueries({ queryKey: queryKeys.home }),
     queryClient.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) }),
   ]);
-}
-
-function invalidateDashboardProjection(
-  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
-  slug: string,
-): Promise<void>[] {
-  return [
-    qc.invalidateQueries({ queryKey: queryKeys.dashboardProjection({ kind: "global" }) }),
-    qc.invalidateQueries({ queryKey: queryKeys.dashboardProjection({ kind: "project", projectSlug: slug }) }),
-  ];
 }
 
 export function useCreateProjectTodo() {
@@ -528,6 +602,20 @@ export function useCreateProjectTodo() {
     },
     onError: async (_error, variables) => {
       await invalidateProjectTodo(queryClient, variables.slug);
+    },
+  });
+}
+
+export function useRunProjectTodoNow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, clientRequestId, content }: { slug: string; clientRequestId: string; content: string }) =>
+      apiFetch<ProjectTodoRunNowResponse>(`${todoUrl(slug)}/run-now`, {
+        method: "POST",
+        body: { clientRequestId, content },
+      }),
+    onSettled: async (_data, _error, variables) => {
+      await invalidateProjectTodoSession(queryClient, variables.slug);
     },
   });
 }

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   intervalFromMilliseconds,
   intervalToMilliseconds,
+  isoToLocalDateTimeInput,
 } from "./EditAutomationDialog";
 
 describe("EditAutomationDialog interval controls", () => {
@@ -16,5 +17,13 @@ describe("EditAutomationDialog interval controls", () => {
     expect(intervalFromMilliseconds(7_200_000)).toEqual({ value: 2, unit: "hours" });
     expect(intervalFromMilliseconds(900_000)).toEqual({ value: 15, unit: "minutes" });
     expect(intervalFromMilliseconds(90_000)).toEqual({ value: 90, unit: "seconds" });
+  });
+
+  test("projects an ISO instant into the local datetime input", () => {
+    const instant = "2026-08-03T09:30:00.000Z";
+    const date = new Date(instant);
+    const expected = new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+    expect(isoToLocalDateTimeInput(instant)).toBe(expected);
+    expect(new Date(isoToLocalDateTimeInput(instant)).toISOString()).toBe(instant);
   });
 });

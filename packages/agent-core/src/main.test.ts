@@ -58,7 +58,7 @@ function makeFakeMcpManager(result: McpDiscoveryResult | Error, secrets: readonl
   const policy = new SecretRedactionPolicy(secrets);
   return { discover: mock(async () => { if (result instanceof Error) throw result; return result; }), closeAll: mock(async () => []), getStatus: mock(() => new Map()), onStatusChange: mock(() => () => {}), startBackgroundDiscovery: mock((onDescriptors: (d: AnyToolDescriptor[]) => void, onWarning: (w: McpWarning) => void) => { if (result instanceof Error) { onWarning({ message: policy.redactString(`Failed to discover MCP tools during startup: ${result.message}`) }); return; } for (const warning of result.warnings) onWarning(warning); if (result.descriptors.length) onDescriptors(result.descriptors); }) } as unknown as McpManager;
 }
-function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead" }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, executionId: crypto.randomUUID(), runOrdinal: 0, toolBatchId: crypto.randomUUID(), abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
+function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead", source: { kind: "direct" } }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, executionId: crypto.randomUUID(), runOrdinal: 0, toolBatchId: crypto.randomUUID(), abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
 type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation">;
 async function createRuntime(options: RuntimeTestOptions) {
   const result = await options.configService.activateForStartup();
@@ -267,7 +267,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Queued input" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", title: "Queued input" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" }, title: "Queued input" });
     expect(session).toMatchObject({
       executionCount: 0,
       isRunning: false,
@@ -312,7 +312,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "HITL create failure" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime.contextResolver.resolve(workspaceRoot);
     const originalCreate = context.hitl.create.bind(context.hitl);
     let createAttempts = 0;
@@ -389,7 +389,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Input release retry" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const originalResolve = runtime.contextResolver.resolve.bind(runtime.contextResolver);
     let resolveAttempts = 0;
     runtime.contextResolver.resolve = async (root) => {
@@ -437,7 +437,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Child release retry" });
-    const parent = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const parent = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     let resolveChildStarted!: () => void;
     const childStarted = new Promise<void>((resolve) => { resolveChildStarted = resolve; });
     let releaseChild!: () => void;
@@ -478,7 +478,7 @@ describe("createRuntime", () => {
 
     const queuedSessionId = crypto.randomUUID();
     const externalStoreManager = new SessionStoreManager({ logger: silentLogger });
-    externalStoreManager.create(queuedSessionId, workspaceRoot, { agentName: "lead" });
+    externalStoreManager.create(queuedSessionId, workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     await externalStoreManager.flushSession(queuedSessionId, workspaceRoot);
     const queuedClientRequestId = crypto.randomUUID();
     await new SessionInputService(externalStoreManager, EMPTY_SESSION_ATTACHMENT_RESOLVER).acceptMessage({
@@ -527,7 +527,7 @@ describe("createRuntime", () => {
       workspaceRoot,
       name: "Attachment media type persistence",
     });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachmentId = crypto.randomUUID();
     const upload = await runtime.uploadSessionAttachment({
       workspaceRoot,
@@ -585,8 +585,7 @@ describe("createRuntime", () => {
     });
     const context = await runtime.contextResolver.resolve(workspaceRoot);
     const todo = await context.todos.createTodo({
-      title: "Discuss attachment evidence",
-      body: "Confirm the attachment before work starts.",
+      content: "Discuss attachment evidence\n\nConfirm the attachment before work starts.",
     });
 
     installTestLlmAdapter();
@@ -631,7 +630,7 @@ describe("createRuntime", () => {
         sessionId: discussion.sessionId,
         rootSessionId: discussion.sessionId,
         agentName: "discussion",
-        projectTodo: { todoId: todo.id, entry: "discussion" },
+        source: { kind: "todo", todoId: todo.id, entry: "discussion" },
       });
       expect(stored.messages).toContainEqual(expect.objectContaining({
         role: "user",
@@ -653,8 +652,8 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Lead collaboration" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", title: "Lead collaboration" });
-    expect(session.projectTodo).toBeUndefined();
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" }, title: "Lead collaboration" });
+    expect(session.source).toEqual({ kind: "direct" });
     const overriddenModel = await runtime.patchSessionModelSelection({
       workspaceRoot,
       sessionId: session.sessionId,
@@ -796,7 +795,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Command retry" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const clientRequestId = crypto.randomUUID();
     const input = {
       slug: project.slug,
@@ -827,7 +826,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Concurrent command retry" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const clientRequestId = crypto.randomUUID();
     const input = {
       slug: project.slug,
@@ -864,7 +863,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Command attachments" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     await expect(runtime.acceptSessionMessage({
       slug: project.slug,
       workspaceRoot,
@@ -910,7 +909,7 @@ describe("createRuntime", () => {
   test("registers MCP descriptors before agent runs", async () => { const descriptor = makeMcpDescriptor(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig({ servers: {} })), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [descriptor], warnings: [] }) }); expect(runtime.toolRegistry.get(descriptor.name)).toBe(descriptor); });
   test("starts with no MCP config", async () => { let resolved: ResolvedMcpConfig | undefined; const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: (config) => { resolved = config; return makeFakeMcpManager({ descriptors: [], warnings: [] }); } }); expect(resolved).toEqual({ servers: {} }); expect(runtime.warnings).toEqual([]); });
   test("exposes project registry and shared context resolver", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); expect(runtime.projectRegistry).toBeDefined(); expect(runtime.contextResolver).toBeDefined(); });
-  test("emits runtime snapshot without idle families", async () => { const workspaceRoot = await makeTempRoot(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" }); const session = await runtime.createSession(workspaceRoot, { agentName: "lead" }); const changes: GlobalSSESessionRuntimeChangedEvent[] = []; const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event)); const events = await runtime.listSessionRuntimeEvents(); expect(events[0]).toMatchObject({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }); await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined(); expect(changes.map(({ activity }) => activity)).toEqual(["stopping", "idle"]); unsubscribe(); });
+  test("emits runtime snapshot without idle families", async () => { const workspaceRoot = await makeTempRoot(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }) }); const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" }); const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } }); const changes: GlobalSSESessionRuntimeChangedEvent[] = []; const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event)); const events = await runtime.listSessionRuntimeEvents(); expect(events[0]).toMatchObject({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }); await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined(); expect(changes.map(({ activity }) => activity)).toEqual(["stopping", "idle"]); unsubscribe(); });
 
   test("startup continuation recovery preserves persisted Session recency and content", async () => {
     const workspaceRoot = await makeTempRoot();
@@ -924,7 +923,7 @@ describe("createRuntime", () => {
     await runtime1.projectRegistry.add({ workspaceRoot, name: "Stable recency" });
     const sessions = await Promise.all(
       ["oldest", "middle", "newest"].map((title) =>
-        runtime1.createSession(workspaceRoot, { agentName: "lead", title })),
+        runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" }, title })),
     );
     await runtime1.shutdown();
 
@@ -975,7 +974,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "HITL delivery failure" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime.contextResolver.resolve(workspaceRoot);
     const record = (await context.hitl.create({
       hitlId: secret,
@@ -1015,7 +1014,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Fast HITL answer" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime.contextResolver.resolve(workspaceRoot);
     const originalCreate = context.hitl.create.bind(context.hitl);
     let responsePromise: ReturnType<AgentRuntime["respondToHitl"]> | undefined;
@@ -1121,9 +1120,9 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot: healthyWorkspaceRoot, name: "Healthy project" });
-    await runtime.createSession(healthyWorkspaceRoot, { agentName: "lead" });
+    await runtime.createSession(healthyWorkspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     await runtime.projectRegistry.add({ workspaceRoot: failedWorkspaceRoot, name: "Failed project" });
-    const failedSession = await runtime.createSession(failedWorkspaceRoot, { agentName: "lead" });
+    const failedSession = await runtime.createSession(failedWorkspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime.contextResolver.resolve(failedWorkspaceRoot);
     const request = context.hitl.codec.createAskUserRequest({
       toolCallId: "missing-startup-call",
@@ -1186,7 +1185,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Goal restart" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
 
     const goalCreated = nextSessionEvent(
       runtime1,
@@ -1250,7 +1249,7 @@ describe("createRuntime", () => {
     const childSessionId = crypto.randomUUID();
     const childExecutionId = crypto.randomUUID();
     const seed = new SessionStoreManager({ logger: silentLogger });
-    await seed.createSessionFile(workspaceRoot, { agentName: "lead" }, rootSessionId);
+    await seed.createSessionFile(workspaceRoot, { agentName: "lead", source: { kind: "direct" } }, rootSessionId);
     const seedGoals = new SessionGoalService(seed);
     const goal = await seedGoals.create({
       workspaceRoot,
@@ -1339,7 +1338,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal continuation" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
 
     await runtime.acceptSessionMessage({
       slug: project.slug,
@@ -1382,7 +1381,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal failure" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
 
     const executionFailed = nextSessionEvent(
       runtime,
@@ -1423,7 +1422,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Repair answered HITL" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime1.contextResolver.resolve(workspaceRoot);
     const questionInput = {
       questions: [{
@@ -1572,7 +1571,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "HITL restart" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context = await runtime1.contextResolver.resolve(workspaceRoot);
     const questionInput = {
       questions: [{
@@ -1728,7 +1727,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "HITL answer and Stop" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context1 = await runtime1.contextResolver.resolve(workspaceRoot);
     const input = {
       questions: [{
@@ -1873,7 +1872,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Concurrent HITL" });
-    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime1.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const context1 = await runtime1.contextResolver.resolve(workspaceRoot);
     const concurrentDisplay = {
       title: "Continue",
@@ -1969,7 +1968,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment deletion" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachmentId = crypto.randomUUID();
     let releaseBody!: () => void;
     let bodyRead!: () => void;
@@ -2012,6 +2011,312 @@ describe("createRuntime", () => {
     await expect(runtime.getSessionFile(workspaceRoot, session.sessionId)).rejects.toThrow();
   });
 
+  test("Session deletion and Todo lifecycle changes never delete Todo-owned references", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Todo attachment retention" });
+    const todos = (await runtime.contextResolver.resolve(workspaceRoot)).todos;
+    let todo = await todos.createTodo({ content: "Retain the PRD" });
+    const attachmentId = crypto.randomUUID();
+    const bytes = new TextEncoder().encode("durable Todo reference");
+    const uploaded = await todos.uploadAttachment({
+      todoId: todo.id,
+      attachmentId,
+      expectedRevision: todo.revision,
+      name: "prd.txt",
+      sizeBytes: bytes.byteLength,
+      mediaType: "text/plain",
+      body: new Response(bytes).body,
+    });
+    todo = uploaded.todo;
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+
+    await runtime.deleteSession(workspaceRoot, session.sessionId);
+    todo = await todos.updateTodo(todo.id, {
+      expectedRevision: todo.revision,
+      status: "rejected",
+      rejectionReason: "Keep for later",
+    });
+    todo = await todos.updateTodo(todo.id, {
+      expectedRevision: todo.revision,
+      archived: true,
+    });
+
+    expect(todo.attachmentIds).toEqual([attachmentId]);
+    const opened = await todos.openAttachment({ todoId: todo.id, attachmentId });
+    expect(await Bun.file(opened.contentPath).text()).toBe("durable Todo reference");
+  });
+
+  test("projects the Todo attachment set current at each model boundary without Session snapshots", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Live Todo references" });
+    const todos = (await runtime.contextResolver.resolve(workspaceRoot)).todos;
+    let todo = await todos.createTodo({ content: "Use current references" });
+    const firstId = crypto.randomUUID();
+    const secondId = crypto.randomUUID();
+    todo = (await todos.uploadAttachment({
+      todoId: todo.id,
+      attachmentId: firstId,
+      expectedRevision: todo.revision,
+      name: "first.txt",
+      sizeBytes: 1,
+      body: new Response(Uint8Array.of(1)).body,
+    })).todo;
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+    const modelCalls: string[] = [];
+    setLlmAdapterForTest({
+      streamText: mock((input: unknown) => {
+        modelCalls.push(JSON.stringify((input as { messages: unknown }).messages));
+        return createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "Live Todo references", toolCalls: [] })) as never,
+    });
+
+    try {
+      const run = async (text: string) => {
+        const idle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
+        await runtime.acceptSessionMessage({
+          slug: project.slug,
+          workspaceRoot,
+          sessionId: session.sessionId,
+          text,
+          attachmentIds: [],
+          clientRequestId: crypto.randomUUID(),
+          source: "user",
+          requestedModelSelection,
+        });
+        await idle;
+      };
+
+      await run("First boundary");
+      todo = (await todos.uploadAttachment({
+        todoId: todo.id,
+        attachmentId: secondId,
+        expectedRevision: todo.revision,
+        name: "second.txt",
+        sizeBytes: 1,
+        body: new Response(Uint8Array.of(2)).body,
+      })).todo;
+      await run("Second boundary");
+      todo = await todos.removeAttachment({
+        todoId: todo.id,
+        attachmentId: firstId,
+        expectedRevision: todo.revision,
+      });
+      await run("Third boundary");
+
+      expect(modelCalls).toHaveLength(3);
+      expect(modelCalls[0]).toContain(firstId);
+      expect(modelCalls[0]).not.toContain(secondId);
+      expect(modelCalls[1]).toContain(firstId);
+      expect(modelCalls[1]).toContain(secondId);
+      expect(modelCalls[2]).not.toContain(firstId);
+      expect(modelCalls[2]).toContain(secondId);
+      const stored = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+      expect(stored.messages.some((message) =>
+        message.parts.some((part) => part.type === "attachment")
+      )).toBe(false);
+      expect(await Bun.file(getAttachmentContentPath(
+        workspaceRoot,
+        session.sessionId,
+        secondId,
+      )).exists()).toBe(false);
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+      setLlmAdapterForTest(undefined);
+    }
+  });
+
+  test("projects the root Todo's current references into a delegated child model boundary", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Child live Todo references" });
+    const todos = (await runtime.contextResolver.resolve(workspaceRoot)).todos;
+    let todo = await todos.createTodo({ content: "Delegate with current references" });
+    const attachmentId = crypto.randomUUID();
+    todo = (await todos.uploadAttachment({
+      todoId: todo.id,
+      attachmentId,
+      expectedRevision: todo.revision,
+      name: "child-brief.txt",
+      sizeBytes: 1,
+      body: new Response(Uint8Array.of(1)).body,
+    })).todo;
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+    let rootCalls = 0;
+    let childMessages = "";
+    setLlmAdapterForTest({
+      streamText: mock((input: { tools?: Record<string, unknown>; messages?: unknown[] }) => {
+        if (input.tools?.create_goal !== undefined) {
+          rootCalls += 1;
+          return rootCalls === 1
+            ? createBackgroundDelegateStream("delegate-live-references")
+            : createStoppedStream();
+        }
+        childMessages = JSON.stringify(input.messages ?? []);
+        return createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "Child live Todo references", toolCalls: [] })) as never,
+    });
+
+    try {
+      const idle = nextFamilyActivity(runtime, project.slug, session.sessionId, "idle");
+      await runtime.acceptSessionMessage({
+        slug: project.slug,
+        workspaceRoot,
+        sessionId: session.sessionId,
+        text: "Delegate inspection of the brief",
+        attachmentIds: [],
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+        requestedModelSelection,
+      });
+      await idle;
+
+      expect(childMessages).toContain("Current Todo References (live user-provided data");
+      expect(childMessages).toContain(attachmentId);
+      const tree = await runtime.listSessionTree(workspaceRoot, session.sessionId);
+      expect(tree.root.children).toHaveLength(1);
+      expect(tree.root.children[0]!.session.rootSessionId).toBe(session.sessionId);
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+      setLlmAdapterForTest(undefined);
+    }
+  });
+
+  test("reprojects current Todo references after hard compact state is reloaded", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const configHome = await makeTempRoot();
+    const registryHome = await makeTempRoot();
+    await mkdir(join(configHome, ".archcode"), { recursive: true });
+    await Bun.write(resolveServerConfigPath(configHome), JSON.stringify(makeConfig({ servers: {} })));
+    const runtimeOptions = {
+      projectRegistryHomeDir: registryHome,
+      mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
+    } as const;
+    const runtime1 = await createRuntime({
+      ...runtimeOptions,
+      configService: new ServerConfigService({ homeDir: configHome }),
+    });
+    const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Reloaded live Todo references" });
+    const todos1 = (await runtime1.contextResolver.resolve(workspaceRoot)).todos;
+    let todo = await todos1.createTodo({ content: "Keep references live after compact" });
+    const firstId = crypto.randomUUID();
+    todo = (await todos1.uploadAttachment({
+      todoId: todo.id,
+      attachmentId: firstId,
+      expectedRevision: todo.revision,
+      name: "before-compact.txt",
+      sizeBytes: 1,
+      body: new Response(Uint8Array.of(1)).body,
+    })).todo;
+    const session = await runtime1.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+
+    setLlmAdapterForTest({
+      streamText: mock(() => createStoppedStream()) as never,
+      generateText: mock(async () => ({ text: "Reloaded live Todo references", toolCalls: [] })) as never,
+    });
+    const firstIdle = nextFamilyActivity(runtime1, project.slug, session.sessionId, "idle");
+    await runtime1.acceptSessionMessage({
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "First boundary",
+      attachmentIds: [],
+      clientRequestId: crypto.randomUUID(),
+      source: "user",
+      requestedModelSelection,
+    });
+    await firstIdle;
+    await runtime1.shutdown();
+
+    const persisted = new SessionStoreManager({ logger: silentLogger });
+    const persistedStore = await persisted.getOrLoad(session.sessionId, workspaceRoot);
+    const tailStartId = persistedStore.getState().messages.at(-1)?.id;
+    if (tailStartId === undefined) throw new Error("Expected a persisted message before compact");
+    persistedStore.getState().append({
+      type: "compact",
+      summary: "Prior work was compacted before restart.",
+      tailStartId,
+    });
+    await persisted.flushSession(session.sessionId, workspaceRoot);
+
+    const runtime2 = await createRuntime({
+      ...runtimeOptions,
+      configService: new ServerConfigService({ homeDir: configHome }),
+    });
+    const todos2 = (await runtime2.contextResolver.resolve(workspaceRoot)).todos;
+    todo = await todos2.removeAttachment({
+      todoId: todo.id,
+      attachmentId: firstId,
+      expectedRevision: todo.revision,
+    });
+    const secondId = crypto.randomUUID();
+    todo = (await todos2.uploadAttachment({
+      todoId: todo.id,
+      attachmentId: secondId,
+      expectedRevision: todo.revision,
+      name: "after-reload.txt",
+      sizeBytes: 1,
+      body: new Response(Uint8Array.of(2)).body,
+    })).todo;
+    let reloadedMessages = "";
+    setLlmAdapterForTest({
+      streamText: mock((input: { messages?: unknown[] }) => {
+        reloadedMessages = JSON.stringify(input.messages ?? []);
+        return createStoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "Reloaded live Todo references", toolCalls: [] })) as never,
+    });
+
+    try {
+      const idle = nextFamilyActivity(runtime2, project.slug, session.sessionId, "idle");
+      await runtime2.acceptSessionMessage({
+        slug: project.slug,
+        workspaceRoot,
+        sessionId: session.sessionId,
+        text: "Boundary after reload",
+        attachmentIds: [],
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+        requestedModelSelection,
+      });
+      await idle;
+
+      expect(reloadedMessages).toContain("Prior work was compacted before restart.");
+      expect(reloadedMessages).not.toContain(firstId);
+      expect(reloadedMessages).toContain(secondId);
+    } finally {
+      await runtime2.abortAllSessionExecutions();
+      await runtime2.shutdown();
+      setLlmAdapterForTest(undefined);
+    }
+  });
+
   test("attachment cleanup failure warns once without changing successful root deletion", async () => {
     const workspaceRoot = await makeTempRoot();
     const { logger, entries } = createInMemoryLogger();
@@ -2025,7 +2330,7 @@ describe("createRuntime", () => {
       attachmentRootRemover: cleanup,
     } as RuntimeTestOptions);
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment cleanup warning" });
-    const session = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachmentId = crypto.randomUUID();
     await runtime.uploadSessionAttachment({
       workspaceRoot,
@@ -2053,7 +2358,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment child deletion" });
-    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const retainedId = crypto.randomUUID();
     await runtime.uploadSessionAttachment({
       workspaceRoot,
@@ -2124,7 +2429,7 @@ describe("createRuntime", () => {
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment failed deletion" });
-    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     const attachmentId = crypto.randomUUID();
     await runtime.uploadSessionAttachment({
       workspaceRoot,
@@ -2173,7 +2478,7 @@ describe("createRuntime", () => {
       },
     } as RuntimeTestOptions);
     await runtime.projectRegistry.add({ workspaceRoot, name: "Attachment delete first" });
-    const root = await runtime.createSession(workspaceRoot, { agentName: "lead" });
+    const root = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } });
     await runtime.uploadSessionAttachment({
       workspaceRoot,
       rootSessionId: root.sessionId,

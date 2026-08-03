@@ -88,7 +88,7 @@ function addRequest(hitlId: string, title: string) {
 }
 
 function bell(): HTMLButtonElement {
-  const trigger = container.querySelector("button[aria-label='Open requests needing attention']") as HTMLButtonElement | null;
+  const trigger = container.querySelector("button[aria-label='Open work that needs you']") as HTMLButtonElement | null;
   if (!trigger) throw new Error("Missing Bell trigger");
   return trigger;
 }
@@ -103,7 +103,7 @@ describe("HitlBell interactions", () => {
     addRequest("two", "Confirm the migration window");
     await render();
 
-    expect(bell().querySelector("span[aria-label='2 requests need attention']")?.textContent).toBe("2");
+    expect(bell().querySelector("span[aria-label='2 items need you']")?.textContent).toBe("2");
     await click(bell());
     const dialog = container.querySelector("section[role='dialog']") as HTMLElement;
     expect(dialog).not.toBeNull();
@@ -115,7 +115,7 @@ describe("HitlBell interactions", () => {
     expect(dialog.textContent).not.toContain("Deny");
     expect(dialog.textContent).not.toContain("Answer");
 
-    const closeButton = dialog.querySelector("button[aria-label='Close requests needing attention']") as HTMLButtonElement;
+    const closeButton = dialog.querySelector("button[aria-label='Close work that needs you']") as HTMLButtonElement;
     closeButton.focus();
     expect(document.activeElement).toBe(closeButton);
     await act(async () => {
@@ -135,11 +135,11 @@ describe("HitlBell interactions", () => {
     expect(container.textContent).toContain("Enable desktop alerts");
     await click(container.querySelector("button[class*='text-text-secondary']") as HTMLButtonElement);
     expect(notificationRequests).toBe(1);
-    await click(container.querySelector("section button[aria-label='Close requests needing attention']") as HTMLButtonElement);
+    await click(container.querySelector("section button[aria-label='Close work that needs you']") as HTMLButtonElement);
     expect(document.activeElement).toBe(bell());
 
     await click(bell());
-    const backdrop = container.querySelectorAll("button[aria-label='Close requests needing attention']")[0] as HTMLButtonElement;
+    const backdrop = container.querySelectorAll("button[aria-label='Close work that needs you']")[0] as HTMLButtonElement;
     await click(backdrop);
     expect(container.querySelector("section[role='dialog']")).toBeNull();
     expect(document.activeElement).toBe(bell());

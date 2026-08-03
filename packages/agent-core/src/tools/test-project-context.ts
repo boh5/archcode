@@ -76,11 +76,14 @@ export function createTestProjectTodoService(
         const session = await sessions.createSessionFile(input.workspaceRoot, {
           agentName: input.agentName,
           title: input.title,
-          projectTodo: input.projectTodo,
+          source: input.source,
         });
         return { sessionId: session.sessionId };
       },
       acceptMessage: async () => {},
+      readRootSession: async () => { throw new Error("not configured"); },
+      hasDurableMessage: async () => false,
+      deleteSession: async () => {},
     },
   });
 }

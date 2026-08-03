@@ -42,12 +42,10 @@ describe("compact icon control contract", () => {
     expect(chat).toContain("h-8 w-8 items-center justify-center rounded-sm transition-colors");
   });
 
-  test("task-critical metadata uses the tertiary foreground", async () => {
+  test("task-critical header metadata uses the tertiary foreground", async () => {
     const header = await source("components/features/ChatHeader.tsx");
-    const sidebar = await source("components/features/Sidebar.tsx");
 
     expect(header).toContain("text-[12px] text-text-tertiary");
-    expect(sidebar.match(/text-\[11px\] text-text-tertiary/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   test("Compression uses the nested Execution surface without fake card hover", async () => {
@@ -103,10 +101,22 @@ describe("compact icon control contract", () => {
     expect(projectBar.match(/rounded-lg border border-border-default bg-bg-overlay/g)?.length).toBe(2);
   });
 
+  test("the tablet Inspector overlay starts below project and Session headers", async () => {
+    const rootLayout = await source("routes/root-layout.tsx");
+    expect(rootLayout).toContain("max-[1180px]:top-28");
+    expect(rootLayout).not.toContain("max-[1180px]:top-12");
+  });
+
   test("Project Todo and Goal editors use control radius and 32px actions", async () => {
     const todos = await source("routes/project-todos.tsx");
+    const todoDetail = await source("routes/project-todo-detail.tsx");
     const goal = await source("components/features/SessionGoalSummaryRow.tsx");
-    expect(todos).toContain('aria-label="New Todo"');
+    expect(todos).toContain('aria-label="New Todo content"');
+    expect(todos).toContain("max-[620px]:basis-[calc(100%-24px)]");
+    expect(todos).toContain("max-[620px]:basis-full max-[620px]:grid max-[620px]:grid-cols-2");
+    expect(todos.match(/max-\[620px\]:h-11/g)).toHaveLength(2);
+    expect(todoDetail).toContain('aria-label="Todo content"');
+    expect(todoDetail).toContain("min-h-8 items-center gap-1.5 rounded-sm border");
     expect(goal).toContain("h-8 rounded-sm border px-3 text-[12px]");
   });
 });

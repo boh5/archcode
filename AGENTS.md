@@ -111,9 +111,11 @@ that page's HTML instead of creating page-specific `.css` or `.js` files.
 
 The current references are:
 
-- Dashboard: `design-system/prototypes/dashboard.html`
-- Session: `design-system/prototypes/session.html`
+- Global Home: `design-system/prototypes/dashboard.html`
 - Todos: `design-system/prototypes/todos.html`
+- Automations: `design-system/prototypes/automations.html`
+- Sessions: `design-system/prototypes/sessions.html`
+- Session detail: `design-system/prototypes/session.html`
 
 When browser QA needs an HTTP origin, serve the prototype root without first
 changing into that directory:
@@ -150,7 +152,7 @@ apps/server/src/
 ├── resolve.ts                  # Request path resolution
 ├── validation.ts               # Hono validator + Zod → BadRequestError thin adapter
 ├── serve-web.ts                # Embedded web asset serving through an explicit asset-map input
-├── routes/                     # Route modules: setup, auth, dashboard, directories, files,
+├── routes/                     # Route modules: setup, auth, global-work, directories, files,
 │                               #   automations, global-events, hitl, mcp, messages,
 │                               #   permissions, projects, questions, sessions, todos
 └── events/                     # global-event-bus.ts
@@ -264,6 +266,7 @@ Delegation: `delegate(DelegationRequest)` creates a durable direct child; `resum
 .archcode/
 ├── runtime/                         # system-managed authority state
 │   ├── sessions/{id}/session.json
+│   ├── attachments/{sessions|todos}/...
 │   ├── hitl-queue.json
 │   ├── permissions.json
 │   ├── todos/state.json
@@ -421,7 +424,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 | Category | Tools | Notes |
 |----------|-------|-------|
-| File I/O | file_read✅, file_write❌, file_edit❌ | Guards: workspace, sensitive-file, read-before-edit (edit), file-exists (write). After: read-snapshot (read), edit-error-recovery (edit) |
+| File I/O | file_read✅, pdf_read✅, file_write❌, file_edit❌ | Guards: workspace, sensitive-file, read-before-edit (edit), file-exists (write). `pdf_read` extracts native text under the existing exact-path read authorization. After: read-snapshot (read), edit-error-recovery (edit) |
 | Search / AST | grep✅, glob✅, ast_grep_search✅, ast_grep_replace❌ | Search tools are workspace-scoped. `ast_grep_replace` is destructive and preview-first. |
 | Git / GitHub | git_status✅, git_diff✅, github_get_pull_request✅, github_list_pull_requests✅, github_get_pull_request_checks✅, github_list_issue_comments✅, github_create_issue_comment❌, github_list_workflow_runs✅, github_get_workflow_run✅, github_rerun_workflow_run❌ | GitHub connectors are registered globally but are not default agent tools. |
 | Shell | bash❌✅destructive | Permission: finite path-aware Bash analysis, deterministic deny/ask, default allow |
@@ -441,7 +444,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Session Store
 
-Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and, when present, an immutable `projectTodo` source; an optional `goal` belongs only to a root Lead Session. `projectTodo` is valid only on a user-facing root and records `{ todoId, entry }`, where entry is `discussion`, `work`, or `automation`; strict identity validation requires `discussion` entry ↔ Discussion Agent and `work`/`automation` entry ↔ Lead Agent. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns logical Execution start/suspend/resume/end, admission, live run resources, and recovery. Store load performs no lifecycle repair; it exposes only current-schema durable facts and reducer state.
+Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and exactly one immutable `RootSessionSource` on every root: `direct`, `todo { todoId, entry }`, or `automation { automationId, invocationId, todoId }`, where Automation `todoId` is nullable; children never copy a root source. An optional `goal` belongs only to a root Lead Session. Strict identity validation requires Todo `discussion` entry ↔ Discussion Agent and every other root source ↔ Lead Agent. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns logical Execution start/suspend/resume/end, admission, live run resources, and recovery. Store load performs no lifecycle repair; it exposes only current-schema durable facts and reducer state.
 
 ## Context Compaction
 
@@ -457,17 +460,17 @@ Project: `.archcode/runtime/memory/`, User: `~/.archcode/memory/` (user-global, 
 
 ## Project Todos
 
-Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Each Project opens its `/projects/:slug/todos` board by default, while `/projects/:slug` remains the Project Dashboard. `ProjectTodoStateManager` owns strict Todo persistence, flat state updates (`idea`, `ready`, `in_progress`, `done`, `rejected`), archive state, revision checks, and the one canonical array order. `ProjectTodoService` is the only Todo application boundary: it exposes list/create/flat-update and creates a root Discussion Session for `discussion`, or a root Lead Session for `work` and `automation`. A Todo never points back to Sessions, Plans, or Automations.
+Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Global `/` is Home; `/projects/:slug` redirects to the Project's `/projects/:slug/todos` board. Project pages share one `Todos / Automations / Sessions` toolbar, while Sessions remain independently creatable and recoverable execution workbenches. `ProjectTodoStateManager` owns strict Todo persistence, flat state updates (`idea`, `ready`, `in_progress`, `done`, `rejected`), archive state, revision checks, the canonical array order, ordered current `attachmentIds`, and narrow durable Run-now receipts. `ProjectTodoService` is the only Todo application boundary: it exposes list/create/flat-update, attachment operations, the composed `Run now` command, and root Session creation for `discussion`, `work`, and `automation`. A Todo never stores reverse Session, Plan, or Automation links.
 
-A Todo can have any number of direct root Sessions. Each such root stores its immutable `{ todoId, entry }` source; children never copy it. `discussion` roots activate `shape-todo`, may update only their source Todo, and may delegate only Explore/Librarian. **Generate / Improve Plan** reuses the latest Discussion only when it is idle, then invokes `plan-work` for the unique `.archcode/plans/<todo-id>.md`. If no Discussion exists, the latest one is busy or suspended, it was deleted, or an idle reuse loses the acceptance race, the action creates a new Discussion whose first accepted message is the Plan request; it never races a generic Discussion start with a second command. No Plan existence is stored or exposed through Todo APIs. `work` and `automation` roots may start only from Ready or In Progress. At work creation only, `ProjectTodoService` checks that Plan path: an existing file starts with `execute-plan`, while no file preserves ordinary implementation behavior. Starting from Ready moves the Todo to In Progress, while starting from In Progress leaves it there. Creating an Automation copies the source `todoId` into the Automation's own optional `projectTodoId`; Automation Invocation Sessions are not direct Todo relations. Todo moves never create, stop, rebind, or delete Sessions or Automations.
+A Todo can have any number of root Sessions with immutable `{ kind: "todo", todoId, entry }` source. Each root family resolves the Todo's current attachment set at model and tool boundaries; references are never copied into Session messages or storage. `discussion` roots activate `shape-todo`, may update only their source Todo, and may delegate only Explore/Librarian. **Generate / Improve Plan** reuses the latest Discussion only when it is idle, then invokes `plan-work` for the unique `.archcode/plans/<todo-id>.md`. If no Discussion exists, the latest one is busy or suspended, it was deleted, or an idle reuse loses the acceptance race, the action creates a new Discussion whose first accepted message is the Plan request; it never races a generic Discussion start with a second command. Plan existence is not persisted; the Todo Plan endpoint only performs a fixed-path, bounded Markdown read. `work` and `automation` roots may start only from Ready or In Progress. At work creation only, `ProjectTodoService` checks that Plan path: an existing file starts with `execute-plan`, while no file preserves ordinary implementation behavior. Starting from Ready moves the Todo to In Progress, while starting from In Progress leaves it there. A Todo-created Automation stores immutable `{ kind: "todo", todoId, sessionId }` origin; every `start_session` Invocation persists `{ kind: "automation", automationId, invocationId, todoId }`. Direct-origin Invocations persist `todoId: null`. Todo moves never create, stop, rebind, or delete Sessions or Automations.
 
 ## HITL
 
-HITL is a durable project-scoped approval/question queue backed by `.archcode/runtime/hitl-queue.json`. Server and Web routes expose redacted `displayPayload` data for approval/dashboard views; raw sensitive payloads must not be rendered or persisted in UI state. Deferred permission/question flows resolve safely on timeout, cancellation, or shutdown so long-running agent execution is not left hanging.
+HITL is a durable project-scoped approval/question queue backed by `.archcode/runtime/hitl-queue.json`. Server and Web routes expose redacted `displayPayload` data for approval/Home views; raw sensitive payloads must not be rendered or persisted in UI state. Deferred permission/question flows resolve safely on timeout, cancellation, or shutdown so long-running agent execution is not left hanging.
 
 ## Automation System
 
-`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. After the user confirms the creation summary, a root Lead Session calls `automation_create` and commits the Automation through the existing scheduler/state path; Discussion does not expose that capability. When the creating root has a Todo source, the new Automation copies its `todoId` into its own `projectTodoId`; Invocation Sessions do not inherit that source. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create an ordinary Lead Session or send a message to an existing Session. Session execution, Agent behavior, permissions, HITL, Session Goal state, and worktree lifecycle remain outside Automation.
+`packages/agent-core/src/automations/` owns schedule calculation, durable Invocation persistence, and dispatch to the ordinary Session API. An Automation has exactly one immutable origin: `direct`, `session { sessionId }`, or `todo { todoId, sessionId }`. Automations UI creation is direct; a root Lead Session may call `automation_create`, with Runtime deriving the Session/Todo origin; Discussion does not expose that capability. An Automation has exactly one `once`, `interval`, or `cron + timezone` trigger and one action: create a root Lead Session with the principal Profile or send a message to an existing Session without changing its identity/source. A `start_session` Invocation persists its origin Todo ID, if any, on the Session so live Todo references remain resolvable even after the Automation is deleted. Session execution, Agent behavior, permissions, HITL, Session Goal state, and worktree lifecycle remain outside Automation.
 
 ## LSP Integration
 
@@ -485,7 +488,7 @@ HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_M
 
 ## Key Dependencies
 
-- `@archcode/agent-core`: `ai` v6 + the 24 statically supported official AI SDK language Provider packages (including `@ai-sdk/openai-compatible`), `@modelcontextprotocol/sdk`, `zustand` v5, `zod` v4 (.strict()), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch)
+- `@archcode/agent-core`: `ai` v6 + the 24 statically supported official AI SDK language Provider packages (including `@ai-sdk/openai-compatible`), `@modelcontextprotocol/sdk`, `zustand` v5, `zod` v4 (.strict()), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch), `unpdf` (native PDF text)
 - `@archcode/server`: `hono` v4 (HTTP/SSE), `zustand` v5, `zod` v4, `fuzzysort`
 - `@archcode/web`: `react` 19 + `react-dom` + `react-router-dom` v7, `@tanstack/react-query`, `zustand` v5, `@radix-ui/*`, `streamdown`, `eventsource-parser`
 - `@archcode/protocol`: zero runtime deps

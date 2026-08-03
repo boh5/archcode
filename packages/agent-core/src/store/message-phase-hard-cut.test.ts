@@ -73,7 +73,7 @@ function createAttempt(
 describe("runtime final Assistant selection", () => {
   test("invalid cross-aggregate selections throw before any state mutation", () => {
     const sessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, ROOT, { agentName: "lead" });
+    const store = manager.create(sessionId, ROOT, { source: { kind: "direct" }, agentName: "lead" });
     store.getState().append({
       type: "execution-start",
       executionId: "execution",
@@ -108,7 +108,7 @@ describe("runtime final Assistant selection", () => {
       { stepId: "interrupted", finishReason: "interrupted", text: "partial" },
     ]) {
       const sessionId = crypto.randomUUID();
-      const store = manager.create(sessionId, ROOT, { agentName: "lead" });
+      const store = manager.create(sessionId, ROOT, { source: { kind: "direct" }, agentName: "lead" });
       store.getState().append({
         type: "execution-start",
         executionId: `execution-${candidate.stepId}`,

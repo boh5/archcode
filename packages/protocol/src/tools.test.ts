@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   TOOL_FILE_READ,
+  TOOL_PDF_READ,
   TOOL_FILE_WRITE,
   TOOL_FILE_EDIT,
   TOOL_GREP,
@@ -49,6 +50,7 @@ import {
 
 const ALL_BUILTIN_NAMES = [
   TOOL_FILE_READ,
+  TOOL_PDF_READ,
   TOOL_FILE_WRITE,
   TOOL_FILE_EDIT,
   TOOL_GREP,
@@ -95,6 +97,7 @@ const ALL_BUILTIN_NAMES = [
 describe("tool name constants", () => {
   test("all builtin names have correct string values", () => {
     expect(TOOL_FILE_READ).toBe("file_read");
+    expect(TOOL_PDF_READ).toBe("pdf_read");
     expect(TOOL_FILE_WRITE).toBe("file_write");
     expect(TOOL_FILE_EDIT).toBe("file_edit");
     expect(TOOL_GREP).toBe("grep");
@@ -157,6 +160,7 @@ describe("TOOL_CATEGORY_MAP", () => {
 
   test("category values are correct per classification", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_FILE_READ]).toBe("fileRead");
+    expect(TOOL_CATEGORY_MAP[TOOL_PDF_READ]).toBe("fileRead");
     expect(TOOL_CATEGORY_MAP[TOOL_FILE_WRITE]).toBe("fileWrite");
     expect(TOOL_CATEGORY_MAP[TOOL_FILE_EDIT]).toBe("fileWrite");
     expect(TOOL_CATEGORY_MAP[TOOL_GREP]).toBe("search");

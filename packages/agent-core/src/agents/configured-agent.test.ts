@@ -48,7 +48,10 @@ function createStore(
   options: Parameters<SessionStoreManager["create"]>[2],
 ) {
   sessions.set(`${workspaceRoot}\0${sessionId}`, { sessionId, workspaceRoot });
-  return storeManager.create(sessionId, workspaceRoot, options);
+  const normalizedOptions = options.parentSessionId === undefined && options.source === undefined
+    ? { ...options, source: { kind: "direct" as const } }
+    : options;
+  return storeManager.create(sessionId, workspaceRoot, normalizedOptions);
 }
 
 function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
@@ -258,6 +261,7 @@ function createAgent(options: {
       agentName: agentType,
       parentSessionId,
       rootSessionId: parentSessionId,
+      source: undefined,
       delegationRequest: {
         agent_type: agentType,
         profile: agentType === "analyst" || agentType === "build" ? "deep" : "fast",
@@ -611,10 +615,10 @@ describe("ConfiguredAgent", () => {
     const sessionId = crypto.randomUUID();
     const projectContextResolver = createTestProjectContextResolver(storeManager);
     const projectContext = await projectContextResolver.resolve(tmpRoot);
-    const todo = await projectContext.todos.createTodo({ title: "Shape runtime architecture" });
+    const todo = await projectContext.todos.createTodo({ content: "Shape runtime architecture" });
     const store = createStore(sessionId, tmpRoot, {
       agentName: "discussion",
-      projectTodo: { todoId: todo.id, entry: "discussion" },
+      source: { kind: "todo", todoId: todo.id, entry: "discussion" },
     });
 
     await runAgent(createAgent({
@@ -624,6 +628,7 @@ describe("ConfiguredAgent", () => {
     }), "discuss");
 
     const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain(`- Source: todo (entry=discussion, todo=${todo.id})`);
     expect(system).toContain(`- Todo: ${todo.id} (bound)`);
     expect(system).toContain("- Allowed delegate targets: explore, librarian");
     expect(system).toContain("- Remaining delegation depth: 2");
@@ -637,12 +642,11 @@ describe("ConfiguredAgent", () => {
     const projectContextResolver = createTestProjectContextResolver(storeManager);
     const projectContext = await projectContextResolver.resolve(tmpRoot);
     const todo = await projectContext.todos.createTodo({
-      title: "Original title",
-      body: "Original body",
+      content: "Original content",
     });
     const store = createStore(sessionId, tmpRoot, {
       agentName: "discussion",
-      projectTodo: { todoId: todo.id, entry: "discussion" },
+      source: { kind: "todo", todoId: todo.id, entry: "discussion" },
     });
     const agent = createAgent({
       definition: discussionAgentDefinition,
@@ -653,26 +657,140 @@ describe("ConfiguredAgent", () => {
     await runAgent(agent, "first discussion");
     const updated = await projectContext.todos.updateTodo(todo.id, {
       expectedRevision: todo.revision,
-      title: "Current title",
-      body: "Current body",
+      content: "Current content",
+      status: "ready",
     });
+    await mkdir(join(tmpRoot, ".archcode", "plans"), { recursive: true });
+    await writeFile(join(tmpRoot, ".archcode", "plans", `${todo.id}.md`), "# Current Plan\n");
     await runAgent(agent, "second discussion");
 
     const firstSystem = (streamFn.mock.calls[0]![0] as { system: string }).system;
     const secondSystem = (streamFn.mock.calls[1]![0] as { system: string }).system;
     expect(firstSystem).toContain(`todoRevision=${todo.revision}`);
-    expect(firstSystem).toContain('todoTitle="Original title"');
+    expect(firstSystem).toContain("todoStatus=idea");
+    expect(firstSystem).toContain('todoContent="Original content"');
+    expect(firstSystem).toContain(`todoPlanPath="${join(tmpRoot, ".archcode", "plans", `${todo.id}.md`)}"`);
+    expect(firstSystem).toContain("todoPlanState=absent");
     expect(secondSystem).toContain(`todoRevision=${updated.revision}`);
-    expect(secondSystem).toContain('todoTitle="Current title"');
-    expect(secondSystem).toContain('todoBody="Current body"');
-    expect(secondSystem).not.toContain('todoTitle="Original title"');
+    expect(secondSystem).toContain("todoStatus=ready");
+    expect(secondSystem).toContain('todoContent="Current content"');
+    expect(secondSystem).toContain("todoPlanState=present");
+    expect(secondSystem).not.toContain('todoContent="Original content"');
+  });
+
+  test("projects current Todo and Plan context into a Todo-bound Lead run", async () => {
+    const streamFn = setupMockStreamText("work refreshed");
+    const projectContextResolver = createTestProjectContextResolver(storeManager);
+    const projectContext = await projectContextResolver.resolve(tmpRoot);
+    const todo = await projectContext.todos.createTodo({ content: "Implement the ready change" });
+    const ready = await projectContext.todos.updateTodo(todo.id, {
+      expectedRevision: todo.revision,
+      status: "ready",
+    });
+    const store = createStore(crypto.randomUUID(), tmpRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: ready.id, entry: "work" },
+    });
+
+    await runAgent(createAgent({
+      definition: leadAgentDefinition,
+      store,
+      projectContextResolver,
+    }), "start work");
+
+    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain(`- Source: todo (entry=work, todo=${ready.id})`);
+    expect(system).toContain(`- Todo: ${ready.id} (bound)`);
+    expect(system).toContain(`todoRevision=${ready.revision}`);
+    expect(system).toContain("todoStatus=ready");
+    expect(system).toContain('todoContent="Implement the ready change"');
+    expect(system).toContain(`todoPlanPath="${join(tmpRoot, ".archcode", "plans", `${ready.id}.md`)}"`);
+    expect(system).toContain("todoPlanState=absent");
+  });
+
+  test("projects an Automation invocation source without folding it into a Todo automation entry", async () => {
+    const streamFn = setupMockStreamText("automation context");
+    const projectContextResolver = createTestProjectContextResolver(storeManager);
+    const projectContext = await projectContextResolver.resolve(tmpRoot);
+    const todo = await projectContext.todos.createTodo({ content: "Run the scheduled verification" });
+    const automationId = crypto.randomUUID();
+    const invocationId = crypto.randomUUID();
+    const store = createStore(crypto.randomUUID(), tmpRoot, {
+      agentName: "lead",
+      source: { kind: "automation", automationId, invocationId, todoId: todo.id },
+    });
+
+    await runAgent(createAgent({
+      definition: leadAgentDefinition,
+      store,
+      projectContextResolver,
+    }), "run automation");
+
+    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain(
+      `- Source: automation (automation=${automationId}, invocation=${invocationId}, todo=${todo.id})`,
+    );
+    expect(system).toContain(`- Todo: ${todo.id} (bound)`);
+    expect(system).toContain('todoContent="Run the scheduled verification"');
+    expect(system).toContain(`todoPlanPath="${join(tmpRoot, ".archcode", "plans", `${todo.id}.md`)}"`);
+  });
+
+  test("keeps a direct root free of Todo and Plan context", async () => {
+    const streamFn = setupMockStreamText("direct context");
+
+    await runAgent(createAgent({ definition: leadAgentDefinition }), "direct work");
+
+    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain("- Source: direct");
+    expect(system).toContain("- Todo: none");
+    expect(system).toContain("todoId=none");
+    expect(system).toContain("todoPlanPath=none");
+    expect(system).toContain("todoPlanState=none");
+  });
+
+  test("refreshes Plan presence between model calls in one Todo-bound Execution", async () => {
+    const projectContextResolver = createTestProjectContextResolver(storeManager);
+    const projectContext = await projectContextResolver.resolve(tmpRoot);
+    const todo = await projectContext.todos.createTodo({ content: "Create a live Plan" });
+    const planPath = join(tmpRoot, ".archcode", "plans", `${todo.id}.md`);
+    const store = createStore(crypto.randomUUID(), tmpRoot, {
+      agentName: "lead",
+      source: { kind: "todo", todoId: todo.id, entry: "work" },
+    });
+    const toolRegistry = makeToolRegistry();
+    toolRegistry.register({
+      name: "create_plan_fixture",
+      description: "Create the Todo Plan between model calls.",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => {
+        await mkdir(join(tmpRoot, ".archcode", "plans"), { recursive: true });
+        await writeFile(planPath, "# Live Plan\n");
+        return createTextToolResult("Plan created");
+      },
+    });
+    const streamFn = setupToolCallStreamText("create_plan_fixture");
+
+    await runAgent(createAgent({
+      definition: leadAgentDefinition,
+      store,
+      projectContextResolver,
+      toolRegistry,
+    }), "create the Plan", { extraTools: ["create_plan_fixture"] });
+
+    expect(streamFn).toHaveBeenCalledTimes(2);
+    const firstSystem = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    const secondSystem = (streamFn.mock.calls[1]![0] as { system: string }).system;
+    expect(firstSystem).toContain("todoPlanState=absent");
+    expect(secondSystem).toContain("todoPlanState=present");
   });
 
   test("keeps Discussion extraTools within its Definition allowlist", async () => {
     const streamFn = setupMockStreamText("should not run");
     const store = createStore(crypto.randomUUID(), tmpRoot, {
       agentName: "discussion",
-      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" },
+      source: { kind: "todo", todoId: crypto.randomUUID(), entry: "discussion" },
     });
     const agent = createAgent({
       definition: discussionAgentDefinition,
@@ -735,8 +853,11 @@ describe("ConfiguredAgent", () => {
       model: modelInfo.model,
       temperature: 0.6,
     }));
-    expect((streamText.mock.calls[0]![0] as { system: string }).system)
-      .not.toContain("Model Overlay");
+    const system = (streamText.mock.calls[0]![0] as { system: string }).system;
+    expect(system).not.toContain("Model Overlay");
+    expect(system).toContain("- Source: child");
+    expect(system).toContain("- Todo: none");
+    expect(system).toContain("todoPlanState=none");
   });
 
   test("passes definition skills and SkillService into tool execution context", async () => {

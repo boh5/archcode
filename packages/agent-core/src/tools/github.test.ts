@@ -18,7 +18,6 @@ import { createToolExecutionContext, type ToolExecutionContext } from "./types";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "./test-registry";
 import { expectBlockedRequest, expectSettledResult } from "./test-results";
 import { createTestProjectContext } from "./test-project-context";
-import { createSessionStore } from "../store/store";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { SkillService } from "../skills";
 import { silentLogger } from "../logger";
@@ -179,7 +178,10 @@ function context(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
   return createToolExecutionContext({
-    store: createSessionStore(`github-tools-${crypto.randomUUID()}`, TMP_DIR),
+    store: storeManager.create(`github-tools-${crypto.randomUUID()}`, TMP_DIR, {
+      agentName: "lead",
+      source: { kind: "direct" },
+    }),
     storeManager,
     toolName,
     toolCallId: `${toolName}-call`,

@@ -1,70 +1,173 @@
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { Plus } from "lucide-react";
-import { useAutomationInvocations, useAutomations } from "../api/queries";
-import { useCreateSession, usePostMessage } from "../api/mutations";
-import type { Automation } from "../api/types";
-import { automationHitlSessionCount, deriveAutomationHitlAttention } from "../lib/automation-hitl-attention";
-import { formatAutomationTrigger } from "../lib/automation-trigger-presentation";
-import { hitlAttentionPath, useAttentionVisibleScopedHitl } from "../store/hitl-store";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
+import { Plus, Search } from "lucide-react";
+import { projectTodoContentExcerpt } from "@archcode/protocol";
+import type { ProjectAutomationInventoryItem } from "../api/types";
+import { useAutomationInventory, useProjectTodos } from "../api/queries";
+import { EditAutomationDialog } from "../components/features/EditAutomationDialog";
 import { StatusGlyph } from "../components/primitives/StatusGlyph";
-import { automationStatusLabel, automationVisualKind } from "../lib/automation-status-presentation";
-import { SidebarToggleButton } from "../components/features/SidebarToggleButton";
+import { RelativeTime } from "../components/primitives/TemporalText";
+import { automationInvocationStatusLabel, automationStatusLabel, automationVisualKind } from "../lib/automation-status-presentation";
+import { formatAutomationTrigger } from "../lib/automation-trigger-presentation";
 
-export function AutomationsRoute() {
-  const { slug = "" } = useParams<{ slug: string }>();
-  const navigate = useNavigate();
-  const { data, isLoading, error } = useAutomations(slug);
-  const createSession = useCreateSession();
-  const postMessage = usePostMessage();
-  const startAutomationSession = () => {
-    createSession.mutate({ slug }, {
-      onSuccess: (session) => {
-        navigate(`/projects/${slug}/sessions/${session.sessionId}`);
-        postMessage.mutate({
-          slug,
-          sessionId: session.sessionId,
-          content: "/skill use automation-create",
-          attachmentIds: [],
-          requestedModelSelection: session.nextModelSelection.requested,
-        });
-      },
-    });
+export type AutomationInventoryGroup = "needs-attention" | "scheduled" | "paused" | "inactive";
+
+export function classifyAutomationInventory(
+  items: readonly ProjectAutomationInventoryItem[],
+): Record<AutomationInventoryGroup, ProjectAutomationInventoryItem[]> {
+  const groups: Record<AutomationInventoryGroup, ProjectAutomationInventoryItem[]> = {
+    "needs-attention": [], scheduled: [], paused: [], inactive: [],
   };
-  return <div className="flex h-full flex-col bg-bg-base"><header className="flex min-h-14 items-center justify-between gap-4 border-b border-border-default bg-bg-surface px-5 py-2"><div className="flex min-w-0 items-center gap-3"><SidebarToggleButton /><div><h1 className="text-[16px] font-semibold leading-[22px] text-text-primary">Automations</h1><p className="mt-0.5 text-[11px] leading-4 text-text-tertiary">Schedule durable work without leaving the workbench.</p></div></div><button onClick={startAutomationSession} disabled={createSession.isPending} className="inline-flex h-8 items-center shrink-0 gap-2 rounded-sm bg-brand px-3 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"><Plus aria-hidden="true" size={14} /> New Automation</button></header>
-    <main className="flex-1 overflow-y-auto px-4 py-5 sm:px-6"><div className="mx-auto max-w-[1100px]">{isLoading ? <p className="py-4 text-text-tertiary">Loading automations…</p> : error ? <p className="py-4 text-error">Failed to load automations</p> : !data?.length ? <div className="flex min-h-56 flex-col items-center justify-center gap-3 border-t border-border-subtle"><h2 className="text-[14px] font-semibold leading-5 text-text-primary">No automations yet</h2><p className="max-w-sm text-center text-sm text-text-tertiary">Schedule a normal Session message for later or on a recurring cadence.</p><button onClick={startAutomationSession} disabled={createSession.isPending} className="inline-flex h-8 items-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"><Plus aria-hidden="true" size={14} /> New Automation</button></div> : <div className="border-t border-border-subtle">{data.map((automation) => <AutomationRow key={automation.id} slug={slug} automation={automation} />)}</div>}</div></main>
-  </div>;
+  for (const item of items) {
+    if (item.latestInvocation?.status === "failed" || item.latestInvocation?.status === "missed") groups["needs-attention"].push(item);
+    else if (item.automation.status === "active") groups.scheduled.push(item);
+    else if (item.automation.status === "paused") groups.paused.push(item);
+    else groups.inactive.push(item);
+  }
+  for (const values of Object.values(groups)) values.sort((a, b) => b.automation.updatedAt.localeCompare(a.automation.updatedAt));
+  return groups;
 }
 
-function AutomationRow({ slug, automation }: { slug: string; automation: Automation }) {
-  const invocations = useAutomationInvocations(slug, automation.id);
-  const scopedHitl = useAttentionVisibleScopedHitl([slug]);
-  const attention = deriveAutomationHitlAttention(automation, invocations.data ?? [], scopedHitl);
-  const attentionCount = automationHitlSessionCount(attention);
-  const firstEntry = attention.kind === "start_session"
-    ? attention.sessions[0]?.entries[0]
-    : attention.entries[0];
-  const statusLabel = automationStatusLabel(automation.status);
+export function matchesAutomationInventory(
+  item: ProjectAutomationInventoryItem,
+  query: string,
+  todoContents: ReadonlyMap<string, string>,
+): boolean {
+  const needle = query.trim().toLocaleLowerCase();
+  if (needle.length === 0) return true;
+  const { automation, latestInvocation } = item;
+  const linkedTodoContent = automation.origin.kind === "todo" ? todoContents.get(automation.origin.todoId) : undefined;
+  return [
+    automation.name,
+    automation.id,
+    automation.action.message,
+    automation.action.kind,
+    automation.action.kind === "send_message" ? automation.action.sessionId : automation.action.location,
+    automation.trigger.kind,
+    formatAutomationTrigger(automation.trigger),
+    automationStatusLabel(automation.status),
+    latestInvocation ? automationInvocationStatusLabel(latestInvocation.status) : "No runs",
+    automation.origin.kind,
+    automation.origin.kind === "todo" ? automation.origin.todoId : undefined,
+    linkedTodoContent,
+  ].some((value) => value?.toLocaleLowerCase().includes(needle));
+}
+
+export function automationInventoryEmptyMessage(totalCount: number): string {
+  return totalCount === 0
+    ? "No Automations yet. Create one to schedule or repeat work."
+    : "No Automations match this name, ID, action, or schedule.";
+}
+
+export function AutomationsRoute() {
+  const { slug = "", automationId } = useParams<{ slug: string; automationId?: string }>();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [creating, setCreating] = useState(false);
+  const inventory = useAutomationInventory(slug);
+  const todos = useProjectTodos(slug);
+  const todoContents = useMemo(() => new Map((todos.data ?? []).map((todo) => [todo.id, todo.content])), [todos.data]);
+  const query = searchParams.get("q") ?? "";
+  const filtered = useMemo(() => {
+    return (inventory.data ?? []).filter((item) => matchesAutomationInventory(item, query, todoContents));
+  }, [inventory.data, query, todoContents]);
+  const groups = useMemo(() => classifyAutomationInventory(filtered), [filtered]);
+  const detailSearch = query ? `?q=${encodeURIComponent(query)}` : "";
+  const restoreAutomationId = typeof location.state === "object" && location.state !== null && "restoreAutomationId" in location.state
+    ? String(location.state.restoreAutomationId)
+    : undefined;
+  const restoreRowRef = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    if (!inventory.isLoading && restoreAutomationId !== undefined) restoreRowRef.current?.focus();
+  }, [inventory.isLoading, restoreAutomationId]);
+  const setQuery = (value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set("q", value); else next.delete("q");
+    setSearchParams(next, { replace: true });
+  };
 
   return (
-    <div className="border-b border-border-subtle px-4 py-3 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover">
-      <div className="flex items-center justify-between gap-3">
-        <Link className="font-medium hover:text-brand" to={`/projects/${slug}/automations/${automation.id}`}>
-          {automation.name}
-        </Link>
-        <span className="inline-flex items-center gap-2 text-xs text-text-tertiary">
-          <StatusGlyph kind={automationVisualKind(automation.status)} label={`Automation ${statusLabel}`} size={13} />
-          {statusLabel}
-        </span>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-bg-base" aria-label="Automations workspace">
+      <header className="grid min-h-[58px] shrink-0 grid-cols-[minmax(220px,420px)_auto] items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-6 py-3 max-[760px]:grid-cols-[minmax(0,1fr)_auto] max-[760px]:px-3">
+        <label className="relative min-w-0 w-full max-w-[420px]">
+          <span className="sr-only">Filter Automations</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={14} aria-hidden="true" />
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Automations…" className="h-9 w-full rounded-sm border border-control-border bg-bg-elevated pl-9 pr-3 text-[12px] outline-none focus:border-brand focus:ring-2 focus:ring-brand-subtle max-[760px]:h-11 max-[760px]:text-[16px] [@media(pointer:coarse)]:h-11" />
+        </label>
+        <button type="button" onClick={() => setCreating(true)} className="inline-flex h-9 shrink-0 items-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-semibold text-brand-ink hover:bg-brand-hover max-[760px]:h-11 [@media(pointer:coarse)]:h-11">
+          <Plus size={14} aria-hidden="true" /> New Automation
+        </button>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[1080px] px-4 pb-12 pt-4 min-[761px]:px-6">
+          {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Automations…</p> : null}
+          {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Automations</p> : null}
+          {!inventory.isLoading && !inventory.error && filtered.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{automationInventoryEmptyMessage(inventory.data?.length ?? 0)}</p> : null}
+          {(["needs-attention", "scheduled", "paused", "inactive"] as const).map((group) => groups[group].length > 0 ? (
+            <AutomationGroup
+              detailSearch={detailSearch}
+              group={group}
+              items={groups[group]}
+              key={group}
+              restoreAutomationId={restoreAutomationId}
+              restoreRowRef={restoreRowRef}
+              selectedAutomationId={automationId}
+              slug={slug}
+              todoContents={todoContents}
+            />
+          ) : null)}
+        </div>
       </div>
-      <div className="mt-1 text-[11px] leading-4 text-text-tertiary">
-        {formatAutomationTrigger(automation.trigger)} · {automation.action.kind === "start_session" ? "Start Session" : "Send message"}
-        {automation.nextFireAt ? ` · next ${new Date(automation.nextFireAt).toLocaleString()}` : ""}
-      </div>
-      {attentionCount > 0 && firstEntry ? (
-        <Link className="mt-2 inline-flex text-xs font-medium text-warning hover:text-text-primary" to={hitlAttentionPath(firstEntry)}>
-          {attention.kind === "start_session" ? `${attentionCount} Sessions need attention` : "Target Session needs attention"}
-        </Link>
-      ) : null}
+      <EditAutomationDialog open={creating} onClose={() => setCreating(false)} slug={slug} />
     </div>
+  );
+}
+
+function AutomationGroup({ detailSearch, group, items, restoreAutomationId, restoreRowRef, selectedAutomationId, slug, todoContents }: {
+  detailSearch: string;
+  group: AutomationInventoryGroup;
+  items: readonly ProjectAutomationInventoryItem[];
+  restoreAutomationId?: string;
+  restoreRowRef: RefObject<HTMLAnchorElement | null>;
+  selectedAutomationId?: string;
+  slug: string;
+  todoContents: ReadonlyMap<string, string>;
+}) {
+  const label = group === "needs-attention" ? "Needs attention" : group === "scheduled" ? "Scheduled" : group === "paused" ? "Paused" : "Inactive";
+  return (
+    <section className="mt-7" aria-labelledby={`automations-${group}`}>
+      <h2 id={`automations-${group}`} className="pb-2 text-[12px] font-semibold text-text-secondary">{label}</h2>
+      <div className="divide-y divide-border-subtle border-y border-border-subtle">
+        {items.map(({ automation, latestInvocation }) => {
+          const needsAttention = group === "needs-attention";
+          const selected = automation.id === selectedAutomationId;
+          const latestStatus = latestInvocation ? automationInvocationStatusLabel(latestInvocation.status) : "No runs";
+          const definitionStatus = automationStatusLabel(automation.status);
+          const linkedTodoContent = automation.origin.kind === "todo" ? todoContents.get(automation.origin.todoId) : undefined;
+          const linkedTodo = automation.origin.kind === "todo"
+            ? linkedTodoContent === undefined
+              ? automation.origin.todoId
+              : projectTodoContentExcerpt(linkedTodoContent)
+            : undefined;
+          return (
+            <Link
+              aria-current={selected ? "page" : undefined}
+              key={automation.id}
+              ref={automation.id === restoreAutomationId ? restoreRowRef : undefined}
+              to={`/projects/${slug}/automations/${automation.id}${detailSearch}`}
+              className={`flex min-h-14 items-center gap-3 px-3 py-2.5 hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${selected ? "bg-brand-subtle" : ""}`}
+            >
+              <StatusGlyph kind={needsAttention ? "failed" : automationVisualKind(automation.status)} size={14} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-semibold text-text-primary">{automation.name}</span>
+                <span className="mt-0.5 block truncate text-[11px] text-text-tertiary">{formatAutomationTrigger(automation.trigger)} · {automation.action.kind === "start_session" ? "Start Session" : "Send message"}{linkedTodo ? ` · ${linkedTodo}` : ""} · {automation.id}</span>
+              </span>
+              <span className={`shrink-0 text-[11px] ${needsAttention ? "font-semibold text-error" : "text-text-tertiary"}`}>{definitionStatus} · {latestStatus}</span>
+              <span className="hidden shrink-0 text-[11px] text-text-tertiary min-[680px]:inline"><RelativeTime timestamp={Date.parse(automation.updatedAt)} /></span>
+            </Link>
+          );
+        })}
+      </div>
+    </section>
   );
 }

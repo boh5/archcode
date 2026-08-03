@@ -137,7 +137,7 @@ describe("CloseProjectDialog", () => {
     expect(copy).toContain("The workspace folder will");
     expect(copy).toContain("not");
     expect(copy).toContain("be deleted");
-    expect(copy).toContain("removes the project from the sidebar");
+    expect(copy).toContain("removes the project from ArchCode");
   });
 
   test("destructive Close Project button deletes by slug and fires callbacks on success", () => {

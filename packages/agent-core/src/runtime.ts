@@ -65,7 +65,10 @@ import type {
   SessionGoal,
   SessionProjection,
   SessionTreeResponse,
-  ProjectTodoSessionSource,
+  RootSessionSource,
+  RootSessionSummary,
+  ProjectSessionInventoryItem,
+  ProjectAutomationInventoryItem,
 } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, createToolExecutionContext, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import {
@@ -131,15 +134,16 @@ import {
 import { ToolOutputArtifactStore, computeProjectIdentity } from "./tool-output/artifact-store";
 import { ToolOutputFinalizer } from "./tool-output/finalizer";
 import { createRuntimeLogSafetyBoundary, SecretRedactionPolicy } from "./security";
-import { USER_DATA_DIR_NAME } from "@archcode/protocol";
+import { rootSessionSourceTodoId, USER_DATA_DIR_NAME } from "@archcode/protocol";
 import {
-  resolveCommittedAttachmentReadPaths,
+  resolveAttachmentReadPaths,
+  ProjectAttachmentStorage,
   SessionAttachmentModelProjector,
   SessionAttachmentService,
   type OpenSessionAttachmentInput,
-  type OpenSessionAttachmentResult,
+  type OpenProjectAttachmentResult,
   type UploadSessionAttachmentInput,
-  type UploadSessionAttachmentResult,
+  type UploadProjectAttachmentResult,
 } from "./attachments";
 
 interface ActiveGoalReconciliationSnapshot {
@@ -256,7 +260,16 @@ export interface CreateRuntimeSessionOptions {
   /** Current execution directory; Session persistence remains under workspaceRoot. */
   readonly cwd?: string;
   readonly title?: string;
-  readonly projectTodo?: ProjectTodoSessionSource;
+  readonly source: RootSessionSource;
+}
+
+export type RuntimeAutomationDefinitionInput = Pick<
+  CreateAutomationInput,
+  "name" | "trigger" | "action"
+>;
+
+export interface SessionAutomationCreateInput extends RuntimeAutomationDefinitionInput {
+  readonly sourceSessionId: string;
 }
 
 export interface ProjectControlPlaneSnapshot {
@@ -346,8 +359,8 @@ export interface AgentRuntime {
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
-  uploadSessionAttachment(input: UploadSessionAttachmentInput): Promise<UploadSessionAttachmentResult>;
-  openSessionAttachment(input: OpenSessionAttachmentInput): Promise<OpenSessionAttachmentResult>;
+  uploadSessionAttachment(input: UploadSessionAttachmentInput): Promise<UploadProjectAttachmentResult>;
+  openSessionAttachment(input: OpenSessionAttachmentInput): Promise<OpenProjectAttachmentResult>;
   createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<RuntimeSessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<RuntimeSessionFile>;
   updateSessionGoalControl(input: {
@@ -370,6 +383,7 @@ export interface AgentRuntime {
   searchToolOutputs(workspaceRoot: string, sessionId: string, input: ScopedOutputSearchInput): ReturnType<ToolOutputAccessService["search"]>;
   resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
+  listSessionInventory(workspaceRoot: string): Promise<ProjectSessionInventoryItem[]>;
   /** Durably accepts a root Session message; execution dispatch is a separate best-effort consequence. */
   acceptSessionMessage(input: AcceptSessionMessageInput): Promise<SessionMessageAcceptance>;
   editPendingSessionMessage(input: {
@@ -403,8 +417,10 @@ export interface AgentRuntime {
   disposeAllSessionAgents(): void;
   isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
   listAutomations(workspaceRoot: string): Promise<Automation[]>;
+  listAutomationInventory(workspaceRoot: string): Promise<ProjectAutomationInventoryItem[]>;
   readAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
-  createAutomation(workspaceRoot: string, input: Omit<CreateAutomationInput, "projectSlug">): Promise<Automation>;
+  createAutomation(workspaceRoot: string, input: SessionAutomationCreateInput): Promise<Automation>;
+  createDirectAutomation(workspaceRoot: string, input: RuntimeAutomationDefinitionInput): Promise<Automation>;
   updateAutomation(workspaceRoot: string, automationId: string, input: UpdateAutomationInput): Promise<Automation>;
   deleteAutomation(workspaceRoot: string, automationId: string): Promise<void>;
   pauseAutomation(workspaceRoot: string, automationId: string): Promise<Automation>;
@@ -584,6 +600,9 @@ export async function createRuntime(
       if (project !== undefined) projectSlugsByWorkspace.set(project.workspaceRoot, project.slug);
     };
     const sessionStoreManager = new SessionStoreManager({ logger: runtimeLogger.child({ module: "sessions.store" }) });
+    const projectAttachmentStorage = new ProjectAttachmentStorage({
+      removeDirectory: internalOptions.attachmentRootRemover,
+    });
     const sessionAttachmentService = new SessionAttachmentService({
       validateRootSession: async (workspaceRoot, rootSessionId) => {
         const file = await sessionStoreManager.getSessionFile(workspaceRoot, rootSessionId);
@@ -598,11 +617,8 @@ export async function createRuntime(
           );
         }
       },
-      removeRootDirectory: internalOptions.attachmentRootRemover,
+      storage: projectAttachmentStorage,
     });
-    const attachmentProjector = new SessionAttachmentModelProjector(
-      sessionAttachmentService,
-    );
     const readProjectedSessionModels = async (
       workspaceRoot: string,
       sessionId: string,
@@ -712,9 +728,7 @@ export async function createRuntime(
       const rootSessionId = (await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId)).rootSessionId;
       return { projectSlug, hitlId: view.hitlId, ownerSessionId, rootSessionId, view };
     }));
-    let contextResolver!: ProjectContextResolver;
-    let executionScopeValidator!: SessionExecutionScopeValidator;
-    contextResolver = new ProjectContextResolver({
+    const contextResolver = new ProjectContextResolver({
       hitlCodec,
       projectInfoFactory: async (workspaceRoot) => {
         const project = await projectRegistry.getByWorkspace(workspaceRoot);
@@ -732,6 +746,8 @@ export async function createRuntime(
       projectTodoFactory: ({ workspaceRoot, project }) => new ProjectTodoService({
         workspaceRoot,
         projectSlug: project.slug,
+        attachmentStorage: projectAttachmentStorage,
+        logger: runtimeLogger.child({ module: "todos" }),
         state: new ProjectTodoStateManager(workspaceRoot, {
           logger: runtimeLogger.child({ module: "todos.state" }),
           onCommitted: (todo) => {
@@ -750,7 +766,7 @@ export async function createRuntime(
               agentName: input.agentName,
               title: input.title,
               cwd: input.workspaceRoot,
-              projectTodo: input.projectTodo,
+              source: input.source,
             });
             return { sessionId: session.sessionId };
           },
@@ -770,13 +786,55 @@ export async function createRuntime(
               requestedModelSelection: session.nextModelSelection.requested,
             });
           },
+          readRootSession: async (input) => {
+            const file = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
+            return projectRootSessionSummary(file);
+          },
+          hasDurableMessage: async (input) => await sessionInputService.hasDurableMessage(input),
+          deleteSession: async (input) => {
+            await executionManager.deleteSession(input.workspaceRoot, input.sessionId);
+          },
         },
       }),
       createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
       logger: runtimeLogger.child({ module: "projects" }),
     });
+    const resolveCurrentTodoAttachments = async (input: {
+      readonly workspaceRoot: string;
+      readonly rootSessionId: string;
+    }) => {
+      const root = await sessionStoreManager.getSessionFile(
+        input.workspaceRoot,
+        input.rootSessionId,
+      );
+      const todoId = root.source === undefined
+        ? undefined
+        : rootSessionSourceTodoId(root.source);
+      if (todoId === undefined) return undefined;
+      const todos = (await contextResolver.resolve(input.workspaceRoot)).todos;
+      const current = await todos.listAttachments(todoId);
+      return {
+        attachments: current.attachments,
+        resolveReadPath: async (descriptor: import("@archcode/protocol").AttachmentDescriptor) => (
+          await todos.resolveAttachmentReadPath(
+            { todoId, attachmentId: descriptor.id },
+            descriptor,
+          )
+        ),
+        readVerified: async (descriptor: import("@archcode/protocol").AttachmentDescriptor) => (
+          await todos.readVerifiedAttachment(
+            { todoId, attachmentId: descriptor.id },
+            descriptor,
+          )
+        ),
+      };
+    };
+    const attachmentProjector = new SessionAttachmentModelProjector(
+      sessionAttachmentService,
+      resolveCurrentTodoAttachments,
+    );
     const sessionModelSelectionService = new SessionModelSelectionService(sessionStoreManager);
-    executionScopeValidator = new SessionExecutionScopeValidator();
+    const executionScopeValidator = new SessionExecutionScopeValidator();
     let executionManager!: SessionExecutionManager;
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
@@ -793,11 +851,12 @@ export async function createRuntime(
       ),
       attachmentProjector,
       resolveAttachmentReadPaths: (workspaceRoot, rootSessionId) => (
-        resolveCommittedAttachmentReadPaths({
+        resolveAttachmentReadPaths({
           workspaceRoot,
           rootSessionId,
           storeManager: sessionStoreManager,
           attachments: sessionAttachmentService,
+          resolveCurrentTodoAttachments,
         })
       ),
       logger: runtimeLogger.child({ module: "sessions.agents" }),
@@ -1577,26 +1636,52 @@ export async function createRuntime(
       return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.listAutomations();
     }
 
+    async function listAutomationInventory(workspaceRoot: string): Promise<ProjectAutomationInventoryItem[]> {
+      return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.listInventory();
+    }
+
     async function readAutomation(workspaceRoot: string, automationId: string): Promise<Automation> {
       return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.readAutomation(automationId);
     }
 
     async function createAutomation(
       workspaceRoot: string,
-      input: Omit<CreateAutomationInput, "projectSlug">,
+      input: SessionAutomationCreateInput,
     ): Promise<Automation> {
       const project = await projectRegistry.getByWorkspace(workspaceRoot);
       if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
-      const sourceSession = await assertResourceCreationSource(workspaceRoot, input.createdFromSessionId);
+      const sourceSession = await assertResourceCreationSource(workspaceRoot, input.sourceSessionId);
       await assertAutomationWorktreeSupported(workspaceRoot, input.action);
+      const { sourceSessionId: _, ...definition } = input;
+      const todoId = sourceSession.source === undefined
+        ? undefined
+        : rootSessionSourceTodoId(sourceSession.source);
       const automation = await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
-        ...input,
+        ...definition,
         projectSlug: project.slug,
-        ...(sourceSession.projectTodo === undefined
-          ? {}
-          : { projectTodoId: sourceSession.projectTodo.todoId }),
+        origin: todoId !== undefined
+          ? {
+            kind: "todo",
+            todoId,
+            sessionId: sourceSession.sessionId,
+          }
+          : { kind: "session", sessionId: sourceSession.sessionId },
       });
       return automation;
+    }
+
+    async function createDirectAutomation(
+      workspaceRoot: string,
+      input: RuntimeAutomationDefinitionInput,
+    ): Promise<Automation> {
+      const project = await projectRegistry.getByWorkspace(workspaceRoot);
+      if (project === undefined) throw new Error(`Project is not registered: ${workspaceRoot}`);
+      await assertAutomationWorktreeSupported(workspaceRoot, input.action);
+      return await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.createAutomation({
+        ...input,
+        projectSlug: project.slug,
+        origin: { kind: "direct" },
+      });
     }
 
     async function assertResourceCreationSource(
@@ -2145,6 +2230,7 @@ export async function createRuntime(
       ),
       resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
+      listSessionInventory: (workspaceRoot) => sessionStoreManager.listSessionInventory(workspaceRoot),
       acceptSessionMessage,
       editPendingSessionMessage: (input) => executionManager.runSessionInputMutation({
         workspaceRoot: input.workspaceRoot,
@@ -2223,8 +2309,10 @@ export async function createRuntime(
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),
       isSessionTombstoned: (workspaceRoot, sessionId) => sessionAgentManager.isTombstoned(workspaceRoot, sessionId),
       listAutomations,
+      listAutomationInventory,
       readAutomation,
       createAutomation,
+      createDirectAutomation,
       updateAutomation,
       deleteAutomation: async (workspaceRoot, automationId) => {
         await (await getAutomationRuntimeServices(workspaceRoot)).scheduler.deleteAutomation(automationId);
@@ -2272,6 +2360,26 @@ function assertRuntimeSessionAgentScope(options: CreateRuntimeSessionOptions): v
   if (options.agentName !== "lead") {
     throw new Error(`Ordinary Session creation requires agentName "lead", got "${options.agentName}"`);
   }
+}
+
+function projectRootSessionSummary(file: SessionFile): RootSessionSummary {
+  if (file.parentSessionId !== undefined || file.rootSessionId !== file.sessionId || file.source === undefined) {
+    throw new Error(`Session ${file.sessionId} is not a sourced root Session`);
+  }
+  return {
+    sessionId: file.sessionId,
+    cwd: file.cwd,
+    rootSessionId: file.rootSessionId,
+    source: file.source,
+    agentName: file.agentName,
+    profile: resolveSessionProfile(file),
+    activeSkillNames: file.activeSkillNames,
+    modelSelection: file.modelSelection,
+    title: file.title,
+    ...(file.goal === undefined ? {} : { goal: file.goal }),
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
+  };
 }
 
 /**

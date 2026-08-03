@@ -66,7 +66,7 @@ const childSession = session("child-session", "Explore implementation", rootSess
 const automation: Automation = {
   id: "automation-1",
   projectSlug: "demo",
-  createdFromSessionId: "source-session",
+  origin: { kind: "session", sessionId: "source-session" },
   name: "Continue review",
   trigger: { kind: "interval", everyMs: 60_000 },
   action: {

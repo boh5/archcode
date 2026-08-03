@@ -1,6 +1,6 @@
 import { DEFAULT_MAX_INDEX_LINES, DEFAULT_MAX_PREFERENCES_BYTES } from "../memory/constants";
 import { assertLegalExecutionMode, lintGuidanceAuthority, lintRoleContract } from "./lint";
-import type { CompiledPromptContract, PromptContractV2, PromptTrace, PromptTraceSection } from "./types";
+import type { CompiledPromptContract, PromptContractV2, PromptTrace, PromptTraceSection, RuntimePromptEnvelope } from "./types";
 
 const SHARED_KERNEL = `## Shared Kernel
 
@@ -102,6 +102,7 @@ function display(value: string | number | readonly string[] | undefined): string
 function renderRuntime(contract: PromptContractV2): string {
   const { runtime, role } = contract;
   const todo = runtime.todo === "none" ? "none" : `${runtime.todo.id} (${runtime.todo.mode})`;
+  const source = renderSessionSource(runtime.source);
   const mcp = Object.keys(runtime.mcp).length === 0 ? "none" : Object.entries(runtime.mcp).map(([name, status]) => `${name}=${status}`).join(", ");
   return `## Runtime Envelope
 
@@ -111,12 +112,20 @@ function renderRuntime(contract: PromptContractV2): string {
 - Parent session: ${runtime.parentSessionId}
 - Parent Agent: ${runtime.parentAgentName}
 - Depth: ${runtime.depth}
+- Source: ${source}
 - Allowed delegate targets: ${display(runtime.allowedDelegateTargets)}
 - Completion authority: ${display(role.completionAuthority)}
 - Todo: ${todo}
 - Remaining delegation depth: ${runtime.remainingDepth}
 - Max concurrent children: ${runtime.maxConcurrentChildren}
 - MCP readiness: ${mcp}`;
+}
+
+function renderSessionSource(source: RuntimePromptEnvelope["source"]): string {
+  if (source === "child") return "child";
+  if (source.kind === "direct") return "direct";
+  if (source.kind === "todo") return `todo (entry=${source.entry}, todo=${source.todoId})`;
+  return `automation (automation=${source.automationId}, invocation=${source.invocationId}, todo=${source.todoId ?? "none"})`;
 }
 
 function renderRole(contract: PromptContractV2): string {

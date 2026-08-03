@@ -22,6 +22,7 @@ import {
   __resetWebSessionStoresForTest,
   createWebSessionStore,
   findWebSessionStore,
+  type GlobalSessionDeltaEnvelope,
   type RemoteEnvelopeApplyResult,
   type WebSessionStoreState,
 } from "../store/session-store";
@@ -38,10 +39,12 @@ import {
   sessionRuntimeStore,
 } from "../store/session-runtime-store";
 import {
+  SESSION_DELTA_BATCH_INTERVAL_MS,
   SSE_WATCHDOG_TIMEOUT_MS,
   SSE_SHUTDOWN_RECONNECT_DELAY_MS,
   cancelSSEShutdownReconnect,
   createHitlNotificationGate,
+  createSessionDeltaBatcher,
   createSSEWatchdog,
   handleSSEEvent,
   isHitlOwnerForeground,
@@ -573,6 +576,81 @@ describe("parseSSEEvent", () => {
   });
 });
 
+describe("Session delta batcher", () => {
+  test("applies one contiguous Session batch on the bounded cadence", () => {
+    const timers = new Map<number, () => void>();
+    const cancelled: number[] = [];
+    const applied: GlobalSessionDeltaEnvelope[][] = [];
+    const batcher = createSessionDeltaBatcher({
+      apply: (envelopes) => applied.push([...envelopes]),
+      schedule: (callback, delay) => {
+        expect(delay).toBe(SESSION_DELTA_BATCH_INTERVAL_MS);
+        timers.set(1, callback);
+        return 1;
+      },
+      cancel: (timer) => {
+        cancelled.push(timer as number);
+        timers.delete(timer as number);
+      },
+    });
+    const envelope = (eventId: number): GlobalSessionDeltaEnvelope => ({
+      type: "event",
+      slug: "project",
+      sessionId: "session",
+      eventId,
+      createdAt: eventId,
+      payload: {
+        type: "text-delta",
+        stepId: "step",
+        blockId: "output",
+        text: String(eventId),
+      },
+      agentName: "lead",
+    });
+
+    batcher.enqueue(envelope(1));
+    batcher.enqueue(envelope(2));
+    expect(timers.size).toBe(1);
+    expect(applied).toEqual([]);
+
+    timers.get(1)?.();
+
+    expect(applied).toEqual([[envelope(1), envelope(2)]]);
+    expect(cancelled).toEqual([]);
+  });
+
+  test("keeps interleaved Sessions in arrival-order groups", () => {
+    const applied: string[][] = [];
+    const batcher = createSessionDeltaBatcher({
+      apply: (envelopes) => applied.push(envelopes.map((envelope) => envelope.sessionId)),
+      schedule: () => 1,
+      cancel: () => {},
+    });
+    const envelope = (sessionId: string, eventId: number): GlobalSessionDeltaEnvelope => ({
+      type: "event",
+      slug: "project",
+      sessionId,
+      eventId,
+      createdAt: eventId,
+      payload: {
+        type: "reasoning-delta",
+        stepId: "step",
+        blockId: "reasoning",
+        text: sessionId,
+      },
+      agentName: "lead",
+    });
+
+    batcher.enqueue(envelope("a", 1));
+    batcher.enqueue(envelope("a", 2));
+    batcher.enqueue(envelope("b", 1));
+    batcher.enqueue(envelope("a", 3));
+    batcher.flush();
+
+    expect(applied).toEqual([["a", "a"], ["b"], ["a"]]);
+  });
+});
+
 describe("handleSSEEvent", () => {
   let deps: SSEEventHandlerDeps;
 
@@ -622,6 +700,49 @@ describe("handleSSEEvent", () => {
       "my-project",
     );
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
+  });
+
+  test("queues text deltas and flushes them before the next control event", () => {
+    const order: string[] = [];
+    const mockStore = createMockStore();
+    mockFindWebSessionStore.mockReturnValue(mockStore);
+    mockApplyRemoteEnvelope.mockImplementation(() => {
+      order.push("apply-control");
+      return "applied";
+    });
+    deps.deltaBatcher = {
+      enqueue: () => order.push("enqueue-delta"),
+      flush: () => order.push("flush-delta"),
+    };
+    const delta: GlobalSessionEventEnvelope = {
+      type: "event",
+      slug: "my-project",
+      sessionId: "session-1",
+      eventId: 1,
+      createdAt: 1,
+      payload: {
+        type: "text-delta",
+        stepId: "step-1",
+        blockId: "block-1",
+        text: "hello",
+      },
+      agentName: "lead",
+    };
+    const end: GlobalSessionEventEnvelope = {
+      ...delta,
+      eventId: 2,
+      payload: {
+        type: "text-end",
+        stepId: "step-1",
+        blockId: "block-1",
+      },
+    };
+
+    handleSSEEvent({ event: "event", data: JSON.stringify(delta) }, deps);
+    expect(mockApplyRemoteEnvelope).not.toHaveBeenCalled();
+    handleSSEEvent({ event: "event", data: JSON.stringify(end) }, deps);
+
+    expect(order).toEqual(["enqueue-delta", "flush-delta", "apply-control"]);
   });
 
   test("starts authoritative snapshot recovery after an invalid lifecycle edge", () => {
@@ -707,11 +828,7 @@ describe("handleSSEEvent", () => {
     ).toEqual([
       queryKeys.session("my-project", "session-1"),
       queryKeys.sessions("my-project"),
-      queryKeys.dashboardProjection({ kind: "global" }),
-      queryKeys.dashboardProjection({
-        kind: "project",
-        projectSlug: "my-project",
-      }),
+      queryKeys.home,
     ]);
   });
 
@@ -843,12 +960,11 @@ describe("handleSSEEvent", () => {
       queryKeys.sessions("proj"),
       queryKeys.tree("proj", "root-session"),
       queryKeys.projectTodos("proj"),
-      queryKeys.dashboardProjection({ kind: "global" }),
-      queryKeys.dashboardProjection({ kind: "project", projectSlug: "proj" }),
+      queryKeys.home,
     ]);
   });
 
-  test("stores the scoped hitl.event view without touching query caches", () => {
+  test("stores the scoped hitl.event view and invalidates Home", () => {
     const event = hitlRealtimeEvent({
       projectSlug: "proj",
       hitlId: "hitl-1",
@@ -862,7 +978,7 @@ describe("handleSSEEvent", () => {
       rootSessionId: event.rootSessionId,
       view: event.view,
     });
-    expect(mockInvalidateQueries).not.toHaveBeenCalled();
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.home });
   });
 
   test("atomically applies the authoritative hitl.snapshot and marks projects initialized", () => {
@@ -908,13 +1024,7 @@ describe("handleSSEEvent", () => {
       queryKey: ["projects", "my-project", "sessions", "session-1"],
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.dashboardProjection({ kind: "global" }),
-    });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.dashboardProjection({
-        kind: "project",
-        projectSlug: "my-project",
-      }),
+      queryKey: queryKeys.home,
     });
   });
 
@@ -958,7 +1068,7 @@ describe("handleSSEEvent", () => {
 
     expect(mockOnShutdown).not.toHaveBeenCalled();
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["dashboard"],
+      queryKey: queryKeys.home,
     });
     expect(mockFindWebSessionStore).not.toHaveBeenCalled();
     expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
@@ -1077,6 +1187,9 @@ describe("handleSSEEvent", () => {
     });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: queryKeys.sessions("proj"),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.home,
     });
 
     const idle: GlobalSSESessionRuntimeChangedEvent = {

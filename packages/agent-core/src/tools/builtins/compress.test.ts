@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 
 function makeStore(): StoreApi<SessionStoreState> {
-  const store = storeManager.create(`compress-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead" });
+  const store = storeManager.create(`compress-test-${crypto.randomUUID()}`, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
   store.setState({ messages: messages() });
   store.getState().toModelMessages();
   return store;

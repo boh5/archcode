@@ -261,7 +261,7 @@ describe("SessionCwdReferenceMigrationService", () => {
       expect(familyLeaseHeld).toBe(true);
       await lifecycle.beforeRemove();
       expect(familyLeaseHeld).toBe(true);
-      expect(() => stores.create(crypto.randomUUID(), PROJECT_ROOT, { cwd: WORKTREE_ROOT, agentName: "lead" }))
+      expect(() => stores.create(crypto.randomUUID(), PROJECT_ROOT, { source: { kind: "direct" }, cwd: WORKTREE_ROOT, agentName: "lead" }))
         .toThrow(SessionCwdPathBarrierError);
       const observer = new SessionStoreManager({ logger: silentLogger });
       for (const sessionId of [oldRootId, oldChildId, retryRootId]) {
@@ -275,6 +275,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     expect(leaseEvents).toEqual(["acquire", "release"]);
     expect(releasedAgents.sort()).toEqual([oldRootId, oldChildId, retryRootId].sort());
     expect((await stores.createSessionFile(PROJECT_ROOT, {
+      source: { kind: "direct" },
       cwd: WORKTREE_ROOT,
       agentName: "lead",
     })).cwd).toBe(WORKTREE_ROOT);
@@ -503,7 +504,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     const pendingId = crypto.randomUUID();
     await persistAtCwd(stores, liveOnlyId, WORKTREE_ROOT);
     await rm(getSessionDir(PROJECT_ROOT, liveOnlyId), { recursive: true, force: true });
-    const pending = stores.create(pendingId, PROJECT_ROOT, { cwd: WORKTREE_ROOT, agentName: "lead" });
+    const pending = stores.create(pendingId, PROJECT_ROOT, { source: { kind: "direct" }, cwd: WORKTREE_ROOT, agentName: "lead" });
     pending.getState().setTitle("pending persistence must settle");
 
     const references = await stores.scanCwdReferencesStrict(PROJECT_ROOT, WORKTREE_ROOT);
@@ -544,7 +545,7 @@ describe("SessionCwdReferenceMigrationService", () => {
     await persistAtCwd(stores, sessionId, WORKTREE_ROOT);
     const barrier = stores.acquireCwdPathBarrier(WORKTREE_ROOT);
 
-    expect(() => stores.create(crypto.randomUUID(), PROJECT_ROOT, { cwd: WORKTREE_ROOT, agentName: "lead" }))
+    expect(() => stores.create(crypto.randomUUID(), PROJECT_ROOT, { source: { kind: "direct" }, cwd: WORKTREE_ROOT, agentName: "lead" }))
       .toThrow(SessionCwdPathBarrierError);
     await expect(stores.updateCwd(crypto.randomUUID(), PROJECT_ROOT, WORKTREE_ROOT))
       .rejects.toBeInstanceOf(SessionCwdPathBarrierError);
@@ -599,11 +600,11 @@ async function persistAtCwd(
         objective: "Preserve a durable child identity while migrating cwd references.",
         skills: [],
         background: false,
-      };
+  };
   manager.create(sessionId, PROJECT_ROOT, {
     ...identity,
     agentName: delegationRequest === undefined ? "lead" : "explore",
-    ...(delegationRequest === undefined ? {} : {
+    ...(delegationRequest === undefined ? { source: { kind: "direct" as const } } : {
       delegationRequest,
     }),
   });

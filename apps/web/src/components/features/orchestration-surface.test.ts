@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { deriveSidebarTabFromPath } from "./Sidebar";
 import {
   buildInspectorChildStatusMap,
   resolveInspectorAgentStatus,
@@ -12,23 +11,6 @@ async function source(path: string): Promise<string> {
 }
 
 describe("orchestration workbench surface", () => {
-  test("places Project Dashboard before Todos in the project sidebar", async () => {
-    const sidebar = await source("components/features/Sidebar.tsx");
-    const dashboardPosition = sidebar.indexOf('label="Project Dashboard"');
-    const todosPosition = sidebar.indexOf('label="Todos"');
-
-    expect(dashboardPosition).toBeGreaterThan(-1);
-    expect(todosPosition).toBeGreaterThan(-1);
-    expect(dashboardPosition).toBeLessThan(todosPosition);
-  });
-
-  test("keeps the selected list tab when the route moves to Project Dashboard or Todos", () => {
-    expect(deriveSidebarTabFromPath("/projects/demo/sessions/session-1")).toBe("sessions");
-    expect(deriveSidebarTabFromPath("/projects/demo/automations/automation-1")).toBe("automations");
-    expect(deriveSidebarTabFromPath("/projects/demo")).toBeNull();
-    expect(deriveSidebarTabFromPath("/projects/demo/todos")).toBeNull();
-  });
-
   test("renders the Agent tree with named role identity and one neutral icon language", async () => {
     const inspector = await source("components/features/context-inspector/SessionAgentsInspector.tsx");
 

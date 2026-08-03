@@ -83,7 +83,7 @@ export interface ToolExecutionContext {
   readonly cwd: string;
   /**
    * Canonical content files for attachments already committed by this root Session family.
-   * Only file_read and finite Bash read analysis may use this exact-path exception.
+   * Only file_read, pdf_read, and finite Bash read analysis may use this exact-path exception.
    */
   readonly attachmentReadPaths?: ReadonlySet<string>;
   /** Registry-owned capture for artifact-policy tools. Descriptors may only write; Registry owns finalize/abort. */

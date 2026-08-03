@@ -30,7 +30,7 @@ describe("Session Store logical Execution hard cut", () => {
   test("rejects invalid transitions and drops exact duplicate lifecycle events", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    const store = manager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     const start = {
       type: "execution-start" as const,
       executionId: "execution-1",
@@ -53,7 +53,7 @@ describe("Session Store logical Execution hard cut", () => {
   test("reloads suspended live fields without terminal cleanup or lifecycle repair", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    const store = manager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     store.getState().append({
       type: "execution-start",
       executionId: "execution-2",
@@ -138,7 +138,7 @@ describe("Session Store logical Execution hard cut", () => {
   test("lists and idempotently marks run and terminal settlements", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    const store = manager.create(sessionId, TMP_DIR, { agentName: "lead" });
+    const store = manager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
     store.getState().append({
       type: "execution-start",
       executionId: "execution-3",

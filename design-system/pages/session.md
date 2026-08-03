@@ -31,7 +31,10 @@ away.
 ## Layout
 
 - Use the complete workbench shell:
-  `project rail → project navigation → Session canvas → context inspector`.
+  `project rail → project toolbar → Session canvas → context inspector`.
+- `Sessions` remains the active project tab for Todo-bound, Automation-bound,
+  and Direct Session details. Preserve origin through breadcrumb and source
+  metadata rather than changing the active top-level tab.
 - Let conversation structure, Work, tools, code, tables, Diffs, and the Composer
   use the available Session canvas with safe horizontal gutters.
 - Constrain only long Agent prose to a 65–72ch reading measure. User messages
@@ -39,10 +42,10 @@ away.
 - Let the conversation and Composer Dock share the Session canvas vertically;
   the dock must not overlay conversation content.
 - Preserve desktop resize, collapse, persisted-width, and focus-mode behavior
-  for project navigation and Context Inspector.
+  for the Context Inspector.
 - At `≤1180px`, Context Inspector becomes a right overlay.
-- At `≤760px`, project navigation also becomes an overlay; the 48px project rail
-  remains visible.
+- At `≤760px`, the project toolbar wraps to keep all three project tabs
+  reachable; the 48px project rail remains visible.
 
 ## Content Order
 
@@ -71,6 +74,10 @@ header and conversation. Do not move Execution into the inspector.
   pair visible beneath the title.
 - Todo/source context stays in this second line rather than consuming a separate
   row above the conversation.
+- For a Session bound to a Todo (including a Todo-origin Automation Session),
+  append the quiet static note `Using live Todo references` beside the existing
+  source link. Do not query, subscribe to, or display a reference count; do not
+  add a banner, card, tab, or navigation entry.
 
 ## Conversation Hierarchy
 

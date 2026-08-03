@@ -52,7 +52,7 @@ function makeBinding(options?: ExecutionModelBinding["options"]): ExecutionModel
 }
 
 function makeTaskContext(overrides: Partial<BackgroundTaskContext> = {}): BackgroundTaskContext {
-  return { store: storeManager.create(crypto.randomUUID(), tmpDir, { agentName: "lead" }),
+  return { store: storeManager.create(crypto.randomUUID(), tmpDir, { source: { kind: "direct" }, agentName: "lead" }),
   binding: makeBinding(),
   logger: silentLogger,
   retryScheduler: createFakeRetryScheduler(),

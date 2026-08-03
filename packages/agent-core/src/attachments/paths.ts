@@ -17,7 +17,9 @@ export function getAttachmentContentPath(
   return join(
     resolve(workspaceRoot),
     ".archcode",
+    "runtime",
     "attachments",
+    "sessions",
     rootSessionId,
     attachmentId,
     "content",

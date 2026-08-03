@@ -70,6 +70,7 @@ beforeEach(async () => {
     background: false,
   };
   const rootStore = sessions.create(rootSessionId, workspace, {
+    source: { kind: "direct" },
     agentName: "lead",
     cwd: workspace,
   });

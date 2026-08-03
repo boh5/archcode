@@ -4465,7 +4465,7 @@ function scheduleActiveExecutionTimeout(
     || run === undefined
     || run.endedAt !== undefined
   ) return undefined;
-  const currentRunDurationMs = Math.max(0, Date.now() - run.startedAt);
+  const currentRunDurationMs = Math.max(0, deadlineScheduler.now() - run.startedAt);
   const remainingMs = record.activeTimeoutMs - record.durationMs - currentRunDurationMs;
   if (remainingMs <= 0) {
     execution.abortController.abort(new Error("Sub-agent timed out"));

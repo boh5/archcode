@@ -366,7 +366,7 @@ describe("compact", () => {
       makeUserMessage("u6", "Sixth message (incomplete)"),
     ];
 
-    const store = storeManager.create("test-session-txn", TEST_WORKSPACE_ROOT, { agentName: "lead" });
+    const store = storeManager.create("test-session-txn", TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
     const originalMessageCount = store.getState().messages.length;
 
     let error: CompactError | null = null;
@@ -615,7 +615,7 @@ describe("compact", () => {
   // -------------------------------------------------------------------------
 
   test("commitCompact dispatches compact event to store", () => {
-    const store = storeManager.create("test-commit-session", TEST_WORKSPACE_ROOT, { agentName: "lead" });
+    const store = storeManager.create("test-commit-session", TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
 
     // Add some messages first
     const messageId = crypto.randomUUID();

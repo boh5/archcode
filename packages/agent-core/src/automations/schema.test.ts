@@ -44,7 +44,7 @@ describe("automation schemas", () => {
     const automation = {
       id: crypto.randomUUID(),
       projectSlug: "project-a",
-      createdFromSessionId: crypto.randomUUID(),
+      origin: { kind: "direct" as const },
       name: "check",
       trigger: { kind: "interval" as const, everyMs: 30_000 },
       action: { kind: "start_session" as const, message: "Check", location: "project" as const },
@@ -55,7 +55,7 @@ describe("automation schemas", () => {
     };
     expect(AutomationSchema.safeParse(automation).success).toBe(true);
     expect(AutomationSchema.safeParse({ ...automation, unexpectedField: true }).success).toBe(false);
-    const { createdFromSessionId: _, ...missingOwner } = automation;
+    const { origin: _, ...missingOwner } = automation;
     expect(AutomationSchema.safeParse(missingOwner).success).toBe(false);
     expect(AutomationStateFileSchema.safeParse({
       automations: [automation],

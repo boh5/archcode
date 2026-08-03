@@ -4,6 +4,7 @@ import type {
   ProjectTodoStatus,
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
+import { MAX_ATTACHMENTS_PER_TODO } from "@archcode/protocol";
 
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
@@ -18,6 +19,7 @@ import {
 } from "./errors";
 import {
   ProjectTodoCreateSchema,
+  ProjectTodoAttachmentIdSchema,
   ProjectTodoStateFileSchema,
   ProjectTodoUpdateSchema,
   type ProjectTodoStateFile,
@@ -31,6 +33,15 @@ const BOARD_STATUSES: ReadonlySet<ProjectTodoStatus> = new Set([
 ]);
 
 type MutableProjectTodo = { -readonly [Key in keyof ProjectTodo]: ProjectTodo[Key] };
+type MutableProjectTodoRunNowReceipt = { -readonly [Key in keyof ProjectTodoRunNowReceipt]: ProjectTodoRunNowReceipt[Key] };
+
+export interface ProjectTodoRunNowReceipt {
+  readonly clientRequestId: string;
+  readonly requestHash: string;
+  readonly todoId: string;
+  readonly sessionId?: string;
+  readonly status: "preparing" | "recovery_required" | "accepted";
+}
 
 export interface ProjectTodoStateManagerOptions {
   readonly now?: () => number;
@@ -57,7 +68,11 @@ export class ProjectTodoStateManager {
   }
 
   async listTodos(): Promise<ProjectTodo[]> {
-    return structuredClone((await this.#read()).todos);
+    const state = await this.#read();
+    const hiddenTodoIds = new Set(state.runNowReceipts
+      .filter((receipt) => receipt.status === "preparing")
+      .map((receipt) => receipt.todoId));
+    return structuredClone(state.todos.filter((todo) => !hiddenTodoIds.has(todo.id)));
   }
 
   async readTodo(todoId: string): Promise<ProjectTodo> {
@@ -65,13 +80,13 @@ export class ProjectTodoStateManager {
   }
 
   async createTodo(input: ProjectTodoCreateInput): Promise<ProjectTodo> {
-    const validated = ProjectTodoCreateSchema.parse(input);
+    const validated = ProjectTodoCreateSchema.parse({ content: input.content });
     return this.#mutate((state) => {
       const now = this.#now();
       const todo: ProjectTodo = {
         id: crypto.randomUUID(),
-        title: validated.title,
-        body: validated.body ?? "",
+        content: validated.content,
+        attachmentIds: [],
         status: "idea",
         revision: 1,
         createdAt: now,
@@ -79,6 +94,95 @@ export class ProjectTodoStateManager {
       };
       state.todos.push(todo);
       return structuredClone(todo);
+    }, (todo) => todo);
+  }
+
+  async beginRunNow(
+    input: ProjectTodoCreateInput & { readonly clientRequestId: string; readonly requestHash: string },
+  ): Promise<{ readonly todo: ProjectTodo; readonly receipt: ProjectTodoRunNowReceipt }> {
+    const validated = ProjectTodoCreateSchema.parse({ content: input.content });
+    return this.#mutate((state) => {
+      const now = this.#now();
+      const todo: ProjectTodo = {
+        id: crypto.randomUUID(),
+        content: validated.content,
+        attachmentIds: [],
+        status: "in_progress",
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.todos.push(todo);
+      const receipt: ProjectTodoRunNowReceipt = {
+        clientRequestId: input.clientRequestId,
+        requestHash: input.requestHash,
+        todoId: todo.id,
+        status: "preparing",
+      };
+      state.runNowReceipts.push(receipt);
+      return structuredClone({ todo, receipt });
+    });
+  }
+
+  async readRunNowReceipt(clientRequestId: string): Promise<ProjectTodoRunNowReceipt | undefined> {
+    const receipt = (await this.#read()).runNowReceipts.find((item) => item.clientRequestId === clientRequestId);
+    return receipt === undefined ? undefined : structuredClone(receipt);
+  }
+
+  async readRunNowTodo(clientRequestId: string): Promise<ProjectTodo> {
+    const state = await this.#read();
+    const receipt = state.runNowReceipts.find((item) => item.clientRequestId === clientRequestId);
+    if (receipt === undefined) throw new ProjectTodoNotFoundError(clientRequestId);
+    return structuredClone(requiredTodo(state, receipt.todoId));
+  }
+
+  async attachRunNowSession(clientRequestId: string, sessionId: string): Promise<ProjectTodoRunNowReceipt> {
+    return this.#mutate((state) => {
+      const receipt = requiredRunNowReceipt(state, clientRequestId);
+      if (receipt.status !== "preparing") return structuredClone(receipt);
+      if (receipt.sessionId !== undefined && receipt.sessionId !== sessionId) {
+        throw new ProjectTodoInvalidMutationError(receipt.todoId, "Run-now receipt is already bound to another Session");
+      }
+      receipt.sessionId = sessionId;
+      return structuredClone(receipt);
+    });
+  }
+
+  async completeRunNow(clientRequestId: string): Promise<ProjectTodoRunNowReceipt> {
+    return this.#mutate((state) => {
+      const receipt = requiredRunNowReceipt(state, clientRequestId);
+      if (receipt.sessionId === undefined) {
+        throw new ProjectTodoInvalidMutationError(receipt.todoId, "Run-now receipt has no Session");
+      }
+      receipt.status = "accepted";
+      return structuredClone(receipt);
+    }, (receipt) => this.#state?.todos.find((todo) => todo.id === receipt.todoId));
+  }
+
+  async markRunNowRecoveryRequired(clientRequestId: string): Promise<ProjectTodoRunNowReceipt> {
+    return this.#mutate((state) => {
+      const receipt = requiredRunNowReceipt(state, clientRequestId);
+      if (receipt.status === "accepted") return structuredClone(receipt);
+      receipt.status = "recovery_required";
+      return structuredClone(receipt);
+    }, (receipt) => this.#state?.todos.find((todo) => todo.id === receipt.todoId));
+  }
+
+  async deletePendingRunNow(clientRequestId: string, todoId: string): Promise<void> {
+    await this.#mutate((state) => {
+      const receiptIndex = state.runNowReceipts.findIndex((item) => item.clientRequestId === clientRequestId);
+      const receipt = state.runNowReceipts[receiptIndex];
+      if (receipt === undefined || receipt.todoId !== todoId || receipt.status !== "preparing") {
+        throw new ProjectTodoInvalidMutationError(todoId, "Run-now reservation is no longer compensatable");
+      }
+      const todoIndex = state.todos.findIndex((todo) => todo.id === todoId);
+      const todo = state.todos[todoIndex];
+      if (todo === undefined) throw new ProjectTodoNotFoundError(todoId);
+      if (todo.revision !== 1 || todo.status !== "in_progress" || todo.attachmentIds.length !== 0) {
+        throw new ProjectTodoInvalidMutationError(todoId, "Run-now Todo changed before compensation");
+      }
+      state.runNowReceipts.splice(receiptIndex, 1);
+      state.todos.splice(todoIndex, 1);
     });
   }
 
@@ -98,8 +202,7 @@ export class ProjectTodoStateManager {
       validateRejection(todo, finalStatus, update.rejectionReason);
       validateAnchor(state, todo, finalStatus, update.beforeTodoId);
 
-      if (update.title !== undefined) todo.title = update.title;
-      if (update.body !== undefined) todo.body = update.body;
+      if (update.content !== undefined) todo.content = update.content;
       todo.status = finalStatus;
       if (finalStatus === "rejected") {
         todo.rejectionReason = update.rejectionReason ?? todo.rejectionReason;
@@ -111,7 +214,51 @@ export class ProjectTodoStateManager {
       if (shouldReorder) reorderTodo(state.todos, todo, finalStatus, update.beforeTodoId ?? null);
       touch(todo, this.#now());
       return structuredClone(todo);
-    });
+    }, (todo) => todo);
+  }
+
+  async addAttachmentReference(
+    todoId: string,
+    attachmentId: string,
+    expectedRevision: number,
+  ): Promise<ProjectTodo> {
+    const validatedAttachmentId = ProjectTodoAttachmentIdSchema.parse(attachmentId);
+    return this.#mutate((state) => {
+      const todo = requiredTodo(state, todoId);
+      assertRevision(todo, expectedRevision);
+      if (todo.attachmentIds.includes(validatedAttachmentId)) return structuredClone(todo);
+      if (todo.attachmentIds.length >= MAX_ATTACHMENTS_PER_TODO) {
+        throw new ProjectTodoInvalidMutationError(
+          todo.id,
+          `Todo cannot retain more than ${MAX_ATTACHMENTS_PER_TODO} attachments`,
+        );
+      }
+      todo.attachmentIds.push(validatedAttachmentId);
+      touch(todo, this.#now());
+      return structuredClone(todo);
+    }, (todo) => todo);
+  }
+
+  async removeAttachmentReference(
+    todoId: string,
+    attachmentId: string,
+    expectedRevision: number,
+  ): Promise<ProjectTodo> {
+    const validatedAttachmentId = ProjectTodoAttachmentIdSchema.parse(attachmentId);
+    return this.#mutate((state) => {
+      const todo = requiredTodo(state, todoId);
+      assertRevision(todo, expectedRevision);
+      const index = todo.attachmentIds.indexOf(validatedAttachmentId);
+      if (index < 0) {
+        throw new ProjectTodoInvalidMutationError(
+          todo.id,
+          `Todo does not reference attachment: ${validatedAttachmentId}`,
+        );
+      }
+      todo.attachmentIds.splice(index, 1);
+      touch(todo, this.#now());
+      return structuredClone(todo);
+    }, (todo) => todo);
   }
 
   /** Reads a Todo and verifies its revision inside the serialized mutation lane. */
@@ -121,7 +268,7 @@ export class ProjectTodoStateManager {
       assertMutable(todo);
       assertRevision(todo, expectedRevision);
       return structuredClone(todo);
-    });
+    }, (todo) => todo);
   }
 
   /**
@@ -143,7 +290,7 @@ export class ProjectTodoStateManager {
       reorderTodo(state.todos, todo, "in_progress", null);
       touch(todo, this.#now());
       return structuredClone(todo);
-    });
+    }, (todo) => todo);
   }
 
   async #read(): Promise<ProjectTodoStateFile> {
@@ -155,14 +302,17 @@ export class ProjectTodoStateManager {
     if (this.#state !== undefined) return this.#state;
     const file = Bun.file(this.#filePath);
     if (!(await file.exists())) {
-      this.#state = { todos: [] };
+      this.#state = { todos: [], runNowReceipts: [] };
       return this.#state;
     }
     this.#state = ProjectTodoStateFileSchema.parse(await file.json());
     return this.#state;
   }
 
-  #mutate<T extends ProjectTodo>(mutation: (state: ProjectTodoStateFile) => T | Promise<T>): Promise<T> {
+  #mutate<T>(
+    mutation: (state: ProjectTodoStateFile) => T | Promise<T>,
+    committedTodo?: (result: T) => ProjectTodo | undefined,
+  ): Promise<T> {
     const operation = this.#mutation.then(async () => {
       const state = structuredClone(await this.#load());
       const before = JSON.stringify(state);
@@ -171,7 +321,8 @@ export class ProjectTodoStateManager {
       if (JSON.stringify(parsed) === before) return result;
       await atomicWrite(this.#filePath, `${JSON.stringify(parsed, null, 2)}\n`);
       this.#state = parsed;
-      this.#notifyCommitted(result);
+      const todo = committedTodo?.(result);
+      if (todo !== undefined) this.#notifyCommitted(todo);
       return result;
     });
     this.#mutation = operation.then(() => undefined, () => undefined);
@@ -210,6 +361,15 @@ function requiredTodo(state: ProjectTodoStateFile, todoId: string): MutableProje
   const todo = state.todos.find((item) => item.id === todoId);
   if (todo === undefined) throw new ProjectTodoNotFoundError(todoId);
   return todo as MutableProjectTodo;
+}
+
+function requiredRunNowReceipt(
+  state: ProjectTodoStateFile,
+  clientRequestId: string,
+): MutableProjectTodoRunNowReceipt {
+  const receipt = state.runNowReceipts.find((item) => item.clientRequestId === clientRequestId);
+  if (receipt === undefined) throw new ProjectTodoNotFoundError(clientRequestId);
+  return receipt as MutableProjectTodoRunNowReceipt;
 }
 
 function assertMutable(todo: ProjectTodo): void {

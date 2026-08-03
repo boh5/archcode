@@ -40,6 +40,9 @@ export type RemoteEnvelopeApplyResult =
   | "gap"
   | "invalid"
   | "refresh-required";
+export type GlobalSessionDeltaEnvelope = GlobalSessionEventEnvelope & {
+  payload: Extract<SessionEventPayload, { type: "text-delta" | "reasoning-delta" }>;
+};
 
 export interface SessionMetadataPatch {
   title?: string | null;
@@ -100,6 +103,9 @@ export interface WebSessionStoreState extends Omit<SessionProjection, "cwd" | "a
   removeLocalSendingMessage: (clientRequestId: string) => void;
   reconcileLocalSendingMessage: (clientRequestId: string) => void;
   applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => RemoteEnvelopeApplyResult;
+  applyRemoteDeltaBatch: (
+    envelopes: readonly GlobalSessionDeltaEnvelope[],
+  ) => RemoteEnvelopeApplyResult;
   beginSnapshotRecovery: (generation: number) => void;
   applyMetadataPatch: (patch: SessionMetadataPatch) => void;
   applyModelStatePatch: (patch: SessionModelState) => void;
@@ -289,6 +295,40 @@ function applyContiguousRemoteEnvelope(
   return outcome;
 }
 
+function applyContiguousRemoteDeltaBatch(
+  store: StoreApi<WebSessionStoreState>,
+  envelopes: readonly GlobalSessionDeltaEnvelope[],
+): RemoteEnvelopeApplyResult {
+  let outcome: RemoteEnvelopeApplyResult = "ignored";
+  store.setState((state) => {
+    let expectedEventId = state.nextEventId;
+    const contiguous: GlobalSessionDeltaEnvelope[] = [];
+    for (const envelope of envelopes) {
+      if (envelope.eventId < expectedEventId) continue;
+      if (envelope.eventId > expectedEventId) {
+        outcome = "gap";
+        return {};
+      }
+      contiguous.push(envelope);
+      expectedEventId += 1;
+    }
+    if (contiguous.length === 0) return {};
+
+    let nextState = state;
+    for (const envelope of contiguous) {
+      const updates = appendEnvelopeToState(nextState, toLocalEnvelope(envelope));
+      if (envelope.agentName && nextState.agentName !== envelope.agentName) {
+        updates.agentName = envelope.agentName;
+      }
+      nextState = { ...nextState, ...updates };
+    }
+
+    outcome = "applied";
+    return nextState;
+  });
+  return outcome;
+}
+
 function toLocalEnvelope(
   envelope: GlobalSessionEventEnvelope,
 ): SessionEventEnvelope {
@@ -444,6 +484,30 @@ export function createWebSessionStore(
   }
 
   let store: StoreApi<WebSessionStoreState>;
+  const applyRemoteDeltaBatch = (
+    envelopes: readonly GlobalSessionDeltaEnvelope[],
+  ): RemoteEnvelopeApplyResult => {
+    if (envelopes.length === 0) return "ignored";
+    if (envelopes.some((envelope) => envelope.slug !== slug || envelope.sessionId !== sessionId)) {
+      return "ignored";
+    }
+
+    const state = store.getState();
+    if (state.snapshotRecoveryStatus === "awaiting") {
+      const buffered = envelopes.every((envelope) => bufferRemoteEnvelope(
+        store,
+        envelope,
+        state.snapshotRecoveryGeneration,
+      ));
+      touchRegistryEntry(key);
+      return buffered ? "ignored" : "refresh-required";
+    }
+
+    const result = applyContiguousRemoteDeltaBatch(store, envelopes);
+    touchRegistryEntry(key);
+    return result;
+  };
+
   store = createStore<WebSessionStoreState>((set) => ({
     sessionId,
     hydrationStatus: "pending",
@@ -563,6 +627,7 @@ export function createWebSessionStore(
       touchRegistryEntry(key);
       return result;
     },
+    applyRemoteDeltaBatch,
     beginSnapshotRecovery: (generation) => {
       pendingRemoteEvents.delete(store);
       set({

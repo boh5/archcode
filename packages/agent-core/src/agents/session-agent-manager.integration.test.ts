@@ -44,7 +44,7 @@ describe("SessionAgentManager Git cwd validation", () => {
     await gitInit(projectRoot);
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, projectRoot, { cwd: outside, agentName: "lead" });
+    storeManager.create(sessionId, projectRoot, { source: { kind: "direct" }, cwd: outside, agentName: "lead" });
     const manager = createManager(storeManager);
 
     await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({
@@ -62,7 +62,7 @@ describe("SessionAgentManager Git cwd validation", () => {
     await symlink(realProjectRoot, projectRoot, "dir");
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    storeManager.create(sessionId, projectRoot, { cwd: realProjectRoot, agentName: "lead" });
+    storeManager.create(sessionId, projectRoot, { source: { kind: "direct" }, cwd: realProjectRoot, agentName: "lead" });
     const manager = createManager(storeManager);
 
     await expect(manager.getOrCreate(projectRoot, sessionId)).rejects.toMatchObject({

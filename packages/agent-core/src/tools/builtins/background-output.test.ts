@@ -50,7 +50,7 @@ function context(): ToolExecutionContext {
   const id = crypto.randomUUID();
   sessions.push({ manager, sessionId: id });
   return {
-    store: manager.create(id, workspace, { agentName: "lead" }), storeManager: manager,
+    store: manager.create(id, workspace, { source: { kind: "direct" }, agentName: "lead" }), storeManager: manager,
     toolName: "background_output", toolCallId: "call", input: {}, step: 1,
     executionId: "test-execution",
     runOrdinal: 0,
@@ -62,7 +62,7 @@ function context(): ToolExecutionContext {
 
 function child(ctx: ToolExecutionContext) {
   const sessionId = crypto.randomUUID();
-  const store = ctx.storeManager.create(sessionId, workspace, { agentName: "lead" });
+  const store = ctx.storeManager.create(sessionId, workspace, { source: { kind: "direct" }, agentName: "lead" });
   sessions.push({ manager: ctx.storeManager, sessionId });
   store.getState().setParentSessionId(ctx.store.getState().sessionId);
   store.setState({ rootSessionId: ctx.store.getState().rootSessionId });

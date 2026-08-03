@@ -29,6 +29,7 @@ import type { SessionToolBatch } from "../../store/types";
 import type { AttachmentDescriptor } from "@archcode/protocol";
 import {
   getAttachmentContentPath,
+  ProjectAttachmentStorage,
   SessionAttachmentModelProjector,
   SessionAttachmentService,
   type AttachmentModelProjector,
@@ -166,7 +167,7 @@ async function createHarness() {
   await mkdir(workspaceRoot, { recursive: true });
   const storeManager = new SessionStoreManager({ logger: silentLogger });
   const sessionId = crypto.randomUUID();
-  const store = storeManager.create(sessionId, workspaceRoot, { agentName: "lead" });
+  const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
   const projectContext = createTestProjectContext(workspaceRoot, storeManager);
   const redactionPolicy = new SecretRedactionPolicy([]);
   const artifactStore = new ToolOutputArtifactStore({ rootDir: join(workspaceRoot, "outputs") });
@@ -481,15 +482,24 @@ describe("QueryLoop Tool Output Plane", () => {
 
   test("resolves and injects the current attachment read paths for each tool execution", async () => {
     const harness = await createHarness();
-    const allowedPath = join(harness.workspaceRoot, ".archcode", "attachments", "content");
+    const allowedPath = join(harness.workspaceRoot, ".archcode", "runtime", "attachments", "sessions", "content");
     let resolutions = 0;
-    let received: ReadonlySet<string> | undefined;
+    let currentPaths: ReadonlySet<string> = new Set([allowedPath]);
+    const received: ReadonlySet<string>[] = [];
+    let firstStarted!: () => void;
+    let releaseFirst!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const releaseFirstPromise = new Promise<void>((resolve) => { releaseFirst = resolve; });
     harness.options.resolveAttachmentReadPaths = async () => {
       resolutions += 1;
-      return new Set([allowedPath]);
+      return currentPaths;
     };
     registerInline(harness, "inspect_attachment_paths", async (_input, context) => {
-      received = context.attachmentReadPaths;
+      received.push(context.attachmentReadPaths ?? new Set());
+      if (received.length === 1) {
+        firstStarted();
+        await releaseFirstPromise;
+      }
       return createTextToolResult("ok");
     });
     harness.appendUser("inspect");
@@ -498,13 +508,21 @@ describe("QueryLoop Tool Output Plane", () => {
         finishReason: "tool-calls",
         toolCalls: [{ toolCallId: "inspect-1", toolName: "inspect_attachment_paths", input: {} }],
       },
+      {
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: "inspect-2", toolName: "inspect_attachment_paths", input: {} }],
+      },
       { finishReason: "stop", text: "done" },
     ]);
 
-    await runQueryLoop(harness.options);
+    const running = runQueryLoop(harness.options);
+    await firstStartedPromise;
+    currentPaths = new Set();
+    releaseFirst();
+    await running;
 
-    expect(resolutions).toBe(1);
-    expect(received).toEqual(new Set([allowedPath]));
+    expect(resolutions).toBe(2);
+    expect(received).toEqual([new Set([allowedPath]), new Set()]);
   });
 
   test("keeps blocked ask_user at zero results and resumes only after the exact response", async () => {
@@ -610,6 +628,7 @@ describe("QueryLoop Tool Output Plane", () => {
     for (const supportsImages of [true, false]) {
       const harness = await createHarness();
       const service = new SessionAttachmentService({
+        storage: new ProjectAttachmentStorage(),
         validateRootSession: async () => {},
       });
       const uploaded = await service.upload({
@@ -720,6 +739,7 @@ describe("QueryLoop Tool Output Plane", () => {
     for (const corruption of ["digest", "symlink"] as const) {
       const harness = await createHarness();
       const service = new SessionAttachmentService({
+        storage: new ProjectAttachmentStorage(),
         validateRootSession: async () => {},
       });
       const bytes = Uint8Array.of(

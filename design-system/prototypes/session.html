@@ -8,7 +8,7 @@
       content="ArchCode Session 页面代表性状态原型，覆盖 Reasoning、Tools、Delegation、HITL 与 Queue"
     />
     <title>ArchCode — Session Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=implementation-sync-3" />
+    <link rel="stylesheet" href="./styles.css?v=theme-rail-1" />
     <style>
       :root {
         --inspector-width: 312px;
@@ -16,21 +16,11 @@
 
       .session-page .app-shell {
         grid-template-columns:
-          var(--rail-width) var(--sidebar-width) minmax(0, 1fr)
-          var(--inspector-width);
-      }
-
-      .session-page.sidebar-collapsed .app-shell {
-        grid-template-columns:
           var(--rail-width) minmax(0, 1fr)
           var(--inspector-width);
       }
 
       .session-page.inspector-collapsed .app-shell {
-        grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
-      }
-
-      .session-page.sidebar-collapsed.inspector-collapsed .app-shell {
         grid-template-columns: var(--rail-width) minmax(0, 1fr);
       }
 
@@ -50,22 +40,55 @@
       .session-canvas {
         display: flex;
         flex-direction: column;
-        height: 100%;
+        min-height: 0;
+        flex: 1 1 auto;
       }
 
       .session-header {
         display: grid;
-        grid-template-columns: 30px minmax(0, 1fr) auto auto;
+        grid-template-columns: minmax(0, 1fr) auto auto;
         align-items: center;
         gap: 12px;
-        flex: 0 0 75px;
-        padding: 10px 24px;
+        flex: 0 0 92px;
+        padding: 9px 24px 11px;
         border-bottom: 1px solid var(--border-default);
         background: var(--bg-surface);
       }
 
       .session-heading {
+        position: relative;
         min-width: 0;
+      }
+
+      .session-breadcrumb {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        margin-bottom: 6px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+      }
+
+      .session-breadcrumb a,
+      .session-breadcrumb span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-breadcrumb a {
+        flex: 0 0 auto;
+        color: var(--text-secondary);
+      }
+
+      .session-breadcrumb a:hover {
+        color: var(--brand);
+      }
+
+      .session-breadcrumb .breadcrumb-separator {
+        flex: 0 0 auto;
+        color: var(--border-strong);
       }
 
       .session-title-line {
@@ -76,12 +99,125 @@
       }
 
       .session-title-line h1 {
-        overflow: hidden;
+        min-width: 0;
+        flex: 1 1 auto;
         font-size: 20px;
         line-height: 1.2;
         letter-spacing: -0.025em;
+      }
+
+      .session-picker {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+        max-width: 100%;
+        width: 100%;
+        padding: 2px 4px 2px 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-primary);
+        font: inherit;
+        font-weight: inherit;
+      }
+
+      .session-picker:hover {
+        color: var(--brand);
+      }
+
+      .session-picker-label {
+        overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .session-picker [data-icon] {
+        color: var(--text-tertiary);
+        transform: rotate(90deg);
+      }
+
+      .session-picker-menu {
+        position: absolute;
+        z-index: 60;
+        top: 55px;
+        left: 0;
+        width: min(340px, calc(100vw - var(--rail-width) - 36px));
+        padding: 6px;
+        border: 1px solid var(--border-default);
+        border-radius: 7px;
+        background: var(--bg-elevated);
+        box-shadow: var(--elevation-md);
+      }
+
+      .session-picker-menu > span {
+        display: block;
+        padding: 7px 9px 6px;
+        color: var(--text-tertiary);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .session-picker-menu a {
+        display: grid;
+        grid-template-columns: 10px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 43px;
+        padding: 6px 9px;
+        border-radius: 5px;
+        color: var(--text-secondary);
+      }
+
+      .session-picker-menu i,
+      .session-picker-menu em {
+        font-style: normal;
+      }
+
+      .session-picker-menu a:hover,
+      .session-picker-menu a[aria-current="page"] {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .session-picker-menu a strong,
+      .session-picker-menu a small {
+        display: block;
+      }
+
+      .session-picker-menu a strong {
+        font-size: 11px;
+        font-weight: 640;
+      }
+
+      .session-picker-menu a small {
+        margin-top: 3px;
+        color: var(--text-tertiary);
+        font-size: 9px;
+      }
+
+      .session-picker-state {
+        width: 8px;
+        height: 8px;
+        border: 1px solid var(--text-tertiary);
+        border-radius: 50%;
+      }
+
+      .session-picker-state.running {
+        border-color: var(--signal);
+        background: var(--signal);
+        box-shadow: inset 0 0 0 2px var(--bg-elevated);
+      }
+
+      .session-picker-state.done {
+        border-color: var(--success);
+        background: var(--success);
+      }
+
+      .session-picker-status {
+        color: var(--text-tertiary);
+        font-size: 9px;
       }
 
       .status-badge {
@@ -108,6 +244,24 @@
         border-radius: 50%;
         background: currentColor;
         content: "";
+      }
+
+      .status-badge.done {
+        border-color: color-mix(in srgb, var(--success) 35%, transparent);
+        background: var(--success-field);
+        color: var(--success);
+      }
+
+      .status-badge.running {
+        border-color: color-mix(in srgb, var(--signal) 35%, transparent);
+        background: var(--signal-field);
+        color: var(--signal-foreground);
+      }
+
+      .status-badge.idle {
+        border-color: var(--border-default);
+        background: var(--neutral-field);
+        color: var(--text-tertiary);
       }
 
       .session-meta {
@@ -172,6 +326,33 @@
         width: min(100%, 820px);
         margin: 0 auto;
         padding: 22px 16px 32px;
+      }
+
+      .direct-session-empty {
+        max-width: 520px;
+        margin: clamp(72px, 16vh, 150px) auto 0;
+        text-align: center;
+      }
+
+      .direct-session-empty-orbit {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 1.5px solid var(--neutral);
+        border-radius: 50%;
+      }
+
+      .direct-session-empty h2 {
+        margin-top: 14px;
+        font-size: 17px;
+        font-weight: 680;
+      }
+
+      .direct-session-empty p {
+        margin-top: 7px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.6;
       }
 
       .message {
@@ -785,6 +966,15 @@
         white-space: nowrap;
       }
 
+      .composer-placeholder:empty::before {
+        content: attr(data-placeholder);
+      }
+
+      .composer-placeholder:focus {
+        color: var(--text-primary);
+        outline: none;
+      }
+
       .composer-state {
         display: inline-flex;
         align-items: center;
@@ -793,6 +983,8 @@
         font-size: 9px;
         white-space: nowrap;
       }
+
+      .composer-state.running { color: var(--signal-foreground); }
 
       .composer-model {
         color: var(--text-tertiary);
@@ -809,6 +1001,12 @@
         border-radius: 5px;
         color: var(--error);
         font-size: 12px;
+      }
+
+      .stop-button.send {
+        border-color: var(--brand);
+        background: var(--brand);
+        color: var(--brand-ink);
       }
 
       .inspector-resize {
@@ -1035,18 +1233,13 @@
 
       @media (max-width: 1180px) {
         .session-page .app-shell {
-          grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
-        }
-
-        .session-page.sidebar-collapsed .app-shell,
-        .session-page.sidebar-collapsed.inspector-collapsed .app-shell {
           grid-template-columns: var(--rail-width) minmax(0, 1fr);
         }
 
         .context-inspector {
           position: fixed;
           z-index: 35;
-          top: 64px;
+          top: 48px;
           right: 0;
           bottom: 0;
           width: min(var(--inspector-width), calc(100vw - var(--rail-width)));
@@ -1074,14 +1267,13 @@
 
       @media (max-width: 760px) {
         .session-page .app-shell,
-        .session-page.sidebar-collapsed .app-shell,
         .session-page.inspector-collapsed .app-shell,
-        .session-page.sidebar-collapsed.inspector-collapsed .app-shell {
+        .session-page.todo-first-shell .app-shell {
           grid-template-columns: var(--rail-width) minmax(0, 1fr);
         }
 
         .session-header {
-          grid-template-columns: 30px minmax(0, 1fr) auto;
+          grid-template-columns: minmax(0, 1fr) auto;
           padding: 9px 12px;
         }
 
@@ -1090,9 +1282,14 @@
         }
 
         .session-path,
+        .session-source,
         .session-meta-separator,
         .todo-progress {
           display: none;
+        }
+
+        .session-breadcrumb span:not(.breadcrumb-separator) {
+          max-width: 150px;
         }
 
         .conversation-inner {
@@ -1187,141 +1384,107 @@
         }
       }
     </style>
-    <script src="./app.js?v=implementation-sync-3" defer></script>
+    <script src="./app.js?v=rail-search-1" defer></script>
   </head>
-  <body class="session-page">
+  <body class="session-page todo-first-shell">
     <a class="skip-link" href="#work-canvas">跳到工作区</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
-        <button class="brand-mark" aria-label="Open dashboard" data-action="打开全局 Dashboard"><span>A</span></button>
-        <button class="rail-project active" aria-label="Open archcode">ar</button>
+        <a class="brand-mark" href="./dashboard.html?v=home-shell-1" aria-label="Open Home"><span>A</span></a>
+        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
         <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
         <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
         <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
         <div class="rail-spacer"></div>
         <div class="rail-separator"></div>
-        <button class="rail-icon" aria-label="Open requests needing attention" data-action="打开待处理请求" data-icon="bell"></button>
+        <button class="rail-icon rail-search" aria-label="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
+        <button class="rail-icon" aria-label="Open 3 requests needing attention" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
         <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
         <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
       </nav>
 
-      <aside class="project-sidebar" aria-label="Project navigation">
-        <div class="project-sidebar-inner">
-          <header class="sidebar-header">
-            <div class="project-copy">
-              <strong>archcode</strong>
-              <span>/workspace/archcode</span>
-            </div>
-            <button class="icon-button" aria-label="Project actions" data-action="打开项目操作" data-icon="more"></button>
-            <button class="icon-button mobile-close" aria-label="Close project navigation" data-close-overlay data-icon="close"></button>
-          </header>
-
-          <nav class="sidebar-nav" aria-label="Project pages">
-            <a href="./dashboard.html">
-              <span data-icon="dashboard"></span><span>Project Dashboard</span><span data-icon="chevron"></span>
-            </a>
-            <a href="./todos.html">
-              <span data-icon="todo"></span><span>Todos</span><span class="nav-count">5</span>
-            </a>
-          </nav>
-
-          <div class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
-            <button role="tab" aria-selected="true" data-sidebar-tab="sessions">Sessions</button>
-            <button role="tab" aria-selected="false" data-sidebar-tab="automations">Automations</button>
-          </div>
-
-          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="sessions">
-            <div class="sidebar-toolbar">
-              <label class="search-field">
-                <span data-icon="search"></span><span class="sr-only">Search sessions</span>
-                <input type="search" placeholder="Search sessions..." />
-              </label>
-              <button class="new-session" data-action="创建 Session">＋ New session</button>
-            </div>
-            <div class="session-group">
-              <div class="session-group-label"><span>Needs you</span><span>1</span></div>
-              <a class="session-item active" href="./session.html" aria-current="page">
-                <span class="session-state"></span><span class="session-title">Session execution state audit</span><time class="session-time">now</time><span></span>
-              </a>
-            </div>
-            <div class="session-group">
-              <div class="session-group-label"><span>Running</span><span>1</span></div>
-              <button class="session-item" data-action="打开 Provider stream recovery">
-                <span class="session-state running"></span><span class="session-title">Provider stream recovery</span><time class="session-time">2m</time><span></span>
-              </button>
-            </div>
-            <div class="session-group">
-              <div class="session-group-label"><span>Recent</span><span>1</span></div>
-              <button class="session-item" data-action="打开 Model runtime snapshots">
-                <span class="session-state completed"></span><span class="session-title">Model runtime snapshots</span><time class="session-time">1h</time><span></span>
-              </button>
-            </div>
-          </section>
-
-          <section class="sidebar-panel" role="tabpanel" data-sidebar-panel="automations" hidden>
-            <div class="sidebar-toolbar">
-              <label class="search-field">
-                <span data-icon="search"></span><span class="sr-only">Search automations</span>
-                <input type="search" placeholder="Search automations..." />
-              </label>
-              <button class="new-session" data-action="创建 Automation">＋ New</button>
-            </div>
-            <div class="session-group">
-              <div class="session-group-label"><span>Automations</span><span>1</span></div>
-              <button class="session-item" data-action="打开每日项目状态检查">
-                <span class="session-state running"></span><span class="session-title">Daily project status check</span><time class="session-time">09:00</time><span></span>
-              </button>
-            </div>
-          </section>
-        </div>
-        <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize project sidebar" aria-orientation="vertical" aria-valuemin="210" aria-valuemax="340" aria-valuenow="264" data-resize-sidebar></div>
-      </aside>
-
       <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
+        <header class="project-toolbar">
+          <div class="project-identity">
+            <span class="project-identity-mark">ar</span>
+            <div class="project-identity-copy"><strong>archcode</strong><span>/workspace/archcode</span></div>
+          </div>
+          <nav class="project-toolbar-nav" aria-label="Project pages">
+            <a href="./todos.html"><span>Todos</span></a>
+            <a href="./automations.html"><span>Automations</span></a>
+            <a class="active" href="./sessions.html" aria-current="page"><span>Sessions</span></a>
+          </nav>
+          <div class="project-toolbar-actions">
+            <button class="icon-button" aria-label="Project actions" data-project-actions data-action="打开项目操作" data-icon="more"></button>
+          </div>
+        </header>
+
         <div class="session-canvas">
           <header class="session-header">
-            <button class="canvas-sidebar-toggle" aria-label="Collapse project sidebar" aria-expanded="true" data-open-sidebar data-icon="panel"></button>
             <div class="session-heading">
+              <nav class="session-breadcrumb" aria-label="Breadcrumb">
+                <a href="./todos.html" data-session-parent-page>Todos</a><span class="breadcrumb-separator">/</span>
+                <a href="./todos.html#todo=todo-profile-defaults" data-session-parent-link>Model profile defaults per project</a><span class="breadcrumb-separator" data-session-parent-separator>/</span>
+                <span data-session-breadcrumb-tail>Session</span>
+              </nav>
               <div class="session-title-line">
-                <h1>Session execution state audit</h1><span class="status-badge">Needs you</span>
+                <h1>
+                  <button class="session-picker" type="button" aria-expanded="false" aria-controls="session-picker-menu" data-session-picker>
+                    <span class="session-picker-label" data-session-title>Implementation Session</span><span data-icon="chevron"></span>
+                  </button>
+                </h1>
+                <span class="status-badge" data-session-status>Needs you</span>
               </div>
               <div class="session-meta">
                 <span class="session-path">/workspace/archcode</span>
                 <span class="session-meta-separator">·</span>
-                <span class="session-usage">12 tools · 48,206 tokens</span>
+                <span class="session-usage" data-session-usage>12 tools · 48,206 tokens</span>
                 <span class="session-meta-separator">·</span>
-                <span>Todo: Verify Session UI</span>
+                <span class="session-source" data-session-source>Todo: Model profile defaults per project</span>
+              </div>
+              <div class="session-picker-menu" id="session-picker-menu" hidden data-session-picker-menu>
+                <span>Sessions for this Todo</span>
+                <a href="./session.html?todo=todo-profile-defaults&amp;session=sess-profile-discussion" data-session-option="sess-profile-discussion">
+                  <i class="session-picker-state done"></i><span><strong>Plan Discussion</strong><small>Discussion · shaped PRD and Plan</small></span><em class="session-picker-status">Done</em>
+                </a>
+                <a href="./session.html?todo=todo-profile-defaults&amp;session=sess-profile-implementation" data-session-option="sess-profile-implementation" aria-current="page">
+                  <i class="session-picker-state running"></i><span><strong>Implementation Session</strong><small>Lead · current execution</small></span><em class="session-picker-status">Needs you</em>
+                </a>
+                <a href="./session.html?todo=todo-profile-defaults&amp;session=sess-profile-review" data-session-option="sess-profile-review">
+                  <i class="session-picker-state done"></i><span><strong>Review Session</strong><small>Analyst · verification pass</small></span><em class="session-picker-status">Done</em>
+                </a>
               </div>
             </div>
-            <button class="todo-progress" data-action="打开 Todo 进度"><strong>3/5</strong><span>Todos</span></button>
+            <a class="todo-progress" href="./todos.html#todo=todo-profile-defaults" data-session-todo-link><strong data-session-todo-id>todo-profile-defaults</strong><span>Open Todo</span></a>
             <button class="icon-button" aria-label="Open context inspector" aria-expanded="true" data-open-inspector data-icon="panel"></button>
           </header>
 
           <section class="conversation" aria-label="Session conversation">
             <div class="conversation-inner">
-              <article class="message">
+              <article class="message" data-primary-turn>
                 <div class="user-message">
-                  <p class="user-bubble">Audit the Session execution UI. Verify tools, delegation, recovery, HITL, and queued follow-up behavior.</p>
+                  <p class="user-bubble" data-primary-message>Implement the project-level model profile recommendation. Preserve explicit Session overrides and the existing global configuration contract.</p>
                   <time class="message-time">4m ago</time>
                 </div>
-                <div class="work">
+                <div class="work" data-primary-work>
                   <button
                     class="work-toggle"
                     aria-expanded="false"
                     aria-controls="completed-work"
                     aria-label="Completed Work segment, worked for 2 minutes 14 seconds"
                     data-work-toggle
+                    data-primary-work-toggle
                   >
                     <span data-icon="chevron"></span><strong>Worked for 2m 14s</strong>
                   </button>
-                  <div class="work-detail" id="completed-work" hidden>
-                    <p class="commentary">Compared the persisted Session events with the store projection and the visible Workstream hierarchy.</p>
+                  <div class="work-detail" id="completed-work" hidden data-primary-work-detail>
+                    <p class="commentary" data-primary-commentary>Compared project registration, Profile resolution, and root Session creation before choosing the narrowest contract change.</p>
                     <div class="timeline-module">
                       <button class="timeline-toggle" aria-expanded="false" aria-controls="completed-reasoning" data-disclosure>
                         <span data-icon="chevron"></span><strong>Reasoning</strong><span class="timeline-summary">1,842 tokens</span>
                       </button>
                       <div class="timeline-body" id="completed-reasoning" hidden>
-                        The Execution boundary should preserve chronological order while keeping the final answer outside Work.
+                        The project recommendation belongs at new root Session admission. It must never rewrite persisted Session bindings or provider configuration.
                       </div>
                     </div>
                     <div class="timeline-module">
@@ -1329,19 +1492,25 @@
                         <span data-icon="chevron"></span><strong>file_read, grep, lsp_diagnostics</strong>
                       </button>
                       <div class="timeline-body tool-run-list" id="completed-tools" hidden>
-                        <div class="tool-child"><span class="tool-name">file_read</span><span class="tool-target">ExecutionWorkstream.tsx</span><span class="tool-status">Completed</span></div>
-                        <div class="tool-child"><span class="tool-name">grep</span><span class="tool-target">“suspended” in apps/web/src</span><span class="tool-status">Completed</span></div>
-                        <div class="tool-child"><span class="tool-name">lsp_diagnostics</span><span class="tool-target">SessionComposerDock.tsx</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">file_read</span><span class="tool-target">projects/registry.ts</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">grep</span><span class="tool-target">“profile” in session creation</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">lsp_diagnostics</span><span class="tool-target">project-settings.ts</span><span class="tool-status">Completed</span></div>
                       </div>
                     </div>
                   </div>
                 </div>
-                <p class="agent-response"><strong>First pass complete.</strong> The Workstream projection is sound; the remaining risk is interaction coverage around suspended Executions and queued instructions.</p>
+                <p class="agent-response" data-primary-response><strong>First pass complete.</strong> The recommendation can remain project-owned and apply only when a new root Session has no explicit Profile override.</p>
               </article>
 
-              <article class="message">
+              <section class="direct-session-empty" hidden data-direct-session-empty>
+                <span class="direct-session-empty-orbit"></span>
+                <h2>Direct Session ready</h2>
+                <p>Describe the work below to start. This Session stays durable; use a Todo when you also want a brief, Plan, or acceptance trail across Sessions.</p>
+              </section>
+
+              <article class="message" data-secondary-turn>
                 <div class="user-message">
-                  <p class="user-bubble">Run the focused interaction checks and stop before any broad workspace mutation.</p>
+                  <p class="user-bubble" data-secondary-message>Add the focused contract coverage. Stop if this requires changing existing Session bindings.</p>
                   <time class="message-time">1m ago</time>
                 </div>
                 <div class="work">
@@ -1352,17 +1521,17 @@
                     aria-label="Work segment needs user input, worked for 38 seconds, waiting for permission"
                     data-work-toggle
                   >
-                    <span data-icon="chevron"></span><strong class="needs-you">Needs you · Worked for 38s</strong>
+                    <span data-icon="chevron"></span><strong class="needs-you" data-current-work-label>Needs you · Worked for 38s</strong>
                   </button>
-                  <div class="work-detail" id="current-work">
-                    <p class="commentary">I found the focused test path. Before running the command, I’m checking the exact scope and preserving the current Session state.</p>
+                  <div class="work-detail" id="current-work" data-current-work-detail>
+                    <p class="commentary" data-current-commentary>I found the focused creation path. Before running verification, I’m checking the exact command scope and preserving current Session bindings.</p>
 
                     <div class="timeline-module">
                       <button class="timeline-toggle" aria-expanded="true" aria-controls="current-reasoning" data-disclosure>
-                        <span data-icon="chevron"></span><strong>Reasoning</strong><span class="timeline-summary">Choosing the narrowest verification lane</span>
+                        <span data-icon="chevron"></span><strong>Reasoning</strong><span class="timeline-summary">Keeping precedence explicit</span>
                       </button>
-                      <div class="timeline-body" id="current-reasoning">
-                        The requested check only needs the Web interaction suite. A full monorepo run would add time and unrelated Agent Core process lifecycles.
+                      <div class="timeline-body" id="current-reasoning" data-current-reasoning>
+                        Resolution order remains explicit Session override, project recommendation, then global principal Profile. Existing Sessions never re-resolve.
                       </div>
                     </div>
 
@@ -1371,38 +1540,38 @@
                         <span data-icon="chevron"></span><strong>file_read, grep, lsp_diagnostics</strong>
                       </button>
                       <div class="timeline-body tool-run-list" id="current-tools">
-                        <div class="tool-child"><span class="tool-name">file_read</span><span class="tool-target">HitlCard.tsx</span><span class="tool-status">Completed</span></div>
-                        <div class="tool-child"><span class="tool-name">grep</span><span class="tool-target">“Queue another instruction”</span><span class="tool-status">Completed</span></div>
-                        <div class="tool-child"><span class="tool-name">lsp_diagnostics</span><span class="tool-target">ExecutionWorkstream.tsx</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">file_read</span><span class="tool-target">routes/sessions.ts</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">grep</span><span class="tool-target">“principal” in Profile resolution</span><span class="tool-status">Completed</span></div>
+                        <div class="tool-child"><span class="tool-name">lsp_diagnostics</span><span class="tool-target">project-todos.tsx</span><span class="tool-status">Completed</span></div>
                       </div>
                     </div>
 
                     <div class="timeline-module">
                       <button class="tool-row" aria-expanded="false" aria-controls="edit-detail" data-disclosure>
-                        <span data-icon="chevron"></span><span class="tool-name">file_edit</span><span class="tool-target">SessionComposerDock.test.tsx</span>
+                        <span data-icon="chevron"></span><span class="tool-name">file_edit</span><span class="tool-target">project-session-profile.test.ts</span>
                         <span class="diffstat">1 file · <span class="plus">+18</span> <span class="minus">−6</span></span>
                       </button>
                       <div class="tool-detail" id="edit-detail" hidden>
-                        <span class="terminal-line">+ preserves queued instructions while HITL is active</span>
-                        <span class="terminal-line">+ exposes Ask User and Permission response paths</span>
+                        <span class="terminal-line">+ explicit Session Profile overrides project recommendation</span>
+                        <span class="terminal-line">+ existing Session bindings remain immutable</span>
                       </div>
                     </div>
 
                     <article class="delegation-card">
                       <div class="delegation-header">
                         <span class="delegation-kicker">↳ delegate</span>
-                        <span class="delegation-copy"><strong>Verify Session HITL semantics</strong><span>Analyst · deep · Completed · 31s</span></span>
+                        <span class="delegation-copy"><strong>Review Profile precedence</strong><span>Analyst · deep · Completed · 31s</span></span>
                         <button class="delegation-action" data-action="打开子 Session">Open child session</button>
                       </div>
                     </article>
 
                     <div class="timeline-module">
                       <button class="tool-row" aria-expanded="false" aria-controls="fetch-detail" data-disclosure>
-                        <span data-icon="chevron"></span><span class="tool-name">web_fetch</span><span class="tool-target">Provider stream reference</span>
+                        <span data-icon="chevron"></span><span class="tool-name">web_fetch</span><span class="tool-target">Provider option reference</span>
                         <span class="tool-status error">Error</span>
                       </button>
                       <div class="tool-detail error-detail" id="fetch-detail" hidden>
-                        <span class="terminal-line">HTTP 503 · upstream stream ended before the final event</span>
+                        <span class="terminal-line">HTTP 503 · provider reference temporarily unavailable</span>
                       </div>
                     </div>
 
@@ -1420,11 +1589,11 @@
 
                     <div class="timeline-module">
                       <button class="tool-row" aria-expanded="true" aria-controls="bash-detail" data-disclosure>
-                        <span data-icon="chevron"></span><span class="tool-name">bash</span><span class="tool-target">bun run --cwd apps/web test SessionComposerDock.test.tsx</span>
+                        <span data-icon="chevron"></span><span class="tool-name">bash</span><span class="tool-target">bun run --cwd apps/server test project-session-profile.test.ts</span>
                         <span class="tool-status running"><span class="live-dot"></span>Permission</span>
                       </button>
                       <div class="tool-detail" id="bash-detail">
-                        <span class="terminal-line">$ bun run --cwd apps/web test SessionComposerDock.test.tsx</span>
+                        <span class="terminal-line">$ bun run --cwd apps/server test project-session-profile.test.ts</span>
                         <span class="terminal-line">Waiting for permission before starting the process…</span>
                       </div>
                     </div>
@@ -1436,7 +1605,7 @@
 
           <section class="composer-dock" aria-label="Session composer and pending requests">
             <div class="dock-inner">
-              <section class="hitl-shell" aria-label="Request needing attention">
+              <section class="hitl-shell" aria-label="Request needing attention" data-session-hitl-shell>
                 <div class="hitl-state-tabs" role="tablist" aria-label="Representative HITL states">
                   <span>Needs attention</span>
                   <button role="tab" aria-selected="true" data-hitl-tab="permission">Permission</button>
@@ -1445,13 +1614,13 @@
 
                 <div class="hitl-panel" role="tabpanel" data-hitl-panel="permission">
                   <div class="hitl-title-row">
-                    <h2>Run focused Web verification</h2><span>bash · 1/2</span>
+                    <h2 data-hitl-title>Run focused Profile verification</h2><span>bash · 1/2</span>
                   </div>
-                  <p class="hitl-summary">The Agent wants to run one scoped interaction-test command in apps/web.</p>
+                  <p class="hitl-summary" data-hitl-summary>The Agent wants to run one scoped Server contract test for new Session admission.</p>
                   <button class="hitl-details" aria-expanded="false" aria-controls="permission-detail" data-disclosure>
                     <span data-icon="chevron"></span>Show operation details
                   </button>
-                  <div class="hitl-detail-body" id="permission-detail" hidden>bun run --cwd apps/web test SessionComposerDock.test.tsx</div>
+                  <div class="hitl-detail-body" id="permission-detail" hidden data-hitl-detail>bun run --cwd apps/server test project-session-profile.test.ts</div>
                   <div class="hitl-actions">
                     <span class="hitl-index">‹ 1 / 2 ›</span>
                     <button class="hitl-action" data-action="添加权限说明">Add note</button>
@@ -1465,11 +1634,11 @@
 
                 <div class="hitl-panel" role="tabpanel" data-hitl-panel="question" hidden>
                   <div class="hitl-title-row">
-                    <h2>Which verification scope should run next?</h2><span>ask_user · 1/1</span>
+                    <h2 data-question-title>Which compatibility scope should run next?</h2><span>ask_user · 1/1</span>
                   </div>
-                  <p class="hitl-summary">Choose one option. The response resumes the same logical Execution.</p>
+                  <p class="hitl-summary" data-question-summary>Choose one option. The response resumes the same logical Execution.</p>
                   <div class="hitl-options" role="radiogroup" aria-label="Verification scope">
-                    <button class="hitl-option selected" role="radio" aria-checked="true" data-hitl-option><span class="option-mark"></span>Focused Web checks</button>
+                    <button class="hitl-option selected" role="radio" aria-checked="true" data-hitl-option><span class="option-mark"></span>Focused Server checks</button>
                     <button class="hitl-option" role="radio" aria-checked="false" data-hitl-option><span class="option-mark"></span>Full monorepo suite</button>
                     <button class="hitl-option" role="radio" aria-checked="false" data-hitl-option><span class="option-mark"></span>Review only</button>
                   </div>
@@ -1481,27 +1650,27 @@
                 </div>
               </section>
 
-              <section class="queue-list" aria-label="Queued instructions">
+              <section class="queue-list" aria-label="Queued instructions" data-session-queue>
                 <div class="queue-row">
                   <span class="queue-status">Queued</span>
-                  <span class="queue-copy">After verification, summarize the remaining risk.</span>
+                  <span class="queue-copy">After verification, summarize Profile precedence and remaining risk.</span>
                   <span class="queue-model">GPT-5.6 Luna · deep</span>
                   <span class="queue-actions"><button data-action="立即引导此消息">Steer</button><button data-action="编辑队列消息">Edit</button><button data-action="删除队列消息">Delete</button></span>
                 </div>
                 <div class="queue-row">
                   <span class="queue-status steering"><span class="state-dot"></span>Steering</span>
-                  <span class="queue-copy">Also check narrow-screen overflow.</span>
+                  <span class="queue-copy">Also verify the recommendation is visible before Start Work.</span>
                   <span class="queue-model">GPT-5.6 Luna · deep</span>
                   <span class="queue-actions"><button data-action="编辑引导消息">Edit</button><button data-action="删除引导消息">Delete</button></span>
                 </div>
               </section>
 
-              <div class="composer" aria-label="Queue another instruction">
+              <div class="composer" aria-label="Queue another instruction" data-session-composer>
                 <button class="icon-button" aria-label="Attach file" data-action="添加附件">＋</button>
-                <span class="composer-placeholder">Queue another instruction…</span>
-                <span class="composer-state"><span class="state-dot"></span>Needs attention</span>
+                <span class="composer-placeholder" data-composer-placeholder role="textbox" contenteditable="true" aria-label="Session instruction"></span>
+                <span class="composer-state" data-composer-state><span class="state-dot"></span><span data-composer-state-text>Needs attention</span></span>
                 <span class="composer-model">Lead · principal</span>
-                <button class="stop-button" aria-label="Stop execution" data-action="停止执行">■</button>
+                <button class="stop-button" aria-label="Stop execution" data-action="停止执行" data-session-terminal-action>■</button>
               </div>
             </div>
           </section>
@@ -1525,42 +1694,42 @@
             <div class="agent-tree">
               <article class="agent-node active">
                 <span class="agent-mark">L</span>
-                <span class="agent-copy"><span class="agent-line"><strong>Lead</strong><span>principal</span></span><span>Session execution state audit</span></span>
-                <span class="agent-state needs-you"><span class="state-dot"></span>Needs you</span>
+                <span class="agent-copy"><span class="agent-line"><strong>Lead</strong><span>principal</span></span><span data-lead-objective>Implement project Profile recommendation</span></span>
+                <span class="agent-state needs-you" data-lead-state><span class="state-dot"></span><span data-lead-state-text>Needs you</span></span>
               </article>
-              <article class="agent-node child">
+              <article class="agent-node child" data-profile-agent>
                 <span class="agent-mark">A</span>
-                <span class="agent-copy"><span class="agent-line"><strong>Analyst</strong><span>deep</span></span><span>Verify Session HITL semantics</span></span>
+                <span class="agent-copy"><span class="agent-line"><strong>Analyst</strong><span>deep</span></span><span>Review Profile precedence</span></span>
                 <span class="agent-state completed"><span class="state-dot"></span>Completed</span>
               </article>
-              <article class="agent-node child">
+              <article class="agent-node child" data-profile-agent>
                 <span class="agent-mark">B</span>
-                <span class="agent-copy"><span class="agent-line"><strong>Build</strong><span>deep</span></span><span>Exercise composer interactions</span></span>
+                <span class="agent-copy"><span class="agent-line"><strong>Build</strong><span>deep</span></span><span>Add Session admission coverage</span></span>
                 <span class="agent-state running"><span class="state-dot"></span>Running</span>
               </article>
-              <article class="agent-node child">
+              <article class="agent-node child" data-profile-agent>
                 <span class="agent-mark">E</span>
-                <span class="agent-copy"><span class="agent-line"><strong>Explore</strong><span>fast</span></span><span>Check narrow-screen overflow</span></span>
+                <span class="agent-copy"><span class="agent-line"><strong>Explore</strong><span>fast</span></span><span>Trace persisted Profile bindings</span></span>
                 <span class="agent-state stopped"><span class="state-dot"></span>Stopped</span>
               </article>
             </div>
           </section>
 
           <section class="inspector-panel" role="tabpanel" data-inspector-panel="changes" hidden>
-            <div class="inspector-list">
-              <div class="change-row"><span class="change-kind">M</span><span class="change-path">SessionComposerDock.test.tsx</span><span class="diffstat"><span class="plus">+18</span> <span class="minus">−6</span></span></div>
-              <div class="change-row"><span class="change-kind">M</span><span class="change-path">HitlCard.tsx</span><span class="diffstat"><span class="plus">+9</span> <span class="minus">−2</span></span></div>
-              <div class="change-row"><span class="change-kind">M</span><span class="change-path">ExecutionWorkstream.tsx</span><span class="diffstat"><span class="plus">+4</span> <span class="minus">−1</span></span></div>
+            <div class="inspector-list" data-inspector-changes>
+              <div class="change-row"><span class="change-kind">M</span><span class="change-path">project-session-profile.test.ts</span><span class="diffstat"><span class="plus">+18</span> <span class="minus">−6</span></span></div>
+              <div class="change-row"><span class="change-kind">M</span><span class="change-path">projects/registry.ts</span><span class="diffstat"><span class="plus">+9</span> <span class="minus">−2</span></span></div>
+              <div class="change-row"><span class="change-kind">M</span><span class="change-path">routes/sessions.ts</span><span class="diffstat"><span class="plus">+4</span> <span class="minus">−1</span></span></div>
             </div>
           </section>
 
           <section class="inspector-panel" role="tabpanel" data-inspector-panel="context" hidden>
             <div class="context-list">
-              <div class="context-row"><span>Goal</span><strong>Active · Verify Session execution UI</strong></div>
+              <div class="context-row"><span>Goal</span><strong data-context-goal>Active · Implement project Profile recommendation</strong></div>
               <div class="context-row"><span>Model</span><strong>GPT-5.6 Luna · deep</strong></div>
-              <div class="context-row"><span>Context</span><strong>48,206 / 200,000 tokens</strong></div>
+              <div class="context-row"><span>Context</span><strong data-context-tokens>48,206 / 200,000 tokens</strong></div>
               <div class="context-row"><span>Working dir</span><strong>/workspace/archcode</strong></div>
-              <div class="context-row"><span>Execution</span><strong>Suspended · Permission</strong></div>
+              <div class="context-row"><span>Execution</span><strong data-context-execution>Suspended · Permission</strong></div>
             </div>
           </section>
         </div>
@@ -1570,6 +1739,350 @@
     <button class="scrim" aria-label="Close overlay" data-close-overlay></button>
     <div class="toast" role="status" aria-live="polite"></div>
     <script>
+      const sessionPicker = document.querySelector("[data-session-picker]");
+      const sessionPickerMenu = document.querySelector("[data-session-picker-menu]");
+      const sessionTitle = document.querySelector("[data-session-title]");
+      const sessionStatus = document.querySelector("[data-session-status]");
+      const sessionUsage = document.querySelector("[data-session-usage]");
+      const sessionSource = document.querySelector("[data-session-source]");
+      const parentPage = document.querySelector("[data-session-parent-page]");
+      const parentLink = document.querySelector("[data-session-parent-link]");
+      const parentSeparator = document.querySelector("[data-session-parent-separator]");
+      const breadcrumbTail = document.querySelector("[data-session-breadcrumb-tail]");
+      const todoLink = document.querySelector("[data-session-todo-link]");
+      const todoIdLabel = document.querySelector("[data-session-todo-id]");
+      const primaryTurn = document.querySelector("[data-primary-turn]");
+      const directSessionEmpty = document.querySelector("[data-direct-session-empty]");
+      const primaryMessage = document.querySelector("[data-primary-message]");
+      const primaryWork = document.querySelector("[data-primary-work]");
+      const primaryWorkToggle = document.querySelector("[data-primary-work-toggle]");
+      const primaryWorkDetail = document.querySelector("[data-primary-work-detail]");
+      const primaryResponse = document.querySelector("[data-primary-response]");
+      const secondaryTurn = document.querySelector("[data-secondary-turn]");
+      const secondaryMessage = document.querySelector("[data-secondary-message]");
+      const currentWorkLabel = document.querySelector("[data-current-work-label]");
+      const currentWorkDetail = document.querySelector("[data-current-work-detail]");
+      const hitlShell = document.querySelector("[data-session-hitl-shell]");
+      const queue = document.querySelector("[data-session-queue]");
+      const composer = document.querySelector("[data-session-composer]");
+      const composerPlaceholder = document.querySelector("[data-composer-placeholder]");
+      const composerState = document.querySelector("[data-composer-state]");
+      const composerStateText = document.querySelector("[data-composer-state-text]");
+      const terminalAction = document.querySelector("[data-session-terminal-action]");
+      const leadObjective = document.querySelector("[data-lead-objective]");
+      const leadState = document.querySelector("[data-lead-state]");
+      const leadStateText = document.querySelector("[data-lead-state-text]");
+      const contextGoal = document.querySelector("[data-context-goal]");
+      const contextTokens = document.querySelector("[data-context-tokens]");
+      const contextExecution = document.querySelector("[data-context-execution]");
+      const inspectorChanges = document.querySelector("[data-inspector-changes]");
+      const hitlTitle = document.querySelector("[data-hitl-title]");
+      const hitlSummary = document.querySelector("[data-hitl-summary]");
+      const hitlDetail = document.querySelector("[data-hitl-detail]");
+      const questionTitle = document.querySelector("[data-question-title]");
+      const questionSummary = document.querySelector("[data-question-summary]");
+      const profileRelated = [
+        { id: "sess-profile-discussion", title: "Plan Discussion", meta: "Discussion · shaped PRD and Plan", status: "Done", tone: "done" },
+        { id: "sess-profile-implementation", title: "Implementation Session", meta: "Lead · current execution", status: "Needs you", tone: "running" },
+        { id: "sess-profile-review", title: "Review Session", meta: "Analyst · verification pass", status: "Done", tone: "done" },
+      ];
+      const sessionSamples = {
+        "sess-profile-discussion": {
+          title: "Plan Discussion", status: "Done", statusTone: "done", todoId: "todo-profile-defaults", todoTitle: "Model profile defaults per project", usage: "5 tools · 18,940 tokens", related: profileRelated,
+          primaryMessage: "Shape this Todo into a clear PRD and an implementation Plan. Do not start product code.", primaryWorkLabel: "Worked for 1m 42s", primaryCommentary: "Inspected the current Profile contract and separated project recommendation from explicit Session selection.", primaryReasoning: "The Plan keeps configuration ownership global and changes only new root Session admission.", primaryTools: "file_read, grep", primaryTarget: "Profile resolution and Session admission", primaryResponse: "<strong>Plan ready.</strong> The Todo now has a bounded PRD and one Markdown Plan. No product code was changed.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Shape project Profile defaults", execution: "Completed", goal: "None · Discussion does not execute work", tokens: "18,940 / 200,000 tokens", changes: [],
+        },
+        "sess-profile-implementation": {
+          title: "Implementation Session", status: "Needs you", statusTone: "attention", todoId: "todo-profile-defaults", todoTitle: "Model profile defaults per project", usage: "12 tools · 48,206 tokens", related: profileRelated, preserveRepresentative: true,
+          primaryMessage: "Implement the project-level model profile recommendation. Preserve explicit Session overrides and the existing global configuration contract.", primaryResponse: "<strong>First pass complete.</strong> The recommendation can remain project-owned and apply only when a new root Session has no explicit Profile override.", showSecondary: true, secondaryMessage: "Add the focused contract coverage. Stop if this requires changing existing Session bindings.", currentWorkLabel: "Needs you · Worked for 38s", needsHitl: true, showQueue: true, composerState: "Needs attention", objective: "Implement project Profile recommendation", execution: "Suspended · Permission", goal: "Active · Implement project Profile recommendation", tokens: "48,206 / 200,000 tokens", changes: ["project-session-profile.test.ts", "projects/registry.ts", "routes/sessions.ts"],
+          hitlTitle: "Run focused Profile verification", hitlSummary: "The Agent wants to run one scoped Server contract test for new Session admission.", hitlDetail: "bun run --cwd apps/server test project-session-profile.test.ts", questionTitle: "Which compatibility scope should run next?", questionSummary: "Choose one option. The response resumes the same logical Execution.",
+        },
+        "sess-profile-review": {
+          title: "Review Session", status: "Done", statusTone: "done", todoId: "todo-profile-defaults", todoTitle: "Model profile defaults per project", usage: "8 tools · 29,112 tokens", related: profileRelated,
+          primaryMessage: "Independently review the implementation against the Todo, Plan, and Profile precedence contract.", primaryWorkLabel: "Worked for 2m 08s", primaryCommentary: "Compared the requested precedence, persisted Session behavior, focused tests, and final diff.", primaryReasoning: "Explicit Session choice still wins; existing bindings remain immutable; the project recommendation applies only at new root admission.", primaryTools: "git_diff, file_read, lsp_diagnostics", primaryTarget: "Profile change and focused verification", primaryResponse: "<strong>Review passed.</strong> No contract regression found. The focused checks cover explicit override precedence and existing Session immutability.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Review Profile implementation", execution: "Completed", goal: "Review only", tokens: "29,112 / 200,000 tokens", changes: ["project-session-profile.test.ts", "projects/registry.ts"],
+        },
+        "sess-live-recovery": {
+          title: "Live execution recovery", status: "Running", statusTone: "running", todoId: "todo-live-recovery", todoTitle: "Live execution recovery", usage: "9 tools · 36,118 tokens",
+          primaryMessage: "Recover live execution state from the next authoritative snapshot without fabricating a second Execution.", primaryWorkLabel: "Worked for 1m 06s", primaryCommentary: "Traced event replay, snapshot refresh, and the persisted execution identity before changing the Web projection.", primaryReasoning: "Snapshot state is authoritative after reconnect; the UI repairs its projection without creating a continuation record.", primaryTools: "file_read, grep, lsp_diagnostics", primaryTarget: "SSE recovery and Session projection", primaryResponse: "<strong>Recovery path isolated.</strong> The change stays in the Web projection and preserves the original executionId.", showSecondary: true, secondaryMessage: "Add the reconnect interaction coverage and keep the Session usable while the snapshot refreshes.", currentWorkLabel: "Working · 46s", currentCommentary: "Adding the missed-event fixture and checking that known content never blanks during refresh.", currentReasoning: "The stale projection stays visible until the authoritative snapshot replaces it.", needsHitl: false, showQueue: false, composerState: "Running", objective: "Repair live Session recovery", execution: "Running", goal: "None · ordinary work", tokens: "36,118 / 200,000 tokens", changes: ["session.tsx", "global-sse.tsx", "session.interaction.tsx"],
+        },
+        "sess-worktree-permission": {
+          title: "Worktree cleanup review", status: "Needs you", statusTone: "attention", todoId: "todo-worktree-permission", todoTitle: "Review worktree deletion permission", usage: "7 tools · 21,804 tokens",
+          primaryMessage: "Resolve the exact managed worktree and stop before deleting anything that cannot be recovered.", primaryWorkLabel: "Worked for 54s", primaryCommentary: "Resolved the managed worktree record and verified it is not the project root or an active Session directory.", primaryReasoning: "Only the exact stale worktree path is eligible; the parent workspace and runtime state remain outside the requested operation.", primaryTools: "git_status, file_read", primaryTarget: "managed worktree registry", primaryResponse: "<strong>Target resolved.</strong> Cleanup is paused at the recoverable permission boundary.", showSecondary: true, secondaryMessage: "Remove only the resolved stale worktree and leave all other project data untouched.", currentWorkLabel: "Needs you · Worked for 22s", currentCommentary: "The exact stale worktree is ready to move to Trash after your approval.", currentReasoning: "The target passed project-root, active-Session, and runtime-path guards.", needsHitl: true, showQueue: false, composerState: "Needs attention", objective: "Review recoverable worktree cleanup", execution: "Suspended · Permission", goal: "None · ordinary work", tokens: "21,804 / 200,000 tokens", changes: [],
+          hitlTitle: "Move one stale worktree to Trash", hitlSummary: "The exact managed worktree has been resolved and can be recovered from Trash.", hitlDetail: "/workspace/.archcode-worktrees/stale-profile-review", questionTitle: "What should happen to the stale worktree?", questionSummary: "Choose one recovery-safe option. No project source has been changed.",
+        },
+        "sess-work-search-discussion": {
+          title: "Search model discussion", status: "Done", statusTone: "done", todoId: "todo-work-search", todoTitle: "Unify project work search", usage: "6 tools · 19,480 tokens",
+          primaryMessage: "Define how users recover project work without requiring them to know whether it is a Todo, Session, or Automation.", primaryWorkLabel: "Worked for 1m 34s", primaryCommentary: "Compared the durable work entities and separated lifecycle state from execution urgency.", primaryReasoning: "Todo remains the default work entry; cross-entity search is the stable recovery path for execution and recurring work.", primaryTools: "file_read, grep", primaryTarget: "Todo, Session, and Automation navigation contracts", primaryResponse: "<strong>Interaction model ready.</strong> Empty search prioritizes decision states, while typed search covers every durable work entity.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Shape project work search", execution: "Completed", goal: "None · Discussion does not execute work", tokens: "19,480 / 200,000 tokens", changes: [],
+          related: [
+            { id: "sess-work-search-discussion", title: "Search model discussion", meta: "Discussion · product model", status: "Done", tone: "done" },
+            { id: "sess-work-search-review", title: "Project work search review", meta: "Lead + Build · result ready", status: "Done", tone: "done" },
+          ],
+        },
+        "sess-work-search-review": {
+          title: "Project work search review", status: "Done", statusTone: "done", todoId: "todo-work-search", todoTitle: "Unify project work search", usage: "10 tools · 34,902 tokens",
+          primaryMessage: "Implement and verify one project search across Todos, Sessions, and Automations, then return the Todo for user review.", primaryWorkLabel: "Worked for 2m 46s", primaryCommentary: "Added cross-entity results, decision-first grouping, keyboard access, and stable deep links without creating a new project page.", primaryReasoning: "The board answers what needs action; the Session remains the inspectable workbench after a user opens exact execution.", primaryTools: "file_edit, browser, git_diff", primaryTarget: "project rail search and Todo runtime ordering", primaryResponse: "<strong>Ready for review.</strong> Search now spans all work entities, while In Progress orders Needs you, Ready to review, and Running without adding another filter layer.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Unify project work search", execution: "Completed · awaiting Todo review", goal: "None · ordinary work", tokens: "34,902 / 200,000 tokens", changes: ["app.js", "todos.html", "styles.css"],
+          related: [
+            { id: "sess-work-search-discussion", title: "Search model discussion", meta: "Discussion · product model", status: "Done", tone: "done" },
+            { id: "sess-work-search-review", title: "Project work search review", meta: "Lead + Build · result ready", status: "Done", tone: "done" },
+          ],
+        },
+        "sess-cwd-review": {
+          title: "Verification Session", status: "Done", statusTone: "done", todoId: "todo-cwd-references", todoTitle: "Preserve Session cwd references", usage: "11 tools · 41,870 tokens",
+          primaryMessage: "Verify the cwd migration and managed worktree guards against the accepted Todo.", primaryWorkLabel: "Worked for 3m 11s", primaryCommentary: "Ran the focused migration, store, and Web interaction checks against preserved Session fixtures.", primaryReasoning: "The project root remains the storage authority while cwd is validated as execution context.", primaryTools: "bash, git_diff, file_read", primaryTarget: "cwd migration and managed worktree fixtures", primaryResponse: "<strong>Verified and accepted.</strong> Existing references load without migration loss, and invalid worktrees fail with actionable diagnostics.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Verify Session cwd compatibility", execution: "Completed", goal: "Completed · reviewed", tokens: "41,870 / 200,000 tokens", changes: ["session-cwd-migration.ts", "session-cwd-migration.test.ts"],
+        },
+        "sess-aut-regression-20260801": {
+          title: "Regression check · Aug 1", status: "Done", statusTone: "done", automationId: "aut-regression", automationTitle: "Regression check", usage: "6 tools · 16,204 tokens",
+          primaryMessage: "Run the focused package checks and return only actionable failures.", primaryWorkLabel: "Worked for 2m 37s", primaryCommentary: "Executed the package-scoped typecheck, Todo interaction coverage, and production Web build.", primaryReasoning: "All selected checks completed on the scheduled workspace snapshot.", primaryTools: "bash, file_read", primaryTarget: "focused verification suite", primaryResponse: "<strong>Scheduled run passed.</strong> Typecheck, interaction tests, and the Web build completed with no actionable failures.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Run scheduled regression check", execution: "Completed", goal: "None · Automation invocation", tokens: "16,204 / 200,000 tokens", changes: [],
+        },
+        "sess-aut-regression-20260731": {
+          title: "Regression check · Jul 31", status: "Done", statusTone: "done", automationId: "aut-regression", automationTitle: "Regression check", usage: "6 tools · 15,882 tokens",
+          primaryMessage: "Run the focused package checks and preserve the exact verification result.", primaryWorkLabel: "Worked for 2m 21s", primaryCommentary: "Ran the same bounded verification suite against the previous workspace snapshot.", primaryReasoning: "No failures or scope drift were detected.", primaryTools: "bash", primaryTarget: "focused verification suite", primaryResponse: "<strong>Scheduled run passed.</strong> Six checks completed; no changes were made.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Run scheduled regression check", execution: "Completed", goal: "None · Automation invocation", tokens: "15,882 / 200,000 tokens", changes: [],
+        },
+        "sess-legacy-context-audit": {
+          title: "Audit project context loading", status: "Done", statusTone: "done", usage: "4 tools · 11,420 tokens", direct: true,
+          primaryMessage: "Trace why project context loads twice after reconnect.", primaryWorkLabel: "Worked for 1m 18s", primaryCommentary: "Compared the initial query, SSE refresh, and context resolver cache.", primaryReasoning: "A duplicate invalidation caused the second read; persisted project data was unaffected.", primaryTools: "grep, file_read", primaryTarget: "project context query lifecycle", primaryResponse: "<strong>Audit complete.</strong> The duplicate read came from one redundant refresh signal; the result remains preserved in this Direct Session.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Audit project context loading", execution: "Completed", goal: "None · Direct Session", tokens: "11,420 / 200,000 tokens", changes: [],
+        },
+        "sess-direct-model-type": {
+          title: "Fix incorrect model type", status: "Running", statusTone: "running", usage: "3 tools · 4,208 tokens", direct: true,
+          primaryMessage: "Fix the incorrect model type and verify the focused contract.", primaryWorkLabel: "Worked for 21s", primaryCommentary: "Located the mismatched type and its consumers before applying the narrow correction.", primaryReasoning: "The type belongs at the protocol boundary; callers should consume the corrected contract without adapters.", primaryTools: "grep, file_read", primaryTarget: "shared model type", primaryResponse: "<strong>Cause isolated.</strong> Applying the focused type correction and checking its direct consumers.", showSecondary: true, secondaryMessage: "Update the type and run focused typecheck coverage.", currentWorkLabel: "Working · 34s", currentCommentary: "Updating the exact protocol declaration and affected use sites.", currentReasoning: "No migration or compatibility layer is needed for this local contract fix.", needsHitl: false, showQueue: false, composerState: "Running", objective: "Fix incorrect model type", execution: "Running", goal: "None · Direct Session", tokens: "4,208 / 200,000 tokens", changes: ["types.ts"],
+        },
+      };
+
+      function escapeSessionHtml(value) {
+        return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
+      }
+
+      function dynamicSessionSample(sessionId, params) {
+        const title = params.get("title");
+        const todoId = params.get("todo");
+        const automationId = params.get("automation");
+        const discussion = params.get("kind") === "discussion";
+        if (title && todoId) {
+          return {
+            title: discussion ? `Discussion: ${title}` : title,
+            status: "Running",
+            statusTone: "running",
+            todoId,
+            todoTitle: title,
+            usage: discussion ? "3 tools · 6,820 tokens" : "2 tools · 3,184 tokens",
+            primaryMessage: discussion ? `Discuss and shape “${title}”. Do not start implementation.` : title,
+            primaryWorkLabel: discussion ? "Working · 24s" : "Working · 12s",
+            primaryCommentary: discussion ? "Reading the project and turning the captured intent into explicit scope and acceptance criteria." : "Started immediately from quick capture and created one bound Lead Session.",
+            primaryReasoning: discussion ? "The Todo stays in control of scope; a Plan is created only if the work needs one." : "This execution started directly from the captured Todo, so no Discussion or Plan gate was required.",
+            primaryTools: "file_read, grep",
+            primaryTarget: discussion ? "project context for Todo shaping" : "target file and relevant references",
+            primaryResponse: discussion ? "<strong>Discussion started.</strong> I’m gathering the minimum evidence needed to clarify the Todo." : "<strong>Work started.</strong> The Todo is now In Progress and this Session holds the execution history.",
+            showSecondary: false,
+            needsHitl: false,
+            showQueue: false,
+            composerState: "Running",
+            objective: discussion ? `Shape ${title}` : title,
+            execution: "Running",
+            goal: "None · ordinary work",
+            tokens: discussion ? "6,820 / 200,000 tokens" : "3,184 / 200,000 tokens",
+            changes: [],
+            related: [{ id: sessionId, title: discussion ? "Todo Discussion" : title, meta: discussion ? "Discussion · shaping work" : "Lead · started with Run now", status: "Running", tone: "running", href: location.href }],
+          };
+        }
+        if (title && automationId) {
+          const failed = sessionId.includes("failed");
+          const completed = sessionId.includes("2026");
+          const running = !failed && !completed;
+          return {
+            title: `${title}${running ? " · Manual run" : ""}`,
+            status: failed ? "Failed" : running ? "Running" : "Done",
+            statusTone: failed ? "attention" : running ? "running" : "done",
+            automationId,
+            automationTitle: title,
+            usage: running ? "2 tools · 2,914 tokens" : "5 tools · 13,204 tokens",
+            primaryMessage: `Run “${title}” against the current project snapshot and preserve the result in this invocation Session.`,
+            primaryWorkLabel: running ? "Working · 18s" : "Worked for 2m 06s",
+            primaryCommentary: failed ? "The scheduled run stopped at an actionable verification failure and preserved the exact evidence." : running ? "Loaded the Automation instructions and started one isolated invocation Session." : "Completed the Automation instructions against the captured project snapshot.",
+            primaryReasoning: failed ? "The run stops here because recovering the failure requires a user decision." : "Each invocation owns its own transcript, tool evidence, and terminal result.",
+            primaryTools: "bash, file_read",
+            primaryTarget: "Automation invocation workspace",
+            primaryResponse: failed ? "<strong>Run needs attention.</strong> The failure evidence is preserved here; the Automation definition remains unchanged." : running ? "<strong>Automation run started.</strong> This invocation has its own durable Session." : "<strong>Automation run completed.</strong> The exact result is preserved in this Session.",
+            showSecondary: false,
+            needsHitl: false,
+            showQueue: false,
+            composerState: failed ? "Needs attention" : running ? "Running" : "Idle",
+            objective: `Run ${title}`,
+            execution: failed ? "Suspended · Needs decision" : running ? "Running" : "Completed",
+            goal: "None · Automation invocation",
+            tokens: running ? "2,914 / 200,000 tokens" : "13,204 / 200,000 tokens",
+            changes: [],
+            hitlTitle: "Review the failed Automation run",
+            hitlSummary: "The exact failure is preserved in this invocation Session. Choose whether to investigate or leave the Automation unchanged.",
+            hitlDetail: "focused verification exited with status 1",
+            questionTitle: "How should this failed run continue?",
+            questionSummary: "No recovery action has been taken automatically.",
+            related: [{ id: sessionId, title: running ? "Manual run" : failed ? "Failed run" : "Completed run", meta: `Automation · ${title}`, status: failed ? "Needs you" : running ? "Running" : "Done", tone: failed ? "attention" : running ? "running" : "done", href: location.href }],
+          };
+        }
+        if (title) {
+          return {
+            title,
+            status: "Idle",
+            statusTone: "idle",
+            usage: "0 tools · 0 tokens",
+            direct: true,
+            empty: true,
+            primaryMessage: "",
+            primaryWorkLabel: "Working · 0s",
+            primaryCommentary: "This Direct Session is ready to begin from the first instruction.",
+            primaryReasoning: "The Session is itself a durable, inspectable execution workspace.",
+            primaryTools: "file_read",
+            primaryTarget: "project context",
+            primaryResponse: "",
+            showSecondary: false,
+            needsHitl: false,
+            showQueue: false,
+            composerState: "Idle",
+            objective: "Waiting for first instruction",
+            execution: "Idle",
+            goal: "None · Direct Session",
+            tokens: "0 / 200,000 tokens",
+            changes: [],
+            related: [{ id: sessionId, title, meta: "Direct · Lead", status: "Idle", tone: "", href: location.href }],
+          };
+        }
+        return {
+          title: "Session not found", status: "Missing", statusTone: "", usage: "0 tools · 0 tokens", missing: true,
+          primaryMessage: `Open Session ${sessionId}`,
+          primaryResponse: "<strong>This Session could not be found.</strong> Use project work search to recover its Todo, Automation, or exact Session by title or stable ID.",
+          showSecondary: false, needsHitl: false, showQueue: false, composerState: "Unavailable", objective: "Unknown Session", execution: "Missing", goal: "None", tokens: "0 / 200,000 tokens", changes: [],
+        };
+      }
+
+      function compactWorkDetail(sample) {
+        return `<p class="commentary">${escapeSessionHtml(sample.primaryCommentary || "Inspected the bounded work context.")}</p>
+          <div class="timeline-module"><button class="timeline-toggle" aria-expanded="false" aria-controls="sample-reasoning" data-disclosure><span data-icon="chevron"></span><strong>Reasoning</strong><span class="timeline-summary">Decision trace</span></button><div class="timeline-body" id="sample-reasoning" hidden>${escapeSessionHtml(sample.primaryReasoning || "Kept the work within the requested scope.")}</div></div>
+          <div class="timeline-module"><button class="timeline-toggle" aria-expanded="false" aria-controls="sample-tools" data-disclosure><span data-icon="chevron"></span><strong>${escapeSessionHtml(sample.primaryTools || "file_read")}</strong></button><div class="timeline-body tool-run-list" id="sample-tools" hidden><div class="tool-child"><span class="tool-name">${escapeSessionHtml(sample.primaryTools || "file_read")}</span><span class="tool-target">${escapeSessionHtml(sample.primaryTarget || "project context")}</span><span class="tool-status">Completed</span></div></div></div>`;
+      }
+
+      function currentWorkMarkup(sample) {
+        return `<p class="commentary">${escapeSessionHtml(sample.currentCommentary || "Continuing the bounded implementation.")}</p>
+          <div class="timeline-module"><button class="timeline-toggle" aria-expanded="true" aria-controls="sample-current-reasoning" data-disclosure><span data-icon="chevron"></span><strong>Reasoning</strong><span class="timeline-summary">Current decision</span></button><div class="timeline-body" id="sample-current-reasoning">${escapeSessionHtml(sample.currentReasoning || "Preserve the existing contract while completing the requested change.")}</div></div>
+          <div class="timeline-module"><button class="tool-row" aria-expanded="true" aria-controls="sample-current-tool" data-disclosure><span data-icon="chevron"></span><span class="tool-name">${sample.needsHitl ? "bash" : "file_edit"}</span><span class="tool-target">${sample.needsHitl ? escapeSessionHtml(sample.hitlDetail || "scoped command") : escapeSessionHtml(sample.primaryTarget || "targeted change")}</span><span class="tool-status ${sample.needsHitl ? "running" : "running"}"><span class="live-dot"></span>${sample.needsHitl ? "Permission" : "Running"}</span></button><div class="tool-detail" id="sample-current-tool"><span class="terminal-line">${sample.needsHitl ? "Waiting for permission…" : "Applying the bounded change…"}</span></div></div>`;
+      }
+
+      function renderRelatedSessions(sample, currentId) {
+        const related = sample.related || [{ id: currentId, title: sample.title, meta: sample.automationId ? "Automation run" : sample.direct ? "Direct · Lead" : "Lead Session", status: sample.status, tone: sample.statusTone }];
+        sessionPickerMenu.innerHTML = `<span>${sample.todoId ? "Sessions for this Todo" : sample.automationId ? "Runs for this Automation" : "This Session"}</span>${related.map((item) => {
+          const todoParam = sample.todoId ? `todo=${encodeURIComponent(sample.todoId)}&` : sample.automationId ? `automation=${encodeURIComponent(sample.automationId)}&` : "";
+          const href = item.href || `./session.html?${todoParam}session=${encodeURIComponent(item.id)}`;
+          return `<a href="${escapeSessionHtml(href)}" data-session-option="${escapeSessionHtml(item.id)}"${item.id === currentId ? ' aria-current="page"' : ""}><i class="session-picker-state ${escapeSessionHtml(item.tone || "")}"></i><span><strong>${escapeSessionHtml(item.title)}</strong><small>${escapeSessionHtml(item.meta)}</small></span><em class="session-picker-status">${escapeSessionHtml(item.status)}</em></a>`;
+        }).join("")}`;
+      }
+
+      function closeSessionPicker({ restoreFocus = false } = {}) {
+        if (!sessionPickerMenu || !sessionPicker) return;
+        sessionPickerMenu.hidden = true;
+        sessionPicker.setAttribute("aria-expanded", "false");
+        if (restoreFocus) sessionPicker.focus();
+      }
+
+      function applySessionSample() {
+        const params = new URLSearchParams(location.search);
+        const requested = params.get("session") || "sess-profile-implementation";
+        const sample = sessionSamples[requested] || dynamicSessionSample(requested, params);
+        sessionTitle.textContent = sample.title;
+        sessionStatus.textContent = sample.status;
+        sessionStatus.className = `status-badge${sample.statusTone ? ` ${sample.statusTone}` : ""}`;
+        sessionUsage.textContent = sample.usage;
+        primaryTurn.hidden = Boolean(sample.empty);
+        directSessionEmpty.hidden = !sample.empty;
+        primaryMessage.textContent = sample.primaryMessage;
+        primaryResponse.innerHTML = sample.primaryResponse;
+        primaryWork.hidden = Boolean(sample.missing);
+        primaryWorkToggle.querySelector("strong").textContent = sample.primaryWorkLabel || "Worked for 0s";
+        if (!sample.preserveRepresentative) primaryWorkDetail.innerHTML = compactWorkDetail(sample);
+        const expandPrimary = sample.status === "Running" && !sample.showSecondary;
+        primaryWorkToggle.setAttribute("aria-expanded", String(expandPrimary));
+        primaryWorkDetail.hidden = !expandPrimary;
+        secondaryTurn.hidden = !sample.showSecondary;
+        secondaryMessage.textContent = sample.secondaryMessage || "Continue with the bounded work.";
+        currentWorkLabel.textContent = sample.currentWorkLabel || (sample.needsHitl ? "Needs you" : "Working");
+        if (sample.showSecondary && !sample.preserveRepresentative) currentWorkDetail.innerHTML = currentWorkMarkup(sample);
+        hitlShell.hidden = !sample.needsHitl;
+        queue.hidden = !sample.showQueue;
+        const composerPrompt = sample.empty ? "What should the Agent do?" : sample.composerState === "Idle" ? "Send a follow-up" : sample.composerState === "Unavailable" ? "Session unavailable" : "Queue another instruction";
+        composer.setAttribute("aria-label", composerPrompt);
+        composerPlaceholder.dataset.placeholder = `${composerPrompt}${sample.composerState === "Unavailable" ? "" : "…"}`;
+        composerPlaceholder.setAttribute("aria-label", composerPrompt);
+        composerPlaceholder.contentEditable = String(sample.composerState !== "Unavailable");
+        composerState.className = `composer-state${sample.composerState === "Needs attention" ? "" : sample.composerState === "Running" ? " running" : ""}`;
+        composerStateText.textContent = sample.composerState;
+        terminalAction.textContent = sample.composerState === "Idle" ? "↑" : "■";
+        terminalAction.className = `stop-button${sample.composerState === "Idle" ? " send" : ""}`;
+        terminalAction.setAttribute("aria-label", sample.composerState === "Idle" ? "Send instruction" : sample.composerState === "Unavailable" ? "Session unavailable" : "Stop execution");
+        terminalAction.disabled = sample.composerState === "Unavailable";
+        terminalAction.dataset.action = sample.empty ? "发送首条指令" : sample.composerState === "Idle" ? "发送后续指令" : "停止执行";
+        leadObjective.textContent = sample.objective;
+        leadState.className = `agent-state ${sample.statusTone === "done" ? "completed" : sample.statusTone === "running" ? "running" : sample.statusTone === "attention" ? "needs-you" : "stopped"}`;
+        leadStateText.textContent = sample.status;
+        contextGoal.textContent = sample.goal;
+        contextTokens.textContent = sample.tokens;
+        contextExecution.textContent = sample.execution;
+        document.querySelectorAll("[data-profile-agent]").forEach((node) => { node.hidden = !sample.preserveRepresentative; });
+        inspectorChanges.innerHTML = sample.changes.length ? sample.changes.map((path) => `<div class="change-row"><span class="change-kind">M</span><span class="change-path">${escapeSessionHtml(path)}</span><span class="diffstat"><span class="plus">Changed</span></span></div>`).join("") : '<div class="context-row"><span>No uncommitted changes in this Session.</span></div>';
+
+        if (sample.todoId) {
+          parentLink.hidden = false;
+          parentSeparator.hidden = false;
+          breadcrumbTail.textContent = "Session";
+          parentPage.textContent = "Todos";
+          parentPage.href = "./todos.html";
+          parentLink.textContent = sample.todoTitle;
+          parentLink.href = `./todos.html#todo=${encodeURIComponent(sample.todoId)}`;
+          sessionSource.textContent = `Todo: ${sample.todoTitle}`;
+          todoLink.hidden = false;
+          todoLink.href = parentLink.href;
+          todoIdLabel.textContent = sample.todoId;
+        } else if (sample.automationId) {
+          parentLink.hidden = false;
+          parentSeparator.hidden = false;
+          breadcrumbTail.textContent = "Session";
+          parentPage.textContent = "Automations";
+          parentPage.href = "./automations.html";
+          parentLink.textContent = sample.automationTitle;
+          parentLink.href = `./automations.html?automation=${encodeURIComponent(sample.automationId)}`;
+          sessionSource.textContent = `Automation: ${sample.automationTitle}`;
+          todoLink.hidden = true;
+        } else {
+          parentPage.textContent = "Sessions";
+          parentPage.href = "./sessions.html";
+          parentLink.hidden = true;
+          parentSeparator.hidden = true;
+          breadcrumbTail.textContent = sample.missing ? requested : sample.title;
+          sessionSource.textContent = sample.missing ? `Missing Session: ${requested}` : "Direct Session";
+          todoLink.hidden = true;
+        }
+        if (sample.needsHitl) {
+          hitlTitle.textContent = sample.hitlTitle;
+          hitlSummary.textContent = sample.hitlSummary;
+          hitlDetail.textContent = sample.hitlDetail;
+          questionTitle.textContent = sample.questionTitle;
+          questionSummary.textContent = sample.questionSummary;
+        }
+        renderRelatedSessions(sample, requested);
+      }
+
+      sessionPicker?.addEventListener("click", () => {
+        const opening = sessionPickerMenu.hidden;
+        sessionPickerMenu.hidden = !opening;
+        sessionPicker.setAttribute("aria-expanded", String(opening));
+        if (opening) sessionPickerMenu.querySelector("[aria-current='page']")?.focus();
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!sessionPickerMenu?.hidden && !sessionPickerMenu.contains(event.target) && !sessionPicker?.contains(event.target)) {
+          closeSessionPicker();
+        }
+      });
+
+      applySessionSample();
+      if (params.get("compose") === "1") requestAnimationFrame(() => composerPlaceholder.focus());
+
       document.querySelectorAll("[data-work-toggle], [data-disclosure]").forEach((button) => {
         button.addEventListener("click", () => {
           const expanded = button.getAttribute("aria-expanded") === "true";
@@ -1621,10 +2134,6 @@
         }
       }
 
-      document.querySelectorAll("[data-open-sidebar]").forEach((button) => {
-        button.addEventListener("click", closeInspector);
-      });
-
       inspectorTrigger?.addEventListener("click", () => {
         if (window.matchMedia("(min-width: 1181px)").matches) {
           const collapsed = document.body.classList.toggle("inspector-collapsed");
@@ -1641,6 +2150,10 @@
       });
       document.querySelector(".scrim")?.addEventListener("click", closeInspector);
       window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !sessionPickerMenu?.hidden) {
+          closeSessionPicker({ restoreFocus: true });
+          return;
+        }
         if (event.key === "Escape") closeInspector();
       });
 

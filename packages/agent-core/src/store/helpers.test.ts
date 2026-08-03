@@ -385,6 +385,7 @@ function persistedState(
     toolBatches: [],
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
+    ...(parentSessionId === undefined ? { source: { kind: "direct" as const } } : {}),
     nextEventId: 0,
     ...(parentSessionId === undefined ? {} : {
       delegationRequest,
@@ -894,7 +895,7 @@ describe("session transcript serialization", () => {
     const state = {
       ...persistedState(sessionId),
       agentName: "discussion" as const,
-      projectTodo: { todoId: crypto.randomUUID(), entry: "discussion" as const },
+      source: { kind: "todo" as const, todoId: crypto.randomUUID(), entry: "discussion" as const },
     };
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
@@ -995,33 +996,59 @@ describe("session transcript serialization", () => {
     }).success).toBe(true);
   });
 
-  test("Project Todo source enforces the Lead and Discussion root identity boundary", async () => {
+  test("root source enforces Lead and Discussion identity and feeds the batch inventory", async () => {
     const sessionId = uniqueSessionId("project-todo-source");
     const todoId = crypto.randomUUID();
     await sessionFileInternals.saveSessionTranscript({
       ...persistedState(sessionId),
-      projectTodo: { todoId, entry: "work" },
+      source: { kind: "todo", todoId, entry: "work" },
     }, TMP_DIR);
 
     const loaded = await sessionFileInternals.readSessionFile(sessionId, TMP_DIR);
-    expect(loaded.projectTodo).toEqual({ todoId, entry: "work" });
-    expect((await sessionFileInternals.listSessionSummaries(TMP_DIR))[0]?.projectTodo)
-      .toEqual({ todoId, entry: "work" });
+    expect(loaded.source).toEqual({ kind: "todo", todoId, entry: "work" });
+    expect((await sessionFileInternals.listSessionSummaries(TMP_DIR))[0]?.source)
+      .toEqual({ kind: "todo", todoId, entry: "work" });
+    expect(await sessionFileInternals.listSessionInventory(TMP_DIR)).toEqual([{
+      session: expect.objectContaining({
+        sessionId,
+        source: { kind: "todo", todoId, entry: "work" },
+      }),
+      latestExecution: {
+        id: "run-1",
+        status: "completed",
+        startedAt: 100,
+        endedAt: 200,
+      },
+    }]);
 
     expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(crypto.randomUUID()),
       agentName: "discussion",
-      projectTodo: { todoId, entry: "discussion" },
+      source: { kind: "todo", todoId, entry: "discussion" },
     })).success).toBe(true);
     expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(crypto.randomUUID()),
       agentName: "lead",
-      projectTodo: { todoId, entry: "discussion" },
+      source: { kind: "todo", todoId, entry: "discussion" },
     })).success).toBe(false);
     expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(crypto.randomUUID()),
       agentName: "discussion",
-      projectTodo: { todoId, entry: "work" },
+      source: { kind: "todo", todoId, entry: "work" },
+    })).success).toBe(false);
+    const automationId = crypto.randomUUID();
+    const invocationId = crypto.randomUUID();
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      source: { kind: "automation", automationId, invocationId, todoId },
+    })).success).toBe(true);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      source: { kind: "automation", automationId, invocationId, todoId: null },
+    })).success).toBe(true);
+    expect(SessionFileSchema.safeParse(persistedFile({
+      ...persistedState(crypto.randomUUID()),
+      source: { kind: "automation", automationId, invocationId },
     })).success).toBe(false);
     expect(SessionFileSchema.safeParse(persistedFile({
       ...persistedState(crypto.randomUUID()),
@@ -1065,7 +1092,7 @@ describe("session transcript serialization", () => {
         sessionId,
       ),
       agentName: "explore",
-      projectTodo: { todoId, entry: "discussion" },
+      source: { kind: "todo", todoId, entry: "discussion" },
     })).success).toBe(false);
   });
 
@@ -1584,8 +1611,9 @@ describe("session transcript serialization", () => {
       "promptTraces",
       "reminders",
       "rootSessionId",
-      "sessionId",
-      "stats",
+    "sessionId",
+    "source",
+    "stats",
       "steps",
       "title",
       "todos",

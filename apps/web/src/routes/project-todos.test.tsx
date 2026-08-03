@@ -5,8 +5,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ProjectTodo, SessionSummary } from "../api/types";
-import { continueWorkUpdateInput, coordinateTodoPlanWork, createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, planWorkCommand, pointerFirstCollisionDetection, ProjectTodosRoute, TODO_PLAN_ACTION_LABEL } from "./project-todos";
+import { createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, pointerFirstCollisionDetection, projectTodoRunNowRecovery, ProjectTodosRoute, todoFlatListEmptyMessage } from "./project-todos";
+import { continueWorkUpdateInput, coordinateTodoPlanWork, planWorkCommand, TODO_PLAN_ACTION_LABEL } from "./project-todo-detail";
+import { ApiError } from "../api/client";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
+import { hitlStore } from "../store/hitl-store";
+import { sessionRuntimeStore } from "../store/session-runtime-store";
 
 let dom: JSDOM;
 let root: Root;
@@ -21,11 +25,13 @@ const todos: ProjectTodo[] = [
   todo("rejected", "Rejected", "rejected"),
 ];
 
-function todo(id: string, title: string, status: ProjectTodo["status"]): ProjectTodo {
-  return { id, title, body: "", status, ...(status === "rejected" ? { rejectionReason: "Not now" } : {}), revision: 1, createdAt: 1, updatedAt: 1 };
+function todo(id: string, content: string, status: ProjectTodo["status"]): ProjectTodo {
+  return { id, content, attachmentIds: [], status, ...(status === "rejected" ? { rejectionReason: "Not now" } : {}), revision: 1, createdAt: 1, updatedAt: 1 };
 }
 
 beforeEach(() => {
+  hitlStore.getState().reset();
+  sessionRuntimeStore.getState().reset();
   sessionSummaries = [{
     sessionId: "work-0",
     rootSessionId: "work-0",
@@ -35,11 +41,11 @@ beforeEach(() => {
     activeSkillNames: [],
     modelSelection: { revision: 0 },
     title: "Existing work",
-    projectTodo: { todoId: "ready", entry: "work" },
+    source: { kind: "todo", todoId: "ready", entry: "work" },
     createdAt: 1,
     updatedAt: 2,
   }];
-  dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { url: "http://localhost/projects/demo/todos?todo=ready" });
+  dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { url: "http://localhost/projects/demo/todos" });
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, Node: dom.window.Node, Event: dom.window.Event, CustomEvent: dom.window.CustomEvent, MouseEvent: dom.window.MouseEvent, KeyboardEvent: dom.window.KeyboardEvent, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), IS_REACT_ACT_ENVIRONMENT: true });
   Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class { observe() {} unobserve() {} disconnect() {} } });
   Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0) });
@@ -54,7 +60,7 @@ beforeEach(() => {
       return Response.json({ todo: todos[1], sessionId: "discussion-new" });
     }
     if (path.endsWith("/todos")) return Response.json({ todos });
-    if (path.endsWith("/sessions")) return Response.json({ sessions: sessionSummaries });
+    if (path.endsWith("/sessions")) return Response.json({ sessions: sessionSummaries.map((session) => ({ session, latestExecution: null })) });
     if (path.includes("/sessions/")) {
       return Response.json({
         nextModelSelection: {
@@ -71,23 +77,35 @@ beforeEach(() => {
         },
       });
     }
-    if (path.endsWith("/automations")) return Response.json({ automations: [{ id: "auto-1", projectSlug: "demo", createdFromSessionId: "work-0", projectTodoId: "ready", name: "Nightly", trigger: { kind: "once", at: "2026-01-01" }, action: { kind: "start_session", message: "go", location: "project" }, status: "active", createdAt: "2026-01-01", updatedAt: "2026-01-02" }] });
+    if (path.endsWith("/automations")) return Response.json({ automations: [{ automation: { id: "auto-1", projectSlug: "demo", origin: { kind: "todo", sessionId: "work-0", todoId: "ready" }, name: "Nightly", trigger: { kind: "once", at: "2026-01-01" }, action: { kind: "start_session", message: "go", location: "project" }, status: "active", createdAt: "2026-01-01", updatedAt: "2026-01-02" }, latestInvocation: null }] });
     return new Response("not found", { status: 404 });
   }) });
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   root = createRoot(document.getElementById("root")!);
 });
 
-afterEach(async () => { await act(async () => root.unmount()); client.clear(); dom.window.close(); });
+afterEach(async () => {
+  await act(async () => root.unmount());
+  client.clear();
+  hitlStore.getState().reset();
+  sessionRuntimeStore.getState().reset();
+  dom.window.close();
+});
 
 async function render(): Promise<void> {
-  await act(async () => root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={["/projects/demo/todos?todo=ready"]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>));
+  await act(async () => root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={["/projects/demo/todos"]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
 describe("Project Todos board", () => {
   test("groups the four canonical board states and excludes rejected Todos", () => {
     expect(deriveProjectTodoGroups(todos)).toMatchObject({ idea: [todos[0]], ready: [todos[1]], in_progress: [todos[2]], done: [todos[3]] });
+  });
+
+  test("gives Rejected and Archived views explicit empty and filtered states", () => {
+    expect(todoFlatListEmptyMessage("rejected", false)).toBe("No rejected Todos yet.");
+    expect(todoFlatListEmptyMessage("rejected", true)).toBe("No rejected Todos match this filter.");
+    expect(todoFlatListEmptyMessage("archived", true)).toBe("No archived Todos match this filter.");
   });
 
   test("keeps a drag order local and computes cross-lane placement without a general board model", () => {
@@ -100,7 +118,7 @@ describe("Project Todos board", () => {
     expect(moveTodoInBoard(order, "c", "idea", 0).idea).toEqual(["c", "a", "b"]);
   });
 
-  test("announces the Todo title, target lane, position, completion, and cancellation", () => {
+  test("announces the Todo content excerpt, target lane, position, completion, and cancellation", () => {
     const order = { idea: ["idea"], ready: ["ready"], in_progress: ["progress"], done: ["done"] };
     const announcements = createDragAnnouncements(order, new Map(todos.map((todo) => [todo.id, todo])));
     const active = { id: "ready" };
@@ -133,7 +151,52 @@ describe("Project Todos board", () => {
     expect(handle.className).toContain("min-h-11");
     expect(handle.className).toContain("w-11");
     expect(handle.className).toContain("cursor-grab");
-    expect(document.querySelector('[data-testid="todo-open-ready"]')?.className).toContain("cursor-pointer");
+    const open = document.querySelector('[data-testid="todo-open-ready"]');
+    expect(open?.className).toContain("cursor-pointer");
+    expect(open?.querySelector("span")?.className).toContain("line-clamp-2");
+    expect(open?.querySelector("span")?.className).not.toContain("block");
+    const viewButtons = document.querySelector('[aria-label="Todo views"]')?.querySelectorAll("button") ?? [];
+    expect(viewButtons).toHaveLength(3);
+    expect(Array.from(viewButtons, (button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+    for (const button of viewButtons) {
+      expect(button.className).toContain("max-[760px]:h-11");
+      expect(button.className).toContain("[@media(pointer:coarse)]:h-11");
+    }
+  });
+
+  test("adds a derived work line only after inventory and realtime facts are authoritative", async () => {
+    sessionSummaries.push({
+      sessionId: "work-progress",
+      rootSessionId: "work-progress",
+      cwd: "/tmp",
+      agentName: "lead",
+      profile: "principal",
+      activeSkillNames: [],
+      modelSelection: { revision: 0 },
+      title: "Current work",
+      source: { kind: "todo", todoId: "progress", entry: "work" },
+      createdAt: 2,
+      updatedAt: 3,
+    });
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["demo"],
+      families: [{ projectSlug: "demo", rootSessionId: "work-progress", activity: "running" }],
+      createdAt: 1,
+    });
+    hitlStore.getState().applySnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: ["demo"],
+      entries: [],
+      createdAt: 1,
+    });
+
+    await render();
+
+    const state = document.querySelector('[data-testid="todo-operational-progress"]');
+    expect(state?.textContent).toBe("Working· Running");
+    expect(document.querySelector('[data-testid="todo-open-progress"]')?.textContent).toBe("ProgressWorking· Running");
+    expect(document.querySelector('[data-testid="todo-operational-ready"]')).toBeNull();
   });
 
   test("uses the pointer position to target another lane on a narrow board", () => {
@@ -217,6 +280,28 @@ describe("Project Todos board", () => {
     expect(planWorkCommand("ready")).toContain("/skill use plan-work");
     expect(planWorkCommand("ready")).toContain(".archcode/plans/ready.md");
     expect(planWorkCommand("ready")).toContain("do not start implementation");
+  });
+
+  test("preserves typed Run now recovery identifiers instead of reducing them to a message", () => {
+    expect(projectTodoRunNowRecovery(new ApiError({
+      code: "INTERNAL_ERROR",
+      message: "Run now needs manual recovery",
+      status: 500,
+      details: {
+        scopeCode: "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED",
+        todoId: "todo-retained",
+        sessionId: "session-retained",
+      },
+    }))).toEqual({
+      message: "Run now needs manual recovery",
+      todoId: "todo-retained",
+      sessionId: "session-retained",
+    });
+    expect(projectTodoRunNowRecovery(new ApiError({
+      code: "INTERNAL_ERROR",
+      message: "ordinary failure",
+      status: 500,
+    }))).toBeNull();
   });
 
   test("reuses an existing Discussion for Plan work without creating another", async () => {

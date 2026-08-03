@@ -124,6 +124,20 @@ export class SessionInputService {
     return state.pendingMessages.map(copyPendingMessage);
   }
 
+  async hasDurableMessage(input: {
+    sessionId: string;
+    workspaceRoot: string;
+    clientRequestId: string;
+  }): Promise<boolean> {
+    assertNonEmpty(input.clientRequestId, "clientRequestId");
+    const state = await this.#store.getSessionFile(input.workspaceRoot, input.sessionId);
+    return state.inputRequestReceipts.some((receipt) => (
+      receipt.kind === "message"
+      && receipt.clientRequestId === input.clientRequestId
+      && receipt.status !== "deleted"
+    ));
+  }
+
   /** Persists the Queue cutoff for an explicit Stop that has no active root Execution record. */
   async recordQueueDispatchBarrier(input: {
     sessionId: string;

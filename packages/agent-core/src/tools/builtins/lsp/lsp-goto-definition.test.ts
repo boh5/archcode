@@ -9,10 +9,26 @@ import { createTestToolRegistryFixture } from "../../test-registry";
 import { expectBlockedRequest } from "../../test-results";
 import type { RawToolResult, ToolExecutionContext } from "../../types";
 import { lspGotoDefinitionTool } from "./lsp-goto-definition";
-import { createDurableTestSessionContext, createTestProjectContext } from "../../test-project-context";
+import { createTestProjectContext } from "../../test-project-context";
 
 const testDir = path.join(tmpdir(), "archcode-lsp-goto-definition", crypto.randomUUID());
 const registryFixture = createTestToolRegistryFixture({ descriptors: [lspGotoDefinitionTool] });
+
+async function createDurableTestSessionContext(
+  workspaceRoot: string,
+  sessionId = crypto.randomUUID(),
+) {
+  const store = storeManager.create(sessionId, workspaceRoot, {
+    agentName: "lead",
+    source: { kind: "direct" },
+  });
+  await storeManager.flushSession(sessionId, workspaceRoot);
+  return {
+    store,
+    storeManager,
+    projectContext: createTestProjectContext(workspaceRoot, storeManager),
+  };
+}
 
 beforeEach(async () => {
   await rm(testDir, { recursive: true, force: true });

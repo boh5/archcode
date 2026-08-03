@@ -1,17 +1,23 @@
 import {
-  PROJECT_TODO_BODY_MAX_LENGTH,
+  PROJECT_TODO_CONTENT_MAX_LENGTH,
   PROJECT_TODO_REJECTION_REASON_MAX_LENGTH,
-  PROJECT_TODO_TITLE_MAX_LENGTH,
+  MAX_ATTACHMENTS_PER_TODO,
   type CreateProjectTodoSessionInput,
   type ProjectTodo,
+  type ProjectTodoRunNowInput,
   type ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import { z } from "zod/v4";
 
-export const ProjectTodoTitleSchema = z.string().trim().min(1).max(PROJECT_TODO_TITLE_MAX_LENGTH);
-export const ProjectTodoBodySchema = z.string().max(PROJECT_TODO_BODY_MAX_LENGTH);
+export const ProjectTodoContentSchema = z.string().trim().min(1).max(PROJECT_TODO_CONTENT_MAX_LENGTH);
 export const ProjectTodoRejectionReasonSchema = z.string().trim().min(1).max(PROJECT_TODO_REJECTION_REASON_MAX_LENGTH);
 export const ProjectTodoStatusSchema = z.enum(["idea", "ready", "in_progress", "done", "rejected"]);
+export const ProjectTodoAttachmentIdSchema = z.uuid();
+export const ProjectTodoAttachmentIdsSchema = z.array(ProjectTodoAttachmentIdSchema)
+  .max(MAX_ATTACHMENTS_PER_TODO)
+  .superRefine((attachmentIds, context) => {
+    addUniqueIssues(attachmentIds, "Todo attachment id", context);
+  });
 export const ProjectTodoSessionEntrySchema = z.enum(["discussion", "work", "automation"]);
 export const CreateProjectTodoSessionSchema = z.discriminatedUnion("entry", [
   z.strictObject({
@@ -31,8 +37,8 @@ export const CreateProjectTodoSessionSchema = z.discriminatedUnion("entry", [
 
 export const ProjectTodoSchema = z.strictObject({
   id: z.uuid(),
-  title: ProjectTodoTitleSchema,
-  body: ProjectTodoBodySchema,
+  content: ProjectTodoContentSchema,
+  attachmentIds: ProjectTodoAttachmentIdsSchema,
   status: ProjectTodoStatusSchema,
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
   revision: z.number().int().positive(),
@@ -51,23 +57,40 @@ export const ProjectTodoSchema = z.strictObject({
   }
 }) satisfies z.ZodType<ProjectTodo>;
 
+export const ProjectTodoRunNowReceiptSchema = z.strictObject({
+  clientRequestId: z.uuid(),
+  requestHash: z.string().length(64),
+  todoId: z.uuid(),
+  sessionId: z.uuid().optional(),
+  status: z.enum(["preparing", "recovery_required", "accepted"]),
+}).superRefine((receipt, context) => {
+  if (receipt.status === "accepted" && receipt.sessionId === undefined) {
+    context.addIssue({ code: "custom", path: ["sessionId"], message: "Accepted run-now receipt requires a Session id" });
+  }
+});
+
 export const ProjectTodoStateFileSchema = z.strictObject({
   todos: z.array(ProjectTodoSchema),
+  runNowReceipts: z.array(ProjectTodoRunNowReceiptSchema),
 }).superRefine((state, context) => {
   addUniqueIssues(state.todos.map((todo) => todo.id), "Todo id", context);
+  addUniqueIssues(state.runNowReceipts.map((receipt) => receipt.clientRequestId), "Run-now clientRequestId", context);
 });
 
 export type ProjectTodoStateFile = z.infer<typeof ProjectTodoStateFileSchema>;
 
 export const ProjectTodoCreateSchema = z.strictObject({
-  title: ProjectTodoTitleSchema,
-  body: ProjectTodoBodySchema.optional(),
+  content: ProjectTodoContentSchema,
 });
+
+export const ProjectTodoRunNowSchema = z.strictObject({
+  clientRequestId: z.uuid(),
+  content: ProjectTodoContentSchema,
+}) satisfies z.ZodType<ProjectTodoRunNowInput>;
 
 export const ProjectTodoUpdateSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
-  title: ProjectTodoTitleSchema.optional(),
-  body: ProjectTodoBodySchema.optional(),
+  content: ProjectTodoContentSchema.optional(),
   status: ProjectTodoStatusSchema.optional(),
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
   archived: z.boolean().optional(),
@@ -83,8 +106,7 @@ export const ProjectTodoUpdateSchema = z.strictObject({
 }) satisfies z.ZodType<ProjectTodoUpdateInput>;
 
 export const ProjectTodoDiscussionUpdatePatchSchema = z.strictObject({
-  title: ProjectTodoTitleSchema.optional(),
-  body: ProjectTodoBodySchema.optional(),
+  content: ProjectTodoContentSchema.optional(),
   status: z.enum(["idea", "ready", "rejected"]).optional(),
   rejectionReason: ProjectTodoRejectionReasonSchema.optional(),
 }).refine((input) => Object.keys(input).length > 0, { message: "At least one Todo field is required" });

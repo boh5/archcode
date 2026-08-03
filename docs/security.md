@@ -41,22 +41,23 @@ Project runtime authority state lives under `.archcode/runtime`. Agent mutation
 tools deny writes to that tree and to Git metadata; system services use their
 own writers.
 
-Browser-uploaded Session attachments live separately under:
+Browser-uploaded attachments are system-managed project runtime data:
 
 ```text
-.archcode/attachments/{rootSessionId}/{attachmentId}/
-├── metadata.json
-└── content
+.archcode/runtime/attachments/
+├── sessions/{rootSessionId}/{attachmentId}/{metadata.json,content}
+└── todos/{todoId}/{attachmentId}/{metadata.json,content}
 ```
 
-This attachment tree is ordinary workspace data, not runtime authority or an
-operating-system isolation boundary. It is excluded by the existing
-project-wide `.archcode` Git ignore rule. Attachments are scoped to a root
-Session, and a configured model provider receives attachment bytes only when a
-referenced file is recognized as a supported image and the frozen Execution
-model declares image input. Other referenced files are exposed to the Agent as
-local paths and metadata; shell-capable Agents may still modify them like other
-workspace files.
+Agent mutation tools cannot write this runtime tree. Session attachments are
+immutable message inputs. Todo attachments are the Todo's current references;
+Todo-bound work resolves that current set at each model and tool boundary
+without copying it into the Session. A configured model provider receives
+attachment bytes only for a supported image when the frozen Execution model
+declares image input. Other files are exposed as exact paths and metadata;
+`pdf_read` extracts native PDF text through the same read authorization as
+other file tools. This is still not an operating-system or tenant-isolation
+boundary: the ArchCode host process and operating-system user remain trusted.
 
 ## Worktrees are not sandboxes
 
