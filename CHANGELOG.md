@@ -7,6 +7,49 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-08-04
+
+### Added
+
+- Add a cross-project Home attention surface, global work search, and dedicated
+  project inventories for Todos, Automations, and Sessions.
+- Add an independent Todo detail workspace with canonical Markdown content,
+  Discussion and Plan entry points, linked execution, and explicit lifecycle
+  controls.
+- Add Todo-owned file references, native PDF text reading, and guarded
+  projection of current references into associated Agent work.
+- Add direct `Save` and composed `Run now` Todo entry paths so lightweight work
+  can start immediately while complex work can still use Discussion and Plan.
+
+### Changed
+
+- Make Todos the durable project work anchor while keeping Sessions and
+  Automations as first-class execution inventories.
+- Replace persisted Todo title and body fields with one canonical Markdown
+  content document and derive compact list labels without inventing titles.
+- Replace legacy root Session and Automation source fields with explicit direct,
+  Todo, Session, and Automation origin contracts.
+- Refresh current Todo, Plan, attachment, and root-source context at model
+  boundaries so long-running Sessions do not operate from stale workflow facts.
+- Batch streamed text and reasoning deltas into bounded Web store updates while
+  preserving event order and reconnect recovery.
+
+### Fixed
+
+- Materialize nested compression summaries before they are rendered back into
+  the model context.
+- Keep workbench controls reachable on mobile and clarify lifecycle,
+  operational-state, and empty-state presentation.
+- Use the scheduler clock for Automation timeout decisions and treat missing
+  glob search roots as empty results.
+
+### Breaking Changes
+
+- Historical project runtime records using Todo `title` and `body`, legacy
+  Session source fields, legacy Automation origin fields, or legacy attachment
+  paths are no longer accepted. Remove old project runtime data before starting
+  this release; no migration or fallback is provided.
+
 ## [0.0.7] - 2026-07-30
 
 ### Changed
