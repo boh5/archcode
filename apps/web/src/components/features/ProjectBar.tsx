@@ -104,7 +104,7 @@ export function ProjectBar({ onAddProject, onSettings, onSearch, searchTriggerRe
                 <div className="absolute -left-2 bottom-2 top-2 w-[3px] rounded-r-sm bg-signal max-[760px]:-left-1" />
               )}
               {getInitials(project.slug)}
-              {attentionCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-[14px] text-bg-base" aria-label={`${attentionCount} requests need attention`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
+              {attentionCount > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-[14px] text-bg-base" aria-label={`${attentionCount} items need you`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}
               <span
                 id={`project-tooltip-${project.slug}`}
                 role="tooltip"

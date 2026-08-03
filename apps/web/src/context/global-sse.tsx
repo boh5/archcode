@@ -6,6 +6,7 @@ import {
   createWebSessionStore,
   findWebSessionStore,
   removeWebSessionStores,
+  type GlobalSessionDeltaEnvelope,
 } from "../store/session-store";
 import { hitlAttentionPath, hitlStore, scopedHitlIdentity, type ScopedHitlView } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
@@ -49,6 +50,65 @@ export interface GlobalSSEContextValue {
 export const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 export const SSE_WATCHDOG_TIMEOUT_MS = SSE_HEARTBEAT_INTERVAL_MS * 3;
 export const SSE_SHUTDOWN_RECONNECT_DELAY_MS = 1_000;
+export const SESSION_DELTA_BATCH_INTERVAL_MS = 32;
+
+interface SessionDeltaBatcherOptions {
+  apply: (envelopes: readonly GlobalSessionDeltaEnvelope[]) => void;
+  schedule?: (callback: () => void, delay: number) => unknown;
+  cancel?: (timer: unknown) => void;
+}
+
+export interface SessionDeltaBatcher {
+  enqueue: (envelope: GlobalSessionDeltaEnvelope) => void;
+  flush: () => void;
+}
+
+export function createSessionDeltaBatcher(
+  options: SessionDeltaBatcherOptions,
+): SessionDeltaBatcher {
+  const schedule = options.schedule ?? ((callback, delay) => setTimeout(callback, delay));
+  const cancel = options.cancel ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>));
+  let timer: unknown;
+  let pending: GlobalSessionDeltaEnvelope[] = [];
+
+  const flush = () => {
+    if (timer !== undefined) {
+      cancel(timer);
+      timer = undefined;
+    }
+    if (pending.length === 0) return;
+
+    const queued = pending;
+    pending = [];
+    let groupStart = 0;
+    for (let index = 1; index <= queued.length; index += 1) {
+      const previous = queued[index - 1];
+      const current = queued[index];
+      if (
+        current !== undefined &&
+        previous !== undefined &&
+        current.slug === previous.slug &&
+        current.sessionId === previous.sessionId
+      ) {
+        continue;
+      }
+      options.apply(queued.slice(groupStart, index));
+      groupStart = index;
+    }
+  };
+
+  return {
+    enqueue: (envelope) => {
+      pending.push(envelope);
+      if (timer !== undefined) return;
+      timer = schedule(() => {
+        timer = undefined;
+        flush();
+      }, SESSION_DELTA_BATCH_INTERVAL_MS);
+    },
+    flush,
+  };
+}
 
 export interface HitlNotificationGate {
   beginConnection: () => void;
@@ -360,6 +420,7 @@ export interface SSEEventHandlerDeps {
   refreshMcpStatus: () => void;
   requestReconnect: () => void;
   refreshSessionSnapshots: () => void;
+  deltaBatcher?: SessionDeltaBatcher;
   hitlNotificationGate?: HitlNotificationGate;
   onLiveHitlRequest?: (entry: ScopedHitlView) => void;
 }
@@ -370,6 +431,12 @@ export function handleSSEEvent(
 ): void {
   const parsed = parseSSEEvent(sseEvent.event, sseEvent.data);
   if (!parsed) return;
+
+  if (isSessionDeltaEnvelope(parsed) && deps.deltaBatcher) {
+    deps.deltaBatcher.enqueue(parsed);
+    return;
+  }
+  deps.deltaBatcher?.flush();
 
   switch (parsed.type) {
     case "event": {
@@ -521,6 +588,32 @@ export function handleSSEEvent(
   }
 }
 
+function isSessionDeltaEnvelope(
+  event: GlobalSSEEvent,
+): event is GlobalSessionDeltaEnvelope {
+  return event.type === "event" &&
+    (event.payload.type === "text-delta" || event.payload.type === "reasoning-delta");
+}
+
+function applySessionDeltaBatch(
+  envelopes: readonly GlobalSessionDeltaEnvelope[],
+  deps: Pick<SSEEventHandlerDeps, "findStore" | "createStore" | "refreshSessionSnapshots">,
+): void {
+  const first = envelopes[0];
+  if (!first) return;
+  const store = deps.findStore(first.sessionId, first.slug)
+    ?? deps.createStore(first.sessionId, first.slug);
+  const applyResult = store.getState().applyRemoteDeltaBatch(envelopes);
+  if (applyResult === "gap") {
+    beginSessionSnapshotRecovery();
+    store.getState().applyRemoteDeltaBatch(envelopes);
+    deps.refreshSessionSnapshots();
+  } else if (applyResult === "refresh-required" || applyResult === "invalid") {
+    beginSessionSnapshotRecovery();
+    deps.refreshSessionSnapshots();
+  }
+}
+
 function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSEResourceChangedEvent): void {
   if (event.resourceType === "automation") {
     invalidateAutomationQueries(deps, event.projectSlug, event.resourceId);
@@ -570,6 +663,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
   const abortRef = useRef<(() => void) | null>(null);
   const reconnectStateRef = useRef<SSEReconnectState>({ requested: false, shutdown: false });
   const watchdogRef = useRef<SSEWatchdog | null>(null);
+  const deltaBatcherRef = useRef<SessionDeltaBatcher | null>(null);
   const hitlNotificationGateRef = useRef<HitlNotificationGate>(createHitlNotificationGate());
 
   const announceLiveHitl = useCallback((entry: ScopedHitlView) => {
@@ -594,7 +688,10 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
     requestSSEReconnectOnce(reconnectStateRef.current, {
       invalidateReadiness: invalidateControlPlaneReadiness,
       markReconnecting: () => setConnectionState("reconnecting"),
-      abortConnection: () => abortRef.current?.(),
+      abortConnection: () => {
+        deltaBatcherRef.current?.flush();
+        abortRef.current?.();
+      },
       scheduleReconnect: () => setReconnectEpoch((epoch) => epoch + 1),
     });
   }, []);
@@ -604,6 +701,21 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
       predicate: (query) => isSessionSnapshotQueryKey(query.queryKey),
     });
   }, [queryClient]);
+
+  useEffect(() => {
+    const batcher = createSessionDeltaBatcher({
+      apply: (envelopes) => applySessionDeltaBatch(envelopes, {
+        findStore: findWebSessionStore,
+        createStore: createWebSessionStore,
+        refreshSessionSnapshots,
+      }),
+    });
+    deltaBatcherRef.current = batcher;
+    return () => {
+      batcher.flush();
+      if (deltaBatcherRef.current === batcher) deltaBatcherRef.current = null;
+    };
+  }, [refreshSessionSnapshots]);
 
   const refreshHome = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.home });
@@ -631,6 +743,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         refreshMcpStatus,
         requestReconnect,
         refreshSessionSnapshots,
+        deltaBatcher: deltaBatcherRef.current ?? undefined,
         hitlNotificationGate: hitlNotificationGateRef.current,
         onLiveHitlRequest: announceLiveHitl,
       });
@@ -682,6 +795,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         setConnectionState("open");
       },
       onConnectionLost: () => {
+        deltaBatcherRef.current?.flush();
         watchdogRef.current?.stop();
         invalidateControlPlaneReadiness();
         beginSessionSnapshotRecovery();
@@ -693,6 +807,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
     abortRef.current = client.abort;
 
     return () => {
+      deltaBatcherRef.current?.flush();
       abortRef.current = null;
       client.abort();
     };

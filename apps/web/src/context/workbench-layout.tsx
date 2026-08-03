@@ -58,7 +58,7 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
       if (mobileFocusSelector) focusElementAfterLayoutChange(mobileFocusSelector, 2);
       if (!query.matches) {
         const focusSelector = mobileInspectorOpenRef.current
-          ? '#context-inspector [role="tab"][tabindex="0"], button[data-state="collapsed"][aria-controls~="context-inspector"]'
+          ? '#context-inspector [role="tab"][tabindex="0"], button[aria-controls~="context-inspector"]'
           : null;
         setMobileInspectorOpen(false);
         if (focusSelector) focusElementAfterLayoutChange(focusSelector, 2);
@@ -179,7 +179,7 @@ function getMobileBreakpointFocusSelector(activeElement: HTMLElement): string | 
     activeElement.closest("#context-inspector")
     || activeElement.matches('button[aria-controls~="context-inspector"], [role="separator"][aria-controls="context-inspector"]')
   ) {
-    return 'button[aria-label="Open context inspector"]';
+    return 'button[aria-controls~="mobile-context-inspector"]';
   }
   return null;
 }

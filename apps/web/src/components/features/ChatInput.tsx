@@ -70,7 +70,7 @@ function composerStatus(
   if (activity === undefined) return { label: "Connecting", kind: "running", tone: "neutral" };
   if (!hitlReady) return { label: "Syncing", kind: "running", tone: "info" };
   if (activity === "stopping") return { label: "Stopping", kind: "running", tone: "warning" };
-  if (hasPendingHitl) return { label: "Needs attention", kind: "needs_you" };
+  if (hasPendingHitl) return { label: "Needs you", kind: "needs_you" };
   if (activity === "running" || activity === "resuming") {
     return { label: sessionFamilyActivityLabel(activity), kind: "running" };
   }

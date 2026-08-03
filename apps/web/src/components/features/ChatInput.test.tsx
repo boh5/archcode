@@ -662,14 +662,14 @@ describe("ChatInput runtime controls", () => {
     expect(findAll(tree, (element) => element.props?.["aria-label"] === "Collapse queued-message composer")).toHaveLength(1);
   });
 
-  test("a suspended family with HITL keeps Stop and presents Needs attention", () => {
+  test("a suspended family with HITL keeps Stop and presents Needs you", () => {
     activity = "waiting_for_human";
     hitlReady = true;
     pendingHitlCount = 1;
     const tree = renderChatInput();
 
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(1);
-    expect(findAll(tree, (element) => textContent(element) === "Needs attention")).toHaveLength(1);
+    expect(findAll(tree, (element) => textContent(element) === "Needs you")).toHaveLength(1);
     expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
   });
 

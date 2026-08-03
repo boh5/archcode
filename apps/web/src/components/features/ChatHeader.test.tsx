@@ -6,6 +6,7 @@ import type {
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import { MemoryRouter } from "react-router-dom";
 import { ChatHeader } from "./ChatHeader";
 import {
   __resetWebSessionStoresForTest,
@@ -84,14 +85,22 @@ describe("ChatHeader", () => {
     });
     await act(async () =>
       root.render(
-        <WorkbenchLayoutProvider>
-          <ChatHeader
-            slug="demo"
-            sessionId="session"
-            inspectorExpanded={false}
-            onToggleInspector={() => {}}
-          />
-        </WorkbenchLayoutProvider>,
+        <MemoryRouter>
+          <WorkbenchLayoutProvider>
+            <ChatHeader
+              slug="demo"
+              sessionId="session"
+              source={{
+                label: "Todo",
+                title: "Review session context",
+                to: "/projects/demo/todos/todo-1",
+                usesLiveTodoReferences: true,
+              }}
+              inspectorExpanded={false}
+              onToggleInspector={() => {}}
+            />
+          </WorkbenchLayoutProvider>
+        </MemoryRouter>,
       ),
     );
     const status = container.querySelector(
@@ -99,6 +108,12 @@ describe("ChatHeader", () => {
     );
     expect(status?.textContent).toContain("Needs you");
     expect(status?.getAttribute("data-product-status")).toBe("needs_you");
-    expect(container.querySelector('header button[aria-label="Expand context inspector"]')).not.toBeNull();
+    const source = container.querySelector('[data-testid="session-source"]');
+    expect(source?.className).not.toContain("max-[760px]:hidden");
+    expect(source?.querySelector("a")?.getAttribute("href")).toBe("/projects/demo/todos/todo-1");
+    expect(container.querySelector('[data-testid="session-source-annotation"]')?.className).toContain("max-[760px]:hidden");
+    const inspectorButton = container.querySelector('header button[aria-label="Expand context inspector"]');
+    expect(inspectorButton).not.toBeNull();
+    expect(inspectorButton?.className).not.toContain("max-[760px]:hidden");
   });
 });

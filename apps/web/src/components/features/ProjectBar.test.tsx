@@ -247,7 +247,7 @@ describe("ProjectBar", () => {
       { projectSlug: "other-project", ownerSessionId: "root", rootSessionId: "root", view: { hitlId: "same" } },
     ];
 
-    const badges = findAll(render(), (element) => element.props?.["aria-label"] === "2 requests need attention");
+    const badges = findAll(render(), (element) => element.props?.["aria-label"] === "2 items need you");
     expect(badges).toHaveLength(1);
   });
 

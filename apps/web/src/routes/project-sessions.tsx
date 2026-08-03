@@ -65,6 +65,12 @@ export function presentSessionInventoryStatus(
   return { label: `Stopped · ${detail}`, kind: "stopped" };
 }
 
+export function sessionInventoryEmptyMessage(totalCount: number): string {
+  return totalCount === 0
+    ? "No Sessions yet. Start one directly or run work from a Todo."
+    : "No Sessions match this title, ID, or source.";
+}
+
 export function ProjectSessionsRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
   const navigate = useNavigate();
@@ -158,7 +164,7 @@ export function ProjectSessionsRoute() {
         {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Sessions…</p> : null}
         {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Sessions</p> : null}
         {!inventory.isLoading && !inventory.error && filtered.length === 0 ? (
-          <p className="py-16 text-center text-[13px] text-text-tertiary">No Sessions match this title, ID, or source.</p>
+          <p className="py-16 text-center text-[13px] text-text-tertiary">{sessionInventoryEmptyMessage(inventory.data?.length ?? 0)}</p>
         ) : null}
         {(["needs-you", "running", "recent"] as const).map((group) => groups[group].length > 0 ? (
           <SessionGroup

@@ -18,6 +18,7 @@ import {
   removeWebSessionStores,
   markSessionForeground,
   __resetWebSessionStoresForTest,
+  type GlobalSessionDeltaEnvelope,
 } from "./session-store";
 import {
   sessionAuthoritativeSnapshot,
@@ -110,6 +111,13 @@ function event(
     payload,
     agentName: "lead",
   };
+}
+
+function deltaEvent(
+  eventId: number,
+  payload: GlobalSessionDeltaEnvelope["payload"],
+): GlobalSessionDeltaEnvelope {
+  return event(eventId, payload) as GlobalSessionDeltaEnvelope;
 }
 
 function committedMessage(
@@ -456,6 +464,59 @@ describe("applyRemoteEnvelope", () => {
     expect(store.getState().events.map((item) => item.id)).toEqual([0]);
     expect(store.getState().messages).toHaveLength(1);
     expect(store.getState().nextEventId).toBe(1);
+  });
+
+  test("reduces a contiguous delta batch with one store notification", () => {
+    const store = createWebSessionStore("session-1", "demo");
+    store.getState().applyRemoteEnvelope(event(0, {
+      type: "execution-start",
+      executionId: "execution-batch",
+      binding,
+      origin: "user_message",
+      maxSteps: 10,
+    }));
+    store.getState().applyRemoteEnvelope(event(1, {
+      type: "step-start",
+      stepId: "step-batch",
+      step: 0,
+    }));
+    store.getState().applyRemoteEnvelope(event(2, {
+      type: "text-start",
+      stepId: "step-batch",
+      blockId: "output",
+    }));
+
+    let notifications = 0;
+    const unsubscribe = store.subscribe(() => {
+      notifications += 1;
+    });
+    const result = store.getState().applyRemoteDeltaBatch([
+      deltaEvent(3, { type: "text-delta", stepId: "step-batch", blockId: "output", text: "hel" }),
+      deltaEvent(4, { type: "text-delta", stepId: "step-batch", blockId: "output", text: "lo" }),
+    ]);
+    unsubscribe();
+
+    const output = store.getState().messages[0]?.parts.find(
+      (part) => part.type === "assistant-output",
+    );
+    expect(result).toBe("applied");
+    expect(notifications).toBe(1);
+    expect(output).toMatchObject({ type: "assistant-output", text: "hello" });
+    expect(store.getState().events.map((item) => item.id)).toEqual([0, 1, 2, 3, 4]);
+    expect(store.getState().nextEventId).toBe(5);
+  });
+
+  test("rejects a non-contiguous batch without applying its prefix", () => {
+    const store = createWebSessionStore("session-1", "demo");
+    const result = store.getState().applyRemoteDeltaBatch([
+      deltaEvent(0, { type: "text-delta", stepId: "step", blockId: "output", text: "first" }),
+      deltaEvent(2, { type: "text-delta", stepId: "step", blockId: "output", text: "third" }),
+    ]);
+
+    expect(result).toBe("gap");
+    expect(store.getState().events).toEqual([]);
+    expect(store.getState().messages).toEqual([]);
+    expect(store.getState().nextEventId).toBe(0);
   });
 
   test("consumes an exact lifecycle replay without changing its projection", () => {

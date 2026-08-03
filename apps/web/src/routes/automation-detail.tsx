@@ -216,7 +216,7 @@ function AutomationAttention({
         </div>
       )) : hitlAttention.entries[0] ? (
         <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-          <span className="inline-flex items-center gap-2"><StatusGlyph kind="needs_you" size={14} />Target Session needs attention</span>
+          <span className="inline-flex items-center gap-2"><StatusGlyph kind="needs_you" size={14} />Target Session needs you</span>
           <Link className="text-brand hover:underline" to={hitlAttentionPath(hitlAttention.entries[0])}>Open Session</Link>
         </div>
       ) : null}

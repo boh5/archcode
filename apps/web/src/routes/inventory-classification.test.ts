@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ProjectAutomationInventoryItem, ProjectSessionInventoryItem } from "../api/types";
-import { classifyAutomationInventory, matchesAutomationInventory } from "./automations";
-import { classifySessionInventory, presentSessionInventoryStatus, sessionAttentionLabels } from "./project-sessions";
+import { automationInventoryEmptyMessage, classifyAutomationInventory, matchesAutomationInventory } from "./automations";
+import { classifySessionInventory, presentSessionInventoryStatus, sessionAttentionLabels, sessionInventoryEmptyMessage } from "./project-sessions";
 
 const automation = (id: string, status: "active" | "paused" | "disabled", invocationStatus?: "failed" | "missed" | "dispatched"): ProjectAutomationInventoryItem => ({
   automation: {
@@ -21,6 +21,13 @@ const automation = (id: string, status: "active" | "paused" | "disabled", invoca
 });
 
 describe("inventory classification", () => {
+  test("distinguishes a true empty inventory from filtered no-results", () => {
+    expect(automationInventoryEmptyMessage(0)).toBe("No Automations yet. Create one to schedule or repeat work.");
+    expect(automationInventoryEmptyMessage(2)).toBe("No Automations match this name, ID, action, or schedule.");
+    expect(sessionInventoryEmptyMessage(0)).toBe("No Sessions yet. Start one directly or run work from a Todo.");
+    expect(sessionInventoryEmptyMessage(2)).toBe("No Sessions match this title, ID, or source.");
+  });
+
   test("assigns each Automation to exactly one operational group", () => {
     const groups = classifyAutomationInventory([
       automation("failed", "active", "failed"),

@@ -76,9 +76,18 @@ mock.module("lucide-react", () => ({
   TriangleAlert: "TriangleAlert",
 }));
 
-const { HomeRoute } = await import("./home");
+const { HomeRoute, homeEntityLabel, homeStatusLabel } = await import("./home");
 
 describe("Home", () => {
+  test("presents product language instead of raw entity and status enums", () => {
+    expect(homeEntityLabel("session")).toBe("Session");
+    expect(homeEntityLabel("hitl")).toBe("Request");
+    expect(homeStatusLabel("running")).toBe("Running");
+    expect(homeStatusLabel("ready_to_review")).toBe("Ready to review");
+    expect(homeStatusLabel("provider_paused")).toBe("Provider paused");
+    expect(homeStatusLabel(" ")).toBe("Status unavailable");
+  });
+
   test("always renders its four decision sections with explicit empty states", () => {
     const home = HomeRoute();
     const sections = findAll(home, (element) => (

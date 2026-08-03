@@ -53,6 +53,12 @@ export function matchesAutomationInventory(
   ].some((value) => value?.toLocaleLowerCase().includes(needle));
 }
 
+export function automationInventoryEmptyMessage(totalCount: number): string {
+  return totalCount === 0
+    ? "No Automations yet. Create one to schedule or repeat work."
+    : "No Automations match this name, ID, action, or schedule.";
+}
+
 export function AutomationsRoute() {
   const { slug = "", automationId } = useParams<{ slug: string; automationId?: string }>();
   const location = useLocation();
@@ -95,7 +101,7 @@ export function AutomationsRoute() {
         </div>
         {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Automations…</p> : null}
         {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Automations</p> : null}
-        {!inventory.isLoading && !inventory.error && filtered.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">No Automations match this name, ID, action, or schedule.</p> : null}
+        {!inventory.isLoading && !inventory.error && filtered.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{automationInventoryEmptyMessage(inventory.data?.length ?? 0)}</p> : null}
         {(["needs-attention", "scheduled", "paused", "inactive"] as const).map((group) => groups[group].length > 0 ? (
           <AutomationGroup
             detailSearch={detailSearch}

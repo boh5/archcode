@@ -5,6 +5,43 @@ import { useHome } from "../api/queries";
 import { StatusGlyph } from "../components/primitives/StatusGlyph";
 import { RelativeTime } from "../components/primitives/TemporalText";
 
+const HOME_ENTITY_LABELS: Readonly<Record<HomeSummaryItem["kind"], string>> = {
+  hitl: "Request",
+  todo: "Todo",
+  session: "Session",
+  automation: "Automation",
+};
+
+const HOME_STATUS_LABELS: Readonly<Record<string, string>> = {
+  inspection: "Manual inspection",
+  permission: "Permission",
+  question: "Question",
+  blocked: "Blocked",
+  budget_limited: "Budget limited",
+  failed: "Failed",
+  timed_out: "Timed out",
+  running: "Running",
+  waiting_for_human: "Waiting",
+  resuming: "Resuming",
+  stopping: "Stopping",
+  ready_to_review: "Ready to review",
+  missed: "Missed",
+  scheduled: "Scheduled",
+};
+
+export function homeEntityLabel(kind: HomeSummaryItem["kind"]): string {
+  return HOME_ENTITY_LABELS[kind];
+}
+
+export function homeStatusLabel(status: string): string {
+  const known = HOME_STATUS_LABELS[status];
+  if (known !== undefined) return known;
+  const readable = status.replaceAll("_", " ").trim();
+  return readable.length === 0
+    ? "Status unavailable"
+    : `${readable[0]!.toLocaleUpperCase()}${readable.slice(1)}`;
+}
+
 export function HomeRoute() {
   const home = useHome();
   return (
@@ -55,9 +92,9 @@ function HomeRow({ item }: { item: HomeSummaryItem }) {
       {item.status.toLowerCase().includes("fail") ? <TriangleAlert size={14} className="text-error" /> : <StatusGlyph kind={item.kind === "hitl" ? "needs_you" : item.status.toLowerCase().includes("running") ? "running" : item.kind === "automation" ? "enabled" : "idle"} size={14} />}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-semibold text-text-primary">{item.title}</span>
-        <span className="mt-1 block truncate text-[11px] text-text-tertiary">{item.project.name} · {item.kind}{item.context ? ` · ${item.context}` : ""}</span>
+        <span className="mt-1 block truncate text-[11px] text-text-tertiary">{item.project.name} · {homeEntityLabel(item.kind)}{item.context ? ` · ${item.context}` : ""}</span>
       </span>
-      <span className="shrink-0 text-[11px] font-medium text-text-secondary">{item.status}</span>
+      <span className="shrink-0 text-[11px] font-medium text-text-secondary">{homeStatusLabel(item.status)}</span>
       <span className="hidden shrink-0 text-[11px] text-text-tertiary min-[640px]:inline"><RelativeTime timestamp={item.sortAt} /></span>
     </Link>
   );

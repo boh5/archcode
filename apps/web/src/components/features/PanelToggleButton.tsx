@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 
 export const WORKBENCH_PANEL_TOGGLE_CLASS =
-  "flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand max-[760px]:hidden [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11";
+  "flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11";
 
 export function PanelToggleButton({
   side,

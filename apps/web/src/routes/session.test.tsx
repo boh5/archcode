@@ -289,7 +289,7 @@ describe("SessionRoute store-level behavior", () => {
     __resetWebSessionStoresForTest();
   });
 
-  test("keeps the child Inspector reopen control aligned with the 760px layout boundary", async () => {
+  test("keeps the Inspector control available across the 760px layout boundary", async () => {
     const sessionSource = await Bun.file(
       new URL("./session.tsx", import.meta.url),
     ).text();
@@ -297,8 +297,9 @@ describe("SessionRoute store-level behavior", () => {
       new URL("../components/features/PanelToggleButton.tsx", import.meta.url),
     ).text();
     expect(sessionSource).toContain("<InspectorToggleButton");
-    expect(panelToggleSource).toContain("max-[760px]:hidden");
+    expect(panelToggleSource).not.toContain("max-[760px]:hidden");
     expect(panelToggleSource).not.toContain("max-[799px]:hidden");
+    expect(panelToggleSource).toContain("[@media(pointer:coarse)]:h-11");
   });
 
   test("wires the Invocation client request id to canonical and queued message owners", async () => {

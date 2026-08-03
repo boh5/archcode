@@ -120,12 +120,12 @@ export function ChatHeader({
             <>
               <span
                 aria-hidden="true"
-                className="shrink-0 text-border-strong max-[760px]:hidden"
+                className="shrink-0 text-border-strong"
               >
                 ·
               </span>
               <span
-                className="min-w-0 truncate [flex:1_1_195px] max-[760px]:hidden"
+                className="min-w-0 truncate [flex:1_1_195px]"
                 data-testid="session-source"
               >
                 <span className="text-text-tertiary">{source.label}</span>{" "}
@@ -138,7 +138,7 @@ export function ChatHeader({
                   {source.title}
                 </Link>
                 {source.usesLiveTodoReferences ? (
-                  <span className="ml-1 text-text-tertiary" data-testid="session-source-annotation">
+                  <span className="ml-1 text-text-tertiary max-[760px]:hidden" data-testid="session-source-annotation">
                     · Using live Todo references
                   </span>
                 ) : null}
