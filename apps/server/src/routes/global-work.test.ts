@@ -78,7 +78,7 @@ describe("global work read routes", () => {
       upcoming: [{ kind: "automation", entityId: automation.id, status: "scheduled" }],
       projectErrors: [{ project: { slug: "bad", name: "Bad Project" }, message: "corrupt project" }],
     });
-    expect(JSON.stringify(body)).not.toContain("Private PRD body");
+    expect(body.readyToReview[0]?.title).toBe("Review the completed work Private PRD body");
   });
 
   test("a Goal-attention Session excludes its entire Todo work family from Ready to review", async () => {
@@ -150,7 +150,7 @@ describe("global work read routes", () => {
       kind: "todo",
       project: { slug: "good", name: "Good Project" },
       entityId: todos[0]!.id,
-      title: "Todo 0",
+      title: "Todo 0 hidden needle content",
       href: `/projects/good/todos/${todos[0]!.id}`,
       context: "in_progress",
     });

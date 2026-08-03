@@ -1,7 +1,7 @@
 import type { AttachmentDescriptor } from "./attachments";
 
 export const PROJECT_TODO_CONTENT_MAX_LENGTH = 20_000;
-export const PROJECT_TODO_DISPLAY_LABEL_MAX_LENGTH = 120;
+export const PROJECT_TODO_CONTENT_EXCERPT_MAX_LENGTH = 80;
 export const PROJECT_TODO_REJECTION_REASON_MAX_LENGTH = 4_000;
 
 export type ProjectTodoStatus = "idea" | "ready" | "in_progress" | "done" | "rejected";
@@ -112,22 +112,19 @@ export interface CreateProjectTodoSessionResponse extends ProjectTodoResponse {
   readonly sessionId: string;
 }
 
-/**
- * Deterministic, display-only label derived from canonical Todo Markdown.
- * It is never persisted and never becomes a second editable Todo field.
- */
-export function projectTodoDisplayLabel(content: string, todoId?: string): string {
-  const firstLine = content
+/** Compact, display-only prefix of canonical Todo Markdown. */
+export function projectTodoContentExcerpt(content: string): string {
+  const compact = content
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  const cleaned = firstLine
-    ?.replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/u, "")
-    .replace(/^\[[ xX]\]\s*/u, "")
+    .map((line) => line
+      .replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/u, "")
+      .replace(/^\[[ xX]\]\s*/u, ""))
+    .filter((line) => line.length > 0)
+    .join(" ")
     .replace(/\s+/gu, " ")
     .trim();
-  const emptyContentLabel = todoId === undefined ? "Untitled Todo" : `Todo ${todoId.slice(0, 8)}`;
-  if (!cleaned) return emptyContentLabel;
-  if (cleaned.length <= PROJECT_TODO_DISPLAY_LABEL_MAX_LENGTH) return cleaned;
-  return `${cleaned.slice(0, PROJECT_TODO_DISPLAY_LABEL_MAX_LENGTH - 1).trimEnd()}…`;
+  const characters = Array.from(compact);
+  if (characters.length <= PROJECT_TODO_CONTENT_EXCERPT_MAX_LENGTH) return compact;
+  return `${characters.slice(0, PROJECT_TODO_CONTENT_EXCERPT_MAX_LENGTH - 1).join("").trimEnd()}…`;
 }

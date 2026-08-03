@@ -215,7 +215,7 @@ Type scale:
 | Commentary | 13–14px | 400–500 | Process explanation inside Work |
 | User message | 15px | 400–500 | User intent |
 | Final response | 15px | 400–600 | Agent outcome and supporting detail |
-| Session / Todos title | 20px | 600 | Active work or page identity |
+| Project / Session title | 20px | 600 | Active work or page identity |
 | Global Home title | 26px | 700 | Cross-project operational identity |
 
 Rules:
@@ -425,6 +425,10 @@ pulse, and terminal cursor may loop.
 
 - Global Home and archived/rejected items are rows separated by rules.
 - Todo cards are one card level only; never nest a card inside another card.
+- A Todo has one canonical Markdown `content` value and no title or summary.
+  Inventory surfaces show only a mechanically normalized, bounded prefix of
+  that content; Todo detail renders the complete content without removing its
+  first line.
 - Selection uses a 2px indigo inset rule plus border change.
 - Running or attention rows may use a semantic field and 3px inset rule.
 

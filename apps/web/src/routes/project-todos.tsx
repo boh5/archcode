@@ -23,7 +23,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { projectTodoDisplayLabel } from "@archcode/protocol";
+import { projectTodoContentExcerpt } from "@archcode/protocol";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { GripVertical, Plus, Search } from "lucide-react";
 import { ApiError } from "../api/client";
@@ -37,9 +37,7 @@ import { useAttentionVisibleScopedHitl, useHitlProjectInitialized } from "../sto
 import { runtimeFamilyKey, useSessionRuntimeFamilies, useSessionRuntimeInitialized } from "../store/session-runtime-store";
 import {
   deriveProjectTodoOperationalState,
-  projectTodoContentPreview,
   PROJECT_TODO_LANE_PRESENTATIONS,
-  presentProjectTodoCard,
   type ProjectTodoAttentionLabel,
   type ProjectTodoLane,
   type ProjectTodoOperationalState,
@@ -398,23 +396,20 @@ function TodoLane({ lane, order, todoById, operationalStateByTodoId, onSelect }:
 
 function SortableTodoCard({ todo, operationalState, onSelect }: { todo: ProjectTodo; operationalState?: ProjectTodoOperationalState; onSelect: () => void }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: todo.id, data: { type: "todo", todo } });
-  const presentation = presentProjectTodoCard({ status: todo.status, ...(todo.archivedAt === undefined ? {} : { archivedAt: todo.archivedAt }) });
-  const { Icon } = presentation;
-  const label = projectTodoDisplayLabel(todo.content, todo.id);
-  const preview = projectTodoContentPreview(todo.content);
+  const excerpt = projectTodoContentExcerpt(todo.content);
   return <article ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`overflow-hidden rounded-md border border-border-default bg-bg-elevated ${isDragging ? "opacity-35" : ""}`} data-testid={`todo-${todo.id}`}>
-    <div className="flex min-h-11 items-stretch"><button ref={setActivatorNodeRef} type="button" className={`flex min-h-11 w-11 shrink-0 touch-none items-center justify-center border-r border-border-subtle text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${isDragging ? "cursor-grabbing bg-brand-subtle text-brand" : "cursor-grab active:cursor-grabbing"}`} aria-label={`Drag ${label}`} {...attributes} {...listeners}><GripVertical size={16} /></button><button type="button" data-testid={`todo-open-${todo.id}`} className="min-w-0 flex-1 cursor-pointer p-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand" onClick={onSelect}><span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}><Icon size={12} />{presentation.label}</span><span className="mt-2 block text-[14px] font-semibold leading-5 text-text-primary">{label}</span>{preview ? <span className="mt-1 line-clamp-2 block text-[12px] leading-5 text-text-tertiary">{preview}</span> : null}{operationalState ? <span className="mt-2 flex items-center gap-1.5 border-t border-border-subtle pt-2 text-[11px] text-text-secondary" data-testid={`todo-operational-${todo.id}`}><StatusGlyph kind={operationalState.kind} size={12} /><span className="font-medium">{operationalState.label}</span>{operationalState.detail ? <span className="truncate text-text-tertiary">· {operationalState.detail}</span> : null}</span> : null}</button></div>
+    <div className="flex min-h-11 items-stretch"><button ref={setActivatorNodeRef} type="button" className={`flex min-h-11 w-11 shrink-0 touch-none items-center justify-center border-r border-border-subtle text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${isDragging ? "cursor-grabbing bg-brand-subtle text-brand" : "cursor-grab active:cursor-grabbing"}`} aria-label={`Drag ${excerpt}`} {...attributes} {...listeners}><GripVertical size={16} /></button><button type="button" data-testid={`todo-open-${todo.id}`} className="min-w-0 flex-1 cursor-pointer px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand" onClick={onSelect}><span className="line-clamp-2 text-[13px] font-medium leading-5 text-text-primary">{excerpt}</span>{operationalState ? <span className="mt-1.5 flex items-center gap-1.5 border-t border-border-subtle pt-1.5 text-[11px] leading-4 text-text-secondary" data-testid={`todo-operational-${todo.id}`}><StatusGlyph kind={operationalState.kind} size={12} /><span className="font-medium">{operationalState.label}</span>{operationalState.detail ? <span className="truncate text-text-tertiary">· {operationalState.detail}</span> : null}</span> : null}</button></div>
   </article>;
 }
 
 function DragPreview({ todo }: { todo?: ProjectTodo }) {
   if (!todo) return null;
-  return <div className="w-64 cursor-grabbing rounded-md border border-brand bg-bg-elevated p-3 shadow-lg"><p className="text-[13px] font-semibold text-text-primary">{projectTodoDisplayLabel(todo.content, todo.id)}</p></div>;
+  return <div className="w-64 cursor-grabbing rounded-md border border-brand bg-bg-elevated p-3 shadow-lg"><p className="line-clamp-2 text-[13px] font-medium leading-5 text-text-primary">{projectTodoContentExcerpt(todo.content)}</p></div>;
 }
 
 function TodoFlatList({ view, todos, onSelect, filtered }: { view: Exclude<View, "board">; todos: ProjectTodo[]; onSelect: (id: string) => void; filtered: boolean }) {
   const title = view === "rejected" ? "Rejected Todos" : "Archived Todos";
-  return <section className="mx-auto max-w-[980px]" aria-label={title}><h2 className="border-b border-border-default pb-3 text-[14px] font-semibold text-text-primary">{title}</h2>{todos.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{todoFlatListEmptyMessage(view, filtered)}</p> : <div className="divide-y divide-border-subtle">{todos.map((todo) => <button key={todo.id} type="button" data-testid={`todo-${todo.id}`} onClick={() => onSelect(todo.id)} className="block w-full px-3 py-3 text-left hover:bg-bg-hover"><span className="text-[13px] font-semibold text-text-primary">{projectTodoDisplayLabel(todo.content, todo.id)}</span><span className="mt-1 block text-[11px] text-text-tertiary">{view === "rejected" ? todo.rejectionReason : "Archived"}</span></button>)}</div>}</section>;
+  return <section className="mx-auto max-w-[980px]" aria-label={title}><h2 className="border-b border-border-default pb-3 text-[14px] font-semibold text-text-primary">{title}</h2>{todos.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{todoFlatListEmptyMessage(view, filtered)}</p> : <div className="divide-y divide-border-subtle">{todos.map((todo) => <button key={todo.id} type="button" data-testid={`todo-${todo.id}`} onClick={() => onSelect(todo.id)} className="block w-full px-3 py-3 text-left hover:bg-bg-hover"><span className="line-clamp-2 text-[13px] font-medium leading-5 text-text-primary">{projectTodoContentExcerpt(todo.content)}</span><span className="mt-1 block text-[11px] text-text-tertiary">{view === "rejected" ? todo.rejectionReason : "Archived"}</span></button>)}</div>}</section>;
 }
 
 function ViewButton({ children, active, onClick }: { children: React.ReactNode; active: boolean; onClick: () => void }) { return <button type="button" onClick={onClick} className={`h-7 rounded-md px-2.5 text-[11px] font-medium [@media(pointer:coarse)]:h-11 ${active ? "bg-bg-elevated text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"}`}>{children}</button>; }
@@ -425,7 +420,7 @@ function messageFor(cause: unknown): string { return cause instanceof Error ? ca
 export function createDragAnnouncements(order: BoardOrder, todoById: ReadonlyMap<string, ProjectTodo>) {
   const titleFor = (id: string | number) => {
     const todo = todoById.get(String(id));
-    return todo === undefined ? "Todo" : projectTodoDisplayLabel(todo.content, todo.id);
+    return todo === undefined ? "Todo" : projectTodoContentExcerpt(todo.content);
   };
   const describeTarget = (target: { lane: ProjectTodoLane; index: number } | undefined) => {
     if (!target) return undefined;

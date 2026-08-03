@@ -40,7 +40,7 @@ describe("inventory classification", () => {
     });
   });
 
-  test("filters Automations by schedule, linked Todo display label, and latest run state", () => {
+  test("filters Automations by schedule, linked Todo content, and latest run state", () => {
     const item = automation("linked", "active", "dispatched");
     const linked = {
       ...item,

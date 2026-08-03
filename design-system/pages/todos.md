@@ -62,12 +62,13 @@ Lane rules:
   lanes remain content-sized with a 160px minimum.
 - Lane headers use a status orbit, title, short explanation, and count.
 - Cards use one border, 6px radius, and no elevation.
-- Card order is lifecycle state → derived display label → optional remaining
-  content preview → optional operational line. Linked Sessions, Automations,
-  and lifecycle actions live on the detail route.
-- The display label is derived deterministically from the first meaningful
-  Markdown line, is never persisted, and is not independently editable.
-- Lifecycle state uses its matching status icon plus text; color is secondary.
+- A Todo has no title. Each card shows only the first 80 characters of its
+  canonical Markdown after mechanically removing line-leading Markdown markers
+  and collapsing whitespace. Clamp this content excerpt to two lines; do not add
+  a second preview, artifact metadata, or linked-work counts.
+- The lane header owns the visible lifecycle label for Board cards. Preserve the
+  lifecycle state in data, drag announcements, and accessible context rather
+  than repeating `Idea`, `Ready`, `In Progress`, or `Done` inside every card.
 - Only In Progress cards may show the compact derived operational line. It is
   not another Todo lifecycle state and is never persisted. Derive it from the
   linked Work Session, Todo-origin Automation run, unresolved HITL, Goal,
@@ -90,7 +91,7 @@ Lane rules:
 ## Rejected Surface
 
 - Use a flat list at a maximum width of 980px.
-- Every row preserves the derived display label and rejection reason.
+- Every row preserves the compact content excerpt and rejection reason.
 - Primary recovery is `Restore to Idea`.
 - Use amber for the rejected/reconsideration signal, never destructive red.
 - Do not mix Rejected items back into the active Board.
@@ -98,7 +99,7 @@ Lane rules:
 ## Archived Surface
 
 - Use the same flat-list structure as Rejected for visual continuity.
-- Show the derived display label and a quiet `Archived` state label.
+- Show the compact content excerpt and a quiet `Archived` state label.
 - Primary recovery is `Restore`.
 - Archived work remains recoverable but visually quiet.
 - Do not replace the list with a hidden archive menu.
@@ -121,7 +122,7 @@ Lane rules:
 
 The route preserves:
 
-- derived display label and lifecycle state;
+- lifecycle state and stable Todo ID;
 - canonical Todo Markdown and one editing control;
 - linked Discussions, work Sessions, and Automations;
 - lifecycle-appropriate primary and secondary actions.
@@ -132,13 +133,13 @@ and `Lifecycle`. Stack these regions on narrower screens. Do not introduce tabs,
 collapsible groups, or a second Todo summary model.
 
 Keep `Edit` with the canonical content. Editing uses one Markdown textarea and
-one Save/Cancel pair. The derived display label represents the first meaningful
-Markdown line in the route header; render the remaining Markdown as the
-`Brief / PRD` body so the same line is not duplicated. Editing always exposes
-the complete canonical content, including that first line. A one-line capture
-shows a quiet empty-detail message rather than inventing a second summary.
-Demote rendered Brief and Plan headings beneath the route heading; fenced code
-content is never rewritten. Detail actions remain grouped by intent:
+one Save/Cancel pair. Do not render a content-derived Todo title in the route
+header; keep only lifecycle state and the stable ID there. Render the complete
+canonical Markdown, including its first line, in `Brief / PRD`. A one-line
+capture therefore remains visible as the complete document rather than
+producing an empty-detail state. Demote rendered Brief and Plan headings beneath
+the route heading; fenced code content is never rewritten. Detail actions remain
+grouped by intent:
 
 - `Discuss & Plan` contains Continue Discussion when available and New Discussion;
 - `Plan` exposes Generate / Improve Plan beside the Plan itself;

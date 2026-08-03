@@ -68,30 +68,6 @@ export const PROJECT_TODO_LANE_PRESENTATIONS: Readonly<Record<ProjectTodoLane, P
   done: { title: "Done", hint: "Explicitly completed", emptyTitle: "Nothing completed", emptyHint: "Completed Todos stay visible here.", Icon: CircleCheck, tone: "success" },
 };
 
-/**
- * Presentation-only document body after the first meaningful line has already
- * been represented by the derived Todo display label.
- */
-export function projectTodoContentRemainder(content: string): string {
-  const lines = content.split(/\r?\n/u);
-  const firstContentLine = lines.findIndex((line) => line.trim().length > 0);
-  return firstContentLine < 0 ? "" : lines.slice(firstContentLine + 1).join("\n").trim();
-}
-
-/** Compact plain-text projection for Board cards; canonical Markdown is unchanged. */
-export function projectTodoContentPreview(content: string): string {
-  return projectTodoContentRemainder(content)
-    .split(/\r?\n/u)
-    .map((line) => line.trim()
-      .replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/u, "")
-      .replace(/^\[[ xX]\]\s*/u, "")
-      .replace(/^```.*$/u, ""))
-    .filter((line) => line.length > 0)
-    .join(" ")
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
 /** Keep embedded Todo documents below the route-level h1 without touching code fences. */
 export function demoteEmbeddedMarkdownHeadings(markdown: string): string {
   let fence: { readonly kind: "`" | "~"; readonly length: number } | undefined;

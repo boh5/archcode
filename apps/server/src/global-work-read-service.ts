@@ -1,6 +1,6 @@
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
 import {
-  projectTodoDisplayLabel,
+  projectTodoContentExcerpt,
   type Automation,
   type GlobalSSEHitlEntry,
   type HomeResponse,
@@ -224,7 +224,7 @@ function projectHomeProjection(facts: ProjectHomeFacts): Omit<HomeResponse, "pro
       kind: "todo",
       project,
       entityId: todo.id,
-      title: projectTodoDisplayLabel(todo.content, todo.id),
+      title: projectTodoContentExcerpt(todo.content),
       status: "ready_to_review",
       href: todoHref(facts.project.slug, todo.id),
       sortAt: Math.max(todo.updatedAt, latest.session.updatedAt),
@@ -261,7 +261,7 @@ function searchProject(
   }
   for (const todo of facts.todos) {
     if (!matches(needle, todo.id, todo.content)) continue;
-    results.push({ kind: "todo", project, entityId: todo.id, title: projectTodoDisplayLabel(todo.content, todo.id), href: todoHref(facts.project.slug, todo.id), context: todo.status });
+    results.push({ kind: "todo", project, entityId: todo.id, title: projectTodoContentExcerpt(todo.content), href: todoHref(facts.project.slug, todo.id), context: todo.status });
   }
   for (const session of facts.sessions) {
     if (!matches(needle, session.sessionId, session.title, session.source.kind, JSON.stringify(session.source))) continue;

@@ -118,7 +118,7 @@ describe("Project Todos board", () => {
     expect(moveTodoInBoard(order, "c", "idea", 0).idea).toEqual(["c", "a", "b"]);
   });
 
-  test("announces the Todo display label, target lane, position, completion, and cancellation", () => {
+  test("announces the Todo content excerpt, target lane, position, completion, and cancellation", () => {
     const order = { idea: ["idea"], ready: ["ready"], in_progress: ["progress"], done: ["done"] };
     const announcements = createDragAnnouncements(order, new Map(todos.map((todo) => [todo.id, todo])));
     const active = { id: "ready" };
@@ -151,7 +151,10 @@ describe("Project Todos board", () => {
     expect(handle.className).toContain("min-h-11");
     expect(handle.className).toContain("w-11");
     expect(handle.className).toContain("cursor-grab");
-    expect(document.querySelector('[data-testid="todo-open-ready"]')?.className).toContain("cursor-pointer");
+    const open = document.querySelector('[data-testid="todo-open-ready"]');
+    expect(open?.className).toContain("cursor-pointer");
+    expect(open?.querySelector("span")?.className).toContain("line-clamp-2");
+    expect(open?.querySelector("span")?.className).not.toContain("block");
     const viewButtons = document.querySelector('[aria-label="Todo views"]')?.querySelectorAll("button") ?? [];
     expect(viewButtons).toHaveLength(3);
     for (const button of viewButtons) expect(button.className).toContain("[@media(pointer:coarse)]:h-11");
@@ -188,7 +191,7 @@ describe("Project Todos board", () => {
 
     const state = document.querySelector('[data-testid="todo-operational-progress"]');
     expect(state?.textContent).toBe("Working· Running");
-    expect(document.querySelector('[data-testid="todo-open-progress"]')?.textContent).toContain("In Progress");
+    expect(document.querySelector('[data-testid="todo-open-progress"]')?.textContent).toBe("ProgressWorking· Running");
     expect(document.querySelector('[data-testid="todo-operational-ready"]')).toBeNull();
   });
 

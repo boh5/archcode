@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  projectTodoDisplayLabel,
   rootSessionSourceTodoId,
   isSessionMessageUnavailableCode,
   type RequestedModelSelection,
@@ -15,7 +14,7 @@ import type { Automation, ProjectTodo, ProjectTodoUpdateInput, SessionSummary } 
 import { MarkdownContent } from "../components/primitives/MarkdownContent";
 import { TodoReferences } from "../components/features/TodoReferences";
 import { STATUS_TONE_CLASS } from "../lib/status-visuals";
-import { demoteEmbeddedMarkdownHeadings, projectTodoContentRemainder, presentProjectTodoCard, type ProjectTodoLane } from "./project-todo-presentation";
+import { demoteEmbeddedMarkdownHeadings, presentProjectTodoCard, type ProjectTodoLane } from "./project-todo-presentation";
 
 const LANES: readonly ProjectTodoLane[] = ["idea", "ready", "in_progress", "done"];
 export const TODO_PLAN_ACTION_LABEL = "Generate / Improve Plan";
@@ -155,9 +154,7 @@ function TodoDetailView({ todo, slug, sessions, sessionsLoading, sessionsError, 
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   const isArchived = todo.archivedAt !== undefined;
   const presentation = presentProjectTodoCard({ status: todo.status, ...(isArchived ? { archivedAt: todo.archivedAt } : {}) });
-  const label = projectTodoDisplayLabel(todo.content, todo.id);
-  const documentBody = projectTodoContentRemainder(todo.content);
-  const embeddedDocumentBody = demoteEmbeddedMarkdownHeadings(documentBody);
+  const embeddedDocumentBody = demoteEmbeddedMarkdownHeadings(todo.content);
   const sessionsAvailable = !sessionsLoading && sessionsError === null;
 
   const update = (input: ProjectTodoUpdateInput, onSuccess?: () => void) => {
@@ -238,8 +235,8 @@ function TodoDetailView({ todo, slug, sessions, sessionsLoading, sessionsError, 
         <div className="mx-auto flex max-w-[1280px] items-start gap-3">
           <button type="button" onClick={onBack} aria-label="Back to Todos" className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><ArrowLeft size={16} /></button>
           <div className="min-w-0 flex-1">
+            <h1 className="sr-only">Todo detail</h1>
             <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${STATUS_TONE_CLASS[presentation.tone]}`}><presentation.Icon size={13} />{presentation.label}</span>
-            <h1 className="mt-1 max-w-[900px] text-[20px] font-semibold leading-7 text-text-primary">{label}</h1>
             <p className="mt-1 font-mono text-[10px] text-text-tertiary">{todo.id}</p>
           </div>
         </div>
@@ -260,9 +257,7 @@ function TodoDetailView({ todo, slug, sessions, sessionsLoading, sessionsError, 
                     <TodoActionButton onClick={() => { setContent(todo.content); setEditing(false); }}>Cancel</TodoActionButton>
                   </div>
                 </div>
-              ) : documentBody.length > 0
-                ? <div className="mt-4 max-w-[820px]"><MarkdownContent>{embeddedDocumentBody}</MarkdownContent></div>
-                : <p className="mt-4 text-[12px] text-text-tertiary">No additional detail yet.</p>}
+              ) : <div className="mt-4 max-w-[820px]"><MarkdownContent>{embeddedDocumentBody}</MarkdownContent></div>}
             </section>
 
             <TodoReferences slug={slug} todo={todo} />

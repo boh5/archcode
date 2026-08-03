@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
-import { projectTodoDisplayLabel } from "@archcode/protocol";
+import { projectTodoContentExcerpt } from "@archcode/protocol";
 import type { ProjectAutomationInventoryItem } from "../api/types";
 import { useAutomationInventory, useProjectTodos } from "../api/queries";
 import { EditAutomationDialog } from "../components/features/EditAutomationDialog";
@@ -145,7 +145,7 @@ function AutomationGroup({ detailSearch, group, items, restoreAutomationId, rest
           const linkedTodo = automation.origin.kind === "todo"
             ? linkedTodoContent === undefined
               ? automation.origin.todoId
-              : projectTodoDisplayLabel(linkedTodoContent, automation.origin.todoId)
+              : projectTodoContentExcerpt(linkedTodoContent)
             : undefined;
           return (
             <Link

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { projectTodoDisplayLabel, rootSessionSourceTodoId, type RootSessionSource } from "@archcode/protocol";
+import { projectTodoContentExcerpt, rootSessionSourceTodoId, type RootSessionSource } from "@archcode/protocol";
 import {
   ExecutionWorkstream,
   retainExecutionWorkstreamUiState,
@@ -420,7 +420,7 @@ export function SessionRoute() {
           slug,
           todoLabel: linkedProjectTodo === undefined
             ? undefined
-            : projectTodoDisplayLabel(linkedProjectTodo.content, linkedProjectTodo.id),
+            : projectTodoContentExcerpt(linkedProjectTodo.content),
           automationTitle: sourceAutomation.data?.name,
         })}
         onToggleInspector={toggleInspectorSurface}

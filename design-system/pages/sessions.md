@@ -37,7 +37,7 @@ attention, and start work directly without manufacturing a Todo first.
 ## Search and Filter
 
 - `Filter Sessions` covers Session title, stable ID, source type, linked Todo
-  display label, and Automation name.
+  content, and Automation name.
 - Treat search and source as one left-aligned filter cluster with an 8px gap;
   keep `New Session` independently anchored to the far right. Never distribute
   the three controls as equal islands across the command row.

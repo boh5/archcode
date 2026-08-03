@@ -1,16 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { PROJECT_TODO_DISPLAY_LABEL_MAX_LENGTH, projectTodoDisplayLabel } from "./project-todos";
+import { PROJECT_TODO_CONTENT_EXCERPT_MAX_LENGTH, projectTodoContentExcerpt } from "./project-todos";
 
-describe("projectTodoDisplayLabel", () => {
-  test("derives one stable display label from canonical Markdown", () => {
-    expect(projectTodoDisplayLabel("\n## Ship offline mode\n\nAcceptance details", "todo-1"))
-      .toBe("Ship offline mode");
-    expect(projectTodoDisplayLabel("- [x] Fix the type\nMore detail"))
-      .toBe("Fix the type");
+describe("projectTodoContentExcerpt", () => {
+  test("compacts the beginning of canonical Markdown without inferring a title", () => {
+    expect(projectTodoContentExcerpt("\n## Goal\n\nResearch and improve codemap\n\n- Keep evidence"))
+      .toBe("Goal Research and improve codemap Keep evidence");
+    expect(projectTodoContentExcerpt("- [x] Fix the type\n\tMore   detail"))
+      .toBe("Fix the type More detail");
   });
 
-  test("bounds the projection and uses the Todo id only for empty defensive input", () => {
-    expect(projectTodoDisplayLabel("x".repeat(200))).toHaveLength(PROJECT_TODO_DISPLAY_LABEL_MAX_LENGTH);
-    expect(projectTodoDisplayLabel(" \n ", "12345678-rest")).toBe("Todo 12345678");
+  test("bounds the excerpt and does not invent content", () => {
+    expect(projectTodoContentExcerpt("x".repeat(200))).toHaveLength(PROJECT_TODO_CONTENT_EXCERPT_MAX_LENGTH);
+    expect(projectTodoContentExcerpt(" \n ")).toBe("");
+  });
+
+  test("counts Unicode code points without splitting surrogate pairs", () => {
+    const exactLimit = `${"a".repeat(78)}😀b`;
+    expect(projectTodoContentExcerpt(exactLimit)).toBe(exactLimit);
+    expect(Array.from(projectTodoContentExcerpt(exactLimit))).toHaveLength(PROJECT_TODO_CONTENT_EXCERPT_MAX_LENGTH);
+
+    const truncated = projectTodoContentExcerpt(`${exactLimit}c`);
+    expect(truncated).toBe(`${"a".repeat(78)}😀…`);
+    expect(Array.from(truncated)).toHaveLength(PROJECT_TODO_CONTENT_EXCERPT_MAX_LENGTH);
   });
 });

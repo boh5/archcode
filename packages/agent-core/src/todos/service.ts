@@ -1,6 +1,6 @@
 import {
   PROJECT_STATE_DIR_NAME,
-  projectTodoDisplayLabel,
+  projectTodoContentExcerpt,
   type CreateProjectTodoSessionInput,
   type CreateProjectTodoSessionResponse,
   type AttachmentDescriptor,
@@ -188,8 +188,8 @@ export class ProjectTodoService {
       workspaceRoot: this.workspaceRoot,
       agentName: request.entry === "discussion" ? "discussion" : "lead",
       title: request.entry === "discussion"
-        ? `Discussion: ${projectTodoDisplayLabel(todo.content, todo.id)}`
-        : projectTodoDisplayLabel(todo.content, todo.id),
+        ? `Discussion: ${projectTodoContentExcerpt(todo.content)}`
+        : projectTodoContentExcerpt(todo.content),
       source,
     });
     await this.#sessions.acceptMessage({
@@ -253,7 +253,7 @@ export class ProjectTodoService {
       ({ sessionId } = await this.#sessions.createRootSession({
         workspaceRoot: this.workspaceRoot,
         agentName: "lead",
-        title: projectTodoDisplayLabel(todo.content, todo.id),
+        title: projectTodoContentExcerpt(todo.content),
         source: { kind: "todo", todoId: todo.id, entry: "work" },
       }));
       try {

@@ -40,7 +40,7 @@ attention, and recover the exact Session associated with every run.
 - Selection uses the shared indigo selected treatment. Needs-attention state
   keeps explicit text in addition to amber color.
 - `Filter Automations` matches stable ID, name, instruction, schedule, linked
-  Todo display label or canonical content, and visible run state. Show a
+  Todo canonical content, and visible run state. Show a
   helpful no-results state in place of the list without hiding the filter or
   New Automation action.
 

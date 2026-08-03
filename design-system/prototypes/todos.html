@@ -233,8 +233,8 @@
 
       .todo-card {
         display: grid;
-        grid-template-columns: 40px minmax(0, 1fr);
-        min-height: 106px;
+        grid-template-columns: 44px minmax(0, 1fr);
+        min-height: 48px;
         overflow: hidden;
         border: 1px solid var(--border-default);
         border-radius: 7px;
@@ -260,9 +260,11 @@
       }
 
       .todo-card-content {
-        display: block;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
         min-width: 0;
-        padding: 12px;
+        padding: 8px 10px;
         background: transparent;
         text-align: left;
       }
@@ -271,18 +273,12 @@
         background: var(--bg-hover);
       }
 
-      .todo-card-top,
-      .todo-card-meta,
       .detail-kicker,
       .document-meta,
       .work-row-meta {
         display: flex;
         align-items: center;
         gap: 7px;
-      }
-
-      .todo-card-top {
-        justify-content: space-between;
       }
 
       .todo-state {
@@ -311,7 +307,6 @@
         color: var(--success);
       }
 
-      .runtime-badge,
       .artifact-badge {
         display: inline-flex;
         align-items: center;
@@ -323,21 +318,6 @@
         font-weight: 700;
       }
 
-      .runtime-badge.running {
-        background: var(--signal-field);
-        color: var(--signal-foreground);
-      }
-
-      .runtime-badge.attention {
-        background: var(--warning-field);
-        color: var(--warning);
-      }
-
-      .runtime-badge.review {
-        background: var(--brand-field);
-        color: var(--brand);
-      }
-
       .runtime-dot {
         width: 6px;
         height: 6px;
@@ -345,7 +325,7 @@
         background: currentColor;
       }
 
-      .runtime-badge.running .runtime-dot {
+      .todo-operational.running .runtime-dot {
         animation: activity-pulse 1.8s ease-in-out infinite;
       }
 
@@ -354,35 +334,31 @@
         50% { opacity: 1; }
       }
 
-      .todo-name {
-        display: block;
-        margin-top: 8px;
-        font-size: 13px;
-        font-weight: 650;
-        line-height: 1.35;
-      }
-
-      .todo-preview {
+      .todo-excerpt {
         display: -webkit-box;
-        margin-top: 5px;
         overflow: hidden;
-        color: var(--text-tertiary);
-        font-size: 11px;
-        line-height: 1.45;
+        font-size: 13px;
+        font-weight: 550;
+        line-height: 1.5;
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
       }
 
-      .todo-card-meta {
-        margin-top: 10px;
-        color: var(--text-tertiary);
-        font-size: 9px;
+      .todo-operational {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid var(--border-subtle);
+        color: var(--text-secondary);
+        font-size: 11px;
+        line-height: 16px;
       }
 
-      .todo-card-meta span + span::before {
-        margin-right: 7px;
-        content: "·";
-      }
+      .todo-operational.running { color: var(--signal-foreground); }
+      .todo-operational.attention { color: var(--warning); }
+      .todo-operational.review { color: var(--brand); }
 
       .lane-orbit {
         width: 12px;
@@ -941,10 +917,7 @@
                     <article class="todo-card" data-runtime="">
                       <button class="drag-handle" aria-label="Drag Add per-project context presets" data-action="拖动 Todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-context-presets">
-                        <span class="todo-card-top"><span class="todo-state">Idea</span></span>
-                        <span class="todo-name">Add per-project context presets</span>
-                        <span class="todo-preview">Capture reusable context without turning it into global configuration.</span>
-                        <span class="todo-card-meta"><span>Brief</span><span>No execution</span></span>
+                        <span class="todo-excerpt">Add per-project context presets Capture reusable context without turning it into global configuration.</span>
                       </button>
                     </article>
                   </div>
@@ -958,10 +931,7 @@
                     <article class="todo-card" data-runtime="">
                       <button class="drag-handle" aria-label="Drag Model profile defaults per project" data-action="拖动 Todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-profile-defaults">
-                        <span class="todo-card-top"><span class="todo-state">Ready</span><span class="artifact-badge">Plan</span></span>
-                        <span class="todo-name">Model profile defaults per project</span>
-                        <span class="todo-preview">Project recommendation, explicit Session override, no hidden inheritance.</span>
-                        <span class="todo-card-meta"><span>PRD</span><span>Plan</span><span>1 Discussion</span></span>
+                        <span class="todo-excerpt">Model profile defaults per project Project recommendation, explicit Session override, no hidden inheritance.</span>
                       </button>
                     </article>
                   </div>
@@ -975,30 +945,24 @@
                     <article class="todo-card" data-runtime="running">
                       <button class="drag-handle" aria-label="Drag Live execution recovery" data-action="拖动 Todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-live-recovery">
-                        <span class="todo-card-top"><span class="todo-state" data-tone="running">In Progress</span><span class="runtime-badge running"><span class="runtime-dot"></span>Running 12m</span></span>
-                        <span class="todo-name">Live execution recovery</span>
-                        <span class="todo-preview">Repair missed runtime events from the next authoritative Session snapshot.</span>
-                        <span class="todo-card-meta"><span>Lead → Explore</span><span>2 Sessions</span></span>
+                        <span class="todo-excerpt">Live execution recovery Repair missed runtime events from the next authoritative Session snapshot.</span>
+                        <span class="todo-operational running"><span class="runtime-dot"></span>Running 12m</span>
                       </button>
                     </article>
 
                     <article class="todo-card" data-runtime="needs_you">
                       <button class="drag-handle" aria-label="Drag Review worktree deletion permission" data-action="拖动 Todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-worktree-permission">
-                        <span class="todo-card-top"><span class="todo-state" data-tone="running">In Progress</span><span class="runtime-badge attention"><span class="runtime-dot"></span>Needs you</span></span>
-                        <span class="todo-name">Review worktree deletion permission</span>
-                        <span class="todo-preview">One bound Session is waiting for permission on a resolved worktree path.</span>
-                        <span class="todo-card-meta"><span>Lead</span><span>1 Session</span><span>Permission</span></span>
+                        <span class="todo-excerpt">Review worktree deletion permission One bound Session is waiting for permission on a resolved worktree path.</span>
+                        <span class="todo-operational attention"><span class="runtime-dot"></span>Needs you</span>
                       </button>
                     </article>
 
                     <article class="todo-card" data-runtime="review">
                       <button class="drag-handle" aria-label="Drag Unify project work search" data-action="拖动 Todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-work-search">
-                        <span class="todo-card-top"><span class="todo-state" data-tone="running">In Progress</span><span class="runtime-badge review"><span class="runtime-dot"></span>Ready to review</span></span>
-                        <span class="todo-name">Unify project work search</span>
-                        <span class="todo-preview">Search Todos, Sessions, and Automations from one project-level surface.</span>
-                        <span class="todo-card-meta"><span>Lead → Build</span><span>1 Session</span><span>Result ready</span></span>
+                        <span class="todo-excerpt">Unify project work search Search Todos, Sessions, and Automations from one project-level surface.</span>
+                        <span class="todo-operational review"><span class="runtime-dot"></span>Ready to review</span>
                       </button>
                     </article>
                   </div>
@@ -1012,10 +976,7 @@
                     <article class="todo-card" data-runtime="">
                       <button class="drag-handle" aria-label="Drag Preserve Session cwd references" data-action="拖动 Todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-cwd-references">
-                        <span class="todo-card-top"><span class="todo-state" data-tone="done">Done</span></span>
-                        <span class="todo-name">Preserve Session cwd references</span>
-                        <span class="todo-preview">Migration, verification, and linked worktree diagnostics delivered.</span>
-                        <span class="todo-card-meta"><span>Accepted</span><span>3 Sessions</span><span>Result</span></span>
+                        <span class="todo-excerpt">Preserve Session cwd references Migration, verification, and linked worktree diagnostics delivered.</span>
                       </button>
                     </article>
                   </div>
@@ -1039,7 +1000,7 @@
             <div class="detail-heading-row">
               <div class="detail-heading">
                 <div class="detail-kicker"><span class="todo-state" data-detail-status>Ready</span><span data-detail-id>todo-profile-defaults</span><span data-detail-updated>Updated 18m ago</span></div>
-                <h2 id="todo-detail-title" tabindex="-1" data-detail-title>Model profile defaults per project</h2>
+                <h1 class="sr-only" id="todo-detail-title" tabindex="-1" data-detail-heading>Todo detail</h1>
               </div>
               <div class="detail-actions" aria-label="Todo actions">
                 <button class="secondary-button" data-discuss-todo>Discuss / Plan</button>
@@ -1330,7 +1291,7 @@ Session storage remains project-root owned while every managed worktree executio
       const todoFilterEmptyTitle = document.querySelector("[data-todo-filter-empty-title]");
       const boardRoute = document.querySelector("[data-board-route]");
       const detailRoute = document.querySelector("[data-detail-route]");
-      const detailTitle = document.querySelector("[data-detail-title]");
+      const detailHeading = document.querySelector("[data-detail-heading]");
       const detailStatus = document.querySelector("[data-detail-status]");
       const detailId = document.querySelector("[data-detail-id]");
       const detailUpdated = document.querySelector("[data-detail-updated]");
@@ -1363,32 +1324,22 @@ Session storage remains project-root owned while every managed worktree executio
         return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
       }
 
-      function displayLabel(sample) {
-        const firstLine = (sample?.content || "").split(/\r?\n/).find((line) => line.trim());
-        const cleaned = firstLine?.trim().replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/, "").replace(/^\[[ xX]\]\s*/, "");
-        return cleaned || `Todo ${(sample?.id || "unknown").slice(0, 8)}`;
-      }
-
-      function contentRemainder(content) {
-        const lines = (content || "").split(/\r?\n/);
-        const first = lines.findIndex((line) => line.trim());
-        return first < 0 ? "" : lines.slice(first + 1).join("\n").trim();
-      }
-
-      function contentPreview(content) {
-        return contentRemainder(content)
+      function contentExcerpt(content) {
+        const compact = (content || "")
           .split(/\r?\n/)
           .map((line) => line.trim().replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/, "").replace(/^\[[ xX]\]\s*/, ""))
           .filter(Boolean)
-          .join(" ");
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+        return compact.length <= 80 ? compact : `${compact.slice(0, 79).trimEnd()}…`;
       }
 
       function contentBodyHtml(content) {
-        const blocks = contentRemainder(content).split(/\n\s*\n/).filter(Boolean);
-        if (!blocks.length) return '<p class="empty-state">No additional detail yet.</p>';
+        const blocks = (content || "").split(/\n\s*\n/).filter(Boolean);
         return blocks.map((block) => {
           const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-          const heading = lines[0]?.match(/^#{2,6}\s+(.+)$/);
+          const heading = lines[0]?.match(/^#{1,6}\s+(.+)$/);
           if (heading && lines.length === 1) return `<h3>${escapeHtml(heading[1])}</h3>`;
           if (lines.every((line) => /^[-+*]\s+/.test(line))) return `<ul>${lines.map((line) => `<li>${escapeHtml(line.replace(/^[-+*]\s+/, ""))}</li>`).join("")}</ul>`;
           if (lines.every((line) => /^\d+[.)]\s+/.test(line))) return `<ol>${lines.map((line) => `<li>${escapeHtml(line.replace(/^\d+[.)]\s+/, ""))}</li>`).join("")}</ol>`;
@@ -1426,7 +1377,7 @@ Session storage remains project-root owned while every managed worktree executio
 
       function dynamicSample(record) {
         const running = record.lane === "in_progress";
-        const label = displayLabel(record);
+        const excerpt = contentExcerpt(record.content);
         return {
           ...record,
           status: running ? "In Progress" : "Idea",
@@ -1435,7 +1386,7 @@ Session storage remains project-root owned while every managed worktree executio
           showPlanPrompt: false,
           primary: running ? "Open Session" : "Run now",
           work: running ? "running" : "none",
-          session: running ? { id: record.sessionId, title: label, summary: "Lead · started directly from quick capture", state: "Running" } : undefined,
+          session: running ? { id: record.sessionId, title: excerpt, summary: "Lead · started directly from quick capture", state: "Running" } : undefined,
         };
       }
 
@@ -1466,24 +1417,20 @@ Session storage remains project-root owned while every managed worktree executio
       }
 
       function cardMarkup(sample) {
-        const label = displayLabel(sample);
-        const tone = sample.status === "Done" ? "done" : sample.status === "In Progress" ? "running" : "";
+        const excerpt = contentExcerpt(sample.content);
         const runtime = sample.work === "attention" ? "needs_you" : sample.work === "running" ? "running" : sample.work === "review" ? "review" : "";
-        const badge = sample.work === "attention"
-          ? '<span class="runtime-badge attention"><span class="runtime-dot"></span>Needs you</span>'
+        const operational = sample.work === "attention"
+          ? '<span class="todo-operational attention"><span class="runtime-dot"></span>Needs you</span>'
           : sample.work === "running"
-            ? '<span class="runtime-badge running"><span class="runtime-dot"></span>Running now</span>'
+            ? '<span class="todo-operational running"><span class="runtime-dot"></span>Running now</span>'
             : sample.work === "review"
-              ? '<span class="runtime-badge review"><span class="runtime-dot"></span>Ready to review</span>'
+              ? '<span class="todo-operational review"><span class="runtime-dot"></span>Ready to review</span>'
             : "";
-        const meta = sample.work === "none" ? "No execution" : sample.work === "running" ? "Lead · 1 Session" : sample.work === "review" ? "Lead → Build · Result ready" : "Captured";
         return `<article class="todo-card" data-runtime="${runtime}">
-          <button class="drag-handle" aria-label="Drag ${escapeHtml(label)}" data-action="拖动 Todo" data-icon="grip"></button>
+          <button class="drag-handle" aria-label="Drag ${escapeHtml(excerpt)}" data-action="拖动 Todo" data-icon="grip"></button>
           <button class="todo-card-content" data-open-todo data-todo-id="${escapeHtml(sample.id)}">
-            <span class="todo-card-top"><span class="todo-state"${tone ? ` data-tone="${tone}"` : ""}>${sample.status}</span>${badge}</span>
-            <span class="todo-name">${escapeHtml(label)}</span>
-            <span class="todo-preview">${escapeHtml(contentPreview(sample.content))}</span>
-            <span class="todo-card-meta"><span>Brief</span><span>${meta}</span></span>
+            <span class="todo-excerpt">${escapeHtml(excerpt)}</span>
+            ${operational}
           </button>
         </article>`;
       }
@@ -1536,7 +1483,6 @@ Session storage remains project-root owned while every managed worktree executio
         if (!sample) return false;
         currentTodo = sample;
         const workMode = sample.work || "none";
-        detailTitle.textContent = displayLabel(sample);
         detailStatus.textContent = sample.status;
         detailStatus.dataset.tone = sample.status === "Done" ? "done" : sample.status === "In Progress" ? "running" : "";
         detailId.textContent = sample.id;
@@ -1565,7 +1511,7 @@ Session storage remains project-root owned while every managed worktree executio
           workDiscussion.querySelector("[data-work-discussion-state]").textContent = sample.discussion.state;
         }
         if (sample.session) {
-          workSession.href = `./session.html?todo=${encodeURIComponent(sample.id)}&session=${encodeURIComponent(sample.session.id)}&title=${encodeURIComponent(displayLabel(sample))}`;
+          workSession.href = `./session.html?todo=${encodeURIComponent(sample.id)}&session=${encodeURIComponent(sample.session.id)}&title=${encodeURIComponent(contentExcerpt(sample.content))}`;
           workSession.querySelector("[data-work-session-title]").textContent = sample.session.title;
           workSession.querySelector("[data-work-session-summary]").textContent = sample.session.summary;
           const sessionState = workSession.querySelector("[data-work-session-state]");
@@ -1587,7 +1533,7 @@ Session storage remains project-root owned while every managed worktree executio
         detailRoute.hidden = false;
         detailOpenedFromBoard = updateHistory;
         if (updateHistory) history.pushState({ todo: trigger.dataset.todoId }, "", `#todo=${encodeURIComponent(trigger.dataset.todoId)}`);
-        requestAnimationFrame(() => detailTitle.focus());
+        requestAnimationFrame(() => detailHeading.focus());
       }
 
       function closeTodo(updateHistory = true) {
@@ -1616,13 +1562,13 @@ Session storage remains project-root owned while every managed worktree executio
           record.sessionId = sessionId;
           localStorage.setItem(storedTodoKey, JSON.stringify(records));
         }
-        location.href = rememberRunningSession({ id: currentTodo.id, title: displayLabel(currentTodo), sessionId });
+        location.href = rememberRunningSession({ id: currentTodo.id, title: contentExcerpt(currentTodo.content), sessionId });
       });
 
       detailDiscuss?.addEventListener("click", () => {
         if (!currentTodo) return;
         const sessionId = currentTodo.discussion?.id || `sess-${currentTodo.id}-discussion-1`;
-        location.href = `./session.html?todo=${encodeURIComponent(currentTodo.id)}&session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(displayLabel(currentTodo))}&kind=discussion`;
+        location.href = `./session.html?todo=${encodeURIComponent(currentTodo.id)}&session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(contentExcerpt(currentTodo.content))}&kind=discussion`;
       });
 
       window.addEventListener("popstate", () => {
@@ -1658,16 +1604,16 @@ Session storage remains project-root owned while every managed worktree executio
         const sessionId = `sess-${id}-work-1`;
         const records = readStoredTodos();
         const record = { id, content, lane: runNow ? "in_progress" : "idea", ...(runNow ? { sessionId } : {}) };
-        const label = displayLabel(record);
+        const excerpt = contentExcerpt(record.content);
         records.unshift(record);
         localStorage.setItem(storedTodoKey, JSON.stringify(records.slice(0, 8)));
         input.value = "";
         if (runNow) {
-          location.href = rememberRunningSession({ id, title: label, sessionId });
+          location.href = rememberRunningSession({ id, title: excerpt, sessionId });
           return;
         }
         renderStoredTodos();
-        showToast(`Saved “${label}” to Ideas`);
+        showToast(`Saved “${excerpt}” to Ideas`);
       });
 
       renderStoredTodos();
