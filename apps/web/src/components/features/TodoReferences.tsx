@@ -66,9 +66,9 @@ export function TodoReferences({ slug, todo }: { slug: string; todo: ProjectTodo
   const refreshRevision = useCallback(async () => {
     try {
       const current = await queryClient.fetchQuery(
-        projectTodoAttachmentsQueryOptions(slug, todo.id),
+        { ...projectTodoAttachmentsQueryOptions(slug, todo.id), staleTime: 0 },
       );
-      revisionRef.current = current.todoRevision;
+      revisionRef.current = Math.max(revisionRef.current, current.todoRevision);
     } catch {
       // The existing row error remains authoritative and retryable.
     }
@@ -88,8 +88,8 @@ export function TodoReferences({ slug, todo }: { slug: string; todo: ProjectTodo
 
   useEffect(() => {
     if (attachments.data === undefined) return;
-    revisionRef.current = attachments.data.todoRevision;
-  }, [attachments.data]);
+    revisionRef.current = Math.max(revisionRef.current, todo.revision, attachments.data.todoRevision);
+  }, [attachments.data, todo.revision]);
 
   const drainUploadQueue = useCallback(async () => {
     if (drainingRef.current || blockedUploadIdRef.current !== null) return;

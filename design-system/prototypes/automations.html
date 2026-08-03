@@ -730,6 +730,17 @@
           runs: [],
         },
       };
+      const storedAutomationRunsKey = "archcode-prototype-automation-runs";
+      let storedAutomationRuns = [];
+      try {
+        const parsed = JSON.parse(localStorage.getItem(storedAutomationRunsKey) || "[]");
+        storedAutomationRuns = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        storedAutomationRuns = [];
+      }
+      storedAutomationRuns.forEach((run) => {
+        if (Object.hasOwn(automationSamples, run.automationId)) automationSamples[run.automationId].runs.unshift(run);
+      });
 
       const automationList = document.querySelector(".automation-list-pane");
       const scheduledRows = document.querySelector("#scheduled-title")?.closest(".automation-group")?.querySelector(".automation-rows");
@@ -917,7 +928,10 @@
         const href = `./session.html?automation=${encodeURIComponent(currentAutomationId)}&session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(sample.name)}`;
         const sessions = window.readArchcodePrototypeSessions?.() || [];
         sessions.unshift({ group: "Running", tone: "running", state: "Running", title: `${sample.name} · Manual run`, sessionId, meta: `Automation · ${sample.name}`, href });
-        localStorage.setItem("archcode-prototype-sessions", JSON.stringify(sessions.slice(0, 6)));
+        localStorage.setItem("archcode-prototype-sessions", JSON.stringify(sessions.slice(0, 12)));
+        const run = { automationId: currentAutomationId, sessionId, label: "Manual run started", time: "Now", status: "Running", tone: "running" };
+        sample.runs.unshift(run);
+        localStorage.setItem(storedAutomationRunsKey, JSON.stringify([run, ...storedAutomationRuns].slice(0, 12)));
         location.href = href;
       });
 

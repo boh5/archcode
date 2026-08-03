@@ -212,7 +212,11 @@ function projectHomeProjection(facts: ProjectHomeFacts): Omit<HomeResponse, "pro
   const readyToReview = facts.todos.flatMap((todo): HomeSummaryItem[] => {
     if (todo.archivedAt !== undefined || todo.status !== "in_progress") return [];
     const workSessions = facts.sessions
-      .filter((item) => item.session.source.kind === "todo" && item.session.source.todoId === todo.id && item.session.source.entry === "work")
+      .filter((item) => (
+        item.session.source.kind === "todo"
+          ? item.session.source.todoId === todo.id && item.session.source.entry === "work"
+          : item.session.source.kind === "automation" && item.session.source.todoId === todo.id
+      ))
       .sort((left, right) => right.session.updatedAt - left.session.updatedAt || right.session.sessionId.localeCompare(left.session.sessionId));
     if (workSessions.length === 0) return [];
     if (workSessions.some((item) => facts.activities.has(item.session.sessionId)
@@ -338,8 +342,9 @@ function automationHref(projectSlug: string, automationId: string, invocationId?
 }
 
 function toProjectError(project: ProjectInfo, error: unknown): WorkbenchProjectReadError {
+  void error;
   return {
     project: { slug: project.slug, name: project.name },
-    message: error instanceof Error ? error.message : String(error),
+    message: "Project work is temporarily unavailable",
   };
 }

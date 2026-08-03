@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { lstat } from "node:fs/promises";
 import {
   PROJECT_STATE_DIR_NAME,
   USER_DATA_DIR_NAME,
@@ -30,6 +31,7 @@ import type { ToolRegistry } from "../tools/index";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
 import type { AttachmentModelProjector } from "../attachments";
+import { ProjectTodoNotFoundError } from "../todos/errors";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
@@ -491,17 +493,22 @@ export class ConfiguredAgent implements Agent {
           : state.source?.kind === "automation" && state.source.todoId !== null
             ? state.source.todoId
             : undefined;
-    const todo = todoId === undefined
-      ? undefined
-      : await input.projectContext.todos.readTodo(todoId);
+    let todo: ProjectTodo | undefined;
+    if (todoId !== undefined) {
+      try {
+        todo = await input.projectContext.todos.readTodo(todoId);
+      } catch (error) {
+        if (!(error instanceof ProjectTodoNotFoundError)) throw error;
+      }
+    }
     const planPath = todo === undefined
       ? undefined
-      : `${PROJECT_STATE_DIR_NAME}/plans/${todo.id}.md`;
+      : join(this.projectRoot, PROJECT_STATE_DIR_NAME, "plans", `${todo.id}.md`);
     const plan = planPath === undefined
       ? undefined
       : {
           path: planPath,
-          state: await Bun.file(join(this.projectRoot, planPath)).exists() ? "present" as const : "absent" as const,
+          state: await isRegularFile(planPath) ? "present" as const : "absent" as const,
         };
     const parentAgentName = state.parentSessionId === undefined
       ? "none"
@@ -706,4 +713,14 @@ export class ConfiguredAgent implements Agent {
     return [...new Set([lifecycleSkill, ...names])];
   }
 
+}
+
+async function isRegularFile(path: string): Promise<boolean> {
+  try {
+    const info = await lstat(path);
+    return info.isFile() && !info.isSymbolicLink();
+  } catch (error) {
+    if (typeof error === "object" && error !== null && Reflect.get(error, "code") === "ENOENT") return false;
+    throw error;
+  }
 }

@@ -166,8 +166,8 @@ mock.module("../../api/mutations", () => ({
 
 ({ ProjectBar } = await import("./ProjectBar"));
 
-function render(): unknown {
-  return ProjectBar({ onAddProject, onSettings, theme: "dark", toggleTheme });
+function render(mobile = false): unknown {
+  return ProjectBar({ mobile, onAddProject, onSettings, theme: "dark", toggleTheme });
 }
 
 function projectNode(tree: unknown) {
@@ -249,6 +249,11 @@ describe("ProjectBar", () => {
 
     const badges = findAll(render(), (element) => element.props?.["aria-label"] === "2 items need you");
     expect(badges).toHaveLength(1);
+  });
+
+  test("uses the bottom-sheet attention panel on mobile", () => {
+    const bell = findAll(render(true), (element) => typeName(element) === "HitlBell")[0];
+    expect(bell?.props?.mobile).toBe(true);
   });
 
   test("settings affordance opens the settings modal", () => {

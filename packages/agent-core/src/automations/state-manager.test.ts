@@ -95,6 +95,30 @@ describe("AutomationStateManager", () => {
     expect((await manager.listInvocations(automation.id))).toHaveLength(1);
   });
 
+  test("selects the latest scheduled occurrence instead of the last appended record", async () => {
+    const manager = new AutomationStateManager(TMP_ROOT, { now: () => NOW });
+    const automation = await manager.createAutomation({
+      projectSlug: "project-a",
+      origin: { kind: "direct" },
+      name: "ordered history",
+      trigger: { kind: "interval", everyMs: 30_000 },
+      action: { kind: "start_session", message: "Check", location: "project" },
+    });
+    const latest = await manager.enqueueInvocation(automation.id, "2026-07-13T00:02:00.000Z");
+    const statePath = join(TMP_ROOT, ".archcode", "runtime", "automations", "state.json");
+    const state = await Bun.file(statePath).json() as { invocations: unknown[] };
+    state.invocations.push({
+      id: crypto.randomUUID(),
+      automationId: automation.id,
+      dueAt: "2026-07-13T00:01:00.000Z",
+      status: "missed",
+      createdAt: "2026-07-13T00:03:00.000Z",
+    });
+    await Bun.write(statePath, `${JSON.stringify(state, null, 2)}\n`);
+
+    expect((await new AutomationStateManager(TMP_ROOT).listInventory())[0]?.latestInvocation?.id).toBe(latest.id);
+  });
+
   test("pause cancels pending, resume skips offline occurrences, and delete is scoped", async () => {
     let now = NOW;
     const manager = new AutomationStateManager(TMP_ROOT, { now: () => now });

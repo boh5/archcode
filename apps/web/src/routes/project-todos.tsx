@@ -51,6 +51,7 @@ interface ProjectTodoRunNowRecovery {
   readonly todoId: string;
   readonly sessionId?: string;
   readonly message: string;
+  readonly content?: string;
 }
 
 export function projectTodoRunNowRecovery(cause: unknown): ProjectTodoRunNowRecovery | null {
@@ -254,7 +255,7 @@ export function ProjectTodosRoute() {
         if (recovery !== null) {
           runNowRequestRef.current = null;
           setCreateError(null);
-          setRunNowRecovery(recovery);
+          setRunNowRecovery({ ...recovery, content });
           return;
         }
         setCreateError(messageFor(cause));
@@ -264,9 +265,8 @@ export function ProjectTodosRoute() {
 
   const resetCaptureFailure = () => {
     setCreateError(null);
-    setRunNowRecovery(null);
-    runNowRequestRef.current = null;
   };
+  const blockedRunNowRecovery = runNowRecovery?.content === newContent.trim() ? runNowRecovery : null;
 
   const resolveDrop = (activeId: string, overId: string | null): { lane: ProjectTodoLane; index: number } | undefined => {
     if (!overId) return undefined;
@@ -353,17 +353,17 @@ export function ProjectTodosRoute() {
           <Plus size={15} className="shrink-0 self-center text-text-tertiary" aria-hidden="true" />
           <textarea aria-label="New Todo content" rows={2} value={newContent} onChange={(event) => { setNewContent(event.target.value); resetCaptureFailure(); }} placeholder="Capture an idea, bug, feature, or paste a PRD…" className="min-h-12 min-w-0 flex-1 resize-y bg-transparent px-1 py-1 text-[13px] leading-5 text-text-primary outline-none placeholder:text-text-muted max-[620px]:basis-[calc(100%-24px)]" />
           <div className="ml-auto flex gap-2 max-[620px]:basis-full max-[620px]:grid max-[620px]:grid-cols-2">
-            <button type="button" onClick={create} disabled={createTodo.isPending || runNow.isPending || runNowRecovery !== null} className="h-8 rounded-sm border border-border-default bg-bg-active px-3 text-[12px] font-medium text-text-secondary hover:bg-bg-hover disabled:opacity-40 max-[620px]:h-11 [@media(pointer:coarse)]:h-11">Save</button>
-            <button type="button" onClick={run} disabled={createTodo.isPending || runNow.isPending || runNowRecovery !== null} className="h-8 rounded-sm bg-brand px-3 text-[12px] font-medium text-brand-ink hover:bg-brand-hover disabled:opacity-40 max-[620px]:h-11 [@media(pointer:coarse)]:h-11">{runNow.isPending ? "Starting…" : "Run now"}</button>
+            <button type="button" onClick={create} disabled={createTodo.isPending || runNow.isPending || blockedRunNowRecovery !== null} className="h-8 rounded-sm border border-border-default bg-bg-active px-3 text-[12px] font-medium text-text-secondary hover:bg-bg-hover disabled:opacity-40 max-[620px]:h-11 [@media(pointer:coarse)]:h-11">Save</button>
+            <button type="button" onClick={run} disabled={createTodo.isPending || runNow.isPending || blockedRunNowRecovery !== null} className="h-8 rounded-sm bg-brand px-3 text-[12px] font-medium text-brand-ink hover:bg-brand-hover disabled:opacity-40 max-[620px]:h-11 [@media(pointer:coarse)]:h-11">{runNow.isPending ? "Starting…" : "Run now"}</button>
           </div>
         </div>
         {createError ? <p role="alert" className="mx-auto mt-1 max-w-[1500px] text-[11px] text-error">{createError}</p> : null}
-        {runNowRecovery ? (
+        {blockedRunNowRecovery ? (
           <div role="alert" className="mx-auto mt-2 max-w-[1500px] border-l-2 border-error bg-error-muted px-3 py-2 text-[11px] leading-5 text-error">
-            <p>{runNowRecovery.message} Do not retry this unchanged request; inspect the retained work first.</p>
+            <p>{blockedRunNowRecovery.message} Do not retry this unchanged request; inspect the retained work first.</p>
             <div className="flex flex-wrap gap-x-3">
-              <Link className="font-medium underline" to={`/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(runNowRecovery.todoId)}`}>Open Todo {runNowRecovery.todoId}</Link>
-              {runNowRecovery.sessionId ? <Link className="font-medium underline" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(runNowRecovery.sessionId)}`}>Open Session {runNowRecovery.sessionId}</Link> : null}
+              <Link className="font-medium underline" to={`/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(blockedRunNowRecovery.todoId)}`}>Open Todo {blockedRunNowRecovery.todoId}</Link>
+              {blockedRunNowRecovery.sessionId ? <Link className="font-medium underline" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(blockedRunNowRecovery.sessionId)}`}>Open Session {blockedRunNowRecovery.sessionId}</Link> : null}
             </div>
             <p>Edit the Todo content before starting a different request.</p>
           </div>

@@ -56,6 +56,12 @@ export function intervalFromMilliseconds(everyMs: number): { value: number; unit
   return { value: everyMs / INTERVAL_UNIT_MS.seconds, unit: "seconds" };
 }
 
+export function isoToLocalDateTimeInput(value: string): string {
+  const date = new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
 interface EditAutomationDialogProps {
   open: boolean;
   onClose: () => void;
@@ -78,7 +84,7 @@ export function EditAutomationDialog({
     return {
       name: automation?.name ?? "",
       triggerKind: automation?.trigger.kind ?? "interval" as const,
-      onceAt: automation?.trigger.kind === "once" ? automation.trigger.at.slice(0, 16) : "",
+      onceAt: automation?.trigger.kind === "once" ? isoToLocalDateTimeInput(automation.trigger.at) : "",
       intervalValue: interval.value,
       intervalUnit: interval.unit,
       cron: automation?.trigger.kind === "cron" ? automation.trigger.expression : "*/15 * * * *",
@@ -90,7 +96,9 @@ export function EditAutomationDialog({
       sessionId: automation?.action.kind === "send_message" ? automation.action.sessionId : "",
       location: automation?.action.kind === "start_session" ? automation.action.location : "project" as const,
     };
-  }, [automation]);
+  // Snapshot the server value when the dialog opens. Realtime inventory
+  // refreshes for the same Automation must not overwrite an in-progress edit.
+  }, [open, automation?.id]);
   const [name, setName] = useState("");
   const [triggerKind, setTriggerKind] = useState<AutomationTrigger["kind"]>("interval");
   const [onceAt, setOnceAt] = useState("");

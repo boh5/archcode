@@ -4,7 +4,7 @@ import { ProjectToolbar } from "../components/features/ProjectToolbar";
 export function ProjectRoute() {
   const { slug } = useParams<{ slug: string }>();
   if (!slug) return <div className="p-4 text-sm text-error">Project is unavailable.</div>;
-  return <Navigate replace to={`/projects/${slug}/todos`} />;
+  return <Navigate replace to={`/projects/${encodeURIComponent(slug)}/todos`} />;
 }
 
 export function ProjectLayout() {

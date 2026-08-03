@@ -16,12 +16,14 @@ export type SessionSourceFilter = "all" | "todo" | "automation" | "direct";
 
 export function sessionAttentionLabels(entries: readonly {
   rootSessionId: string;
-  view: { source: { type: "tool_permission" | "ask_user" } };
-}[]): ReadonlyMap<string, "Permission" | "Question"> {
-  const labels = new Map<string, "Permission" | "Question">();
+  view: { source: { type: "tool_permission" | "ask_user" }; requiresInspection?: true };
+}[]): ReadonlyMap<string, "Inspection" | "Permission" | "Question"> {
+  const labels = new Map<string, "Inspection" | "Permission" | "Question">();
   for (const entry of entries) {
-    const label = entry.view.source.type === "tool_permission" ? "Permission" : "Question";
-    if (label === "Permission" || !labels.has(entry.rootSessionId)) labels.set(entry.rootSessionId, label);
+    const label = entry.view.requiresInspection === true
+      ? "Inspection"
+      : entry.view.source.type === "tool_permission" ? "Permission" : "Question";
+    if (label === "Inspection" || label === "Permission" || !labels.has(entry.rootSessionId)) labels.set(entry.rootSessionId, label);
   }
   return labels;
 }
@@ -47,13 +49,13 @@ export function classifySessionInventory(
 export function presentSessionInventoryStatus(
   item: ProjectSessionInventoryItem,
   activity: SessionFamilyActivity,
-  attentionLabel?: "Permission" | "Question",
+  attentionLabel?: "Inspection" | "Permission" | "Question",
 ): { label: string; kind: VisualStatusKind } {
   if (attentionLabel !== undefined) return { label: attentionLabel, kind: "needs_you" };
   const execution = item.latestExecution;
+  if (activity !== "idle") return { label: activityLabel(activity), kind: "running" };
   if (execution?.status === "failed") return { label: "Failed", kind: "failed" };
   if (execution?.status === "timed_out") return { label: "Timed out", kind: "failed" };
-  if (activity !== "idle") return { label: activityLabel(activity), kind: "running" };
   if (execution === null) return { label: "Idle", kind: "idle" };
   if (execution.status === "running") return { label: "Running", kind: "running" };
   if (execution.status === "suspended") return { label: "Suspended", kind: "blocked" };
@@ -192,7 +194,7 @@ function SessionGroup({ group, items, activityBySessionId, attentionSessionIds, 
   items: readonly ProjectSessionInventoryItem[];
   activityBySessionId: ReadonlyMap<string, SessionFamilyActivity>;
   attentionSessionIds: ReadonlySet<string>;
-  attentionLabelsBySessionId: ReadonlyMap<string, "Permission" | "Question">;
+  attentionLabelsBySessionId: ReadonlyMap<string, "Inspection" | "Permission" | "Question">;
   automationNames: ReadonlyMap<string, string>;
   todoNames: ReadonlyMap<string, string>;
   slug: string;

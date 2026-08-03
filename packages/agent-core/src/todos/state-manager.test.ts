@@ -182,21 +182,31 @@ describe("ProjectTodoStateManager", () => {
 
   test("persists run-now receipts and supports scoped compensation deletion", async () => {
     const manager = new ProjectTodoStateManager(TMP_ROOT);
-    const todo = await manager.createRunNowTodo({ content: "Run now" });
-    const receipt = {
-      clientRequestId: crypto.randomUUID(),
+    const clientRequestId = crypto.randomUUID();
+    const { todo, receipt } = await manager.beginRunNow({
+      content: "Run now",
+      clientRequestId,
       requestHash: "a".repeat(64),
-      todoId: todo.id,
-      sessionId: crypto.randomUUID(),
-    };
+    });
 
     expect(todo.status).toBe("in_progress");
-    expect(await manager.commitRunNowReceipt(receipt)).toEqual(receipt);
-    expect(await manager.commitRunNowReceipt(receipt)).toEqual(receipt);
-    expect(await new ProjectTodoStateManager(TMP_ROOT).readRunNowReceipt(receipt.clientRequestId)).toEqual(receipt);
+    expect(receipt).toMatchObject({ status: "preparing" });
+    expect(receipt.sessionId).toBeUndefined();
+    expect(await manager.listTodos()).toEqual([]);
+    const sessionId = crypto.randomUUID();
+    await manager.attachRunNowSession(clientRequestId, sessionId);
+    expect(await manager.completeRunNow(clientRequestId)).toMatchObject({ status: "accepted", sessionId });
+    expect(await new ProjectTodoStateManager(TMP_ROOT).readRunNowReceipt(clientRequestId))
+      .toMatchObject({ status: "accepted", sessionId });
+    expect(await manager.listTodos()).toEqual([todo]);
 
-    const compensated = await manager.createRunNowTodo({ content: "Compensate" });
-    await manager.deleteRunNowTodo(compensated.id);
+    const compensationId = crypto.randomUUID();
+    const { todo: compensated } = await manager.beginRunNow({
+      content: "Compensate",
+      clientRequestId: compensationId,
+      requestHash: "b".repeat(64),
+    });
+    await manager.deletePendingRunNow(compensationId, compensated.id);
     expect((await manager.listTodos()).map((item) => item.id)).toEqual([todo.id]);
   });
 

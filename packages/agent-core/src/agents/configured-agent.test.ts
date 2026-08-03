@@ -669,7 +669,7 @@ describe("ConfiguredAgent", () => {
     expect(firstSystem).toContain(`todoRevision=${todo.revision}`);
     expect(firstSystem).toContain("todoStatus=idea");
     expect(firstSystem).toContain('todoContent="Original content"');
-    expect(firstSystem).toContain(`todoPlanPath=".archcode/plans/${todo.id}.md"`);
+    expect(firstSystem).toContain(`todoPlanPath="${join(tmpRoot, ".archcode", "plans", `${todo.id}.md`)}"`);
     expect(firstSystem).toContain("todoPlanState=absent");
     expect(secondSystem).toContain(`todoRevision=${updated.revision}`);
     expect(secondSystem).toContain("todoStatus=ready");
@@ -704,7 +704,7 @@ describe("ConfiguredAgent", () => {
     expect(system).toContain(`todoRevision=${ready.revision}`);
     expect(system).toContain("todoStatus=ready");
     expect(system).toContain('todoContent="Implement the ready change"');
-    expect(system).toContain(`todoPlanPath=".archcode/plans/${ready.id}.md"`);
+    expect(system).toContain(`todoPlanPath="${join(tmpRoot, ".archcode", "plans", `${ready.id}.md`)}"`);
     expect(system).toContain("todoPlanState=absent");
   });
 
@@ -732,7 +732,7 @@ describe("ConfiguredAgent", () => {
     );
     expect(system).toContain(`- Todo: ${todo.id} (bound)`);
     expect(system).toContain('todoContent="Run the scheduled verification"');
-    expect(system).toContain(`todoPlanPath=".archcode/plans/${todo.id}.md"`);
+    expect(system).toContain(`todoPlanPath="${join(tmpRoot, ".archcode", "plans", `${todo.id}.md`)}"`);
   });
 
   test("keeps a direct root free of Todo and Plan context", async () => {

@@ -70,7 +70,14 @@ export class AutomationStateManager {
   async listInventory(): Promise<ProjectAutomationInventoryItem[]> {
     const state = await this.#read();
     const latestByAutomation = new Map<string, AutomationInvocation>();
-    for (const invocation of state.invocations) latestByAutomation.set(invocation.automationId, invocation);
+    for (const invocation of state.invocations) {
+      const latest = latestByAutomation.get(invocation.automationId);
+      if (latest === undefined
+        || invocation.dueAt > latest.dueAt
+        || (invocation.dueAt === latest.dueAt && invocation.createdAt > latest.createdAt)) {
+        latestByAutomation.set(invocation.automationId, invocation);
+      }
+    }
     return structuredClone(state.automations.map((automation) => ({
       automation,
       latestInvocation: latestByAutomation.get(automation.id) ?? null,

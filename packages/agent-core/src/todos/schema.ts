@@ -61,7 +61,12 @@ export const ProjectTodoRunNowReceiptSchema = z.strictObject({
   clientRequestId: z.uuid(),
   requestHash: z.string().length(64),
   todoId: z.uuid(),
-  sessionId: z.uuid(),
+  sessionId: z.uuid().optional(),
+  status: z.enum(["preparing", "recovery_required", "accepted"]),
+}).superRefine((receipt, context) => {
+  if (receipt.status === "accepted" && receipt.sessionId === undefined) {
+    context.addIssue({ code: "custom", path: ["sessionId"], message: "Accepted run-now receipt requires a Session id" });
+  }
 });
 
 export const ProjectTodoStateFileSchema = z.strictObject({

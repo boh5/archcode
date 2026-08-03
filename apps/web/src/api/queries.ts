@@ -78,7 +78,10 @@ export function workSearchQueryOptions(query: string) {
   const normalized = query.trim();
   return queryOptions({
     queryKey: queryKeys.workSearch(normalized),
-    queryFn: () => apiFetch<WorkSearchResponse>(`/api/search?q=${encodeURIComponent(normalized)}`),
+    queryFn: ({ signal }) => apiFetch<WorkSearchResponse>(
+      `/api/search?q=${encodeURIComponent(normalized)}`,
+      { signal },
+    ),
     enabled: normalized.length > 0 && normalized.length <= 200,
   });
 }

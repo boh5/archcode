@@ -667,7 +667,7 @@ export class SessionStoreManager {
         : field === "activeSkillNames"
           ? JSON.stringify(expected.activeSkillNames) === JSON.stringify(actual.activeSkillNames)
           : field === "source"
-            ? JSON.stringify(expected.source) === JSON.stringify(actual.source)
+            ? sameSessionSource(expected.source, actual.source)
         : expected[field] === actual[field];
       if (!matches) {
         throw new SessionFileIdentityConflictError(sessionId, field, expected[field], actual[field]);
@@ -1464,6 +1464,21 @@ export class SessionStoreManager {
       this.#registerRootSessionId(summary.sessionId, workspaceRoot, summary.rootSessionId);
     }
   }
+}
+
+function sameSessionSource(
+  expected: HydratedSessionFile["source"],
+  actual: HydratedSessionFile["source"],
+): boolean {
+  if (expected?.kind !== actual?.kind) return false;
+  if (expected === undefined || actual === undefined) return expected === actual;
+  if (expected.kind === "direct" && actual.kind === "direct") return true;
+  if (expected.kind === "todo" && actual.kind === "todo") {
+    return expected.todoId === actual.todoId && expected.entry === actual.entry;
+  }
+  return expected.kind === "automation" && actual.kind === "automation"
+    && expected.automationId === actual.automationId
+    && expected.todoId === actual.todoId;
 }
 
 function reduceStoreEvent(

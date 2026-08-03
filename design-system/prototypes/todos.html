@@ -1478,7 +1478,10 @@ Session storage remains project-root owned while every managed worktree executio
         return blocks.map((block) => {
           const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
           const heading = lines[0]?.match(/^#{1,6}\s+(.+)$/);
-          if (heading && lines.length === 1) return `<h3>${escapeHtml(heading[1])}</h3>`;
+          if (heading) {
+            const rest = lines.slice(1).join("\n");
+            return `<h3>${escapeHtml(heading[1])}</h3>${rest ? contentBodyHtml(rest) : ""}`;
+          }
           if (lines.every((line) => /^[-+*]\s+/.test(line))) return `<ul>${lines.map((line) => `<li>${escapeHtml(line.replace(/^[-+*]\s+/, ""))}</li>`).join("")}</ul>`;
           if (lines.every((line) => /^\d+[.)]\s+/.test(line))) return `<ol>${lines.map((line) => `<li>${escapeHtml(line.replace(/^\d+[.)]\s+/, ""))}</li>`).join("")}</ol>`;
           return `<p>${lines.map(escapeHtml).join("<br>")}</p>`;
@@ -1644,7 +1647,7 @@ Session storage remains project-root owned while every managed worktree executio
         </div>`).join("");
         referenceList.querySelectorAll("[data-reference-action]").forEach((button) => button.addEventListener("click", () => showToast(button.dataset.referenceAction)));
         planPresent.hidden = !sample.hasPlan;
-        planEmpty.hidden = sample.hasPlan || !sample.showPlanPrompt;
+        planEmpty.hidden = sample.hasPlan;
         planPath.textContent = `.archcode/plans/${sample.id}.md`;
         planCopy.innerHTML = sample.plan || "<ol><li>Extend the requested contract without changing global ownership.</li><li>Preserve explicit user choices and durable Session bindings.</li><li>Expose the resolved state in the existing workbench UI.</li><li>Add focused protocol, server, and Web interaction coverage.</li></ol><h3>Verification</h3><p>Run package typechecks, focused interaction tests, and the production Web build.</p>";
         resultPresent.hidden = !sample.result;

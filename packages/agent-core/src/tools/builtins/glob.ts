@@ -1,4 +1,4 @@
-import { lstat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { defineTool } from "../define-tool";
@@ -77,6 +77,15 @@ export const globTool = defineTool({
         outputSink: collector.sink,
       });
 
+      if (input.path && !(await searchPathExists(ctx.cwd, input.path))) {
+        return createLineSourcePage({
+          lines: [],
+          offset: 0,
+          nextInput: () => input,
+          emptyText: `Search path does not exist: ${input.path}`,
+        });
+      }
+
       const output = getProcessRunnerStdout(result);
       if (output.ok === false) return output.error;
       const files = collector.finish();
@@ -105,7 +114,7 @@ export const globTool = defineTool({
 
 async function searchPathExists(cwd: string, path: string): Promise<boolean> {
   try {
-    await lstat(resolve(cwd, path));
+    await stat(resolve(cwd, path));
     return true;
   } catch (error) {
     if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return false;

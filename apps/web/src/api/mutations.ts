@@ -81,6 +81,7 @@ export function useDeleteProject() {
     }),
     onSuccess: async (_data, slug) => {
       removeProjectControlPlane(slug);
+      queryClient.removeQueries({ queryKey: ["projects", slug] });
       await invalidateProjectCatalog(queryClient);
     },
   });

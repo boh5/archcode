@@ -44,7 +44,9 @@ Do not add greetings, marketing copy, metrics, charts, or a global Todo board.
   `state icon → entity/title/project context → time or action state`.
 - Every row identifies its project and entity type because Home crosses project
   boundaries.
-- Needs-you rows use amber plus `Permission`, `Question`, or `Failed` text.
+- Needs-you rows use amber plus the exact actionable state, including
+  `Inspection`, `Permission`, `Question`, `Blocked`, `Budget limited`,
+  `Failed`, or `Timed out`.
   Running rows use the live orbit plus elapsed time. Review rows say what result
   is awaiting review. Upcoming rows identify the Automation schedule.
 - Current-project rows use exact Todo, Automation, or Session deep links. Other
@@ -56,8 +58,9 @@ Do not add greetings, marketing copy, metrics, charts, or a global Todo board.
 
 - Project-rail `Search all work` remains the only navigational search and covers
   all registered projects and work entities.
-- The rail `Needs you` control opens the same cross-project attention set in a
-  compact dialog. It supplements Home; it does not create another page.
+- The rail `Needs you` control is the compact cross-project inbox for pending
+  permissions, questions, and manual inspections. Home's `Needs you` section is
+  broader and also includes failed Sessions, blocked Goals, and failed runs.
 - Home has no local filter because it is a curated decision surface, not an
   inventory.
 

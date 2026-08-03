@@ -72,6 +72,18 @@ function readerFor(
 }
 
 describe("SessionAttachmentModelProjector", () => {
+  test("does not fail when live Todo references have no user message to augment", async () => {
+    const attachment = descriptor({ kind: "file", mediaType: "text/plain" });
+    const projector = new SessionAttachmentModelProjector(readerFor(attachment), async () => ({
+      attachments: [attachment],
+      resolveReadPath: async () => "/tmp/reference.txt",
+      readVerified: async () => { throw new Error("not used"); },
+    }));
+    const messages: ModelMessage[] = [{ role: "assistant", content: [{ type: "text", text: "ready" }] }];
+    await expect(projector.project({ messages, attachmentSlots: [], workspaceRoot: WORKSPACE_ROOT, rootSessionId: ROOT_SESSION_ID, supportsImages: false })).resolves.toBeUndefined();
+    expect(messages).toHaveLength(1);
+  });
+
   test("adds the exact path and original bytes for an image-capable binding", async () => {
     const attachment = descriptor();
     const fixture = projectionFixture(attachment);

@@ -238,16 +238,25 @@ export class ProjectTodoService {
       if (receipt.requestHash !== requestHash) {
         throw new ProjectTodoRunNowConflictError(request.clientRequestId);
       }
-      return {
-        todo: await this.#state.readTodo(receipt.todoId),
-        session: await this.#sessions.readRootSession({
-          workspaceRoot: this.workspaceRoot,
-          sessionId: receipt.sessionId,
-        }),
-      };
+      if (receipt.status === "accepted") return await this.#readRunNowResponse(receipt.todoId, receipt.sessionId!);
+      if (receipt.status === "recovery_required") {
+        throw new ProjectTodoRunNowRecoveryError(
+          receipt.todoId,
+          receipt.sessionId,
+          "Run now retained work that requires inspection before another attempt",
+        );
+      }
+      if (receipt.sessionId !== undefined) {
+        return await this.#acceptPreparedRunNow(request.clientRequestId, receipt.todoId, receipt.sessionId);
+      }
+      await this.#state.deletePendingRunNow(request.clientRequestId, receipt.todoId);
     }
 
-    const todo = await this.#state.createRunNowTodo({ content: request.content });
+    const { todo } = await this.#state.beginRunNow({
+      content: request.content,
+      clientRequestId: request.clientRequestId,
+      requestHash,
+    });
     let sessionId: string | undefined;
     try {
       ({ sessionId } = await this.#sessions.createRootSession({
@@ -256,72 +265,101 @@ export class ProjectTodoService {
         title: projectTodoContentExcerpt(todo.content),
         source: { kind: "todo", todoId: todo.id, entry: "work" },
       }));
-      try {
-        await this.#sessions.acceptMessage({
-          workspaceRoot: this.workspaceRoot,
-          sessionId,
-          text: `Implement the following Project Todo as an ordinary Lead Session.\n\n${todoSource(todo)}`,
-          clientRequestId: request.clientRequestId,
-        });
-      } catch (error) {
-        let durable: boolean;
-        try {
-          durable = await this.#sessions.hasDurableMessage({
-            workspaceRoot: this.workspaceRoot,
-            sessionId,
-            clientRequestId: request.clientRequestId,
-          });
-        } catch (receiptError) {
-          throw new ProjectTodoRunNowRecoveryError(
-            todo.id,
-            sessionId,
-            "Run now failed after Session creation, and durable message acceptance could not be determined",
-            { cause: new AggregateError([error, receiptError]) },
-          );
-        }
-        if (!durable) {
-          await this.#compensateRunNow(todo.id, sessionId, error);
-          throw error;
-        }
-      }
-
-      try {
-        await this.#state.commitRunNowReceipt({
-          clientRequestId: request.clientRequestId,
-          requestHash,
-          todoId: todo.id,
-          sessionId,
-        });
-      } catch (error) {
-        throw new ProjectTodoRunNowRecoveryError(
-          todo.id,
-          sessionId,
-          "Run now was accepted, but its idempotency receipt could not be committed",
-          { cause: error },
-        );
-      }
-
-      return {
-        todo,
-        session: await this.#sessions.readRootSession({
-          workspaceRoot: this.workspaceRoot,
-          sessionId,
-        }),
-      };
+      await this.#state.attachRunNowSession(request.clientRequestId, sessionId);
+      return await this.#acceptPreparedRunNow(request.clientRequestId, todo.id, sessionId);
     } catch (error) {
       if (error instanceof ProjectTodoRunNowRecoveryError) throw error;
-      if (sessionId === undefined) await this.#compensateRunNow(todo.id, undefined, error);
+      if (sessionId === undefined) {
+        await this.#compensateRunNow(request.clientRequestId, todo.id, undefined, error);
+      }
       throw error;
     }
   }
 
-  async #compensateRunNow(todoId: string, sessionId: string | undefined, cause: unknown): Promise<void> {
+  async #acceptPreparedRunNow(
+    clientRequestId: string,
+    todoId: string,
+    sessionId: string,
+  ): Promise<ProjectTodoRunNowResponse> {
+    const todo = await this.#state.readRunNowTodo(clientRequestId);
+    try {
+      await this.#sessions.acceptMessage({
+        workspaceRoot: this.workspaceRoot,
+        sessionId,
+        text: `Implement the following Project Todo as an ordinary Lead Session.\n\n${todoSource(todo)}`,
+        clientRequestId,
+      });
+    } catch (error) {
+      let durable: boolean;
+      try {
+        durable = await this.#sessions.hasDurableMessage({
+          workspaceRoot: this.workspaceRoot,
+          sessionId,
+          clientRequestId,
+        });
+      } catch (receiptError) {
+        let cause: unknown = new AggregateError([error, receiptError]);
+        try {
+          await this.#state.markRunNowRecoveryRequired(clientRequestId);
+        } catch (recoveryError) {
+          cause = new AggregateError([error, receiptError, recoveryError]);
+        }
+        throw new ProjectTodoRunNowRecoveryError(
+          todoId,
+          sessionId,
+          "Run now failed after Session creation, and durable message acceptance could not be determined",
+          { cause },
+        );
+      }
+      if (!durable) {
+        await this.#compensateRunNow(clientRequestId, todoId, sessionId, error);
+        throw error;
+      }
+    }
+
+    try {
+      await this.#state.completeRunNow(clientRequestId);
+    } catch (error) {
+      let cause: unknown = error;
+      try {
+        await this.#state.markRunNowRecoveryRequired(clientRequestId);
+      } catch (recoveryError) {
+        cause = new AggregateError([error, recoveryError]);
+      }
+      throw new ProjectTodoRunNowRecoveryError(
+        todoId,
+        sessionId,
+        "Run now was accepted, but its idempotency receipt could not be committed",
+        { cause },
+      );
+    }
+    return await this.#readRunNowResponse(todoId, sessionId);
+  }
+
+  async #readRunNowResponse(todoId: string, sessionId: string): Promise<ProjectTodoRunNowResponse> {
+    return {
+      todo: await this.#state.readTodo(todoId),
+      session: await this.#sessions.readRootSession({ workspaceRoot: this.workspaceRoot, sessionId }),
+    };
+  }
+
+  async #compensateRunNow(
+    clientRequestId: string,
+    todoId: string,
+    sessionId: string | undefined,
+    cause: unknown,
+  ): Promise<void> {
     try {
       if (sessionId !== undefined) {
         await this.#sessions.deleteSession({ workspaceRoot: this.workspaceRoot, sessionId });
       }
-      await this.#state.deleteRunNowTodo(todoId);
+      await this.#state.deletePendingRunNow(clientRequestId, todoId);
     } catch (error) {
+      try {
+        await this.#state.markRunNowRecoveryRequired(clientRequestId);
+      } catch (recoveryError) {
+        error = new AggregateError([error, recoveryError]);
+      }
       throw new ProjectTodoRunNowRecoveryError(
         todoId,
         sessionId,

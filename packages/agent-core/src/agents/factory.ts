@@ -103,7 +103,12 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
   const factory: AgentFactory = {
     createRootAgent(name, options = {}) {
       const rootConfig = { ...agentConfig, backgroundTaskManager: undefined };
-      return createConfiguredAgent(rootConfig, factory.getDefinition(name), options);
+      const definition = factory.getDefinition(name);
+      const store = options.store ?? rootConfig.storeManager.create(crypto.randomUUID(), rootConfig.workspaceRoot, {
+        agentName: definition.name,
+        source: { kind: "direct" },
+      });
+      return createConfiguredAgent(rootConfig, definition, { ...options, store });
     },
 
     createAgent(name, options = {}) {

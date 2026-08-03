@@ -53,7 +53,8 @@ attention, and recover the exact Session associated with every run.
   new Invocation without changing the Automation definition; `start_session`
   creates its Automation-source Session and `send_message` targets its existing
   Session.
-- Every recent-run row opens its exact Session URL. Never reuse one generic
+- Every dispatched recent-run row opens its exact Session URL. A missed or
+  pre-dispatch failed Invocation has no Session link. Never reuse one generic
   Session URL for multiple invocations.
 - A linked Todo opens its stable Todo detail URL. Absence of a linked Todo is
   valid and does not make the Automation incomplete.

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import type {
@@ -291,31 +292,32 @@ export async function readTodoPlan(
 ): Promise<ProjectTodoPlan | null> {
   const relativePath = join(".archcode", "plans", `${todoId}.md`);
   const candidate = join(workspaceRoot, relativePath);
-  let candidateInfo;
+  let handle;
   try {
-    candidateInfo = await lstat(candidate);
+    handle = await open(candidate, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return null;
+    if (hasErrorCode(error, "ELOOP")) {
+      throw new ServerError("BAD_REQUEST", "Todo Plan must not be a symbolic link", 400, { scopeCode: "TODO_PLAN_UNSAFE_PATH" });
+    }
     throw error;
   }
-  if (candidateInfo.isSymbolicLink() || !candidateInfo.isFile()) {
-    throw new ServerError("BAD_REQUEST", "Todo Plan must be a regular file", 400, { scopeCode: "TODO_PLAN_UNSAFE_PATH" });
-  }
-
-  const [canonicalWorkspace, canonicalCandidate] = await Promise.all([
-    realpath(workspaceRoot),
-    realpath(candidate),
-  ]);
-  const canonicalPlansRoot = join(canonicalWorkspace, ".archcode", "plans");
-  const relativeCandidate = relative(canonicalPlansRoot, canonicalCandidate);
-  if (relativeCandidate !== `${todoId}.md` || relativeCandidate.startsWith("..") || isAbsolute(relativeCandidate)) {
-    throw new ServerError("BAD_REQUEST", "Todo Plan resolves outside the project plans directory", 400, { scopeCode: "TODO_PLAN_UNSAFE_PATH" });
-  }
-
-  const handle = await open(canonicalCandidate, "r");
   try {
-    const fileInfo = await handle.stat();
-    if (!fileInfo.isFile()) {
+    const [canonicalWorkspace, canonicalCandidate, fileInfo, pathInfo] = await Promise.all([
+      realpath(workspaceRoot),
+      realpath(candidate),
+      handle.stat(),
+      lstat(candidate),
+    ]);
+    const canonicalPlansRoot = join(canonicalWorkspace, ".archcode", "plans");
+    const relativeCandidate = relative(canonicalPlansRoot, canonicalCandidate);
+    const unsafePath = relativeCandidate !== `${todoId}.md`
+      || relativeCandidate.startsWith("..")
+      || isAbsolute(relativeCandidate)
+      || pathInfo.isSymbolicLink()
+      || pathInfo.dev !== fileInfo.dev
+      || pathInfo.ino !== fileInfo.ino;
+    if (unsafePath || !fileInfo.isFile()) {
       throw new ServerError("BAD_REQUEST", "Todo Plan must be a regular file", 400, { scopeCode: "TODO_PLAN_UNSAFE_PATH" });
     }
     if (fileInfo.size > MAX_TODO_PLAN_BYTES) {
@@ -331,6 +333,11 @@ export async function readTodoPlan(
       markdown: buffer.subarray(0, bytesRead).toString("utf8"),
       updatedAt: fileInfo.mtimeMs,
     };
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR") || hasErrorCode(error, "ELOOP")) {
+      throw new ServerError("BAD_REQUEST", "Todo Plan path changed while it was being read", 400, { scopeCode: "TODO_PLAN_UNSAFE_PATH" });
+    }
+    throw error;
   } finally {
     await handle.close();
   }

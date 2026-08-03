@@ -330,16 +330,19 @@ describe("ProjectTodoService", () => {
     const { service, sessions } = fixture();
     sessions.failAccept = 1;
     sessions.failDurableRead = 1;
-
-    const error = await service.runNow({
+    const request = {
       clientRequestId: crypto.randomUUID(),
       content: "Acceptance is indeterminate",
-    }).catch((caught: unknown) => caught);
+    };
+
+    const error = await service.runNow(request).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ProjectTodoRunNowRecoveryError);
     expect(error).toMatchObject({ todoId: expect.any(String), sessionId: expect.any(String) });
     expect(sessions.sessions.size).toBe(1);
     expect(await service.listTodos()).toHaveLength(1);
+    await expect(service.runNow(request)).rejects.toBeInstanceOf(ProjectTodoRunNowRecoveryError);
+    expect(sessions.sessions.size).toBe(1);
   });
 
   test("authorizes Discussion updates from root identity and immutable Todo binding", async () => {

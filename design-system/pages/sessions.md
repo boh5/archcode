@@ -26,9 +26,10 @@ attention, and start work directly without manufacturing a Todo first.
 - Row order is status orbit, Session title and source context, then action state
   or elapsed time.
 - Every row identifies one source: `Todo`, `Automation`, or `Direct`.
-- Todo and Automation sources include the durable parent name. Direct Sessions
-  show the root Agent identity instead of inventing a parent work item.
-- `Needs you` uses an amber icon plus `Permission`, `Question`, or `Failed` text;
+- Todo and Automation sources include the durable parent name when it is still
+  available, otherwise their stable parent ID. Direct Sessions show the root
+  Agent identity instead of inventing a parent work item.
+- `Needs you` uses an amber icon plus `Inspection`, `Permission`, `Question`, or `Failed` text;
   `Running` uses the live orbit plus elapsed time; completed Recent rows use a
   green check or explicit `Completed` text.
 - The whole row opens the exact Session URL. Destructive actions remain in an

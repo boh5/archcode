@@ -11,6 +11,7 @@ import { CloseProjectDialog } from "./CloseProjectDialog";
 import type { Project } from "../../api/types";
 
 interface ProjectBarProps {
+  mobile?: boolean;
   onAddProject?: () => void;
   onSettings?: () => void;
   onSearch?: () => void;
@@ -24,7 +25,7 @@ function getInitials(slug: string): string {
   return slug.slice(0, 2).toLowerCase();
 }
 
-export function ProjectBar({ onAddProject, onSettings, onSearch, searchTriggerRef, showBell = true, theme, toggleTheme }: ProjectBarProps) {
+export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch, searchTriggerRef, showBell = true, theme, toggleTheme }: ProjectBarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { slug: activeSlug } = useParams<{ slug: string }>();
@@ -143,7 +144,7 @@ export function ProjectBar({ onAddProject, onSettings, onSearch, searchTriggerRe
         >
           <Search size={15} aria-hidden="true" />
         </button>
-        {showBell && <HitlBell variant="rail" />}
+        {showBell && <HitlBell mobile={mobile} variant="rail" />}
         <button
           type="button"
           className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-ink/8 hover:text-rail-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"

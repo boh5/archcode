@@ -95,6 +95,27 @@ describe("automation routes", () => {
     expect(runtime.createDirectAutomation).toHaveBeenCalledTimes(1);
   });
 
+  test("returns a structured conflict when worktree execution is unavailable", async () => {
+    const { app, item, project, runtime } = await fixture("worktree-unavailable");
+    runtime.createDirectAutomation.mockRejectedValueOnce(Object.assign(new Error("not a Git worktree"), {
+      code: "INVALID_CANONICAL_ROOT",
+    }));
+    const response = await app.request(`/${project.slug}/automations`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: item.name,
+        trigger: item.trigger,
+        action: { kind: "start_session", message: "Review", location: "worktree" },
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: "BAD_REQUEST", details: { scopeCode: "AUTOMATION_WORKTREE_UNAVAILABLE" } },
+    });
+  });
+
   test("rejects origin changes through the update route", async () => {
     const { app, item, project, runtime } = await fixture("immutable-provenance");
     const res = await app.request(`/${project.slug}/automations/${item.id}`, {

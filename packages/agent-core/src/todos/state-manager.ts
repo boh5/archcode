@@ -33,12 +33,14 @@ const BOARD_STATUSES: ReadonlySet<ProjectTodoStatus> = new Set([
 ]);
 
 type MutableProjectTodo = { -readonly [Key in keyof ProjectTodo]: ProjectTodo[Key] };
+type MutableProjectTodoRunNowReceipt = { -readonly [Key in keyof ProjectTodoRunNowReceipt]: ProjectTodoRunNowReceipt[Key] };
 
 export interface ProjectTodoRunNowReceipt {
   readonly clientRequestId: string;
   readonly requestHash: string;
   readonly todoId: string;
-  readonly sessionId: string;
+  readonly sessionId?: string;
+  readonly status: "preparing" | "recovery_required" | "accepted";
 }
 
 export interface ProjectTodoStateManagerOptions {
@@ -66,7 +68,11 @@ export class ProjectTodoStateManager {
   }
 
   async listTodos(): Promise<ProjectTodo[]> {
-    return structuredClone((await this.#read()).todos);
+    const state = await this.#read();
+    const hiddenTodoIds = new Set(state.runNowReceipts
+      .filter((receipt) => receipt.status === "preparing")
+      .map((receipt) => receipt.todoId));
+    return structuredClone(state.todos.filter((todo) => !hiddenTodoIds.has(todo.id)));
   }
 
   async readTodo(todoId: string): Promise<ProjectTodo> {
@@ -74,7 +80,7 @@ export class ProjectTodoStateManager {
   }
 
   async createTodo(input: ProjectTodoCreateInput): Promise<ProjectTodo> {
-    const validated = ProjectTodoCreateSchema.parse(input);
+    const validated = ProjectTodoCreateSchema.parse({ content: input.content });
     return this.#mutate((state) => {
       const now = this.#now();
       const todo: ProjectTodo = {
@@ -91,8 +97,10 @@ export class ProjectTodoStateManager {
     }, (todo) => todo);
   }
 
-  async createRunNowTodo(input: ProjectTodoCreateInput): Promise<ProjectTodo> {
-    const validated = ProjectTodoCreateSchema.parse(input);
+  async beginRunNow(
+    input: ProjectTodoCreateInput & { readonly clientRequestId: string; readonly requestHash: string },
+  ): Promise<{ readonly todo: ProjectTodo; readonly receipt: ProjectTodoRunNowReceipt }> {
+    const validated = ProjectTodoCreateSchema.parse({ content: input.content });
     return this.#mutate((state) => {
       const now = this.#now();
       const todo: ProjectTodo = {
@@ -105,8 +113,15 @@ export class ProjectTodoStateManager {
         updatedAt: now,
       };
       state.todos.push(todo);
-      return structuredClone(todo);
-    }, (todo) => todo);
+      const receipt: ProjectTodoRunNowReceipt = {
+        clientRequestId: input.clientRequestId,
+        requestHash: input.requestHash,
+        todoId: todo.id,
+        status: "preparing",
+      };
+      state.runNowReceipts.push(receipt);
+      return structuredClone({ todo, receipt });
+    });
   }
 
   async readRunNowReceipt(clientRequestId: string): Promise<ProjectTodoRunNowReceipt | undefined> {
@@ -114,21 +129,60 @@ export class ProjectTodoStateManager {
     return receipt === undefined ? undefined : structuredClone(receipt);
   }
 
-  async commitRunNowReceipt(receipt: ProjectTodoRunNowReceipt): Promise<ProjectTodoRunNowReceipt> {
+  async readRunNowTodo(clientRequestId: string): Promise<ProjectTodo> {
+    const state = await this.#read();
+    const receipt = state.runNowReceipts.find((item) => item.clientRequestId === clientRequestId);
+    if (receipt === undefined) throw new ProjectTodoNotFoundError(clientRequestId);
+    return structuredClone(requiredTodo(state, receipt.todoId));
+  }
+
+  async attachRunNowSession(clientRequestId: string, sessionId: string): Promise<ProjectTodoRunNowReceipt> {
     return this.#mutate((state) => {
-      const existing = state.runNowReceipts.find((item) => item.clientRequestId === receipt.clientRequestId);
-      if (existing !== undefined) return structuredClone(existing);
-      requiredTodo(state, receipt.todoId);
-      state.runNowReceipts.push(structuredClone(receipt));
+      const receipt = requiredRunNowReceipt(state, clientRequestId);
+      if (receipt.status !== "preparing") return structuredClone(receipt);
+      if (receipt.sessionId !== undefined && receipt.sessionId !== sessionId) {
+        throw new ProjectTodoInvalidMutationError(receipt.todoId, "Run-now receipt is already bound to another Session");
+      }
+      receipt.sessionId = sessionId;
       return structuredClone(receipt);
     });
   }
 
-  async deleteRunNowTodo(todoId: string): Promise<void> {
+  async completeRunNow(clientRequestId: string): Promise<ProjectTodoRunNowReceipt> {
+    return this.#mutate((state) => {
+      const receipt = requiredRunNowReceipt(state, clientRequestId);
+      if (receipt.sessionId === undefined) {
+        throw new ProjectTodoInvalidMutationError(receipt.todoId, "Run-now receipt has no Session");
+      }
+      receipt.status = "accepted";
+      return structuredClone(receipt);
+    }, (receipt) => this.#state?.todos.find((todo) => todo.id === receipt.todoId));
+  }
+
+  async markRunNowRecoveryRequired(clientRequestId: string): Promise<ProjectTodoRunNowReceipt> {
+    return this.#mutate((state) => {
+      const receipt = requiredRunNowReceipt(state, clientRequestId);
+      if (receipt.status === "accepted") return structuredClone(receipt);
+      receipt.status = "recovery_required";
+      return structuredClone(receipt);
+    }, (receipt) => this.#state?.todos.find((todo) => todo.id === receipt.todoId));
+  }
+
+  async deletePendingRunNow(clientRequestId: string, todoId: string): Promise<void> {
     await this.#mutate((state) => {
-      const index = state.todos.findIndex((todo) => todo.id === todoId);
-      if (index < 0) throw new ProjectTodoNotFoundError(todoId);
-      state.todos.splice(index, 1);
+      const receiptIndex = state.runNowReceipts.findIndex((item) => item.clientRequestId === clientRequestId);
+      const receipt = state.runNowReceipts[receiptIndex];
+      if (receipt === undefined || receipt.todoId !== todoId || receipt.status !== "preparing") {
+        throw new ProjectTodoInvalidMutationError(todoId, "Run-now reservation is no longer compensatable");
+      }
+      const todoIndex = state.todos.findIndex((todo) => todo.id === todoId);
+      const todo = state.todos[todoIndex];
+      if (todo === undefined) throw new ProjectTodoNotFoundError(todoId);
+      if (todo.revision !== 1 || todo.status !== "in_progress" || todo.attachmentIds.length !== 0) {
+        throw new ProjectTodoInvalidMutationError(todoId, "Run-now Todo changed before compensation");
+      }
+      state.runNowReceipts.splice(receiptIndex, 1);
+      state.todos.splice(todoIndex, 1);
     });
   }
 
@@ -307,6 +361,15 @@ function requiredTodo(state: ProjectTodoStateFile, todoId: string): MutableProje
   const todo = state.todos.find((item) => item.id === todoId);
   if (todo === undefined) throw new ProjectTodoNotFoundError(todoId);
   return todo as MutableProjectTodo;
+}
+
+function requiredRunNowReceipt(
+  state: ProjectTodoStateFile,
+  clientRequestId: string,
+): MutableProjectTodoRunNowReceipt {
+  const receipt = state.runNowReceipts.find((item) => item.clientRequestId === clientRequestId);
+  if (receipt === undefined) throw new ProjectTodoNotFoundError(clientRequestId);
+  return receipt as MutableProjectTodoRunNowReceipt;
 }
 
 function assertMutable(todo: ProjectTodo): void {

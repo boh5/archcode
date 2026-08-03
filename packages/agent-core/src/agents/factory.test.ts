@@ -145,6 +145,11 @@ describe("createAgentFactory", () => {
     expect(typeof agent.run).toBe("function");
   });
 
+  test("creates a store-less root Lead with direct source identity", () => {
+    const agent = makeFactory().createRootAgent("lead");
+    expect(agent.store.getState().source).toEqual({ kind: "direct" });
+  });
+
   test("creates Discussion only from a Todo-bound root store", () => {
     const factory = makeFactory([definition(), discussionAgentDefinition]);
     const store = storeManager.create(`factory-discussion-${crypto.randomUUID()}`, TEST_WORKSPACE_ROOT, {

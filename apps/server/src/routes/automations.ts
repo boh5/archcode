@@ -42,7 +42,7 @@ export function createAutomationsRoutes(runtime: AgentRuntime): Hono {
     async (c) => {
       const project = await resolveProject(runtime, c.req.valid("param").slug);
       return c.json({
-        automation: await runtime.createDirectAutomation(project.workspaceRoot, c.req.valid("json")),
+        automation: await withAutomationErrors(undefined, () => runtime.createDirectAutomation(project.workspaceRoot, c.req.valid("json"))),
       }, 201);
     },
   );
@@ -57,7 +57,7 @@ export function createAutomationsRoutes(runtime: AgentRuntime): Hono {
     const { slug, automationId } = c.req.valid("param");
     const project = await resolveProject(runtime, slug);
     const input = c.req.valid("json");
-    return c.json({ automation: await withAutomationNotFound(automationId, () => runtime.updateAutomation(project.workspaceRoot, automationId, input)) });
+    return c.json({ automation: await withAutomationErrors(automationId, () => runtime.updateAutomation(project.workspaceRoot, automationId, input)) });
   });
 
   app.delete("/:slug/automations/:automationId", zValidator("param", AutomationParamsSchema), async (c) => {
@@ -103,11 +103,23 @@ async function readAutomation(runtime: AgentRuntime, workspaceRoot: string, auto
 }
 
 async function withAutomationNotFound<T>(automationId: string, operation: () => Promise<T>): Promise<T> {
+  return await withAutomationErrors(automationId, operation);
+}
+
+async function withAutomationErrors<T>(automationId: string | undefined, operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
   } catch (error) {
     if (hasCode(error, "AUTOMATION_NOT_FOUND")) {
       throw new ServerError("AUTOMATION_NOT_FOUND", `Automation not found: ${automationId}`, 404);
+    }
+    if (hasCode(error, "INVALID_CANONICAL_ROOT") || hasCode(error, "CANONICAL_ROOT_MISMATCH")) {
+      throw new ServerError(
+        "BAD_REQUEST",
+        "Worktree Automations require the Project root to be a Git worktree",
+        409,
+        { scopeCode: "AUTOMATION_WORKTREE_UNAVAILABLE" },
+      );
     }
     throw error;
   }

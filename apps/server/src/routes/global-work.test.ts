@@ -76,7 +76,7 @@ describe("global work read routes", () => {
       running: [],
       readyToReview: [{ kind: "todo", entityId: todo.id, status: "ready_to_review" }],
       upcoming: [{ kind: "automation", entityId: automation.id, status: "scheduled" }],
-      projectErrors: [{ project: { slug: "bad", name: "Bad Project" }, message: "corrupt project" }],
+      projectErrors: [{ project: { slug: "bad", name: "Bad Project" }, message: "Project work is temporarily unavailable" }],
     });
     expect(body.readyToReview[0]?.title).toBe("Review the completed work Private PRD body");
   });
@@ -123,6 +123,30 @@ describe("global work read routes", () => {
     expect(body.readyToReview).toEqual([]);
   });
 
+  test("completed Todo-originated Automation work is ready for Todo review", async () => {
+    const todo = makeTodo();
+    const session = rootSession("automation-work", {
+      kind: "automation",
+      automationId: "11111111-1111-4111-8111-111111111111",
+      invocationId: "22222222-2222-4222-8222-222222222222",
+      todoId: todo.id,
+    }, 60);
+    const runtime = makeRuntime({
+      projects: [goodProject],
+      sessions: [session],
+      todos: [todo],
+      automations: [],
+      executions: new Map([[session.sessionId, [execution("completed", 61)]]]),
+    });
+    const app = new Hono().route("/api", createGlobalWorkRoutes(runtime));
+    app.onError(errorHandler);
+
+    const body = await (await app.request("/api/home")).json();
+    expect(body.readyToReview).toEqual([
+      expect.objectContaining({ kind: "todo", entityId: todo.id, status: "ready_to_review" }),
+    ]);
+  });
+
   test("GET /api/search matches Todo content, caps at 100, and isolates project failures", async () => {
     const todos = Array.from({ length: 101 }, (_, index) => makeTodo({
       id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
@@ -145,7 +169,7 @@ describe("global work read routes", () => {
     expect(response.status).toBe(200);
     expect(body.results).toHaveLength(100);
     expect(body.truncated).toBe(true);
-    expect(body.projectErrors).toEqual([{ project: { slug: "bad", name: "Bad Project" }, message: "corrupt project" }]);
+    expect(body.projectErrors).toEqual([{ project: { slug: "bad", name: "Bad Project" }, message: "Project work is temporarily unavailable" }]);
     expect(body.results[0]).toEqual({
       kind: "todo",
       project: { slug: "good", name: "Good Project" },

@@ -70,6 +70,7 @@ function WorkbenchShell() {
     <div className="relative flex h-screen min-w-0 overflow-hidden bg-bg-base text-text-primary">
       <div className="relative z-[55] w-12 shrink-0 border-r border-border-default bg-rail min-[761px]:z-40 min-[761px]:w-[52px]">
         <ProjectBar
+          mobile={layout.isMobile}
           onAddProject={openAddProjectModal}
           onSettings={openSettingsModal}
           onSearch={() => setSearchOpen(true)}

@@ -14,6 +14,7 @@ import type { Automation, ProjectTodo, ProjectTodoUpdateInput, SessionSummary } 
 import { MarkdownContent } from "../components/primitives/MarkdownContent";
 import { TodoReferences } from "../components/features/TodoReferences";
 import { STATUS_TONE_CLASS } from "../lib/status-visuals";
+import { createClientUuid } from "../lib/client-uuid";
 import { demoteEmbeddedMarkdownHeadings, presentProjectTodoCard, type ProjectTodoLane } from "./project-todo-presentation";
 
 const LANES: readonly ProjectTodoLane[] = ["idea", "ready", "in_progress", "done"];
@@ -86,7 +87,7 @@ export function ProjectTodoDetailRoute() {
   };
 
   if (todos.isLoading) return <RouteMessage>Loading Todo…</RouteMessage>;
-  if (todos.error) return <RouteMessage tone="error">Failed to load Todo</RouteMessage>;
+  if (todos.error && todos.data === undefined) return <RouteMessage tone="error">Failed to load Todo</RouteMessage>;
   if (todo === undefined) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg-base px-6 text-center">
@@ -140,6 +141,7 @@ function TodoDetailView({ todo, slug, sessions, sessionsLoading, sessionsError, 
   const [planError, setPlanError] = useState<string | null>(null);
   const [isOpeningPlan, setIsOpeningPlan] = useState(false);
   const planActionInFlight = useRef(false);
+  const planMessageRef = useRef<{ sessionId: string; command: string; clientRequestId: string } | null>(null);
   useEffect(() => {
     if (!editing) setContent(todo.content);
   }, [editing, todo.content]);
@@ -195,11 +197,27 @@ function TodoDetailView({ todo, slug, sessions, sessionsLoading, sessionsError, 
           }
         },
         sendCommand: async (sessionId, command, requestedModelSelection) => {
+          const previous = planMessageRef.current;
+          const request = previous?.sessionId === sessionId && previous.command === command
+            ? previous
+            : { sessionId, command, clientRequestId: createClientUuid() };
+          planMessageRef.current = request;
           try {
-            await postMessage.mutateAsync({ slug, sessionId, content: command, attachmentIds: [], requestedModelSelection });
+            await postMessage.mutateAsync({
+              slug,
+              sessionId,
+              content: command,
+              attachmentIds: [],
+              clientRequestId: request.clientRequestId,
+              requestedModelSelection,
+            });
+            planMessageRef.current = null;
             return "sent";
           } catch (cause) {
-            if (isUnavailablePlanDiscussion(cause)) return "unavailable";
+            if (isUnavailablePlanDiscussion(cause)) {
+              planMessageRef.current = null;
+              return "unavailable";
+            }
             throw cause;
           }
         },

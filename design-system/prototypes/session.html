@@ -966,6 +966,15 @@
         white-space: nowrap;
       }
 
+      .composer-placeholder:empty::before {
+        content: attr(data-placeholder);
+      }
+
+      .composer-placeholder:focus {
+        color: var(--text-primary);
+        outline: none;
+      }
+
       .composer-state {
         display: inline-flex;
         align-items: center;
@@ -1658,7 +1667,7 @@
 
               <div class="composer" aria-label="Queue another instruction" data-session-composer>
                 <button class="icon-button" aria-label="Attach file" data-action="添加附件">＋</button>
-                <span class="composer-placeholder" data-composer-placeholder>Queue another instruction…</span>
+                <span class="composer-placeholder" data-composer-placeholder role="textbox" contenteditable="true" aria-label="Session instruction"></span>
                 <span class="composer-state" data-composer-state><span class="state-dot"></span><span data-composer-state-text>Needs attention</span></span>
                 <span class="composer-model">Lead · principal</span>
                 <button class="stop-button" aria-label="Stop execution" data-action="停止执行" data-session-terminal-action>■</button>
@@ -1832,6 +1841,10 @@
           title: "Audit project context loading", status: "Done", statusTone: "done", usage: "4 tools · 11,420 tokens", direct: true,
           primaryMessage: "Trace why project context loads twice after reconnect.", primaryWorkLabel: "Worked for 1m 18s", primaryCommentary: "Compared the initial query, SSE refresh, and context resolver cache.", primaryReasoning: "A duplicate invalidation caused the second read; persisted project data was unaffected.", primaryTools: "grep, file_read", primaryTarget: "project context query lifecycle", primaryResponse: "<strong>Audit complete.</strong> The duplicate read came from one redundant refresh signal; the result remains preserved in this Direct Session.", showSecondary: false, needsHitl: false, showQueue: false, composerState: "Idle", objective: "Audit project context loading", execution: "Completed", goal: "None · Direct Session", tokens: "11,420 / 200,000 tokens", changes: [],
         },
+        "sess-direct-model-type": {
+          title: "Fix incorrect model type", status: "Running", statusTone: "running", usage: "3 tools · 4,208 tokens", direct: true,
+          primaryMessage: "Fix the incorrect model type and verify the focused contract.", primaryWorkLabel: "Worked for 21s", primaryCommentary: "Located the mismatched type and its consumers before applying the narrow correction.", primaryReasoning: "The type belongs at the protocol boundary; callers should consume the corrected contract without adapters.", primaryTools: "grep, file_read", primaryTarget: "shared model type", primaryResponse: "<strong>Cause isolated.</strong> Applying the focused type correction and checking its direct consumers.", showSecondary: true, secondaryMessage: "Update the type and run focused typecheck coverage.", currentWorkLabel: "Working · 34s", currentCommentary: "Updating the exact protocol declaration and affected use sites.", currentReasoning: "No migration or compatibility layer is needed for this local contract fix.", needsHitl: false, showQueue: false, composerState: "Running", objective: "Fix incorrect model type", execution: "Running", goal: "None · Direct Session", tokens: "4,208 / 200,000 tokens", changes: ["types.ts"],
+        },
       };
 
       function escapeSessionHtml(value) {
@@ -1889,7 +1902,7 @@
             primaryTarget: "Automation invocation workspace",
             primaryResponse: failed ? "<strong>Run needs attention.</strong> The failure evidence is preserved here; the Automation definition remains unchanged." : running ? "<strong>Automation run started.</strong> This invocation has its own durable Session." : "<strong>Automation run completed.</strong> The exact result is preserved in this Session.",
             showSecondary: false,
-            needsHitl: failed,
+            needsHitl: false,
             showQueue: false,
             composerState: failed ? "Needs attention" : running ? "Running" : "Idle",
             objective: `Run ${title}`,
@@ -1994,7 +2007,9 @@
         queue.hidden = !sample.showQueue;
         const composerPrompt = sample.empty ? "What should the Agent do?" : sample.composerState === "Idle" ? "Send a follow-up" : sample.composerState === "Unavailable" ? "Session unavailable" : "Queue another instruction";
         composer.setAttribute("aria-label", composerPrompt);
-        composerPlaceholder.textContent = `${composerPrompt}${sample.composerState === "Unavailable" ? "" : "…"}`;
+        composerPlaceholder.dataset.placeholder = `${composerPrompt}${sample.composerState === "Unavailable" ? "" : "…"}`;
+        composerPlaceholder.setAttribute("aria-label", composerPrompt);
+        composerPlaceholder.contentEditable = String(sample.composerState !== "Unavailable");
         composerState.className = `composer-state${sample.composerState === "Needs attention" ? "" : sample.composerState === "Running" ? " running" : ""}`;
         composerStateText.textContent = sample.composerState;
         terminalAction.textContent = sample.composerState === "Idle" ? "↑" : "■";
@@ -2066,6 +2081,7 @@
       });
 
       applySessionSample();
+      if (params.get("compose") === "1") requestAnimationFrame(() => composerPlaceholder.focus());
 
       document.querySelectorAll("[data-work-toggle], [data-disclosure]").forEach((button) => {
         button.addEventListener("click", () => {

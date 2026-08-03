@@ -445,7 +445,7 @@
       document.querySelector("[data-new-session]").addEventListener("click", () => {
         const sessionId = `sess-direct-${Date.now()}`;
         const title = "Untitled Session";
-        const href = `./session.html?session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(title)}`;
+        const href = `./session.html?session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(title)}&compose=1`;
         const records = window.readArchcodePrototypeSessions?.() || [];
         records.unshift({ group: "Recent", tone: "", state: "Idle", source: "Direct", title, sessionId, parent: "Lead", agent: "Lead", href });
         localStorage.setItem("archcode-prototype-sessions", JSON.stringify(records.slice(0, 12)));

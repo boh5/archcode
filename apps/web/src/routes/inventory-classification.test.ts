@@ -99,6 +99,13 @@ describe("inventory classification", () => {
     ]);
   });
 
+  test("gives manual inspection precedence over its original request type", () => {
+    const labels = sessionAttentionLabels([
+      { rootSessionId: "inspection", view: { source: { type: "ask_user" }, requiresInspection: true } },
+    ]);
+    expect(labels.get("inspection")).toBe("Inspection");
+  });
+
   test("presents every durable terminal and suspended Session state without calling it Idle", () => {
     const item = (status: NonNullable<ProjectSessionInventoryItem["latestExecution"]>["status"]) => ({
       session: { sessionId: status, updatedAt: 1 },
@@ -110,5 +117,6 @@ describe("inventory classification", () => {
     expect(presentSessionInventoryStatus(item("cancelled"), "idle")).toEqual({ label: "Stopped · Cancelled", kind: "stopped" });
     expect(presentSessionInventoryStatus(item("interrupted"), "idle")).toEqual({ label: "Stopped · Interrupted", kind: "stopped" });
     expect(presentSessionInventoryStatus(item("suspended"), "idle")).toEqual({ label: "Suspended", kind: "blocked" });
+    expect(presentSessionInventoryStatus(item("failed"), "running")).toEqual({ label: "Running", kind: "running" });
   });
 });

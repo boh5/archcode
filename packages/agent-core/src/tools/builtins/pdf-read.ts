@@ -7,7 +7,6 @@ import { utf8ByteLength } from "../../tool-output/utf8";
 import { getSystemErrorCode } from "../../utils";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import { createReadSnapshotAfterHook } from "../hooks";
 import { createSensitiveFilePermission, createWorkspacePermission } from "../permission";
 import { createTextToolResult } from "../results";
 import { resolveAndValidatePath } from "../security";
@@ -185,7 +184,6 @@ export const pdfReadTool = defineTool({
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   outputPolicy: { kind: "artifact", previewDirection: "head" },
   permissions: [createWorkspacePermission(), createSensitiveFilePermission()],
-  hooks: { after: [createReadSnapshotAfterHook()] },
   execute: async (input: PdfReadInput, ctx): Promise<RawToolResult> => {
     const { resolved } = resolveAndValidatePath(input.path, ctx.cwd);
 
@@ -209,6 +207,14 @@ export const pdfReadTool = defineTool({
         return createToolErrorResult({ kind: "file-permission-denied", code: "TOOL_FILE_PERMISSION_DENIED", message: `Permission denied: ${input.path}` });
       }
       return createToolErrorResult({ kind: "execution", error });
+    }
+
+    if (bytes.byteLength > MAX_ATTACHMENT_SIZE_BYTES) {
+      return pdfError(
+        "TOOL_PDF_TOO_LARGE",
+        `The PDF exceeds the fixed ${MAX_ATTACHMENT_SIZE_BYTES} byte read limit.`,
+        "Use a smaller PDF. pdf_read does not stream or partially parse oversized documents.",
+      );
     }
 
     if (!hasPdfHeader(bytes)) {
