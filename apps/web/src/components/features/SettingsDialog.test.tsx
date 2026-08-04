@@ -82,7 +82,23 @@ describe("SettingsDialog", () => {
     const labels = findAll(tree, (element) => element.type === "button").map(textContent);
 
     expect(textContent(tree)).toContain("Server");
-    expect(labels).toEqual(["Models", "Profiles", "Security", "MCP", "Memory", "GitHub", "About & Updates"]);
+    expect(labels).toEqual(["Models", "Profiles", "Security", "Runtime Data", "MCP", "Memory", "GitHub", "About & Updates"]);
+  });
+
+  test("adds Config Recovery while disabling Config-dependent sections", () => {
+    const tree = SettingsNavigation({
+      activeSection: "config-recovery",
+      onSelect: () => {},
+      recoveryMode: true,
+    });
+    const buttons = findAll(tree, (element) => element.type === "button");
+    const labels = buttons.map(textContent);
+
+    expect(labels[0]).toBe("Config Recovery");
+    expect(buttons.find((button) => textContent(button) === "Config Recovery")?.props?.disabled).toBe(false);
+    expect(buttons.find((button) => textContent(button) === "About & Updates")?.props?.disabled).toBe(false);
+    expect(buttons.find((button) => textContent(button) === "Models")?.props?.disabled).toBe(true);
+    expect(buttons.find((button) => textContent(button) === "Runtime Data")?.props?.disabled).toBe(true);
   });
 
   test("keeps providers and models in one continuous Models surface", () => {
@@ -127,5 +143,25 @@ describe("SettingsDialog", () => {
     const notice = textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: ["mcp", "integrations.github"] }));
     expect(notice).toContain("applied live");
     expect(notice).toContain("Restart required for: MCP, GitHub");
+  });
+
+  test("does not claim live application while Runtime is unavailable", () => {
+    const notice = textContent(SettingsApplyNotice({
+      modelsAppliedLive: false,
+      restartRequiredSections: [],
+      savedWhileRuntimeUnavailable: true,
+    }));
+
+    expect(notice).toContain("Configuration saved");
+    expect(notice).toContain("Retry Runtime");
+    expect(notice).not.toContain("applied live");
+  });
+
+  test("keeps MCP configuration visible while live status is unavailable", () => {
+    const tree = SettingsMcpPanel({ config, servers: {}, onChange: () => {}, runtimeAvailable: false });
+
+    expect(textContent(tree)).toContain("Unavailable while Runtime is offline");
+    expect(textContent(tree)).toContain("Unavailable");
+    expect(textContent(tree)).not.toContain("Failed");
   });
 });

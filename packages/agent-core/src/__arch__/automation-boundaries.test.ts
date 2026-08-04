@@ -53,12 +53,17 @@ describe("Automation architecture boundaries", () => {
       serverHost.indexOf("runtime.startAutomationSchedulers"),
     );
     expect(serverHost.indexOf("runtime.startAutomationSchedulers")).toBeLessThan(
-      serverHost.indexOf("this.runtimeApp = createRuntimeApp(runtime"),
+      serverHost.indexOf("const runtimeApp = createRuntimeApp(runtime"),
+    );
+    expect(serverHost.indexOf("const runtimeApp = createRuntimeApp(runtime")).toBeLessThan(
+      serverHost.indexOf("this.runtimeApp = runtimeApp"),
     );
     expect(serverMain.indexOf("await ArchCodeServerHost.create")).toBeLessThan(
       serverMain.indexOf("await bootServer(host"),
     );
-    expect(boot).toContain("startServer(host.app");
+    expect(boot.indexOf("startServer(host.app")).toBeLessThan(
+      boot.indexOf("host.startRuntimeActivation()"),
+    );
     expect(sessionRecovery).toContain("reconcileAnsweredHitl");
     expect(sessionRecovery).toContain("continueRunnableToolBatches");
     expect(runtime).toContain("reconcileAllActiveGoals");

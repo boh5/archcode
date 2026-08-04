@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { SetupGrant } from "./setup-grant";
+import { TerminalGrant } from "./terminal-grant";
 
-describe("SetupGrant", () => {
+describe("TerminalGrant", () => {
   test("authorizes only the random token embedded in the setup fragment", () => {
-    const grant = new SetupGrant();
-    const url = grant.setupUrl("http://localhost:4096");
+    const grant = new TerminalGrant();
+    const url = grant.url("http://localhost:4096", "/setup");
     const token = new URL(url).hash.slice("#token=".length);
 
     expect(token.length).toBeGreaterThanOrEqual(43);
@@ -14,8 +14,8 @@ describe("SetupGrant", () => {
   });
 
   test("cannot be reused after setup commits", () => {
-    const grant = new SetupGrant();
-    const token = new URL(grant.setupUrl("http://localhost:4096")).hash.slice("#token=".length);
+    const grant = new TerminalGrant();
+    const token = new URL(grant.url("http://localhost:4096", "/config-recovery")).hash.slice("#token=".length);
 
     grant.consume();
 

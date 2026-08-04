@@ -29,7 +29,9 @@ export {
 export {
   BuiltinMcpConfigNameError,
   ConfigRevisionConflictError,
+  ConfigRecoveryConflictError,
   ConfigSemanticValidationError,
+  InvalidConfigRemovalError,
   ConfigInitializationConflictError,
   ServerConfigService,
   resolveServerConfigPath,
@@ -39,6 +41,10 @@ export {
   type ServerConfigInitialization,
   type ServerAuthCredential,
   type ServerAuthConfigUpdate,
+  type InvalidConfigRemovalItem,
+  type InvalidConfigRemovalPlan,
+  type InvalidConfigRemovalTarget,
+  type InvalidConfigRecoveryContext,
 } from "./server-config-service";
 export {
   type ModelCallOptions,

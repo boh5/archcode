@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -6,12 +7,15 @@ import type { ServerConfigEditableView, ServerConfigUpdate } from "@archcode/pro
 import {
   BuiltinMcpConfigNameError,
   ConfigInitializationConflictError,
+  ConfigRecoveryConflictError,
   ConfigRevisionConflictError,
   ConfigSemanticValidationError,
+  InvalidConfigRemovalError,
   ServerConfigService,
   resolveServerConfigPath,
 } from "./server-config-service";
 import { providerAdapterCatalog, type ProviderAdapter } from "./provider-adapter-catalog";
+import { ModelRuntime } from "../models";
 
 const roots: string[] = [];
 const PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA";
@@ -639,18 +643,345 @@ describe("ServerConfigService", () => {
     const invalidJson = await createUnloadedService();
     await mkdir(join(invalidJson.homeDir, ".archcode"), { recursive: true });
     await writeFile(invalidJson.configPath, "{");
-    expect(await invalidJson.activateForStartup()).toMatchObject({
+    const invalidJsonResult = await invalidJson.activateForStartup();
+    expect(invalidJsonResult).toMatchObject({
       status: "config_error",
       error: { message: expect.stringContaining(invalidJson.configPath) },
     });
+    if (invalidJsonResult.status !== "config_error") throw new Error("Expected invalid JSON");
+    expect(invalidJson.invalidConfigRemovalPlan(invalidJsonResult.error)).toEqual({ items: [] });
 
     const invalidSchema = await createUnloadedService();
     await mkdir(join(invalidSchema.homeDir, ".archcode"), { recursive: true });
     await writeFile(invalidSchema.configPath, JSON.stringify({ provider: {} }));
-    expect(await invalidSchema.activateForStartup()).toMatchObject({
+    const invalidSchemaResult = await invalidSchema.activateForStartup();
+    expect(invalidSchemaResult).toMatchObject({
       status: "config_error",
       error: { message: expect.stringContaining(invalidSchema.configPath) },
     });
+    if (invalidSchemaResult.status !== "config_error") throw new Error("Expected invalid schema");
+    expect(invalidSchema.invalidConfigRemovalPlan(invalidSchemaResult.error).items).toEqual([]);
+  });
+
+  test("discards only an invalid canonical Config and refuses a valid one", async () => {
+    const invalid = await createUnloadedService();
+    await mkdir(join(invalid.homeDir, ".archcode"), { recursive: true });
+    await writeFile(invalid.configPath, "{", { mode: 0o600 });
+
+    await invalid.discardInvalidConfig();
+    expect(await invalid.activateForStartup()).toEqual({ status: "setup" });
+    await expect(invalid.discardInvalidConfig()).resolves.toBeUndefined();
+
+    const valid = await createService();
+    const before = await readFile(valid.configPath, "utf8");
+    await expect(valid.discardInvalidConfig()).rejects.toBeInstanceOf(
+      ConfigRecoveryConflictError,
+    );
+    expect(await readFile(valid.configPath, "utf8")).toBe(before);
+  });
+
+  test("removes only selected invalid fields after validating the complete remaining Config", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, unknown>;
+    invalid.unsupportedLegacyConfig = { secretSentinel: "must-stay-private" };
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    expect(startup.status).toBe("config_error");
+    if (startup.status !== "config_error") throw new Error("Expected invalid Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    expect(plan.revision).toBeString();
+    expect(plan.items).toHaveLength(1);
+    expect(plan.items[0]!.id).not.toContain("unsupportedLegacyConfig");
+    expect(plan.items[0]!.id).not.toContain("must-stay-private");
+
+    const secondService = await createUnloadedService();
+    await mkdir(join(secondService.homeDir, ".archcode"), { recursive: true });
+    await writeFile(secondService.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+    const secondStartup = await secondService.activateForStartup();
+    if (secondStartup.status !== "config_error") throw new Error("Expected second invalid Config");
+    expect(secondService.invalidConfigRemovalPlan(secondStartup.error).items[0]!.id)
+      .not.toBe(plan.items[0]!.id);
+
+    const result = await service.removeInvalidConfigItems(
+      plan.revision!,
+      [plan.items[0]!.id],
+    );
+
+    expect(result.status).toBe("ready");
+    expect(JSON.parse(await readFile(service.configPath, "utf8"))).toEqual(config());
+    expect((await stat(service.configPath)).mode & 0o777).toBe(0o600);
+  });
+
+  test("leaves the invalid Config byte-for-byte unchanged when selected removals are insufficient", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, unknown>;
+    invalid.firstLegacyField = true;
+    invalid.secondLegacyField = true;
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    const before = `${JSON.stringify(invalid, null, 2)}\n`;
+    await writeFile(service.configPath, before, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected invalid Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    expect(plan.items).toHaveLength(2);
+
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      [plan.items[0]!.id],
+    )).rejects.toBeInstanceOf(InvalidConfigRemovalError);
+    expect(await readFile(service.configPath, "utf8")).toBe(before);
+
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      plan.items.map((item) => item.id),
+    )).resolves.toMatchObject({ status: "ready" });
+  });
+
+  test("removes only the failing MCP server and preserves healthy MCP secrets", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, any>;
+    invalid.mcp.servers.broken = {
+      url: "file:///must-not-be-accepted",
+      headers: { Authorization: "broken-server-secret" },
+    };
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected invalid MCP Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    expect(plan.items).toHaveLength(1);
+    expect(plan.items[0]!.path).toEqual(["mcp", "servers", "broken"]);
+
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      [plan.items[0]!.id],
+    )).resolves.toMatchObject({ status: "ready" });
+    const saved = JSON.parse(await readFile(service.configPath, "utf8"));
+    expect(saved.mcp.servers).toEqual({
+      custom: {
+        url: "https://mcp.example.test",
+        headers: { Authorization: "mcp-secret" },
+      },
+    });
+  });
+
+  test("preserves dotted MCP server identifiers as one selective-removal path segment", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, any>;
+    invalid.mcp.servers.foo = {
+      url: "https://healthy.example.test",
+      headers: { Authorization: "healthy-dotted-neighbor-secret" },
+    };
+    invalid.mcp.servers["foo.bar"] = {
+      url: "file:///must-not-be-accepted",
+    };
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected invalid dotted MCP Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    expect(plan.items).toHaveLength(1);
+    expect(plan.items[0]!.path).toEqual(["mcp", "servers", "foo.bar"]);
+
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      [plan.items[0]!.id],
+    )).resolves.toMatchObject({ status: "ready" });
+    const saved = JSON.parse(await readFile(service.configPath, "utf8"));
+    expect(saved.mcp.servers.foo).toEqual({
+      url: "https://healthy.example.test",
+      headers: { Authorization: "healthy-dotted-neighbor-secret" },
+    });
+    expect(saved.mcp.servers["foo.bar"]).toBeUndefined();
+  });
+
+  test("preserves dotted Provider identifiers as one selective-removal path segment", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, any>;
+    invalid.provider["broken.provider"] = {
+      npm: "@ai-sdk/openai",
+      name: "Broken dotted provider",
+      options: {
+        apiKey: "dotted-provider-secret",
+        queryParams: { unsupported: "true" },
+      },
+      models: structuredClone(invalid.provider.local.models),
+    };
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected invalid dotted Provider Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    expect(plan.items).toHaveLength(1);
+    expect(plan.items[0]!.path).toEqual([
+      "provider",
+      "broken.provider",
+      "options",
+      "queryParams",
+    ]);
+
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      [plan.items[0]!.id],
+    )).resolves.toMatchObject({ status: "ready" });
+    const saved = JSON.parse(await readFile(service.configPath, "utf8"));
+    expect(saved.provider.local).toEqual((config() as any).provider.local);
+    expect(saved.provider["broken.provider"]).toEqual({
+      npm: "@ai-sdk/openai",
+      name: "Broken dotted provider",
+      options: { apiKey: "dotted-provider-secret" },
+      models: structuredClone((config() as any).provider.local.models),
+    });
+  });
+
+  test("rejects stale, duplicate, and non-removable invalid Config selections without mutation", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, any>;
+    invalid.unsupportedLegacyConfig = true;
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected invalid Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    const itemId = plan.items[0]!.id;
+    const before = await readFile(service.configPath, "utf8");
+    await expect(service.removeInvalidConfigItems(plan.revision!, [itemId, itemId]))
+      .rejects.toBeInstanceOf(InvalidConfigRemovalError);
+    expect(await readFile(service.configPath, "utf8")).toBe(before);
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      ["abcdefghijklmnopqrstuv"],
+    )).rejects.toBeInstanceOf(ConfigRevisionConflictError);
+    expect(await readFile(service.configPath, "utf8")).toBe(before);
+
+    invalid.anotherLegacyField = true;
+    const changed = `${JSON.stringify(invalid, null, 2)}\n`;
+    await writeFile(service.configPath, changed, { mode: 0o600 });
+    await expect(service.removeInvalidConfigItems(plan.revision!, [itemId]))
+      .rejects.toBeInstanceOf(ConfigRevisionConflictError);
+    expect(await readFile(service.configPath, "utf8")).toBe(changed);
+
+    delete invalid.unsupportedLegacyConfig;
+    delete invalid.anotherLegacyField;
+    invalid.profiles.principal.model = "missing:model";
+    const profileError = `${JSON.stringify(invalid, null, 2)}\n`;
+    await writeFile(service.configPath, profileError, { mode: 0o600 });
+    const profileStartup = await service.activateForStartup();
+    if (profileStartup.status !== "config_error") throw new Error("Expected invalid Profile");
+    expect(service.invalidConfigRemovalPlan(profileStartup.error).items).toEqual([]);
+    expect(await readFile(service.configPath, "utf8")).toBe(profileError);
+  });
+
+  test("never overwrites an external Config created during selective recovery validation", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "archcode-server-config-"));
+    roots.push(homeDir);
+    const configPath = resolveServerConfigPath(homeDir);
+    await mkdir(join(homeDir, ".archcode"), { recursive: true });
+    const invalid = config() as Record<string, unknown>;
+    invalid.unsupportedLegacyConfig = true;
+    await writeFile(configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+    const external = config() as Record<string, any>;
+    external.provider.local.name = "Externally repaired Config";
+    const externalBytes = `${JSON.stringify(external, null, 2)}\n`;
+    class RacingModelRuntime extends ModelRuntime {
+      override prepare(...args: Parameters<ModelRuntime["prepare"]>) {
+        writeFileSync(configPath, externalBytes, { mode: 0o600 });
+        return super.prepare(...args);
+      }
+    }
+    const service = new ServerConfigService({
+      homeDir,
+      modelRuntime: new RacingModelRuntime(),
+    });
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected invalid Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      [plan.items[0]!.id],
+    )).rejects.toBeInstanceOf(ConfigRevisionConflictError);
+    expect(await readFile(configPath, "utf8")).toBe(externalBytes);
+  });
+
+  test("preserves a valid Config replaced during Reset validation", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "archcode-server-config-"));
+    roots.push(homeDir);
+    await mkdir(join(homeDir, ".archcode"), { recursive: true });
+    const configPath = resolveServerConfigPath(homeDir);
+    const repaired = config() as Record<string, any>;
+    repaired.provider.local.name = "Externally repaired";
+    const repairedBytes = `${JSON.stringify(repaired, null, 2)}\n`;
+    await writeFile(configPath, `${JSON.stringify(config(), null, 2)}\n`, { mode: 0o600 });
+
+    class RacingModelRuntime extends ModelRuntime {
+      private preparations = 0;
+
+      override prepare(
+        candidate: Parameters<ModelRuntime["prepare"]>[0],
+        revision: string,
+      ): ReturnType<ModelRuntime["prepare"]> {
+        this.preparations += 1;
+        if (this.preparations === 2) {
+          writeFileSync(configPath, repairedBytes, { mode: 0o600 });
+        }
+        if (this.preparations <= 2) throw new Error("provider preparation sentinel");
+        return super.prepare(candidate, revision);
+      }
+    }
+    const service = new ServerConfigService({
+      homeDir,
+      modelRuntime: new RacingModelRuntime(),
+    });
+
+    expect(await service.activateForStartup()).toMatchObject({ status: "config_error" });
+    await expect(service.discardInvalidConfig()).rejects.toBeInstanceOf(
+      ConfigRecoveryConflictError,
+    );
+    expect(await readFile(configPath, "utf8")).toBe(repairedBytes);
+    expect(await service.activateForStartup()).toMatchObject({ status: "ready" });
+  });
+
+  test("unlinks an invalid Config symlink without touching its target", async () => {
+    const service = await createUnloadedService();
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    const target = join(service.homeDir, "invalid-target.json");
+    await writeFile(target, "{secret-sentinel", { mode: 0o600 });
+    await symlink(target, service.configPath);
+
+    await service.discardInvalidConfig();
+
+    expect(await readFile(target, "utf8")).toBe("{secret-sentinel");
+    expect(await service.activateForStartup()).toEqual({ status: "setup" });
+  });
+
+  test("discards a Config that fails model runtime preparation", async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), "archcode-server-config-"));
+    roots.push(homeDir);
+    await mkdir(join(homeDir, ".archcode"), { recursive: true });
+    await writeFile(resolveServerConfigPath(homeDir), `${JSON.stringify(config())}\n`, { mode: 0o600 });
+    class FailingModelRuntime extends ModelRuntime {
+      override prepare(): never {
+        throw new Error("provider preparation sentinel");
+      }
+    }
+    const service = new ServerConfigService({
+      homeDir,
+      modelRuntime: new FailingModelRuntime(),
+    });
+
+    expect(await service.activateForStartup()).toMatchObject({
+      status: "config_error",
+    });
+    await service.discardInvalidConfig();
+    expect(await service.activateForStartup()).toEqual({ status: "setup" });
   });
 
   test("rejects singular and plural undeclared credential options during startup and GET", async () => {

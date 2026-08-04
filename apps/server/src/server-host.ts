@@ -1,15 +1,30 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
+import {
+  ConfigRecoveryConflictError,
+  ConfigRevisionConflictError,
+  InvalidConfigRemovalError,
+  normalizeError,
+} from "@archcode/agent-core";
 import type {
   AgentRuntime,
   AgentRuntimeOptions,
   Logger,
-  ServerConfigActivation,
+  ProjectRegistry,
+  RuntimeDataService,
   ServerConfigService,
 } from "@archcode/agent-core";
 import type {
   BootstrapStatus,
   CompleteSetupRequest,
+  ConfigRecoveryActionResponse,
+  ConfigRecoveryStatus,
+  RemoveInvalidConfigItemsRequest,
+  ResetInvalidConfigRequest,
+  RuntimeDataDeleteResult,
+  RuntimeDataDeleteResponse,
+  RuntimeDataInspectionResponse,
+  RuntimeStatus,
   SetupProviderAdapterCatalogResponse,
 } from "@archcode/protocol";
 import { createRuntimeApp } from "./app";
@@ -28,10 +43,16 @@ import {
   type SetupCoordinatorPort,
 } from "./routes/setup";
 import {
+  createConfigRecoveryRoutes,
+  safeConfigRecoveryStatus,
+  type ConfigRecoveryActionResult,
+  type ConfigRecoveryCoordinatorPort,
+} from "./routes/config-recovery";
+import {
   ServerAuthService,
   type AuthConfigWriter,
 } from "./server-auth-service";
-import { SetupGrant } from "./setup-grant";
+import { TerminalGrant } from "./terminal-grant";
 import { ServerError, UnauthorizedError } from "./errors";
 import {
   createEmbeddedAssetHandler,
@@ -41,6 +62,11 @@ import { globalEventBus } from "./events/global-event-bus";
 import { createUpdateRoutes } from "./routes/update";
 import type { ServerRestartController } from "./restart-controller";
 import type { UpdateService } from "./updater";
+import { createConfigRoutes } from "./routes/config";
+import {
+  createRuntimeControlRoutes,
+  type RuntimeControlCoordinatorPort,
+} from "./routes/runtime-control";
 
 export type AgentRuntimeFactory = (
   options: AgentRuntimeOptions,
@@ -64,32 +90,54 @@ export interface ServerHostOptions {
     | "reopenAdmission"
   >;
   readonly restartController: ServerRestartController;
+  readonly projectRegistry: ProjectRegistry;
+  readonly runtimeDataService: Pick<RuntimeDataService, "inspect" | "delete">;
+}
+
+function requireRecoveryGrant(authorized: boolean): void {
+  if (!authorized) {
+    throw new UnauthorizedError("A valid Config Recovery Grant is required");
+  }
 }
 
 type HostState =
-  | { readonly mode: "setup"; readonly grant: SetupGrant }
-  | { readonly mode: "activating"; readonly grant: SetupGrant }
+  | { readonly mode: "setup"; readonly grant: TerminalGrant; submitting: boolean }
   | { readonly mode: "ready" }
-  | { readonly mode: "config_error"; readonly message: string }
-  | { readonly mode: "startup_error"; readonly message: string };
+  | {
+    readonly mode: "config_error";
+    readonly grant: TerminalGrant;
+    readonly recovery: ConfigRecoveryStatus;
+  };
+
+type ReadyBootstrapStatus = Extract<BootstrapStatus, { mode: "ready" }>;
 
 /**
  * Owns the single HTTP shell, bootstrap mode and optional Runtime lifecycle.
  * It is also the one narrow first-run use-case coordinator.
  */
-export class ArchCodeServerHost implements SetupCoordinatorPort {
+export class ArchCodeServerHost implements SetupCoordinatorPort, ConfigRecoveryCoordinatorPort, RuntimeControlCoordinatorPort {
   readonly app: Hono;
   readonly auth: ServerAuthService;
   private readonly options: ServerHostOptions;
   private state: HostState;
+  private runtimeStatus: RuntimeStatus | undefined;
   private runtime: AgentRuntime | undefined;
   private runtimeApp: Hono | undefined;
+  private uncleanRuntimeCandidate: AgentRuntime | undefined;
+  private mutationTail: Promise<void> = Promise.resolve();
+  private initialRuntimeActivationStarted = false;
+  private runtimeMutationPending = false;
   private mutationAdmissionOpen = true;
   private activeMutations = 0;
 
-  private constructor(options: ServerHostOptions, state: HostState) {
+  private constructor(
+    options: ServerHostOptions,
+    state: HostState,
+    runtimeStatus?: RuntimeStatus,
+  ) {
     this.options = options;
     this.state = state;
+    this.runtimeStatus = runtimeStatus;
     this.auth = new ServerAuthService({
       configWriter: options.configService as AuthConfigWriter,
     });
@@ -101,7 +149,8 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
     if (result.status === "setup") {
       return new ArchCodeServerHost(options, {
         mode: "setup",
-        grant: new SetupGrant(),
+        grant: new TerminalGrant(),
+        submitting: false,
       });
     }
     if (result.status === "config_error") {
@@ -111,17 +160,21 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       });
       return new ArchCodeServerHost(options, {
         mode: "config_error",
-        message: "The global configuration is invalid. Repair it and restart ArchCode.",
+        grant: new TerminalGrant(),
+        recovery: safeConfigRecoveryStatus(
+          options.configService.configPath,
+          result.error.issues,
+          options.configService.invalidConfigRemovalPlan(result.error),
+        ),
       });
     }
 
-    const host = new ArchCodeServerHost(options, { mode: "ready" });
+    const host = new ArchCodeServerHost(
+      options,
+      { mode: "ready" },
+      { state: "activating" },
+    );
     host.auth.activateCredential(result.auth?.passwordHash);
-    try {
-      await host.activateRuntime(result.activation);
-    } catch (error) {
-      host.recordStartupFailure(error);
-    }
     return host;
   }
 
@@ -129,18 +182,85 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
     switch (this.state.mode) {
       case "setup":
         return { mode: "setup" };
-      case "activating":
-        return { mode: "activating" };
       case "config_error":
-        return { mode: "config_error", message: this.state.message };
-      case "startup_error":
-        return { mode: "startup_error", message: this.state.message };
-      case "ready":
         return {
-          mode: "ready",
-          authRequired: this.auth.authRequired,
-          authenticated: this.auth.authenticate(sessionToken),
+          mode: "config_error",
+          message: "The global configuration is invalid. Open Config Recovery from the server terminal.",
         };
+      case "ready":
+        return this.readyBootstrapStatus(sessionToken);
+    }
+  }
+
+  /** Starts the initial Runtime attempt without delaying listener publication. */
+  startRuntimeActivation(): void {
+    if (this.state.mode !== "ready" || this.runtime !== undefined) return;
+    if (this.initialRuntimeActivationStarted) return;
+    if (this.runtimeMutationPending) return;
+    this.initialRuntimeActivationStarted = true;
+    this.runtimeMutationPending = true;
+    void this.runHostMutation(async () => {
+      try {
+        await this.activateRuntimeFromCurrentConfig();
+      } finally {
+        this.runtimeMutationPending = false;
+      }
+    }).catch(() => undefined);
+  }
+
+  getRuntimeStatus(): RuntimeStatus {
+    return this.requireRuntimeStatus();
+  }
+
+  async retryRuntime(): Promise<RuntimeStatus> {
+    this.assertRuntimeMutationAvailable();
+    this.runtimeMutationPending = true;
+    try {
+      await this.runHostMutation(async () => {
+        try {
+          await this.activateRuntimeFromCurrentConfig();
+        } catch {
+          // The current safe error status is the retry result.
+        }
+      });
+      return this.requireRuntimeStatus();
+    } finally {
+      this.runtimeMutationPending = false;
+    }
+  }
+
+  async inspectRuntimeData(): Promise<RuntimeDataInspectionResponse> {
+    return await this.options.runtimeDataService.inspect();
+  }
+
+  async deleteRuntimeData(
+    projectSlugs: readonly string[],
+  ): Promise<RuntimeDataDeleteResponse> {
+    this.assertRuntimeMutationAvailable();
+    this.runtimeMutationPending = true;
+    try {
+      return await this.runHostMutation(async () => {
+        const response: RuntimeDataDeleteResult = await this.options.runtimeDataService.delete(
+          projectSlugs,
+        );
+        if (
+          response.results.length > 0
+          && response.results.every((result) => result.status === "deleted")
+        ) {
+          await this.options.runtimeDataService.inspect();
+          try {
+            await this.activateRuntimeFromCurrentConfig();
+          } catch {
+            // Deletion succeeded. Bootstrap carries the resulting Runtime error.
+          }
+        }
+        return {
+          ...response,
+          runtime: this.requireRuntimeStatus(),
+        };
+      });
+    } finally {
+      this.runtimeMutationPending = false;
     }
   }
 
@@ -158,55 +278,225 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
   ): Promise<CompleteSetupResult> {
     const state = this.requireSetupState();
     requireSetupGrant(state.grant.authorize(authorization));
-    this.state = { mode: "activating", grant: state.grant };
+    if (state.submitting) {
+      throw new ServerError("SETUP_CONFLICT", "Setup is already activating", 409);
+    }
+    state.submitting = true;
 
     let committed = false;
     try {
-      const passwordHash = request.requireLogin
-        ? await this.auth.hashPassword(request.password)
-        : undefined;
-      const candidate = {
-        ...request.config,
-        ...(passwordHash === undefined ? {} : { auth: { passwordHash } }),
-      };
-      const initialized = await this.options.configService.initialize(candidate);
-      committed = true;
-      state.grant.consume();
-      this.auth.activateCredential(initialized.auth?.passwordHash);
-      await this.activateRuntime(initialized.activation);
-      this.state = { mode: "ready" };
-      const session = this.auth.authRequired ? this.auth.issueSession() : undefined;
+      let session: ReturnType<ServerAuthService["issueSession"]> | undefined;
+      await this.runHostMutation(async () => {
+        const passwordHash = request.requireLogin
+          ? await this.auth.hashPassword(request.password)
+          : undefined;
+        const candidate = {
+          ...request.config,
+          ...(passwordHash === undefined ? {} : { auth: { passwordHash } }),
+        };
+        const initialized = await this.options.configService.initialize(candidate);
+        committed = true;
+        state.grant.consume();
+        this.auth.activateCredential(initialized.auth?.passwordHash);
+        this.state = { mode: "ready" };
+        this.runtimeStatus = { state: "activating" };
+        session = this.auth.authRequired ? this.auth.issueSession() : undefined;
+        try {
+          await this.activateRuntimeFromCurrentConfig();
+        } catch {
+          // A committed Setup is successful even when Runtime startup fails.
+          // activateRuntimeFromCurrentConfig records the safe Runtime status.
+        }
+      });
       return {
         response: {
-          status: {
-            mode: "ready",
-            authRequired: this.auth.authRequired,
-            authenticated: true,
-          },
+          status: this.readyBootstrapStatus(session?.token),
         },
         ...(session === undefined ? {} : { session }),
       };
     } catch (error) {
       if (!committed) {
-        this.state = { mode: "setup", grant: state.grant };
+        state.submitting = false;
         throw error;
       }
-      this.recordStartupFailure(error);
-      throw new ServerError(
-        "SERVER_NOT_READY",
-        "Setup was saved, but ArchCode could not start. Restart after checking the server log.",
-        500,
-      );
+      throw error;
     }
   }
 
-  setupInstructions(baseUrl: string): readonly string[] {
-    if (this.state.mode !== "setup") return [];
+  getConfigRecoveryStatus(
+    authorization: string | undefined,
+  ): ConfigRecoveryStatus {
+    const state = this.requireConfigRecoveryState();
+    requireRecoveryGrant(state.grant.authorize(authorization));
+    return state.recovery;
+  }
+
+  async retryConfigRecovery(
+    authorization: string | undefined,
+  ): Promise<ConfigRecoveryActionResult> {
+    const initial = this.requireConfigRecoveryState();
+    requireRecoveryGrant(initial.grant.authorize(authorization));
+    let session: ReturnType<ServerAuthService["issueSession"]> | undefined;
+    let response!: ConfigRecoveryActionResponse;
+    let activateRuntime = false;
+
+    await this.runHostMutation(async () => {
+      const state = this.requireConfigRecoveryState();
+      requireRecoveryGrant(state.grant === initial.grant && state.grant.authorize(authorization));
+      const current = await this.options.configService.activateForStartup();
+      if (current.status === "config_error") {
+        const recovery = safeConfigRecoveryStatus(
+          this.options.configService.configPath,
+          current.error.issues,
+          this.options.configService.invalidConfigRemovalPlan(current.error),
+        );
+        this.state = { mode: "config_error", grant: state.grant, recovery };
+        response = {
+          status: this.bootstrapStatus(undefined),
+          recovery,
+        };
+        return;
+      }
+      if (current.status === "setup") {
+        this.state = { mode: "setup", grant: state.grant, submitting: false };
+        response = { status: { mode: "setup" } };
+        return;
+      }
+
+      state.grant.consume();
+      this.auth.activateCredential(current.auth?.passwordHash);
+      this.state = { mode: "ready" };
+      this.runtimeStatus = { state: "activating" };
+      session = this.auth.authRequired ? this.auth.issueSession() : undefined;
+      response = { status: this.readyBootstrapStatus(session?.token) };
+      activateRuntime = true;
+    });
+
+    if (activateRuntime) this.startRuntimeActivation();
+    return {
+      response,
+      ...(session === undefined ? {} : { session }),
+    };
+  }
+
+  async removeInvalidConfigItems(
+    authorization: string | undefined,
+    request: RemoveInvalidConfigItemsRequest,
+  ): Promise<ConfigRecoveryActionResult> {
+    const initial = this.requireConfigRecoveryState();
+    requireRecoveryGrant(initial.grant.authorize(authorization));
+    let session: ReturnType<ServerAuthService["issueSession"]> | undefined;
+    let response!: ConfigRecoveryActionResponse;
+    let activateRuntime = false;
+
+    await this.runHostMutation(async () => {
+      const state = this.requireConfigRecoveryState();
+      requireRecoveryGrant(state.grant === initial.grant && state.grant.authorize(authorization));
+      let current;
+      try {
+        current = await this.options.configService.removeInvalidConfigItems(
+          request.expectedRevision,
+          request.itemIds,
+        );
+      } catch (error) {
+        if (error instanceof ConfigRevisionConflictError) {
+          throw new ServerError(
+            "CONFIG_RECOVERY_CONFLICT",
+            "The configuration changed. Reload Config Recovery before removing anything.",
+            409,
+          );
+        }
+        if (error instanceof InvalidConfigRemovalError) {
+          throw new ServerError(
+            "CONFIG_VALIDATION_ERROR",
+            "The selected removals would not leave a valid configuration. Nothing was changed.",
+            422,
+          );
+        }
+        if (error instanceof ConfigRecoveryConflictError) {
+          throw new ServerError(
+            "CONFIG_RECOVERY_CONFLICT",
+            "The configuration is now valid. Retry configuration instead.",
+            409,
+          );
+        }
+        throw error;
+      }
+
+      if (current.status === "config_error") {
+        const recovery = safeConfigRecoveryStatus(
+          this.options.configService.configPath,
+          current.error.issues,
+          this.options.configService.invalidConfigRemovalPlan(current.error),
+        );
+        this.state = { mode: "config_error", grant: state.grant, recovery };
+        response = { status: this.bootstrapStatus(undefined), recovery };
+        return;
+      }
+      if (current.status === "setup") {
+        throw new ServerError(
+          "CONFIG_RECOVERY_CONFLICT",
+          "The configuration no longer exists. Reload Config Recovery.",
+          409,
+        );
+      }
+
+      state.grant.consume();
+      this.auth.activateCredential(current.auth?.passwordHash);
+      this.state = { mode: "ready" };
+      this.runtimeStatus = { state: "activating" };
+      session = this.auth.authRequired ? this.auth.issueSession() : undefined;
+      response = { status: this.readyBootstrapStatus(session?.token) };
+      activateRuntime = true;
+    });
+
+    if (activateRuntime) this.startRuntimeActivation();
+    return {
+      response,
+      ...(session === undefined ? {} : { session }),
+    };
+  }
+
+  async resetInvalidConfig(
+    authorization: string | undefined,
+    _request: ResetInvalidConfigRequest,
+  ): Promise<ConfigRecoveryActionResult> {
+    const initial = this.requireConfigRecoveryState();
+    requireRecoveryGrant(initial.grant.authorize(authorization));
+    return await this.runHostMutation(async () => {
+      const state = this.requireConfigRecoveryState();
+      requireRecoveryGrant(state.grant === initial.grant && state.grant.authorize(authorization));
+      try {
+        await this.options.configService.discardInvalidConfig();
+      } catch (error) {
+        if (error instanceof ConfigRecoveryConflictError) {
+          throw new ServerError(
+            "CONFIG_RECOVERY_CONFLICT",
+            "The configuration is now valid and was not deleted. Retry configuration instead.",
+            409,
+          );
+        }
+        throw error;
+      }
+      this.state = { mode: "setup", grant: state.grant, submitting: false };
+      return { response: { status: { mode: "setup" } } };
+    });
+  }
+
+  terminalInstructions(baseUrl: string): readonly string[] {
+    if (this.state.mode === "ready") return [];
     const localBaseUrl = this.options.dev
       ? "http://localhost:5173"
       : baseUrl;
-    const url = this.state.grant.setupUrl(localBaseUrl);
+    const pathname = this.state.mode === "setup" ? "/setup" : "/config-recovery";
+    const url = this.state.grant.url(localBaseUrl, pathname);
     const fragment = new URL(url).hash;
+    if (this.state.mode === "config_error") {
+      return [
+        `Repair the invalid global configuration at ${url}`,
+        `For a remote HTTPS URL, open /config-recovery${fragment} on that host or use an SSH tunnel.`,
+      ];
+    }
     return [
       `Complete first-run setup at ${url}`,
       `For a remote HTTPS URL, open /setup${fragment} on that host or use an SSH tunnel.`,
@@ -216,13 +506,22 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
   async shutdown(reason: string = "server_shutdown"): Promise<void> {
     this.mutationAdmissionOpen = false;
     await this.options.updateService.stop();
+    await this.mutationTail;
     const runtime = this.runtime;
+    const uncleanRuntimeCandidate = this.uncleanRuntimeCandidate;
     this.runtime = undefined;
     this.runtimeApp = undefined;
-    if (runtime === undefined) return;
-    globalEventBus.emit({ type: "shutdown", reason });
-    runtime.notifyRuntimeShutdown(reason);
-    await runtime.shutdown();
+    this.uncleanRuntimeCandidate = undefined;
+    if (runtime !== undefined) {
+      globalEventBus.emit({ type: "shutdown", reason });
+      runtime.notifyRuntimeShutdown(reason);
+    }
+    const runtimes = runtime === undefined
+      ? uncleanRuntimeCandidate === undefined ? [] : [uncleanRuntimeCandidate]
+      : uncleanRuntimeCandidate === undefined || uncleanRuntimeCandidate === runtime
+        ? [runtime]
+        : [runtime, uncleanRuntimeCandidate];
+    await Promise.all(runtimes.map(async (ownedRuntime) => await ownedRuntime.shutdown()));
   }
 
   private createShell(): Hono {
@@ -258,9 +557,17 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
     app.use("/api/bootstrap", noStore);
     app.use("/api/setup", noStore);
     app.use("/api/setup/*", noStore);
+    app.use("/api/config-recovery", noStore);
+    app.use("/api/config-recovery/*", noStore);
     app.use("/api/auth/*", noStore);
+    app.use("/api/config", noStore);
+    app.use("/api/config/*", noStore);
     app.use("/api/update", noStore);
     app.use("/api/update/*", noStore);
+    app.use("/api/runtime", noStore);
+    app.use("/api/runtime/*", noStore);
+    app.use("/api/runtime-data", noStore);
+    app.use("/api/runtime-data/*", noStore);
 
     app.get("/api/health", (c) => c.json({
       ok: true,
@@ -270,6 +577,9 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       this.bootstrapStatus(readSessionToken(c)),
     ));
     app.route("/api/setup", createSetupRoutes(this, {
+      dev: this.options.dev,
+    }));
+    app.route("/api/config-recovery", createConfigRecoveryRoutes(this, {
       dev: this.options.dev,
     }));
     app.use("/api/auth/*", async (_c, next) => {
@@ -286,11 +596,11 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       dev: this.options.dev,
     }));
 
-    const updateAccess: MiddlewareHandler = async (c, next) => {
-      if (this.state.mode !== "ready" || this.runtime === undefined) {
+    const controlPlaneAccess: MiddlewareHandler = async (c, next) => {
+      if (this.state.mode !== "ready") {
         throw new ServerError(
           "SERVER_NOT_READY",
-          "ArchCode Runtime is not available",
+          "ArchCode control plane is not available",
           503,
         );
       }
@@ -305,6 +615,30 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       }
       await next();
     };
+    app.use("/api/config", controlPlaneAccess);
+    app.use("/api/config/*", controlPlaneAccess);
+    app.route("/api/config", createConfigRoutes({
+      getSnapshot: () => this.options.configService.getSnapshot(),
+      getModelRuntimeCatalog: () => this.options.configService.getModelRuntimeCatalog(),
+      getProviderAdapterCatalog: () => this.options.configService.getProviderAdapterCatalog(),
+      save: (request) => this.runHostMutation(
+        () => this.options.configService.save(request),
+      ),
+    }));
+
+    const updateAccess: MiddlewareHandler = async (c, next) => {
+      if (this.state.mode === "config_error") {
+        requireRecoveryGrant(
+          this.state.grant.authorize(c.req.header("Authorization")),
+        );
+        if (!isSafeMethod(c.req.method)) {
+          assertMutationOrigin(c.req.raw, { dev: this.options.dev });
+        }
+        await next();
+        return;
+      }
+      await controlPlaneAccess(c, next);
+    };
     app.use("/api/update", updateAccess);
     app.use("/api/update/*", updateAccess);
     app.route("/api/update", createUpdateRoutes({
@@ -313,14 +647,15 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       prepareForRestart: () => this.prepareForRestart(),
     }));
 
+    app.use("/api/runtime", controlPlaneAccess);
+    app.use("/api/runtime/*", controlPlaneAccess);
+    app.use("/api/runtime-data", controlPlaneAccess);
+    app.use("/api/runtime-data/*", controlPlaneAccess);
+    const runtimeControl = createRuntimeControlRoutes(this);
+    app.route("/api/runtime", runtimeControl.runtime);
+    app.route("/api/runtime-data", runtimeControl.runtimeData);
+
     app.all("/api/*", async (c) => {
-      if (this.state.mode !== "ready" || this.runtimeApp === undefined) {
-        throw new ServerError(
-          "SERVER_NOT_READY",
-          "ArchCode Runtime is not available",
-          503,
-        );
-      }
       if (
         this.auth.authRequired
         && !this.auth.authenticate(readSessionToken(c))
@@ -329,6 +664,13 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       }
       if (this.auth.authRequired && !isSafeMethod(c.req.method)) {
         assertMutationOrigin(c.req.raw, { dev: this.options.dev });
+      }
+      if (this.state.mode !== "ready" || this.runtimeApp === undefined) {
+        throw new ServerError(
+          "SERVER_NOT_READY",
+          "ArchCode Runtime is not available",
+          503,
+        );
       }
       return await this.runtimeApp.fetch(c.req.raw);
     });
@@ -340,13 +682,21 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
   }
 
   private requireSetupState(): Extract<HostState, { mode: "setup" }> {
-    if (this.state.mode === "activating") {
-      throw new ServerError("SETUP_CONFLICT", "Setup is already activating", 409);
-    }
     if (this.state.mode !== "setup") {
       throw new ServerError(
         "SERVER_NOT_READY",
         "First-run setup is not available",
+        404,
+      );
+    }
+    return this.state;
+  }
+
+  private requireConfigRecoveryState(): Extract<HostState, { mode: "config_error" }> {
+    if (this.state.mode !== "config_error") {
+      throw new ServerError(
+        "SERVER_NOT_READY",
+        "Config Recovery is not available",
         404,
       );
     }
@@ -384,14 +734,16 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
       return { ready: false, activeFamilyCount: 1 };
     }
 
+    if (this.runtimeMutationPending) {
+      this.options.updateService.reopenAdmission();
+      this.mutationAdmissionOpen = true;
+      return { ready: false, activeFamilyCount: 1 };
+    }
+
     try {
       const runtime = this.runtime;
       if (runtime === undefined) {
-        throw new ServerError(
-          "SERVER_NOT_READY",
-          "ArchCode Runtime is not available",
-          503,
-        );
+        return { ready: true };
       }
       const admission = runtime.prepareForRestart();
       if (!admission.ready) {
@@ -406,18 +758,36 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
     }
   }
 
-  private async activateRuntime(activation: ServerConfigActivation): Promise<void> {
+  private async activateRuntimeFromCurrentConfig(): Promise<void> {
+    this.runtimeStatus = { state: "activating" };
+    let current: Awaited<ReturnType<ServerConfigService["activateForStartup"]>>;
+    try {
+      current = await this.options.configService.activateForStartup();
+    } catch (error) {
+      this.recordRuntimeFailure(error);
+      throw error;
+    }
+    if (current.status !== "ready") {
+      const error = new Error(
+        current.status === "config_error"
+          ? "The current global configuration is invalid"
+          : "The current global configuration is missing",
+      );
+      this.recordRuntimeFailure(error);
+      throw error;
+    }
+
     let runtime: AgentRuntime | undefined;
     try {
       runtime = await this.options.createRuntime({
         configService: this.options.configService,
-        activation,
+        activation: current.activation,
+        projectRegistry: this.options.projectRegistry,
         logger: this.options.logger,
       });
       await runtime.recoverSessionContinuations();
       await runtime.startAutomationSchedulers();
-      this.runtime = runtime;
-      this.runtimeApp = createRuntimeApp(runtime, {
+      const runtimeApp = createRuntimeApp(runtime, {
         logger: this.options.logger.child({ module: "server.http" }),
         globalEventStreamLease: (request) => {
           if (!this.auth.authRequired) return undefined;
@@ -430,6 +800,9 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
           return lease;
         },
       }).app;
+      this.runtime = runtime;
+      this.runtimeApp = runtimeApp;
+      this.runtimeStatus = { state: "ready" };
     } catch (error) {
       if (runtime !== undefined) {
         try {
@@ -437,31 +810,121 @@ export class ArchCodeServerHost implements SetupCoordinatorPort {
         } catch (shutdownError) {
           this.options.logger.error("server.runtime.cleanup_failed", {
             message: "Runtime cleanup failed",
+            error: shutdownError,
             meta: {
               errorName: shutdownError instanceof Error
                 ? shutdownError.name
                 : "NonErrorThrow",
+              activationError: normalizeError(error, true),
+              ...(shutdownError instanceof Error && shutdownError.cause !== undefined
+                ? { cause: normalizeError(shutdownError.cause, true) }
+                : {}),
             },
           });
+          this.uncleanRuntimeCandidate = runtime;
+          this.recordRuntimeCleanupFailure(error);
+          throw error;
         }
       }
+      this.recordRuntimeFailure(error);
       throw error;
     }
   }
 
-  private recordStartupFailure(error: unknown): void {
+  private recordRuntimeFailure(error: unknown): void {
     this.runtime = undefined;
     this.runtimeApp = undefined;
+    this.logRuntimeStartFailure(error);
+    this.runtimeStatus = {
+      state: "error",
+      error: {
+        message: "ArchCode Runtime could not start. Check Runtime Data or the server log, then retry.",
+        recoveryAllowed: true,
+      },
+    };
+  }
+
+  private recordRuntimeCleanupFailure(activationError: unknown): void {
+    this.runtime = undefined;
+    this.runtimeApp = undefined;
+    this.logRuntimeStartFailure(activationError);
+    this.runtimeStatus = {
+      state: "error",
+      error: {
+        message: "Runtime cleanup did not complete. Restart ArchCode before retrying or deleting Runtime data.",
+        recoveryAllowed: false,
+      },
+    };
+  }
+
+  private logRuntimeStartFailure(error: unknown): void {
     this.options.logger.error("server.runtime.start_failed", {
       message: "Runtime startup failed",
+      error,
       meta: {
         errorName: error instanceof Error ? error.name : "NonErrorThrow",
+        ...(error instanceof Error && error.cause !== undefined
+          ? { cause: normalizeError(error.cause, true) }
+          : {}),
       },
     });
-    this.state = {
-      mode: "startup_error",
-      message: "The saved configuration is valid, but ArchCode could not start. Check the server log and restart.",
+  }
+
+  private requireRuntimeStatus(): RuntimeStatus {
+    if (this.runtimeStatus === undefined) {
+      throw new Error("Ready control plane requires a Runtime status");
+    }
+    return this.runtimeStatus;
+  }
+
+  private assertRuntimeMutationAvailable(): void {
+    if (this.state.mode !== "ready") {
+      throw new ServerError(
+        "SERVER_NOT_READY",
+        "ArchCode control plane is not available",
+        503,
+      );
+    }
+    const status = this.requireRuntimeStatus();
+    if (this.runtimeMutationPending || status.state === "activating") {
+      throw new ServerError(
+        "RUNTIME_BUSY",
+        "ArchCode Runtime activation is already in progress",
+        409,
+      );
+    }
+    if (status.state === "ready") {
+      throw new ServerError(
+        "RUNTIME_BUSY",
+        "ArchCode Runtime is already ready",
+        409,
+      );
+    }
+    if (!status.error.recoveryAllowed) {
+      throw new ServerError(
+        "RUNTIME_CLEANUP_INCOMPLETE",
+        "Restart ArchCode before retrying or deleting Runtime data",
+        409,
+      );
+    }
+  }
+
+  private readyBootstrapStatus(sessionToken: string | undefined): ReadyBootstrapStatus {
+    return {
+      mode: "ready",
+      authRequired: this.auth.authRequired,
+      authenticated: this.auth.authenticate(sessionToken),
+      runtime: this.requireRuntimeStatus(),
     };
+  }
+
+  private runHostMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation, operation);
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 }
 

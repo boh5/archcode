@@ -181,15 +181,28 @@ export function SettingsNavigation({
   activeSection,
   onSelect,
   invalidProfileCount = 0,
+  recoveryMode = false,
 }: {
   activeSection: SettingsSection;
   onSelect: (section: SettingsSection) => void;
   invalidProfileCount?: number;
+  recoveryMode?: boolean;
 }) {
-  const entries: Array<[SettingsSection, string]> = [["models", "Models"], ["profiles", "Profiles"], ["security", "Security"], ["mcp", "MCP"], ["memory", "Memory"], ["github", "GitHub"], ["updates", "About & Updates"]];
+  const entries: Array<[SettingsSection, string]> = [
+    ...(recoveryMode ? [["config-recovery", "Config Recovery"]] as Array<[SettingsSection, string]> : []),
+    ["models", "Models"],
+    ["profiles", "Profiles"],
+    ["security", "Security"],
+    ["runtime-data", "Runtime Data"],
+    ["mcp", "MCP"],
+    ["memory", "Memory"],
+    ["github", "GitHub"],
+    ["updates", "About & Updates"],
+  ];
   return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-1 px-3 py-3 sm:flex sm:flex-col sm:px-3">
     <p className="col-span-3 px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">Server</p>
     {entries.map(([id, label]) => {
+      const disabled = recoveryMode && id !== "config-recovery" && id !== "updates";
       const showsInvalidProfiles = id === "profiles" && invalidProfileCount > 0;
       const attentionMessage = showsInvalidProfiles
         ? `${invalidProfileCount} variant ${invalidProfileCount === 1 ? "reference needs" : "references need"} attention`
@@ -198,11 +211,14 @@ export function SettingsNavigation({
         key={id}
         type="button"
         onClick={() => onSelect(id)}
+        disabled={disabled}
         aria-current={id === activeSection ? "page" : undefined}
-        aria-label={attentionMessage === undefined ? undefined : `${label}, ${attentionMessage}`}
-        title={attentionMessage}
+        aria-label={disabled
+          ? `${label}, unavailable until the global configuration is valid`
+          : attentionMessage === undefined ? undefined : `${label}, ${attentionMessage}`}
+        title={disabled ? "Unavailable until the global configuration is valid" : attentionMessage}
         data-invalid-count={showsInvalidProfiles ? invalidProfileCount : undefined}
-        className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12px] font-medium transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-brand" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
+        className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12px] font-medium transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:cursor-not-allowed disabled:text-text-muted ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-brand" : disabled ? "" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
       >
         <span className="flex items-center justify-between gap-2">
           <span>{label}</span>
@@ -363,20 +379,24 @@ export function SettingsProfilesPanel({ config, onChange, errors, onJsonValidati
   </section>;
 }
 
-export function SettingsMcpPanel({ config, servers, onChange, errors = {} }: { config: ServerConfig; servers: Record<string, McpServerStatus>; onChange: (config: ServerConfig) => void; errors?: FieldErrors }) {
+export function SettingsMcpPanel({ config, servers, onChange, errors = {}, runtimeAvailable = true }: { config: ServerConfig; servers: Record<string, McpServerStatus>; onChange: (config: ServerConfig) => void; errors?: FieldErrors; runtimeAvailable?: boolean }) {
   const custom = Object.entries(config.mcp?.servers ?? {}).filter(([name]) => !BUILT_IN_MCP_NAMES.includes(name as typeof BUILT_IN_MCP_NAMES[number]));
   const all = [...BUILT_IN_MCP_NAMES.map((name) => [name, undefined] as const), ...custom];
   return <section className="space-y-5 pb-1"><PanelHeader title="MCP servers" description="Configuration and discovery status are shown together for built-in and custom servers." />
     <div className="overflow-hidden rounded-md border border-border-default bg-bg-surface divide-y divide-border-subtle">
     {all.map(([name, server]) => {
-      const status = servers[name];
+      const status = runtimeAvailable ? servers[name] : undefined;
       const builtIn = BUILT_IN_MCP_NAMES.includes(name as typeof BUILT_IN_MCP_NAMES[number]);
-      const statusMeta = MCP_STATUS_META[status?.state ?? "unreported"];
+      const statusMeta = runtimeAvailable ? MCP_STATUS_META[status?.state ?? "unreported"] : {
+        label: "Unavailable",
+        dotClass: "bg-text-muted",
+        badgeClass: "border-border-default bg-bg-elevated text-text-tertiary",
+      };
       return <article key={name} className="px-4 py-4 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover/40">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="truncate font-mono text-sm">{name}</h2>
-            <p className={`mt-1 text-xs ${status?.state === "failed" ? "text-error" : "text-text-tertiary"}`}>{describeStatus(status)}</p>
+            <p className={`mt-1 text-xs ${status?.state === "failed" ? "text-error" : "text-text-tertiary"}`}>{runtimeAvailable ? describeStatus(status) : "Unavailable while Runtime is offline"}</p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {builtIn && <span className="rounded-sm bg-bg-active px-2 py-1 text-[11px] font-medium text-text-tertiary">Built-in</span>}

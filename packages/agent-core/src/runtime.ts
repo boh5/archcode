@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { defaultAgentDefinitions, isUserFacingRootSession } from "./agents";
 import type { AgentName } from "./agents";
@@ -29,7 +28,7 @@ import {
 } from "./mcp/index";
 import { ModelSelectionResolver, type ModelRuntime } from "./models";
 import { ProjectContextResolver } from "./projects/context-resolver";
-import { ProjectRegistry } from "./projects/registry";
+import type { ProjectRegistry } from "./projects/registry";
 import type { ProjectInfo } from "./projects/types";
 import { SessionLifecycleService } from "./projects/session-lifecycle-service";
 import { SkillService } from "./skills";
@@ -240,7 +239,10 @@ export interface AgentRuntimeOptions {
   mcpManagerFactory?: (config: ResolvedMcpConfig, redactionPolicy: SecretRedactionPolicy) => McpManager;
   /** Already-resolved process-owned secret literals that are not part of global Config. */
   externalSecretLiterals?: readonly string[];
-  projectRegistryHomeDir?: string;
+  /** Process-owned registry shared with the control plane. Runtime never constructs one. */
+  projectRegistry: ProjectRegistry;
+  /** Test-only base directory for Runtime-owned process storage such as tool outputs. */
+  runtimeStorageHomeDir?: string;
   /** Internal storage location override for isolated tests. */
   toolOutputRootDir?: string;
   automationSchedulerTimer?: AutomationSchedulerTimer;
@@ -253,6 +255,9 @@ interface AgentRuntimeInternalOptions extends AgentRuntimeOptions {
   toolOutputStoreFactory?: (rootDir: string) => ToolOutputArtifactStore;
   /** Test-only seam for best-effort attachment cleanup failures. */
   attachmentRootRemover?: (path: string) => Promise<void>;
+  /** Test-only seams for proving Runtime shutdown cleanup ordering. */
+  executionManagerShutdown?: () => Promise<void>;
+  sessionAgentManagerDisposeAll?: () => void;
 }
 
 export interface CreateRuntimeSessionOptions {
@@ -527,7 +532,7 @@ export async function createRuntime(
   const runtimeLogger = createRuntimeLogSafetyBoundary(logger, redactionPolicy).child({ module: "runtime" });
 
   const toolOutputRootDir = options.toolOutputRootDir
-    ?? join(options.projectRegistryHomeDir ?? homedir(), USER_DATA_DIR_NAME, "tool-output");
+    ?? join(options.runtimeStorageHomeDir ?? options.configService.homeDir, USER_DATA_DIR_NAME, "tool-output");
   const toolOutputArtifactStore = internalOptions.toolOutputStoreFactory?.(toolOutputRootDir)
     ?? new ToolOutputArtifactStore({ rootDir: toolOutputRootDir });
   let mcpManager: McpManager | undefined;
@@ -591,7 +596,7 @@ export async function createRuntime(
       (warning) => recordWarning(warning),
     );
 
-    const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: runtimeLogger.child({ module: "projects.registry" }) });
+    const projectRegistry = options.projectRegistry;
     const projectSlugsByWorkspace = new Map(
       (await projectRegistry.list()).map((project) => [project.workspaceRoot, project.slug]),
     );
@@ -1892,11 +1897,27 @@ export async function createRuntime(
 
     async function stopAutomationSchedulers(): Promise<void> {
       automationSchedulersStarted = false;
-      const services = await Promise.allSettled([...automationRuntimeServices.values()]);
-      for (const result of services) {
-        if (result.status === "fulfilled") result.value.scheduler.dispose();
+      const entries = [...automationRuntimeServices.entries()];
+      const services = await Promise.allSettled(entries.map(([, service]) => service));
+      const errors: unknown[] = [];
+      for (const [index, result] of services.entries()) {
+        const [workspaceRoot, service] = entries[index]!;
+        if (result.status === "rejected") {
+          errors.push(result.reason);
+          continue;
+        }
+        try {
+          result.value.scheduler.dispose();
+          if (automationRuntimeServices.get(workspaceRoot) === service) {
+            automationRuntimeServices.delete(workspaceRoot);
+          }
+        } catch (error) {
+          errors.push(error);
+        }
       }
-      automationRuntimeServices.clear();
+      if (errors.length > 0) {
+        throw new AggregateError(errors, "Automation scheduler shutdown failed");
+      }
     }
 
     async function getToolOutputAccess(
@@ -2036,21 +2057,58 @@ export async function createRuntime(
       shutdownReconciliation();
       return executionManager.abortAll();
     };
+    type ShutdownStep = {
+      completed: boolean;
+      readonly operation: () => void | Promise<void>;
+    };
+    const shutdownSteps: ShutdownStep[] = [
+      { completed: false, operation: stopAutomationSchedulers },
+      { completed: false, operation: shutdownReconciliation },
+      {
+        completed: false,
+        operation: () => internalOptions.executionManagerShutdown !== undefined
+          ? internalOptions.executionManagerShutdown()
+          : executionManager.shutdown(),
+      },
+      { completed: false, operation: () => toolOutputArtifactStore.dispose() },
+      { completed: false, operation: () => closeMcpManager(activeMcpManager, warnings, runtimeLogger) },
+      {
+        completed: false,
+        operation: () => internalOptions.sessionAgentManagerDisposeAll !== undefined
+          ? internalOptions.sessionAgentManagerDisposeAll()
+          : sessionAgentManager.disposeAll(),
+      },
+    ];
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = (): Promise<void> => {
       if (shutdownPromise !== undefined) return shutdownPromise;
 
-      shutdownPromise = (async () => {
-        await stopAutomationSchedulers();
-        shutdownReconciliation();
-        await executionManager.shutdown();
-        await Promise.all([
-          toolOutputArtifactStore.dispose(),
-          closeMcpManager(activeMcpManager, warnings, runtimeLogger),
-        ]);
-        sessionAgentManager.disposeAll();
+      const currentShutdown = (async () => {
+        const errors: unknown[] = [];
+        const attempt = async (step: ShutdownStep): Promise<void> => {
+          if (step.completed) return;
+          try {
+            await step.operation();
+            step.completed = true;
+          } catch (error) {
+            errors.push(error);
+          }
+        };
+
+        for (const step of shutdownSteps) await attempt(step);
+
+        if (errors.length > 0) {
+          throw new AggregateError(errors, "AgentRuntime shutdown failed");
+        }
       })();
-      return shutdownPromise;
+      shutdownPromise = currentShutdown;
+      void currentShutdown.then(
+        () => undefined,
+        () => {
+          if (shutdownPromise === currentShutdown) shutdownPromise = undefined;
+        },
+      );
+      return currentShutdown;
     };
 
     return {

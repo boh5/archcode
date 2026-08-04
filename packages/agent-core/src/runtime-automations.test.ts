@@ -559,7 +559,8 @@ async function runtimeFixture(options: {
   const runtime = await createRuntime({
     configService,
     activation: activationResult.activation,
-    projectRegistryHomeDir: root,
+    projectRegistry: registry,
+    runtimeStorageHomeDir: root,
     mcpManagerFactory: () => mcpManager(),
     automationSchedulerClock: clock,
     automationSchedulerTimer: timer,

@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ProviderAdapterCatalog } from "@archcode/protocol";
 import type { ServerConfigSnapshot } from "../../api/config";
 import { DialogRoot } from "../ui/Dialog";
-import { SettingsBody as SettingsBodyComponent, SettingsCloseButton } from "./SettingsDialog";
+import { RuntimeRecoverySettings, SettingsBody as SettingsBodyComponent, SettingsCloseButton } from "./SettingsDialog";
+import { SettingsRuntimeDataPanel } from "./SettingsRuntimeDataPanel";
+import { ConfigRecoverySettings } from "./ConfigRecoverySettings";
 
 let dom: JSDOM;
 let root: Root;
@@ -43,8 +46,8 @@ function SettingsBody(props: Omit<ComponentProps<typeof SettingsBodyComponent>, 
 }
 
 function installDom() {
-  dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
-  for (const [name, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, Node: dom.window.Node, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement, HTMLInputElement: dom.window.HTMLInputElement, Event: dom.window.Event, CustomEvent: dom.window.CustomEvent, MouseEvent: dom.window.MouseEvent, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), IS_REACT_ACT_ENVIRONMENT: true })) Object.defineProperty(globalThis, name, { configurable: true, value });
+  dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost", pretendToBeVisual: true });
+  for (const [name, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, Node: dom.window.Node, NodeFilter: dom.window.NodeFilter, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement, HTMLButtonElement: dom.window.HTMLButtonElement, HTMLInputElement: dom.window.HTMLInputElement, DocumentFragment: dom.window.DocumentFragment, Event: dom.window.Event, CustomEvent: dom.window.CustomEvent, MouseEvent: dom.window.MouseEvent, PointerEvent: dom.window.PointerEvent ?? dom.window.MouseEvent, MutationObserver: dom.window.MutationObserver, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), IS_REACT_ACT_ENVIRONMENT: true })) Object.defineProperty(globalThis, name, { configurable: true, value });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 }
 function click(label: string) { const element = [...container.querySelectorAll("button")].find((button) => button.textContent === label); if (!element) throw new Error(`Missing ${label}`); act(() => element.click()); }
@@ -80,6 +83,13 @@ function blur(element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElemen
     if (props?.onBlur) props.onBlur();
     else element.dispatchEvent(new dom.window.FocusEvent("focusout", { bubbles: true }));
   });
+}
+async function waitForText(expected: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (container.textContent?.includes(expected)) return;
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
+  throw new Error(`Timed out waiting for ${expected}`);
 }
 function successfulSaveResponse(restartRequiredSections: ServerConfigSnapshot["restartRequiredSections"] = []) {
   return {
@@ -617,6 +627,256 @@ describe("SettingsDialog interactions", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={withGithub} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("GitHub");
     expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+  });
+
+  test("keeps Runtime Data unselected by default and enables only an affected project", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json({
+      projects: [{
+        projectSlug: "healthy",
+        name: "Healthy",
+        workspace: "/work/healthy",
+        runtimePath: "/work/healthy/.archcode/runtime",
+        stats: { fileCount: 2, totalBytes: 512 },
+        issues: [],
+      }, {
+        projectSlug: "broken",
+        name: "Broken",
+        workspace: "/work/broken",
+        runtimePath: "/work/broken/.archcode/runtime",
+        stats: { fileCount: 4, totalBytes: 2048 },
+        issues: [{ relativePath: "sessions/root/session.json", reason: "invalid_current_schema", schemaIssues: [{ path: ["messages", 0], message: "Invalid message" }] }],
+      }],
+    })) });
+
+    await act(async () => {
+      root.render(<SettingsRuntimeDataPanel runtime={{ state: "error", error: { message: "Runtime failed safely", recoveryAllowed: true } }} onRefreshRuntime={async () => {}} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const checkboxes = [...container.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+    expect(checkboxes).toHaveLength(2);
+    expect(checkboxes[0]?.disabled).toBe(true);
+    expect(checkboxes[1]?.disabled).toBe(false);
+    expect(checkboxes.every((checkbox) => !checkbox.checked)).toBe(true);
+    expect(container.textContent).toContain("Does not match the current ArchCode data format");
+    expect(container.textContent).toContain("Invalid message");
+    expect(([...container.querySelectorAll("button")].find((button) => button.textContent === "Delete runtime data") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("keeps inspection available but disables in-process recovery after incomplete cleanup", async () => {
+    const requests: Array<{ url: string; method?: string }> = [];
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {
+      requests.push({ url, method: init?.method });
+      return Response.json({
+        projects: [{
+          projectSlug: "broken",
+          name: "Broken",
+          workspace: "/work/broken",
+          runtimePath: "/work/broken/.archcode/runtime",
+          stats: { fileCount: 4, totalBytes: 2048 },
+          issues: [{ relativePath: "todos/state.json", reason: "invalid_json" }],
+        }],
+      });
+    }) });
+
+    await act(async () => {
+      root.render(<SettingsRuntimeDataPanel runtime={{ state: "error", error: { message: "Runtime cleanup did not finish", recoveryAllowed: false } }} onRefreshRuntime={async () => {}} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("todos/state.json");
+    expect(container.textContent).toContain("ArchCode must be restarted. Runtime cannot be retried and Runtime data cannot be deleted in this process.");
+    expect(container.textContent).toContain("Deletion is unavailable until ArchCode is restarted.");
+    expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).disabled).toBe(true);
+    const retryButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry Runtime") as HTMLButtonElement;
+    const deleteButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Delete runtime data") as HTMLButtonElement;
+    expect(retryButton.disabled).toBe(true);
+    expect(deleteButton.disabled).toBe(true);
+    act(() => {
+      retryButton.click();
+      deleteButton.click();
+    });
+    expect(requests).toEqual([{ url: "/api/runtime-data", method: undefined }]);
+  });
+
+  test("shows a Runtime retry failure returned by the control plane", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Response.json({ state: "error", error: { message: "Runtime still cannot load project data.", recoveryAllowed: true } });
+      return Response.json({ projects: [] });
+    }) });
+    const onRefreshRuntime = mock(async () => {});
+
+    await act(async () => {
+      root.render(<SettingsRuntimeDataPanel runtime={{ state: "error", error: { message: "Initial failure", recoveryAllowed: true } }} onRefreshRuntime={onRefreshRuntime} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry Runtime")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect([...container.querySelectorAll('[role="alert"]')].some((alert) => alert.textContent?.includes("Runtime still cannot load project data."))).toBe(true);
+    expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
+    expect(document.activeElement?.textContent).toBe("Runtime Data");
+  });
+
+  test("shows Runtime inspection loading before an empty result", async () => {
+    let resolveInspection!: (response: Response) => void;
+    const pendingInspection = new Promise<Response>((resolve) => { resolveInspection = resolve; });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => pendingInspection) });
+
+    await act(async () => {
+      root.render(<SettingsRuntimeDataPanel runtime={{ state: "error", error: { message: "Runtime failed", recoveryAllowed: true } }} onRefreshRuntime={async () => {}} />);
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Inspecting registered projects…");
+
+    await act(async () => {
+      resolveInspection(Response.json({ projects: [] }));
+      await pendingInspection;
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("No registered project Runtime data was found.");
+  });
+
+  test("keeps an inspection failure inline with a retry action", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json({
+      error: { code: "RUNTIME_DATA_INSPECTION_FAILED", message: "Inspection service is unavailable." },
+    }, { status: 500 })) });
+
+    await act(async () => {
+      root.render(<SettingsRuntimeDataPanel runtime={{ state: "error", error: { message: "Runtime failed", recoveryAllowed: true } }} onRefreshRuntime={async () => {}} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect([...container.querySelectorAll('[role="alert"]')].some((alert) => alert.textContent?.includes("Inspection service is unavailable."))).toBe(true);
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Retry inspection")).toBe(true);
+  });
+
+  test("announces a successful Runtime retry", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Response.json({ state: "ready" });
+      return Response.json({ projects: [] });
+    }) });
+    const onRefreshRuntime = mock(async () => {});
+
+    await act(async () => {
+      root.render(<SettingsRuntimeDataPanel runtime={{ state: "error", error: { message: "Initial failure", recoveryAllowed: true } }} onRefreshRuntime={onRefreshRuntime} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry Runtime")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Runtime is ready.");
+    expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps every Settings section reachable from Runtime recovery", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const updateStatus = {
+      currentVersion: "0.0.8",
+      phase: "idle",
+      managed: false,
+      restartSupported: true,
+      updateAvailable: false,
+      restartRequired: false,
+    } as const;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string) => {
+      if (url === "/api/runtime-data") return Response.json({ projects: [] });
+      if (url === "/api/config") return Response.json(successfulSaveResponse());
+      if (url === "/api/config/provider-adapters") return Response.json(adapterCatalog);
+      if (url === "/api/auth/status") return Response.json({ required: false });
+      if (url === "/api/update") return Response.json(updateStatus);
+      throw new Error(`Unexpected request: ${url}`);
+    }) });
+
+    await act(async () => {
+      root.render(<QueryClientProvider client={queryClient}><RuntimeRecoverySettings runtime={{ state: "error", error: { message: "Runtime failed", recoveryAllowed: true } }} onRefreshRuntime={async () => {}} /></QueryClientProvider>);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector('[data-settings-section="runtime-data"]')).not.toBeNull();
+
+    click("Models");
+    await waitForText("Providers and their model profiles");
+    const destinations: Array<[string, string]> = [
+      ["Profiles", "Principal, deep, and fast model bindings"],
+      ["Security", "Manage the one password"],
+      ["MCP", "MCP servers"],
+      ["Memory", "Configure extraction thresholds"],
+      ["GitHub", "Optional GitHub integration settings"],
+    ];
+    for (const [label, expected] of destinations) {
+      click(label);
+      await waitForText(expected);
+    }
+    click("About & Updates");
+    await waitForText("About & Updates");
+    expect(container.textContent).toContain("Install releases signed by the official ArchCode workflow, then restart when the Runtime is idle.");
+    expect(container.textContent).not.toContain("preserve Runtime data");
+    queryClient.clear();
+  });
+
+  test("retries Config while keeping Updates available through the recovery grant", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const onTransition = mock(() => undefined);
+    const requests: Array<{ url: string; method: string; authorization: string | null; body?: string }> = [];
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      requests.push({
+        url,
+        method: init?.method ?? "GET",
+        authorization: headers.get("Authorization"),
+        ...(typeof init?.body === "string" ? { body: init.body } : {}),
+      });
+      if (url === "/api/config-recovery") return Response.json({
+        configPath: "/Users/test/.archcode/config.json",
+        issues: [{ path: "configuration", message: "This value does not match the current ArchCode configuration format." }],
+      });
+      if (url === "/api/config-recovery/retry") return Response.json({
+        status: { mode: "config_error", message: "Config remains invalid." },
+        recovery: {
+          configPath: "/Users/test/.archcode/config.json",
+          issues: [{ path: "profiles.fast.model", message: "This value does not match the current ArchCode configuration format." }],
+        },
+      });
+      if (url === "/api/update") return Response.json({
+        currentVersion: "0.0.8",
+        phase: "idle",
+        managed: false,
+        restartSupported: false,
+        updateAvailable: false,
+        restartRequired: false,
+      });
+      throw new Error(`Unexpected request: ${url}`);
+    }) });
+
+    await act(async () => {
+      root.render(<QueryClientProvider client={queryClient}><ConfigRecoverySettings grant="recovery-token" onTransition={onTransition} /></QueryClientProvider>);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitForText("/Users/test/.archcode/config.json");
+    expect((container.querySelector("button[aria-label^='Models, unavailable']") as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => { click("Retry configuration"); await Promise.resolve(); });
+    await waitForText("still invalid");
+    expect(container.textContent).toContain("profiles.fast.model");
+    expect(document.activeElement?.textContent).toBe("Config Recovery");
+
+    click("About & Updates");
+    await waitForText("About & Updates");
+    expect(requests.find((request) => request.url === "/api/update")?.authorization).toBe("Bearer recovery-token");
+    queryClient.clear();
   });
 
 });

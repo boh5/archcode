@@ -6,6 +6,8 @@ import { ApiError, subscribeAuthInvalidation } from "../../api/client";
 import { completeSetup, getBootstrapStatus, getSetupProviderAdapterCatalog } from "../../api/bootstrap";
 import { login } from "../../api/auth";
 import { SettingsModelsPanel, SettingsProfilesPanel } from "../features/settings-panels";
+import { RuntimeRecoverySettings } from "../features/SettingsDialog";
+import { ConfigRecoverySettings } from "../features/ConfigRecoverySettings";
 import { toFieldErrors, type FieldErrors } from "../features/settings-helpers";
 import { Field, TextInput } from "../features/settings-fields";
 
@@ -14,20 +16,18 @@ type GateState = { kind: "loading" } | { kind: "error"; message: string } | { ki
 const primaryButton = "inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-brand px-4 text-[12px] font-semibold text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 const secondaryButton = "inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-bg-active px-4 text-[12px] font-semibold text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 
-let inspectedSetupFragment = false;
-let setupGrantFromFragment: string | undefined;
+let terminalGrantFromFragment: string | undefined;
 
-function readSetupGrant(): string | undefined {
-  if (inspectedSetupFragment) return setupGrantFromFragment;
-  inspectedSetupFragment = true;
+function readTerminalGrant(): string | undefined {
+  if (terminalGrantFromFragment !== undefined) return terminalGrantFromFragment;
   if (typeof window === "undefined") return undefined;
   const params = new URLSearchParams(window.location.hash.slice(1));
   const token = params.get("token")?.trim();
   if (token) {
-    setupGrantFromFragment = token;
+    terminalGrantFromFragment = token;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
   }
-  return setupGrantFromFragment;
+  return terminalGrantFromFragment;
 }
 
 function emptySetupConfig(): ServerConfigUpdate {
@@ -53,7 +53,7 @@ export function BootstrapGate({
     setState({ kind: "loading" });
     try {
       const status = await getBootstrapStatus();
-      normalizeCompletedSetupPath(status);
+      normalizeBootstrapPath(status);
       setState({ kind: "status", status });
     } catch (error) {
       setState({ kind: "error", message: error instanceof Error ? error.message : "Unable to reach ArchCode." });
@@ -69,7 +69,7 @@ export function BootstrapGate({
     [onAuthInvalidated, reload],
   );
   useEffect(() => {
-    if (state.kind !== "status" || state.status.mode !== "activating") return;
+    if (state.kind !== "status" || state.status.mode !== "ready" || state.status.runtime.state !== "activating") return;
     const timeout = window.setTimeout(() => { void reload(); }, 1_000);
     return () => window.clearTimeout(timeout);
   }, [reload, state]);
@@ -79,15 +79,24 @@ export function BootstrapGate({
 
   const { status } = state;
   if (status.mode === "setup") {
-    const grant = readSetupGrant();
+    const grant = readTerminalGrant();
     return grant
       ? <SetupPage grant={grant} onComplete={reload} />
       : <SetupLinkRequiredPage onRetry={reload} />;
   }
-  if (status.mode === "activating") return <BootstrapShell title="Finishing setup"><p className="text-sm text-text-tertiary">ArchCode is creating the runtime. This page will continue automatically.</p></BootstrapShell>;
-  if (status.mode === "config_error") return <BlockingPage icon={<ShieldAlert size={20} />} title="Configuration needs repair" message={status.message} onRetry={reload} />;
-  if (status.mode === "startup_error") return <BlockingPage icon={<TriangleAlert size={20} />} title="ArchCode could not start" message={status.message} onRetry={reload} />;
+  if (status.mode === "config_error") {
+    const grant = readTerminalGrant();
+    return grant
+      ? <ConfigRecoverySettings grant={grant} onTransition={(next) => {
+        if (next.mode === "ready") setTerminalGrantConsumed();
+        normalizeBootstrapPath(next);
+        setState({ kind: "status", status: next });
+      }} />
+      : <ConfigRecoveryLinkRequiredPage message={status.message} onRetry={reload} />;
+  }
   if (status.authRequired && !status.authenticated) return <LoginPage onLoggedIn={reload} />;
+  if (status.runtime.state === "activating") return <BootstrapShell title="Finishing setup"><p className="text-sm text-text-tertiary">ArchCode is creating the runtime. This page will continue automatically.</p></BootstrapShell>;
+  if (status.runtime.state === "error") return <RuntimeRecoverySettings runtime={status.runtime} onRefreshRuntime={reload} />;
   return <>{children}</>;
 }
 
@@ -120,6 +129,19 @@ function SetupLinkRequiredPage({ onRetry }: { onRetry: () => void }) {
       <div className="space-y-2 text-sm leading-6 text-text-secondary">
         <p>This ArchCode server has not been set up yet.</p>
         <p>Return to the terminal where ArchCode is running and open the URL printed after <span className="font-medium text-text-primary">“Complete first-run setup at”</span>. That URL contains the one-time token required to begin setup.</p>
+      </div>
+    </div>
+    <button type="button" className={`mt-6 ${secondaryButton}`} onClick={onRetry}><RefreshCw size={14} aria-hidden="true" />Check again</button>
+  </BootstrapShell>;
+}
+
+function ConfigRecoveryLinkRequiredPage({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return <BootstrapShell title="Open Config Recovery from your terminal">
+    <div className="flex gap-3">
+      <span className="mt-0.5 text-warning" aria-hidden="true"><ShieldAlert size={20} /></span>
+      <div className="space-y-2 text-sm leading-6 text-text-secondary">
+        <p role="alert">{message}</p>
+        <p>Return to the terminal where ArchCode is running and open the URL printed after <span className="font-medium text-text-primary">“Repair the invalid global configuration at”</span>. That URL contains the process-local token required to access recovery actions safely.</p>
       </div>
     </div>
     <button type="button" className={`mt-6 ${secondaryButton}`} onClick={onRetry}><RefreshCw size={14} aria-hidden="true" />Check again</button>
@@ -206,7 +228,7 @@ function SetupPage({ grant, onComplete }: { grant: string; onComplete: () => Pro
         ? { config, requireLogin: true, password }
         : { config, requireLogin: false };
       await completeSetup(grant, request);
-      setSetupGrantConsumed();
+      setTerminalGrantConsumed();
       await onComplete();
     } catch (cause) {
       setFieldErrors(toFieldErrors(cause));
@@ -240,20 +262,24 @@ function SetupPage({ grant, onComplete }: { grant: string; onComplete: () => Pro
   </main>;
 }
 
-function setSetupGrantConsumed() {
-  setupGrantFromFragment = undefined;
+function setTerminalGrantConsumed() {
+  terminalGrantFromFragment = undefined;
 }
 
-function normalizeCompletedSetupPath(status: BootstrapStatus): void {
+function normalizeBootstrapPath(status: BootstrapStatus): void {
+  if (typeof window === "undefined") return;
+  const pathname = window.location.pathname;
+  let nextPath: string | undefined;
+  if (status.mode === "setup" && pathname === "/config-recovery") nextPath = "/setup";
+  if (status.mode === "config_error" && pathname === "/setup") nextPath = "/config-recovery";
   if (
-    typeof window !== "undefined"
-    && window.location.pathname === "/setup"
-    && status.mode === "ready"
+    status.mode === "ready"
+    && (pathname === "/setup" || pathname === "/config-recovery")
     && (!status.authRequired || status.authenticated)
-  ) {
-    window.history.replaceState(null, "", "/");
-    window.dispatchEvent(new window.PopStateEvent("popstate"));
-  }
+  ) nextPath = "/";
+  if (nextPath === undefined) return;
+  window.history.replaceState(null, "", nextPath);
+  window.dispatchEvent(new window.PopStateEvent("popstate"));
 }
 
 function validatePassword(password: string, confirmation: string, required: boolean): string | undefined {

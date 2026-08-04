@@ -3,6 +3,8 @@ import {
   createConsoleLogger,
   createRuntime,
   type Logger,
+  ProjectRegistry,
+  RuntimeDataService,
   ServerConfigService,
 } from "@archcode/agent-core";
 import {
@@ -46,6 +48,10 @@ async function main(
   const configService = new ServerConfigService();
   const compiled = isCompiledRuntime();
   const restartController = new ServerRestartController();
+  const projectRegistry = new ProjectRegistry({
+    logger: logger.child({ module: "projects.registry" }),
+  });
+  const runtimeDataService = new RuntimeDataService({ projectRegistry });
   const updateService = new UpdateService({
     currentVersion: options.version ?? "development",
     executablePath: process.execPath,
@@ -71,6 +77,8 @@ async function main(
     version: options.version,
     updateService,
     restartController,
+    projectRegistry,
+    runtimeDataService,
   });
   await bootServer(host, {
     port: options.port,

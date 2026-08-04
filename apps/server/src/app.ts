@@ -7,7 +7,6 @@ import {
 } from "@archcode/agent-core";
 import type { GlobalSSEEvent } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
-import { createConfigRoutes } from "./routes/config";
 import { createAgentsRoutes } from "./routes/agents";
 import { createCompressionRoutes } from "./routes/compression";
 import { createDirectoriesRoutes } from "./routes/directories";
@@ -83,7 +82,6 @@ export function createRuntimeApp(
   const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
   const mcp = createMcpRoutes(serverRuntime);
-  const config = createConfigRoutes(serverRuntime.configService);
 
   app.route("/api", globalWork);
   app.route("/api/projects", projects);
@@ -98,7 +96,6 @@ export function createRuntimeApp(
   app.route("/api/events", globalEvents);
   app.route("/api/projects", files);
   app.route("/api/mcp", mcp);
-  app.route("/api/config", config);
   app.route("/api/sessions", new Hono());
   app.route("/api/agents", agents);
   app.route("/api/files", new Hono());

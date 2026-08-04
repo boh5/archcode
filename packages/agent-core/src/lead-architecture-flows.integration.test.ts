@@ -618,7 +618,8 @@ async function runtimeFixture(projectName: string): Promise<{
     logger: silentLogger,
     configService,
     activation: activationResult.activation,
-    projectRegistryHomeDir: root,
+    projectRegistry: registry,
+    runtimeStorageHomeDir: root,
     mcpManagerFactory: () => mcpManager(),
   });
   activeRuntime = runtime;
