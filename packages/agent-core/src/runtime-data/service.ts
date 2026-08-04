@@ -161,8 +161,17 @@ export class RuntimeDataService {
       const key = `${issue.reason}\0${issue.relativePath}`;
       if (issueKeys.has(key)) return;
       if (issues.length >= MAX_RUNTIME_DATA_ISSUES_PER_PROJECT) {
-        if (issue.reason === "unreadable" && !issues.some((current) => current.reason === "unreadable")) {
-          issues[issues.length - 1] = issue;
+        const protectedReason = issue.reason === "unreadable" || issue.reason === "inspection_limit";
+        if (protectedReason && !issues.some((current) => current.reason === issue.reason)) {
+          let replaceIndex = -1;
+          for (let index = issues.length - 1; index >= 0; index -= 1) {
+            const current = issues[index]!;
+            if (current.reason !== "unreadable" && current.reason !== "inspection_limit") {
+              replaceIndex = index;
+              break;
+            }
+          }
+          if (replaceIndex >= 0) issues[replaceIndex] = issue;
         }
         return;
       }
@@ -350,7 +359,7 @@ async function inspectJsonFile(
     return;
   }
   if (stat.size > MAX_INSPECTED_JSON_FILE_BYTES) {
-    addIssue({ relativePath, reason: "unreadable" });
+    addIssue({ relativePath, reason: "inspection_limit" });
     return;
   }
 
@@ -359,8 +368,12 @@ async function inspectJsonFile(
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const openedStat = await handle.stat();
-      if (!openedStat.isFile() || openedStat.size > MAX_INSPECTED_JSON_FILE_BYTES) {
+      if (!openedStat.isFile()) {
         addIssue({ relativePath, reason: "unreadable" });
+        return;
+      }
+      if (openedStat.size > MAX_INSPECTED_JSON_FILE_BYTES) {
+        addIssue({ relativePath, reason: "inspection_limit" });
         return;
       }
       text = await handle.readFile({ encoding: "utf8" });

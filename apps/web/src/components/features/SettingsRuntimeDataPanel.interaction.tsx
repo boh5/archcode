@@ -175,6 +175,56 @@ describe("Settings Runtime Data interactions", () => {
     expect(container.textContent).toContain("No registered project Runtime data was found");
   });
 
+  test("preserves a successful deletion when the Runtime status refresh fails", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return Response.json({
+        results: [{ projectSlug: "broken", status: "deleted" }],
+        runtime: { state: "ready" },
+      });
+      return Response.json(inspectionResponse());
+    }) });
+    const onRefreshRuntime = mock(async () => { throw new Error("Runtime status refresh failed."); });
+
+    await renderPanel(onRefreshRuntime);
+    await act(async () => {
+      [...document.body.querySelectorAll("button")].find((button) => button.textContent === "Delete permanently")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
+
+    expect(document.body.textContent).not.toContain("Permanently delete Runtime data?");
+    expect(container.textContent).toContain("Runtime data deleted for 1 project");
+    expect(container.textContent).toContain("Runtime status refresh failed.");
+    expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  test("preserves a successful Runtime retry when the status refresh fails", async () => {
+    const requests: Array<{ method?: string }> = [];
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
+      requests.push({ method: init?.method });
+      if (init?.method === "POST") return Response.json({ state: "ready" });
+      return Response.json(inspectionResponse());
+    }) });
+    const onRefreshRuntime = mock(async () => { throw new Error("Runtime status refresh failed."); });
+    const { SettingsRuntimeDataPanel } = await import("./SettingsRuntimeDataPanel");
+    await act(async () => {
+      root.render(<SettingsRuntimeDataPanel runtime={{ state: "error", error: { message: "Runtime failed", recoveryAllowed: true } }} onRefreshRuntime={onRefreshRuntime} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry Runtime")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
+    expect(container.textContent).toContain("Runtime is ready.");
+    expect(container.textContent).toContain("Runtime status refresh failed.");
+    expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
+  });
+
   test("shows the final Runtime error returned by deletion without waiting for Bootstrap refresh", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
       if (init?.method === "DELETE") return Response.json({

@@ -292,11 +292,27 @@ describe("RuntimeDataService inspection", () => {
     const issues = response.projects[0]!.issues;
 
     expect(issues).toHaveLength(100);
-    expect(issues).toContainEqual({ relativePath: "todos/state.json", reason: "unreadable" });
+    expect(issues).toContainEqual({ relativePath: "todos/state.json", reason: "inspection_limit" });
   });
 });
 
 describe("RuntimeDataService deletion", () => {
+  test("allows a structurally safe Runtime tree whose JSON exceeds the inspection limit", async () => {
+    const project = await createProject("oversized-json");
+    const runtimePath = projectRuntimePath(project.workspaceRoot);
+    await truncate(join(runtimePath, "todos", "state.json"), 64 * 1024 * 1024 + 1);
+    registry.projects = [project];
+
+    expect((await service.inspect()).projects[0]?.issues).toContainEqual({
+      relativePath: "todos/state.json",
+      reason: "inspection_limit",
+    });
+    expect(await service.delete([project.slug])).toEqual({
+      results: [{ projectSlug: project.slug, status: "deleted" }],
+    });
+    await expect(lstat(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   test("rejects empty, duplicate, unknown, and healthy selections before mutation", async () => {
     const invalid = await createProject("invalid");
     const healthy = await createProject("healthy");

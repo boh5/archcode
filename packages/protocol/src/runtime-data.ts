@@ -3,6 +3,7 @@ import type { RuntimeStatus } from "./bootstrap";
 export type RuntimeDataIssueReason =
   | "invalid_json"
   | "invalid_current_schema"
+  | "inspection_limit"
   | "unreadable";
 
 export interface RuntimeDataSchemaIssue {

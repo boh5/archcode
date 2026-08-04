@@ -32,6 +32,7 @@ export function SettingsRuntimeDataPanel({
   const [deleteResults, setDeleteResults] = useState<RuntimeDataProjectDeleteResult[]>([]);
   const [actionMessage, setActionMessage] = useState<string>();
   const [actionError, setActionError] = useState<string>();
+  const [runtimeRefreshError, setRuntimeRefreshError] = useState<string>();
   const statusHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const loadInspection = useCallback(async () => {
@@ -71,6 +72,7 @@ export function SettingsRuntimeDataPanel({
     setRetrying(true);
     setActionMessage(undefined);
     setActionError(undefined);
+    setRuntimeRefreshError(undefined);
     setDeleteResults([]);
     try {
       const nextRuntime = await retryRuntime();
@@ -82,10 +84,13 @@ export function SettingsRuntimeDataPanel({
       } else {
         setActionMessage("Runtime activation is in progress.");
       }
-      await onRefreshRuntime();
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Unable to retry Runtime.");
+    }
+    try {
       await onRefreshRuntime();
+    } catch (cause) {
+      setRuntimeRefreshError(cause instanceof Error ? cause.message : "Runtime status could not be refreshed.");
     } finally {
       setRetrying(false);
       queueMicrotask(() => statusHeadingRef.current?.focus());
@@ -97,6 +102,7 @@ export function SettingsRuntimeDataPanel({
     setDeleting(true);
     setActionMessage(undefined);
     setActionError(undefined);
+    setRuntimeRefreshError(undefined);
     setDeleteResults([]);
     try {
       const response = await deleteRuntimeData({ projectSlugs: selectedProjects.map((project) => project.projectSlug) });
@@ -113,7 +119,12 @@ export function SettingsRuntimeDataPanel({
         setSelected(new Set());
       }
       setConfirmOpen(false);
-      await Promise.all([loadInspection(), onRefreshRuntime()]);
+      await loadInspection();
+      try {
+        await onRefreshRuntime();
+      } catch (cause) {
+        setRuntimeRefreshError(cause instanceof Error ? cause.message : "Runtime status could not be refreshed.");
+      }
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Unable to delete Runtime data.");
       setConfirmOpen(false);
@@ -185,6 +196,10 @@ export function SettingsRuntimeDataPanel({
       {deleteResults.some((result) => result.status === "error") && <ul className="mt-2 list-disc space-y-1 pl-5">
         {deleteResults.filter((result) => result.status === "error").map((result) => <li key={result.projectSlug}><span className="font-mono">{result.projectSlug}</span>: {result.error?.message ?? "Delete failed"}</li>)}
       </ul>}
+    </div>}
+
+    {runtimeRefreshError && <div role="alert" className="rounded-sm border border-warning/30 bg-warning-muted px-3 py-3 text-[12px] leading-5 text-warning">
+      {runtimeRefreshError}
     </div>}
 
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-4">
@@ -283,6 +298,7 @@ function DeleteRuntimeDataDialog({ open, projects, deleting, onCancel, onConfirm
 function issueReason(reason: RuntimeDataProjectInspection["issues"][number]["reason"]): string {
   if (reason === "invalid_json") return "Invalid JSON";
   if (reason === "invalid_current_schema") return "Does not match the current ArchCode data format";
+  if (reason === "inspection_limit") return "Too large to inspect safely";
   return "Unreadable or unsafe to inspect";
 }
 
