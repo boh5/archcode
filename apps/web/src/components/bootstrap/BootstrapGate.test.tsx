@@ -154,6 +154,7 @@ describe("BootstrapGate", () => {
         return Response.json({
           configPath: "/Users/test/.archcode/config.json",
           issues: [{ path: "configuration", message: "This value does not match the current ArchCode configuration format." }],
+          removableItems: [],
         });
       }
       throw new Error(`Unexpected request: ${String(input)}`);

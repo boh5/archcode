@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { TerminalGrant } from "./terminal-grant";
 
 describe("TerminalGrant", () => {
-  test("authorizes only the random token embedded in the setup fragment", () => {
+  test("authorizes only the random token embedded in a terminal recovery fragment", () => {
     const grant = new TerminalGrant();
     const url = grant.url("http://localhost:4096", "/setup");
     const token = new URL(url).hash.slice("#token=".length);
@@ -13,7 +13,7 @@ describe("TerminalGrant", () => {
     expect(grant.authorize(`Basic ${token}`)).toBe(false);
   });
 
-  test("cannot be reused after setup commits", () => {
+  test("cannot be reused after a terminal recovery flow commits", () => {
     const grant = new TerminalGrant();
     const token = new URL(grant.url("http://localhost:4096", "/config-recovery")).hash.slice("#token=".length);
 

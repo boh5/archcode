@@ -740,6 +740,52 @@ describe("ServerConfigService", () => {
     )).resolves.toMatchObject({ status: "ready" });
   });
 
+  test("collapses selected descendant removals when their selected ancestor already removes them", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, any>;
+    invalid.provider.local.models.broken = structuredClone(invalid.provider.local.models["test-model"]);
+    invalid.provider.local.models.broken.name = 42;
+    invalid.provider.local.models.broken.variants.fast.temperature = 3;
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected nested invalid Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    expect(plan.items.map((item) => item.path)).toEqual([
+      ["provider", "local", "models", "broken"],
+      ["provider", "local", "models", "broken", "variants", "fast"],
+    ]);
+
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      plan.items.map((item) => item.id),
+    )).resolves.toMatchObject({ status: "ready" });
+    const saved = JSON.parse(await readFile(service.configPath, "utf8"));
+    expect(saved.provider.local.models.broken).toBeUndefined();
+    expect(saved.provider.local.models["test-model"]).toBeDefined();
+  });
+
+  test("rejects a selective removal plan after the Config was repaired externally", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, unknown>;
+    invalid.unsupportedLegacyConfig = true;
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected invalid Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    const repairedBytes = `${JSON.stringify(config(), null, 2)}\n`;
+    await writeFile(service.configPath, repairedBytes, { mode: 0o600 });
+
+    await expect(service.removeInvalidConfigItems(
+      plan.revision!,
+      [plan.items[0]!.id],
+    )).rejects.toBeInstanceOf(ConfigRecoveryConflictError);
+    expect(await readFile(service.configPath, "utf8")).toBe(repairedBytes);
+  });
+
   test("removes only the failing MCP server and preserves healthy MCP secrets", async () => {
     const service = await createUnloadedService();
     const invalid = config() as Record<string, any>;

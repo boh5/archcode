@@ -346,6 +346,25 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).not.toContain("applied live");
   });
 
+  test("clears the Runtime-unavailable save notice when a newer snapshot arrives", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json(
+      successfulSaveResponse(),
+    )) });
+    const runtime = { state: "error" as const, error: { message: "Runtime unavailable", recoveryAllowed: true } };
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} runtime={runtime} onReload={async () => {}} /></DialogRoot>));
+
+    click("Add provider");
+    await act(async () => { click("Save changes"); await Promise.resolve(); });
+    expect(container.textContent).toContain("Configuration saved. Retry Runtime to use the saved configuration.");
+
+    const newerSnapshot = { ...snapshot, revision: "r2" };
+    await act(async () => {
+      root.render(<DialogRoot open><SettingsBody snapshot={newerSnapshot} servers={{}} runtime={runtime} onReload={async () => {}} /></DialogRoot>);
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain("Configuration saved. Retry Runtime to use the saved configuration.");
+  });
+
   test("names restart-only sections without claiming a model live-apply", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json(
       successfulSaveResponse(["memory"]),

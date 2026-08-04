@@ -38,6 +38,8 @@ import { PermissionApprovalFileSchema } from "../tools/permission/project-approv
 const SCHEMA_ISSUE_MESSAGE = "Does not match the current ArchCode data format.";
 const MAX_SCHEMA_ISSUES_PER_FILE = 20;
 const MAX_SCHEMA_ISSUE_PATH_SEGMENTS = 12;
+const MAX_RUNTIME_DATA_ISSUES_PER_PROJECT = 100;
+const MAX_INSPECTED_JSON_FILE_BYTES = 64 * 1024 * 1024;
 const SCHEMA_ISSUE_FIELD_SEGMENT = "$field";
 
 export type RuntimeDataRequestErrorCode =
@@ -158,6 +160,12 @@ export class RuntimeDataService {
     const addIssue = (issue: RuntimeDataIssue): void => {
       const key = `${issue.reason}\0${issue.relativePath}`;
       if (issueKeys.has(key)) return;
+      if (issues.length >= MAX_RUNTIME_DATA_ISSUES_PER_PROJECT) {
+        if (issue.reason === "unreadable" && !issues.some((current) => current.reason === "unreadable")) {
+          issues[issues.length - 1] = issue;
+        }
+        return;
+      }
       issueKeys.add(key);
       issues.push(issue);
     };
@@ -341,13 +349,17 @@ async function inspectJsonFile(
     addIssue({ relativePath, reason: "unreadable" });
     return;
   }
+  if (stat.size > MAX_INSPECTED_JSON_FILE_BYTES) {
+    addIssue({ relativePath, reason: "unreadable" });
+    return;
+  }
 
   let text: string;
   try {
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const openedStat = await handle.stat();
-      if (!openedStat.isFile()) {
+      if (!openedStat.isFile() || openedStat.size > MAX_INSPECTED_JSON_FILE_BYTES) {
         addIssue({ relativePath, reason: "unreadable" });
         return;
       }

@@ -322,8 +322,15 @@ export class ServerConfigService {
             "This Config is not valid JSON and has no safely removable structured items.",
           );
         }
-        for (const item of selected as InvalidConfigRemovalItem[]) {
-          deleteConfigPath(candidate, item.path);
+        const selectedItems = selected as InvalidConfigRemovalItem[];
+        const removalPaths = selectedItems
+          .map((item) => item.path)
+          .filter((path, _index, paths) => !paths.some((candidateAncestor) =>
+            candidateAncestor.length < path.length
+            && candidateAncestor.every((segment, index) => path[index] === segment)
+          ));
+        for (const path of removalPaths) {
+          deleteConfigPath(candidate, path);
         }
 
         let validated: ArchCodeConfig;
@@ -1390,7 +1397,7 @@ async function restoreClaimedConfig(
     await link(claimedPath, configPath);
   } catch (cause) {
     if (isNodeError(cause, "EEXIST")) {
-      await unlink(claimedPath);
+      await unlink(claimedPath).catch(() => undefined);
       return;
     }
     const claimedBytes = await readFile(claimedPath);
@@ -1399,23 +1406,35 @@ async function restoreClaimedConfig(
       handle = await open(configPath, "wx", 0o600);
     } catch (createCause) {
       if (isNodeError(createCause, "EEXIST")) {
-        await unlink(claimedPath);
+        await unlink(claimedPath).catch(() => undefined);
         return;
       }
-      throw configDiscardError(configPath, createCause);
+      throw configRestoreError(configPath, claimedPath, createCause);
     }
     try {
       await handle.writeFile(claimedBytes);
       await handle.sync();
     } catch (writeCause) {
-      throw configDiscardError(configPath, writeCause);
-    } finally {
-      await handle.close();
+      await handle.close().catch(() => undefined);
+      await unlink(configPath).catch(() => undefined);
+      throw configRestoreError(configPath, claimedPath, writeCause);
     }
-    await unlink(claimedPath);
+    await handle.close().catch(() => undefined);
+    await unlink(claimedPath).catch(() => undefined);
     return;
   }
-  await unlink(claimedPath);
+  await unlink(claimedPath).catch(() => undefined);
+}
+
+function configRestoreError(
+  configPath: string,
+  claimedPath: string,
+  cause: unknown,
+): ConfigSemanticValidationError {
+  return new ConfigSemanticValidationError([{
+    path: configPath,
+    message: `Failed to restore the global configuration at ${configPath}: ${errorMessage(cause)}. The original file remains at ${claimedPath}.`,
+  }]);
 }
 
 function configDiscardError(

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, RefreshCw, RotateCcw, ShieldAlert, Trash2 } from "lucide-react";
 import type {
   BootstrapStatus,
@@ -39,15 +39,21 @@ export function SettingsConfigRecoveryPanel({
   const [notice, setNotice] = useState<string>();
   const headingRef = useRef<HTMLHeadingElement>(null);
 
-  useEffect(() => {
-    let live = true;
+  const loadRecoveryStatus = useCallback(async () => {
     setLoading(true);
-    void getConfigRecoveryStatus(grant).then(
-      (status) => { if (live) setRecovery(status); },
-      (cause) => { if (live) setError(errorMessage(cause, "Unable to load Config diagnostics.")); },
-    ).finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
+    setError(undefined);
+    try {
+      setRecovery(await getConfigRecoveryStatus(grant));
+    } catch (cause) {
+      setError(errorMessage(cause, "Unable to load Config diagnostics."));
+    } finally {
+      setLoading(false);
+    }
   }, [grant]);
+
+  useEffect(() => {
+    void loadRecoveryStatus();
+  }, [loadRecoveryStatus]);
 
   useEffect(() => {
     if (recovery === undefined) return;
@@ -215,7 +221,9 @@ export function SettingsConfigRecoveryPanel({
             </div>
           </details>
         </>
-        : null}
+        : <button type="button" className={secondaryButton} onClick={() => { void loadRecoveryStatus(); }}>
+          <RefreshCw size={13} aria-hidden="true" />Retry diagnostics
+        </button>}
 
     <RemoveInvalidConfigItemsDialog
       open={confirmRemove}

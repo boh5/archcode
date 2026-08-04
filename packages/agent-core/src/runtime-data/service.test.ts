@@ -7,6 +7,7 @@ import {
   rename,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -274,6 +275,25 @@ describe("RuntimeDataService inspection", () => {
     expect(response).not.toHaveProperty("runtimeError");
     expect(JSON.stringify(response)).not.toMatch(/startupCause|old version|new version/i);
   });
+
+  test("bounds oversized JSON reads and the per-project issue response", async () => {
+    const project = await createProject("bounded-inspection");
+    const runtimePath = projectRuntimePath(project.workspaceRoot);
+    const sessionsPath = join(runtimePath, "sessions");
+    for (let index = 0; index < 105; index += 1) {
+      const sessionPath = join(sessionsPath, `broken-${String(index).padStart(3, "0")}`);
+      await mkdir(sessionPath);
+      await writeFile(join(sessionPath, "session.json"), "{");
+    }
+    await truncate(join(runtimePath, "todos", "state.json"), 64 * 1024 * 1024 + 1);
+    registry.projects = [project];
+
+    const response = await service.inspect();
+    const issues = response.projects[0]!.issues;
+
+    expect(issues).toHaveLength(100);
+    expect(issues).toContainEqual({ relativePath: "todos/state.json", reason: "unreadable" });
+  });
 });
 
 describe("RuntimeDataService deletion", () => {
@@ -415,7 +435,7 @@ describe("RuntimeDataService deletion", () => {
     }
   });
 
-  test("returns per-project deletion errors and leaves retry admission to the Host", async () => {
+  test.skipIf(typeof process.getuid === "function" && process.getuid() === 0)("returns per-project deletion errors and leaves retry admission to the Host", async () => {
     const first = await createProject("first");
     const second = await createProject("second");
     await writeFile(join(projectRuntimePath(first.workspaceRoot), "todos", "state.json"), "{");

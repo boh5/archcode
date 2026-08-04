@@ -116,9 +116,10 @@ export function SettingsRuntimeDataPanel({
       await Promise.all([loadInspection(), onRefreshRuntime()]);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Unable to delete Runtime data.");
+      setConfirmOpen(false);
     } finally {
       setDeleting(false);
-      queueMicrotask(() => statusHeadingRef.current?.focus());
+      window.requestAnimationFrame(() => statusHeadingRef.current?.focus());
     }
   };
 

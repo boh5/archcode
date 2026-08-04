@@ -111,11 +111,34 @@ describe("Settings Runtime Data interactions", () => {
       await pendingDelete;
       await Promise.resolve();
       await Promise.resolve();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
     });
 
     expect([...container.querySelectorAll('[role="alert"]')].some((alert) => alert.textContent?.includes("Permission denied"))).toBe(true);
     expect(container.textContent).toContain("Runtime still cannot start");
     expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
+    expect(document.activeElement?.textContent).toBe("Runtime Data");
+  });
+
+  test("closes the confirmation and exposes an error when the delete request rejects", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return Response.json({ error: { message: "Deletion service unavailable" } }, { status: 500 });
+      }
+      return Response.json(inspectionResponse());
+    }) });
+
+    await renderPanel();
+    const confirm = [...document.body.querySelectorAll("button")].find((button) => button.textContent === "Delete permanently") as HTMLButtonElement;
+    await act(async () => {
+      confirm.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
+
+    expect(document.body.textContent).not.toContain("Permanently delete Runtime data?");
+    expect(container.textContent).toContain("Deletion service unavailable");
     expect(document.activeElement?.textContent).toBe("Runtime Data");
   });
 

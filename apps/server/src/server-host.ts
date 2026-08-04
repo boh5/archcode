@@ -247,7 +247,6 @@ export class ArchCodeServerHost implements SetupCoordinatorPort, ConfigRecoveryC
           response.results.length > 0
           && response.results.every((result) => result.status === "deleted")
         ) {
-          await this.options.runtimeDataService.inspect();
           try {
             await this.activateRuntimeFromCurrentConfig();
           } catch {

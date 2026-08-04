@@ -46,6 +46,33 @@ afterEach(() => {
 });
 
 describe("Settings Config Recovery interactions", () => {
+  test("keeps a diagnostics retry available after the initial status load fails", async () => {
+    let calls = 0;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string) => {
+      if (url !== "/api/config-recovery") throw new Error(`Unexpected request: ${url}`);
+      calls += 1;
+      if (calls === 1) return Response.json({ error: { message: "Diagnostics unavailable" } }, { status: 500 });
+      return Response.json({
+        configPath: "/Users/test/.archcode/config.json",
+        issues: [],
+        removableItems: [],
+      });
+    }) });
+    const { SettingsConfigRecoveryPanel } = await import("./SettingsConfigRecoveryPanel");
+
+    await act(async () => {
+      root.render(<SettingsConfigRecoveryPanel grant="recovery-token" onTransition={() => undefined} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitForText("Diagnostics unavailable", container);
+    await click("Retry diagnostics", container);
+
+    expect(calls).toBe(2);
+    expect(container.textContent).toContain("Safe diagnostics");
+    expect(container.textContent).toContain("Retry configuration");
+  });
+
   test("requires selection and confirmation before removing only invalid items", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {

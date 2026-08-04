@@ -52,6 +52,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
     setErrors({});
     setJsonErrors({});
     setSaveError(undefined);
+    setSavedWhileRuntimeUnavailable(false);
     setRestartRequiredSections(snapshot.restartRequiredSections);
     setJsonResetVersion((current) => current + 1);
   }, [snapshot]);

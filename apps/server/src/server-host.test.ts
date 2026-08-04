@@ -1372,7 +1372,7 @@ describe("ArchCodeServerHost", () => {
       expect((await recovering).status).toBe(200);
       expect(order).toEqual(recovery === "retry"
         ? ["save:start", "save:end", `activate:${changedName}`]
-        : ["save:start", "save:end", "delete", "inspect", `activate:${changedName}`]);
+        : ["save:start", "save:end", "delete", `activate:${changedName}`]);
       expect(host.getRuntimeStatus()).toEqual({ state: "ready" });
       await host.shutdown();
     }
@@ -1452,8 +1452,9 @@ describe("ArchCodeServerHost", () => {
         });
       expect(attempts).toBe(deletionSucceeded ? 2 : 1);
       expect(host.getRuntimeStatus().state).toBe(deletionSucceeded ? "ready" : "error");
+      expect(runtimeDataService.inspect).not.toHaveBeenCalled();
       expect(order).toEqual(deletionSucceeded
-        ? ["delete", "inspect", "activate"]
+        ? ["delete", "activate"]
         : ["delete"]);
     }
   });
