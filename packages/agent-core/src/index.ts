@@ -7,12 +7,15 @@ export {
 } from "./runtime";
 export type { AcceptSessionMessageInput, AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, ProjectControlPlaneSnapshot, ProjectRemovalResult, SessionMessageAcceptance } from "./runtime";
 export * from "./attachments";
+export * from "./runtime-data";
 export * from "./automations";
 export type { CompressionOriginalRangeResult } from "./compression";
 export {
   BuiltinMcpConfigNameError,
   ConfigRevisionConflictError,
   ConfigSemanticValidationError,
+  ConfigRecoveryConflictError,
+  InvalidConfigRemovalError,
   ConfigInitializationConflictError,
   ServerConfigService,
   resolveServerConfigPath,
@@ -24,6 +27,10 @@ export type {
   ServerConfigActivationResult,
   ServerConfigInitialization,
   ServerConfigServiceOptions,
+  InvalidConfigRemovalItem,
+  InvalidConfigRemovalPlan,
+  InvalidConfigRemovalTarget,
+  InvalidConfigRecoveryContext,
 } from "./config";
 
 export { createProcessRunner } from "./process/runner";

@@ -29,6 +29,7 @@ import type { SessionToolBatch } from "./store/types";
 import { createTestProjectContext } from "./tools/test-project-context";
 import { createInMemoryLogger, silentLogger } from "./logger";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
+import { ProjectRegistry } from "./projects/registry";
 import { setLlmAdapterForTest } from "./llm";
 import { getLspClientPool } from "./lsp/client-pool";
 import { SessionGoalService } from "./session-goal";
@@ -59,14 +60,19 @@ function makeFakeMcpManager(result: McpDiscoveryResult | Error, secrets: readonl
   return { discover: mock(async () => { if (result instanceof Error) throw result; return result; }), closeAll: mock(async () => []), getStatus: mock(() => new Map()), onStatusChange: mock(() => () => {}), startBackgroundDiscovery: mock((onDescriptors: (d: AnyToolDescriptor[]) => void, onWarning: (w: McpWarning) => void) => { if (result instanceof Error) { onWarning({ message: policy.redactString(`Failed to discover MCP tools during startup: ${result.message}`) }); return; } for (const warning of result.warnings) onWarning(warning); if (result.descriptors.length) onDescriptors(result.descriptors); }) } as unknown as McpManager;
 }
 function makeContext(toolName: string, input: unknown): ToolExecutionContext { const workspaceRoot = import.meta.dir; return { store: storeManager.create(`main-test-${crypto.randomUUID()}`, workspaceRoot, { agentName: "lead", source: { kind: "direct" } }), storeManager, toolName, toolCallId: `${toolName}-call`, input, step: 0, executionId: crypto.randomUUID(), runOrdinal: 0, toolBatchId: crypto.randomUUID(), abort: new AbortController().signal, startedAt: 0, allowedTools: new Set([toolName]), cwd: workspaceRoot, projectContext: createTestProjectContext(workspaceRoot) }; }
-type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation">;
+type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation" | "projectRegistry"> & {
+  projectRegistry?: ProjectRegistry;
+};
 async function createRuntime(options: RuntimeTestOptions) {
   const result = await options.configService.activateForStartup();
   if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
+  const runtimeStorageHomeDir = options.runtimeStorageHomeDir ?? await makeTempRoot();
   return createProductionRuntime({
     ...options,
     activation: result.activation,
-    projectRegistryHomeDir: options.projectRegistryHomeDir ?? await makeTempRoot(),
+    projectRegistry: options.projectRegistry
+      ?? new ProjectRegistry({ homeDir: runtimeStorageHomeDir, logger: silentLogger }),
+    runtimeStorageHomeDir,
   });
 }
 function nextSessionEvent(
@@ -222,10 +228,12 @@ describe("createRuntime", () => {
     if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
     await rm(configService.configPath);
     let policy: SecretRedactionPolicy | undefined;
+    const runtimeStorageHomeDir = await makeTempRoot();
     const runtime = await createProductionRuntime({
       configService,
       activation: result.activation,
-      projectRegistryHomeDir: await makeTempRoot(),
+      projectRegistry: new ProjectRegistry({ homeDir: runtimeStorageHomeDir, logger: silentLogger }),
+      runtimeStorageHomeDir,
       mcpManagerFactory: (_config, runtimePolicy) => {
         policy = runtimePolicy;
         return makeFakeMcpManager({ descriptors: [], warnings: [] });
@@ -917,7 +925,7 @@ describe("createRuntime", () => {
     const configService = await writeConfig(makeConfig());
     const runtime1 = await createRuntime({
       configService,
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime1.projectRegistry.add({ workspaceRoot, name: "Stable recency" });
@@ -946,7 +954,7 @@ describe("createRuntime", () => {
 
     const runtime2 = await createRuntime({
       configService,
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime2.recoverSessionContinuations();
@@ -1116,7 +1124,7 @@ describe("createRuntime", () => {
     const failedWorkspaceRoot = await makeTempRoot();
     const runtime = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: await makeTempRoot(),
+      runtimeStorageHomeDir: await makeTempRoot(),
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await runtime.projectRegistry.add({ workspaceRoot: healthyWorkspaceRoot, name: "Healthy project" });
@@ -1181,7 +1189,7 @@ describe("createRuntime", () => {
     });
     const runtime1 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Goal restart" });
@@ -1231,7 +1239,7 @@ describe("createRuntime", () => {
     });
     const runtime2 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
 
@@ -1285,7 +1293,7 @@ describe("createRuntime", () => {
 
     const runtime1 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: await makeTempRoot(),
+      runtimeStorageHomeDir: await makeTempRoot(),
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     await expect(runtime1.updateSessionGoalControl({
@@ -1302,7 +1310,7 @@ describe("createRuntime", () => {
     });
     const runtime2 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: await makeTempRoot(),
+      runtimeStorageHomeDir: await makeTempRoot(),
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const cleared = await runtime2.updateSessionGoalControl({
@@ -1334,7 +1342,7 @@ describe("createRuntime", () => {
     });
     const runtime = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal continuation" });
@@ -1377,7 +1385,7 @@ describe("createRuntime", () => {
     });
     const runtime = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Goal failure" });
@@ -1418,7 +1426,7 @@ describe("createRuntime", () => {
     const registryHome = await makeTempRoot();
     const runtime1 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Repair answered HITL" });
@@ -1512,7 +1520,7 @@ describe("createRuntime", () => {
 
     const runtime2 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     installTestLlmAdapter();
@@ -1567,7 +1575,7 @@ describe("createRuntime", () => {
     const registryHome = await makeTempRoot();
     const runtime1 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "HITL restart" });
@@ -1663,7 +1671,7 @@ describe("createRuntime", () => {
 
     const runtime2 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     expect((await runtime2.getSessionFile(workspaceRoot, session.sessionId)).toolBatches[0]?.calls[0]?.state).toBe("blocked");
@@ -1723,7 +1731,7 @@ describe("createRuntime", () => {
     const registryHome = await makeTempRoot();
     const runtime1 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "HITL answer and Stop" });
@@ -1811,7 +1819,7 @@ describe("createRuntime", () => {
 
     const runtime2 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const context2 = await runtime2.contextResolver.resolve(workspaceRoot);
@@ -1868,7 +1876,7 @@ describe("createRuntime", () => {
     const registryHome = await makeTempRoot();
     const runtime1 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     const project = await runtime1.projectRegistry.add({ workspaceRoot, name: "Concurrent HITL" });
@@ -1942,7 +1950,7 @@ describe("createRuntime", () => {
 
     const runtime2 = await createRuntime({
       configService: await writeConfig(makeConfig()),
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     });
     installTestLlmAdapter();
@@ -2212,7 +2220,7 @@ describe("createRuntime", () => {
     await mkdir(join(configHome, ".archcode"), { recursive: true });
     await Bun.write(resolveServerConfigPath(configHome), JSON.stringify(makeConfig({ servers: {} })));
     const runtimeOptions = {
-      projectRegistryHomeDir: registryHome,
+      runtimeStorageHomeDir: registryHome,
       mcpManagerFactory: () => makeFakeMcpManager({ descriptors: [], warnings: [] }),
     } as const;
     const runtime1 = await createRuntime({

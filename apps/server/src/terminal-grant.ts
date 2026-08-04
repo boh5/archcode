@@ -1,17 +1,18 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
-const SETUP_TOKEN_BYTES = 32;
+const TERMINAL_GRANT_BYTES = 32;
 
 /**
- * Process-local proof that the person completing first-run setup can read the
- * server terminal. It has no persistence or configuration responsibility.
+ * Process-local proof that a browser can read the server terminal. The same
+ * grant can carry Config Recovery into Setup, and is consumed after a valid
+ * Config becomes active.
  */
-export class SetupGrant {
-  private readonly token = randomBytes(SETUP_TOKEN_BYTES).toString("base64url");
+export class TerminalGrant {
+  private readonly token = randomBytes(TERMINAL_GRANT_BYTES).toString("base64url");
   private consumed = false;
 
-  setupUrl(baseUrl: string): string {
-    return `${baseUrl.replace(/\/$/, "")}/setup#token=${this.token}`;
+  url(baseUrl: string, pathname: "/setup" | "/config-recovery"): string {
+    return `${baseUrl.replace(/\/$/, "")}${pathname}#token=${this.token}`;
   }
 
   authorize(header: string | undefined): boolean {

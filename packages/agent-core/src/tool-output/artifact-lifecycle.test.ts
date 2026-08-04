@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { ServerConfigService, resolveServerConfigPath } from "../config";
 import { silentLogger } from "../logger";
 import type { McpManager } from "../mcp";
+import { ProjectRegistry } from "../projects/registry";
 import { createRuntime as createProductionRuntime } from "../runtime";
 import { createTestArtifact } from "./artifact-store-fixture.test";
 import {
@@ -23,7 +24,11 @@ const CURSOR_KEY = new Uint8Array(32).fill(19);
 const roots = new Set<string>();
 const stores = new Set<ToolOutputArtifactStore>();
 
-type RuntimeTestOptions = Omit<NonNullable<Parameters<typeof createProductionRuntime>[0]>, "activation"> & {
+type RuntimeTestOptions = Omit<
+  NonNullable<Parameters<typeof createProductionRuntime>[0]>,
+  "activation" | "projectRegistry"
+> & {
+  projectRegistry?: ProjectRegistry;
   toolOutputStoreFactory?: (rootDir: string) => ToolOutputArtifactStore;
 };
 
@@ -134,9 +139,14 @@ function fakeMcpManager(): McpManager {
 async function createRuntime(options: RuntimeTestOptions) {
   const result = await options.configService.activateForStartup();
   if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
+  const runtimeStorageHomeDir = options.runtimeStorageHomeDir
+    ?? await makeRoot("archcode-output-runtime-home-");
   return createProductionRuntime({
     ...options,
     activation: result.activation,
+    projectRegistry: options.projectRegistry
+      ?? new ProjectRegistry({ homeDir: runtimeStorageHomeDir, logger: silentLogger }),
+    runtimeStorageHomeDir,
   } as Parameters<typeof createProductionRuntime>[0]);
 }
 
@@ -155,7 +165,7 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
     let artifactStore: ToolOutputArtifactStore | undefined;
     const runtime = await createRuntime({
       configService: await writeConfig(homeDir),
-      projectRegistryHomeDir: homeDir,
+      runtimeStorageHomeDir: homeDir,
       toolOutputRootDir: join(homeDir, "tool-output"),
       mcpManagerFactory: () => fakeMcpManager(),
       logger: silentLogger,

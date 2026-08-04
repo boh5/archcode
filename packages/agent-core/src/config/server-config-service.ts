@@ -1,4 +1,5 @@
-import { chmod, link, lstat, mkdir, open, readFile, unlink } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { createHmac, randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -17,7 +18,7 @@ import { sortJsonValue } from "@archcode/utils";
 import { ModelRuntime, type ModelRuntimeSnapshot } from "../models";
 import { SensitiveValueRedactor } from "../provider/sensitive-value-redactor";
 import { atomicWrite } from "../utils/safe-file";
-import { resolveMcpConfig } from "./mcp";
+import { McpConfigEnvError, McpConfigError, resolveMcpConfig } from "./mcp";
 import {
   MissingProviderOptionError,
   UnsupportedProviderOptionError,
@@ -86,9 +87,43 @@ export class ConfigSemanticValidationError extends Error {
   constructor(
     public readonly issues: readonly ServerConfigValidationIssue[],
     message: string = "Configuration validation failed",
+    public readonly recovery?: InvalidConfigRecoveryContext,
   ) {
     super(message);
     this.name = "ConfigSemanticValidationError";
+  }
+}
+
+export interface InvalidConfigRemovalTarget {
+  readonly path: readonly string[];
+}
+
+export interface InvalidConfigRecoveryContext {
+  readonly revision?: string;
+  readonly removalTargets: readonly InvalidConfigRemovalTarget[];
+}
+
+export interface InvalidConfigRemovalItem {
+  readonly id: string;
+  readonly path: readonly string[];
+}
+
+export interface InvalidConfigRemovalPlan {
+  readonly revision?: string;
+  readonly items: readonly InvalidConfigRemovalItem[];
+}
+
+interface RecoverableConfigValidationIssue extends ServerConfigValidationIssue {
+  readonly removalTarget?: InvalidConfigRemovalTarget;
+}
+
+export class InvalidConfigRemovalError extends Error {
+  constructor(
+    message: string,
+    public readonly issues: readonly ServerConfigValidationIssue[] = [],
+  ) {
+    super(message);
+    this.name = "InvalidConfigRemovalError";
   }
 }
 
@@ -99,12 +134,23 @@ export class ConfigInitializationConflictError extends Error {
   }
 }
 
+export class ConfigRecoveryConflictError extends Error {
+  constructor(public readonly configPath: string) {
+    super(`Global configuration at ${configPath} is valid and was not deleted`);
+    this.name = "ConfigRecoveryConflictError";
+  }
+}
+
 class MissingServerConfigError extends Error {}
 class ExistingServerConfigError extends Error {}
 
 export class BuiltinMcpConfigNameError extends ConfigSemanticValidationError {
   constructor(name: string) {
-    super([{ path: `mcp.servers.${name}`, message: `MCP server name "${name}" is reserved for a built-in server` }]);
+    super(
+      [{ path: `mcp.servers.${name}`, message: `MCP server name "${name}" is reserved for a built-in server` }],
+      undefined,
+      { removalTargets: [{ path: ["mcp", "servers", name] }] },
+    );
     this.name = "BuiltinMcpConfigNameError";
   }
 }
@@ -122,6 +168,7 @@ export class ServerConfigService {
   readonly homeDir: string;
   readonly configPath: string;
   readonly modelRuntime: ModelRuntime;
+  private readonly invalidConfigRemovalSecret = randomBytes(32);
   private startupConfig: ArchCodeConfig | undefined;
   private writeTail: Promise<void> = Promise.resolve();
 
@@ -133,9 +180,15 @@ export class ServerConfigService {
 
   async activateForStartup(): Promise<ServerConfigActivationResult> {
     try {
-      const loaded = await this.readDiskConfig();
-      const runtimeRevision = await runtimeRevisionForConfig(loaded.config);
-      return { status: "ready", ...this.activate(loaded.config, runtimeRevision) };
+      const prepared = await this.prepareDiskConfig();
+      return {
+        status: "ready",
+        ...this.activate(
+          prepared.config,
+          prepared.runtimeRevision,
+          prepared.modelRuntime,
+        ),
+      };
     } catch (error) {
       if (error instanceof MissingServerConfigError) return { status: "setup" };
       if (error instanceof ConfigSemanticValidationError) {
@@ -144,6 +197,7 @@ export class ServerConfigService {
           error: new ConfigSemanticValidationError(
             error.issues,
             `Invalid global configuration at ${this.configPath}: ${error.message}`,
+            error.recovery,
           ),
         };
       }
@@ -172,6 +226,148 @@ export class ServerConfigService {
       }
 
       return this.activate(validated, runtimeRevision, prepared);
+    });
+  }
+
+  /** Deletes only the canonical global Config, and only while it is invalid. */
+  async discardInvalidConfig(): Promise<void> {
+    return this.withWriteLock(async () => {
+      try {
+        await this.prepareDiskConfig();
+      } catch (error) {
+        if (error instanceof MissingServerConfigError) return;
+        if (!(error instanceof ConfigSemanticValidationError)) throw error;
+        return this.claimAndDiscardInvalidConfig();
+      }
+      throw new ConfigRecoveryConflictError(this.configPath);
+    });
+  }
+
+  invalidConfigRemovalPlan(
+    error: ConfigSemanticValidationError,
+  ): InvalidConfigRemovalPlan {
+    const recovery = error.recovery;
+    if (recovery === undefined) return { items: [] };
+    if (recovery.revision === undefined) return { items: [] };
+    const revision = recovery.revision;
+    return {
+      revision,
+      items: recovery.removalTargets.map((target) => ({
+        id: invalidConfigRemovalId(
+          this.invalidConfigRemovalSecret,
+          revision,
+          target.path,
+        ),
+        path: target.path,
+      })),
+    };
+  }
+
+  async removeInvalidConfigItems(
+    expectedRevision: string,
+    itemIds: readonly string[],
+  ): Promise<ServerConfigActivationResult> {
+    return this.withWriteLock(async () => {
+      let currentError: ConfigSemanticValidationError;
+      try {
+        await this.prepareDiskConfig();
+        throw new ConfigRecoveryConflictError(this.configPath);
+      } catch (cause) {
+        if (cause instanceof MissingServerConfigError) {
+          throw new ConfigRecoveryConflictError(this.configPath);
+        }
+        if (!(cause instanceof ConfigSemanticValidationError)) throw cause;
+        currentError = cause;
+      }
+
+      const plan = this.invalidConfigRemovalPlan(currentError);
+      if (plan.revision === undefined || plan.revision !== expectedRevision) {
+        throw new ConfigRevisionConflictError(
+          expectedRevision,
+          plan.revision ?? "unavailable",
+        );
+      }
+      if (itemIds.length === 0 || new Set(itemIds).size !== itemIds.length) {
+        throw new InvalidConfigRemovalError("Select at least one unique invalid Config item.");
+      }
+      const byId = new Map(plan.items.map((item) => [item.id, item]));
+      const selected = itemIds.map((id) => byId.get(id));
+      if (selected.some((item) => item === undefined)) {
+        throw new ConfigRevisionConflictError(expectedRevision, plan.revision);
+      }
+
+      const claimedPath = join(
+        dirname(this.configPath),
+        `.config-selective-recovery-${crypto.randomUUID()}`,
+      );
+      try {
+        await rename(this.configPath, claimedPath);
+      } catch (cause) {
+        throw new ConfigRevisionConflictError(expectedRevision, "changed");
+      }
+
+      let claimActive = true;
+      try {
+        const raw = await readFile(claimedPath, "utf8");
+        const claimedRevision = await revisionForText(raw);
+        if (claimedRevision !== expectedRevision) {
+          throw new ConfigRevisionConflictError(expectedRevision, claimedRevision);
+        }
+
+        let candidate: unknown;
+        try {
+          candidate = JSON.parse(raw);
+        } catch {
+          throw new InvalidConfigRemovalError(
+            "This Config is not valid JSON and has no safely removable structured items.",
+          );
+        }
+        const selectedItems = selected as InvalidConfigRemovalItem[];
+        const removalPaths = selectedItems
+          .map((item) => item.path)
+          .filter((path, _index, paths) => !paths.some((candidateAncestor) =>
+            candidateAncestor.length < path.length
+            && candidateAncestor.every((segment, index) => path[index] === segment)
+          ));
+        for (const path of removalPaths) {
+          deleteConfigPath(candidate, path);
+        }
+
+        let validated: ArchCodeConfig;
+        try {
+          validated = validateConfig(candidate);
+          const runtimeRevision = await runtimeRevisionForConfig(validated);
+          this.prepareModelRuntime(omitAuth(validated), runtimeRevision);
+        } catch (cause) {
+          if (cause instanceof ConfigSemanticValidationError) {
+            throw new InvalidConfigRemovalError(
+              "The selected removals would not produce a valid Config. Select the other related invalid items or repair the file externally.",
+              cause.issues,
+            );
+          }
+          throw cause;
+        }
+
+        try {
+          await createConfigFile(this.configPath, stableJson(validated));
+        } catch (cause) {
+          if (cause instanceof ExistingServerConfigError) {
+            throw new ConfigRevisionConflictError(expectedRevision, "changed");
+          }
+          throw cause;
+        }
+        // The no-replace install is the commit point. Cleanup must never turn a
+        // committed user operation into a reported failure.
+        claimActive = false;
+        await unlink(claimedPath).catch(() => undefined);
+      } catch (cause) {
+        if (claimActive) {
+          await restoreClaimedConfig(claimedPath, this.configPath);
+          claimActive = false;
+        }
+        throw cause;
+      }
+      return this.activateForStartup();
     });
   }
 
@@ -311,11 +507,22 @@ export class ServerConfigService {
   }
 
   private async readDiskConfig(): Promise<{ config: ArchCodeConfig; revision: string }> {
+    return this.readConfigFile(this.configPath, true);
+  }
+
+  private async readConfigFile(
+    sourcePath: string,
+    missingMeansSetup: boolean,
+  ): Promise<{ config: ArchCodeConfig; revision: string }> {
     let raw: string;
     try {
-      raw = await readFile(this.configPath, "utf8");
+      raw = await readFile(sourcePath, "utf8");
     } catch (cause) {
-      if (isNodeError(cause, "ENOENT") && await pathIsAbsent(this.configPath)) {
+      if (
+        missingMeansSetup
+        && isNodeError(cause, "ENOENT")
+        && await pathIsAbsent(sourcePath)
+      ) {
         throw new MissingServerConfigError();
       }
       throw new ConfigSemanticValidationError([{
@@ -334,7 +541,96 @@ export class ServerConfigService {
       }]);
     }
 
-    return { config: validateConfig(json), revision: await revisionForText(raw) };
+    const revision = await revisionForText(raw);
+    try {
+      return { config: validateConfig(json), revision };
+    } catch (cause) {
+      if (cause instanceof ConfigSemanticValidationError) {
+        throw new ConfigSemanticValidationError(
+          cause.issues,
+          cause.message,
+          {
+            revision,
+            removalTargets: cause.recovery?.removalTargets ?? [],
+          },
+        );
+      }
+      throw cause;
+    }
+  }
+
+  private async prepareDiskConfig(): Promise<{
+    config: ArchCodeConfig;
+    runtimeRevision: string;
+    modelRuntime: ModelRuntimeSnapshot;
+  }> {
+    return this.prepareConfigFile(this.configPath, true);
+  }
+
+  private async prepareConfigFile(
+    sourcePath: string,
+    missingMeansSetup: boolean,
+  ): Promise<{
+    config: ArchCodeConfig;
+    runtimeRevision: string;
+    modelRuntime: ModelRuntimeSnapshot;
+  }> {
+    const loaded = await this.readConfigFile(sourcePath, missingMeansSetup);
+    const runtimeRevision = await runtimeRevisionForConfig(loaded.config);
+    try {
+      return {
+        config: loaded.config,
+        runtimeRevision,
+        modelRuntime: this.prepareModelRuntime(omitAuth(loaded.config), runtimeRevision),
+      };
+    } catch (cause) {
+      if (cause instanceof ConfigSemanticValidationError) {
+        throw new ConfigSemanticValidationError(
+          cause.issues,
+          cause.message,
+          {
+            revision: loaded.revision,
+            removalTargets: cause.recovery?.removalTargets ?? [],
+          },
+        );
+      }
+      throw cause;
+    }
+  }
+
+  private async claimAndDiscardInvalidConfig(): Promise<void> {
+    const claimedPath = join(
+      dirname(this.configPath),
+      `.config-reset-${crypto.randomUUID()}`,
+    );
+    try {
+      await rename(this.configPath, claimedPath);
+    } catch (cause) {
+      if (isNodeError(cause, "ENOENT") && await pathIsAbsent(this.configPath)) return;
+      throw configDiscardError(this.configPath, cause);
+    }
+
+    try {
+      await this.prepareConfigFile(claimedPath, false);
+    } catch (cause) {
+      if (!(cause instanceof ConfigSemanticValidationError)) {
+        await restoreClaimedConfig(claimedPath, this.configPath);
+        throw cause;
+      }
+      try {
+        await unlink(claimedPath);
+      } catch (deleteCause) {
+        await restoreClaimedConfig(claimedPath, this.configPath);
+        throw configDiscardError(this.configPath, deleteCause);
+      }
+      if (!(await pathIsAbsent(this.configPath))) {
+        throw new ConfigRecoveryConflictError(this.configPath);
+      }
+      return;
+    }
+
+    await restoreClaimedConfig(claimedPath, this.configPath);
+    throw new ConfigRecoveryConflictError(this.configPath);
   }
 
   private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -364,13 +660,21 @@ function providerConfigSecretRedactor(config: ArchCodeConfig): SensitiveValueRed
 function validateConfig(value: unknown): ArchCodeConfig {
   const schema = archcodeConfigSchema.safeParse(value);
   if (!schema.success) {
-    throw new ConfigSemanticValidationError(schema.error.issues.map((issue) => ({
-      path: issue.path.join("."),
-      message: issue.message,
-    })));
+    throw new ConfigSemanticValidationError(
+      schema.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+      undefined,
+      {
+        removalTargets: dedupeRemovalTargets(
+          schema.error.issues.flatMap((issue) => schemaIssueRemovalTargets(issue)),
+        ),
+      },
+    );
   }
   const config = schema.data;
-  const issues: ServerConfigValidationIssue[] = [];
+  const issues: RecoverableConfigValidationIssue[] = [];
 
   for (const [providerId, provider] of Object.entries(config.provider)) {
     const adapter = providerAdapterCatalog.get(provider.npm);
@@ -378,6 +682,7 @@ function validateConfig(value: unknown): ArchCodeConfig {
       issues.push({
         path: `provider.${providerId}.npm`,
         message: `Unsupported provider package "${provider.npm}"`,
+        removalTarget: { path: ["provider", providerId] },
       });
       continue;
     }
@@ -389,6 +694,11 @@ function validateConfig(value: unknown): ArchCodeConfig {
           ? `provider.${providerId}.options.${cause.optionPath}`
           : `provider.${providerId}.options`,
         message: errorMessage(cause),
+        removalTarget: {
+          path: cause instanceof MissingProviderOptionError || cause instanceof UnsupportedProviderOptionError
+            ? ["provider", providerId, "options", ...cause.optionPath.split(".")]
+            : ["provider", providerId],
+        },
       });
     }
     validateAllowedProviderSecretPaths(
@@ -396,12 +706,14 @@ function validateConfig(value: unknown): ArchCodeConfig {
       adapter,
       `provider.${providerId}.options`,
       issues,
+      ["provider", providerId, "options"],
     );
     validateCredentialBearingProviderUrls(
       provider.options,
       adapter,
       `provider.${providerId}.options`,
       issues,
+      ["provider", providerId, "options"],
     );
   }
   validateSecretValuePlacement(config, issues);
@@ -425,10 +737,27 @@ function validateConfig(value: unknown): ArchCodeConfig {
   try {
     resolveMcpConfig(config.mcp);
   } catch (cause) {
-    issues.push({ path: "mcp", message: errorMessage(cause) });
+    const serverName = mcpErrorServerName(cause, config);
+    issues.push({
+      path: serverName === undefined ? "mcp" : `mcp.servers.${serverName}`,
+      message: errorMessage(cause),
+      removalTarget: serverName === undefined
+        ? undefined
+        : { path: ["mcp", "servers", serverName] },
+    });
   }
 
-  if (issues.length > 0) throw new ConfigSemanticValidationError(issues);
+  if (issues.length > 0) {
+    throw new ConfigSemanticValidationError(
+      issues,
+      undefined,
+      {
+        removalTargets: dedupeRemovalTargets(
+          issues.flatMap((issue) => issue.removalTarget === undefined ? [] : [issue.removalTarget]),
+        ),
+      },
+    );
+  }
   return config;
 }
 
@@ -758,7 +1087,8 @@ function validateAllowedProviderSecretPaths(
   options: Record<string, unknown>,
   adapter: ProviderAdapter,
   basePath: string,
-  issues: ServerConfigValidationIssue[],
+  issues: RecoverableConfigValidationIssue[],
+  removalBasePath?: readonly string[],
 ): void {
   for (const secretPath of findSecretBearingProviderOptionPaths(options, "")) {
     const normalizedPath = secretPath.replace(/^\./, "");
@@ -766,6 +1096,9 @@ function validateAllowedProviderSecretPaths(
       issues.push({
         path: `${basePath}.${normalizedPath}`,
         message: "Secret-bearing provider option is not declared by this adapter",
+        removalTarget: removalBasePath === undefined
+          ? undefined
+          : { path: [...removalBasePath, ...normalizedPath.split(".")] },
       });
     }
   }
@@ -789,7 +1122,7 @@ function matchesSecretPath(
 
 function validateSecretValuePlacement(
   config: ArchCodeConfig,
-  issues: ServerConfigValidationIssue[],
+  issues: RecoverableConfigValidationIssue[],
 ): void {
   const secretValues = new Set<string>();
   for (const provider of Object.values(config.provider)) {
@@ -834,6 +1167,9 @@ function validateSecretValuePlacement(
         issues.push({
           path: segments.join("."),
           message: "Credential values may appear only in declared secret fields",
+          removalTarget: boundedRemovalTarget(segments) === undefined
+            ? undefined
+            : { path: boundedRemovalTarget(segments)! },
         });
       }
       return;
@@ -855,7 +1191,8 @@ function validateCredentialBearingProviderUrls(
   options: Record<string, unknown>,
   adapter: ProviderAdapter,
   basePath: string,
-  issues: ServerConfigValidationIssue[],
+  issues: RecoverableConfigValidationIssue[],
+  removalBasePath?: readonly string[],
 ): void {
   const knownUrlPaths = new Set(
     adapter.optionFields.filter((field) => field.kind === "url").map((field) => field.path),
@@ -868,6 +1205,9 @@ function validateCredentialBearingProviderUrls(
         issues.push({
           path: `${basePath}.${path}`,
           message: "Provider URL credentials, query parameters, and fragments are allowed only in declared secret fields",
+          removalTarget: removalBasePath === undefined
+            ? undefined
+            : { path: [...removalBasePath, ...path.split(".")] },
         });
       }
       return;
@@ -941,6 +1281,105 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
   return error instanceof Error && "code" in error && error.code === code;
 }
 
+function schemaIssueRemovalTargets(issue: {
+  readonly code: string;
+  readonly path: readonly PropertyKey[];
+  readonly keys?: readonly string[];
+}): InvalidConfigRemovalTarget[] {
+  const path = issue.path.filter(
+    (segment): segment is string => typeof segment === "string",
+  );
+  if (issue.code === "unrecognized_keys" && issue.keys !== undefined) {
+    return issue.keys.map((key) => ({ path: [...path, key] }));
+  }
+  const target = boundedRemovalTarget(path);
+  return target === undefined ? [] : [{ path: target }];
+}
+
+function boundedRemovalTarget(path: readonly string[]): readonly string[] | undefined {
+  const [root] = path;
+  if (root === undefined || root === "auth" || root === "profiles") return undefined;
+  if (root === "provider") {
+    const providerId = path[1];
+    if (providerId === undefined) return undefined;
+    if (path[2] === "models" && path[3] !== undefined) {
+      if (path[4] === "variants" && path[5] !== undefined) {
+        return path.slice(0, 6);
+      }
+      return path.slice(0, 4);
+    }
+    if (path[2] === "options" && path.length >= 4) return path;
+    return path.slice(0, 2);
+  }
+  if (root === "mcp") {
+    if (path[1] === "servers" && path[2] !== undefined) {
+      return path.slice(0, 3);
+    }
+    return undefined;
+  }
+  if (root === "memory") return ["memory"];
+  if (root === "integrations" && path[1] === "github") {
+    return ["integrations", "github"];
+  }
+  return path.length === 1 ? path : undefined;
+}
+
+function dedupeRemovalTargets(
+  targets: readonly InvalidConfigRemovalTarget[],
+): InvalidConfigRemovalTarget[] {
+  const byPath = new Map<string, InvalidConfigRemovalTarget>();
+  for (const target of targets) {
+    byPath.set(JSON.stringify(target.path), target);
+  }
+  return [...byPath.values()];
+}
+
+function invalidConfigRemovalId(
+  secret: Uint8Array,
+  revision: string,
+  path: readonly string[],
+): string {
+  return createHmac("sha256", secret)
+    .update(revision)
+    .update("\0")
+    .update(JSON.stringify(path))
+    .digest("base64url")
+    .slice(0, 22);
+}
+
+function mcpErrorServerName(
+  error: unknown,
+  config: ArchCodeConfig,
+): string | undefined {
+  if (error instanceof McpConfigError) return error.serverName;
+  if (!(error instanceof McpConfigEnvError)) return undefined;
+  return Object.keys(config.mcp?.servers ?? {})
+    .sort((left, right) => right.length - left.length)
+    .find((serverName) => {
+      const prefix = `mcp.servers.${serverName}`;
+      return error.configPath === prefix || error.configPath.startsWith(`${prefix}.`);
+    });
+}
+
+function deleteConfigPath(candidate: unknown, path: readonly string[]): void {
+  if (!isRecord(candidate) || path.length === 0) {
+    throw new InvalidConfigRemovalError("The selected invalid Config item is no longer removable.");
+  }
+  let current: Record<string, unknown> = candidate;
+  for (const segment of path.slice(0, -1)) {
+    const next = current[segment];
+    if (!isRecord(next)) {
+      throw new InvalidConfigRemovalError("The selected invalid Config item is no longer removable.");
+    }
+    current = next;
+  }
+  const final = path[path.length - 1]!;
+  if (!Object.hasOwn(current, final)) {
+    throw new InvalidConfigRemovalError("The selected invalid Config item is no longer removable.");
+  }
+  delete current[final];
+}
+
 async function pathIsAbsent(path: string): Promise<boolean> {
   try {
     await lstat(path);
@@ -948,6 +1387,64 @@ async function pathIsAbsent(path: string): Promise<boolean> {
   } catch (cause) {
     return isNodeError(cause, "ENOENT");
   }
+}
+
+async function restoreClaimedConfig(
+  claimedPath: string,
+  configPath: string,
+): Promise<void> {
+  try {
+    await link(claimedPath, configPath);
+  } catch (cause) {
+    if (isNodeError(cause, "EEXIST")) {
+      await unlink(claimedPath).catch(() => undefined);
+      return;
+    }
+    const claimedBytes = await readFile(claimedPath);
+    let handle;
+    try {
+      handle = await open(configPath, "wx", 0o600);
+    } catch (createCause) {
+      if (isNodeError(createCause, "EEXIST")) {
+        await unlink(claimedPath).catch(() => undefined);
+        return;
+      }
+      throw configRestoreError(configPath, claimedPath, createCause);
+    }
+    try {
+      await handle.writeFile(claimedBytes);
+      await handle.sync();
+    } catch (writeCause) {
+      await handle.close().catch(() => undefined);
+      await unlink(configPath).catch(() => undefined);
+      throw configRestoreError(configPath, claimedPath, writeCause);
+    }
+    await handle.close().catch(() => undefined);
+    await unlink(claimedPath).catch(() => undefined);
+    return;
+  }
+  await unlink(claimedPath).catch(() => undefined);
+}
+
+function configRestoreError(
+  configPath: string,
+  claimedPath: string,
+  cause: unknown,
+): ConfigSemanticValidationError {
+  return new ConfigSemanticValidationError([{
+    path: configPath,
+    message: `Failed to restore the global configuration at ${configPath}: ${errorMessage(cause)}. The original file remains at ${claimedPath}.`,
+  }]);
+}
+
+function configDiscardError(
+  configPath: string,
+  cause: unknown,
+): ConfigSemanticValidationError {
+  return new ConfigSemanticValidationError([{
+    path: configPath,
+    message: `Failed to delete invalid global configuration at ${configPath}: ${errorMessage(cause)}`,
+  }]);
 }
 
 function redactProviderOptions(

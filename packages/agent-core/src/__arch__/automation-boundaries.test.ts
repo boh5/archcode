@@ -49,16 +49,26 @@ describe("Automation architecture boundaries", () => {
     expect(state).not.toMatch(/from\s+["']\.\/(?:dispatcher|scheduler|runtime-session-gateway)["']/);
     expect(dispatcher).not.toMatch(/from\s+["']\.\/(?:scheduler|runtime-session-gateway)["']/);
     expect(scheduler).not.toContain("runtime-session-gateway");
-    expect(serverHost.indexOf("runtime.recoverSessionContinuations")).toBeLessThan(
-      serverHost.indexOf("runtime.startAutomationSchedulers"),
+    const indexOfRequired = (source: string, needle: string): number => {
+      const index = source.indexOf(needle);
+      expect(index).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    expect(indexOfRequired(serverHost, "runtime.recoverSessionContinuations")).toBeLessThan(
+      indexOfRequired(serverHost, "runtime.startAutomationSchedulers"),
     );
-    expect(serverHost.indexOf("runtime.startAutomationSchedulers")).toBeLessThan(
-      serverHost.indexOf("this.runtimeApp = createRuntimeApp(runtime"),
+    expect(indexOfRequired(serverHost, "runtime.startAutomationSchedulers")).toBeLessThan(
+      indexOfRequired(serverHost, "const runtimeApp = createRuntimeApp(runtime"),
     );
-    expect(serverMain.indexOf("await ArchCodeServerHost.create")).toBeLessThan(
-      serverMain.indexOf("await bootServer(host"),
+    expect(indexOfRequired(serverHost, "const runtimeApp = createRuntimeApp(runtime")).toBeLessThan(
+      indexOfRequired(serverHost, "this.runtimeApp = runtimeApp"),
     );
-    expect(boot).toContain("startServer(host.app");
+    expect(indexOfRequired(serverMain, "await ArchCodeServerHost.create")).toBeLessThan(
+      indexOfRequired(serverMain, "await bootServer(host"),
+    );
+    expect(indexOfRequired(boot, "startServer(host.app")).toBeLessThan(
+      indexOfRequired(boot, "host.startRuntimeActivation()"),
+    );
     expect(sessionRecovery).toContain("reconcileAnsweredHitl");
     expect(sessionRecovery).toContain("continueRunnableToolBatches");
     expect(runtime).toContain("reconcileAllActiveGoals");

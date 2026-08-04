@@ -13,25 +13,25 @@ import { queryKeys } from "../../api/queries";
 const secondaryButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 const primaryButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 
-export function SettingsUpdatesPanel() {
+export function SettingsUpdatesPanel({ authorizationToken }: { authorizationToken?: string } = {}) {
   const queryClient = useQueryClient();
   const statusQuery = useQuery({
     queryKey: queryKeys.update,
-    queryFn: getUpdateStatus,
+    queryFn: () => getUpdateStatus(authorizationToken),
   });
   const applyStatus = (status: UpdateStatus) => {
     queryClient.setQueryData(queryKeys.update, status);
   };
   const check = useMutation({
-    mutationFn: checkForUpdate,
+    mutationFn: () => checkForUpdate(authorizationToken),
     onSuccess: applyStatus,
   });
   const install = useMutation({
-    mutationFn: installUpdate,
+    mutationFn: () => installUpdate(authorizationToken),
     onSuccess: applyStatus,
   });
   const restart = useMutation({
-    mutationFn: restartForUpdate,
+    mutationFn: () => restartForUpdate(authorizationToken),
     onSuccess: applyStatus,
   });
   useEffect(() => {

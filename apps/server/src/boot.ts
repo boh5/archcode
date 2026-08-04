@@ -45,9 +45,13 @@ export async function bootServer(
       ...(options.version ? { version: options.version } : {}),
     },
   });
-  for (const instruction of host.setupInstructions(url)) {
-    logger.info("server.setup.required", { message: instruction });
+  for (const instruction of host.terminalInstructions(url)) {
+    logger.info("server.terminal_action.required", { message: instruction });
   }
+
+  // The listener is deliberately published before Runtime activation begins.
+  // Runtime startup may be slow or fail; the control plane remains responsive.
+  host.startRuntimeActivation();
 
   if (Bun.env[ENV_OPEN_BROWSER]) {
     // Browser opening will be implemented when the web UI workflow is ready.

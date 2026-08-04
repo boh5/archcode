@@ -5,12 +5,6 @@ import { createRuntimeApp } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
 const mockRuntime = {
-  configService: {
-    getSnapshot: mock(async () => ({ config: { provider: {}, profiles: {} }, revision: "test", modelRuntimeRevision: "test", configPath: "/test", restartRequiredSections: [] })),
-    getModelRuntimeCatalog: mock(() => ({ revision: "test", providers: [], profileDefaults: {} })),
-    getProviderAdapterCatalog: mock(() => []),
-    save: mock(async () => ({ config: { provider: {}, profiles: {} }, revision: "test", modelRuntimeRevision: "test", configPath: "/test", restartRequiredSections: [] })),
-  },
   listAgentDescriptors: mock(() => []),
   subscribeSessionEvents: mock(() => () => undefined),
   subscribeHitlEvents: mock(() => () => undefined),

@@ -44,31 +44,25 @@ function App() {
 
   setGlobalToastCallback(show);
 
-  return <BootstrapGate onAuthInvalidated={clearQueryCache}>
-    <WorkbenchProviders toasts={toasts} onDismiss={dismiss} />
-  </BootstrapGate>;
+  return <QueryClientProvider client={queryClient}>
+    <SettingsModalProvider>
+      <ErrorBoundary>
+        <BootstrapGate onAuthInvalidated={clearQueryCache}>
+          <WorkbenchProviders />
+        </BootstrapGate>
+      </ErrorBoundary>
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
+    </SettingsModalProvider>
+  </QueryClientProvider>;
 }
 
-function WorkbenchProviders({
-  toasts,
-  onDismiss,
-}: {
-  toasts: ReturnType<typeof useToast>["toasts"];
-  onDismiss: ReturnType<typeof useToast>["dismiss"];
-}) {
+function WorkbenchProviders() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <GlobalSSEProvider>
-        <AddProjectModalProvider>
-          <SettingsModalProvider>
-            <ErrorBoundary>
-              <RouterProvider router={router} />
-            </ErrorBoundary>
-            <ToastContainer toasts={toasts} onDismiss={onDismiss} />
-          </SettingsModalProvider>
-        </AddProjectModalProvider>
-      </GlobalSSEProvider>
-    </QueryClientProvider>
+    <GlobalSSEProvider>
+      <AddProjectModalProvider>
+        <RouterProvider router={router} />
+      </AddProjectModalProvider>
+    </GlobalSSEProvider>
   );
 }
 

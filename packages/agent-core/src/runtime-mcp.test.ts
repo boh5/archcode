@@ -17,12 +17,17 @@ import {
   type AgentRuntimeOptions,
 } from "./runtime";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
+import { silentLogger } from "./logger";
+import { ProjectRegistry } from "./projects/registry";
 import { ToolOutputArtifactStore } from "./tool-output/artifact-store";
 import { REDACTION_MARKER, type SecretRedactionPolicy } from "./security";
 import { createInMemoryLogger } from "./logger";
 
-type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation"> & {
+type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation" | "projectRegistry"> & {
+  projectRegistry?: ProjectRegistry;
   toolOutputStoreFactory?: (rootDir: string) => ToolOutputArtifactStore;
+  executionManagerShutdown?: () => Promise<void>;
+  sessionAgentManagerDisposeAll?: () => void;
 };
 
 const tmpRoots: string[] = [];
@@ -44,11 +49,13 @@ async function createRuntime(
 ): ReturnType<typeof createProductionRuntime> {
   const result = await options.configService.activateForStartup();
   if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
-  const projectRegistryHomeDir = options.projectRegistryHomeDir ?? await makeTempRoot();
+  const runtimeStorageHomeDir = options.runtimeStorageHomeDir ?? await makeTempRoot();
   return createProductionRuntime({
     ...options,
     activation: result.activation,
-    projectRegistryHomeDir,
+    projectRegistry: options.projectRegistry
+      ?? new ProjectRegistry({ homeDir: runtimeStorageHomeDir, logger: silentLogger }),
+    runtimeStorageHomeDir,
   });
 }
 
@@ -454,6 +461,57 @@ describe("createRuntime MCP background loading", () => {
 });
 
 describe("createRuntime tool output lifecycle", () => {
+  test("retries only failed shutdown steps after a best-effort round", async () => {
+    const configService = await writeConfig(makeConfig({ servers: {} }));
+    const { manager } = makeMockMcpManager();
+    const root = await makeTempRoot();
+    const cleanupCalls: string[] = [];
+    let executionShutdownAttempts = 0;
+
+    (manager as unknown as { closeAll: () => Promise<McpWarning[]> }).closeAll = mock(async () => {
+      cleanupCalls.push("mcp");
+      return [];
+    });
+    class TrackingStore extends ToolOutputArtifactStore {
+      override async dispose(): Promise<void> {
+        cleanupCalls.push("artifacts");
+        await super.dispose();
+      }
+    }
+
+    const runtime = await createRuntime({
+      configService,
+      mcpManagerFactory: () => manager,
+      toolOutputRootDir: root,
+      toolOutputStoreFactory: (rootDir) => new TrackingStore({ rootDir }),
+      executionManagerShutdown: async () => {
+        executionShutdownAttempts += 1;
+        cleanupCalls.push(`executions:${executionShutdownAttempts}`);
+        if (executionShutdownAttempts === 1) throw new Error("execution cleanup failed");
+      },
+      sessionAgentManagerDisposeAll: () => {
+        cleanupCalls.push("agents");
+      },
+    });
+
+    const firstShutdown = runtime.shutdown();
+    expect(runtime.shutdown()).toBe(firstShutdown);
+    await expect(firstShutdown).rejects.toMatchObject({
+      name: "AggregateError",
+      message: "AgentRuntime shutdown failed",
+    });
+    expect(cleanupCalls).toEqual(["executions:1", "artifacts", "mcp", "agents"]);
+
+    const retryShutdown = runtime.shutdown();
+    expect(retryShutdown).not.toBe(firstShutdown);
+    await retryShutdown;
+    expect(cleanupCalls).toEqual(["executions:1", "artifacts", "mcp", "agents", "executions:2"]);
+
+    expect(runtime.shutdown()).toBe(retryShutdown);
+    await runtime.shutdown();
+    expect(cleanupCalls).toEqual(["executions:1", "artifacts", "mcp", "agents", "executions:2"]);
+  });
+
   test("initializes the configured store and exposes awaited disposal", async () => {
     const configService = await writeConfig(makeConfig({ servers: {} }));
     const { manager } = makeMockMcpManager();
