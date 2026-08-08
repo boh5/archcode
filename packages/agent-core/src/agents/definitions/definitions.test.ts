@@ -16,7 +16,7 @@ import {
 import {
   TOOL_COMPRESS,
 } from "../../tools/names";
-import { BUILTIN_SKILL_BODIES } from "../../skills";
+import { BUILTIN_SKILL_PACKAGES } from "../../skills";
 
 const EXPECTED_TOOL_MATRIX = {
   lead: [
@@ -240,7 +240,7 @@ describe("Agent catalog", () => {
     }
 
     for (const name of ["orchestrate-work", "plan-work", "execute-plan", "run-goal", "shape-todo", "review-work", "goal-review"] as const) {
-      expect(BUILTIN_SKILL_BODIES[name]).toBeString();
+      expect(BUILTIN_SKILL_PACKAGES[name].entry).toBeString();
     }
     expect(leadAgentDefinition.skills).toEqual(expect.arrayContaining([
       "orchestrate-work", "plan-work", "execute-plan", "run-goal", "review-work",

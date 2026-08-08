@@ -15,7 +15,10 @@ afterAll(async () => {
 
 const gitMasterBody = "FULL GIT MASTER BODY MUST NOT LEAK";
 const builtinSkills = {
-  "git-master": `---\nname: git-master\ndescription: Git guidance.\nwhen_to_use: Use for git operations.\n---\n\n${gitMasterBody}`,
+  "git-master": {
+    entry: `---\nname: git-master\ndescription: Git guidance. Use for git operations.\n---\n\n${gitMasterBody}`,
+    resources: {},
+  },
 };
 
 function createCommand(agentSkills: readonly string[] = ["git-master"]) {

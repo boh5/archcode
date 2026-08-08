@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ModelInfo } from "../provider/model";
 import type { ExecutionModelBinding } from "../models";
 import { SkillService } from "../skills";
-import { BUILTIN_SKILL_BODIES } from "../skills/builtin/manifest";
+import { BUILTIN_SKILL_PACKAGES } from "../skills/builtin/manifest";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
@@ -172,15 +172,14 @@ function createIdentityManager(
   ]);
   const skillService = new SkillService({
     builtinSkills: {
-      ...BUILTIN_SKILL_BODIES,
-      [IDENTITY_SKILL_NAME]: [
+      ...BUILTIN_SKILL_PACKAGES,
+      [IDENTITY_SKILL_NAME]: { entry: [
         "---",
         `name: ${IDENTITY_SKILL_NAME}`,
-        "description: Identity fixture",
-        "when_to_use: Verify persisted child identity.",
+        "description: Identity fixture. Use to verify persisted child identity.",
         "---",
         IDENTITY_SKILL_BODY,
-      ].join("\n"),
+      ].join("\n"), resources: {} },
     },
   });
 

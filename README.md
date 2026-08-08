@@ -142,8 +142,8 @@ workbench.
 ## Built in
 
 - Structured file, shell, Git, search, LSP, Web, memory, and MCP tools
-- Built-in and project workflow Skills for Todo shaping, planning, review, and
-  repeatable working methods
+- Built-in and project workflow Skill packages for Todo shaping, planning,
+  review, and repeatable working methods
 - Project memory and context compaction
 - Optional Git worktree execution
 - GitHub and custom MCP integrations

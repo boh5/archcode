@@ -7,6 +7,24 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- Replace single-file workflow Skills with standard local Skill packages:
+  `SKILL.md` plus optional `scripts/`, `references/`, `assets/`, and other
+  contained resources. Skill discovery is metadata-only; entry and listed
+  resources are disclosed progressively.
+
+### Breaking Changes
+
+- Project and user Skills must use one directory per Skill:
+  `<skills-root>/<name>/SKILL.md`. Manually update existing entries to use only `name` and `description`
+  (required), with optional `license`, `compatibility`, and string-map
+  `metadata`. Move former activation guidance into `description`; move
+  supporting files beneath the package and reference them with package-relative
+  paths. `when_to_use`, `allowed_tools`, and all other
+  top-level frontmatter fields are rejected. There is no migration, fallback,
+  compatibility reader, or resource merge with lower-precedence packages.
+
 ## [0.0.8] - 2026-08-04
 
 ### Added

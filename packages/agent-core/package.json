@@ -57,6 +57,7 @@
     "vscode-jsonrpc": "^8.2.1",
     "vscode-languageserver-protocol": "^3.17.5",
     "vscode-languageserver-types": "^3.17.5",
+    "yaml": "^2.8.1",
     "zod": "^4.4.2",
     "zustand": "^5.0.13"
   },

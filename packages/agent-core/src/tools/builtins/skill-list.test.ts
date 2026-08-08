@@ -61,7 +61,7 @@ describe("skill_list tool", () => {
     for (const entry of entries) {
       expect(entry.description.length).toBeGreaterThan(0);
       expect(entry.source).toBe("builtin");
-      expect("body" in entry).toBe(false);
+      expect(Object.keys(entry).sort()).toEqual(["description", "name", "source"]);
     }
   });
 

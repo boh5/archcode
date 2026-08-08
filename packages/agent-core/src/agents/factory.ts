@@ -168,7 +168,7 @@ async function resolveDelegatedSkillNames(
   }
 
   for (const skillName of dedupedNames) {
-    const skill = await skillService.readForAgent(workspaceRoot, skillName, targetDefinition.skills);
+    const skill = await skillService.discoverForAgent(workspaceRoot, skillName, targetDefinition.skills);
     if (skill === null) {
       throw new SkillNotFoundError(skillName);
     }

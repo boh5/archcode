@@ -1,23 +1,45 @@
 export type SkillSource = "project" | "user" | "builtin";
 
 export interface SkillMetadata {
-  name: string;
-  description: string;
-  when_to_use: string;
-  allowed_tools?: string[];
+  readonly name: string;
+  readonly description: string;
+  readonly license?: string;
+  readonly compatibility?: string;
+  readonly metadata?: Readonly<Record<string, string>>;
+}
+
+export interface SkillResourceDescriptor {
+  readonly path: string;
+  readonly bytes: number;
 }
 
 export interface ResolvedSkill {
-  metadata: SkillMetadata;
-  body: string;
-  source: SkillSource;
-  path?: string;
+  readonly metadata: SkillMetadata;
+  readonly body: string;
+  readonly source: SkillSource;
+  readonly sourceLabel: string;
+  /** Absolute package root for project/user Skills. Embedded builtins intentionally have no pretend path. */
+  readonly root?: string;
+  readonly resources: readonly SkillResourceDescriptor[];
+}
+
+export interface ResolvedSkillResource {
+  readonly skillName: string;
+  readonly source: SkillSource;
+  readonly sourceLabel: string;
+  readonly root?: string;
+  readonly resource: SkillResourceDescriptor;
+  readonly content: Uint8Array;
 }
 
 export interface SkillIndexEntry {
-  name: string;
-  description: string;
-  when_to_use: string;
-  source: SkillSource;
-  allowed_tools?: string[];
+  readonly name: string;
+  readonly description: string;
+  readonly source: SkillSource;
+}
+
+/** Complete embedded package. Resource values preserve bytes; no filesystem fallback exists. */
+export interface BuiltinSkillPackage {
+  readonly entry: string;
+  readonly resources: Readonly<Record<string, string | Uint8Array>>;
 }

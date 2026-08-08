@@ -326,15 +326,16 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "skill_list",
     competitorEvidenceIds: ["CC-160-A:Skill", "OC:skill"],
     runtimeSourceIds: ["tools/builtins/skill-list.ts:6-35"],
-    descriptionPatterns: [/currently allowed for this Agent/i, /System Prompt normally already lists the same allowed metadata/i, /fresh machine-readable copy/i, /call skill_read directly/i, /skill_list\(\{\}\)/, /exact returned name/i, /Never guess or invent/i],
+    descriptionPatterns: [/currently allowed for this Agent/i, /System Prompt normally already lists the same allowed metadata/i, /fresh machine-readable copy/i, /call skill_read directly/i, /skill_list\(\{\}\)/, /exact returned name/i, /Never guess or invent/i, /exactly name, description, and source/i, /resource contents are omitted/i],
   },
   {
     tool: "skill_read",
     competitorEvidenceIds: ["CC-160-A:Skill", "OC:skill"],
     runtimeSourceIds: ["tools/builtins/skill-read.ts:10-14,83-105"],
-    descriptionPatterns: [/allowed.*Agent/i, /available names are already listed in the System Prompt/i, /skill_read\(/, /Read the Skill before the work it governs/i, /Do not load unrelated Skills/i, /cannot expand/i, /permissions/, /workspace/],
+    descriptionPatterns: [/allowed.*Agent/i, /available names are already listed in the System Prompt/i, /skill_read\(/, /metadata, filesystem root when available, sorted resource descriptors, and entry body/i, /exactly one listed UTF-8 text resource/i, /unsupported-binary error/i, /Read the Skill before the work it governs/i, /supporting resources only when needed/i, /Do not load unrelated Skills/i, /cannot expand/i, /permissions/, /workspace/],
     schema: [
       { path: ["properties", "name"], descriptionPatterns: [/System Prompt's available-skill list or skill_list/i, /exact/i] },
+      { path: ["properties", "resource"], descriptionPatterns: [/Skill-root-relative/i, /Resources list/i, /cannot.*arbitrary filesystem path/i] },
     ],
   },
   {

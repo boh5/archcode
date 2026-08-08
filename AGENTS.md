@@ -198,6 +198,7 @@ packages/agent-core/src/
 ├── automations/                # Canonical Automation schemas, schedule, durable Invocation, Session dispatch
 ├── todos/                      # ProjectTodo schema, serialized state, and narrow Session-entry coordination
 ├── lsp/                        # LspClientPool (acquire/release, idle timeout, crash detection), StdioLspTransport, auto-installer, 18 language servers, 50+ ext mappings
+├── skills/                     # Standard local Skill packages: schema, package reader, source resolver, embedded builtin manifest
 ├── llm/                        # Managed LLM runtime: runLlmStream/runLlmText/runLlmObject, retry/recovery, adapter test seam
 ├── projects/                   # ProjectRegistry + per-workspace HITL/memory/approval context resolver
 ├── prompt/                     # PromptContractCompiler V2: typed kernel/runtime/role/collaboration/context/overlay layers + trace/eval
@@ -396,6 +397,10 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) �
 - Ordinary root Lead activates `orchestrate-work`; active Goal activates `run-goal`; root Discussion activates `shape-todo`, derived from authoritative runtime facts on every Execution.
 - `plan-work` writes one ordinary Markdown Plan per Todo under `.archcode/plans/`. Plan has no service, state, ID, API, dedicated page, or Goal link. `execute-plan` is activated only by the Todo-to-work handoff when that file exists.
 - `review-work` guides Lead review orchestration. Analyst analysis/review Skills include `analyze-work`, `review-change`, and the reserved `goal-review` final gate.
+- A Skill is one package: required `SKILL.md`; optional `scripts/`, `references/`, `assets/`, and other contained resources. Its strict YAML frontmatter accepts `name`, `description`, optional `license`, `compatibility`, and `metadata`; `description` states both method and activation timing.
+- Discovery (`skill_list` and available Prompt metadata) returns exactly name, description, and source. Entry activation (`skill_read({ name })`) returns the entry plus sorted resource descriptors; `skill_read({ name, resource })` reads exactly one listed text resource on demand. Binary assets are valid package resources but are not returned by the text-only tool.
+- Project `.archcode/skills/<name>/` > user `~/.archcode/skills/<name>/` > embedded builtin is whole-package precedence: bodies and resources never merge or fall through. Reserved lifecycle builtins remain unshadowable and Agent-gated.
+- Skills remain guidance only: their package metadata and resources cannot grant tools or permissions, execute scripts automatically, change Agent/Profile/MCP/workspace scope/delegation, or grant completion authority. Scripts use only existing Bash permissions.
 
 **MCP visibility by agent:**
 

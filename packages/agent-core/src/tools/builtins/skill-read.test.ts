@@ -1,7 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SkillService } from "../../skills";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
@@ -9,10 +8,9 @@ import { createTestProjectContext } from "../test-project-context";
 import { expectTextDraft } from "../test-results";
 import { createToolExecutionContext, type ToolExecutionContext } from "../types";
 import { createBuiltinToolDescriptors } from "./index";
-import { SkillReadInputSchema, skillReadTool } from "./skill-read";
-import { ONE_SHOT_FILE_READ_MAX_BYTES } from "../../utils/safe-file";
+import { formatResolvedSkillResource, SkillReadInputSchema, skillReadTool } from "./skill-read";
 
-const tmpRoot = join(tmpdir(), "archcode-skill-read-tool", crypto.randomUUID());
+const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-read", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
 const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
 const executionCwd = join(tmpRoot, "project.worktrees", "session-skill");
@@ -36,10 +34,19 @@ function makeContext(agentSkills: readonly string[], cwd = projectRoot): ToolExe
   cwd, });
 }
 
-async function writeProjectSkill(name: string, content: string): Promise<void> {
+async function writeProjectSkill(
+  name: string,
+  content: string,
+  resources: Readonly<Record<string, string | Uint8Array>> = {},
+): Promise<void> {
   const skillDir = join(projectSkillsRoot, name);
   await mkdir(skillDir, { recursive: true });
   await Bun.write(join(skillDir, "SKILL.md"), content);
+  for (const [path, resource] of Object.entries(resources)) {
+    const destination = join(skillDir, path);
+    await mkdir(dirname(destination), { recursive: true });
+    await Bun.write(destination, resource);
+  }
 }
 
 async function writeExecutionSkill(name: string, content: string): Promise<void> {
@@ -59,30 +66,180 @@ describe("skill_read tool", () => {
     await rm(tmpRoot, { recursive: true, force: true });
   });
 
-  test("allowed skill returns full metadata and body content", async () => {
+  test("entry read returns fixed metadata, root, sorted descriptors, and body without resource contents", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Maps code architecture and entry points when investigating an unfamiliar repository.
+license: MIT
+compatibility: Requires repository source access.
+metadata:
+  zeta: last
+  alpha: first
+---
+
+ENTRY_BODY
+`, {
+      "references/z-last.md": "RESOURCE_Z",
+      "references/a-first.md": "RESOURCE_A",
+    });
+
     const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"]));
 
     const output = expectTextDraft(result);
     expect(output).toContain("---\nname: codemap");
-    expect(output).toContain("description:");
-    expect(output).toContain("when_to_use:");
-    expect(output).toContain("source: builtin");
-    expect(output).toContain("Trace entry points");
+    expect(output).toContain(`source: ${join(projectSkillsRoot, "codemap")}`);
+    expect(output).toContain(`root: ${join(projectSkillsRoot, "codemap")}`);
+    expect(output).toContain("license: MIT");
+    expect(output).toContain("compatibility: Requires repository source access.");
+    expect(output).toContain('metadata: {"alpha":"first","zeta":"last"}');
+    const headerKeys = output.split("---\n", 2)[1]!
+      .trimEnd()
+      .split("\n")
+      .map((line) => line.slice(0, line.indexOf(":")));
+    expect(headerKeys).toEqual([
+      "name",
+      "description",
+      "source",
+      "root",
+      "license",
+      "compatibility",
+      "metadata",
+    ]);
+    expect(output.indexOf("references/a-first.md")).toBeLessThan(output.indexOf("references/z-last.md"));
+    expect(output).toContain("ENTRY_BODY");
+    expect(output).not.toContain("RESOURCE_A");
+    expect(output).not.toContain("RESOURCE_Z");
+  });
+
+  test("entry read emits Resources: none for a package without supporting files", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Maps code architecture when investigating an unfamiliar repository.
+---
+
+ENTRY_BODY
+`);
+
+    const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"]));
+    expect(expectTextDraft(result)).toContain("Resources: none\n\n\nENTRY_BODY\n");
+  });
+
+  test("resource read returns exactly one UTF-8 resource with a fixed identity header", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Maps code architecture when investigating an unfamiliar repository.
+---
+
+ENTRY_BODY
+`, {
+      "references/guide.md": "RESOURCE_TEXT\n",
+      "references/other.md": "OTHER_TEXT",
+    });
+
+    const result = await skillReadTool.execute(
+      { name: "codemap", resource: "references/guide.md" },
+      makeContext(["codemap"]),
+    );
+
+    expect(expectTextDraft(result)).toBe([
+      "---",
+      "skill: codemap",
+      `source: ${join(projectSkillsRoot, "codemap")}`,
+      "resource: references/guide.md",
+      "bytes: 14",
+      "---",
+      "",
+      "RESOURCE_TEXT\n",
+    ].join("\n"));
+    expect(expectTextDraft(result)).not.toContain("ENTRY_BODY");
+    expect(expectTextDraft(result)).not.toContain("OTHER_TEXT");
+  });
+
+  test("binary resource read returns deterministic unsupported-binary identity and error", async () => {
+    const result = formatResolvedSkillResource({
+      skillName: "codemap",
+      source: "builtin",
+      sourceLabel: "builtin",
+      resource: { path: "assets/image.bin", bytes: 3 },
+      content: Uint8Array.from([0xff, 0xfe, 0xfd]),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_SKILL_RESOURCE_BINARY_UNSUPPORTED");
+    expect(expectTextDraft(result)).toBe([
+      "---",
+      "skill: codemap",
+      "source: builtin",
+      "resource: assets/image.bin",
+      "bytes: 3",
+      "---",
+      "",
+      "error: TOOL_SKILL_RESOURCE_BINARY_UNSUPPORTED",
+      "hint: Binary Skill resources are valid package assets but cannot be returned by the text-only skill_read tool.",
+    ].join("\n"));
+  });
+
+  test("unknown resource returns a structured error without lower-source fallback", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Maps code architecture when investigating an unfamiliar repository.
+---
+
+ENTRY_BODY
+`);
+
+    const result = await skillReadTool.execute(
+      { name: "codemap", resource: "references/missing.md" },
+      makeContext(["codemap"]),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_SKILL_RESOURCE_NOT_FOUND");
+  });
+
+  test("unknown resource on an unresolved Skill reports the Skill-level error", async () => {
+    const result = await skillReadTool.execute(
+      { name: "missing-skill", resource: "references/missing.md" },
+      makeContext(["missing-skill"]),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_SKILL_NOT_FOUND");
+    expect(expectTextDraft(result)).toContain(
+      "Skill not found or not allowed for current agent: missing-skill",
+    );
+  });
+
+  test("rejects traversal and absolute resource paths at the tool boundary", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Maps code architecture when investigating an unfamiliar repository.
+---
+
+ENTRY_BODY
+`, { "references/guide.md": "guide" });
+
+    for (const resource of ["../../etc/passwd", "references/../../escape.md", "/etc/passwd"]) {
+      const result = await skillReadTool.execute(
+        { name: "codemap", resource },
+        makeContext(["codemap"]),
+      );
+      expect(result.isError).toBe(true);
+      expect(result.details?.error?.code).toBe("TOOL_SKILL_INVALID");
+    }
   });
 
   test("resolves project-local Skills from execution cwd, not canonical project root", async () => {
     await writeProjectSkill("codemap", `---
 name: codemap
-description: canonical marker
-when_to_use: Test canonical Skill resolution.
+description: Maps the canonical checkout when testing Skill resolution.
 ---
 
 CANONICAL_SKILL_BODY
 `);
     await writeExecutionSkill("codemap", `---
 name: codemap
-description: worktree marker
-when_to_use: Test worktree Skill resolution.
+description: Maps the execution worktree when testing Skill resolution.
 ---
 
 WORKTREE_SKILL_BODY
@@ -147,29 +304,18 @@ Broken body.
     expect(result.details?.error).toBeDefined();
   });
 
-  test("rejects a Skill one byte over the one-shot file cap without partial fallback", async () => {
-    const header = `---\nname: codemap\ndescription: oversized\nwhen_to_use: boundary test\n---\n\n`;
-    await writeProjectSkill(
-      "codemap",
-      header + "x".repeat(ONE_SHOT_FILE_READ_MAX_BYTES - new TextEncoder().encode(header).byteLength + 1),
-    );
-
-    const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"]));
-    expect(result.isError).toBe(true);
-    expect(result.details?.error?.code).toBe("TOOL_OUTPUT_POLICY_VIOLATION");
-    expect(expectTextDraft(result)).not.toContain("x".repeat(1_024));
-  });
-
-  test("input schema rejects unknown keys including agent, role, source, and path", () => {
+  test("input schema accepts an optional listed resource and rejects authority overrides", () => {
     expect(SkillReadInputSchema.safeParse({ name: "codemap" }).success).toBe(true);
+    expect(SkillReadInputSchema.safeParse({ name: "codemap", resource: "references/guide.md" }).success).toBe(true);
     expect(SkillReadInputSchema.safeParse({ name: "codemap", agentName: "lead" }).success).toBe(false);
     expect(SkillReadInputSchema.safeParse({ name: "codemap", role: "builder" }).success).toBe(false);
     expect(SkillReadInputSchema.safeParse({ name: "codemap", source: "builtin" }).success).toBe(false);
     expect(SkillReadInputSchema.safeParse({ name: "codemap", path: "/tmp/SKILL.md" }).success).toBe(false);
+    expect(SkillReadInputSchema.safeParse({ name: "codemap", resource: "" }).success).toBe(false);
   });
 
   test("input schema rejects invalid skill names", () => {
-    for (const invalidName of ["../x", "Git-Master", ""]) {
+    for (const invalidName of ["../x", "Git-Master", "double--hyphen", "trailing-", ""]) {
       expect(SkillReadInputSchema.safeParse({ name: invalidName }).success).toBe(false);
     }
   });

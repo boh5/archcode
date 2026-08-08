@@ -1,20 +1,31 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
-import { BUILTIN_SKILL_BODIES } from "./builtin/manifest";
-import { assertSkillName, parseSkillMarkdown } from "./schema";
-import type { ResolvedSkill, SkillIndexEntry, SkillSource } from "./types";
+import { BUILTIN_SKILL_PACKAGES } from "./builtin/manifest";
 import {
-  ONE_SHOT_FILE_READ_MAX_BYTES,
-  assertUtf8TextWithinLimit,
-  readUtf8FileBounded,
-  resolveContainedPath,
-  SafePathError,
-} from "../utils/safe-file";
+  activateBuiltinSkill,
+  activateFilesystemSkill,
+  assertFilesystemSkillAncestry,
+  discoverBuiltinSkill,
+  discoverFilesystemSkill,
+  filesystemSkillDirectoryExists,
+  readBuiltinSkillResource,
+  readFilesystemSkillResource,
+  SkillPackageResourceNotFoundError,
+} from "./package-reader";
+import { assertSkillName } from "./schema";
+import type {
+  BuiltinSkillPackage,
+  ResolvedSkill,
+  ResolvedSkillResource,
+  SkillIndexEntry,
+  SkillMetadata,
+  SkillSource,
+} from "./types";
 
 const PROJECT_SKILLS_DIR = join(PROJECT_STATE_DIR_NAME, "skills");
-const SKILL_FILE = "SKILL.md";
+
 export const RESERVED_BUILTIN_SKILL_NAMES = new Set([
   "automation-create",
   "orchestrate-work",
@@ -48,6 +59,16 @@ export class SkillNotFoundError extends Error {
   }
 }
 
+export class SkillResourceNotFoundError extends Error {
+  constructor(
+    public readonly skillName: string,
+    public readonly resource: string,
+  ) {
+    super(`Skill resource not found: ${skillName}/${resource}`);
+    this.name = "SkillResourceNotFoundError";
+  }
+}
+
 export class SkillValidationError extends Error {
   public readonly skillName: string;
   public readonly source: SkillSource;
@@ -71,23 +92,31 @@ export class SkillValidationError extends Error {
 }
 
 export interface SkillServiceOptions {
-  userSkillsRoot?: string;
-  builtinSkills?: Record<string, string>;
+  readonly userSkillsRoot?: string;
+  readonly builtinSkills?: Readonly<Record<string, BuiltinSkillPackage>>;
 }
 
-interface SkillCandidate {
-  source: SkillSource;
-  path?: string;
-  content?: string;
-}
+type SkillCandidate =
+  | {
+      readonly source: "project" | "user";
+      readonly boundaryRoot: string;
+      readonly root: string;
+    }
+  | {
+      readonly source: "builtin";
+      readonly skillPackage: BuiltinSkillPackage;
+    };
 
 export class SkillService {
   public readonly userSkillsRoot: string;
-  readonly #builtinSkills: Record<string, string>;
+  readonly #userSkillsBoundaryRoot: string;
+  readonly #builtinSkills: Readonly<Record<string, BuiltinSkillPackage>>;
 
   constructor(options: SkillServiceOptions = {}) {
+    const defaultUserRoot = options.userSkillsRoot === undefined;
     this.userSkillsRoot = resolve(options.userSkillsRoot ?? join(homedir(), USER_DATA_DIR_NAME, "skills"));
-    this.#builtinSkills = options.builtinSkills ?? BUILTIN_SKILL_BODIES;
+    this.#userSkillsBoundaryRoot = defaultUserRoot ? resolve(homedir()) : dirname(this.userSkillsRoot);
+    this.#builtinSkills = options.builtinSkills ?? BUILTIN_SKILL_PACKAGES;
   }
 
   async listForAgent(
@@ -98,18 +127,22 @@ export class SkillService {
     const entries: SkillIndexEntry[] = [];
 
     for (const name of names) {
-      const skill = await this.readForAgent(projectRoot, name, allowedNames);
-      if (skill === null) continue;
-      entries.push({
-        name: skill.metadata.name,
-        description: skill.metadata.description,
-        when_to_use: skill.metadata.when_to_use,
-        source: skill.source,
-        allowed_tools: skill.metadata.allowed_tools,
-      });
+      const entry = await this.discoverForAgent(projectRoot, name, allowedNames);
+      if (entry !== null) entries.push(entry);
     }
+    return entries.sort((a, b) => lexicalCompare(a.name, b.name));
+  }
 
-    return entries.sort((a, b) => a.name.localeCompare(b.name));
+  async discoverForAgent(
+    projectRoot: string,
+    name: string,
+    allowedNames?: readonly string[],
+  ): Promise<SkillIndexEntry | null> {
+    assertSkillName(name);
+    const candidate = await this.#resolveWinningCandidate(projectRoot, name, allowedNames);
+    if (candidate === null) return null;
+    const metadata = await this.#discoverCandidate(name, candidate);
+    return { name: metadata.name, description: metadata.description, source: candidate.source };
   }
 
   async readForAgent(
@@ -118,14 +151,52 @@ export class SkillService {
     allowedNames?: readonly string[],
   ): Promise<ResolvedSkill | null> {
     assertSkillName(name);
-
-    const candidates = await this.#candidates(projectRoot, name, allowedNames);
-    for (const candidate of candidates) {
-      if (candidate.content === undefined) continue;
-      return this.#parseCandidate(name, candidate);
+    const candidate = await this.#resolveWinningCandidate(projectRoot, name, allowedNames);
+    if (candidate === null) return null;
+    try {
+      const activated = candidate.source === "builtin"
+        ? activateBuiltinSkill(candidate.skillPackage, name)
+        : await activateFilesystemSkill(candidate, name);
+      return {
+        metadata: activated.metadata,
+        body: activated.body,
+        source: candidate.source,
+        sourceLabel: candidate.source === "builtin" ? "builtin" : candidate.root,
+        ...(candidate.source === "builtin" ? {} : { root: candidate.root }),
+        resources: activated.resources,
+      };
+    } catch (error) {
+      throw this.#validationError(name, candidate, error);
     }
+  }
 
-    return null;
+  async readResourceForAgent(
+    projectRoot: string,
+    name: string,
+    resource: string,
+    allowedNames?: readonly string[],
+  ): Promise<ResolvedSkillResource | null> {
+    assertSkillName(name);
+    const candidate = await this.#resolveWinningCandidate(projectRoot, name, allowedNames);
+    if (candidate === null) return null;
+    try {
+      const read = candidate.source === "builtin"
+        ? readBuiltinSkillResource(candidate.skillPackage, name, resource)
+        : await readFilesystemSkillResource(candidate, name, resource);
+      return {
+        skillName: name,
+        source: candidate.source,
+        sourceLabel: candidate.source === "builtin" ? "builtin" : candidate.root,
+        ...(candidate.source === "builtin" ? {} : { root: candidate.root }),
+        resource: read.descriptor,
+        content: read.content,
+      };
+    } catch (error) {
+      if (error instanceof SkillPackageResourceNotFoundError) {
+        throw new SkillResourceNotFoundError(name, resource);
+      }
+      throw this.#validationError(name, candidate, error);
+    }
   }
 
   async #discoverNames(
@@ -134,70 +205,86 @@ export class SkillService {
   ): Promise<string[]> {
     const allowed = allowedNames === undefined ? null : new Set(allowedNames);
     const names = new Set<string>();
-
-    for (const root of [this.#projectSkillsRoot(projectRoot), this.userSkillsRoot]) {
-      for (const name of await this.#listSkillDirs(root)) {
-        if (RESERVED_BUILTIN_SKILL_NAMES.has(name)) continue;
-        names.add(name);
+    const filesystemSources = [
+      { boundaryRoot: resolve(projectRoot), root: this.#projectSkillsRoot(projectRoot) },
+      { boundaryRoot: this.#userSkillsBoundaryRoot, root: this.userSkillsRoot },
+    ] as const;
+    for (const source of filesystemSources) {
+      for (const name of await this.#listSkillDirs(source.boundaryRoot, source.root)) {
+        if (!RESERVED_BUILTIN_SKILL_NAMES.has(name)) names.add(name);
       }
     }
-
     for (const name of Object.keys(this.#builtinSkills)) {
-      if (allowed !== null && !allowed.has(name)) continue;
-      names.add(name);
+      if (allowed === null || allowed.has(name)) names.add(name);
     }
-
-    return [...names].sort();
+    return [...names].sort(lexicalCompare);
   }
 
-  async #candidates(
+  async #resolveWinningCandidate(
     projectRoot: string,
     name: string,
     allowedNames?: readonly string[],
-  ): Promise<SkillCandidate[]> {
-    const builtin = this.#builtinSkills[name];
+  ): Promise<SkillCandidate | null> {
+    const allowed = allowedNames === undefined || allowedNames.includes(name);
+    const builtin = Object.hasOwn(this.#builtinSkills, name)
+      ? this.#builtinSkills[name]
+      : undefined;
     if (RESERVED_BUILTIN_SKILL_NAMES.has(name)) {
-      return allowedNames === undefined || allowedNames.includes(name)
-        ? [{ source: "builtin", content: builtin }]
-        : [];
+      return allowed && builtin !== undefined
+        ? { source: "builtin", skillPackage: builtin }
+        : null;
     }
-    const projectPath = await this.#resolveSkillPath(this.#projectSkillsRoot(projectRoot), name);
-    const userPath = await this.#resolveSkillPath(this.userSkillsRoot, name);
 
-    return [
-      { source: "project", path: projectPath, content: await this.#readFileOrUndefined(projectPath) },
-      { source: "user", path: userPath, content: await this.#readFileOrUndefined(userPath) },
-      ...(allowedNames === undefined || allowedNames.includes(name)
-        ? [{ source: "builtin" as const, content: builtin }]
-        : []),
-    ];
+    const projectPackageRoot = resolve(this.#projectSkillsRoot(projectRoot), name);
+    const projectCandidate = {
+      source: "project" as const,
+      boundaryRoot: resolve(projectRoot),
+      root: projectPackageRoot,
+    };
+    if (await this.#filesystemCandidateExists(projectCandidate)) {
+      return projectCandidate;
+    }
+    const userPackageRoot = resolve(this.userSkillsRoot, name);
+    const userCandidate = {
+      source: "user" as const,
+      boundaryRoot: this.#userSkillsBoundaryRoot,
+      root: userPackageRoot,
+    };
+    if (await this.#filesystemCandidateExists(userCandidate)) {
+      return userCandidate;
+    }
+    return allowed && builtin !== undefined
+      ? { source: "builtin", skillPackage: builtin }
+      : null;
   }
 
-  #parseCandidate(requestedName: string, candidate: SkillCandidate): ResolvedSkill {
+  async #discoverCandidate(name: string, candidate: SkillCandidate): Promise<SkillMetadata> {
     try {
-      const content = candidate.content;
-      if (content === undefined) throw new Error("Skill content is missing");
-      assertUtf8TextWithinLimit(content, ONE_SHOT_FILE_READ_MAX_BYTES);
-      const { metadata, body } = parseSkillMarkdown(content);
-      if (metadata.name !== requestedName) {
-        throw new Error(
-          `frontmatter.name must match requested skill "${requestedName}" (received "${metadata.name}")`,
-        );
-      }
-      return {
-        metadata,
-        body,
-        source: candidate.source,
-        path: candidate.path,
-      };
+      return candidate.source === "builtin"
+        ? discoverBuiltinSkill(candidate.skillPackage, name)
+        : await discoverFilesystemSkill(candidate, name);
     } catch (error) {
-      throw new SkillValidationError({
-        skillName: requestedName,
-        source: candidate.source,
-        path: candidate.path,
-        message: error instanceof Error ? error.message : String(error),
-        cause: error,
-      });
+      throw this.#validationError(name, candidate, error);
+    }
+  }
+
+  #validationError(name: string, candidate: SkillCandidate, error: unknown): SkillValidationError {
+    return new SkillValidationError({
+      skillName: name,
+      source: candidate.source,
+      ...(candidate.source === "builtin" ? {} : { path: candidate.root }),
+      message: error instanceof Error ? error.message : String(error),
+      cause: error,
+    });
+  }
+
+  async #filesystemCandidateExists(
+    candidate: Extract<SkillCandidate, { readonly source: "project" | "user" }>,
+  ): Promise<boolean> {
+    try {
+      return await filesystemSkillDirectoryExists(candidate);
+    } catch (error) {
+      throw new SkillPathError(candidate.root, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -205,22 +292,12 @@ export class SkillService {
     return resolve(projectRoot, PROJECT_SKILLS_DIR);
   }
 
-  async #resolveSkillPath(root: string, name: string): Promise<string> {
+  async #listSkillDirs(boundaryRoot: string, root: string): Promise<string[]> {
     try {
-      return await resolveContainedPath(join(name, SKILL_FILE), root);
-    } catch (error) {
-      if (error instanceof SafePathError) {
-        throw new SkillPathError(error.path, error.reason);
-      }
-      throw error;
-    }
-  }
-
-  async #listSkillDirs(root: string): Promise<string[]> {
-    try {
+      await assertFilesystemSkillAncestry({ boundaryRoot, root });
       const entries = await readdir(root, { withFileTypes: true });
-      return entries
-        .filter((entry) => entry.isDirectory())
+      const names = entries
+        .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
         .map((entry) => entry.name)
         .filter((name) => {
           try {
@@ -230,22 +307,20 @@ export class SkillService {
             return false;
           }
         })
-        .sort();
-    } catch {
-      return [];
-    }
-  }
-
-  async #readFileOrUndefined(filePath: string): Promise<string | undefined> {
-    try {
-      return await readUtf8FileBounded(filePath, ONE_SHOT_FILE_READ_MAX_BYTES);
+        .sort(lexicalCompare);
+      await assertFilesystemSkillAncestry({ boundaryRoot, root });
+      return names;
     } catch (error) {
-      if (isNoEntryError(error)) return undefined;
-      throw error;
+      if (isNoEntryError(error)) return [];
+      throw new SkillPathError(root, error instanceof Error ? error.message : String(error));
     }
   }
 }
 
 function isNoEntryError(error: unknown): boolean {
   return error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
+}
+
+function lexicalCompare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }

@@ -49,7 +49,7 @@ export class PromptContractCompiler {
         sections: rendered.map(({ trace }) => trace),
         skills: {
           status: contract.availableSkills.length === 0 && contract.activeSkills.length === 0 ? "absent" : "present",
-          active: contract.activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.path ?? skill.source })),
+          active: contract.activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.sourceLabel })),
         },
         visibleTools: [...contract.allowedTools],
         agentsMd: contract.agentsMd.status,
@@ -66,7 +66,7 @@ export function createFailedPromptTrace(
   error: unknown,
   skills: PromptTrace["skills"] = {
     status: contract.availableSkills.length === 0 && contract.activeSkills.length === 0 ? "absent" : "present",
-    active: contract.activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.path ?? skill.source })),
+    active: contract.activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.sourceLabel })),
   },
 ): PromptTrace {
   const message = error instanceof Error ? error.message : String(error);
@@ -171,13 +171,21 @@ function renderCollaboration(contract: PromptContractV2): string {
 }
 
 function renderSkills(contract: PromptContractV2): string {
-  const available = contract.availableSkills.map((skill) => {
-    const allowedTools = skill.allowed_tools === undefined || skill.allowed_tools.length === 0
-      ? ""
-      : ` [allowed_tools: ${skill.allowed_tools.join(", ")}]`;
-    return `- ${skill.name}: ${skill.description}${allowedTools} (source=${skill.source}; when=${skill.when_to_use})`;
+  const available = contract.availableSkills.map(
+    (skill) => `- ${skill.name}: ${skill.description} (source=${skill.source})`,
+  );
+  const active = contract.activeSkills.map((skill) => {
+    const source = skill.root === undefined
+      ? `source=${skill.sourceLabel}`
+      : `source=${skill.sourceLabel}; root=${skill.root}`;
+    const resources = [...skill.resources]
+      .sort((a, b) => lexicalCompare(a.path, b.path))
+      .map((resource) => `- ${resource.path} (${resource.bytes} bytes)`);
+    const resourceSection = resources.length === 0
+      ? "Resources: none"
+      : `Resources:\n${resources.join("\n")}`;
+    return `### ${skill.metadata.name} (${source})\n\n${resourceSection}\n\n${skill.body}`;
   });
-  const active = contract.activeSkills.map((skill) => `### ${skill.metadata.name} (source=${skill.path ?? skill.source})\n\n${skill.body}`);
   return `## Skills
 
 Skills provide optional workflow guidance. They never expand tools, runtime permissions, delegation targets, transitions, or completion authority.
@@ -188,6 +196,10 @@ ${available.length === 0 ? "- none" : available.join("\n")}
 
 Active:
 ${active.length === 0 ? "- none" : active.join("\n\n---\n\n")}`;
+}
+
+function lexicalCompare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function renderTools(contract: PromptContractV2): string {

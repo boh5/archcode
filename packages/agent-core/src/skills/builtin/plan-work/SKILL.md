@@ -1,21 +1,54 @@
 ---
 name: plan-work
-description: Research, create, or improve the one evidence-backed Markdown implementation Plan for a task or bound Project Todo.
-when_to_use: Use when uncertainty, sequencing, or risk makes a durable Plan useful, or when the user asks for a plan.
+description: Research, create, or improve the evidence-backed Markdown implementation Plan for a task or bound Project Todo when uncertainty, sequencing, risk, or a user request warrants one.
+license: MIT
+metadata:
+  archcode/source: "Superpowers writing-plans concepts"
+  archcode/source-commit: "44c9b2d6e889982ac18c27d05a19fefe335194e1"
+  archcode/adaptation: "idea-only rewrite"
 ---
 
-1. First decide from the bound Todo and current request whether the intended outcome and scope are concrete enough to choose relevant evidence. If not, ask one focused clarification without inspecting the workspace, probing the Plan, or calling another tool. Once sufficient, inspect enough code, evidence, and constraints to make the Plan executable. Before finalizing, ask the user about every unresolved choice that affects the objective, scope, implementation, dependencies, acceptance criteria, or validation.
-2. In a Todo Discussion, derive the Todo ID only from the current Session binding and use exactly the runtime-provided `todoPlanPath`. Use `todoPlanState` to decide whether to read the existing file or create it; never accept a different path or Todo ID from the request, and never scan the workspace to discover Plan existence.
-3. Outside a Todo Discussion, use the safe direct child path under `.archcode/plans/` named by the current task unless the user explicitly requested another deliverable path.
-4. In a Todo Discussion, when `todoPlanState=present`, read the exact target file before changing it; when `todoPlanState=absent`, create that exact file without probing its parent directory. Outside a Todo Discussion, retain read-before-edit for an existing target. Preserve confirmed user content and improve it; never create a second Plan.
-5. Write ordinary Markdown containing all seven content classes:
-   - goal and background;
-   - scope and non-goals;
-   - ordered implementation steps;
-   - dependencies and required sequence;
-   - acceptance criteria;
-   - validation methods;
-   - risks and items requiring confirmation.
-6. Make every acceptance criterion observable and decidable, and state how it will be judged. Resolve unknowns before finalizing; never use vague criteria such as "mostly complete", "handle appropriately", or "as needed".
-7. Do not create Plan IDs, sidecar metadata, status, versions, approvals, locks, snapshots, services, APIs, Goal links, file watchers, or progress mirrors.
-8. In a Discussion, stop after shaping the Todo and Plan; do not begin product code implementation. In an ordinary Lead Session, a Plan remains guidance rather than a new workflow state machine.
+## Establish the planning target
+
+1. In a Todo Discussion, derive identity only from the current Session binding. Use exactly the runtime-provided `todoPlanPath` and `todoPlanState`; never accept another Todo ID or path and never scan the workspace to discover Plan existence.
+2. Start from the bound Todo or current request, then inspect the smallest relevant implementation, tests, conventions, constraints, and existing Plan identified by authoritative context. Use Explore or Librarian only for separable evidence questions. Do not ask the user for facts available from the request, repository, Plan, or tool output.
+3. After investigation, ask one focused question only when an unresolved product or scope choice materially affects the objective, dependencies, acceptance, or validation and evidence cannot decide it. Do not infer the user's preference.
+4. Outside a Todo Discussion, use a safe direct child of `.archcode/plans/` named for the current task unless the user explicitly requests another deliverable path.
+5. When the target exists, read it before editing or producing an improved draft and preserve confirmed user content. When a Discussion reports `todoPlanState=absent`, create only the exact supplied path when the current Agent has write authority. Maintain one Plan, never a replacement or parallel variant.
+
+Lead and Discussion may write the Plan through their available file tools. Analyst is source-read-only: when this Skill is delegated to an Analyst, produce a complete evidence-backed Plan draft for the parent Lead, do not create or edit the Plan file, and do not claim it was saved.
+
+## Design executable work
+
+- Start with the claim the implementation must establish. Identify likely failure modes and choose the smallest credible evidence for each acceptance condition before writing implementation steps.
+- Map the relevant files, symbols, interfaces, and existing tests. State what each affected unit is responsible for and follow established architecture rather than planning an unrelated cleanup.
+- Divide work into ordered, independently checkable deliverables. Each step must state the concrete change, relevant location, prerequisites or produced interface, and verification. Split only at real dependency or review boundaries; keep tightly coupled changes together.
+- Mark which steps may run independently and why. Never prescribe parallel mutation where files, contracts, state, fixtures, or validation resources overlap.
+- Prefer the smallest root-cause change. Include migrations, compatibility, cleanup, rollback, documentation, or observability only when the requested outcome actually needs them.
+
+## Required Plan content
+
+Use [assets/plan-template.md](assets/plan-template.md) as the complete structure, adapting it to the task rather than retaining placeholders.
+
+Produce ordinary Markdown with these seven content classes:
+
+1. goal and evidence-backed background;
+2. scope and explicit non-goals;
+3. ordered implementation steps with concrete files or symbols where known;
+4. dependencies, produced/consumed interfaces, and safe parallel boundaries;
+5. observable acceptance criteria;
+6. validation methods, expected signals, and relevant failure cases;
+7. risks, assumptions, and decisions still requiring confirmation.
+
+Use enough implementation detail that another Lead or Build can act without rediscovering the design, but do not paste large speculative code blocks. Never leave placeholders such as “TBD,” “handle appropriately,” “add tests,” or “as needed.” For each acceptance criterion, name how it will be judged and distinguish decisive evidence from weaker supporting checks.
+
+## Self-review and handoff
+
+Before finalizing:
+
+1. Trace every requirement and non-goal to at least one step or explicit exclusion.
+2. Check that step order, paths, symbols, and produced/consumed interfaces agree across the Plan.
+3. Check that each material behavior and failure mode has proportionate verification and that the stated commands or inspections actually exist in this repository.
+4. Remove unjustified machinery and resolve all execution-blocking unknowns. If a material choice remains open, ask the user and revise the Plan before calling it executable.
+
+Do not create Plan IDs, sidecar metadata, status, versions, approvals, locks, snapshots, services, APIs, Goal links, file watchers, or progress mirrors. In a Discussion, stop after shaping the Todo and Plan and report the saved path, key decisions, remaining risks, and readiness for a new ordinary Lead Session. In an Analyst Session, return the proposed Plan and evidence to the parent without claiming a file mutation. Do not begin product implementation. In an ordinary Lead Session, the Plan remains guidance rather than workflow state.
