@@ -32,7 +32,7 @@ export function createSkillCommand(): CommandDescriptor {
       }
 
       try {
-        const skill = await ctx.skillService.readForAgent(ctx.cwd, name, ctx.agentSkills);
+        const skill = await ctx.skillService.discoverForAgent(ctx.cwd, name, ctx.agentSkills);
         if (skill === null) {
           return unavailable(name, ctx.agentName);
         }

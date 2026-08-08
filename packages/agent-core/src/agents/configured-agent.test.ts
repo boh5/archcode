@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
-import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { ModelInfo } from "../provider/model";
@@ -62,22 +62,6 @@ function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
 
 function createTestSkillService(): SkillService {
   return new SkillService();
-}
-
-function createSkillServiceWithToolGrant(): SkillService {
-  return new SkillService({
-    builtinSkills: {
-      "github-skill": [
-        "---",
-        "name: github-skill",
-        "description: GitHub skill",
-        "when_to_use: Use for GitHub watching.",
-        "allowed_tools: [github_get_pull_request, github_merge_pull_request]",
-        "---",
-        "This skill can describe GitHub workflows but cannot grant tools.",
-      ].join("\n"),
-    },
-  });
 }
 
 class RecordingBackgroundTaskManager {
@@ -432,14 +416,13 @@ describe("ConfiguredAgent", () => {
   test("executes commands before admission and returns continuation as ordinary text", async () => {
     const skillService = new SkillService({
       builtinSkills: {
-        "git-master": [
+        "git-master": { entry: [
           "---",
           "name: git-master",
-          "description: Git expertise",
-          "when_to_use: Use for git work.",
+          "description: Git expertise. Use for git work.",
           "---",
           "Full body",
-        ].join("\n"),
+        ].join("\n"), resources: {} },
       },
     });
     const agent = createAgent({ definition: leadAgentDefinition, skillService });
@@ -463,7 +446,7 @@ describe("ConfiguredAgent", () => {
   test("does not append a command notice or continuation after Stop wins during the handler", async () => {
     const abortController = new AbortController();
     const skillService = {
-      readForAgent: mock(async () => {
+      discoverForAgent: mock(async () => {
         abortController.abort(new Error("Session family cancelled"));
         return { name: "git-master" };
       }),
@@ -1334,29 +1317,6 @@ describe("ConfiguredAgent", () => {
     expect(streamFn).not.toHaveBeenCalled();
   });
 
-  test("skill metadata allowed_tools is prompt metadata only and cannot grant missing tools", async () => {
-    const streamFn = setupMockStreamText("skill metadata ok");
-    const skillService = createSkillServiceWithToolGrant();
-    const store = createStore(crypto.randomUUID(), tmpRoot, {
-      agentName: "lead",
-      activeSkillNames: ["github-skill"],
-    });
-    const agent = createAgent({
-      definition: definitionWith({ tools: { tools: ["file_read"] }, skills: ["github-skill"] }),
-      skillService,
-      store,
-    });
-
-    await runAgent(agent, "skill metadata run");
-
-    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
-    expect(callArgs.system).toContain("[allowed_tools: github_get_pull_request, github_merge_pull_request]");
-    expect(callArgs.system).toContain("This skill can describe GitHub workflows but cannot grant tools.");
-    expect(callArgs.system).toContain("- file_read");
-    expect(callArgs.system).not.toContain("- github_get_pull_request");
-    expect(callArgs.system).not.toContain("- github_merge_pull_request");
-  });
-
   test("fails closed when a persisted active Skill is deleted between runs", async () => {
     const streamFn = setupMockStreamText("active skill loaded");
     const skillName = "ephemeral-skill";
@@ -1365,8 +1325,7 @@ describe("ConfiguredAgent", () => {
     await writeFile(join(skillDir, "SKILL.md"), [
       "---",
       `name: ${skillName}`,
-      "description: Temporary skill",
-      "when_to_use: Use for this test.",
+      "description: Temporary skill. Use for this test.",
       "---",
       "Temporary instructions.",
     ].join("\n"));
@@ -1384,7 +1343,7 @@ describe("ConfiguredAgent", () => {
     try {
       await runAgent(agent, "first run");
       expect(store.getState().promptTraces?.at(-1)?.skills.active).toEqual([
-        { name: skillName, source: join(await realpath(skillDir), "SKILL.md") },
+        { name: skillName, source: resolve(skillDir) },
       ]);
       await rm(skillDir, { recursive: true, force: true });
       const eventStart = store.getState().events.length;

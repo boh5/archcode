@@ -62,8 +62,8 @@ function createTestSkillService(): SkillService {
 function createSkillServiceWithBuiltins(): SkillService {
   return new SkillService({
     builtinSkills: {
-      "git-master": "---\nname: git-master\ndescription: Git helper\nwhen_to_use: Use for git operations.\n---\nUse git carefully.",
-      codemap: "---\nname: codemap\ndescription: Code map helper\nwhen_to_use: Use before implementation.\n---\nMap code first.",
+      "git-master": { entry: "---\nname: git-master\ndescription: Git helper. Use for git operations.\n---\nUse git carefully.", resources: {} },
+      codemap: { entry: "---\nname: codemap\ndescription: Code map helper. Use before implementation.\n---\nMap code first.", resources: {} },
     },
   });
 }

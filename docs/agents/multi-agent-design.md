@@ -43,6 +43,21 @@ Discussion ─┬─ Explore
 
 Stable Agent prompts describe identity and authority. Workflow methods live in Skills, including `orchestrate-work`, `plan-work`, `execute-plan`, `run-goal`, `shape-todo`, `review-work`, and `goal-review`. Analyst can combine analysis and review Skills without creating a new Agent identity for every professional role.
 
+A Skill is a standard local package: required `SKILL.md`; optional
+`scripts/`, `references/`, `assets/`, and other contained resources. Its
+frontmatter accepts only `name`, `description`, `license`, `compatibility`, and
+`metadata`; `description` contains both the method and activation timing.
+`skill_list` and Prompt discovery expose metadata only. `skill_read` then loads
+the entry and its resource descriptors, and can load exactly one listed text
+resource on demand. Project > user > builtin is whole-package precedence; no
+entry or resource is merged from a lower source, and reserved lifecycle
+builtins remain unshadowable.
+
+The package mechanism changes disclosure and storage only. A Skill cannot add
+tools, execute a script automatically, change Profiles or MCP access, widen
+workspace scope, change delegation, or grant completion authority. A script,
+when applicable, is run only through the Agent's existing Bash permission.
+
 A Plan is an ordinary Markdown file under `.archcode/plans/`, not a service, state machine, Session identity, or Goal dependency.
 
 ## Sessions, Todos, and Goals

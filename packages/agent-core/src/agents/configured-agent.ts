@@ -339,7 +339,7 @@ export class ConfiguredAgent implements Agent {
         });
         const trace = durablePromptTrace(createFailedPromptTrace(contract, error, {
           status: "error",
-          active: activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.path ?? skill.source })),
+          active: activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.sourceLabel })),
         }));
         this.store.getState().append({ type: "prompt-trace", trace });
         await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);

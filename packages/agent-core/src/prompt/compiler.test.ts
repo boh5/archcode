@@ -77,6 +77,51 @@ function contract(overrides: Partial<PromptContractV2> = {}): PromptContractV2 {
 }
 
 describe("PromptContractCompiler", () => {
+  test("renders available Skill discovery as name, description, and source only", async () => {
+    const result = await new PromptContractCompiler().compile(contract({
+      availableSkills: [{
+        name: "codemap",
+        description: "Map an unfamiliar codebase when locating architecture or entry points.",
+        source: "builtin",
+      }],
+    }));
+
+    expect(result.prompt).toContain(
+      "- codemap: Map an unfamiliar codebase when locating architecture or entry points. (source=builtin)",
+    );
+  });
+
+  test("renders active Skill body and sorted resource descriptors without resource contents", async () => {
+    const result = await new PromptContractCompiler().compile(contract({
+      activeSkills: [{
+        metadata: {
+          name: "codemap",
+          description: "Map an unfamiliar codebase when locating architecture or entry points.",
+        },
+        source: "project",
+        sourceLabel: "/workspace/.archcode/skills/codemap",
+        root: "/workspace/.archcode/skills/codemap",
+        resources: [
+          { path: "references/z.md", bytes: 20 },
+          { path: "references/a.md", bytes: 10 },
+        ],
+        body: "ENTRY_BODY",
+      }],
+    }));
+
+    expect(result.prompt).toContain(
+      "### codemap (source=/workspace/.archcode/skills/codemap; root=/workspace/.archcode/skills/codemap)",
+    );
+    expect(result.prompt.indexOf("references/a.md")).toBeLessThan(
+      result.prompt.indexOf("references/z.md"),
+    );
+    expect(result.prompt).toContain("ENTRY_BODY");
+    expect(result.trace.skills.active).toEqual([{
+      name: "codemap",
+      source: "/workspace/.archcode/skills/codemap",
+    }]);
+  });
+
   test("keeps Runtime and Current Context free of Session Goal state", async () => {
     const result = await new PromptContractCompiler().compile(contract());
 
