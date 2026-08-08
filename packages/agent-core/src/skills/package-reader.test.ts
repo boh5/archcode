@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   activateBuiltinSkill,
@@ -8,6 +7,7 @@ import {
   discoverFilesystemSkill as discoverFilesystemSkillAt,
   readBuiltinSkillResource,
   readFilesystemSkillResource as readFilesystemSkillResourceAt,
+  SkillPackageResourceNotFoundError,
   SKILL_PACKAGE_MAX_BYTES,
   SKILL_PACKAGE_MAX_ENTRIES,
   SKILL_RESOURCE_MAX_BYTES,
@@ -17,7 +17,7 @@ import {
 } from "./package-reader";
 import type { BuiltinSkillPackage } from "./types";
 
-const tmpRoot = join(tmpdir(), "archcode-skill-package-reader", crypto.randomUUID());
+const tmpRoot = join(import.meta.dir, "__test_tmp__", "package-reader", crypto.randomUUID());
 const encoder = new TextEncoder();
 
 function entry(name = "test-skill", body = "Entry body.\n"): string {
@@ -121,6 +121,22 @@ describe("Skill package reader", () => {
     expect(read.content).not.toBe(bytes);
   });
 
+  test("reports unlisted builtin and filesystem resources with the package not-found type", async () => {
+    const skillPackage = builtin({ "assets/present.bin": "x" });
+    expect(() => readBuiltinSkillResource(skillPackage, "test-skill", "assets/absent.bin"))
+      .toThrow(SkillPackageResourceNotFoundError);
+    try {
+      readBuiltinSkillResource(skillPackage, "test-skill", "assets/absent.bin");
+    } catch (error) {
+      expect(error).toMatchObject({ name: "SkillPackageResourceNotFoundError" });
+    }
+
+    const packageRoot = join(tmpRoot, "not-found", "test-skill");
+    await writePackage(packageRoot, { "references/guide.md": "guide" });
+    await expect(readFilesystemSkillResource(packageRoot, "test-skill", "references/absent.md"))
+      .rejects.toBeInstanceOf(SkillPackageResourceNotFoundError);
+  });
+
   test("builtin packages cannot place resources below the SKILL.md entry path", () => {
     expect(() => activateBuiltinSkill(
       builtin({ "SKILL.md/hidden.txt": "impossible filesystem shape" }),
@@ -148,15 +164,26 @@ describe("Skill package reader", () => {
     expect(() => validateResourcePath("references/file.md")).not.toThrow();
   });
 
-  test("enforces resource depth below, equal, and above the fixed limit", () => {
+  test("enforces resource depth below, equal, and above the fixed limit", async () => {
     for (const depth of [SKILL_RESOURCE_MAX_DEPTH - 1, SKILL_RESOURCE_MAX_DEPTH]) {
       const path = pathAtDepth(depth);
       expect(activateBuiltinSkill(builtin({ [path]: "ok" }), "test-skill").resources[0]?.path).toBe(path);
+
+      const packageRoot = join(tmpRoot, `filesystem-depth-${depth}`, "test-skill");
+      await writePackage(packageRoot, { [path]: "ok" });
+      expect((await activateFilesystemSkill(packageRoot, "test-skill")).resources[0]?.path).toBe(path);
     }
     expect(() => activateBuiltinSkill(
       builtin({ [pathAtDepth(SKILL_RESOURCE_MAX_DEPTH + 1)]: "too deep" }),
       "test-skill",
     )).toThrow(`depth exceeds ${SKILL_RESOURCE_MAX_DEPTH}`);
+
+    const aboveRoot = join(tmpRoot, "filesystem-depth-above", "test-skill");
+    await writePackage(aboveRoot, {
+      [pathAtDepth(SKILL_RESOURCE_MAX_DEPTH + 1)]: "too deep",
+    });
+    await expect(activateFilesystemSkill(aboveRoot, "test-skill"))
+      .rejects.toThrow(`depth exceeds ${SKILL_RESOURCE_MAX_DEPTH}`);
   });
 
   test("enforces one-resource bytes below, equal, and above the fixed limit", () => {
@@ -304,6 +331,19 @@ describe("Skill package reader", () => {
     await expect(activateFilesystemSkill(resourceRoot, "test-skill")).rejects.toThrow("symlinks are not allowed");
   });
 
+  test("requires the filesystem entry name to be exactly SKILL.md", async () => {
+    const packageRoot = join(tmpRoot, "entry-case", "test-skill");
+    await mkdir(packageRoot, { recursive: true });
+    await Bun.write(join(packageRoot, "skill.md"), entry());
+
+    await expect(discoverFilesystemSkill(packageRoot, "test-skill"))
+      .rejects.toThrow("must be named exactly SKILL.md");
+    await expect(activateFilesystemSkill(packageRoot, "test-skill"))
+      .rejects.toThrow("must be named exactly SKILL.md");
+    expect(() => validateResourcePath("skill.md")).toThrow("cannot be a resource");
+    expect(() => validateResourcePath("skill.md/hidden.txt")).toThrow("cannot be a resource");
+  });
+
   test("rejects a symlink in package ancestry below the trusted source boundary", async () => {
     const boundaryRoot = join(tmpRoot, "ancestry", "project");
     const externalSkillsRoot = join(tmpRoot, "ancestry", "external-skills");
@@ -337,8 +377,15 @@ describe("Skill package reader", () => {
     const packageRoot = join(tmpRoot, "input", "test-skill");
     await writePackage(packageRoot, { "references/guide.md": "guide" });
 
-    for (const resource of ["/tmp/outside", "../outside", "references\\guide.md", "references//guide.md"]) {
-      await expect(readFilesystemSkillResource(packageRoot, "test-skill", resource)).rejects.toThrow();
+    const cases = [
+      { resource: "/tmp/outside", message: "must be relative" },
+      { resource: "../outside", message: "invalid segment" },
+      { resource: "references\\guide.md", message: "POSIX separators" },
+      { resource: "references//guide.md", message: "invalid segment" },
+    ] as const;
+    for (const item of cases) {
+      await expect(readFilesystemSkillResource(packageRoot, "test-skill", item.resource))
+        .rejects.toThrow(item.message);
     }
   });
 });

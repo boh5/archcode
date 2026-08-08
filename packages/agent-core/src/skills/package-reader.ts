@@ -60,6 +60,7 @@ export async function discoverFilesystemSkill(
   const { root } = location;
   await assertFilesystemSkillAncestry(location);
   await assertRegularDirectory(root, "Skill package root");
+  await assertExactSkillEntryName(root);
   const entryPath = join(root, SKILL_ENTRY_FILE);
   await assertRegularFile(entryPath, "SKILL.md");
   const headerBytes = await readPrefix(entryPath, DISCOVERY_READ_MAX_BYTES);
@@ -76,6 +77,7 @@ export async function activateFilesystemSkill(
   const { root } = location;
   await assertFilesystemSkillAncestry(location);
   await assertRegularDirectory(root, "Skill package root");
+  await assertExactSkillEntryName(root);
   const entryPath = join(root, SKILL_ENTRY_FILE);
   const entryBytes = await readRegularFileBounded(entryPath, SKILL_ENTRY_MAX_BYTES, "SKILL.md");
   let entryText: string;
@@ -101,6 +103,7 @@ export async function readFilesystemSkillResource(
   const activated = await activateFilesystemSkill(location, expectedName);
   const descriptor = activated.resources.find((candidate) => candidate.path === resource);
   if (descriptor === undefined) throw new SkillPackageResourceNotFoundError(resource);
+  const ancestry = await captureResourceDirectoryIdentity(location, resource);
   const content = await readRegularFileBounded(
     join(root, ...resource.split("/")),
     SKILL_RESOURCE_MAX_BYTES,
@@ -109,6 +112,7 @@ export async function readFilesystemSkillResource(
   if (content.byteLength !== descriptor.bytes) {
     throw new Error(`Skill resource changed while reading: ${resource}`);
   }
+  await assertDirectoryIdentityUnchanged(ancestry);
   await assertFilesystemSkillAncestry(location);
   return { descriptor, content };
 }
@@ -117,8 +121,8 @@ export function discoverBuiltinSkill(
   skillPackage: BuiltinSkillPackage,
   expectedName: string,
 ): SkillMetadata {
-  const entryBytes = new TextEncoder().encode(skillPackage.entry.slice(0, DISCOVERY_READ_MAX_BYTES));
-  const { metadata } = parseSkillHeaderBytes(entryBytes.subarray(0, DISCOVERY_READ_MAX_BYTES));
+  const entryBytes = encodeUtf8Prefix(skillPackage.entry, DISCOVERY_READ_MAX_BYTES);
+  const { metadata } = parseSkillHeaderBytes(entryBytes);
   assertExpectedName(metadata, expectedName);
   return metadata;
 }
@@ -164,7 +168,7 @@ export function validateResourcePath(resource: string): void {
   if (segments.length > SKILL_RESOURCE_MAX_DEPTH) {
     throw new Error(`Skill resource depth exceeds ${SKILL_RESOURCE_MAX_DEPTH}`);
   }
-  if (segments[0] === SKILL_ENTRY_FILE) {
+  if (segments[0]?.toLowerCase() === SKILL_ENTRY_FILE.toLowerCase()) {
     throw new Error("SKILL.md is the package entry and cannot be a resource directory");
   }
 }
@@ -178,6 +182,10 @@ async function walkFilesystemResources(
   let totalBytes = entryBytes;
 
   async function walk(directory: string, prefix: readonly string[]): Promise<void> {
+    const directoryIdentity = await assertRegularDirectory(
+      directory,
+      prefix.length === 0 ? "Skill package root" : `Skill resource directory "${prefix.join("/")}"`,
+    );
     const entries = await readdir(directory, { withFileTypes: true });
     entries.sort((a, b) => lexicalCompare(a.name, b.name));
     for (const entry of entries) {
@@ -213,6 +221,11 @@ async function walkFilesystemResources(
         throw new Error(`Skill package exceeds ${SKILL_PACKAGE_MAX_BYTES} aggregate bytes`);
       }
     }
+    await assertSamePathIdentity(
+      directory,
+      directoryIdentity,
+      prefix.length === 0 ? "Skill package root" : `Skill resource directory "${prefix.join("/")}"`,
+    );
   }
 
   await walk(root, []);
@@ -283,11 +296,12 @@ async function readRegularFileBounded(
   maxBytes: number,
   label: string,
 ): Promise<Uint8Array> {
-  await assertRegularFile(path, label);
+  const pathInfo = await assertRegularFile(path, label);
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw new Error(`${label} must be a regular file`);
+    assertSameIdentity(pathInfo, info, label);
     if (info.size > maxBytes) throw new Error(`${label} exceeds ${maxBytes} bytes`);
     const buffer = new Uint8Array(info.size);
     let offset = 0;
@@ -298,6 +312,7 @@ async function readRegularFileBounded(
     }
     const after = await handle.stat();
     if (offset !== info.size || after.size !== info.size) throw new Error(`${label} changed while reading`);
+    assertSameIdentity(info, after, label);
     return buffer;
   } finally {
     await handle.close();
@@ -309,6 +324,70 @@ async function assertRegularDirectory(path: string, label: string) {
   if (info.isSymbolicLink()) throw new Error(`${label} must not be a symlink`);
   if (!info.isDirectory()) throw new Error(`${label} must be a directory`);
   return info;
+}
+
+interface FileIdentity {
+  readonly path: string;
+  readonly label: string;
+  readonly dev: number;
+  readonly ino: number;
+}
+
+async function assertExactSkillEntryName(root: string): Promise<void> {
+  const names = await readdir(root);
+  const aliases = names.filter((name) => name.toLowerCase() === SKILL_ENTRY_FILE.toLowerCase());
+  if (aliases.length !== 1 || aliases[0] !== SKILL_ENTRY_FILE) {
+    throw new Error(`Skill package entry must be named exactly ${SKILL_ENTRY_FILE}`);
+  }
+}
+
+async function captureResourceDirectoryIdentity(
+  location: FilesystemSkillPackageLocation,
+  resource: string,
+): Promise<readonly FileIdentity[]> {
+  await assertFilesystemSkillAncestry(location);
+  const identities: FileIdentity[] = [];
+  let current = location.root;
+  const parentSegments = resource.split("/").slice(0, -1);
+  const roots = ["", ...parentSegments];
+  for (const segment of roots) {
+    if (segment !== "") current = join(current, segment);
+    const label = segment === "" ? "Skill package root" : `Skill resource directory "${current}"`;
+    const info = await assertRegularDirectory(current, label);
+    identities.push({ path: current, label, dev: info.dev, ino: info.ino });
+  }
+  return identities;
+}
+
+async function assertDirectoryIdentityUnchanged(
+  identities: readonly FileIdentity[],
+): Promise<void> {
+  for (const identity of identities) {
+    const info = await assertRegularDirectory(identity.path, identity.label);
+    assertSameIdentity(identity, info, identity.label);
+  }
+}
+
+async function assertSamePathIdentity(
+  path: string,
+  expected: { readonly dev: number; readonly ino: number },
+  label: string,
+): Promise<void> {
+  const current = await lstat(path);
+  if (current.isSymbolicLink() || !current.isDirectory()) {
+    throw new Error(`${label} changed while reading`);
+  }
+  assertSameIdentity(expected, current, label);
+}
+
+function assertSameIdentity(
+  expected: { readonly dev: number; readonly ino: number },
+  actual: { readonly dev: number; readonly ino: number },
+  label: string,
+): void {
+  if (expected.dev !== actual.dev || expected.ino !== actual.ino) {
+    throw new Error(`${label} changed while reading`);
+  }
 }
 
 export async function assertFilesystemSkillAncestry(
@@ -339,6 +418,19 @@ async function assertRegularFile(path: string, label: string) {
   if (info.isSymbolicLink()) throw new Error(`${label} must not be a symlink`);
   if (!info.isFile()) throw new Error(`${label} must be a regular file`);
   return info;
+}
+
+function encodeUtf8Prefix(value: string, maxBytes: number): Uint8Array {
+  const output = new Uint8Array(maxBytes);
+  const encoder = new TextEncoder();
+  let offset = 0;
+  for (const character of value) {
+    const bytes = encoder.encode(character);
+    if (offset + bytes.byteLength > maxBytes) break;
+    output.set(bytes, offset);
+    offset += bytes.byteLength;
+  }
+  return output.subarray(0, offset);
 }
 
 function assertExpectedName(metadata: SkillMetadata, expectedName: string): void {

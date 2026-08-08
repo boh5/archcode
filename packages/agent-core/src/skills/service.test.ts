@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, symlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { BuiltinSkillPackage } from "./types";
 import {
@@ -11,7 +10,7 @@ import {
   SkillValidationError,
 } from "./service";
 
-const tmpRoot = join(tmpdir(), "archcode-skill-service", crypto.randomUUID());
+const tmpRoot = join(import.meta.dir, "__test_tmp__", "service", crypto.randomUUID());
 
 function skillMarkdown(
   name: string,
@@ -245,8 +244,11 @@ describe("SkillService", () => {
       expect(skill?.body).toContain(`BUILTIN_${name}`);
       expect(await service.readForAgent(projectRoot, name, ["codemap"])).toBeNull();
     }
-    expect((await service.listForAgent(projectRoot, ["codemap"])).map((entry) => entry.name))
-      .not.toEqual(expect.arrayContaining([...RESERVED_BUILTIN_SKILL_NAMES]));
+    const listed = (await service.listForAgent(projectRoot, ["codemap"]))
+      .map((entry) => entry.name);
+    for (const name of RESERVED_BUILTIN_SKILL_NAMES) {
+      expect(listed).not.toContain(name);
+    }
   });
 
   test("lists custom packages regardless of builtin allow-list and only eligible builtins", async () => {

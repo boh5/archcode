@@ -199,6 +199,27 @@ Follow the plan.
     expect(() => parseSkillHeaderBytes(invalid)).toThrow("valid UTF-8");
     expect(() => parseSkillHeaderBytes(encoder.encode("---\nname: a\n"))).toThrow("closing delimiter");
   });
+
+  test("rejects duplicate YAML keys and alias expansion beyond the fixed limit", () => {
+    expect(() => parseSkillFrontmatter([
+      "name: a",
+      "description: Use this Skill when needed.",
+      "description: Duplicate key.",
+    ].join("\n"))).toThrow("Invalid Skill YAML frontmatter");
+
+    const aliasExpansion = [
+      "name: a",
+      "description: Use this Skill when needed.",
+      "metadata:",
+      "  a: &a [x, x]",
+      "  b: &b [*a, *a]",
+      "  c: &c [*b, *b]",
+      "  d: &d [*c, *c]",
+      "  e: *d",
+    ].join("\n");
+    expect(() => parseSkillFrontmatter(aliasExpansion))
+      .toThrow("Excessive alias count");
+  });
 });
 
 function frontmatterWithExactBytes(target: number): string {

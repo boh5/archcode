@@ -65,6 +65,7 @@ Never amend an existing commit unless the user requested an amend or the current
 ## Prepare a branch or PR
 
 - Confirm the real base branch; do not assume it is `main`.
+- Never commit to or push directly to a protected base branch. Use a focused feature branch and a pull request for protected-branch work.
 - Review the complete committed base-to-HEAD diff. Separately inspect `git_status`, both staged and unstaged `git_diff` views, and the contents of relevant untracked files; none of that uncommitted work appears in the base-to-HEAD commit range.
 - Run the required checks on the exact tree being proposed.
 - Push, create a PR, merge, delete branches, or clean worktrees only when the user requested that external or destructive effect.
@@ -72,6 +73,6 @@ Never amend an existing commit unless the user requested an amend or the current
 
 ## Stop conditions
 
-Stop and report before acting when authorization is missing, the base or target ref is uncertain, unrelated changes overlap the operation, a conflict's intended resolution is unclear, verification fails, or the operation would make recovery materially harder than the user requested.
+Stop and report before acting when authorization is missing, the base or target ref is uncertain, the current branch is a protected base branch, unrelated changes overlap the operation, a conflict's intended resolution is unclear, verification fails, or the operation would make recovery materially harder than the user requested.
 
 Finish with the resulting branch/ref state, commits created or moved, verification evidence, remaining local changes, and any action still awaiting authorization.

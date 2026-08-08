@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SkillService } from "../../skills";
 import { storeManager } from "../../store/store";
@@ -11,7 +10,7 @@ import { createToolExecutionContext, type ToolExecutionContext } from "../types"
 import { createBuiltinToolDescriptors } from "./index";
 import { formatResolvedSkillResource, SkillReadInputSchema, skillReadTool } from "./skill-read";
 
-const tmpRoot = join(tmpdir(), "archcode-skill-read-tool", crypto.randomUUID());
+const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-read", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
 const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
 const executionCwd = join(tmpRoot, "project.worktrees", "session-skill");
@@ -196,6 +195,38 @@ ENTRY_BODY
 
     expect(result.isError).toBe(true);
     expect(result.details?.error?.code).toBe("TOOL_SKILL_RESOURCE_NOT_FOUND");
+  });
+
+  test("unknown resource on an unresolved Skill reports the Skill-level error", async () => {
+    const result = await skillReadTool.execute(
+      { name: "missing-skill", resource: "references/missing.md" },
+      makeContext(["missing-skill"]),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_SKILL_NOT_FOUND");
+    expect(expectTextDraft(result)).toContain(
+      "Skill not found or not allowed for current agent: missing-skill",
+    );
+  });
+
+  test("rejects traversal and absolute resource paths at the tool boundary", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Maps code architecture when investigating an unfamiliar repository.
+---
+
+ENTRY_BODY
+`, { "references/guide.md": "guide" });
+
+    for (const resource of ["../../etc/passwd", "references/../../escape.md", "/etc/passwd"]) {
+      const result = await skillReadTool.execute(
+        { name: "codemap", resource },
+        makeContext(["codemap"]),
+      );
+      expect(result.isError).toBe(true);
+      expect(result.details?.error?.code).toBe("TOOL_SKILL_INVALID");
+    }
   });
 
   test("resolves project-local Skills from execution cwd, not canonical project root", async () => {

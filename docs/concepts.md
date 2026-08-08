@@ -109,18 +109,8 @@ Root Lead and Discussion default to `principal`; Analyst uses `deep`; Explore
 and Librarian use `fast`; Build can use `deep` or `fast`. Profiles do not change
 Agent tools or authority.
 
-Skills are task-specific working methods packaged as a directory: a required
-`SKILL.md` entry plus optional `scripts/`, `references/`, `assets/`, and other
-resources. The entry has standard YAML frontmatter (`name`, `description`, and
-optional `license`, `compatibility`, `metadata`); its description says both
-what the Skill does and when to use it.
-
-Discovery exposes only a Skill's name, description, and source. Activating it
-loads its entry and a resource list; an Agent reads one listed resource only
-when needed. Project packages override user packages, which override builtin
-packages, as whole packages. Reserved lifecycle builtins cannot be shadowed.
-Skills guide behavior without granting tools, permissions, delegation,
-Profiles, MCP access, workspace scope, or completion authority.
+Skills provide task-specific working methods. They guide behavior without
+granting additional tools or permissions.
 
 ## Approvals and questions
 

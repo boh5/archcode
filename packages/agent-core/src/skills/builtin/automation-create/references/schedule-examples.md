@@ -4,7 +4,7 @@ Use these as normalization examples, not values to copy without confirmation.
 
 | User wording | Missing decision | Valid normalized trigger |
 | --- | --- | --- |
-| “Tomorrow morning” | Exact date, local clock time, and UTC offset | `{ "kind": "once", "at": "2026-08-09T09:00:00+08:00" }` |
+| “Tomorrow morning” | Exact date, local clock time, and UTC offset | Recalculate the date from the current local date, then confirm `{ "kind": "once", "at": "<YYYY-MM-DD>T09:00:00+08:00" }` |
 | “Every five minutes” | Whether a fixed elapsed interval is intended | `{ "kind": "interval", "everyMs": 300000 }` |
 | “Weekdays at nine” | IANA timezone | `{ "kind": "cron", "expression": "0 9 * * 1-5", "timezone": "Asia/Shanghai" }` |
 

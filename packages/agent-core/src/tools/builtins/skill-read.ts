@@ -13,11 +13,12 @@ import {
 } from "../../skills";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
 
-const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9]+(?:-[a-z0-9]+)*$";
+const SKILL_NAME_PATTERN = "^(?!.*--)[a-z0-9]+(?:-[a-z0-9]+)*$";
+const SKILL_NAME_MESSAGE = `Skill name must match pattern ${SKILL_NAME_PATTERN} (no consecutive hyphens)`;
 
 export const SkillReadInputSchema = z
   .object({
-    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe("Exact allowed Skill name matching ^[a-z0-9]+(?:-[a-z0-9]+)*$; copy it from the System Prompt's available-skill list or skill_list instead of guessing."),
+    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe(`Exact allowed Skill name matching ${SKILL_NAME_PATTERN}, with no consecutive hyphens; copy it from the System Prompt's available-skill list or skill_list instead of guessing.`),
     resource: z.string().min(1).optional().describe("Optional Skill-root-relative resource path copied exactly from the entry's Resources list, for example references/review-packet.md. It cannot select a source or read an arbitrary filesystem path."),
   })
   .strict();
@@ -167,8 +168,8 @@ export function createSkillReadTool() {
           if (resource === null) {
             return createToolErrorResult({
               kind: "file-not-found",
-              code: "TOOL_SKILL_RESOURCE_NOT_FOUND",
-              message: `Skill resource not found or not allowed for current agent: ${input.name}/${input.resource}`,
+              code: "TOOL_SKILL_NOT_FOUND",
+              message: `Skill not found or not allowed for current agent: ${input.name}`,
             });
           }
           return formatResolvedSkillResource(resource);

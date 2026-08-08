@@ -31,6 +31,12 @@ describe("builtin Skill package manifest", () => {
       expect(activated.resources.map((resource) => resource.path)).toEqual(
         Object.keys(skillPackage.resources).sort(),
       );
+
+      for (const [path, value] of Object.entries(skillPackage.resources)) {
+        const embedded = typeof value === "string" ? new TextEncoder().encode(value) : value;
+        const source = await Bun.file(join(builtinRoot, name, ...path.split("/"))).bytes();
+        expect([...embedded]).toEqual([...source]);
+      }
     }
   });
 

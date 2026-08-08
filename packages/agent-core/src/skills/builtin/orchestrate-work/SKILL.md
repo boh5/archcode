@@ -1,6 +1,6 @@
 ---
 name: orchestrate-work
-description: Route ordinary root Lead work between direct execution and bounded child collaboration while retaining technical ownership.
+description: When ordinary root Lead work requires choosing between direct execution and bounded child collaboration, route it while retaining technical ownership.
 license: MIT
 metadata:
   archcode/source: "ArchCode delegation protocol"
