@@ -66,21 +66,33 @@ export { formatSimpleYaml, parseSimpleYaml };
 // Index parsing
 // ---------------------------------------------------------------------------
 
-const INDEX_LINE_REGEX = /^- \[(.+?)\]\((.+?)\) —(?: (.*))?$/;
+const INDEX_LINE_PREFIX = "- [";
+const INDEX_TITLE_NAME_SEPARATOR = "](";
+const INDEX_NAME_SUMMARY_SEPARATOR = ") —";
 
 export function parseIndex(content: string): MemoryIndexEntry[] {
   const entries: MemoryIndexEntry[] = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (trimmed === "" || trimmed.startsWith("#")) continue;
-    const match = trimmed.match(INDEX_LINE_REGEX);
-    if (match) {
-      entries.push({
-        title: match[1],
-        name: match[2],
-        summary: match[3] ?? "",
-      });
-    }
+    if (!trimmed.startsWith(INDEX_LINE_PREFIX)) continue;
+    const titleEnd = trimmed.indexOf(
+      INDEX_TITLE_NAME_SEPARATOR,
+      INDEX_LINE_PREFIX.length,
+    );
+    if (titleEnd <= INDEX_LINE_PREFIX.length) continue;
+    const nameStart = titleEnd + INDEX_TITLE_NAME_SEPARATOR.length;
+    const nameEnd = trimmed.indexOf(INDEX_NAME_SUMMARY_SEPARATOR, nameStart);
+    if (nameEnd <= nameStart) continue;
+    const remainder = trimmed.slice(
+      nameEnd + INDEX_NAME_SUMMARY_SEPARATOR.length,
+    );
+    if (remainder !== "" && !remainder.startsWith(" ")) continue;
+    entries.push({
+      title: trimmed.slice(INDEX_LINE_PREFIX.length, titleEnd),
+      name: trimmed.slice(nameStart, nameEnd),
+      summary: remainder === "" ? "" : remainder.slice(1),
+    });
   }
   return entries;
 }

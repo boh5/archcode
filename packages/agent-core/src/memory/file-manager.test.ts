@@ -162,6 +162,12 @@ describe("parseIndex", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].summary).toBe("Summary with — dashes & stuff");
   });
+
+  test("rejects a delimiter-heavy malformed line without regex backtracking", () => {
+    const content = `- [a](${"a](a".repeat(50_000)}\n`;
+
+    expect(parseIndex(content)).toEqual([]);
+  });
 });
 
 describe("formatIndex", () => {
