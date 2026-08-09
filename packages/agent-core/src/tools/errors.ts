@@ -259,7 +259,15 @@ function kindFromMessage(message: string): ToolErrorKind | undefined {
   if (/already exists/i.test(message)) return "file-already-exists";
   if (/too large/i.test(message)) return "file-too-large";
   if (/identical/i.test(message)) return "edit-identical";
-  if (/oldString.*not found|no match/i.test(message)) return "edit-no-match";
+  const normalizedMessage = message.toLowerCase();
+  const oldStringIndex = normalizedMessage.indexOf("oldstring");
+  if (
+    (oldStringIndex !== -1 &&
+      normalizedMessage.indexOf("not found", oldStringIndex + "oldstring".length) !== -1) ||
+    normalizedMessage.includes("no match")
+  ) {
+    return "edit-no-match";
+  }
   if (/multiple matches|ambiguous/i.test(message)) return "edit-ambiguous";
   if (/overlapping edits/i.test(message)) return "edit-overlap";
   if (/not been read first/i.test(message)) return "read-before-write";
