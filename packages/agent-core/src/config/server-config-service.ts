@@ -12,13 +12,18 @@ import {
   type ServerConfigUpdate,
   type ServerConfigValidationIssue,
   type UpdateServerConfigRequest,
-  type UpdateServerConfigResponse,
 } from "@archcode/protocol";
 import { sortJsonValue } from "@archcode/utils";
 import { ModelRuntime, type ModelRuntimeSnapshot } from "../models";
 import { SensitiveValueRedactor } from "../provider/sensitive-value-redactor";
 import { atomicWrite } from "../utils/safe-file";
-import { McpConfigEnvError, McpConfigError, resolveMcpConfig } from "./mcp";
+import {
+  McpConfigEnvError,
+  McpConfigError,
+  resolveMcpConfig,
+  type ResolvedMcpConfig,
+} from "./mcp";
+import { SecretLiteralRegistry, type RuntimeSecretLiteralInput } from "./runtime-secret-literals";
 import {
   MissingProviderOptionError,
   UnsupportedProviderOptionError,
@@ -55,6 +60,12 @@ export interface ServerConfigActivation {
 export interface ServerConfigInitialization {
   readonly activation: ServerConfigActivation;
   readonly auth: ServerAuthCredential;
+}
+
+/** Internal result used by the Host to hot-apply MCP without rereading Config. */
+export interface ServerConfigRuntimeSaveResult {
+  readonly snapshot: ServerConfigSnapshot;
+  readonly resolvedMcpConfig: ResolvedMcpConfig;
 }
 
 export type ServerConfigActivationResult =
@@ -400,23 +411,38 @@ export class ServerConfigService {
     return providerAdapterCatalog.toDto();
   }
 
-  async save(request: UpdateServerConfigRequest): Promise<UpdateServerConfigResponse> {
+  async save(request: UpdateServerConfigRequest): Promise<ServerConfigSnapshot> {
+    const result = await this.saveWithRuntimeConfig(request);
+    return result.snapshot;
+  }
+
+  /**
+   * Validate and persist Config once, returning the exact resolved MCP draft
+   * that was committed so the Host can hot-apply it without a second read.
+   * The atomic file write remains the commit point; ModelRuntime publication
+   * happens only after that write succeeds.
+   */
+  async saveWithRuntimeConfig(
+    request: UpdateServerConfigRequest,
+  ): Promise<ServerConfigRuntimeSaveResult> {
     return this.withWriteLock(async () => {
       const current = await this.readDiskConfig();
       if (request.expectedRevision !== current.revision) {
         throw new ConfigRevisionConflictError(request.expectedRevision, current.revision);
       }
 
-      validateSecretMutationPayload(request.config);
-      const candidate = applySecretMutations(request.config, current.config);
-      const validated = validateConfig(candidate);
-      const text = stableJson(validated);
-      const unchanged = text === stableJson(current.config);
-      const revision = unchanged ? current.revision : await revisionForText(text);
-      const runtimeConfig = omitAuth(validated);
-      const runtimeRevision = await runtimeRevisionForConfig(validated);
+      const prepared = await prepareSaveCandidate(request.config, current.config, current.revision);
+      const {
+        validated,
+        text,
+        unchanged,
+        revision,
+        runtimeConfig,
+        runtimeRevision,
+        resolvedMcpConfig,
+      } = prepared;
       const runtimeUnchanged = runtimeRevision === this.modelRuntime.current.revision;
-      const prepared = runtimeUnchanged
+      const preparedModelRuntime = runtimeUnchanged
         ? undefined
         : this.prepareModelRuntime(runtimeConfig, runtimeRevision);
 
@@ -430,14 +456,32 @@ export class ServerConfigService {
           }]);
         }
       }
-      if (prepared !== undefined) this.modelRuntime.publish(prepared);
+      if (preparedModelRuntime !== undefined) this.modelRuntime.publish(preparedModelRuntime);
       return {
-        config: redactConfig(validated),
-        revision,
-        modelRuntimeRevision: this.modelRuntime.current.revision,
-        configPath: this.configPath,
-        restartRequiredSections: restartRequiredSections(validated, this.startupConfig),
+        snapshot: {
+          config: redactConfig(validated),
+          revision,
+          modelRuntimeRevision: this.modelRuntime.current.revision,
+          configPath: this.configPath,
+          restartRequiredSections: restartRequiredSections(validated, this.startupConfig),
+        },
+        resolvedMcpConfig,
       };
+    });
+  }
+
+  /**
+   * Validate a proposed Config against the current revision and secret policy
+   * without writing, publishing, or exposing a masked/serialized snapshot.
+   */
+  async resolveMcpDraft(request: UpdateServerConfigRequest): Promise<ResolvedMcpConfig> {
+    return this.withWriteLock(async () => {
+      const current = await this.readDiskConfig();
+      if (request.expectedRevision !== current.revision) {
+        throw new ConfigRevisionConflictError(request.expectedRevision, current.revision);
+      }
+      const prepared = await prepareSaveCandidate(request.config, current.config, current.revision);
+      return prepared.resolvedMcpConfig;
     });
   }
 
@@ -657,6 +701,41 @@ function providerConfigSecretRedactor(config: ArchCodeConfig): SensitiveValueRed
   return new SensitiveValueRedactor(values);
 }
 
+interface PreparedSaveCandidate {
+  readonly validated: ArchCodeConfig;
+  readonly text: string;
+  readonly unchanged: boolean;
+  readonly revision: string;
+  readonly runtimeConfig: Omit<ArchCodeConfig, "auth">;
+  readonly runtimeRevision: string;
+  readonly resolvedMcpConfig: ResolvedMcpConfig;
+}
+
+async function prepareSaveCandidate(
+  input: ServerConfigUpdate,
+  current: ArchCodeConfig,
+  currentRevision: string,
+): Promise<PreparedSaveCandidate> {
+  validateSecretMutationPayload(input);
+  const candidate = applySecretMutations(input, current);
+  const validated = validateConfig(candidate);
+  const text = stableJson(validated);
+  const unchanged = text === stableJson(current);
+  const revision = unchanged ? currentRevision : await revisionForText(text);
+  const runtimeConfig = omitAuth(validated);
+  const runtimeRevision = await runtimeRevisionForConfig(validated);
+  const resolvedMcpConfig = resolveMcpConfig(validated.mcp);
+  return {
+    validated,
+    text,
+    unchanged,
+    revision,
+    runtimeConfig,
+    runtimeRevision,
+    resolvedMcpConfig,
+  };
+}
+
 function validateConfig(value: unknown): ArchCodeConfig {
   const schema = archcodeConfigSchema.safeParse(value);
   if (!schema.success) {
@@ -735,7 +814,8 @@ function validateConfig(value: unknown): ArchCodeConfig {
     }
   }
   try {
-    resolveMcpConfig(config.mcp);
+    const resolvedMcpConfig = resolveMcpConfig(config.mcp);
+    validateMcpSecretLiteralPolicy(resolvedMcpConfig, issues);
   } catch (cause) {
     const serverName = mcpErrorServerName(cause, config);
     issues.push({
@@ -761,6 +841,35 @@ function validateConfig(value: unknown): ArchCodeConfig {
   return config;
 }
 
+/** Keep MCP transport credentials inside the same runtime literal bounds used
+ * by the redaction policy. Transport endpoints/commands are not credentials. */
+function validateMcpSecretLiteralPolicy(
+  config: ResolvedMcpConfig,
+  issues: RecoverableConfigValidationIssue[],
+): void {
+  const literals: RuntimeSecretLiteralInput[] = [];
+  for (const [serverName, server] of Object.entries(config.servers)) {
+    const field = server.type === "http" ? "headers" : "env";
+    const values = server.type === "http" ? server.headers : server.env;
+    for (const [key, value] of Object.entries(values ?? {})) {
+      literals.push({
+        path: `mcp.servers.${serverName}.${field}.${key}`,
+        value,
+      });
+    }
+  }
+  if (literals.length === 0) return;
+  try {
+    new SecretLiteralRegistry(literals);
+  } catch (cause) {
+    if (cause instanceof ConfigSemanticValidationError) {
+      issues.push(...cause.issues.map((issue) => ({ ...issue })));
+      return;
+    }
+    throw cause;
+  }
+}
+
 function applySecretMutations(input: ServerConfigUpdate, current: ArchCodeConfig): unknown {
   const candidate = structuredClone(input) as Record<string, any>;
   delete candidate.auth;
@@ -782,15 +891,29 @@ function applySecretMutations(input: ServerConfigUpdate, current: ArchCodeConfig
       `provider.${providerId}.options`,
     );
   }
-  for (const [name, server] of Object.entries(candidate.mcp?.servers ?? {}) as Array<[string, { headers?: Record<string, ConfigSecretMutation> }]>) {
+  for (const [name, server] of Object.entries(candidate.mcp?.servers ?? {}) as Array<[string, Record<string, unknown>]>) {
+    const field = mcpSecretField(server);
+    if (field === undefined) continue;
+    const currentServer = current.mcp?.servers[name];
+    const currentValues = currentServer === undefined
+      ? undefined
+      : asStringRecord((currentServer as unknown as Record<string, unknown>)[field]);
     applySecretRecord(
-      server as { headers?: Record<string, ConfigSecretMutation> },
-      "headers",
-      current.mcp?.servers[name]?.headers,
-      `mcp.servers.${name}.headers`,
+      server,
+      field,
+      currentValues,
+      `mcp.servers.${name}.${field}`,
     );
   }
   return candidate;
+}
+
+function mcpSecretField(
+  server: { readonly type?: unknown },
+): "headers" | "env" | undefined {
+  if (server.type === "http") return "headers";
+  if (server.type === "stdio") return "env";
+  return undefined;
 }
 
 function materializeInitialConfig(input: unknown): unknown {
@@ -829,24 +952,27 @@ function materializeInitialConfig(input: unknown): unknown {
     ? candidate.mcp.servers
     : {};
   for (const [name, server] of Object.entries(mcpServers)) {
-    if (!isRecord(server) || server.headers === undefined) continue;
-    if (!isRecord(server.headers)) {
+    if (!isRecord(server)) continue;
+    const field = mcpSecretField(server);
+    if (field === undefined || server[field] === undefined) continue;
+    const mutations = server[field];
+    if (!isRecord(mutations)) {
       issues.push({
-        path: `mcp.servers.${name}.headers`,
+        path: `mcp.servers.${name}.${field}`,
         message: "Initial secret record must contain replace actions",
       });
       continue;
     }
     const headers: Record<string, string> = {};
-    for (const [header, mutation] of Object.entries(server.headers)) {
-      const path = `mcp.servers.${name}.headers.${header}`;
+    for (const [header, mutation] of Object.entries(mutations)) {
+      const path = `mcp.servers.${name}.${field}.${header}`;
       if (!isInitialSecretReplacement(mutation)) {
         issues.push({ path, message: "Initial secret must use a replace action" });
       } else {
         headers[header] = mutation.value;
       }
     }
-    server.headers = headers;
+    server[field] = headers;
   }
   if (issues.length > 0) throw new ConfigSemanticValidationError(issues);
   return candidate;
@@ -927,7 +1053,10 @@ function validateSecretMutationPayload(input: unknown): void {
   const mcp = isRecord(input.mcp) && isRecord(input.mcp.servers) ? input.mcp.servers : {};
   for (const [name, server] of Object.entries(mcp)) {
     if (!isRecord(server)) continue;
-    validateSecretMutationRecord(server.headers, `mcp.servers.${name}.headers`, issues);
+    const field = mcpSecretField(server);
+    if (field !== undefined) {
+      validateSecretMutationRecord(server[field], `mcp.servers.${name}.${field}`, issues);
+    }
   }
   if (issues.length > 0) throw new ConfigSemanticValidationError(issues);
 }
@@ -1133,14 +1262,19 @@ function validateSecretValuePlacement(
     }
   }
   for (const server of Object.values(config.mcp?.servers ?? {})) {
-    for (const value of Object.values(server.headers ?? {})) {
+    const values = server.type === "http" ? server.headers : server.env;
+    for (const value of Object.values(values ?? {})) {
       if (value.length > 0) secretValues.add(value);
     }
   }
   if (secretValues.size === 0) return;
 
   const isControlledSecretPath = (segments: readonly string[]): boolean => {
-    if (segments[0] === "mcp" && segments[1] === "servers" && segments[3] === "headers") {
+    if (
+      segments[0] === "mcp"
+      && segments[1] === "servers"
+      && (segments[3] === "headers" || segments[3] === "env")
+    ) {
       return segments.length === 5;
     }
     if (segments[0] !== "provider" || segments[2] !== "options") return false;
@@ -1248,7 +1382,8 @@ function redactConfig(config: ArchCodeConfig): ServerConfigEditableView {
     redactProviderOptions(provider.options, adapter);
   }
   for (const server of Object.values(view.mcp?.servers ?? {})) {
-    redactSecretRecord(server.headers);
+    if (server.type === "http") redactSecretRecord(server.headers);
+    else redactSecretRecord(server.env);
   }
   return view;
 }
@@ -1542,10 +1677,9 @@ function asStringRecord(value: unknown): Record<string, string> | undefined {
 function restartRequiredSections(
   config: ArchCodeConfig,
   startupConfig: ArchCodeConfig | undefined,
-): Array<"mcp" | "memory" | "integrations.github"> {
+): Array<"memory" | "integrations.github"> {
   if (!startupConfig) return [];
-  const sections: Array<"mcp" | "memory" | "integrations.github"> = [];
-  if (stableJson(config.mcp) !== stableJson(startupConfig.mcp)) sections.push("mcp");
+  const sections: Array<"memory" | "integrations.github"> = [];
   if (stableJson(config.memory) !== stableJson(startupConfig.memory)) sections.push("memory");
   if (stableJson(config.integrations?.github) !== stableJson(startupConfig.integrations?.github)) {
     sections.push("integrations.github");

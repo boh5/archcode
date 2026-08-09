@@ -2,7 +2,7 @@ import { afterAll, describe, test, expect } from "bun:test";
 import type { ToolCallLike } from "../types";
 import { partitionToolCalls } from "./partition";
 import type { ToolDescriptor } from "../types";
-import { adaptMcpTool } from "../../mcp/tool-adapter";
+import { adaptMcpTool, type McpCallHandle } from "../../mcp/tool-adapter";
 import type { McpClient } from "../../mcp/client";
 import { SecretRedactionPolicy } from "../../security";
 import { createTextToolResult } from "../results";
@@ -34,10 +34,13 @@ function makeCall(toolName: string, toolCallId?: string): ToolCallLike {
   return { toolCallId: toolCallId ?? toolName, toolName, input: {} };
 }
 
-function makeMcpClient(): McpClient {
+function makeMcpHandle(): McpCallHandle {
   return {
-    callTool: async () => ({ content: [] }),
-  } as unknown as McpClient;
+    tryAcquireCall: () => ({
+      client: { callTool: async () => ({ content: [] }) } as unknown as McpClient,
+      release: () => undefined,
+    }),
+  };
 }
 
 describe("partitionToolCalls", () => {
@@ -136,36 +139,35 @@ describe("partitionToolCalls", () => {
     }
   });
 
-  test("MCP adapter traits make read-only tools parallel and destructive tools serial", async () => {
+  test("MCP adapter traits parallelize only explicitly read-only tools", () => {
     const readDescriptor = adaptMcpTool(
       { name: "read", annotations: { readOnlyHint: true } },
       "docs",
-      makeMcpClient(),
+      makeMcpHandle(),
       TEST_REDACTION_POLICY,
     );
     const otherReadDescriptor = adaptMcpTool(
       { name: "lookup" },
       "docs",
-      makeMcpClient(),
+      makeMcpHandle(),
       TEST_REDACTION_POLICY,
     );
     const destructiveDescriptor = adaptMcpTool(
       { name: "delete", annotations: { destructiveHint: true } },
       "docs",
-      makeMcpClient(),
+      makeMcpHandle(),
       TEST_REDACTION_POLICY,
     );
-    const mcpFixture = createTestToolRegistryFixture({ descriptors: [
+    const descriptors = new Map([
       readDescriptor,
       otherReadDescriptor,
       destructiveDescriptor,
-    ] });
-    const mcpRegistry = mcpFixture.registry;
+    ].map((descriptor) => [descriptor.name, descriptor]));
     const calls = [
-      makeCall("mcp__docs__read", "read-1"),
-      makeCall("mcp__docs__lookup", "read-2"),
-      makeCall("mcp__docs__delete", "delete-1"),
-      makeCall("mcp__docs__read", "read-3"),
+      makeCall(readDescriptor.name, "read-1"),
+      makeCall(otherReadDescriptor.name, "read-2"),
+      makeCall(destructiveDescriptor.name, "delete-1"),
+      makeCall(readDescriptor.name, "read-3"),
     ];
 
     expect(readDescriptor.traits).toMatchObject({
@@ -178,11 +180,11 @@ describe("partitionToolCalls", () => {
       destructive: true,
       concurrencySafe: false,
     });
-    expect(partitionToolCalls(calls, mcpRegistry)).toEqual([
-      { type: "parallel", calls: [calls[0], calls[1]] },
+    expect(partitionToolCalls(calls, descriptors)).toEqual([
+      { type: "parallel", calls: [calls[0]] },
+      { type: "serial", call: calls[1] },
       { type: "serial", call: calls[2] },
       { type: "parallel", calls: [calls[3]] },
     ]);
-    await mcpFixture.dispose();
   });
 });

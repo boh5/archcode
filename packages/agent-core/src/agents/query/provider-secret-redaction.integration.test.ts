@@ -85,6 +85,7 @@ describe("Provider secret redaction integration", () => {
         binding: binding.summary,
         origin: "tool_call",
         maxSteps: 50,
+        executionSkills: [],
       });
       store.getState().append({
         type: "session.messages_committed",

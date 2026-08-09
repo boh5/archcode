@@ -94,7 +94,14 @@ export type {
   SessionEventSourceEvent,
 } from "./events";
 
-export type { McpDiscoveryResult, McpManager, McpWarning } from "./mcp/index";
+export {
+  McpRuntimeService,
+  type McpRuntime,
+  type McpRuntimeServiceOptions,
+  type McpStatusListener,
+  type McpTestResult,
+  type McpToolSnapshot,
+} from "./mcp/index";
 
 export {
   createConsoleLogger,

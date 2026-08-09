@@ -85,8 +85,12 @@ export function collectRuntimeSecretLiterals(input: {
 
   for (const [serverName, server] of Object.entries(input.userMcp.servers)) {
     const prefix = `mcp.servers.${serverName}`;
-    literals.push({ path: `${prefix}.url`, value: server.url });
-    collectRecordValues(literals, `${prefix}.headers`, server.headers);
+    if (server.type === "http") {
+      literals.push({ path: `${prefix}.url`, value: server.url });
+      collectRecordValues(literals, `${prefix}.headers`, server.headers);
+    } else {
+      collectRecordValues(literals, `${prefix}.env`, server.env);
+    }
   }
 
   if (input.github.token !== undefined) {

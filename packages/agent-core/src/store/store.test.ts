@@ -46,6 +46,7 @@ function executionStart(executionId: string = crypto.randomUUID()) {
     binding: TEST_BINDING,
     origin: "user_message" as const,
     maxSteps: 50,
+    executionSkills: [],
   };
 }
 

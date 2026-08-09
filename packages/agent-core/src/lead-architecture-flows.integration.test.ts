@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { setLlmAdapterForTest } from "./llm";
 import { silentLogger } from "./logger";
-import type { McpManager } from "./mcp";
 import { ProjectRegistry } from "./projects/registry";
 import { createRuntime, type AgentRuntime } from "./runtime";
 import { createTestTempRoot } from "./testing/test-temp-root";
+import { createTestMcpRuntime, type TestMcpRuntime } from "./testing/test-mcp-runtime";
 
 const testTempRoot = createTestTempRoot("lead-architecture-flows");
 let activeRuntime: AgentRuntime | undefined;
@@ -152,10 +152,13 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       "file_read",
       "file_edit",
     ]);
-    expect(userTextInputs(session)).toHaveLength(2);
-    expect(userTextInputs(session).every((input) =>
-      input.startsWith('Use Skill "plan-work" for this request. First call skill_read'),
-    )).toBe(true);
+    const inputs = userTextInputs(session);
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toStartWith(
+      `Create or improve the implementation Plan for this bound Todo at ${planPath}. Preserve one Plan file, read it before editing when it exists, and do not start implementation. Todo ID: ${idea.id}`,
+    );
+    expect(inputs[0]).not.toContain("First call skill_read");
+    expect(inputs[1]).toBe(`Improve the existing implementation Plan at ${planPath}.`);
     expect(session.messages.flatMap((message) => message.role === "user" ? message.parts : [])
       .filter((part) => part.type === "system-notice")
       .map((part) => part.notice)).toEqual([
@@ -620,7 +623,7 @@ async function runtimeFixture(projectName: string): Promise<{
     activation: activationResult.activation,
     projectRegistry: registry,
     runtimeStorageHomeDir: root,
-    mcpManagerFactory: () => mcpManager(),
+    mcpRuntimeFactory: () => mcpRuntime(),
   });
   activeRuntime = runtime;
   return { runtime, workspaceRoot, projectSlug: project.slug };
@@ -687,14 +690,8 @@ function toolStream(toolCallId: string, toolName: string, input: unknown): unkno
   };
 }
 
-function mcpManager(): McpManager {
-  return {
-    discover: mock(async () => ({ descriptors: [], warnings: [] })),
-    closeAll: mock(async () => []),
-    getStatus: mock(() => new Map()),
-    onStatusChange: mock(() => () => {}),
-    startBackgroundDiscovery: mock(() => {}),
-  } as unknown as McpManager;
+function mcpRuntime(): TestMcpRuntime {
+  return createTestMcpRuntime();
 }
 
 function waitForFamilyIdle(

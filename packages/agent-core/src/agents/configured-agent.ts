@@ -27,7 +27,7 @@ import type { SessionStoreManager } from "../store/session-store-manager";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
-import type { ToolRegistry } from "../tools/index";
+import { ResolvedToolSet, type ToolRegistry } from "../tools/index";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
 import type { AttachmentModelProjector } from "../attachments";
@@ -35,7 +35,7 @@ import { ProjectTodoNotFoundError } from "../todos/errors";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
-import type { AgentDefinition } from "./factory-types";
+import type { AgentDefinition, AgentMcpToolSnapshot } from "./factory-types";
 import {
   createAutoInjectReminderHook,
   createHybridCompressionHook,
@@ -88,7 +88,9 @@ export interface ConfiguredAgentOptions {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
-  readonly resolveMcpStatuses?: () => ReadonlyMap<string, McpServerStatus>;
+  readonly resolveMcpToolSnapshot?: (
+    builtinServerNames: AgentDefinition["builtinMcpServers"],
+  ) => AgentMcpToolSnapshot;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly logger: Logger;
 }
@@ -106,8 +108,9 @@ function buildEnv(projectRoot: string, cwd: string, versionControl: VersionContr
 }
 
 export function mapMcpServerStatusForPrompt(status: McpServerStatus | undefined): RuntimePromptEnvelope["mcp"][string] {
-  if (status === undefined || status.state === "pending") return "pending";
-  if (status.state === "failed" || status.state === "disabled") return "failed";
+  if (status === undefined || status.state === "connecting") return "connecting";
+  if (status.state === "disabled") return "disabled";
+  if (status.state === "failed") return "failed";
   if (status.toolCount === 0) return "ready-zero";
   return status.warningCount > 0 ? "partial-warning" : "ready";
 }
@@ -120,6 +123,12 @@ function durablePromptTrace(trace: CompiledPromptContract["trace"]): PromptTrace
     sections: trace.sections.map((section) => ({ ...section })),
     skills: {
       status: trace.skills.status,
+      available: {
+        includedEntries: trace.skills.available.includedEntries.map((entry) => ({ ...entry })),
+        omittedCount: trace.skills.available.omittedCount,
+        renderedText: trace.skills.available.renderedText,
+        byteLength: trace.skills.available.byteLength,
+      },
       active: trace.skills.active.map((skill) => ({ ...skill })),
     },
     visibleTools: [...trace.visibleTools],
@@ -174,7 +183,7 @@ export class ConfiguredAgent implements Agent {
   private readonly cancelChildSession: ((workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean) | undefined;
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly acquireSessionCwdTransition: ((workspaceRoot: string, sessionId: string) => () => void) | undefined;
-  private readonly resolveMcpStatuses: (() => ReadonlyMap<string, McpServerStatus>) | undefined;
+  private readonly resolveMcpToolSnapshot: ConfiguredAgentOptions["resolveMcpToolSnapshot"];
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
   private agentsMd: PromptSource<string> = { status: "absent", source: "AGENTS.md search" };
@@ -213,7 +222,7 @@ export class ConfiguredAgent implements Agent {
     this.cancelChildSession = options.cancelChildSession;
     this.resumeChildSession = options.resumeChildSession;
     this.acquireSessionCwdTransition = options.acquireSessionCwdTransition;
-    this.resolveMcpStatuses = options.resolveMcpStatuses;
+    this.resolveMcpToolSnapshot = options.resolveMcpToolSnapshot;
     this.memoryConfig = options.memoryConfig;
     this.memoryRoots = {
       project: projectRuntimePath(this.projectRoot, "memory"),
@@ -277,9 +286,13 @@ export class ConfiguredAgent implements Agent {
     options.abort?.throwIfAborted();
     this.store.getState().append({ type: "system-notice", message: result.message });
     await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
-    return result.continueAsMessage === undefined
+    return result.pendingMessage === undefined
       ? { kind: "handled" }
-      : { kind: "message", content: result.continueAsMessage };
+      : {
+          kind: "message",
+          content: result.pendingMessage.content,
+          executionSkillNames: result.pendingMessage.executionSkillNames,
+        };
   }
 
   async run(binding: ExecutionModelBinding, options: AgentRunOptions): Promise<AgentResult> {
@@ -296,6 +309,7 @@ export class ConfiguredAgent implements Agent {
       extraTools,
       toolProjection,
       consumeSteers,
+      executionSkillSnapshots,
     } = options;
 
     const btm = this.backgroundTaskManager;
@@ -318,27 +332,41 @@ export class ConfiguredAgent implements Agent {
       );
       const agentSkills = this.definition.skills;
       const memory = await this.resolveMemorySnapshot();
-      const mcpStatuses = this.resolveMcpStatuses?.() ?? new Map<string, McpServerStatus>();
       const env = buildEnv(
         this.projectRoot,
         this.cwd,
         await this.resolveVersionControl(this.cwd, abort),
       );
-      let availableSkills: PromptContractV2["availableSkills"] = [];
+      let availableSkills: PromptContractV2["availableSkills"] = {
+        includedEntries: [],
+        omittedCount: 0,
+        renderedText: "- none",
+        byteLength: 6,
+      };
       const activeSkills: ResolvedSkill[] = [];
       try {
-        availableSkills = await this.skillService.listForAgent(this.cwd, agentSkills);
-        for (const name of await this.resolveActiveSkillNames(projectContext)) {
-          const skill = await this.skillService.readForAgent(this.cwd, name, this.definition.skills);
+        availableSkills = await this.skillService.projectPromptCatalog(this.cwd, agentSkills);
+        for (const name of await this.resolveActiveSkillNames(projectContext, executionSkillSnapshots)) {
+          const skill = executionSkillSnapshots?.get(name)?.readEntry()
+            ?? await this.skillService.readForAgent(this.cwd, name, this.definition.skills);
           if (skill === null) throw new SkillNotFoundError(name);
           activeSkills.push(skill);
         }
       } catch (error) {
+        const modelTools = this.resolveModelTools(allowedTools);
         const contract = await this.buildPromptContract({
-          allowedTools, availableSkills, activeSkills, env, projectContext, memory, mcpStatuses, binding,
+          allowedTools: modelTools.tools.descriptors.map((descriptor) => descriptor.name),
+          availableSkills,
+          activeSkills,
+          env,
+          projectContext,
+          memory,
+          mcpStatuses: modelTools.mcpStatuses,
+          binding,
         });
         const trace = durablePromptTrace(createFailedPromptTrace(contract, error, {
           status: "error",
+          available: availableSkills,
           active: activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.sourceLabel })),
         }));
         this.store.getState().append({ type: "prompt-trace", trace });
@@ -346,15 +374,16 @@ export class ConfiguredAgent implements Agent {
         throw error;
       }
       const compiler = new PromptContractCompiler();
-      const resolveSystemPrompt = async (): Promise<string> => {
+      const resolveModelBoundary = async () => {
+        const modelTools = this.resolveModelTools(allowedTools);
         const contract = await this.buildPromptContract({
-          allowedTools,
+          allowedTools: modelTools.tools.descriptors.map((descriptor) => descriptor.name),
           availableSkills,
           activeSkills,
           env,
           projectContext,
           memory,
-          mcpStatuses,
+          mcpStatuses: modelTools.mcpStatuses,
           binding,
         });
         try {
@@ -363,7 +392,7 @@ export class ConfiguredAgent implements Agent {
           this.store.getState().append({ type: "prompt-trace", trace });
           await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
           this.logger.debug("prompt.compiled", { meta: { ...compiled.trace } });
-          return compiled.prompt;
+          return { systemPrompt: compiled.prompt, tools: modelTools.tools };
         } catch (error) {
           const trace = durablePromptTrace(createFailedPromptTrace(contract, error));
           this.store.getState().append({ type: "prompt-trace", trace });
@@ -396,6 +425,7 @@ export class ConfiguredAgent implements Agent {
             allowedTools,
             agentSkills,
             skillService: this.skillService,
+            ...(executionSkillSnapshots === undefined ? {} : { executionSkillSnapshots }),
             storeManager: this.storeManager,
             projectContext,
             ...(this.sessionGoalService === undefined ? {} : { sessionGoalService: this.sessionGoalService }),
@@ -407,7 +437,7 @@ export class ConfiguredAgent implements Agent {
               this.store.getState().rootSessionId,
             ),
             abort,
-            resolveSystemPrompt,
+            resolveModelBoundary,
             store: this.store,
             consumeSteers,
             ...(prepareModelContext === undefined ? {} : { prepareModelContext }),
@@ -532,7 +562,10 @@ export class ConfiguredAgent implements Agent {
       todo: todo === undefined ? "none" : { id: todo.id, mode: "bound" },
       remainingDepth: Math.max(0, effectiveMaxDepth - this.depth),
       maxConcurrentChildren: this.definition.childPolicy?.maxConcurrent ?? 0,
-      mcp: Object.fromEntries((this.definition.mcpTools ?? []).map((server) => [server, mapMcpServerStatusForPrompt(input.mcpStatuses.get(server))])),
+      mcp: Object.fromEntries([...input.mcpStatuses].map(([server, status]) => [
+        server,
+        mapMcpServerStatusForPrompt(status),
+      ])),
     };
     return {
       version: "2",
@@ -629,6 +662,27 @@ export class ConfiguredAgent implements Agent {
     return hooks;
   }
 
+  private resolveModelTools(baseAllowedTools: readonly string[]): {
+    readonly tools: ResolvedToolSet;
+    readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
+  } {
+    const base = this.toolRegistry.resolveForAgent(baseAllowedTools).descriptors;
+    const mcp = this.resolveMcpToolSnapshot?.(this.definition.builtinMcpServers);
+    const descriptors = [...base];
+    const names = new Set(base.map((descriptor) => descriptor.name));
+    for (const descriptor of mcp?.descriptors.values() ?? []) {
+      if (names.has(descriptor.name)) {
+        throw new Error(`MCP tool alias "${descriptor.name}" collides with an existing visible tool`);
+      }
+      names.add(descriptor.name);
+      descriptors.push(descriptor);
+    }
+    return {
+      tools: new ResolvedToolSet(descriptors),
+      mcpStatuses: new Map(Object.entries(mcp?.statuses.servers ?? {})),
+    };
+  }
+
   private resolveEffectiveTools(
     definitionAllowedTools: readonly string[],
     extraTools: readonly string[] | undefined,
@@ -696,9 +750,12 @@ export class ConfiguredAgent implements Agent {
       );
   }
 
-  private async resolveActiveSkillNames(_projectContext: ProjectContext): Promise<readonly string[]> {
+  private async resolveActiveSkillNames(
+    _projectContext: ProjectContext,
+    executionSkillSnapshots?: ReadonlyMap<string, import("../skills").SkillPackageSnapshot>,
+  ): Promise<readonly string[]> {
     const state = this.store.getState();
-    const names = [...state.activeSkillNames];
+    const names = [...state.activeSkillNames, ...(executionSkillSnapshots?.keys() ?? [])];
     if (state.parentSessionId !== undefined || state.sessionId !== state.rootSessionId) {
       return [...new Set(names)];
     }

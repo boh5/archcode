@@ -44,8 +44,9 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "shutdown":
       return exact(event, ["type"], ["reason"]) && optionalString(event.reason);
     case "execution-start":
-      return exact(event, ["type", "executionId", "origin", "maxSteps", "binding"], ["activeTimeoutMs"])
+      return exact(event, ["type", "executionId", "origin", "maxSteps", "binding", "executionSkills"], ["activeTimeoutMs"])
         && isString(event.executionId) && isExecutionModelBinding(event.binding)
+        && arrayOf(event.executionSkills, isExecutionSkillBinding)
         && oneOf(event.origin, ["user_message", "tool_call", "goal_continuation"])
         && isPositiveSafeInteger(event.maxSteps)
         && (event.activeTimeoutMs === undefined || isPositiveSafeInteger(event.activeTimeoutMs));
@@ -215,6 +216,16 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
   }
 }
 
+function isExecutionSkillBinding(value: unknown): boolean {
+  const binding = record(value);
+  return binding !== undefined
+    && exact(binding, ["name", "source", "digest", "resolutionRoot"])
+    && isString(binding.name)
+    && oneOf(binding.source, ["project-archcode", "project-agents", "user-archcode", "user-agents", "builtin"])
+    && isString(binding.digest)
+    && isString(binding.resolutionRoot);
+}
+
 function isPromptTrace(value: unknown): boolean {
   const trace = record(value);
   return trace !== undefined
@@ -233,15 +244,16 @@ function isPromptTrace(value: unknown): boolean {
     && oneOf(trace.agentsMd, ["present", "absent", "error"])
     && oneOf(trace.memory, ["present", "absent", "error"])
     && record(trace.mcp) !== undefined
-    && Object.values(trace.mcp as UnknownRecord).every((status) => oneOf(status, ["pending", "ready", "ready-zero", "partial-warning", "failed"]))
+    && Object.values(trace.mcp as UnknownRecord).every((status) => oneOf(status, ["disabled", "connecting", "ready", "ready-zero", "partial-warning", "failed"]))
     && arrayOf(trace.warnings, isString);
 }
 
 function isPromptTraceSkills(value: unknown): boolean {
   const skills = record(value);
   return skills !== undefined
-    && exact(skills, ["status", "active"])
+    && exact(skills, ["status", "available", "active"])
     && oneOf(skills.status, ["present", "absent", "error"])
+    && isPromptSkillProjection(skills.available)
     && arrayOf(skills.active, (value) => {
       const active = record(value);
       return active !== undefined
@@ -250,12 +262,29 @@ function isPromptTraceSkills(value: unknown): boolean {
     });
 }
 
+function isPromptSkillProjection(value: unknown): boolean {
+  const projection = record(value);
+  return projection !== undefined
+    && exact(projection, ["includedEntries", "omittedCount", "renderedText", "byteLength"])
+    && arrayOf(projection.includedEntries, (value) => {
+      const entry = record(value);
+      return entry !== undefined
+        && exact(entry, ["name", "description", "source"])
+        && isString(entry.name)
+        && isString(entry.description)
+        && oneOf(entry.source, ["project-archcode", "project-agents", "user-archcode", "user-agents", "builtin"]);
+    })
+    && isNonNegativeInteger(projection.omittedCount)
+    && isString(projection.renderedText)
+    && isNonNegativeInteger(projection.byteLength);
+}
+
 function isPendingSessionMessage(value: unknown): boolean {
   const message = record(value);
   if (message === undefined
     || !exact(
       message,
-      ["id", "clientRequestId", "content", "attachments", "source", "state", "revision", "acceptedAt", "updatedAt", "requestedModelSelection"],
+      ["id", "clientRequestId", "content", "attachments", "source", "state", "revision", "acceptedAt", "updatedAt", "requestedModelSelection", "executionSkillNames"],
       ["targetExecutionId", "targetRunOrdinal", "targetModelAudit", "claimedAt"],
     )
     || !isString(message.id)
@@ -268,6 +297,7 @@ function isPendingSessionMessage(value: unknown): boolean {
     || !isFiniteNumber(message.acceptedAt)
     || !isFiniteNumber(message.updatedAt)
     || !isRequestedModelSelection(message.requestedModelSelection)
+    || !arrayOf(message.executionSkillNames, isString)
     || !optionalString(message.targetExecutionId)
     || (message.targetRunOrdinal !== undefined && !isNonNegativeSafeInteger(message.targetRunOrdinal))
     || (message.targetModelAudit !== undefined && !isMessageModelAudit(message.targetModelAudit))

@@ -9,6 +9,8 @@ describe("DialogContent", () => {
     const content = children[1];
 
     expect(content.props.className).toContain("!fixed");
+    expect(children[0].props.className).toContain("z-[70]");
+    expect(content.props.className).toContain("z-[71]");
     expect(content.props.className).toContain("bg-bg-overlay");
     expect(content.props.className).toContain("data-[state=open]:animate-overlay-enter");
     expect(content.props.className).toContain("data-[state=closed]:animate-overlay-exit");

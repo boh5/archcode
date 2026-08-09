@@ -18,12 +18,14 @@ import { ModelPicker } from "./ModelPicker";
 import { coherentModelRuntime } from "../../lib/model-runtime-coherence";
 import { createClientUuid } from "../../lib/client-uuid";
 import { sessionFamilyActivityLabel } from "../../lib/session-family-presentation";
+import { getCompleteProjectSkillInventory, type ProjectSkillPickerItem } from "../../api/skills";
 import type { StatusTone, VisualStatusKind } from "../../lib/status-visuals";
 import { StatusGlyph } from "../primitives/StatusGlyph";
 import { formatAttachmentSize } from "../primitives/AttachmentChip";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
+  { name: "/skill use", description: "Activate a Skill" },
 ] as const;
 
 type SlashCommand = (typeof SLASH_COMMANDS)[number];
@@ -92,6 +94,8 @@ export function ChatInput({
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [skillInventory, setSkillInventory] = useState<ProjectSkillPickerItem[]>([]);
+  const [skillInventoryState, setSkillInventoryState] = useState<"idle" | "loading" | "ready" | "failed">("idle");
   const [hitlComposerExpanded, setHitlComposerExpanded] = useState(false);
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string>();
@@ -100,6 +104,7 @@ export function ChatInput({
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef<DraftAttachment[]>([]);
+  const skillInventoryRequestRef = useRef(0);
 
   const modelSelection = useSessionStore(sessionId, (state) => state.modelSelection, slug);
   const nextModelSelection = useSessionStore(sessionId, (state) => state.nextModelSelection, slug);
@@ -130,9 +135,53 @@ export function ChatInput({
     && !attachmentUploadInProgress
     && !(hasAttachments && isSlashInput(value));
   const status = composerStatus(activity, hitlReady, hasPendingHitl);
-  const filteredCommands = SLASH_COMMANDS.filter((command) =>
-    command.name.startsWith(`/ ${slashFilter}`.replace(/\s/g, "")),
+  const skillUseInput = /^\/skill\s+use(?:\s+(.*))?$/i.exec(value);
+  const selectingSkill = skillUseInput !== null;
+  const skillQuery = skillUseInput?.[1]?.trim().toLowerCase() ?? "";
+  const filteredSkills = skillUseInput === null ? [] : skillInventory.filter((skill) =>
+    skill.name.toLowerCase().includes(skillQuery) || skill.description?.toLowerCase().includes(skillQuery),
   );
+  const filteredCommands = (skillUseInput === null ? SLASH_COMMANDS : []).filter((command) =>
+    command.name.replace(/\s/g, "").startsWith(`/ ${slashFilter}`.replace(/\s/g, "")),
+  );
+  const slashOptionCount = skillUseInput === null ? filteredCommands.length : filteredSkills.length;
+
+  useEffect(() => {
+    skillInventoryRequestRef.current += 1;
+    setSkillInventory([]);
+    setSkillInventoryState("idle");
+  }, [sessionId, slug]);
+
+  const loadSkillInventory = useCallback(() => {
+    const request = ++skillInventoryRequestRef.current;
+    setSkillInventoryState("loading");
+    void getCompleteProjectSkillInventory(slug, sessionId).then((items) => {
+      if (request !== skillInventoryRequestRef.current) return;
+      setSkillInventory(items);
+      setSkillInventoryState("ready");
+    }).catch(() => {
+      if (request === skillInventoryRequestRef.current) setSkillInventoryState("failed");
+    });
+  }, [sessionId, slug]);
+
+  useEffect(() => {
+    if (!selectingSkill || skillInventoryState !== "idle") return;
+    loadSkillInventory();
+  }, [loadSkillInventory, selectingSkill, skillInventoryState]);
+
+  useEffect(() => {
+    if (!selectingSkill && skillInventoryState === "failed") setSkillInventoryState("idle");
+  }, [selectingSkill, skillInventoryState]);
+
+  useEffect(() => {
+    if (!selectingSkill || filteredSkills.length === 0) return;
+    setSlashActiveIndex((current) => {
+      const currentSkill = filteredSkills[current];
+      if (currentSkill && skillIsSelectable(currentSkill)) return current;
+      const firstSelectable = filteredSkills.findIndex(skillIsSelectable);
+      return firstSelectable < 0 ? 0 : firstSelectable;
+    });
+  }, [selectingSkill, skillInventory, skillQuery]);
 
   const adjustHeight = useCallback(() => {
     const element = textareaRef.current;
@@ -303,11 +352,31 @@ export function ChatInput({
   const selectSlashCommand = useCallback((command: SlashCommand) => {
     if (!canCompose || isQueueing || hasPendingHitl) return;
     if (!nextModelSelection) return;
+    if (command.name === "/skill use") {
+      setValue("/skill use ");
+      setSlashFilter("skill use ");
+      setSlashActiveIndex(0);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
+    }
     if (attachmentsRef.current.length > 0) {
       setAttachmentNotice(SLASH_ATTACHMENT_GUIDANCE);
       return;
     }
     submitMessage(command.name, [], nextModelSelection.requested);
+    setShowSlashMenu(false);
+    setSlashFilter("");
+    setSlashActiveIndex(0);
+    textareaRef.current?.focus();
+  }, [canCompose, hasPendingHitl, isQueueing, nextModelSelection, submitMessage]);
+
+  const selectSkill = useCallback((skill: ProjectSkillPickerItem) => {
+    if (!skill.valid || skill.shadowed || !skill.winner || !canCompose || isQueueing || hasPendingHitl || !nextModelSelection) return;
+    if (attachmentsRef.current.length > 0) {
+      setAttachmentNotice(SLASH_ATTACHMENT_GUIDANCE);
+      return;
+    }
+    submitMessage(`/skill use ${skill.name}`, [], nextModelSelection.requested);
     setShowSlashMenu(false);
     setSlashFilter("");
     setSlashActiveIndex(0);
@@ -328,20 +397,27 @@ export function ChatInput({
   }, [modelSelection.revision, patchModelSelection, sessionId, slug]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (showSlashMenu && filteredCommands.length > 0) {
+    if (showSlashMenu && slashOptionCount > 0) {
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        setSlashActiveIndex((index) => index <= 0 ? filteredCommands.length - 1 : index - 1);
+        setSlashActiveIndex((index) => nextSlashIndex(index, -1, slashOptionCount, filteredSkills, selectingSkill));
         return;
       }
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setSlashActiveIndex((index) => index >= filteredCommands.length - 1 ? 0 : index + 1);
+        setSlashActiveIndex((index) => nextSlashIndex(index, 1, slashOptionCount, filteredSkills, selectingSkill));
         return;
       }
       if ((event.key === "Enter" || event.key === "Tab") && !event.nativeEvent.isComposing) {
+        const selectedSkill = skillUseInput === null ? undefined : filteredSkills[slashActiveIndex];
+        if (selectedSkill !== undefined && !skillIsSelectable(selectedSkill)) {
+          if (event.key === "Enter") event.preventDefault();
+          else setShowSlashMenu(false);
+          return;
+        }
         event.preventDefault();
-        selectSlashCommand(filteredCommands[slashActiveIndex]);
+        if (selectedSkill !== undefined) selectSkill(selectedSkill);
+        else selectSlashCommand(filteredCommands[slashActiveIndex]);
         return;
       }
       if (event.key === "Escape") {
@@ -365,12 +441,16 @@ export function ChatInput({
     }
   }, [
     filteredCommands,
+    filteredSkills,
     isQueueing,
     selectSlashCommand,
+    selectSkill,
     sendMessage,
     sessionId,
     showSlashMenu,
     slashActiveIndex,
+    slashOptionCount,
+    skillUseInput,
     slug,
     stopSession,
   ]);
@@ -468,26 +548,53 @@ export function ChatInput({
 
   return (
     <div className="relative" data-testid="conversation-composer">
-      {showSlashMenu && filteredCommands.length > 0 && canCompose && !isQueueing && !hasPendingHitl && (
+      {showSlashMenu && canCompose && !isQueueing && !hasPendingHitl && (slashOptionCount > 0 || skillUseInput !== null) && (
         <div
           ref={slashMenuRef}
+          id="composer-slash-menu"
+          role={skillUseInput !== null && skillInventoryState === "failed" ? "group" : "listbox"}
+          aria-label={skillUseInput === null ? "Slash commands" : "Skills"}
           className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20 max-h-[200px] overflow-y-auto rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md"
           data-testid="composer-slash-menu"
         >
-          {filteredCommands.map((command, index) => (
+          {skillUseInput !== null && skillInventoryState === "loading" && <p role="status" className="px-3 py-2 text-[12px] text-text-tertiary">Loading Skills…</p>}
+          {skillUseInput !== null && skillInventoryState === "failed" && <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+            <p role="alert" className="text-[12px] text-error">Unable to load Skills.</p>
+            <button type="button" className="min-h-8 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11" onClick={loadSkillInventory}>Retry</button>
+          </div>}
+          {skillUseInput !== null && skillInventoryState === "ready" && filteredSkills.length === 0 && <p role="status" className="px-3 py-2 text-[12px] text-text-tertiary">No matching Skills.</p>}
+          {(skillUseInput === null ? filteredCommands : filteredSkills).map((entry, index) => {
+            const skill = skillUseInput === null ? undefined : entry as ProjectSkillPickerItem;
+            const command = skillUseInput === null ? entry as SlashCommand : undefined;
+            const unavailable = skill !== undefined && !skillIsSelectable(skill);
+            const id = `composer-slash-option-${index}`;
+            return (
             <button
               type="button"
-              key={command.name}
-              className={`flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] ${
+              id={id}
+              role="option"
+              aria-selected={index === slashActiveIndex}
+              disabled={unavailable}
+              key={skill ? `${skill.source}:${skill.name}:${index}` : command!.name}
+              className={`flex min-w-0 w-full flex-wrap items-start gap-x-2 gap-y-1 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
                 index === slashActiveIndex ? "bg-bg-hover" : "hover:bg-bg-hover"
-              }`}
-              onClick={() => selectSlashCommand(command)}
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+              onClick={() => skill ? selectSkill(skill) : selectSlashCommand(command!)}
               onMouseEnter={() => setSlashActiveIndex(index)}
             >
-              <span className="font-mono text-brand">{command.name}</span>
-              <span className="text-[12px] leading-4 text-text-tertiary">{command.description}</span>
+              <span className="min-w-0 max-w-full break-all font-mono text-brand">{skill?.name ?? command!.name}</span>
+              <span className="min-w-[12rem] flex-1 break-words text-[12px] leading-4 text-text-tertiary">
+                {skill ? skill.description : command!.description}
+                {skill?.diagnostic && <span className="block break-words text-error">{skill.diagnostic.message}</span>}
+              </span>
+              {skill && <span className="break-all text-[10px] text-text-tertiary">{skill.source}</span>}
+              {skill?.winner && <span className="text-[10px] text-text-secondary">Winner</span>}
+              {skill?.shadowed && <span className="text-[10px] text-text-tertiary">Shadowed</span>}
+              {skill?.valid && <span className="text-[10px] text-success">Valid</span>}
+              {skill && !skill.valid && <span className="text-[10px] text-error">Invalid</span>}
+              {skill?.promptOmitted && <span className="text-[10px] text-warning">Prompt omitted</span>}
             </button>
-          ))}
+          );})}
         </div>
       )}
 
@@ -527,6 +634,11 @@ export function ChatInput({
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          aria-label="Message"
+          aria-autocomplete="list"
+          aria-controls={showSlashMenu ? "composer-slash-menu" : undefined}
+          aria-expanded={showSlashMenu}
+          aria-activedescendant={showSlashMenu && slashOptionCount > 0 ? `composer-slash-option-${slashActiveIndex}` : undefined}
           disabled={!canCompose}
           placeholder={
             !runtimeReady
@@ -636,4 +748,24 @@ export function ChatInput({
       </div>
     </div>
   );
+}
+
+function skillIsSelectable(skill: ProjectSkillPickerItem): boolean {
+  return skill.valid && skill.winner && !skill.shadowed;
+}
+
+function nextSlashIndex(
+  current: number,
+  direction: -1 | 1,
+  count: number,
+  skills: readonly ProjectSkillPickerItem[],
+  selectingSkill: boolean,
+): number {
+  if (!selectingSkill) return (current + direction + count) % count;
+  for (let offset = 1; offset <= count; offset += 1) {
+    const candidate = (current + direction * offset + count * 2) % count;
+    const skill = skills[candidate];
+    if (skill !== undefined && skillIsSelectable(skill)) return candidate;
+  }
+  return current;
 }

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { useMatch } from "react-router-dom";
 import { SettingsDialog } from "../components/features/SettingsDialog";
 import type { SettingsSection } from "../components/features/settings-helpers";
 
@@ -29,7 +30,8 @@ export function SettingsModalProvider({ children }: { children: ReactNode }) {
 
 export function SettingsModalRenderer() {
   const { settingsOpen, settingsSection, closeSettingsModal } = useSettingsModal();
-  return <SettingsDialog open={settingsOpen} section={settingsSection} onClose={closeSettingsModal} />;
+  const projectMatch = useMatch("/projects/:slug/*");
+  return <SettingsDialog open={settingsOpen} section={settingsSection} projectSlug={projectMatch?.params.slug} onClose={closeSettingsModal} />;
 }
 
 export function useSettingsModal() {

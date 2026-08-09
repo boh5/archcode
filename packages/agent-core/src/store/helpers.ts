@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionStoreState, StoredMessage } from "./types";
 import {
+  SKILL_SOURCE_TIERS,
   isSessionEventPayload,
   isValidAttachmentMediaType,
   isValidAttachmentName,
@@ -276,6 +277,12 @@ const SessionExecutionRecordBaseShape = {
   durationMs: z.number().int().nonnegative(),
   stopRequestedAt: z.number().int().nonnegative().optional(),
   runs: z.array(SessionExecutionRunSchema).min(1),
+  executionSkills: z.array(z.strictObject({
+    name: z.string().trim().min(1),
+    source: z.enum(["project-archcode", "project-agents", "user-archcode", "user-agents", "builtin"]),
+    digest: z.string().trim().min(1),
+    resolutionRoot: z.string().trim().min(1),
+  })),
 };
 
 const SessionExecutionRecordSchema = z.discriminatedUnion("status", [
@@ -367,6 +374,7 @@ const PendingSessionMessageSchema = z.strictObject({
   targetModelAudit: MessageModelAuditSchema.optional(),
   claimedAt: z.number().int().nonnegative().optional(),
   requestedModelSelection: RequestedModelSelectionSchema,
+  executionSkillNames: z.array(z.string().trim().min(1)).max(1),
 }).superRefine((message, ctx) => {
   if (message.content.trim().length === 0 && message.attachments.length === 0) {
     ctx.addIssue({
@@ -911,6 +919,16 @@ const PromptTraceSnapshotSchema = z.strictObject({
   })),
   skills: z.strictObject({
     status: z.enum(["present", "absent", "error"]),
+    available: z.strictObject({
+      includedEntries: z.array(z.strictObject({
+        name: z.string(),
+        description: z.string(),
+        source: z.enum(SKILL_SOURCE_TIERS),
+      })),
+      omittedCount: z.number().int().nonnegative(),
+      renderedText: z.string(),
+      byteLength: z.number().int().nonnegative().max(8_000),
+    }),
     active: z.array(z.strictObject({
       name: z.string(),
       source: z.string(),
@@ -921,7 +939,7 @@ const PromptTraceSnapshotSchema = z.strictObject({
   memory: z.enum(["present", "absent", "error"]),
   mcp: z.record(
     z.string(),
-    z.enum(["pending", "ready", "ready-zero", "partial-warning", "failed"]),
+    z.enum(["disabled", "connecting", "ready", "ready-zero", "partial-warning", "failed"]),
   ),
   warnings: z.array(z.string()),
 });
@@ -986,10 +1004,11 @@ const SessionToolBatchCallSchema = z.strictObject({
   recoveryFailure: SessionToolRecoveryFailureSchema.optional(),
 }).superRefine((call, ctx) => {
   const terminalResult = call.state === "completed" || call.state === "failed";
-  if (terminalResult !== (call.result !== undefined)) {
+  const inspectedUnknownResult = call.state === "manual_inspection_required" && call.result !== undefined;
+  if ((terminalResult || inspectedUnknownResult) !== (call.result !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["result"], message: `${call.state} has invalid result presence` });
   }
-  if (terminalResult !== (call.settledAt !== undefined)) {
+  if ((terminalResult || inspectedUnknownResult) !== (call.settledAt !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["settledAt"], message: `${call.state} has invalid settledAt presence` });
   }
   if (call.state === "completed" && call.result?.isError !== false) {
@@ -997,6 +1016,13 @@ const SessionToolBatchCallSchema = z.strictObject({
   }
   if (call.state === "failed" && call.result?.isError !== true) {
     ctx.addIssue({ code: "custom", path: ["result", "isError"], message: "failed result must be an error" });
+  }
+  if (inspectedUnknownResult && (call.result?.isError !== true || call.result.details?.unknownResult !== true)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["result"],
+      message: "manual inspection result must be an unknown error result",
+    });
   }
   if (call.executionCompleted === true && call.state !== "completed") {
     ctx.addIssue({ code: "custom", path: ["executionCompleted"], message: "executionCompleted requires a successful completed call" });

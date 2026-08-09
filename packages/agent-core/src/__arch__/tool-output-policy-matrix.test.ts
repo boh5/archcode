@@ -6,8 +6,9 @@ import { createBuiltinToolDescriptors } from "../tools/builtins";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import { createGitHubToolDescriptors } from "../tools/github";
-import { adaptMcpTool } from "../mcp/tool-adapter";
+import { adaptMcpTool, type McpCallHandle } from "../mcp/tool-adapter";
 import type { McpClient } from "../mcp/client";
+import { toMcpToolRegistryName } from "../mcp/naming";
 import { SecretRedactionPolicy } from "../security";
 
 const SOURCE = [
@@ -85,10 +86,15 @@ describe("Tool Output Plane architecture matrix", () => {
     const descriptor = adaptMcpTool(
       { name: "lookup", inputSchema: { type: "object" } },
       "docs",
-      { callTool: async () => ({ content: [] }) } as unknown as McpClient,
+      {
+        tryAcquireCall: () => ({
+          client: { callTool: async () => ({ content: [] }) } as unknown as McpClient,
+          release: () => undefined,
+        }),
+      } satisfies McpCallHandle,
       new SecretRedactionPolicy([]),
     );
-    expect(descriptor.name).toBe("mcp__docs__lookup");
+    expect(descriptor.name).toBe(toMcpToolRegistryName("docs", "lookup"));
     expect(descriptor.outputPolicy).toEqual({ kind: "artifact", previewDirection: "head-tail" });
   });
 

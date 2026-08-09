@@ -43,6 +43,7 @@ describe("resolveAttachmentReadPaths", () => {
           mode: "profile_default",
           selection: { model: "test:model" },
         },
+        executionSkillNames: [],
       },
     });
     store.getState().append({

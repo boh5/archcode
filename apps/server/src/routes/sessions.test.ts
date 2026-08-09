@@ -94,10 +94,8 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
 
   const runtime = {
     projectRegistry,
-    mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    warnings: [],
     contextResolver: undefined,
     subscribeSessionRuntimeChanges: () => () => undefined,
     createSession: async (workspaceRoot: string) => {

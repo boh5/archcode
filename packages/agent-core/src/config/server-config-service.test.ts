@@ -55,6 +55,8 @@ function config(): Record<string, unknown> {
     mcp: {
       servers: {
         custom: {
+          type: "http",
+          enabled: true,
           url: "https://mcp.example.test",
           headers: { Authorization: "mcp-secret" },
         },
@@ -84,7 +86,7 @@ function preserveSecrets(view: ServerConfigEditableView): ServerConfigUpdate {
   update.provider.local.options.apiKey = { action: "preserve" };
   update.provider.local.options.headers = { Authorization: { action: "preserve" } };
   update.provider.local.options.queryParams = { token: { action: "preserve" } };
-  update.mcp!.servers.custom.headers = { Authorization: { action: "preserve" } };
+  (update.mcp!.servers.custom as any).headers = { Authorization: { action: "preserve" } };
   return update;
 }
 
@@ -367,7 +369,7 @@ describe("ServerConfigService", () => {
       headers: { Authorization: { configured: true } },
       queryParams: { token: { configured: true } },
     });
-    expect(snapshot.config.mcp?.servers.custom.headers).toEqual({ Authorization: { configured: true } });
+    expect((snapshot.config.mcp?.servers.custom as any).headers).toEqual({ Authorization: { configured: true } });
   });
 
   for (const adapter of providerAdapterCatalog.list()) {
@@ -436,7 +438,7 @@ describe("ServerConfigService", () => {
     edited.provider.local.options.apiKey = { action: "preserve" };
     edited.provider.local.options.headers = { Authorization: { action: "replace", value: "replacement" } };
     delete edited.provider.local.options.queryParams;
-    edited.mcp!.servers.custom.headers = { Authorization: { action: "preserve" } };
+    (edited.mcp!.servers.custom as any).headers = { Authorization: { action: "preserve" } };
 
     await service.save({ expectedRevision: snapshot.revision, config: edited });
     const disk = JSON.parse(await readFile(service.configPath, "utf8")) as Record<string, any>;
@@ -455,7 +457,7 @@ describe("ServerConfigService", () => {
     delete edited.provider.local.options.apiKey;
     delete edited.provider.local.options.headers;
     edited.provider.local.options.queryParams = {};
-    delete edited.mcp!.servers.custom.headers;
+    delete (edited.mcp!.servers.custom as any).headers;
 
     await service.save({ expectedRevision: snapshot.revision, config: edited });
     const disk = JSON.parse(await readFile(service.configPath, "utf8")) as Record<string, any>;
@@ -506,7 +508,7 @@ describe("ServerConfigService", () => {
   test("rejects unsupported provider packages and invalid MCP URLs before writing", async () => {
     for (const mutate of [
       (draft: ServerConfigUpdate) => { draft.provider.local.npm = "unsupported"; },
-      (draft: ServerConfigUpdate) => { draft.mcp!.servers.custom.url = "file:///not-http"; },
+      (draft: ServerConfigUpdate) => { (draft.mcp!.servers.custom as any).url = "file:///not-http"; },
     ]) {
       const service = await createService();
       const snapshot = await service.getSnapshot();
@@ -561,7 +563,11 @@ describe("ServerConfigService", () => {
     const service = await createService();
     const snapshot = await service.getSnapshot();
     const invalid = preserveSecrets(snapshot.config);
-    invalid.mcp!.servers.context7 = { url: "https://example.test" };
+    invalid.mcp!.servers.context7 = {
+      type: "http",
+      enabled: true,
+      url: "https://example.test",
+    };
 
     await expect(service.save({ expectedRevision: snapshot.revision, config: invalid })).rejects.toBeInstanceOf(BuiltinMcpConfigNameError);
   });
@@ -790,6 +796,8 @@ describe("ServerConfigService", () => {
     const service = await createUnloadedService();
     const invalid = config() as Record<string, any>;
     invalid.mcp.servers.broken = {
+      type: "http",
+      enabled: true,
       url: "file:///must-not-be-accepted",
       headers: { Authorization: "broken-server-secret" },
     };
@@ -809,6 +817,8 @@ describe("ServerConfigService", () => {
     const saved = JSON.parse(await readFile(service.configPath, "utf8"));
     expect(saved.mcp.servers).toEqual({
       custom: {
+        type: "http",
+        enabled: true,
         url: "https://mcp.example.test",
         headers: { Authorization: "mcp-secret" },
       },
@@ -819,10 +829,14 @@ describe("ServerConfigService", () => {
     const service = await createUnloadedService();
     const invalid = config() as Record<string, any>;
     invalid.mcp.servers.foo = {
+      type: "http",
+      enabled: true,
       url: "https://healthy.example.test",
       headers: { Authorization: "healthy-dotted-neighbor-secret" },
     };
     invalid.mcp.servers["foo.bar"] = {
+      type: "http",
+      enabled: true,
       url: "file:///must-not-be-accepted",
     };
     await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
@@ -840,6 +854,8 @@ describe("ServerConfigService", () => {
     )).resolves.toMatchObject({ status: "ready" });
     const saved = JSON.parse(await readFile(service.configPath, "utf8"));
     expect(saved.mcp.servers.foo).toEqual({
+      type: "http",
+      enabled: true,
       url: "https://healthy.example.test",
       headers: { Authorization: "healthy-dotted-neighbor-secret" },
     });
@@ -1312,13 +1328,13 @@ describe("ServerConfigService", () => {
     replace.provider.local.options.apiKey = { action: "replace", value: "api-2" };
     replace.provider.local.options.headers = { Authorization: { action: "replace", value: "header-2" } };
     replace.provider.local.options.queryParams = { token: { action: "replace", value: "query-2" } };
-    replace.mcp!.servers.custom.headers = { Authorization: { action: "replace", value: "mcp-2" } };
+    (replace.mcp!.servers.custom as any).headers = { Authorization: { action: "replace", value: "mcp-secret-2" } };
     const replaced = await service.save({ expectedRevision: before.revision, config: replace });
     const deleteAll = preserveSecrets(replaced.config);
     deleteAll.provider.local.options.apiKey = { action: "delete" };
     deleteAll.provider.local.options.headers = { Authorization: { action: "delete" } };
     deleteAll.provider.local.options.queryParams = { token: { action: "delete" } };
-    deleteAll.mcp!.servers.custom.headers = { Authorization: { action: "delete" } };
+    (deleteAll.mcp!.servers.custom as any).headers = { Authorization: { action: "delete" } };
     await service.save({ expectedRevision: replaced.revision, config: deleteAll });
     const disk = JSON.parse(await readFile(service.configPath, "utf8")) as Record<string, any>;
     expect(disk.provider.local.options.apiKey).toBeUndefined();
@@ -1390,7 +1406,7 @@ describe("ServerConfigService", () => {
       limit: { context: 64_000, output: 4_096 },
       modalities: { input: ["text"], output: ["text"] },
     };
-    update.mcp!.servers.custom.url = "https://changed.example.test";
+    (update.mcp!.servers.custom as any).url = "https://changed.example.test";
     update.memory = { enabled: false };
     update.integrations = { github: { enabled: false } };
 
@@ -1398,6 +1414,137 @@ describe("ServerConfigService", () => {
     expect(saved.modelRuntimeRevision).toBe(saved.revision);
     expect(service.modelRuntime.current.revision).toBe(saved.revision);
     expect(service.modelRuntime.current.tryResolveSelection({ model: "local:new-model" })).toBeDefined();
-    expect(saved.restartRequiredSections).toEqual(["mcp", "memory", "integrations.github"]);
+    expect(saved.restartRequiredSections).toEqual(["memory", "integrations.github"]);
+  });
+
+  test("validates a draft without writing and hot-applies the committed HTTP/STDIO result", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const update = preserveSecrets(snapshot.config);
+    update.mcp!.servers.local = {
+      type: "stdio",
+      enabled: true,
+      command: "mcp-local",
+      args: ["--stdio"],
+      env: { TOKEN: { action: "replace", value: "stdio-secret" } },
+    };
+    const beforeBytes = await readFile(service.configPath, "utf8");
+    const beforeRuntime = service.modelRuntime.current;
+
+    const draft = await service.resolveMcpDraft({
+      expectedRevision: snapshot.revision,
+      config: update,
+    });
+    expect(draft.servers.local).toEqual({
+      type: "stdio",
+      enabled: true,
+      command: "mcp-local",
+      args: ["--stdio"],
+      env: { TOKEN: "stdio-secret" },
+      connectTimeoutMs: 10_000,
+      discoveryTimeoutMs: 30_000,
+      callTimeoutMs: 60_000,
+    });
+    expect(await readFile(service.configPath, "utf8")).toBe(beforeBytes);
+    expect(service.modelRuntime.current).toBe(beforeRuntime);
+
+    const committed = await service.saveWithRuntimeConfig({
+      expectedRevision: snapshot.revision,
+      config: update,
+    });
+    expect(committed.resolvedMcpConfig.servers.local).toEqual(draft.servers.local);
+    expect(committed.snapshot.config.mcp?.servers.local).toMatchObject({
+      type: "stdio",
+      enabled: true,
+      command: "mcp-local",
+      args: ["--stdio"],
+      env: { TOKEN: { configured: true } },
+    });
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).mcp.servers.local.env).toEqual({ TOKEN: "stdio-secret" });
+    expect(committed.snapshot.restartRequiredSections).toEqual([]);
+  });
+
+  test("enforces runtime secret literal bounds for MCP headers and STDIO env", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const shortSecret = preserveSecrets(snapshot.config);
+    shortSecret.mcp!.servers.local = {
+      type: "stdio",
+      enabled: true,
+      command: "mcp-local",
+      env: { TOKEN: { action: "replace", value: "short" } },
+    };
+    await expect(service.resolveMcpDraft({
+      expectedRevision: snapshot.revision,
+      config: shortSecret,
+    })).rejects.toMatchObject({
+      issues: [{ path: "mcp.servers.local.env.TOKEN" }],
+    });
+
+    const tooMany = preserveSecrets(snapshot.config);
+    tooMany.mcp!.servers.local = {
+      type: "stdio",
+      enabled: true,
+      command: "mcp-local",
+      env: Object.fromEntries(Array.from({ length: 256 }, (_, index) => [
+        `TOKEN_${index}`,
+        { action: "replace", value: `stdio-secret-${index.toString().padStart(3, "0")}` },
+      ])),
+    };
+    await expect(service.resolveMcpDraft({
+      expectedRevision: snapshot.revision,
+      config: tooMany,
+    })).rejects.toMatchObject({
+      issues: [{ path: "runtime.secretLiterals" }],
+    });
+  });
+
+  test("validates resolved MCP environment secrets before draft use or save commit", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const beforeBytes = await readFile(service.configPath, "utf8");
+    const envName = "ARCHCODE_MCP_RESOLVED_SECRET_TEST";
+    const previous = process.env[envName];
+    try {
+      process.env[envName] = "resolved-secret-value";
+      const valid = preserveSecrets(snapshot.config);
+      valid.mcp!.servers.local = {
+        type: "stdio",
+        enabled: true,
+        command: "mcp-local",
+        env: { TOKEN: { action: "replace", value: `\${${envName}}` } },
+      };
+      const resolved = await service.resolveMcpDraft({
+        expectedRevision: snapshot.revision,
+        config: valid,
+      });
+      expect(resolved.servers.local).toMatchObject({ env: { TOKEN: "resolved-secret-value" } });
+
+      process.env[envName] = "short";
+      await expect(service.resolveMcpDraft({
+        expectedRevision: snapshot.revision,
+        config: valid,
+      })).rejects.toMatchObject({
+        issues: [{ path: "mcp.servers.local.env.TOKEN" }],
+      });
+      await expect(service.saveWithRuntimeConfig({
+        expectedRevision: snapshot.revision,
+        config: valid,
+      })).rejects.toMatchObject({
+        issues: [{ path: "mcp.servers.local.env.TOKEN" }],
+      });
+      expect(await readFile(service.configPath, "utf8")).toBe(beforeBytes);
+
+      process.env[envName] = "x".repeat(16 * 1024 + 1);
+      await expect(service.resolveMcpDraft({
+        expectedRevision: snapshot.revision,
+        config: valid,
+      })).rejects.toMatchObject({
+        issues: [{ path: "mcp.servers.local.env.TOKEN" }],
+      });
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
   });
 });

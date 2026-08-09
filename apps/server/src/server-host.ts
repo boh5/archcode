@@ -621,7 +621,44 @@ export class ArchCodeServerHost implements SetupCoordinatorPort, ConfigRecoveryC
       getModelRuntimeCatalog: () => this.options.configService.getModelRuntimeCatalog(),
       getProviderAdapterCatalog: () => this.options.configService.getProviderAdapterCatalog(),
       save: (request) => this.runHostMutation(
-        () => this.options.configService.save(request),
+        async () => {
+          const saved = await this.options.configService.saveWithRuntimeConfig(request);
+          const runtime = this.runtime;
+          if (runtime === undefined) {
+            return {
+              ...saved.snapshot,
+              mcpApply: {
+                state: "failed" as const,
+                error: "Configuration was saved, but the Runtime is unavailable for MCP live apply",
+                status: { servers: {} },
+              },
+            };
+          }
+          try {
+            await runtime.applyMcpConfig(saved.resolvedMcpConfig);
+            return {
+              ...saved.snapshot,
+              mcpApply: {
+                state: "applied" as const,
+                status: runtime.getMcpServerStatus(),
+              },
+            };
+          } catch (error) {
+            this.options.logger.error("server.config.mcp-apply.failed", {
+              error: {
+                name: error instanceof Error ? error.name : "NonErrorThrow",
+              },
+            });
+            return {
+              ...saved.snapshot,
+              mcpApply: {
+                state: "failed" as const,
+                error: "Configuration was saved, but MCP live apply failed",
+                status: runtime.getMcpServerStatus(),
+              },
+            };
+          }
+        },
       ),
     }));
 

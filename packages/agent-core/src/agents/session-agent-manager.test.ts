@@ -354,6 +354,7 @@ describe("SessionAgentManager", () => {
         binding: binding.summary,
         origin: "user_message",
         maxSteps: 1,
+        executionSkills: [],
       });
       agent.store.getState().append({
         type: "session.messages_committed",

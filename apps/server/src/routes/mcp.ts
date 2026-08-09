@@ -1,25 +1,98 @@
 import { Hono } from "hono";
-import type { AgentRuntime } from "@archcode/agent-core";
-import type { McpServerStatus } from "@archcode/protocol";
+import type {
+  McpServerInventoryResponse,
+  McpServerStatusResponse,
+  McpToolInventoryItem,
+  UpdateServerConfigRequest,
+} from "@archcode/protocol";
+
+import { BadRequestError } from "../errors";
+import { readBoundedJsonBody } from "../request-body";
+
+const MCP_DRAFT_BODY_MAX_BYTES = 2 * 1024 * 1024;
+const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
 /**
- * MCP routes. Mounted under `/api/mcp` so the MCP status endpoint is reachable
- * at `/api/mcp/status`.
- *
- * MCP status is runtime-global (not per-project); the route intentionally has no
- * `:slug` segment so clients can fetch the snapshot without a project context.
+ * The server route only owns HTTP validation and dispatch. Config resolution,
+ * secret policy, draft testing, and live MCP lifecycle stay behind this port.
  */
-export function createMcpRoutes(runtime: AgentRuntime): Hono {
+export interface McpRuntimePort {
+  getMcpServerStatus(): McpServerStatusResponse;
+  getMcpServerInventory(): McpServerInventoryResponse;
+  testMcpServerDraft(
+    serverName: string,
+    request: UpdateServerConfigRequest,
+    options?: { signal?: AbortSignal },
+  ): Promise<McpTestResponse>;
+  reconnectMcpServer(serverName: string): Promise<void>;
+}
+
+export interface McpTestResponse {
+  readonly tools: McpToolInventoryItem[];
+  readonly warnings: string[];
+}
+
+/** MCP routes are global (not project-scoped). */
+export function createMcpRoutes(runtime: McpRuntimePort): Hono {
   const app = new Hono();
 
-  app.get("/status", (c) => {
-    const statuses = runtime.getMcpServerStatuses();
-    const servers: Record<string, McpServerStatus> = {};
-    for (const [name, status] of statuses) {
-      servers[name] = status;
-    }
-    return c.json({ servers });
+  app.get("/status", (c) => c.json(runtime.getMcpServerStatus()));
+  app.get("/inventory", (c) => c.json(runtime.getMcpServerInventory()));
+
+  app.post("/test/:serverName", async (c) => {
+    const serverName = parseServerName(c.req.param("serverName"));
+    const request = parseDraftRequest(await readBoundedJsonBody(c.req.raw, {
+      maxBytes: MCP_DRAFT_BODY_MAX_BYTES,
+      label: "MCP test draft",
+    }));
+    return c.json(await runtime.testMcpServerDraft(serverName, request, {
+      signal: c.req.raw.signal,
+    }));
+  });
+
+  app.post("/reconnect/:serverName", async (c) => {
+    const serverName = parseServerName(c.req.param("serverName"));
+    await runtime.reconnectMcpServer(serverName);
+    return c.json(runtime.getMcpServerStatus());
   });
 
   return app;
+}
+
+function parseServerName(value: string | undefined): string {
+  if (
+    value === undefined
+    || value.length === 0
+    || !MCP_SERVER_NAME_PATTERN.test(value)
+    || value.includes("__")
+  ) {
+    throw new BadRequestError("Invalid MCP server name");
+  }
+  return value;
+}
+
+function parseDraftRequest(value: unknown): UpdateServerConfigRequest {
+  if (!isRecord(value)) {
+    throw new BadRequestError("MCP test draft must be an object");
+  }
+  const keys = Object.keys(value).sort();
+  if (
+    keys.length !== 2
+    || keys[0] !== "config"
+    || keys[1] !== "expectedRevision"
+  ) {
+    throw new BadRequestError("MCP test draft must contain only expectedRevision and config");
+  }
+  if (
+    typeof value.expectedRevision !== "string"
+    || value.expectedRevision.length === 0
+    || !isRecord(value.config)
+  ) {
+    throw new BadRequestError("MCP test draft must include expectedRevision and config");
+  }
+  return value as unknown as UpdateServerConfigRequest;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -16,10 +16,8 @@ function createTestRuntime(
 ): AgentRuntime {
   return {
     projectRegistry,
-    mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    warnings: [],
     contextResolver: undefined,
     reconcileRegisteredProject: async () => undefined,
     startAutomationScheduler: async () => undefined,

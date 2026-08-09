@@ -47,7 +47,7 @@ const TEST_BINDING = {
 };
 
 function executionStart(executionId: string): StreamEvent {
-  return { type: "execution-start", executionId, binding: TEST_BINDING, origin: "user_message", maxSteps: 50 };
+  return { type: "execution-start", executionId, binding: TEST_BINDING, origin: "user_message", maxSteps: 50, executionSkills: [] };
 }
 
 function executionEnd(
@@ -1327,6 +1327,7 @@ describe("reduceStreamEvent", () => {
           endedAt: 2,
           durationMs: 1,
           maxSteps: 50,
+          executionSkills: [],
           runs: [{
             ordinal: 0,
             startedAt: 1,
@@ -1598,6 +1599,7 @@ describe("reduceStreamEvent", () => {
       acceptedAt: 10,
       updatedAt: 10,
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
+      executionSkillNames: [],
     };
     const steering = {
       ...queued,
@@ -1906,7 +1908,7 @@ describe("reduceStreamEvent", () => {
       status: "compiled" as const,
       hash: "a".repeat(64),
       sections: [{ name: "Runtime Envelope", source: "runtime/snapshot", hash: "b".repeat(64) }],
-      skills: { status: "present" as const, active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] },
+      skills: { status: "present" as const, available: { includedEntries: [], omittedCount: 0, renderedText: "- none", byteLength: 6 }, active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] },
       visibleTools: ["file_read"],
       agentsMd: "present" as const,
       memory: "absent" as const,

@@ -11,7 +11,8 @@ const mockRuntime = {
   subscribeSessionRuntimeChanges: mock(() => () => undefined),
   subscribeMcpStatusChanges: mock(() => () => undefined),
   subscribeModelRuntimeChanges: mock(() => () => undefined),
-  getMcpServerStatuses: mock(() => new Map()),
+  getMcpServerStatus: mock(() => ({ servers: {} })),
+  getMcpServerInventory: mock(() => ({ servers: {} })),
 } as unknown as AgentRuntime;
 
 describe("createRuntimeApp", () => {
@@ -41,6 +42,7 @@ describe("createRuntimeApp", () => {
           },
           origin: "user_message",
           maxSteps: 50,
+          executionSkills: [],
         } });
         listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 2, createdAt: 2, agentName: "lead", payload: {
           type: "execution-end",
@@ -71,7 +73,7 @@ describe("createRuntimeApp", () => {
     const observed: GlobalSSEEvent[] = [];
     const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
     createRuntimeApp(runtime);
-    listener!("context7", { state: "ready", toolCount: 1, warningCount: 0 });
+    listener!("context7", { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 1 });
     expect(observed[0]).toMatchObject({ type: "mcp_status", serverName: "context7" });
     unsubscribe();
   });

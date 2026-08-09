@@ -9,7 +9,7 @@ import type { ExecutionEndEvent, SessionStoreState } from "../../store/types";
 import type { SessionToolManualInspectionReason } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
 import type { RawToolResult, ToolCallLike, ToolExecutionContext } from "../../tools/index";
-import type { ToolRegistry } from "../../tools/registry";
+import type { ResolvedToolSet, ToolRegistry } from "../../tools/registry";
 import { createToolErrorResult } from "../../tools/errors";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { classifyLlmError, runLlmStream } from "../../llm";
@@ -39,6 +39,7 @@ interface ModelAttemptOptions {
   binding: QueryLoopOptions["binding"];
   systemPrompt: QueryLoopOptions["systemPrompt"];
   resolveSystemPrompt?: QueryLoopOptions["resolveSystemPrompt"];
+  resolveModelBoundary?: QueryLoopOptions["resolveModelBoundary"];
   toolRegistry: ToolRegistry;
   allowedTools: readonly string[];
   abort: AbortSignal;
@@ -60,6 +61,7 @@ type ModelAttemptResult =
       outcome: "success";
       stepId: string;
       finalized: FinalizedModelResult;
+      tools: ResolvedToolSet;
       streamError?: unknown;
     }
   | {
@@ -162,6 +164,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     binding,
     systemPrompt: staticSystemPrompt,
     resolveSystemPrompt,
+    resolveModelBoundary,
     toolRegistry,
     allowedTools,
     abort,
@@ -181,15 +184,17 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
 
   let messages: ModelMessage[];
   let tools: ToolSet | undefined;
+  let resolvedTools: ResolvedToolSet;
   let systemPrompt = staticSystemPrompt;
   let stepStarted = false;
 
   try {
     await consumeSteers?.();
     await prepareModelContext?.();
-    systemPrompt = resolveSystemPrompt === undefined
-      ? staticSystemPrompt
-      : await resolveSystemPrompt();
+    const modelBoundary = await resolveModelBoundary?.();
+    systemPrompt = modelBoundary?.systemPrompt
+      ?? (resolveSystemPrompt === undefined ? staticSystemPrompt : await resolveSystemPrompt());
+    resolvedTools = modelBoundary?.tools ?? toolRegistry.resolveForAgent(allowedTools);
     await runHooks("beforeModelBuild", beforeModelBuild, { store, binding, logger, abort, systemPrompt }, logger, { sessionId, agentName });
     await prepareModelContext?.();
     const projection = store.getState().toModelMessagesProjection();
@@ -202,8 +207,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       rootSessionId: store.getState().rootSessionId,
       supportsImages: binding.modelInfo.modalities.input.includes("image"),
     });
-    const resolved = toolRegistry.resolveForAgent(allowedTools);
-    tools = resolved.descriptors.length > 0 ? resolved.toAITools() : undefined;
+    tools = resolvedTools.descriptors.length > 0 ? resolvedTools.toAITools() : undefined;
     store.getState().append({ type: "step-start", stepId, step });
     stepStarted = true;
     await storeManager.flushSession(sessionId, projectContext.project.workspaceRoot);
@@ -238,7 +242,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       if (finalized.outcome === "retry") await settleUnfinalizedToolParts();
       return { ...finalized, stepId };
     }
-    return { outcome: "success", stepId, finalized: finalized.finalized, streamError };
+    return { outcome: "success", stepId, finalized: finalized.finalized, tools: resolvedTools, streamError };
   } catch (err) {
     await settleModelResultPromises(result, abort);
     if (classifyLlmError(err, { boundary: "provider-request" }).kind === "abort") {
@@ -373,13 +377,16 @@ export async function runQueryLoop(
       toolBatchId: batch.batchId,
       abort,
       startedAt: Date.now(),
-      allowedTools: new Set(allowedTools.filter((tool) => persistedAllowedTools.has(tool))),
+      allowedTools: persistedAllowedTools,
       projectContext: options.projectContext,
       ...(options.sessionGoalService === undefined ? {} : { sessionGoalService: options.sessionGoalService }),
       cwd: executionCwd,
       attachmentReadPaths,
       agentSkills: options.agentSkills.filter((skill) => persistedSkills.has(skill)),
       skillService: options.skillService,
+      ...(options.executionSkillSnapshots === undefined
+        ? {}
+        : { executionSkillSnapshots: options.executionSkillSnapshots }),
       storeManager: options.storeManager,
       outputArtifacts: options.toolOutputAccess,
       ...(liveToolOutput === undefined ? {} : { liveToolOutput }),
@@ -431,6 +438,7 @@ export async function runQueryLoop(
     agentName: store.getState().agentName,
     allowedTools,
     agentSkills: options.agentSkills,
+    logger: options.logger,
     createContext,
   });
 
@@ -482,6 +490,7 @@ export async function runQueryLoop(
         binding,
         systemPrompt: options.systemPrompt,
         resolveSystemPrompt: options.resolveSystemPrompt,
+        resolveModelBoundary: options.resolveModelBoundary,
         toolRegistry,
         allowedTools,
         abort,
@@ -674,6 +683,7 @@ export async function runQueryLoop(
         attempt.stepId,
         completedStep,
         doomTracker,
+        attempt.tools,
       );
 
       if (toolExecution.sessionCwdChanged) {
@@ -1256,13 +1266,14 @@ async function executeToolCalls(
   stepId: string,
   step: number,
   doomTracker?: DoomTracker,
+  resolvedTools?: ResolvedToolSet,
 ): Promise<ToolBatchExecutionResult> {
   const doomCallIds = new Set<string>();
   for (const toolCall of toolCalls) {
     if (doomTracker?.check(toolCall)) doomCallIds.add(toolCall.toolCallId);
   }
   if (toolCalls.length === 0) return { sessionCwdChanged: false };
-  await scheduler.createBatch(toolCalls, stepId, step);
+  await scheduler.createBatch(toolCalls, stepId, step, resolvedTools?.descriptors);
   for (const toolCallId of doomCallIds) {
     await scheduler.settleQueuedCall(toolCallId, createToolErrorResult({
       kind: "execution",

@@ -13,12 +13,19 @@ import { SkillListInputSchema, skillListTool } from "./skill-list";
 
 const tmpRoot = join(tmpdir(), "archcode-skill-list-tool", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
+const executionCwd = join(tmpRoot, "project.worktrees", "session-skill");
 const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
+const userAgentsSkillsRoot = join(tmpRoot, "user", ".agents", "skills");
 
 const leadSkills = ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"] as const;
 const exploreSkills = ["codemap", "research-docs"] as const;
 
-function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
+type SkillListPage = {
+  readonly items: readonly SkillIndexEntry[];
+  readonly nextCursor?: string;
+};
+
+function makeContext(agentSkills: readonly string[], cwd = projectRoot): ToolExecutionContext {
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "skill_list",
   toolCallId: "skill-list-call",
   input: {},
@@ -30,15 +37,16 @@ function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
   startedAt: 0,
   allowedTools: new Set(["skill_list"]),
   agentSkills,
-  skillService: new SkillService({ userSkillsRoot }),
+  skillService: new SkillService({ userSkillsRoot, userAgentsSkillsRoot }),
   projectContext: createTestProjectContext(projectRoot),
-  cwd: projectRoot, });
+  cwd, });
 }
 
 describe("skill_list tool", () => {
   beforeEach(async () => {
     await rm(tmpRoot, { recursive: true, force: true });
     await mkdir(userSkillsRoot, { recursive: true });
+    await mkdir(userAgentsSkillsRoot, { recursive: true });
     await mkdir(projectRoot, { recursive: true });
   });
 
@@ -48,7 +56,8 @@ describe("skill_list tool", () => {
 
   test("Lead allow-list returns all five builtin skill entries without bodies", async () => {
     const result = await skillListTool.execute({}, makeContext(leadSkills));
-    const entries = JSON.parse(expectTextDraft(result)) as SkillIndexEntry[];
+    const page = JSON.parse(expectTextDraft(result)) as SkillListPage;
+    const entries = page.items;
 
     expect(entries.map((entry) => entry.name)).toEqual([
       "codemap",
@@ -67,7 +76,8 @@ describe("skill_list tool", () => {
 
   test("explore allow-list returns codemap and research-docs only", async () => {
     const result = await skillListTool.execute({}, makeContext(exploreSkills));
-    const entries = JSON.parse(expectTextDraft(result)) as SkillIndexEntry[];
+    const page = JSON.parse(expectTextDraft(result)) as SkillListPage;
+    const entries = page.items;
 
     expect(entries.map((entry) => entry.name)).toEqual(["codemap", "research-docs"]);
   });
@@ -75,7 +85,39 @@ describe("skill_list tool", () => {
   test("agent with no skills receives an empty list", async () => {
     const result = await skillListTool.execute({}, makeContext([]));
 
-    expect(JSON.parse(expectTextDraft(result))).toEqual([]);
+    expect(JSON.parse(expectTextDraft(result))).toEqual({ items: [] });
+  });
+
+  test("resolves same-name project Skills from the Session cwd", async () => {
+    const name = "worktree-catalog-skill";
+    for (const [root, description] of [
+      [projectRoot, "Canonical checkout metadata."],
+      [executionCwd, "Session worktree metadata."],
+    ] as const) {
+      const skillRoot = join(root, ".archcode", "skills", name);
+      await mkdir(skillRoot, { recursive: true });
+      await Bun.write(join(skillRoot, "SKILL.md"), [
+        "---",
+        `name: ${name}`,
+        `description: ${description}`,
+        "---",
+        "",
+        description,
+      ].join("\n"));
+    }
+
+    const result = await skillListTool.execute({}, makeContext([], executionCwd));
+    const page = JSON.parse(expectTextDraft(result)) as SkillListPage;
+
+    expect(page.items).toContainEqual({
+      name,
+      description: "Session worktree metadata.",
+      source: "project-archcode",
+    });
+    expect(page.items).not.toContainEqual(expect.objectContaining({
+      name,
+      description: "Canonical checkout metadata.",
+    }));
   });
 
   test("input schema rejects unknown keys including agentName", () => {

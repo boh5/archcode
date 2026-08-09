@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
-import { silentLogger } from "../logger";
+import { silentLogger, type Logger } from "../logger";
 import { sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionToolBatchCall } from "../store/types";
@@ -17,8 +17,9 @@ import { ToolRegistry } from "../tools/registry";
 import { createTextToolResult } from "../tools/results";
 import { SecretRedactionPolicy } from "../security";
 import { createTestProjectContext } from "../tools/test-project-context";
-import type { ToolCallLike, ToolExecutionContext } from "../tools/types";
+import type { AnyToolDescriptor, RawToolResult, ToolCallLike, ToolExecutionContext } from "../tools/types";
 import { testExecutionStart } from "../testing/test-execution-fixtures";
+import { adaptMcpTool } from "../mcp/tool-adapter";
 import {
   SessionToolBatchScheduler,
   applySessionToolBatchChildOutcome,
@@ -35,7 +36,7 @@ const TMP_DIR = join("/tmp", "archcode-session-tool-batch", crypto.randomUUID())
 beforeEach(async () => { await mkdir(TMP_DIR, { recursive: true }); });
 afterEach(async () => { await rm(TMP_DIR, { recursive: true, force: true }); });
 
-async function createHarness() {
+async function createHarness(logger: Logger = silentLogger) {
   const storeManager = new SessionStoreManager({ logger: silentLogger });
   const sessionId = crypto.randomUUID();
   const store = storeManager.create(sessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
@@ -49,7 +50,7 @@ async function createHarness() {
   const registry = new ToolRegistry({
     finalizer: new ToolOutputFinalizer({ artifactStore }),
     hitlCodec: new HitlBoundaryCodec(redactionPolicy),
-    logger: silentLogger,
+    logger,
   });
   registry.register(defineTool({
     name: "read_tool",
@@ -72,6 +73,15 @@ async function createHarness() {
       permissionExecutions += 1;
       return createTextToolResult("approved");
     },
+  }));
+  registry.register(defineTool({
+    name: "permission_serial_tool",
+    description: "permission serial",
+    inputSchema: z.object({}).strict(),
+    traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    outputPolicy: { kind: "inline", previewDirection: "head" },
+    permissions: [async () => ({ outcome: "ask", reason: "Approve serial effect" })],
+    execute: async () => createTextToolResult("approved"),
   }));
   registry.register(defineTool({
     name: "effect_tool",
@@ -160,7 +170,10 @@ async function createHarness() {
     toolBatchId: store.getState().toolBatches.find((batch) => batch.archivedAt === undefined)!.batchId,
     abort: new AbortController().signal,
     startedAt: Date.now(),
-    allowedTools: new Set(["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user", "delegate"]),
+    allowedTools: new Set([
+      "read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user", "delegate",
+      call.toolName,
+    ]),
     projectContext,
     cwd: TMP_DIR,
   });
@@ -173,8 +186,9 @@ async function createHarness() {
     registry,
     hitlQueue,
     agentName: "lead",
-    allowedTools: ["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "ask_user", "delegate"],
+    allowedTools: ["read_tool", "effect_tool", "completion_tool", "cwd_tool", "permission_tool", "permission_serial_tool", "ask_user", "delegate"],
     agentSkills: [],
+    logger,
     createContext,
   });
   return {
@@ -186,9 +200,28 @@ async function createHarness() {
     hitlQueue,
     createContext,
     artifactStore,
+    logger,
     permissionExecutions: () => permissionExecutions,
     effectExecutions: () => effectExecutions,
   };
+}
+
+function makeMcpDescriptor(
+  name: string,
+  options: { readonly readOnly?: boolean; readonly result?: RawToolResult } = {},
+): { readonly descriptor: AnyToolDescriptor; readonly execute: ReturnType<typeof mock> } {
+  const readOnly = options.readOnly ?? true;
+  const execute = mock(async () => options.result ?? createTextToolResult("mcp output"));
+  const descriptor = defineTool({
+    name,
+    description: name,
+    inputSchema: z.object({}).strict(),
+    traits: { readOnly, destructive: !readOnly, concurrencySafe: readOnly },
+    outputPolicy: { kind: "inline", previewDirection: "head" },
+    ...(readOnly ? {} : { permissions: [async () => ({ outcome: "allow" as const })] }),
+    execute,
+  });
+  return { descriptor, execute };
 }
 
 function eventResults(harness: Awaited<ReturnType<typeof createHarness>>) {
@@ -210,7 +243,321 @@ async function markRunning(
   }));
 }
 
+async function cancelHarnessBatch(
+  harness: Awaited<ReturnType<typeof createHarness>>,
+  reason = "Session stopped",
+) {
+  return await cancelSessionToolBatch({
+    storeManager: harness.storeManager,
+    hitlQueue: harness.hitlQueue,
+    prepareHitlCancellation: async () => undefined,
+    settleSystem: async (call, step, raw) => {
+      const outcome = await harness.registry.settleSystem(call, await harness.createContext(call, step), raw);
+      if (outcome.kind !== "settled") throw new Error("unexpected block");
+      return outcome;
+    },
+    sessionId: harness.sessionId,
+    workspaceRoot: TMP_DIR,
+    reason,
+    logger: harness.logger,
+  });
+}
+
+function deferredResult() {
+  let resolve!: (result: RawToolResult) => void;
+  const promise = new Promise<RawToolResult>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
 describe("SessionToolBatchScheduler output ownership", () => {
+  test("executes the exact run-local MCP descriptor even when Registry has a same-name replacement", async () => {
+    const harness = await createHarness();
+    const resolved = makeMcpDescriptor("mcp__docs__lookup");
+    const replacement = makeMcpDescriptor("mcp__docs__lookup", {
+      result: createTextToolResult("registry replacement"),
+    });
+    harness.registry.register(replacement.descriptor);
+
+    await harness.scheduler.createBatch([
+      { toolCallId: "mcp-resolved", toolName: resolved.descriptor.name, input: {} },
+    ], "step-0", 0, [resolved.descriptor]);
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(resolved.execute).toHaveBeenCalledTimes(1);
+    expect(replacement.execute).not.toHaveBeenCalled();
+    expect(harness.scheduler.activeBatch()!.calls[0]!.result?.output.preview).toBe("mcp output");
+  });
+
+  test("settles a retired run-local MCP descriptor as TOOL_MCP_NOT_AVAILABLE", async () => {
+    const harness = await createHarness();
+    const retired = adaptMcpTool(
+      { name: "retired" },
+      "docs",
+      { tryAcquireCall: () => undefined },
+      new SecretRedactionPolicy([]),
+    );
+
+    await harness.scheduler.createBatch([
+      { toolCallId: "mcp-retired", toolName: retired.name, input: {} },
+    ], "step-0", 0, [retired]);
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(harness.scheduler.activeBatch()!.calls[0]!.result?.details?.error?.code)
+      .toBe("TOOL_MCP_NOT_AVAILABLE");
+  });
+
+  test("settles an MCP call with no run-local descriptor as TOOL_MCP_INTERRUPTED", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([
+      { toolCallId: "mcp-missing", toolName: "mcp__docs__missing", input: {} },
+    ], "step-0", 0);
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(harness.scheduler.activeBatch()!.calls[0]!.result?.details?.error?.code)
+      .toBe("TOOL_MCP_INTERRUPTED");
+  });
+
+  test("finalizes queued MCP calls as interrupted behind an ask_user blocker", async () => {
+    const harness = await createHarness();
+    const mcp = makeMcpDescriptor("mcp__docs__queued-ask");
+    await harness.scheduler.createBatch([
+      {
+        toolCallId: "ask-before-mcp",
+        toolName: "ask_user",
+        input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
+      },
+      { toolCallId: "mcp-after-ask", toolName: mcp.descriptor.name, input: {} },
+    ], "step-0", 0, [harness.registry.get("ask_user")!, mcp.descriptor]);
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "suspended_hitl" });
+    const mcpCall = harness.scheduler.activeBatch()!.calls.find((call) => call.toolCallId === "mcp-after-ask")!;
+    expect(mcpCall).toMatchObject({
+      state: "failed",
+      attempt: 0,
+      result: { isError: true, details: { error: { code: "TOOL_MCP_INTERRUPTED" } } },
+    });
+    expect(mcp.execute).not.toHaveBeenCalled();
+  });
+
+  test("finalizes queued MCP calls as interrupted behind a permission blocker", async () => {
+    const harness = await createHarness();
+    const mcp = makeMcpDescriptor("mcp__docs__queued-permission");
+    await harness.scheduler.createBatch([
+      { toolCallId: "permission-before-mcp", toolName: "permission_serial_tool", input: {} },
+      { toolCallId: "mcp-after-permission", toolName: mcp.descriptor.name, input: {} },
+    ], "step-0", 0, [harness.registry.get("permission_serial_tool")!, mcp.descriptor]);
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "suspended_hitl" });
+    const mcpCall = harness.scheduler.activeBatch()!.calls.find((call) => call.toolCallId === "mcp-after-permission")!;
+    expect(mcpCall).toMatchObject({
+      state: "failed",
+      attempt: 0,
+      result: { isError: true, details: { error: { code: "TOOL_MCP_INTERRUPTED" } } },
+    });
+    expect(mcp.execute).not.toHaveBeenCalled();
+  });
+
+  test("finalizes queued MCP calls as interrupted when a synchronous child suspends the batch", async () => {
+    const harness = await createHarness();
+    const mcp = makeMcpDescriptor("mcp__docs__queued-child");
+    await harness.scheduler.createBatch([
+      { toolCallId: "delegate-before-mcp", toolName: "delegate", input: {} },
+      { toolCallId: "mcp-after-child", toolName: mcp.descriptor.name, input: {} },
+    ], "step-0", 0, [harness.registry.get("delegate")!, mcp.descriptor]);
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "waiting_for_child" });
+    const mcpCall = harness.scheduler.activeBatch()!.calls.find((call) => call.toolCallId === "mcp-after-child")!;
+    expect(mcpCall).toMatchObject({
+      state: "failed",
+      attempt: 0,
+      result: { isError: true, details: { error: { code: "TOOL_MCP_INTERRUPTED" } } },
+    });
+    expect(mcp.execute).not.toHaveBeenCalled();
+  });
+
+  test("startup recovery never replays MCP calls: only an effectful running call needs manual inspection", async () => {
+    const harness = await createHarness();
+    const effectful = makeMcpDescriptor("mcp__docs__effectful-running", { readOnly: false });
+    const readOnly = makeMcpDescriptor("mcp__docs__readonly-running");
+    const queued = makeMcpDescriptor("mcp__docs__queued");
+    const batch = await harness.scheduler.createBatch([
+      { toolCallId: "mcp-effectful-running", toolName: effectful.descriptor.name, input: {} },
+      { toolCallId: "mcp-readonly-running", toolName: readOnly.descriptor.name, input: {} },
+      { toolCallId: "mcp-queued", toolName: queued.descriptor.name, input: {} },
+    ], "step-0", 0, [effectful.descriptor, readOnly.descriptor, queued.descriptor]);
+    await markRunning(harness, batch.calls[0]!, 1);
+    await markRunning(harness, batch.calls[1]!, 1);
+
+    expect(await harness.scheduler.recoverInterruptedBatch()).toMatchObject({
+      status: "manual_inspection_required",
+      reason: { kind: "effectful_outcome_unknown", toolCallId: "mcp-effectful-running" },
+    });
+    const calls = harness.store.getState().toolBatches[0]!.calls;
+    expect(calls.find((call) => call.toolCallId === "mcp-effectful-running")).toMatchObject({
+      state: "manual_inspection_required",
+      recoveryFailure: { kind: "effectful_outcome_unknown" },
+    });
+    for (const toolCallId of ["mcp-readonly-running", "mcp-queued"]) {
+      expect(calls.find((call) => call.toolCallId === toolCallId)).toMatchObject({
+        state: "failed",
+        result: { isError: true, details: { error: { code: "TOOL_MCP_INTERRUPTED" } } },
+      });
+    }
+    expect(effectful.execute).not.toHaveBeenCalled();
+    expect(readOnly.execute).not.toHaveBeenCalled();
+    expect(queued.execute).not.toHaveBeenCalled();
+  });
+
+  test("archives a finalized unknown effectful MCP result before the model can continue", async () => {
+    const harness = await createHarness();
+    const raw = createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_MCP_CALL_TIMEOUT",
+      message: "External effect may have completed",
+    });
+    const mcp = makeMcpDescriptor("mcp__write__unknown", {
+      readOnly: false,
+      result: { ...raw, details: { ...raw.details, unknownResult: true } },
+    });
+    const batch = await harness.scheduler.createBatch([
+      { toolCallId: "mcp-unknown", toolName: mcp.descriptor.name, input: {} },
+    ], "step-0", 0, [mcp.descriptor]);
+
+    expect(await harness.scheduler.advance()).toEqual({
+      status: "manual_inspection_required",
+      reason: {
+        kind: "effectful_cancelled_unknown",
+        toolCallId: "mcp-unknown",
+        toolName: "mcp__write__unknown",
+      },
+    });
+    expect(harness.scheduler.activeBatch()).toBeUndefined();
+    expect(harness.store.getState().toolBatches[0]).toMatchObject({
+      batchId: batch.batchId,
+      archivedAt: expect.any(String),
+      manualInspectionReason: { kind: "effectful_cancelled_unknown" },
+      calls: [{
+        state: "manual_inspection_required",
+        recoveryFailure: { kind: "effectful_cancelled_unknown" },
+        result: { isError: true, details: { unknownResult: true } },
+      }],
+    });
+    expect(eventResults(harness)).toHaveLength(1);
+  });
+
+  test("response-first effectful MCP settlement remains the single durable result", async () => {
+    const harness = await createHarness();
+    const mcp = makeMcpDescriptor("mcp__write__response-first", { readOnly: false });
+    await harness.scheduler.createBatch([
+      { toolCallId: "mcp-response-first", toolName: mcp.descriptor.name, input: {} },
+    ], "step-0", 0, [mcp.descriptor]);
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(await cancelHarnessBatch(harness)).toEqual({ hitlIds: [], manualInspectionRequired: false });
+    expect(harness.store.getState().toolBatches[0]).toMatchObject({
+      archivedAt: expect.any(String),
+      calls: [{ state: "completed", result: { isError: false } }],
+    });
+    expect(harness.store.getState().toolBatches[0]!.manualInspectionReason).toBeUndefined();
+    expect(eventResults(harness)).toHaveLength(1);
+  });
+
+  test("cancellation-first effectful MCP settlement accepts one unknown result and discards no duplicate", async () => {
+    const warnings: string[] = [];
+    let logger!: Logger;
+    logger = {
+      ...silentLogger,
+      warn(event) { warnings.push(event); },
+      child() { return logger; },
+    };
+    const harness = await createHarness(logger);
+    const pending = deferredResult();
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    const execute = mock(async () => {
+      started();
+      return await pending.promise;
+    });
+    const descriptor = defineTool({
+      name: "mcp__write__cancellation-first",
+      description: "effectful MCP race",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: false, destructive: true, concurrencySafe: false },
+      permissions: [async () => ({ outcome: "allow" as const })],
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute,
+    });
+    await harness.scheduler.createBatch([
+      { toolCallId: "mcp-cancellation-first", toolName: descriptor.name, input: {} },
+    ], "step-0", 0, [descriptor]);
+    const advancing = harness.scheduler.advance();
+    await startedPromise;
+
+    expect(await cancelHarnessBatch(harness, "Execution interrupted")).toEqual({
+      hitlIds: [],
+      manualInspectionRequired: true,
+    });
+    expect(eventResults(harness)).toHaveLength(0);
+    const raw = createToolErrorResult({
+      kind: "cancelled",
+      code: "TOOL_MCP_CALL_ABORTED",
+      message: "Call was cancelled after dispatch",
+    });
+    pending.resolve({ ...raw, details: { ...raw.details, unknownResult: true } });
+    expect(await advancing).toMatchObject({ status: "manual_inspection_required" });
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(eventResults(harness)).toHaveLength(1);
+    expect(warnings).not.toContain("tool.result.late_discarded");
+    expect(harness.store.getState().toolBatches[0]).toMatchObject({
+      archivedAt: expect.any(String),
+      manualInspectionReason: { kind: "effectful_cancelled_unknown" },
+      calls: [{ state: "manual_inspection_required", result: { details: { unknownResult: true } } }],
+    });
+  });
+
+  test("discards and logs a late read-only MCP completion after cancellation", async () => {
+    const warnings: string[] = [];
+    let logger!: Logger;
+    logger = {
+      ...silentLogger,
+      warn(event) { warnings.push(event); },
+      child() { return logger; },
+    };
+    const harness = await createHarness(logger);
+    const pending = deferredResult();
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    const execute = mock(async () => {
+      started();
+      return await pending.promise;
+    });
+    const descriptor = defineTool({
+      name: "mcp__read__late",
+      description: "read-only MCP race",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute,
+    });
+    await harness.scheduler.createBatch([
+      { toolCallId: "mcp-read-late", toolName: descriptor.name, input: {} },
+    ], "step-0", 0, [descriptor]);
+    const advancing = harness.scheduler.advance();
+    await startedPromise;
+    expect(await cancelHarnessBatch(harness)).toEqual({ hitlIds: [], manualInspectionRequired: false });
+    pending.resolve(createTextToolResult("late secret-free response"));
+    await expect(advancing).rejects.toThrow("Session has no active tool batch");
+
+    expect(eventResults(harness)).toHaveLength(1);
+    expect(warnings).toContain("tool.result.late_discarded");
+    expect(harness.store.getState().toolBatches[0]).toMatchObject({
+      archivedAt: expect.any(String),
+      calls: [{ state: "failed", result: { isError: true } }],
+    });
+    expect(harness.store.getState().toolBatches[0]!.manualInspectionReason).toBeUndefined();
+  });
+
   test("persists and appends only nested FinalizedToolResult", async () => {
     const harness = await createHarness();
     const batch = await harness.scheduler.createBatch([
@@ -578,6 +925,77 @@ describe("SessionToolBatchScheduler output ownership", () => {
     expect(eventResults(harness)).toHaveLength(1);
   });
 
+  test("response-first HITL cancellation claims the answered call and settles it once", async () => {
+    const harness = await createHarness();
+    await harness.scheduler.createBatch([{
+      toolCallId: "ask-response-first",
+      toolName: "ask_user",
+      input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
+    }], "step-0", 0);
+    await harness.scheduler.advance();
+    const blocker = harness.scheduler.activeBatch()!.calls[0]!.blocker!;
+    const response = { type: "question_answer" as const, answers: ["Yes"] };
+    await applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: blocker.hitlId!,
+      requestKey: blocker.requestKey,
+      response,
+    });
+
+    expect(await cancelHarnessBatch(harness)).toEqual({
+      hitlIds: [blocker.hitlId!],
+      manualInspectionRequired: false,
+    });
+    expect(harness.store.getState().toolBatches[0]!.calls[0]).toMatchObject({
+      state: "failed",
+      blocker: { response },
+      result: { isError: true },
+    });
+    expect(eventResults(harness)).toHaveLength(1);
+  });
+
+  test("cancellation-first HITL settlement discards and logs the late response", async () => {
+    const warnings: string[] = [];
+    let logger!: Logger;
+    logger = {
+      ...silentLogger,
+      warn(event) { warnings.push(event); },
+      child() { return logger; },
+    };
+    const harness = await createHarness(logger);
+    await harness.scheduler.createBatch([{
+      toolCallId: "ask-cancellation-first",
+      toolName: "ask_user",
+      input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
+    }], "step-0", 0);
+    await harness.scheduler.advance();
+    const blocker = harness.scheduler.activeBatch()!.calls[0]!.blocker!;
+
+    expect(await cancelHarnessBatch(harness)).toEqual({
+      hitlIds: [blocker.hitlId!],
+      manualInspectionRequired: false,
+    });
+    await expect(applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      sessionId: harness.sessionId,
+      workspaceRoot: TMP_DIR,
+      hitlId: blocker.hitlId!,
+      requestKey: blocker.requestKey,
+      response: { type: "question_answer", answers: ["Late"] },
+      logger,
+    })).rejects.toThrow("conflicts with the accepted response");
+    expect(warnings).toContain("tool.hitl.late_response_discarded");
+    expect(eventResults(harness)).toHaveLength(1);
+    expect(harness.store.getState().toolBatches[0]!.calls[0]).toMatchObject({
+      state: "failed",
+      result: { isError: true },
+    });
+  });
+
   test("permission approval resumes the exact call and performs the effect once", async () => {
     const harness = await createHarness();
     await harness.scheduler.createBatch([{ toolCallId: "permission-1", toolName: "permission_tool", input: {} }], "step-0", 0);
@@ -597,6 +1015,41 @@ describe("SessionToolBatchScheduler output ownership", () => {
     await harness.scheduler.advance();
     expect(harness.permissionExecutions()).toBe(1);
     expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({ state: "completed", attempt: 2 });
+  });
+
+  test("settles an immediate terminal child result from the exact child-launch checkpoint", async () => {
+    const harness = await createHarness();
+    const descriptor = defineTool({
+      name: "terminal_child_tool",
+      description: "synchronous child that completes before the tool returns",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async (_input, context) => {
+        await harness.scheduler.prepareChildLaunch({
+          parentExecutionId: context.executionId,
+          parentRunOrdinal: context.runOrdinal,
+          parentToolBatchId: context.toolBatchId,
+          parentToolCallId: context.toolCallId,
+          childSessionId: "terminal-child-session",
+          childExecutionId: "terminal-child-execution",
+        });
+        return createTextToolResult("terminal child completed");
+      },
+    });
+    await harness.scheduler.createBatch([{
+      toolCallId: "terminal-child-call",
+      toolName: descriptor.name,
+      input: {},
+    }], "step-0", 0, [descriptor]);
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({
+      state: "completed",
+      result: { isError: false, output: { preview: "terminal child completed" } },
+    });
+    expect(harness.scheduler.activeBatch()!.calls[0]!.childDependency).toBeUndefined();
+    expect(eventResults(harness)).toHaveLength(1);
   });
 
   for (const executionStatus of ["completed", "failed"] as const) {

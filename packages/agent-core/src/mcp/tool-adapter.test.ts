@@ -1,195 +1,157 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { z } from "zod";
-import { REDACTION_MARKER, SecretRedactionPolicy } from "../security";
+import { describe, expect, mock, test } from "bun:test";
+import { SecretRedactionPolicy } from "../security";
 import type { RawToolResult, ToolExecutionContext } from "../tools/types";
-import type { CallToolResultLike, McpClient } from "./client";
-import { MAX_MCP_SERIALIZED_RESULT_BYTES, adaptMcpTool } from "./tool-adapter";
+import type { McpClient, McpToolLike } from "./client";
+import { McpToolExecutionError } from "./errors";
+import { adaptMcpTool, traitsFromAnnotations, type McpCallHandle } from "./tool-adapter";
 
-const POLICY = new SecretRedactionPolicy(["secret-token"]);
-
-function makeClient(result: CallToolResultLike): McpClient {
-  return { callTool: mock(async () => result) } as unknown as McpClient;
+function handleWith(callTool: McpClient["callTool"]): { handle: McpCallHandle; release: ReturnType<typeof mock> } {
+  const release = mock(() => undefined);
+  const client = { callTool } as McpClient;
+  return { handle: { tryAcquireCall: () => ({ client, release }) }, release };
 }
 
-function throwingClient(error: unknown): McpClient {
-  return {
-    callTool: mock(async () => { throw error; }),
-  } as unknown as McpClient;
+function execute(descriptor: ReturnType<typeof adaptMcpTool>, signal = new AbortController().signal): Promise<RawToolResult> {
+  return Promise.resolve(descriptor.execute(
+    {},
+    { abort: signal } as ToolExecutionContext,
+  ));
 }
 
-function text(result: RawToolResult): string {
-  if (result.draft.kind !== "text") throw new Error("Expected MCP text draft");
-  return result.draft.text;
-}
-
-async function execute(
-  descriptor: ReturnType<typeof adaptMcpTool>,
-  input: Record<string, unknown> = {},
-): Promise<RawToolResult> {
-  return descriptor.execute(input, {} as ToolExecutionContext);
-}
-
-afterEach(() => mock.restore());
-
-describe("adaptMcpTool", () => {
-  test("declares the artifact policy and preserves the MCP schema", () => {
+describe("MCP tool adapter", () => {
+  test("uses conservative annotation traits and never adds a permission", () => {
+    const acquired = handleWith(mock(async () => ({ content: [] })));
     const descriptor = adaptMcpTool(
-      {
-        name: "resolve-library-id",
-        description: "Resolve a library ID",
-        inputSchema: {
-          type: "object",
-          properties: { libraryName: { type: "string" } },
-          required: ["libraryName"],
-        },
-      },
-      "context7",
-      makeClient({ content: [] }),
-      POLICY,
+      { name: "delete.item", inputSchema: { type: "object" } },
+      "docs",
+      acquired.handle,
+      new SecretRedactionPolicy([]),
     );
+    expect(descriptor.traits).toEqual({ readOnly: false, destructive: true, concurrencySafe: false });
+    expect(descriptor.permissions).toBeUndefined();
+    expect(descriptor.outputPolicy).toEqual({ kind: "artifact", previewDirection: "head-tail" });
+  });
 
-    expect(descriptor.name).toBe("mcp__context7__resolve-library-id");
-    expect(descriptor.description).toBe("Resolve a library ID");
-    expect(descriptor.inputSchema).toBeInstanceOf(z.ZodObject);
-    expect(descriptor.aiInputSchema).toBeDefined();
-    expect(descriptor.outputPolicy).toEqual({
-      kind: "artifact",
-      previewDirection: "head-tail",
+  test("only explicit read-only annotations are concurrency safe", () => {
+    expect(traitsFromAnnotations({ readOnlyHint: true, destructiveHint: true })).toEqual({
+      readOnly: true,
+      destructive: false,
+      concurrencySafe: true,
+    });
+    expect(traitsFromAnnotations({ readOnlyHint: false, destructiveHint: false })).toEqual({
+      readOnly: false,
+      destructive: false,
+      concurrencySafe: false,
     });
   });
 
-  test("uses safe traits by default and serial destructive traits when annotated", () => {
-    const safe = adaptMcpTool(
-      { name: "read" }, "docs", makeClient({ content: [] }), POLICY,
-    );
-    const destructive = adaptMcpTool(
-      { name: "delete", annotations: { readOnlyHint: true, destructiveHint: true } },
+  test("calls the original tool identity and redacts successful content", async () => {
+    const callTool = mock(async (name: string) => ({
+      content: [{ type: "text", text: `${name}: secret-value` }],
+      structuredContent: { token: "secret-value" },
+    }));
+    const acquired = handleWith(callTool as McpClient["callTool"]);
+    const descriptor = adaptMcpTool(
+      { name: "lookup.tool", inputSchema: { type: "object" } },
       "docs",
-      makeClient({ content: [] }),
-      POLICY,
-    );
-
-    expect(safe.traits).toEqual({ readOnly: true, destructive: false, concurrencySafe: true });
-    expect(destructive.traits).toEqual({ readOnly: false, destructive: true, concurrencySafe: false });
-    expect(destructive.permissions).toHaveLength(1);
-  });
-
-  test("calls the original MCP name and constructs a Raw text draft", async () => {
-    const client = makeClient({ content: [{ type: "text", text: "ok" }] });
-    const descriptor = adaptMcpTool(
-      { name: "resolve-library-id" }, "context7", client, POLICY,
-    );
-    const input = { libraryName: "React" };
-    const result = await execute(descriptor, input);
-
-    expect(client.callTool).toHaveBeenCalledWith("resolve-library-id", input);
-    expect(result).toEqual({ isError: false, draft: { kind: "text", text: "ok" } });
-  });
-
-  test("formats content in order and appends structured content", async () => {
-    const descriptor = adaptMcpTool(
-      { name: "query" },
-      "docs",
-      makeClient({
-        content: [
-          { type: "text", text: "summary" },
-          { type: "image", mimeType: "image/png" },
-        ],
-        structuredContent: { ids: ["one"] },
-      }),
-      POLICY,
-    );
-
-    expect(text(await execute(descriptor))).toBe(
-      'summary\n[Unsupported MCP content type: image]\nStructured content:\n{"ids":["one"]}',
-    );
-  });
-
-  test("uses deterministic empty output", async () => {
-    const descriptor = adaptMcpTool(
-      { name: "empty" }, "docs", makeClient({ content: [] }), POLICY,
-    );
-    expect(text(await execute(descriptor))).toBe("MCP tool returned no content.");
-  });
-
-  test("turns MCP error results into bounded structured Raw errors", async () => {
-    const descriptor = adaptMcpTool(
-      { name: "fail" },
-      "docs",
-      makeClient({ content: [{ type: "text", text: "upstream failed" }], isError: true }),
-      POLICY,
+      acquired.handle,
+      new SecretRedactionPolicy(["secret-value"]),
     );
     const result = await execute(descriptor);
-
-    expect(result.isError).toBe(true);
-    expect(result.details?.error).toMatchObject({
-      kind: "execution",
-      code: "TOOL_MCP_ERROR",
-      name: "McpToolError",
-    });
-    expect(text(result)).toContain("upstream failed");
+    expect(callTool).toHaveBeenCalledWith("lookup.tool", {}, expect.any(AbortSignal), expect.any(Function));
+    expect(result.draft.kind === "text" ? result.draft.text : "").toContain("[REDACTED:SECRET]");
+    expect(JSON.stringify(result)).not.toContain("secret-value");
+    expect(acquired.release).toHaveBeenCalledTimes(1);
   });
 
-  test("uses the shared runtime policy for thrown errors and logs", async () => {
+  test("fails deterministically when the bound handle retired before acquire", async () => {
     const descriptor = adaptMcpTool(
-      { name: "fail" },
+      { name: "lookup" },
       "docs",
-      throwingClient(new Error("bad token secret-token")),
-      POLICY,
+      { tryAcquireCall: () => undefined },
+      new SecretRedactionPolicy([]),
     );
     const result = await execute(descriptor);
-
-    expect(result.isError).toBe(true);
-    expect(text(result)).toContain(REDACTION_MARKER);
-    expect(JSON.stringify(result)).not.toContain("secret-token");
+    expect(result.details?.error?.code).toBe("TOOL_MCP_NOT_AVAILABLE");
   });
 
-  test("converts non-serializable structured content into a tool error", async () => {
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
-    const descriptor = adaptMcpTool(
-      { name: "circular" },
+  test("effectful timeout is marked unknown while read-only timeout is not", async () => {
+    const timeout = mock(async (
+      _name: string,
+      _input: Record<string, unknown>,
+      _signal?: AbortSignal,
+      onDispatch?: () => void,
+    ) => {
+      onDispatch?.();
+      throw new McpToolExecutionError("docs", "work", new Error("timeout"), "timeout");
+    }) as McpClient["callTool"];
+    const effectful = adaptMcpTool(
+      { name: "work" },
       "docs",
-      makeClient({ content: [], structuredContent: circular }),
-      POLICY,
+      handleWith(timeout).handle,
+      new SecretRedactionPolicy([]),
     );
-    const result = await execute(descriptor);
-
-    expect(result.isError).toBe(true);
-    expect(result.details?.error?.code).toBe("TOOL_MCP_ERROR");
+    const readOnly = adaptMcpTool(
+      { name: "read", annotations: { readOnlyHint: true } },
+      "docs",
+      handleWith(timeout).handle,
+      new SecretRedactionPolicy([]),
+    );
+    const effectfulResult = await execute(effectful);
+    const readOnlyResult = await execute(readOnly);
+    expect(effectfulResult.details?.error?.code).toBe("TOOL_MCP_CALL_TIMEOUT");
+    expect(effectfulResult.details?.unknownResult).toBe(true);
+    expect(readOnlyResult.details?.unknownResult).toBeUndefined();
   });
 
-  test("rejects escaped structured serialization that expands beyond 8 MiB", async () => {
+  test("pre-dispatch abort never acquires a handle", async () => {
+    const tryAcquireCall = mock(() => undefined);
     const descriptor = adaptMcpTool(
-      { name: "expanded" },
-      "server",
-      makeClient({ content: [], structuredContent: { value: "\n".repeat(MAX_MCP_SERIALIZED_RESULT_BYTES / 2) } }),
-      POLICY,
+      { name: "work" },
+      "docs",
+      { tryAcquireCall },
+      new SecretRedactionPolicy([]),
+    );
+    const controller = new AbortController();
+    controller.abort();
+    const result = await execute(descriptor, controller.signal);
+    expect(result.details?.error?.code).toBe("TOOL_MCP_CALL_ABORTED");
+    expect(result.details?.unknownResult).toBeUndefined();
+    expect(tryAcquireCall).not.toHaveBeenCalled();
+  });
+
+  test("cancellation before SDK dispatch is not marked as an uncertain effect", async () => {
+    const callTool = mock(async (
+      _name: string,
+      _input: Record<string, unknown>,
+      _signal?: AbortSignal,
+      _onDispatch?: () => void,
+    ) => {
+      throw new McpToolExecutionError("docs", "work", new Error("aborted before dispatch"), "aborted");
+    }) as McpClient["callTool"];
+    const descriptor = adaptMcpTool(
+      { name: "work" },
+      "docs",
+      handleWith(callTool).handle,
+      new SecretRedactionPolicy([]),
     );
 
     const result = await execute(descriptor);
 
-    expect(result.isError).toBe(true);
-    expect(result.details?.error?.code).toBe("TOOL_MCP_ERROR");
-    expect(result.draft.kind === "text" ? Buffer.byteLength(result.draft.text) : 0).toBeLessThan(4 * 1024);
+    expect(result.details?.error?.code).toBe("TOOL_MCP_CALL_ABORTED");
+    expect(result.details?.unknownResult).toBeUndefined();
   });
 
-  test("rejects aggregate content blocks before join can create an oversized string", async () => {
+  test("bounds invalid or cyclic structured results as tool errors", async () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const acquired = handleWith(mock(async () => ({ content: [], structuredContent: cyclic })) as McpClient["callTool"]);
     const descriptor = adaptMcpTool(
-      { name: "many-blocks" },
-      "server",
-      makeClient({
-        content: [
-          { type: "text", text: "a".repeat(MAX_MCP_SERIALIZED_RESULT_BYTES / 2) },
-          { type: "text", text: "b".repeat(MAX_MCP_SERIALIZED_RESULT_BYTES / 2) },
-        ],
-      }),
-      POLICY,
+      { name: "lookup" } satisfies McpToolLike,
+      "docs",
+      acquired.handle,
+      new SecretRedactionPolicy([]),
     );
-
-    const result = await execute(descriptor);
-
-    expect(result.isError).toBe(true);
-    expect(result.details?.error?.code).toBe("TOOL_MCP_ERROR");
+    expect((await execute(descriptor)).details?.error?.code).toBe("TOOL_MCP_ERROR");
   });
 });

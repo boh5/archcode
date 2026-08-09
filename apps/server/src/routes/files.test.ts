@@ -21,10 +21,8 @@ interface CreateTestAppOptions {
 function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   return {
     projectRegistry,
-    mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    warnings: [],
     contextResolver: undefined,
     subscribeSessionRuntimeChanges: () => () => undefined,
     createSession: async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),

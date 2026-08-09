@@ -15,7 +15,7 @@ Settings is one shared workspace with three presentations:
   Settings shell opens on `Config Recovery`.
 
 The recovery presentation is not a separate error page. Its navigation keeps
-Models, Profiles, Security, Runtime Data, MCP, Memory, GitHub, and About &
+Models, Profiles, Security, Runtime Data, MCP, Skills, Memory, GitHub, and About &
 Updates reachable. About & Updates retains its existing panel, behavior, and
 copy and never suggests that updating preserves, repairs, or makes Runtime data
 compatible.
@@ -28,7 +28,7 @@ compatible.
   no diagnostics or mutation.
 - The recovery shell uses the ordinary Settings sidebar. `Config Recovery` and
   `About & Updates` are enabled; Models, Profiles, Security, Runtime Data, MCP,
-  Memory, and GitHub remain visible but disabled with the explanation
+  Skills, Memory, and GitHub remain visible but disabled with the explanation
   `Unavailable until the global configuration is valid`.
 - Show only the canonical Config path, server-produced safe structural
   diagnostics, and server-offered bounded invalid-item choices. Choice IDs are
@@ -93,9 +93,20 @@ polite live region; destructive and request errors use an alert.
   user to `Retry Runtime`; it never says changes were applied live.
 - Runtime Data and About & Updates do not wait for Config or MCP data before
   rendering.
-- MCP configuration remains editable from Config. Live discovery status shows
-  `Unavailable while Runtime is offline` instead of failing the Settings
-  workspace or implying that an MCP server itself failed.
+- MCP configuration remains editable from Config. Each server draft uses the
+  required transport `type` (`http` or `stdio`) and `enabled` fields; built-in
+  opt-out is controlled by `disabledBuiltins`. When Runtime is ready, saving
+  hot-applies the draft and each server exposes live `disabled`, `connecting`,
+  `ready`, or `failed` status plus discovered tool inventory, **Test**, and
+  **Reconnect** actions. If Runtime is offline, show `Unavailable while
+  Runtime is offline` instead of failing the Settings workspace or implying
+  that an MCP server itself failed. Config persistence and live MCP apply are
+  separate outcomes and must be reported separately.
+- Skills is a project-scoped, read-only diagnostic surface. It shows every
+  candidate across the five precedence tiers, the winning/shadowed/invalid
+  state and safe diagnostic, plus the canonical Prompt directory preview,
+  included/omitted counts, and byte size. It has no enable/disable controls.
+  Outside a project it says to open a project instead of guessing a workspace.
 - Security and About & Updates preserve their existing independent behavior.
 
 ## Layout And Accessibility
@@ -104,8 +115,9 @@ polite live region; destructive and request errors use an alert.
   column. The full-page recovery workspace is centered within the available
   viewport but uses the full height required for safe action placement.
 - At narrow widths the navigation becomes the existing compact grid above the
-  content. Project identity, Runtime paths, issue text, and confirmation content
-  wrap; the document never scrolls horizontally.
+  content. Project identity, Runtime paths, MCP tool identities, Skill names,
+  diagnostics, and confirmation content wrap; the document never scrolls
+  horizontally.
 - Keep the action footer in normal flex layout with wrapping. It must remain
   reachable at 390, 760, 1024, and 1440px and must not cover content.
 - Use semantic headings, lists, labels, native checkboxes and buttons. The

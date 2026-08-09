@@ -25,7 +25,6 @@ export {
 export { createReadBeforeEditPermission } from "./read-before-edit";
 export { createFileExistsPermission } from "./file-exists";
 export { createBashPermission } from "./bash";
-export { createMcpDestructivePermission } from "./mcp";
 export {
   PermissionApprovalFileSchema,
   PermissionApprovalScopeSchema,

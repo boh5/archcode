@@ -33,6 +33,7 @@ const executionStart = (executionId: string) => ({
   binding: TEST_BINDING,
   origin: "user_message" as const,
   maxSteps: 50,
+  executionSkills: [],
 });
 
 function executionEnd(
@@ -118,6 +119,7 @@ describe("SessionStoreManager", () => {
       status: "running",
       origin: "user_message",
       maxSteps: 50,
+      executionSkills: [],
       durationMs: 0,
       runs: [{ ordinal: 0, startedAt, binding: TEST_BINDING }],
     };
@@ -135,6 +137,7 @@ describe("SessionStoreManager", () => {
       status: "interrupted",
       origin: "tool_call",
       maxSteps: 50,
+      executionSkills: [],
       endedAt,
       durationMs: endedAt - startedAt,
       runs: [{
@@ -1584,7 +1587,7 @@ describe("SessionStoreManager", () => {
       status: "compiled" as const,
       hash: "a".repeat(64),
       sections: [{ name: "Runtime Envelope", source: "runtime/snapshot", hash: "b".repeat(64) }],
-      skills: { status: "present" as const, active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] },
+      skills: { status: "present" as const, available: { includedEntries: [], omittedCount: 0, renderedText: "- none", byteLength: 6 }, active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] },
       visibleTools: ["file_read"],
       agentsMd: "present" as const,
       memory: "absent" as const,

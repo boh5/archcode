@@ -2,532 +2,347 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { REDACTION_MARKER } from "../security";
 import {
   ConfigEnvExpansionError,
-  type McpConfig,
+  archcodeConfigSchema,
+  expandEnvVars,
   McpConfigEnvError,
   McpConfigError,
-  type ResolvedMcpConfig,
   mcpConfigSchema,
+  mcpHttpServerConfigSchema,
   mcpServerConfigSchema,
   mcpServerNameSchema,
+  mcpStdioServerConfigSchema,
   resolveMcpConfig,
-  expandEnvVars,
+  type McpConfig,
+  type ResolvedMcpConfig,
+  MCP_DEFAULT_CALL_TIMEOUT_MS,
+  MCP_DEFAULT_CONNECT_TIMEOUT_MS,
+  MCP_DEFAULT_DISCOVERY_TIMEOUT_MS,
+  MCP_MAX_TIMEOUT_MS,
 } from "./index";
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+const HTTP_SERVER = {
+  type: "http" as const,
+  enabled: true,
+  url: "http://localhost:3000/mcp",
+};
 
-const VALID_SERVER = {
-  url: "http://localhost:3000",
+const STDIO_SERVER = {
+  type: "stdio" as const,
+  enabled: true,
+  command: "mcp-server",
+  args: ["--stdio"],
 };
 
 function makeValidConfig(): McpConfig {
   return {
     servers: {
-      myserver: { ...VALID_SERVER },
+      myserver: { ...HTTP_SERVER },
     },
   };
 }
 
-// ─── Schema Validation ───────────────────────────────────────────────────────
-
 describe("mcpServerNameSchema", () => {
   test("accepts valid server names", () => {
-    expect(mcpServerNameSchema.safeParse("myserver").success).toBe(true);
-    expect(mcpServerNameSchema.safeParse("my-server").success).toBe(true);
-    expect(mcpServerNameSchema.safeParse("my_server").success).toBe(true);
-    expect(mcpServerNameSchema.safeParse("server.1").success).toBe(true);
-    expect(mcpServerNameSchema.safeParse("a").success).toBe(true);
+    for (const name of ["myserver", "my-server", "my_server", "server.1", "a"]) {
+      expect(mcpServerNameSchema.safeParse(name).success).toBe(true);
+    }
   });
 
-  test("rejects empty server name", () => {
-    const result = mcpServerNameSchema.safeParse("");
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects spaces in server name", () => {
-    const result = mcpServerNameSchema.safeParse("my server");
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects slashes in server name", () => {
-    const result = mcpServerNameSchema.safeParse("my/server");
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects special characters in server name", () => {
-    const result = mcpServerNameSchema.safeParse("server@name");
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects double underscore in server name", () => {
-    const result = mcpServerNameSchema.safeParse("my__server");
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0].message).toContain("double underscore");
+  test("rejects empty, spaced, slashed, special, and double-underscore names", () => {
+    for (const name of ["", "my server", "my/server", "server@name", "my__server"]) {
+      expect(mcpServerNameSchema.safeParse(name).success).toBe(false);
     }
   });
 });
 
-describe("mcpServerConfigSchema", () => {
-  test("accepts valid minimal config", () => {
-    const result = mcpServerConfigSchema.safeParse(VALID_SERVER);
-    expect(result.success).toBe(true);
+describe("MCP transport schemas", () => {
+  test("requires the HTTP discriminator and enable flag", () => {
+    expect(mcpHttpServerConfigSchema.safeParse(HTTP_SERVER).success).toBe(true);
+    expect(mcpHttpServerConfigSchema.safeParse({ url: HTTP_SERVER.url }).success).toBe(false);
+    expect(mcpHttpServerConfigSchema.safeParse({ ...HTTP_SERVER, enabled: undefined }).success).toBe(false);
   });
 
-  test("accepts config with all optional fields", () => {
-    const result = mcpServerConfigSchema.safeParse({
-      ...VALID_SERVER,
+  test("accepts HTTP headers and all bounded timeout fields", () => {
+    const result = mcpHttpServerConfigSchema.safeParse({
+      ...HTTP_SERVER,
       headers: { Authorization: "Bearer token" },
-      timeout: 60000,
+      connectTimeoutMs: MCP_DEFAULT_CONNECT_TIMEOUT_MS,
+      discoveryTimeoutMs: MCP_DEFAULT_DISCOVERY_TIMEOUT_MS,
+      callTimeoutMs: MCP_DEFAULT_CALL_TIMEOUT_MS,
     });
     expect(result.success).toBe(true);
   });
 
-  test("rejects unknown server fields", () => {
-    const result = mcpServerConfigSchema.safeParse({
-      ...VALID_SERVER,
-      unexpectedField: true,
-    });
-    expect(result.success).toBe(false);
+  test("requires the STDIO discriminator, enable flag, and command", () => {
+    expect(mcpStdioServerConfigSchema.safeParse(STDIO_SERVER).success).toBe(true);
+    expect(mcpStdioServerConfigSchema.safeParse({ type: "stdio", enabled: true }).success).toBe(false);
+    expect(mcpStdioServerConfigSchema.safeParse({ ...STDIO_SERVER, command: "" }).success).toBe(false);
   });
 
-  test("rejects empty url", () => {
-    const result = mcpServerConfigSchema.safeParse({
-      url: "",
-    });
-    expect(result.success).toBe(false);
+  test("accepts STDIO args/env and rejects shell/cwd fields", () => {
+    expect(mcpStdioServerConfigSchema.safeParse({
+      ...STDIO_SERVER,
+      env: { TOKEN: "secret" },
+      connectTimeoutMs: 1,
+      discoveryTimeoutMs: MCP_MAX_TIMEOUT_MS,
+      callTimeoutMs: MCP_DEFAULT_CALL_TIMEOUT_MS,
+    }).success).toBe(true);
+    expect(mcpStdioServerConfigSchema.safeParse({ ...STDIO_SERVER, shell: "sh" }).success).toBe(false);
+    expect(mcpStdioServerConfigSchema.safeParse({ ...STDIO_SERVER, cwd: "/tmp" }).success).toBe(false);
   });
 
-  test("rejects timeout of 0", () => {
-    const result = mcpServerConfigSchema.safeParse({
-      ...VALID_SERVER,
-      timeout: 0,
-    });
-    expect(result.success).toBe(false);
+  test("rejects non-positive, fractional, and over-bound timeouts", () => {
+    for (const field of ["connectTimeoutMs", "discoveryTimeoutMs", "callTimeoutMs"] as const) {
+      expect(mcpServerConfigSchema.safeParse({ ...HTTP_SERVER, [field]: 0 }).success).toBe(false);
+      expect(mcpServerConfigSchema.safeParse({ ...HTTP_SERVER, [field]: 1.5 }).success).toBe(false);
+      expect(mcpServerConfigSchema.safeParse({ ...HTTP_SERVER, [field]: MCP_MAX_TIMEOUT_MS + 1 }).success).toBe(false);
+    }
   });
 
-  test("rejects negative timeout", () => {
-    const result = mcpServerConfigSchema.safeParse({
-      ...VALID_SERVER,
-      timeout: -1,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects non-integer timeout", () => {
-    const result = mcpServerConfigSchema.safeParse({
-      ...VALID_SERVER,
-      timeout: 1.5,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects unknown keys (strict mode)", () => {
-    const result = mcpServerConfigSchema.safeParse({
-      ...VALID_SERVER,
-      unknownKey: "value",
-    });
-    expect(result.success).toBe(false);
+  test("rejects unknown transport fields in strict mode", () => {
+    expect(mcpServerConfigSchema.safeParse({ ...HTTP_SERVER, unexpectedField: true }).success).toBe(false);
+    expect(mcpServerConfigSchema.safeParse({ ...STDIO_SERVER, unexpectedField: true }).success).toBe(false);
   });
 });
 
 describe("mcpConfigSchema", () => {
-  test("accepts valid config with one server", () => {
-    const result = mcpConfigSchema.safeParse(makeValidConfig());
-    expect(result.success).toBe(true);
-  });
-
-  test("accepts config with multiple servers", () => {
+  test("accepts HTTP, STDIO, and optional disabled built-ins", () => {
     const result = mcpConfigSchema.safeParse({
+      disabledBuiltins: ["exa"],
       servers: {
-        a: { ...VALID_SERVER },
-        b: { ...VALID_SERVER },
+        docs: HTTP_SERVER,
+        local: STDIO_SERVER,
       },
     });
     expect(result.success).toBe(true);
   });
 
-  test("accepts empty servers object", () => {
-    const result = mcpConfigSchema.safeParse({ servers: {} });
-    expect(result.success).toBe(true);
+  test("requires unique known disabled built-in IDs", () => {
+    expect(mcpConfigSchema.safeParse({ disabledBuiltins: ["exa", "exa"], servers: {} }).success).toBe(false);
+    expect(mcpConfigSchema.safeParse({ disabledBuiltins: ["unknown"], servers: {} }).success).toBe(false);
   });
 
-  test("rejects unknown keys on mcp config", () => {
-    const result = mcpConfigSchema.safeParse({
-      servers: { s: { ...VALID_SERVER } },
-      builtin: true,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects non-string header values", () => {
-    const result = mcpServerConfigSchema.safeParse({
-      ...VALID_SERVER,
-      headers: { key: 42 },
-    });
-    expect(result.success).toBe(false);
+  test("keeps the top-level MCP object strict", () => {
+    expect(mcpConfigSchema.safeParse({ servers: {}, extraKey: true }).success).toBe(false);
   });
 });
 
-// ─── Named Error Classes ─────────────────────────────────────────────────────
-
 describe("McpConfigError", () => {
-  test("has the correct name", () => {
-    const err = new McpConfigError("test error");
-    expect(err.name).toBe("McpConfigError");
-  });
-
-  test("carries optional serverName", () => {
-    const err = new McpConfigError("test", "myserver");
-    expect(err.serverName).toBe("myserver");
-  });
-
-  test("works without serverName", () => {
-    const err = new McpConfigError("test");
-    expect(err.serverName).toBeUndefined();
+  test("has the correct name and optional serverName", () => {
+    expect(new McpConfigError("test error").name).toBe("McpConfigError");
+    expect(new McpConfigError("test", "myserver").serverName).toBe("myserver");
   });
 });
 
 describe("McpConfigEnvError", () => {
-  test("has the correct name", () => {
-    const err = new McpConfigEnvError("API_KEY", "mcp.servers.s.url");
-    expect(err.name).toBe("McpConfigEnvError");
-  });
-
-  test("carries variableName and configPath", () => {
-    const err = new McpConfigEnvError("MY_VAR", "mcp.servers.s.url");
-    expect(err.variableName).toBe("MY_VAR");
-    expect(err.configPath).toBe("mcp.servers.s.url");
-  });
-
-  test("message includes variable name and path", () => {
-    const err = new McpConfigEnvError("TOKEN", "mcp.servers.mine.url");
-    expect(err.message).toContain("TOKEN");
-    expect(err.message).toContain("mcp.servers.mine.url");
+  test("carries variableName/configPath without exposing values", () => {
+    const error = new McpConfigEnvError("TOKEN", "mcp.servers.docs.headers.Authorization");
+    expect(error.name).toBe("McpConfigEnvError");
+    expect(error.variableName).toBe("TOKEN");
+    expect(error.configPath).toBe("mcp.servers.docs.headers.Authorization");
+    expect(error.message).toContain("TOKEN");
   });
 });
 
-// ─── Env Expansion ───────────────────────────────────────────────────────────
+describe("resolveMcpConfig", () => {
+  test("returns empty disabled-builtins and servers when config is absent", () => {
+    expect(resolveMcpConfig()).toEqual({ disabledBuiltins: [], servers: {} });
+  });
 
-describe("resolveMcpConfig - env expansion", () => {
+  test("applies exact transport timeout defaults", () => {
+    const result = resolveMcpConfig({
+      servers: { http: HTTP_SERVER, stdio: STDIO_SERVER },
+    });
+
+    expect(result.servers.http).toMatchObject({
+      type: "http",
+      enabled: true,
+      connectTimeoutMs: MCP_DEFAULT_CONNECT_TIMEOUT_MS,
+      discoveryTimeoutMs: MCP_DEFAULT_DISCOVERY_TIMEOUT_MS,
+      callTimeoutMs: MCP_DEFAULT_CALL_TIMEOUT_MS,
+    });
+    expect(result.servers.stdio).toMatchObject({
+      type: "stdio",
+      args: ["--stdio"],
+      connectTimeoutMs: MCP_DEFAULT_CONNECT_TIMEOUT_MS,
+      discoveryTimeoutMs: MCP_DEFAULT_DISCOVERY_TIMEOUT_MS,
+      callTimeoutMs: MCP_DEFAULT_CALL_TIMEOUT_MS,
+    });
+  });
+
+  test("preserves explicit timeout values and disabled state", () => {
+    const config: McpConfig = {
+      servers: {
+        docs: {
+          ...HTTP_SERVER,
+          enabled: false,
+          connectTimeoutMs: 11_000,
+          discoveryTimeoutMs: 31_000,
+          callTimeoutMs: 61_000,
+        },
+      },
+    };
+    const result = resolveMcpConfig(config);
+    expect(result.servers.docs).toMatchObject({
+      type: "http",
+      enabled: false,
+      connectTimeoutMs: 11_000,
+      discoveryTimeoutMs: 31_000,
+      callTimeoutMs: 61_000,
+    });
+  });
+
+  test("retains the disabled built-in set without duplicates", () => {
+    expect(resolveMcpConfig({ disabledBuiltins: ["context7", "exa"], servers: {} }).disabledBuiltins)
+      .toEqual(["context7", "exa"]);
+    expect(() => resolveMcpConfig({ disabledBuiltins: ["exa", "exa"] as never, servers: {} }))
+      .toThrow(McpConfigError);
+  });
+
+  test("returns a resolved union with HTTP and STDIO fields", () => {
+    const result: ResolvedMcpConfig = resolveMcpConfig({
+      servers: {
+        docs: { ...HTTP_SERVER, headers: { Authorization: "token" } },
+        local: { ...STDIO_SERVER, env: { TOKEN: "secret" } },
+      },
+    });
+    expect(result.servers.docs).toMatchObject({ type: "http", url: HTTP_SERVER.url, headers: { Authorization: "token" } });
+    expect(result.servers.local).toMatchObject({ type: "stdio", command: "mcp-server", args: ["--stdio"], env: { TOKEN: "secret" } });
+  });
+});
+
+describe("resolveMcpConfig environment expansion", () => {
   const OLD_ENV = process.env;
 
   afterEach(() => {
     process.env = { ...OLD_ENV };
   });
 
-  test("resolves ${VAR} from process.env", () => {
-    process.env.MCP_TEST_HOST = "http://resolved-host:8080";
-    const config = makeValidConfig();
-    config.servers.myserver.url = "${MCP_TEST_HOST}";
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.url).toBe("http://resolved-host:8080");
+  test("expands HTTP URL and header values using the supplied env", () => {
+    const config: McpConfig = {
+      servers: {
+        docs: {
+          ...HTTP_SERVER,
+          url: "https://${MCP_HOST}/mcp",
+          headers: { Authorization: "Bearer ${MCP_TOKEN}" },
+        },
+      },
+    };
+    const result = resolveMcpConfig(config, {
+      MCP_HOST: "docs.example.test",
+      MCP_TOKEN: "secret-token",
+    });
+    expect(result.servers.docs).toMatchObject({
+      url: "https://docs.example.test/mcp",
+      headers: { Authorization: "Bearer secret-token" },
+    });
   });
 
-  test("resolves ${VAR} in the middle of a url", () => {
-    process.env.MCP_TEST_PORT = "9090";
-    const config = makeValidConfig();
-    config.servers.myserver.url = "http://localhost:${MCP_TEST_PORT}/path";
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.url).toBe("http://localhost:9090/path");
+  test("expands STDIO env values but leaves command and args literal", () => {
+    const result = resolveMcpConfig({
+      servers: {
+        local: {
+          ...STDIO_SERVER,
+          command: "${MCP_COMMAND}",
+          args: ["${MCP_ARG}"],
+          env: { TOKEN: "${MCP_TOKEN}" },
+        },
+      },
+    }, {
+      MCP_COMMAND: "not-used",
+      MCP_ARG: "not-used",
+      MCP_TOKEN: "stdio-secret",
+    });
+    expect(result.servers.local).toMatchObject({
+      command: "${MCP_COMMAND}",
+      args: ["${MCP_ARG}"],
+      env: { TOKEN: "stdio-secret" },
+    });
   });
 
-  test("uses ${VAR:-default} when env is undefined", () => {
-    delete process.env.MCP_TEST_MISSING;
-    const config = makeValidConfig();
-    config.servers.myserver.url = "${MCP_TEST_MISSING:-http://default:3000}";
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.url).toBe("http://default:3000");
+  test("supports defaults and does not recursively expand values", () => {
+    const result = resolveMcpConfig({
+      servers: {
+        docs: {
+          ...HTTP_SERVER,
+          url: "http://${MCP_HOST:-localhost}:3000/mcp",
+          headers: { "X-Token": "${MCP_OUTER}" },
+        },
+      },
+    }, {
+      MCP_OUTER: "${MCP_INNER}",
+    });
+    expect(result.servers.docs).toMatchObject({
+      url: "http://localhost:3000/mcp",
+      headers: { "X-Token": "${MCP_INNER}" },
+    });
   });
 
-  test("uses ${VAR:-default} when env is empty string", () => {
-    process.env.MCP_TEST_EMPTY = "";
-    const config = makeValidConfig();
-    config.servers.myserver.url = "${MCP_TEST_EMPTY:-http://fallback}";
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.url).toBe("http://fallback");
-  });
-
-  test("uses env value over ${VAR:-default} when env is set", () => {
-    process.env.MCP_TEST_WITH_DEFAULT = "http://env-value";
-    const config = makeValidConfig();
-    config.servers.myserver.url = "${MCP_TEST_WITH_DEFAULT:-http://default}";
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.url).toBe("http://env-value");
-  });
-
-  test("throws McpConfigEnvError for missing ${VAR} without default", () => {
-    delete process.env.MCP_TEST_REQUIRED;
-    const config = makeValidConfig();
-    config.servers.myserver.url = "${MCP_TEST_REQUIRED}";
-
-    expect(() => resolveMcpConfig(config)).toThrow(McpConfigEnvError);
-  });
-
-  test("throws McpConfigEnvError for empty ${VAR} without default", () => {
-    process.env.MCP_TEST_REQUIRED_EMPTY = "";
-    const config = makeValidConfig();
-    config.servers.myserver.url = "${MCP_TEST_REQUIRED_EMPTY}";
-
-    expect(() => resolveMcpConfig(config)).toThrow(McpConfigEnvError);
-  });
-
-  test("McpConfigEnvError has correct variableName and configPath", () => {
-    delete process.env.MCP_TEST_VAR;
-    const config = makeValidConfig();
-    config.servers.myserver.url = "${MCP_TEST_VAR}";
-
+  test("reports missing HTTP header and STDIO env variables at exact paths", () => {
+    expect(() => resolveMcpConfig({
+      servers: { docs: { ...HTTP_SERVER, headers: { Authorization: "${MISSING_HEADER}" } } },
+    }, {})).toThrow(McpConfigEnvError);
     try {
-      resolveMcpConfig(config);
+      resolveMcpConfig({
+        servers: { local: { ...STDIO_SERVER, env: { TOKEN: "${MISSING_STDIO_ENV}" } } },
+      }, {});
       expect.unreachable();
-    } catch (err) {
-      if (err instanceof McpConfigEnvError) {
-        expect(err.variableName).toBe("MCP_TEST_VAR");
-        expect(err.configPath).toBe("mcp.servers.myserver.url");
-      }
+    } catch (error) {
+      expect(error).toBeInstanceOf(McpConfigEnvError);
+      expect((error as McpConfigEnvError).configPath).toBe("mcp.servers.local.env.TOKEN");
+    }
+  });
+});
+
+describe("resolveMcpConfig URL validation", () => {
+  test("accepts HTTP and HTTPS only", () => {
+    expect(() => resolveMcpConfig({ servers: { docs: { ...HTTP_SERVER, url: "http://example.com/path" } } })).not.toThrow();
+    expect(() => resolveMcpConfig({ servers: { docs: { ...HTTP_SERVER, url: "https://secure.example.com" } } })).not.toThrow();
+  });
+
+  test("rejects non-HTTP schemes and malformed URLs", () => {
+    for (const url of ["ftp://files.example.com", "ws://socket.example.com", "not a valid url", "//example.com/rpc"]) {
+      expect(() => resolveMcpConfig({ servers: { docs: { ...HTTP_SERVER, url } } })).toThrow(McpConfigError);
     }
   });
 
-  test("expands env vars in header values", () => {
-    process.env.MCP_TEST_TOKEN = "secret-token";
-    const config = makeValidConfig();
-    config.servers.myserver.headers = {
-      Authorization: "Bearer ${MCP_TEST_TOKEN}",
-    };
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.headers?.Authorization).toBe(
-      "Bearer secret-token",
-    );
-  });
-
-  test("expands env vars with default in header values", () => {
-    delete process.env.MCP_TEST_AUTH;
-    const config = makeValidConfig();
-    config.servers.myserver.headers = {
-      Authorization: "${MCP_TEST_AUTH:-default-token}",
-    };
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.headers?.Authorization).toBe(
-      "default-token",
-    );
-  });
-
-  test("does not perform recursive expansion", () => {
-    process.env.MCP_OUTER = "${MCP_INNER}";
-    process.env.MCP_INNER = "real-value";
-    const config = makeValidConfig();
-    config.servers.myserver.headers = {
-      Authorization: "${MCP_OUTER}",
-    };
-
-    const result = resolveMcpConfig(config);
-    // Outer resolves to literal "${MCP_INNER}" without further expansion
-    expect(result.servers.myserver.headers?.Authorization).toBe(
-      "${MCP_INNER}",
-    );
-  });
-
-  test("supports defaults containing the delimiter substring", () => {
-    delete process.env.MCP_TEST_DEFAULT_WITH_DELIMITER;
-    const config = makeValidConfig();
-    config.servers.myserver.headers = {
-      "X-Default": "${MCP_TEST_DEFAULT_WITH_DELIMITER:-left:-right}",
-    };
-
-    const result = resolveMcpConfig(config);
-
-    expect(result.servers.myserver.headers?.["X-Default"]).toBe("left:-right");
-  });
-
-  test("reports header env expansion failures at the server path", () => {
-    delete process.env.MCP_TEST_MISSING_HEADER;
-    const config = makeValidConfig();
-    config.servers.myserver.headers = {
-      Authorization: "Bearer ${MCP_TEST_MISSING_HEADER}",
-    };
-
+  test("redacts invalid URL values", () => {
     try {
-      resolveMcpConfig(config);
+      resolveMcpConfig({ servers: { docs: { ...HTTP_SERVER, url: "ftp://secret.example.com" } } });
       expect.unreachable();
-    } catch (err) {
-      expect(err).toBeInstanceOf(McpConfigEnvError);
-      expect((err as McpConfigEnvError).variableName).toBe(
-        "MCP_TEST_MISSING_HEADER",
-      );
-      expect((err as McpConfigEnvError).configPath).toBe(
-        "mcp.servers.myserver",
-      );
+    } catch (error) {
+      expect(error).toBeInstanceOf(McpConfigError);
+      expect((error as McpConfigError).message).toContain(REDACTION_MARKER);
+      expect((error as McpConfigError).message).not.toContain("secret.example.com");
     }
+  });
+
+  test("rejects malformed direct timeout values even when bypassing Zod", () => {
+    expect(() => resolveMcpConfig({
+      servers: { docs: { ...HTTP_SERVER, callTimeoutMs: MCP_MAX_TIMEOUT_MS + 1 } as never },
+    })).toThrow(McpConfigError);
   });
 });
 
 describe("expandEnvVars", () => {
-  test("uses shared ${VAR:-default} semantics outside mcp", () => {
-    const expanded = expandEnvVars(
-      "token-env:${ARCHCODE_TOKEN_ENV_NAME:-GITHUB_TOKEN}",
-      "integrations.github.tokenEnv",
-      { env: {} },
-    );
-
-    expect(expanded).toBe("token-env:GITHUB_TOKEN");
+  test("retains shared ${VAR:-default} semantics outside MCP", () => {
+    expect(expandEnvVars("token-env:${ARCHCODE_TOKEN_ENV_NAME:-GITHUB_TOKEN}", "integrations.github.tokenEnv", { env: {} }))
+      .toBe("token-env:GITHUB_TOKEN");
   });
 
-  test("throws a typed shared env expansion error without leaking env values", () => {
+  test("throws a typed shared expansion error without leaking env values", () => {
     try {
-      expandEnvVars("${MISSING_TOKEN_ENV}", "integrations.github.tokenEnv", {
-        env: { OTHER_TOKEN: "secret-sentinel" },
-      });
+      expandEnvVars("${MISSING_TOKEN_ENV}", "integrations.github.tokenEnv", { env: { OTHER_TOKEN: "secret-sentinel" } });
       expect.unreachable();
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConfigEnvExpansionError);
-      expect((err as ConfigEnvExpansionError).variableName).toBe("MISSING_TOKEN_ENV");
-      expect((err as ConfigEnvExpansionError).message).not.toContain("secret-sentinel");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigEnvExpansionError);
+      expect((error as ConfigEnvExpansionError).variableName).toBe("MISSING_TOKEN_ENV");
+      expect((error as ConfigEnvExpansionError).message).not.toContain("secret-sentinel");
     }
   });
 });
 
-// ─── resolveMcpConfig ──────────────────────────────────────────────────────
-
-describe("resolveMcpConfig", () => {
-  test("returns empty config when undefined", () => {
-    const result = resolveMcpConfig(undefined);
-    expect(result).toEqual({ servers: {} });
-  });
-
-  test("returns empty config when no argument", () => {
-    const result = resolveMcpConfig();
-    expect(result).toEqual({ servers: {} });
-  });
-
-  test("applies default timeout of 30000", () => {
-    const config = makeValidConfig();
-    delete (config.servers.myserver as Record<string, unknown>).timeout;
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.timeout).toBe(30000);
-  });
-
-  test("preserves explicit timeout", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.timeout = 60000;
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.timeout).toBe(60000);
-  });
-
-  test("preserves headers", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.headers = { "X-Custom": "value" };
-
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.headers).toEqual({ "X-Custom": "value" });
-  });
-
-  test("returns undefined headers when none provided", () => {
-    const config = makeValidConfig();
-    const result = resolveMcpConfig(config);
-    expect(result.servers.myserver.headers).toBeUndefined();
-  });
-
-  test("resolves multiple servers", () => {
-    const config = makeValidConfig();
-    config.servers.server2 = { ...VALID_SERVER };
-
-    const result = resolveMcpConfig(config);
-    expect(Object.keys(result.servers).sort()).toEqual([
-      "myserver",
-      "server2",
-    ]);
-  });
-
-  test("returns ResolvedMcpConfig shape with proper interface", () => {
-    const result: ResolvedMcpConfig = resolveMcpConfig(makeValidConfig());
-    expect(result.servers.myserver).toMatchObject({
-      url: "http://localhost:3000",
-      timeout: 30000,
-    });
-  });
-});
-
-// ─── URL Validation ─────────────────────────────────────────────────────────
-
-describe("resolveMcpConfig - URL validation", () => {
-  const OLD_ENV = process.env;
-
-  afterEach(() => {
-    process.env = { ...OLD_ENV };
-  });
-
-  test("accepts http:// URL", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.url = "http://example.com/path";
-    expect(() => resolveMcpConfig(config)).not.toThrow();
-  });
-
-  test("accepts https:// URL", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.url = "https://secure.example.com";
-    expect(() => resolveMcpConfig(config)).not.toThrow();
-  });
-
-  test("rejects ftp:// URL", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.url = "ftp://files.example.com";
-    expect(() => resolveMcpConfig(config)).toThrow(McpConfigError);
-  });
-
-  test("rejects ws:// URL", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.url = "ws://socket.example.com";
-    expect(() => resolveMcpConfig(config)).toThrow(McpConfigError);
-  });
-
-  test("rejects structurally invalid URL", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.url = "not a valid url";
-    expect(() => resolveMcpConfig(config)).toThrow(McpConfigError);
-  });
-
-  test("rejects protocol-relative URLs", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.url = "//example.com/rpc";
-    expect(() => resolveMcpConfig(config)).toThrow(McpConfigError);
-  });
-
-  test("error message contains REDACTION_MARKER not the URL", () => {
-    const config = makeValidConfig();
-    config.servers.myserver.url = "ftp://secret-ftp.example.com";
-    try {
-      resolveMcpConfig(config);
-      expect.unreachable();
-    } catch (err) {
-      if (err instanceof McpConfigError) {
-        expect(err.message).toContain(REDACTION_MARKER);
-        expect(err.message).not.toContain("secret-ftp");
-      }
-    }
-  });
-
-  test("rejects non-http URL after env expansion", () => {
-    process.env.MCP_TEST_PROTO = "ws";
-    const config = makeValidConfig();
-    config.servers.myserver.url = "${MCP_TEST_PROTO}://chat";
-
-    expect(() => resolveMcpConfig(config)).toThrow(McpConfigError);
-  });
-});
-
-// ─── Config Schema Integration ───────────────────────────────────────────────
-
-import { archcodeConfigSchema } from "./index";
-
-describe("archcodeConfigSchema with mcp", () => {
+describe("archcodeConfigSchema with MCP", () => {
   const BASE = {
     provider: {
       p: {
@@ -550,37 +365,22 @@ describe("archcodeConfigSchema with mcp", () => {
     },
   };
 
-  test("accepts config without mcp key", () => {
-    const result = archcodeConfigSchema.safeParse(BASE);
-    expect(result.success).toBe(true);
+  test("accepts config without MCP and with the strict HTTP/STDIO shape", () => {
+    expect(archcodeConfigSchema.safeParse(BASE).success).toBe(true);
+    expect(archcodeConfigSchema.safeParse({
+      ...BASE,
+      mcp: { servers: { docs: HTTP_SERVER, local: STDIO_SERVER } },
+    }).success).toBe(true);
   });
 
-  test("accepts config with valid mcp", () => {
-    const result = archcodeConfigSchema.safeParse({
+  test("rejects unknown MCP keys through the full config schema", () => {
+    expect(archcodeConfigSchema.safeParse({
       ...BASE,
-      mcp: { servers: { s: { url: "http://localhost" } } },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  test("rejects unknown keys when mcp is present (strict on both levels)", () => {
-    const result = archcodeConfigSchema.safeParse({
+      mcp: { servers: { docs: HTTP_SERVER }, extraKey: "bad" },
+    }).success).toBe(false);
+    expect(archcodeConfigSchema.safeParse({
       ...BASE,
-      mcp: {
-        servers: { s: { url: "http://localhost" } },
-        extraKey: "bad",
-      },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects unknown server fields in full config", () => {
-    const result = archcodeConfigSchema.safeParse({
-      ...BASE,
-      mcp: {
-        servers: { s: { url: "http://localhost", unexpectedField: true } },
-      },
-    });
-    expect(result.success).toBe(false);
+      mcp: { servers: { docs: { ...HTTP_SERVER, timeout: 30_000 } } },
+    }).success).toBe(false);
   });
 });

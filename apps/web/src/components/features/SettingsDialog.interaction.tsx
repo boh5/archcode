@@ -5,6 +5,7 @@ import { JSDOM } from "jsdom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ProviderAdapterCatalog } from "@archcode/protocol";
 import type { ServerConfigSnapshot } from "../../api/config";
+import type { ServerConfig } from "../../api/config";
 import { DialogRoot } from "../ui/Dialog";
 import { RuntimeRecoverySettings, SettingsBody as SettingsBodyComponent, SettingsCloseButton } from "./SettingsDialog";
 import { SettingsRuntimeDataPanel } from "./SettingsRuntimeDataPanel";
@@ -19,7 +20,7 @@ const snapshot: ServerConfigSnapshot = {
   config: {
     provider: { local: { npm: "@ai-sdk/openai-compatible", name: "Local", options: { baseURL: "http://localhost/v1", apiKey: { action: "preserve" }, headers: { Authorization: { action: "preserve" } } }, models: { demo: { name: "Demo", limit: { context: 1000, output: 500 }, modalities: { input: ["text"], output: ["text"] }, variants: { fast: { temperature: 0.1 } } } } } },
     profiles: { principal: { model: "local:demo" }, deep: { model: "local:demo" }, fast: { model: "local:demo" } },
-    mcp: { servers: { custom: { url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
+    mcp: { servers: { custom: { type: "http", enabled: true, url: "https://example.com/mcp", headers: { Authorization: { action: "preserve" } } } } },
   },
 };
 
@@ -96,6 +97,7 @@ function successfulSaveResponse(restartRequiredSections: ServerConfigSnapshot["r
     ...snapshot,
     modelRuntimeRevision: "m2",
     restartRequiredSections,
+    mcpApply: { state: "applied" as const, status: { servers: {} } },
     config: {
       ...snapshot.config,
       provider: {
@@ -108,9 +110,15 @@ function successfulSaveResponse(restartRequiredSections: ServerConfigSnapshot["r
           },
         },
       },
-      mcp: { servers: { custom: { ...snapshot.config.mcp!.servers.custom, headers: { Authorization: { configured: true } } } } },
+      mcp: { servers: { custom: { type: "http" as const, enabled: true, url: "https://example.com/mcp", headers: { Authorization: { configured: true } } } } },
     },
   };
+}
+
+function customHttpServer(config: ServerConfig) {
+  const server = config.mcp?.servers.custom;
+  if (server?.type !== "http") throw new Error("Expected custom HTTP MCP server");
+  return server;
 }
 
 beforeEach(() => installDom());
@@ -119,7 +127,7 @@ afterEach(() => { act(() => root.unmount()); dom.window.close(); });
 describe("SettingsDialog interactions", () => {
   test("keeps the apply notice and Settings workspace inside one bounded column", () => {
     const withNotice = structuredClone(snapshot);
-    withNotice.restartRequiredSections = ["mcp"];
+    withNotice.restartRequiredSections = ["memory"];
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={withNotice} servers={{}} onReload={async () => {}} /></DialogRoot>));
 
     const layout = container.querySelector("[data-settings-layout]") as HTMLElement;
@@ -145,6 +153,7 @@ describe("SettingsDialog interactions", () => {
       ["Models", "Providers and their model profiles"],
       ["Profiles", "Principal, deep, and fast model bindings"],
       ["MCP", "MCP servers"],
+      ["Skills", "Open a project to inspect its Skills"],
       ["Memory", "Configure extraction thresholds"],
       ["GitHub", "Optional GitHub integration settings"],
     ];
@@ -227,7 +236,7 @@ describe("SettingsDialog interactions", () => {
       name: "Existing provider three",
     };
     sparse.config.provider.local.models["model-3"] = structuredClone(snapshot.config.provider.local.models.demo);
-    sparse.config.mcp!.servers["server-3"] = { url: "https://three.example.com/mcp" };
+    sparse.config.mcp!.servers["server-3"] = { type: "http", enabled: true, url: "https://three.example.com/mcp" };
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={sparse} servers={{}} onReload={async () => {}} /></DialogRoot>));
 
     click("Add provider");
@@ -316,13 +325,33 @@ describe("SettingsDialog interactions", () => {
 
   test("reports live-applied Models separately from named restart sections", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json({
-      ...successfulSaveResponse(["mcp", "memory"]),
+      ...successfulSaveResponse(["memory"]),
     })) });
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Add provider");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
     expect(container.textContent).toContain("Model and Profile changes applied live");
-    expect(container.textContent).toContain("Restart required for: MCP, Memory");
+    expect(container.textContent).toContain("Restart required for: Memory");
+  });
+
+  test("keeps the saved-but-MCP-apply-failed outcome through the matching reload", async () => {
+    const response = {
+      ...successfulSaveResponse(),
+      revision: "r2",
+      mcpApply: { state: "failed" as const, error: "Connection refused", status: { servers: {} } },
+    };
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json(response)) });
+    const reloaded = { ...snapshot, revision: "r2" };
+    const onReload = async () => {
+      root.render(<DialogRoot open><SettingsBody snapshot={reloaded} servers={{}} onReload={onReload} /></DialogRoot>);
+    };
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={onReload} /></DialogRoot>));
+
+    click("Add provider");
+    await act(async () => { click("Save changes"); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(container.querySelector("footer [role=\"alert\"]")?.textContent)
+      .toBe("Configuration saved, but MCP live apply failed: Connection refused");
   });
 
   test("clears a prior live-applied notice before a failed follow-up save", async () => {
@@ -407,7 +436,7 @@ describe("SettingsDialog interactions", () => {
     const providerOptions = config.provider.local.options as unknown as { apiKey?: unknown; headers?: Record<string, unknown> };
     expect(providerOptions.apiKey).toEqual({ action: "preserve" });
     expect(providerOptions.headers?.Authorization).toEqual({ action: "preserve" });
-    expect(config.mcp?.servers.custom.headers?.Authorization).toEqual({ action: "preserve" });
+    expect(customHttpServer(config).headers?.Authorization).toEqual({ action: "preserve" });
   });
 
   test("submits multi-character replacements for every secret collection", async () => {
@@ -432,7 +461,7 @@ describe("SettingsDialog interactions", () => {
     expect(providerOptions.apiKey).toEqual({ action: "replace", value: "api-secret-123" });
     expect(providerOptions.headers?.Authorization).toEqual({ action: "replace", value: "provider-header-123" });
     expect(providerOptions.queryParams?.header).toEqual({ action: "replace", value: "query-secret-123" });
-    expect(config.mcp?.servers.custom.headers?.Authorization).toEqual({ action: "replace", value: "mcp-header-123" });
+    expect(customHttpServer(config).headers?.Authorization).toEqual({ action: "replace", value: "mcp-header-123" });
   });
 
   test("submits deletes for provider query and MCP header secrets", async () => {
@@ -451,7 +480,7 @@ describe("SettingsDialog interactions", () => {
     const config = request?.config as typeof snapshot.config;
     const providerOptions = config.provider.local.options as unknown as { queryParams?: Record<string, unknown> };
     expect(providerOptions.queryParams?.token).toEqual({ action: "delete" });
-    expect(config.mcp?.servers.custom.headers?.Authorization).toEqual({ action: "delete" });
+    expect(customHttpServer(config).headers?.Authorization).toEqual({ action: "delete" });
   });
 
   test("uses variant keys from the model JSON in the Profile editor", () => {
@@ -504,7 +533,8 @@ describe("SettingsDialog interactions", () => {
     expect((input("Name") as HTMLInputElement).readOnly).toBe(true);
 
     const withoutMcpSecrets = structuredClone(snapshot);
-    delete withoutMcpSecrets.config.mcp!.servers.custom.headers;
+    const serverWithoutSecrets = withoutMcpSecrets.config.mcp!.servers.custom;
+    if (serverWithoutSecrets.type === "http") delete serverWithoutSecrets.headers;
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={withoutMcpSecrets} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("MCP");
     const name = input("Name");
@@ -622,7 +652,7 @@ describe("SettingsDialog interactions", () => {
 
 
   test("keeps built-in MCP rows locked in the rendered DOM", () => {
-    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{ context7: { state: "ready", toolCount: 2, warningCount: 0 } }} onReload={async () => {}} /></DialogRoot>));
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{ context7: { state: "ready", toolCount: 2, warningCount: 0, connectedAt: 1 } }} onReload={async () => {}} /></DialogRoot>));
     click("MCP");
     expect(container.textContent).toContain("Built-in");
     expect(container.textContent).toContain("Ready");
@@ -631,6 +661,55 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).not.toContain("Delete context7");
     expect(container.textContent).not.toContain("Delete grep.app");
     expect(container.textContent).not.toContain("Delete exa");
+  });
+
+  test("offers draft Test for built-ins but blocks Reconnect while disabled", () => {
+    const disabled = structuredClone(snapshot);
+    disabled.config.mcp!.disabledBuiltins = ["context7"];
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={disabled} servers={{ context7: { state: "disabled", updatedAt: 1 } }} onReload={async () => {}} /></DialogRoot>));
+    click("MCP");
+
+    const row = [...container.querySelectorAll("article")].find((article) => article.querySelector("h2")?.textContent === "context7");
+    if (!row) throw new Error("Missing context7 MCP row");
+    const testButton = [...row.querySelectorAll("button")].find((button) => button.textContent === "Test draft") as HTMLButtonElement;
+    const reconnectButton = [...row.querySelectorAll("button")].find((button) => button.textContent === "Reconnect") as HTMLButtonElement;
+
+    expect(testButton.disabled).toBe(false);
+    expect(reconnectButton.disabled).toBe(true);
+    expect(reconnectButton.title).toContain("Enable and save");
+  });
+
+  test("shows complete project Skill diagnostics and Prompt projection", async () => {
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string) => {
+      expect(url).toBe("/api/projects/demo/skills");
+      return Response.json({
+        items: [
+          { name: "included", source: "project-archcode", winner: true, shadowed: false, valid: true, description: "Included guidance" },
+          { name: "omitted", source: "builtin", winner: true, shadowed: false, valid: true, description: "Omitted guidance" },
+          { name: "broken", source: "user-agents", winner: true, shadowed: false, valid: false, diagnostic: { code: "SKILL_INVALID_PACKAGE", message: "Invalid frontmatter" } },
+        ],
+        promptProjection: {
+          includedEntries: [{ name: "included", source: "project-archcode", description: "Included guidance" }],
+          omittedCount: 1,
+          renderedText: "included: Included guidance",
+          byteLength: 27,
+        },
+      });
+    }) });
+
+    await act(async () => {
+      root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} projectSlug="demo" section="skills" onReload={async () => {}} /></DialogRoot>);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitForText("Discovered packages");
+
+    expect(container.textContent).toContain("1 included · 1 omitted · 27 bytes");
+    expect(container.textContent).toContain("Project .archcode");
+    expect(container.textContent).toContain("Prompt omitted");
+    expect(container.textContent).toContain("Invalid frontmatter");
+    expect(container.textContent).not.toContain("sourceLabel");
+    expect(container.querySelectorAll('[data-settings-skills] input[type="checkbox"]')).toHaveLength(0);
   });
 
   test("renders the schema default as enabled when memory is absent", () => {

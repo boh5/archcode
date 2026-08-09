@@ -37,6 +37,7 @@ export class McpConnectionError extends Error {
   constructor(
     public readonly serverName: string,
     public readonly cause?: unknown,
+    public readonly reason: "aborted" | "timeout" | "failed" = "failed",
   ) {
     const msg =
       cause instanceof Error
@@ -52,6 +53,7 @@ export class McpToolExecutionError extends Error {
     public readonly serverName: string,
     public readonly toolName: string,
     public readonly cause?: unknown,
+    public readonly reason: "aborted" | "timeout" | "failed" = "failed",
   ) {
     const msg =
       cause instanceof Error
@@ -60,12 +62,4 @@ export class McpToolExecutionError extends Error {
     super(msg);
     this.name = "McpToolExecutionError";
   }
-}
-
-// ─── Warning Type ───
-
-export interface McpWarning {
-  serverName?: string;
-  toolName?: string;
-  message: string;
 }

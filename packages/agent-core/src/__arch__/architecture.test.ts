@@ -378,6 +378,25 @@ describe("monorepo package boundaries", () => {
   });
 
   describe("session stats and sub-agent guardrails", () => {
+    test("ToolRegistry stays independent of MCP, Config, and Agent policy", () => {
+      const registryPath = join(projectRoot, "packages/agent-core/src/tools/registry.ts");
+      const violations = extractImports(registryPath)
+        .filter(({ importPath }) => /(?:^|\/)(?:mcp|config|agents)(?:\/|$)/.test(importPath))
+        .map(formatViolation);
+
+      expectNoViolations(violations);
+    });
+
+    test("the hard-cut MCP architecture has no legacy manager or persistent binding fields", () => {
+      expectNoViolations(findProductionTextViolationsInScope("packages/agent-core/src", [
+        /\bMcpManager\b/,
+        /\bstartBackgroundDiscovery\b/,
+        /\bcreateMcpDestructivePermission\b/,
+        /\bmcpTools\b/,
+        /\bmcp(?:Handle|Version|Fingerprint|Generation|Lease)\b/i,
+      ]));
+    });
+
     test("only the LLM runtime imports AI SDK stream/text execution APIs", () => {
       expectNoViolations(
         findManagedLlmImportViolations([

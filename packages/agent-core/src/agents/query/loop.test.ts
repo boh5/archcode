@@ -207,6 +207,7 @@ async function createHarness() {
     binding: dummyBinding.summary,
     origin: "tool_call",
     maxSteps: 50,
+    executionSkills: [],
   });
   const appendUser = (text: string) => {
     const id = crypto.randomUUID();

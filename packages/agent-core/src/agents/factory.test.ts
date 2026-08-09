@@ -74,6 +74,7 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   profiles: ["principal"],
   roleContract: leadRoleContract,
   tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
+  builtinMcpServers: [],
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,
@@ -335,8 +336,8 @@ describe("createAgentFactory", () => {
   });
 });
 
-describe("factoryResolveAllowedTools with MCP tools", () => {
-  function makeMcpFactory(def: AgentDefinition, extraTools: AnyToolDescriptor[] = []) {
+describe("factoryResolveAllowedTools static base-tool projection", () => {
+  function makeStaticFactory(def: AgentDefinition, extraTools: AnyToolDescriptor[] = []) {
     return createAgentFactory({
       definitions: [def],
       toolRegistry: createTestRegistry([
@@ -356,42 +357,15 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
     });
   }
 
-  test("includes mcp__{server}__* tools when mcpTools lists the server", () => {
-    const mcpTools: AnyToolDescriptor[] = [
-      makeTool("mcp__testserver__search"),
-      makeTool("mcp__testserver__read"),
-    ];
-    const def = definition({ mcpTools: ["testserver"] });
-    const factory = makeMcpFactory(def, mcpTools);
+  test("resolves only the definition's static base tools", () => {
+    const def = definition({ builtinMcpServers: ["context7"], tools: { tools: ["grep", "missing"] } });
+    const factory = makeStaticFactory(def, [makeTool("mcp__context7__search")]);
 
-    const allowed = factory.resolveAllowedTools(def, 0);
-
-    expect(allowed).toContain("mcp__testserver__search");
-    expect(allowed).toContain("mcp__testserver__read");
+    expect(factory.resolveAllowedTools(def, 0)).toEqual(["grep"]);
   });
 
-  test("omits mcp tools for unlisted servers", () => {
-    const mcpTools = [makeTool("mcp__other__tool")];
-    const def = definition({ mcpTools: ["testserver"] });
-    const factory = makeMcpFactory(def, mcpTools);
-
-    const allowed = factory.resolveAllowedTools(def, 0);
-
-    expect(allowed).not.toContain("mcp__other__tool");
-  });
-
-  test("returns no mcp tools when registry has no matching prefix (MCP not yet loaded)", () => {
-    const def = definition({ mcpTools: ["testserver"] });
-    const factory = makeMcpFactory(def);
-
-    const allowed = factory.resolveAllowedTools(def, 0);
-
-    const mcpItems = allowed.filter((name) => name.startsWith("mcp__"));
-    expect(mcpItems).toEqual([]);
-  });
-
-  test("picks up tools registered after initial resolution (simulates background loading)", () => {
-    const def = definition({ mcpTools: ["lazy"] });
+  test("does not change the static projection when MCP descriptors load later", () => {
+    const def = definition({ builtinMcpServers: ["context7"], tools: { tools: ["grep"] } });
     const registry = createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
@@ -410,81 +384,12 @@ describe("factoryResolveAllowedTools with MCP tools", () => {
       logger: silentLogger,
     });
 
-    // First call — no mcp tools yet
     const first = factory.resolveAllowedTools(def, 0);
-    expect(first.filter((n) => n.startsWith("mcp__"))).toEqual([]);
+    expect(first).toEqual(["grep"]);
 
-    // Register MCP tools after factory creation
-    registry.register(makeTool("mcp__lazy__search"));
-    registry.register(makeTool("mcp__lazy__read"));
+    registry.register(makeTool("mcp__context7__search"));
 
-    // Second call — mcp tools should now appear
     const second = factory.resolveAllowedTools(def, 0);
-    expect(second).toContain("mcp__lazy__search");
-    expect(second).toContain("mcp__lazy__read");
-  });
-
-  test("survives depth filtering for non-delegation MCP tools", () => {
-    const mcpTools = [makeTool("mcp__testserver__search")];
-    const def = definition({ mcpTools: ["testserver"] });
-    const factory = makeMcpFactory(def, mcpTools);
-
-    // Depth < MAX_SUB_AGENT_DEPTH: mcp tool present
-    const shallow = factory.resolveAllowedTools(def, 2);
-    expect(shallow).toContain("mcp__testserver__search");
-
-    // Depth >= MAX_SUB_AGENT_DEPTH: mcp tool still present (not a delegation tool)
-    const deep = factory.resolveAllowedTools(def, 3);
-    expect(deep).toContain("mcp__testserver__search");
-    // Normal delegation tools ARE stripped at max depth
-    expect(deep).not.toContain("delegate");
-  });
-
-  test("does not introduce duplicates for tool names that appear in both tools and mcpTools", () => {
-    // Namespace separation prevents overlap: resolveForAgent resolves
-    // exact names from definition.tools.tools (normal tool names),
-    // while listByPrefix returns mcp__{server}__ names. If a tool name
-    // somehow matches both sources, the result includes it at least once.
-    const mcpTools = [makeTool("mcp__test__grep")];
-    const def = definition({ tools: { tools: ["grep", "mcp__test__grep"] }, mcpTools: ["test"] });
-    const factory = makeMcpFactory(def, mcpTools);
-
-    const allowed = factory.resolveAllowedTools(def, 0);
-
-    expect(allowed).toContain("grep");
-    // mcp__test__grep is in the result (from resolveForAgent + listByPrefix).
-    // Dedup is not applied since namespaces don't overlap in practice.
-    expect(allowed.filter((n) => n === "mcp__test__grep").length).toBeGreaterThanOrEqual(1);
-  });
-
-  test("sanitizes server name with dots when computing MCP prefix (grep.app → mcp__grep_app__)", () => {
-    // Registry name generation sanitizes dots to underscores, so the prefix
-    // lookup must use the same sanitization or tools silently disappear.
-    const mcpTools: AnyToolDescriptor[] = [
-      makeTool("mcp__grep_app__search"),
-      makeTool("mcp__grep_app__read"),
-    ];
-    const def = definition({ mcpTools: ["grep.app"] });
-    const factory = makeMcpFactory(def, mcpTools);
-
-    const allowed = factory.resolveAllowedTools(def, 0);
-
-    expect(allowed).toContain("mcp__grep_app__search");
-    expect(allowed).toContain("mcp__grep_app__read");
-  });
-
-  test("does not match unsanitized prefix for dotted server name", () => {
-    // Without coordination, prefix "mcp__grep.app__" would match nothing
-    // because the registered name is "mcp__grep_app__search".
-    const mcpTools: AnyToolDescriptor[] = [
-      makeTool("mcp__grep_app__search"),
-    ];
-    const def = definition({ mcpTools: ["grep.app"] });
-    const factory = makeMcpFactory(def, mcpTools);
-
-    const allowed = factory.resolveAllowedTools(def, 0);
-
-    expect(allowed).toContain("mcp__grep_app__search");
-    expect(allowed).not.toContain("mcp__grep.app__search");
+    expect(second).toEqual(["grep"]);
   });
 });

@@ -14,7 +14,7 @@ import type {
 } from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
-import type { SkillService } from "../skills";
+import type { SkillPackageSnapshot, SkillService } from "../skills";
 import type {
   ChildDeferredToolResult,
   ChildToolDependency,
@@ -76,6 +76,8 @@ export interface ToolExecutionContext {
   agentSkills?: readonly string[];
   /** Shared Skill service for agent-scoped skill lookup. */
   skillService?: SkillService;
+  /** Execution-owned immutable package snapshots for explicit one-shot Skills. */
+  executionSkillSnapshots?: ReadonlyMap<string, SkillPackageSnapshot>;
   projectContext: ProjectContext;
   /** Runtime-wide Session Goal owner. Tools never mutate Session state directly. */
   sessionGoalService?: SessionGoalService;

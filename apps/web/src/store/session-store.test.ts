@@ -221,6 +221,7 @@ describe("web session store registry", () => {
         binding,
         origin: "user_message",
         maxSteps: 10,
+        executionSkills: [],
       }),
       sessionId: "model-state",
     });
@@ -263,6 +264,7 @@ describe("web session store registry", () => {
         binding,
         origin: "user_message",
         maxSteps: 10,
+        executionSkills: [],
       }),
       sessionId: "resumed-model-state",
     });
@@ -474,6 +476,7 @@ describe("applyRemoteEnvelope", () => {
       binding,
       origin: "user_message",
       maxSteps: 10,
+      executionSkills: [],
     }));
     store.getState().applyRemoteEnvelope(event(1, {
       type: "step-start",
@@ -527,6 +530,7 @@ describe("applyRemoteEnvelope", () => {
       binding,
       origin: "user_message" as const,
       maxSteps: 10,
+      executionSkills: [],
     };
 
     expect(store.getState().applyRemoteEnvelope({
@@ -553,6 +557,7 @@ describe("applyRemoteEnvelope", () => {
       binding,
       origin: "user_message" as const,
       maxSteps: 10,
+      executionSkills: [],
     };
     store.getState().applyRemoteEnvelope({
       ...event(0, start),
@@ -650,6 +655,7 @@ describe("applyRemoteEnvelope", () => {
           content: "hello",
           attachments: [],
           source: "user",
+          executionSkillNames: [],
           state: "queued",
           revision: 1,
           acceptedAt: 43,
@@ -672,6 +678,7 @@ describe("applyRemoteEnvelope", () => {
       content: "first",
       attachments: [],
       source: "user" as const,
+      executionSkillNames: [],
       state: "queued" as const,
       revision: 1,
       acceptedAt: 10,
@@ -779,6 +786,7 @@ describe("authoritative snapshot", () => {
         content: "hello",
         attachments: [],
         source: "user",
+        executionSkillNames: [],
         state: "queued",
         revision: 1,
         acceptedAt: 2,
@@ -945,6 +953,7 @@ describe("authoritative snapshot", () => {
         binding,
         origin: "user_message",
         maxSteps: 10,
+        executionSkills: [],
       }),
       sessionId: "stale-guard",
     });
@@ -972,6 +981,7 @@ describe("authoritative snapshot", () => {
         binding,
         origin: "user_message",
         maxSteps: 10,
+        executionSkills: [],
       }),
       sessionId: "stale-guard",
     });
@@ -1051,6 +1061,7 @@ describe("authoritative snapshot", () => {
         binding,
         origin: "user_message",
         maxSteps: 10,
+        executionSkills: [],
       }),
       sessionId: "stale-active-binding",
     });
@@ -1122,6 +1133,7 @@ describe("authoritative snapshot", () => {
           status: "running",
           origin: "user_message",
           maxSteps: 10,
+          executionSkills: [],
           durationMs: 0,
           runs: [{ ordinal: 0, startedAt: 1, binding }],
         },
@@ -1178,6 +1190,7 @@ describe("authoritative snapshot", () => {
           status: "running",
           origin: "user_message",
           maxSteps: 10,
+          executionSkills: [],
           durationMs: 0,
           runs: [{ ordinal: 0, startedAt: 1, binding }],
         },
@@ -1255,6 +1268,7 @@ describe("authoritative snapshot", () => {
           status: "running",
           origin: "user_message",
           maxSteps: 10,
+          executionSkills: [],
           durationMs: 0,
           runs: [{ ordinal: 0, startedAt: 1, binding }],
         },
@@ -1326,6 +1340,7 @@ describe("authoritative snapshot", () => {
           status: "running",
           origin: "user_message",
           maxSteps: 10,
+          executionSkills: [],
           durationMs: 0,
           runs: [{ ordinal: 0, startedAt: 1, binding }],
         },
@@ -1379,6 +1394,7 @@ describe("authoritative snapshot", () => {
           content: "Start the first task",
           attachments: [],
           source: "user",
+          executionSkillNames: [],
           state: "queued",
           revision: 0,
           acceptedAt: 1,
@@ -1419,6 +1435,7 @@ describe("authoritative snapshot", () => {
           status: "running",
           origin: "user_message",
           maxSteps: 10,
+          executionSkills: [],
           durationMs: 0,
           runs: [{ ordinal: 0, startedAt: 2, binding }],
         },

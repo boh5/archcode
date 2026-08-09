@@ -48,15 +48,14 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
 
   const runtime = {
     projectRegistry,
-    mcpManager: undefined,
     toolRegistry: undefined,
     skillService: undefined,
-    warnings: [],
     contextResolver: undefined,
     hitl: undefined,
     subscribeSessionRuntimeChanges: () => () => undefined,
     subscribeMcpStatusChanges: () => () => undefined,
-    getMcpServerStatuses: () => new Map(),
+    getMcpServerStatus: () => ({ servers: {} }),
+    getMcpServerInventory: () => ({ servers: {} }),
     createSession: async () => { throw new Error("not implemented"); },
     getSessionFile: async () => { throw new Error("not implemented"); },
     resolveCompressionOriginalRange: mock(async (workspaceRoot: string, sessionId: string, blockRef: string) => {

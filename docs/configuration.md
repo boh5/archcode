@@ -51,6 +51,27 @@ Provider IDs and model IDs combine as `provider:modelId`, such as
 `local:your-model-id`. A versioned starting file is also available at
 [`config.example.json`](../config.example.json).
 
+## MCP configuration
+
+The optional `mcp` section has `servers` plus an optional `disabledBuiltins`
+array. Each user server is a strict discriminated object with required `type`
+(`"http"` or `"stdio"`) and `enabled` fields. HTTP servers use `url` and
+optional `headers`; STDIO servers use `command`, optional `args`, and optional
+`env`. The three optional deadlines are `connectTimeoutMs`,
+`discoveryTimeoutMs`, and `callTimeoutMs`, defaulting to 10,000 ms, 30,000 ms,
+and 60,000 ms respectively.
+
+`disabledBuiltins` may list only the fixed built-ins `context7`, `grep.app`, and
+`exa`; it disables those servers without allowing a user replacement. User MCP
+servers are process-global and live, and all six Agent identities receive their
+current descriptors at the next model-call boundary. There is no additional
+MCP approval step. Built-in visibility remains the definition-level role
+matrix; a local read-only Agent can still cause an external write through a
+user MCP tool.
+
+See [GitHub and MCP integrations](integrations.md) for complete HTTP/STDIO
+examples, environment expansion, status, Test, and Reconnect behavior.
+
 ## Supported packages
 
 The catalog contains exactly these official AI SDK language Provider packages:
@@ -73,9 +94,16 @@ The catalog contains exactly these official AI SDK language Provider packages:
 - If a Profile still names a removed variant, Settings marks that Profile for attention but allows the document to save. Runtime omits the missing variant and uses the model default plus Profile options until the reference is repaired. An empty Profile variant is normalized to Default; an unknown Profile model remains a validation error.
 - A user-facing root Session override is a complete alternative selection. It resolves the chosen model and variant without inheriting `principal` options; clearing it returns to `principal`.
 
-Saving in **Settings → Models / Profiles** validates the complete document, prepares the new Provider registry, writes atomically, then publishes Models and Profile defaults immediately. It returns the disk revision, the published model-runtime revision, and any restart-required sections: `mcp`, `memory`, or `integrations.github`.
+Saving in **Settings** validates the complete document and writes it atomically.
+Provider/Model/Profile changes publish their new model runtime immediately, and
+MCP changes are hot-applied to the live MCP runtime in the same save operation.
+The response includes the disk revision, model-runtime revision, and an
+independent `mcpApply` status. Only `memory` and `integrations.github` can
+appear in `restartRequiredSections`.
 
-Editing `~/.archcode/config.json` outside Settings has no watcher. Restart ArchCode, or make a Settings save against the current disk revision, to load it.
+Editing `~/.archcode/config.json` outside Settings has no watcher. Restart
+ArchCode to load an external edit; a current-revision save through Settings
+validates, commits, and hot-applies MCP without a restart.
 
 A user-facing root Session or Composer selection affects its next Execution. Each active
 run span retains its selected model, merged options, Profile identity, and

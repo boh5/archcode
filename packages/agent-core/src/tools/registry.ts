@@ -98,12 +98,6 @@ export class ToolRegistry {
     return [...this.#descriptors.values()];
   }
 
-  listByPrefix(prefix: string): AnyToolDescriptor[] {
-    return [...this.#descriptors.entries()]
-      .filter(([name]) => name.startsWith(prefix))
-      .map(([, descriptor]) => descriptor);
-  }
-
   resolveForAgent(toolNames?: readonly string[]): ResolvedToolSet {
     if (!toolNames || toolNames.length === 0) return new ResolvedToolSet([]);
     const descriptors: AnyToolDescriptor[] = [];
@@ -120,6 +114,21 @@ export class ToolRegistry {
 
   execute(toolCall: ToolCallLike, context: ToolExecutionContext): Promise<RegistryExecutionOutcome> {
     return this.#execute(toolCall, context);
+  }
+
+  executeResolved(
+    descriptor: AnyToolDescriptor,
+    toolCall: ToolCallLike,
+    context: ToolExecutionContext,
+  ): Promise<RegistryExecutionOutcome> {
+    if (descriptor.name !== toolCall.toolName) {
+      return this.settleSystem(toolCall, context, createToolErrorResult({
+        kind: "unknown-tool",
+        code: "TOOL_UNKNOWN",
+        message: `Resolved tool "${descriptor.name}" does not match call "${toolCall.toolName}"`,
+      }));
+    }
+    return this.#execute(toolCall, context, undefined, descriptor);
   }
 
   validateBlockedResponse(request: ToolBlockedRequest, response: unknown): HitlResponse {
@@ -259,9 +268,10 @@ export class ToolRegistry {
     toolCall: ToolCallLike,
     context: ToolExecutionContext,
     resume?: ResumeExecution,
+    resolvedDescriptor?: AnyToolDescriptor,
   ): Promise<RegistryExecutionOutcome> {
     this.#initializeContext(toolCall, context);
-    const descriptor = this.#descriptors.get(toolCall.toolName);
+    const descriptor = resolvedDescriptor ?? this.#descriptors.get(toolCall.toolName);
     if (!descriptor) {
       return this.settleSystem(toolCall, context, createToolErrorResult({
         kind: "unknown-tool",

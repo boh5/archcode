@@ -15,12 +15,12 @@ import { tmpdir } from "node:os";
 
 import { silentLogger } from "../logger";
 import { ServerConfigService, resolveServerConfigPath } from "../config";
-import type { McpManager } from "../mcp";
 import { ProjectRegistry } from "../projects/registry";
 import { projectRuntimePath } from "../projects/runtime-path";
 import type { ProjectInfo } from "../projects/types";
 import { createRuntime } from "../runtime";
 import { SessionStoreManager } from "../store/session-store-manager";
+import { createTestMcpRuntime } from "../testing/test-mcp-runtime";
 import {
   RuntimeDataRequestError,
   RuntimeDataService,
@@ -506,19 +506,14 @@ describe("Runtime Project Registry ownership", () => {
     const activation = await configService.activateForStartup();
     if (activation.status !== "ready") throw new Error("Expected a valid test Config");
     const processRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
-    const fakeMcpManager = {
-      startBackgroundDiscovery: () => {},
-      closeAll: async () => [],
-      getStatus: () => new Map(),
-      onStatusChange: () => () => {},
-    } as unknown as McpManager;
+    const fakeMcpRuntime = createTestMcpRuntime();
 
     const runtime = await createRuntime({
       configService,
       activation: activation.activation,
       projectRegistry: processRegistry,
       runtimeStorageHomeDir: join(TMP_ROOT, "runtime-storage"),
-      mcpManagerFactory: () => fakeMcpManager,
+      mcpRuntimeFactory: () => fakeMcpRuntime,
     });
     try {
       expect(runtime.projectRegistry).toBe(processRegistry);

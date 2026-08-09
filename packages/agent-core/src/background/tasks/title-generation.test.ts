@@ -140,6 +140,7 @@ describe("createTitleGenerationTask", () => {
       binding: binding.summary,
       origin: "user_message",
       maxSteps: 50,
+      executionSkills: [],
     });
     store.getState().append({
       type: "session.messages_committed",

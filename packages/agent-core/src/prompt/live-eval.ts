@@ -129,7 +129,7 @@ function buildLiveEvalContract(
     role,
     runtime: base,
     allowedTools,
-    availableSkills: [],
+    availableSkills: { includedEntries: [], omittedCount: 0, renderedText: "- none", byteLength: 6 },
     activeSkills: [],
     guidanceAuthority: {
       skills: { kind: "guidance-only", grants: "none" },

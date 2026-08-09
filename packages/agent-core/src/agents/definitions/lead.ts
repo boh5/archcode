@@ -77,7 +77,7 @@ export const leadAgentDefinition = {
     ],
     delegateTargets: ["analyst", "build", "explore", "librarian"],
   },
-  mcpTools: ["context7", "exa"],
+  builtinMcpServers: ["context7", "exa"],
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,

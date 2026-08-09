@@ -6,11 +6,11 @@ import type { AutomationSchedulerTimer, AutomationSchedulerTimerHandle } from ".
 import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { setLlmAdapterForTest } from "./llm";
 import { silentLogger } from "./logger";
-import type { McpManager } from "./mcp";
 import { ProjectRegistry } from "./projects/registry";
 import { createRuntime, type AgentRuntime } from "./runtime";
 import { createTestTempRoot } from "./testing/test-temp-root";
 import { managedWorktreeNames, WorktreeService } from "./worktrees";
+import { createTestMcpRuntime, type TestMcpRuntime } from "./testing/test-mcp-runtime";
 
 const testTempRoot = createTestTempRoot("runtime-automations-worktree");
 const START = Date.parse("2026-07-13T00:00:00.000Z");
@@ -95,7 +95,7 @@ async function runtimeFixture(): Promise<{
     activation: activationResult.activation,
     projectRegistry: registry,
     runtimeStorageHomeDir: root,
-    mcpManagerFactory: () => mcpManager(),
+    mcpRuntimeFactory: () => mcpRuntime(),
     automationSchedulerClock: clock,
     automationSchedulerTimer: new FakeTimer(clock),
   });
@@ -129,14 +129,8 @@ function config(): Record<string, unknown> {
   };
 }
 
-function mcpManager(): McpManager {
-  return {
-    discover: mock(async () => ({ descriptors: [], warnings: [] })),
-    closeAll: mock(async () => []),
-    getStatus: mock(() => new Map()),
-    onStatusChange: mock(() => () => {}),
-    startBackgroundDiscovery: mock(() => {}),
-  } as unknown as McpManager;
+function mcpRuntime(): TestMcpRuntime {
+  return createTestMcpRuntime();
 }
 
 async function initializeGitRepo(cwd: string): Promise<void> {

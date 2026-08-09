@@ -20,6 +20,7 @@ import { createMessagesRoutes } from "./routes/messages";
 import { createMcpRoutes } from "./routes/mcp";
 import { createProjectsRoutes } from "./routes/projects";
 import { createSessionsRoutes } from "./routes/sessions";
+import { createSkillsRoutes } from "./routes/skills";
 import { createTodosRoutes } from "./routes/todos";
 import { createToolOutputRoutes } from "./routes/tool-outputs";
 import { globalEventBus } from "./events/global-event-bus";
@@ -64,6 +65,7 @@ export function createRuntimeApp(
   const automations = createAutomationsRoutes(serverRuntime);
   const todos = createTodosRoutes(serverRuntime);
   const sessions = createSessionsRoutes(serverRuntime);
+  const skills = createSkillsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
   const attachments = createAttachmentsRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus, {
@@ -89,6 +91,7 @@ export function createRuntimeApp(
   app.route("/api/projects", todos);
   app.route("/api/projects", projectHitl);
   app.route("/api/projects/:slug/sessions", sessions);
+  app.route("/api/projects", skills);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
   app.route("/api/projects/:slug/sessions/:sessionId/attachments", attachments);
   app.route("/api/projects/:slug/sessions/:sessionId/compression", compression);

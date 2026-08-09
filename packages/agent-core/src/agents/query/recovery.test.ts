@@ -113,6 +113,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
       binding: dummyBinding.summary,
       origin: "tool_call",
       maxSteps: overrides.maxSteps ?? 50,
+      executionSkills: [],
     });
   }
   return {
@@ -333,9 +334,9 @@ describe("query loop LLM stream recovery", () => {
         execute: async () => createTextToolResult("unreachable"),
       }),
     ]);
-    registry.execute = mock(async () => {
+    registry.executeResolved = mock(async () => {
       throw new Error("tool executor escaped");
-    }) as typeof registry.execute;
+    }) as typeof registry.executeResolved;
     createMockStreamText([
       { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-explode", toolName: "explode", input: {} }] },
     ]);

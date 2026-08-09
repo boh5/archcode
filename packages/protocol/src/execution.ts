@@ -55,6 +55,7 @@ function validateStart(
       && execution.origin === event.origin
       && execution.maxSteps === event.maxSteps
       && execution.activeTimeoutMs === event.activeTimeoutMs
+      && equal(execution.executionSkills, event.executionSkills)
       && equal(firstRun.binding, event.binding)
       ? duplicate()
       : invalid(`Execution ${event.executionId} already exists with a conflicting start`);

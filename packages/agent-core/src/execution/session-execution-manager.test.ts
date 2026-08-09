@@ -89,6 +89,7 @@ class TestSessionStoreManager extends SessionStoreManager {
 }
 
 const storeManager = new TestSessionStoreManager({ logger: silentLogger });
+const skillServiceFixture = new SkillService({ builtinSkills: {} });
 const TEST_REQUESTED_MODEL_SELECTION = {
   mode: "profile_default" as const,
   selection: { model: "test:model" },
@@ -316,6 +317,7 @@ interface FakeManagerOptions {
   sessionFamilyStopTimeoutMs?: number;
   deadlineScheduler?: TestDeadlineScheduler;
   modelRuntime?: ModelRuntime;
+  skillService?: SkillService;
   applyChildDependencyOutcome?: ConstructorParameters<typeof SessionExecutionManager>[0]["applyChildDependencyOutcome"];
   resolveGoalInstanceId?: ConstructorParameters<typeof SessionExecutionManager>[0]["resolveGoalInstanceId"];
   onExecutionSettlement?: ConstructorParameters<typeof SessionExecutionManager>[0]["onExecutionSettlement"];
@@ -635,6 +637,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
   const deadlineScheduler = options.deadlineScheduler ?? createTestDeadlineScheduler();
   const rawManager = new SessionExecutionManager({
     sessionAgentManager,
+    skillService: options.skillService ?? skillServiceFixture,
     modelRuntime,
     modelSelectionResolver: new ModelSelectionResolver(),
     ...storeCallbacks(executionStoreManager),
@@ -840,6 +843,301 @@ describe("SessionExecutionManager", () => {
     expect(state.executions[0]?.finalOutputStepId).toBe(finalAssistant?.stepId);
     expect(finalAssistant?.outputPhase).toBe("final_answer");
     expect(rootAgent.runBindings[0]!.summary).toEqual(state.executions[0]!.runs.at(-1)!.binding);
+  });
+
+  test("claims one-shot Queue Skills into the Execution, reuses the snapshot across resume, then releases it at terminal", async () => {
+    const skillName = "queue-skill";
+    const executionCwd = join(workspaceRoot, "worktrees", "queue-skill");
+    const skillRoot = join(executionCwd, ".archcode", "skills", skillName);
+    const canonicalSkillRoot = join(workspaceRoot, ".archcode", "skills", skillName);
+    await mkdir(skillRoot, { recursive: true });
+    await mkdir(canonicalSkillRoot, { recursive: true });
+    const writeSkill = async (body: string) => await Bun.write(join(skillRoot, "SKILL.md"), [
+      "---",
+      `name: ${skillName}`,
+      "description: Queue-only Skill fixture.",
+      "---",
+      "",
+      body,
+      "",
+    ].join("\n"));
+    await writeSkill("OLD_QUEUE_SKILL_BODY");
+    await Bun.write(join(canonicalSkillRoot, "SKILL.md"), [
+      "---",
+      `name: ${skillName}`,
+      "description: Canonical package that must lose to the Session cwd.",
+      "---",
+      "",
+      "CANONICAL_QUEUE_SKILL_BODY",
+      "",
+    ].join("\n"));
+
+    const skillService = new SkillService({
+      userSkillsRoot: join(workspaceRoot, "missing-user-skills"),
+      userAgentsSkillsRoot: join(workspaceRoot, "missing-user-agent-skills"),
+    });
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+      cwd: executionCwd,
+    });
+    const runOptions: AgentRunOptions[] = [];
+    let invocation = 0;
+    const agent: Agent = {
+      store,
+      cwd: executionCwd,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: mock(async (_binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> => {
+        if (options === undefined) throw new Error("Execution identity is required");
+        runOptions.push(options);
+        invocation += 1;
+        if (invocation === 1) {
+          const batch = { ...blockedToolBatch("queue-skill-hitl"), executionId: options.executionId };
+          store.setState({ toolBatches: [batch] });
+          return {
+            outcome: "suspended",
+            text: "waiting",
+            steps: 1,
+            suspension: {
+              kind: "hitl",
+              toolBatchId: batch.batchId,
+              blockerIds: ["queue-skill-hitl"],
+            },
+          };
+        }
+        store.setState((state) => ({
+          toolBatches: state.toolBatches.map((batch) => ({
+            ...batch,
+            archivedAt: new Date().toISOString(),
+          })),
+        }));
+        return { outcome: "terminal", text: "done", steps: 1, status: "completed" };
+      }),
+      dispose: mock(() => undefined),
+    };
+    const { manager } = createManager({ [sessionId]: agent as MockAgent }, {
+      factory: makeFactory(),
+      skillService,
+      flushSessionStore: (id, root) => storeManager.flushSession(id, root),
+    });
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const enqueue = async (clientRequestId: string, text: string) => {
+      const command = {
+        sessionId,
+        workspaceRoot,
+        text: `/skill use ${skillName}`,
+        clientRequestId,
+        source: "user" as const,
+        requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+      };
+      await inputs.claimCommand(command);
+      return await inputs.completeCommandAsMessage({
+        ...command,
+        text,
+        executionSkillNames: [skillName],
+      });
+    };
+
+    const accepted = await enqueue("queue-skill-first", "Apply the queue Skill");
+    expect(accepted.message?.executionSkillNames).toEqual([skillName]);
+    const first = await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
+    if (first === undefined) throw new Error("Expected the Skill Queue execution to start");
+    await first.promise;
+
+    const firstSnapshots = runOptions[0]?.executionSkillSnapshots;
+    expect(firstSnapshots).toBeDefined();
+    expect(firstSnapshots?.get(skillName)?.readEntry().body).toContain("OLD_QUEUE_SKILL_BODY");
+    expect(firstSnapshots?.get(skillName)?.readEntry().body).not.toContain("CANONICAL_QUEUE_SKILL_BODY");
+    const executionStart = store.getState().events
+      .map((event) => event.payload)
+      .find((payload) => payload.type === "execution-start");
+    expect(executionStart).toMatchObject({
+      executionId: first.executionId,
+      executionSkills: [{
+        name: skillName,
+        source: "project-archcode",
+        digest: expect.any(String),
+        resolutionRoot: executionCwd,
+      }],
+    });
+    expect(store.getState().executions[0]?.executionSkills).toEqual(executionStart?.type === "execution-start"
+      ? executionStart.executionSkills
+      : []);
+
+    await writeSkill("NEW_QUEUE_SKILL_BODY");
+    expect(firstSnapshots?.get(skillName)?.readEntry().body).toContain("OLD_QUEUE_SKILL_BODY");
+    store.setState((state) => ({
+      toolBatches: state.toolBatches.map((batch) => ({
+        ...batch,
+        calls: batch.calls.map((call) => ({ ...call, state: "completed" as const, blocker: undefined })),
+      })),
+    }));
+    const resumed = await manager.reconcileDurableSession({ slug: "project", workspaceRoot, sessionId });
+    if (resumed === undefined) throw new Error("Expected the suspended Skill execution to resume");
+    await resumed.promise;
+    expect(resumed.executionId).toBe(first.executionId);
+    expect(runOptions[1]?.executionSkillSnapshots).toBe(firstSnapshots);
+    expect(runOptions[1]?.executionSkillSnapshots?.get(skillName)?.readEntry().body)
+      .toContain("OLD_QUEUE_SKILL_BODY");
+
+    await enqueue("queue-skill-second", "Run a fresh queue Skill execution");
+    const next = await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
+    if (next === undefined) throw new Error("Expected a second Skill Queue execution to start");
+    await next.promise;
+    expect(next.executionId).not.toBe(first.executionId);
+    expect(runOptions[2]?.executionSkillSnapshots).not.toBe(firstSnapshots);
+    expect(runOptions[2]?.executionSkillSnapshots?.get(skillName)?.readEntry().body)
+      .toContain("NEW_QUEUE_SKILL_BODY");
+  });
+
+  test("restart rejects a changed claimed Skill package before invoking the model", async () => {
+    const skillName = "restart-skill";
+    const executionCwd = join(workspaceRoot, "worktrees", "restart-skill");
+    const skillRoot = join(executionCwd, ".archcode", "skills", skillName);
+    const canonicalSkillRoot = join(workspaceRoot, ".archcode", "skills", skillName);
+    await mkdir(skillRoot, { recursive: true });
+    await mkdir(canonicalSkillRoot, { recursive: true });
+    const skillEntry = (body: string) => [
+      "---",
+      `name: ${skillName}`,
+      "description: Restart Skill fixture.",
+      "---",
+      "",
+      body,
+      "",
+    ].join("\n");
+    const writeSkill = async (body: string) => await Bun.write(join(skillRoot, "SKILL.md"), skillEntry(body));
+    await writeSkill("ORIGINAL_RESTART_BODY");
+    await Bun.write(join(canonicalSkillRoot, "SKILL.md"), skillEntry("ORIGINAL_RESTART_BODY"));
+    const skillService = new SkillService({
+      userSkillsRoot: join(workspaceRoot, "missing-user-skills"),
+      userAgentsSkillsRoot: join(workspaceRoot, "missing-user-agent-skills"),
+    });
+    const sessionId = crypto.randomUUID();
+    const firstAgent = new MockAgent(
+      sessionId,
+      Promise.resolve({ text: "unused", steps: 1 }),
+      workspaceRoot,
+    );
+    firstAgent.store.setState({ cwd: executionCwd });
+    firstAgent.runMock.mockImplementation(async (options) => {
+      const batch = { ...blockedToolBatch("restart-skill-hitl"), executionId: options.executionId };
+      const now = Date.now();
+      firstAgent.store.setState((state) => ({
+        steps: [...state.steps, {
+          id: batch.stepId,
+          executionId: batch.executionId,
+          runOrdinal: batch.runOrdinal,
+          step: batch.step,
+          startedAt: now,
+        }],
+        messages: [...state.messages, {
+          id: batch.assistantMessageId,
+          role: "assistant" as const,
+          executionId: batch.executionId,
+          runOrdinal: batch.runOrdinal,
+          stepId: batch.stepId,
+          outputPhase: "commentary" as const,
+          parts: [{
+            type: "tool" as const,
+            id: `tool-part-${batch.batchId}`,
+            state: "running" as const,
+            toolCallId: batch.calls[0]!.toolCallId,
+            toolName: batch.calls[0]!.toolName,
+            input: batch.calls[0]!.input,
+            createdAt: now,
+            startedAt: now,
+          }],
+          createdAt: now,
+        }],
+        toolBatches: [batch],
+      }));
+      return {
+        outcome: "suspended",
+        text: "waiting",
+        steps: 1,
+        suspension: {
+          kind: "hitl",
+          toolBatchId: batch.batchId,
+          blockerIds: ["restart-skill-hitl"],
+        },
+      };
+    });
+    const { manager } = createManager({ [sessionId]: firstAgent }, {
+      factory: makeFactory(),
+      skillService,
+      flushSessionStore: (id, root) => storeManager.flushSession(id, root),
+    });
+    const inputs = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const command = {
+      sessionId,
+      workspaceRoot,
+      text: `/skill use ${skillName}`,
+      clientRequestId: "restart-skill-command",
+      source: "user" as const,
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    };
+    await inputs.claimCommand(command);
+    await inputs.completeCommandAsMessage({
+      ...command,
+      text: "Apply the restart Skill",
+      executionSkillNames: [skillName],
+    });
+    const execution = await manager.tryStartQueuedExecution({ slug: "project", workspaceRoot, sessionId });
+    if (execution === undefined) throw new Error("Expected the restart Skill execution to start");
+    await execution.promise;
+    expect(firstAgent.runMock).toHaveBeenCalledTimes(1);
+    expect(firstAgent.store.getState().executions[0]?.executionSkills).toMatchObject([
+      {
+        name: skillName,
+        source: "project-archcode",
+        digest: expect.any(String),
+        resolutionRoot: executionCwd,
+      },
+    ]);
+
+    firstAgent.store.setState({ cwd: workspaceRoot });
+    await storeManager.flushSession(sessionId, workspaceRoot);
+    await writeSkill("CHANGED_RESTART_BODY");
+    const coldStores = new SessionStoreManager({ logger: silentLogger });
+    const coldStore = await coldStores.getOrLoad(sessionId, workspaceRoot);
+    coldStore.setState((state) => ({
+      toolBatches: state.toolBatches.map((batch) => ({
+        ...batch,
+        calls: batch.calls.map((call) => ({ ...call, state: "completed" as const, blocker: undefined })),
+      })),
+    }));
+    await coldStores.flushSession(sessionId, workspaceRoot);
+    const coldAgent = new MockAgent(
+      sessionId,
+      Promise.resolve({ text: "must not reach model", steps: 1 }),
+      workspaceRoot,
+      coldStores,
+    );
+    const { manager: coldManager } = createManager({ [sessionId]: coldAgent }, {
+      storeManager: coldStores,
+      factory: makeFactory(),
+      skillService,
+      flushSessionStore: (id, root) => coldStores.flushSession(id, root),
+    });
+
+    let restartError: unknown;
+    try {
+      await coldManager.reconcileDurableSession({ slug: "project", workspaceRoot, sessionId });
+    } catch (error) {
+      restartError = error;
+    }
+    expect(restartError).toMatchObject({ code: "SKILL_PACKAGE_CHANGED" });
+    for (let attempt = 0; attempt < 20 && coldStore.getState().executions[0]?.status !== "failed"; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    expect(coldAgent.runMock).not.toHaveBeenCalled();
+    expect(coldStore.getState().executions[0]).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("Skill package changed"),
+    });
   });
 
   test("settles each run with the canonical persisted run duration", async () => {
@@ -2149,6 +2447,7 @@ describe("SessionExecutionManager", () => {
           executionId: execution.executionId,
           binding: execution.binding.summary,
           origin: "user_message",
+          executionSkills: [],
         }),
         expect.objectContaining({
           type: "execution-end",
@@ -3020,6 +3319,7 @@ describe("SessionExecutionManager", () => {
         ...sessionAgentManager,
         getOrCreate: mock(async () => await new Promise<Agent>(() => undefined)),
       } as unknown as SessionAgentManager,
+      skillService: skillServiceFixture,
       modelRuntime: makeModelRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
@@ -3080,6 +3380,7 @@ describe("SessionExecutionManager", () => {
     const sessionAgentManager = createFakeManager({ [sessionId]: agentB });
     const managerB = new SessionExecutionManager({
       sessionAgentManager,
+      skillService: skillServiceFixture,
       modelRuntime: makeModelRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
@@ -5372,6 +5673,7 @@ describe("SessionExecutionManager", () => {
     const callbacks = storeCallbacks(storeManager);
     const manager = new SessionExecutionManager({
       sessionAgentManager: createFakeManager({}, { factory: makeFactory() }),
+      skillService: skillServiceFixture,
       modelRuntime: makeModelRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...callbacks,

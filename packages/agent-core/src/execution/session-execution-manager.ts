@@ -8,6 +8,7 @@ import {
   type RequestedModelSelection,
   type SessionExecutionOrigin,
   type SessionExecutionRecord,
+  type ExecutionSkillBinding,
   type SessionExecutionSuspension,
   type SessionExecutionTerminalStatus,
   type SessionFamilyActivity,
@@ -21,6 +22,11 @@ import {
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { Agent } from "../agents/types";
+import {
+  SkillNotFoundError,
+  type SkillPackageSnapshot,
+  type SkillService,
+} from "../skills";
 import type { AgentChildPolicy } from "../agents/factory-types";
 import type { ProfileName } from "../config";
 import {
@@ -148,6 +154,9 @@ interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"
   readonly queueSnapshots?: readonly ResolvedSessionInputSnapshot[];
   readonly directRequestedModelSelection?: RequestedModelSelection;
   readonly initialUsage: NormalizedUsage;
+  /** Session cwd fixed synchronously when this logical Execution claims admission. */
+  readonly skillResolutionRoot: string;
+  executionSkillSnapshots?: ReadonlyMap<string, SkillPackageSnapshot>;
   ready: boolean;
   steerGateOpen: boolean;
   readonly steerMailbox: ResolvedSessionInputSnapshot[];
@@ -301,6 +310,7 @@ interface SessionExecutionManagerConfig {
     SessionInputService,
     "beginQueueExecution" | "beginDirectExecution" | "claimSteer" | "commitSteers" | "rollbackSteers" | "getPendingMessages" | "recordQueueDispatchBarrier"
   >;
+  readonly skillService: SkillService;
   readonly trackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly untrackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly executionScopeValidator: Pick<SessionExecutionScopeValidator, "validate">;
@@ -426,6 +436,7 @@ export class SessionExecutionManager {
   readonly #familyControls = new Map<string, SessionFamilyControlState>();
   readonly #runtimeMutations = new Set<symbol>();
   readonly #runtimeChangeListeners = new Set<SessionRuntimeChangeListener>();
+  readonly #executionSkillSnapshots = new Map<string, ReadonlyMap<string, SkillPackageSnapshot>>();
   readonly #publishedRuntime = new Map<string, Pick<SessionRuntimeChange, "activity" | "steerTargetExecutionId">>();
   readonly #durableNonterminal = new Map<string, {
     readonly workspaceRoot: string;
@@ -527,6 +538,7 @@ export class SessionExecutionManager {
       maxSteps: resumedRecord?.maxSteps ?? input.maxSteps ?? DEFAULT_EXECUTION_MAX_STEPS,
       binding: resolved.binding,
       initialUsage: { ...sessionState.stats.usage },
+      skillResolutionRoot: sessionState.cwd,
       ...(input.input.kind === "queue" ? { queueSnapshots: resolved.snapshots } : {}),
       ...(directRequestedModelSelection === undefined ? {} : { directRequestedModelSelection }),
       started,
@@ -2530,6 +2542,7 @@ export class SessionExecutionManager {
     });
     await this.#config.flushSessionStore(sessionId, workspaceRoot);
     this.#durableNonterminal.delete(scopedKey(workspaceRoot, sessionId));
+    this.#executionSkillSnapshots.delete(executionSkillSnapshotKey(workspaceRoot, sessionId, record.id));
     this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId);
     await this.#applySettlements({
       workspaceRoot,
@@ -2557,22 +2570,35 @@ export class SessionExecutionManager {
     let runEndedAt: number | undefined;
     try {
       if (store === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
-      if (input.input.kind !== "resume") {
-        store.getState().append({
-          type: "execution-start",
-          executionId: execution.executionId,
-          binding: execution.binding.summary,
-          origin: execution.origin,
-          maxSteps: execution.maxSteps,
-          ...(input.activeTimeoutMs === undefined ? {} : { activeTimeoutMs: input.activeTimeoutMs }),
-        });
-        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
-      } else {
+      if (input.input.kind === "resume") {
         store.getState().append({
           type: "execution-resumed",
           executionId: execution.executionId,
           runOrdinal: execution.runOrdinal,
           binding: execution.binding.summary,
+        });
+        await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
+      }
+      execution.executionSkillSnapshots = await this.#resolveExecutionSkillSnapshots(
+        input,
+        execution,
+        store.getState(),
+      );
+      if (input.input.kind !== "resume") {
+        const executionSkills: ExecutionSkillBinding[] = [...execution.executionSkillSnapshots.values()].map((snapshot) => ({
+          name: snapshot.name,
+          source: snapshot.source,
+          digest: snapshot.digest,
+          resolutionRoot: execution.skillResolutionRoot,
+        }));
+        store.getState().append({
+          type: "execution-start",
+          executionId: execution.executionId,
+          binding: execution.binding.summary,
+          executionSkills,
+          origin: execution.origin,
+          maxSteps: execution.maxSteps,
+          ...(input.activeTimeoutMs === undefined ? {} : { activeTimeoutMs: input.activeTimeoutMs }),
         });
         await this.#config.flushSessionStore(input.sessionId, input.workspaceRoot);
       }
@@ -2653,6 +2679,9 @@ export class SessionExecutionManager {
           ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
           ...(input.toolProjection === undefined ? {} : { toolProjection: input.toolProjection }),
           consumeSteers: async () => await this.#consumeSteers(execution),
+          ...(execution.executionSkillSnapshots.size === 0
+            ? {}
+            : { executionSkillSnapshots: execution.executionSkillSnapshots }),
         });
         runEndedAt = Date.now();
         execution.newlyActivatedAgent = undefined;
@@ -2815,6 +2844,57 @@ export class SessionExecutionManager {
     }
   }
 
+  async #resolveExecutionSkillSnapshots(
+    input: InternalStartSessionExecutionInput,
+    execution: PendingSessionExecution,
+    state: SessionStoreState,
+  ): Promise<ReadonlyMap<string, SkillPackageSnapshot>> {
+    const key = executionSkillSnapshotKey(input.workspaceRoot, input.sessionId, execution.executionId);
+    if (input.input.kind === "resume") {
+      const cached = this.#executionSkillSnapshots.get(key);
+      if (cached !== undefined) return cached;
+      const record = state.executions.find((candidate) => candidate.id === execution.executionId);
+      if (record === undefined) throw new Error(`Execution ${execution.executionId} is missing its Skill bindings`);
+      const restored = new Map<string, SkillPackageSnapshot>();
+      const allowedNames = this.#config.sessionAgentManager
+        .getFactory(input.workspaceRoot)
+        .getDefinition(execution.agentName).skills;
+      for (const binding of record.executionSkills) {
+        const snapshot = await this.#config.skillService.restoreSnapshotForAgent(
+          binding.resolutionRoot,
+          binding.name,
+          { source: binding.source, digest: binding.digest },
+          allowedNames,
+        );
+        restored.set(binding.name, snapshot);
+      }
+      if (restored.size > 0) this.#executionSkillSnapshots.set(key, restored);
+      return restored;
+    }
+
+    const requestedNames = input.input.kind === "queue"
+      ? [...new Set(execution.queueSnapshots?.flatMap((snapshot) => snapshot.pending.executionSkillNames) ?? [])]
+      : [];
+    if (requestedNames.length > 1) {
+      throw new SessionInputConflictError("state", "A Queue execution may activate only one explicit Skill");
+    }
+    const snapshots = new Map<string, SkillPackageSnapshot>();
+    const allowedNames = this.#config.sessionAgentManager
+      .getFactory(input.workspaceRoot)
+      .getDefinition(execution.agentName).skills;
+    for (const name of requestedNames) {
+      const snapshot = await this.#config.skillService.snapshotForAgent(
+        execution.skillResolutionRoot,
+        name,
+        allowedNames,
+      );
+      if (snapshot === null) throw new SkillNotFoundError(name);
+      snapshots.set(name, snapshot);
+    }
+    if (snapshots.size > 0) this.#executionSkillSnapshots.set(key, snapshots);
+    return snapshots;
+  }
+
   async #consumeSteers(execution: PendingSessionExecution): Promise<void> {
     const current = this.#active.get(scopedKey(execution.workspaceRoot, execution.sessionId));
     if (
@@ -2890,6 +2970,16 @@ export class SessionExecutionManager {
       if (execution.ready) {
         this.#publishSessionRuntimeChange(execution.workspaceRoot, execution.rootSessionId);
       }
+    }
+    const record = this.#config
+      .getSessionStore(execution.sessionId, execution.workspaceRoot)
+      ?.getState().executions.find((candidate) => candidate.id === execution.executionId);
+    if (record?.status !== "suspended") {
+      this.#executionSkillSnapshots.delete(executionSkillSnapshotKey(
+        execution.workspaceRoot,
+        execution.sessionId,
+        execution.executionId,
+      ));
     }
 
     if (ownedFamilyStopLease !== undefined) {
@@ -3051,6 +3141,7 @@ export class SessionExecutionManager {
       });
       await this.#config.flushSessionStore(sessionId, workspaceRoot);
       this.#durableNonterminal.delete(scopedKey(workspaceRoot, sessionId));
+      this.#executionSkillSnapshots.delete(executionSkillSnapshotKey(workspaceRoot, sessionId, record.id));
       this.#publishSessionRuntimeChange(workspaceRoot, rootSessionId);
       await this.#applySettlements({
         workspaceRoot,
@@ -3990,6 +4081,14 @@ export class SessionExecutionManager {
     });
   }
 
+}
+
+function executionSkillSnapshotKey(
+  workspaceRoot: string,
+  sessionId: string,
+  executionId: string,
+): string {
+  return `${scopedKey(workspaceRoot, sessionId)}\0${executionId}`;
 }
 
 function sanitizeBindingError(error: unknown, binding: ExecutionModelBinding): Error {

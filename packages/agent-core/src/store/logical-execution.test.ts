@@ -37,6 +37,7 @@ describe("Session Store logical Execution hard cut", () => {
       origin: "user_message" as const,
       maxSteps: 50,
       binding,
+      executionSkills: [],
     };
 
     store.getState().append(start);
@@ -60,6 +61,7 @@ describe("Session Store logical Execution hard cut", () => {
       origin: "user_message",
       maxSteps: 50,
       binding,
+      executionSkills: [],
     });
     store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({
@@ -145,6 +147,7 @@ describe("Session Store logical Execution hard cut", () => {
       origin: "user_message",
       maxSteps: 50,
       binding,
+      executionSkills: [],
     });
     const run = store.getState().executions[0]!.runs[0]!;
     const runEndedAt = Math.max(Date.now(), run.startedAt);

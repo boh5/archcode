@@ -29,6 +29,7 @@ function record(
     startedAt: 0,
     origin: "user_message" as const,
     maxSteps: 10,
+    executionSkills: [],
     durationMs: 0,
     runs: status === "running" ? [{ ordinal: 0, startedAt: 0, binding }] : [],
   };

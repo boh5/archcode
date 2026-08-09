@@ -256,6 +256,7 @@ describe("Session model selection protocol", () => {
       clientRequestId: "command-selection",
       source: "user" as const,
       requestedModelSelection: requested,
+      executionSkillNames: [],
     };
     expect(await input.claimCommand(command)).toEqual({ kind: "claimed" });
     expect((await manager.getSessionFile(WORKSPACE, SESSION_ID)).inputRequestReceipts[0])

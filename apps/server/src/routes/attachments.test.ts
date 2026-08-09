@@ -175,7 +175,6 @@ async function createFixture(name: string) {
   });
   const runtime = {
     projectRegistry,
-    warnings: [],
     uploadSessionAttachment: (
       input: Parameters<AgentRuntime["uploadSessionAttachment"]>[0],
     ) => attachments.upload(input),
@@ -189,7 +188,8 @@ async function createFixture(name: string) {
     subscribeMcpStatusChanges: () => () => undefined,
     listSessionRuntimeEvents: async () => [],
     listHitlSnapshotEvents: async () => [],
-    getMcpServerStatuses: () => new Map(),
+    getMcpServerStatus: () => ({ servers: {} }),
+    getMcpServerInventory: () => ({ servers: {} }),
   } as unknown as AgentRuntime;
   return {
     app: createRuntimeApp(runtime).app,

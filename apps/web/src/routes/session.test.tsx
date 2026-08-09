@@ -632,6 +632,7 @@ describe("SessionRoute focused view store behavior", () => {
         startedAt: 1,
         endedAt: 2,
         maxSteps: 10,
+        executionSkills: [],
         durationMs: 1,
         runs: [],
         terminalSettlement: {
@@ -812,6 +813,7 @@ describe("SessionRoute focused view store behavior", () => {
         endedAt: 2,
         durationMs: 1,
         maxSteps: 10,
+        executionSkills: [],
         runs: [],
         terminalSettlement: {
           key: "terminal:root-execution",
@@ -854,6 +856,7 @@ describe("SessionRoute focused view store behavior", () => {
         endedAt: 3,
         durationMs: 1,
         maxSteps: 10,
+        executionSkills: [],
         runs: [],
         terminalSettlement: {
           key: "terminal:child-execution",

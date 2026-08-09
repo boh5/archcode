@@ -173,6 +173,44 @@ During the monorepo migration we evaluated splitting `agent-core` into finer-gra
 - **Migration cost** — Splitting would require extensive refactoring of import paths, barrel exports, and test setup with no immediate benefit.
 - **Future option** — If a future consumer genuinely needs a subset (e.g., a CLI plugin that only uses tools), the split can happen then with clearer boundaries.
 
+## MCP Runtime Ownership
+
+MCP is a process-global live integration owned by one high-cohesion
+`McpRuntimeService`. It owns resolved HTTP/STDIO configuration, transport
+connections, discovery, tool inventory, status publication, draft Test,
+Reconnect, hot apply, and shutdown. The service does not own Sessions,
+Executions, Agent definitions, the Tool Registry, permissions, retries, or
+durable project data.
+
+Each model-call boundary asks the live runtime for the current user-server
+descriptors and the built-ins allowed by that Agent's fixed role matrix. The
+result is a transient descriptor/status projection for that model call; tool
+execution uses the exact descriptors returned with it. A later reconnect,
+disable, or discovery change takes effect at the next model-call boundary and
+does not mutate a call already handed to the model.
+
+User MCP servers are visible to all six Agent identities and do not receive an
+additional approval layer. This is separate from the built-in matrix:
+
+| Agent | Built-in MCP servers |
+| --- | --- |
+| Lead | `context7`, `exa` |
+| Discussion | none |
+| Analyst | `context7` |
+| Build | none |
+| Explore | none |
+| Librarian | `context7`, `grep.app`, `exa` |
+
+The local read-only designation therefore does not make a user MCP call
+read-only; an external MCP tool may still write to its remote system.
+
+Configuration requires `type` + `enabled` for every user server. HTTP uses
+`url`/`headers`; STDIO uses `command`/`args`/`env`. The independent
+`connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` deadlines default
+to 10,000/30,000/60,000 ms. `disabledBuiltins` can disable fixed built-ins but
+cannot replace them. Config saves commit once and hot-apply this live runtime;
+the API reports the independent MCP apply result and global status/inventory.
+
 ---
 
 ## Why Root `start` Was Removed

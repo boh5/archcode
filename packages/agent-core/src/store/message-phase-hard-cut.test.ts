@@ -80,6 +80,7 @@ describe("runtime final Assistant selection", () => {
       origin: "user_message",
       maxSteps: 10,
       binding: BINDING,
+      executionSkills: [],
     });
     createAttempt(sessionId, "earlier-stop", 0, "stop", "earlier");
     createAttempt(sessionId, "latest-tool", 1, "tool-calls", "tool preamble");
@@ -115,6 +116,7 @@ describe("runtime final Assistant selection", () => {
         origin: "user_message",
         maxSteps: 10,
         binding: BINDING,
+        executionSkills: [],
       });
       createAttempt(sessionId, candidate.stepId, 0, candidate.finishReason, candidate.text);
       expect(() => store.getState().append(terminalEvent(sessionId, candidate.stepId)))

@@ -42,6 +42,7 @@ function execution(
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,
+    executionSkills: [],
     durationMs: 100,
     status: "completed",
     endedAt: 100,

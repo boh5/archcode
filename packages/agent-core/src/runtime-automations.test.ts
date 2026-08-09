@@ -7,7 +7,6 @@ import type {
   GlobalSSEResourceChangedEvent,
 } from "@archcode/protocol";
 
-import type { McpManager } from "./mcp";
 import { setLlmAdapterForTest } from "./llm";
 import { silentLogger } from "./logger";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
@@ -16,6 +15,7 @@ import { createRuntime, type AgentRuntime } from "./runtime";
 import { RuntimeSessionDispatchGateway } from "./automations/runtime-session-gateway";
 import type { AutomationSchedulerTimer, AutomationSchedulerTimerHandle } from "./automations/scheduler";
 import { SessionStoreManager } from "./store/session-store-manager";
+import { createTestMcpRuntime, type TestMcpRuntime } from "./testing/test-mcp-runtime";
 
 const roots: string[] = [];
 const START = Date.parse("2026-07-13T00:00:00.000Z");
@@ -561,7 +561,7 @@ async function runtimeFixture(options: {
     activation: activationResult.activation,
     projectRegistry: registry,
     runtimeStorageHomeDir: root,
-    mcpManagerFactory: () => mcpManager(),
+    mcpRuntimeFactory: () => mcpRuntime(),
     automationSchedulerClock: clock,
     automationSchedulerTimer: timer,
   });
@@ -611,14 +611,8 @@ function config(): Record<string, unknown> {
   };
 }
 
-function mcpManager(): McpManager {
-  return {
-    discover: mock(async () => ({ descriptors: [], warnings: [] })),
-    closeAll: mock(async () => []),
-    getStatus: mock(() => new Map()),
-    onStatusChange: mock(() => () => {}),
-    startBackgroundDiscovery: mock(() => {}),
-  } as unknown as McpManager;
+function mcpRuntime(): TestMcpRuntime {
+  return createTestMcpRuntime();
 }
 
 function sessionEventProbe(runtime: AgentRuntime): {

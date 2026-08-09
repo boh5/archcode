@@ -6,7 +6,6 @@ import { join } from "node:path";
 
 import { ServerConfigService, resolveServerConfigPath } from "../config";
 import { silentLogger } from "../logger";
-import type { McpManager } from "../mcp";
 import { ProjectRegistry } from "../projects/registry";
 import { createRuntime as createProductionRuntime } from "../runtime";
 import { createTestArtifact } from "./artifact-store-fixture.test";
@@ -19,6 +18,7 @@ import type {
   ArtifactSearchRunner,
   OutputRef,
 } from "./artifact-types";
+import { createTestMcpRuntime } from "../testing/test-mcp-runtime";
 
 const CURSOR_KEY = new Uint8Array(32).fill(19);
 const roots = new Set<string>();
@@ -127,13 +127,8 @@ async function writeConfig(homeDir: string): Promise<ServerConfigService> {
   return new ServerConfigService({ homeDir });
 }
 
-function fakeMcpManager(): McpManager {
-  return {
-    startBackgroundDiscovery() {},
-    async closeAll() { return []; },
-    getStatus() { return new Map(); },
-    onStatusChange() { return () => undefined; },
-  } as unknown as McpManager;
+function fakeMcpRuntime() {
+  return createTestMcpRuntime();
 }
 
 async function createRuntime(options: RuntimeTestOptions) {
@@ -167,7 +162,7 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
       configService: await writeConfig(homeDir),
       runtimeStorageHomeDir: homeDir,
       toolOutputRootDir: join(homeDir, "tool-output"),
-      mcpManagerFactory: () => fakeMcpManager(),
+      mcpRuntimeFactory: () => fakeMcpRuntime(),
       logger: silentLogger,
       toolOutputStoreFactory: (rootDir) => {
         artifactStore = makeStore(rootDir);

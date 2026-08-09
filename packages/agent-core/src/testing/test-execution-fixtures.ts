@@ -68,6 +68,7 @@ export function testExecutionStart(
     binding: testExecutionBinding,
     origin,
     maxSteps: 50,
+    executionSkills: [],
   };
 }
 
@@ -125,6 +126,7 @@ export function testExecutionRecord(
       status,
       origin: "tool_call",
       maxSteps: 50,
+      executionSkills: [],
       durationMs: 0,
       runs: [run],
     };
@@ -136,6 +138,7 @@ export function testExecutionRecord(
       status,
       origin: "tool_call",
       maxSteps: 50,
+      executionSkills: [],
       durationMs: 0,
       runs: [{ ...run, endedAt: 1, durationMs: 0, usageDelta: testExecutionUsage, settlement }],
       suspension: { kind: "hitl", toolBatchId: `batch:${id}`, blockerIds: [`blocker:${id}`] },
@@ -147,6 +150,7 @@ export function testExecutionRecord(
     status,
     origin: "tool_call",
     maxSteps: 50,
+    executionSkills: [],
     durationMs: 0,
     endedAt: 1,
     runs: [{ ...run, endedAt: 1, durationMs: 0, usageDelta: testExecutionUsage, settlement }],

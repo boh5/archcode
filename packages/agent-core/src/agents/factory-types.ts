@@ -3,6 +3,13 @@ export type { AgentName } from "./names";
 import type { AgentName } from "./names";
 import type { RoleContract } from "../prompt/types";
 import type { ProfileName } from "../config";
+import type { BuiltinMcpServerName, McpServerStatusResponse } from "@archcode/protocol";
+import type { AnyToolDescriptor } from "../tools/types";
+
+export interface AgentMcpToolSnapshot {
+  readonly descriptors: ReadonlyMap<string, AnyToolDescriptor>;
+  readonly statuses: McpServerStatusResponse;
+}
 
 export interface AgentDefinition {
   readonly name: AgentName;
@@ -10,7 +17,7 @@ export interface AgentDefinition {
   readonly profiles: readonly ProfileName[];
   readonly roleContract: RoleContract;
   readonly tools: AgentToolPolicy;
-  readonly mcpTools?: readonly string[];
+  readonly builtinMcpServers: readonly BuiltinMcpServerName[];
   readonly hooks: AgentHookPolicy;
   readonly childPolicy?: AgentChildPolicy;
   readonly includeMemoryInPrompt: boolean;

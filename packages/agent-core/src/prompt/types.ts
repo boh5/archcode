@@ -1,6 +1,6 @@
 import type { AgentName } from "../agents/names";
 import type { BuiltinToolName, DelegationRequest, RootSessionSource } from "@archcode/protocol";
-import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
+import type { ResolvedSkill, SkillPromptProjection } from "../skills/types";
 import type { VersionControl } from "../version-control/detector";
 
 export type CapabilityRef = BuiltinToolName;
@@ -29,7 +29,7 @@ export interface RoleContract {
 }
 
 export type TodoPromptMode = "none" | "bound";
-export type McpPromptStatus = "pending" | "ready" | "ready-zero" | "partial-warning" | "failed";
+export type McpPromptStatus = "disabled" | "connecting" | "ready" | "ready-zero" | "partial-warning" | "failed";
 
 export interface RuntimePromptEnvelope {
   readonly agentName: AgentName;
@@ -78,7 +78,7 @@ export interface PromptContractV2 {
   readonly role: RoleContract;
   readonly runtime: RuntimePromptEnvelope;
   readonly allowedTools: readonly string[];
-  readonly availableSkills: readonly SkillIndexEntry[];
+  readonly availableSkills: SkillPromptProjection;
   readonly activeSkills: readonly ResolvedSkill[];
   readonly guidanceAuthority: {
     readonly skills: GuidanceAuthority;
@@ -104,6 +104,7 @@ export interface PromptTrace {
   readonly sections: readonly PromptTraceSection[];
   readonly skills: {
     readonly status: "present" | "absent" | "error";
+    readonly available: SkillPromptProjection;
     readonly active: readonly { readonly name: string; readonly source: string }[];
   };
   readonly visibleTools: readonly string[];

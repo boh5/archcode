@@ -7,6 +7,8 @@ import {
   discoverFilesystemSkill as discoverFilesystemSkillAt,
   readBuiltinSkillResource,
   readFilesystemSkillResource as readFilesystemSkillResourceAt,
+  snapshotBuiltinSkill,
+  snapshotFilesystemSkill,
   SkillPackageResourceNotFoundError,
   SKILL_PACKAGE_MAX_BYTES,
   SKILL_PACKAGE_MAX_ENTRIES,
@@ -119,6 +121,42 @@ describe("Skill package reader", () => {
     const read = readBuiltinSkillResource(skillPackage, "test-skill", "assets/arbitrary.bin");
     expect([...read.content]).toEqual([...bytes]);
     expect(read.content).not.toBe(bytes);
+  });
+
+  test("snapshot resolver keeps entry and resource reads detached from mutable builtin bytes", () => {
+    const mutable = Uint8Array.from([1, 2, 3]);
+    const skillPackage = builtin({ "assets/arbitrary.bin": mutable });
+    const snapshot = snapshotBuiltinSkill(skillPackage, "test-skill");
+    const digest = snapshot.digest;
+    mutable[0] = 9;
+    const first = snapshot.readResource("assets/arbitrary.bin");
+    first.content[1] = 9;
+
+    expect(snapshot.digest).toBe(digest);
+    expect([...snapshot.readResource("assets/arbitrary.bin").content]).toEqual([1, 2, 3]);
+    expect(Object.isFrozen(snapshot)).toBeTrue();
+    expect(Object.isFrozen(snapshot.readEntry())).toBeTrue();
+  });
+
+  test("filesystem snapshot returns the captured package after live files mutate", async () => {
+    const packageRoot = join(tmpRoot, "snapshot-live", "test-skill");
+    await writePackage(packageRoot, { "reference.txt": "before" });
+    const snapshot = await snapshotFilesystemSkill(
+      filesystemLocation(packageRoot),
+      "test-skill",
+      "project-agents",
+    );
+    await Bun.write(join(packageRoot, "reference.txt"), "after!");
+    await Bun.write(join(packageRoot, "SKILL.md"), entry("test-skill", "Changed body.\n"));
+
+    expect(new TextDecoder().decode(snapshot.readResource("reference.txt").content)).toBe("before");
+    expect(snapshot.readEntry().body).toContain("Entry body.");
+    const current = await snapshotFilesystemSkill(
+      filesystemLocation(packageRoot),
+      "test-skill",
+      "project-agents",
+    );
+    expect(current.digest).not.toBe(snapshot.digest);
   });
 
   test("reports unlisted builtin and filesystem resources with the package not-found type", async () => {

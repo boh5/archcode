@@ -34,7 +34,7 @@ export const librarianAgentDefinition = {
       ...SKILL_ACCESS_TOOLS,
     ],
   },
-  mcpTools: ["context7", "grep.app", "exa"],
+  builtinMcpServers: ["context7", "grep.app", "exa"],
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,
