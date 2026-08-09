@@ -27,10 +27,15 @@ const TEST_BINDING = {
   providerDisplayName: "Test", modelDisplayName: "Model",
   resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
+const TEST_MEMORY_POLICY = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "persisted-memory-boot", generation: 4 },
+};
 const executionStart = (executionId: string) => ({
   type: "execution-start" as const,
   executionId,
   binding: TEST_BINDING,
+  memoryPolicy: TEST_MEMORY_POLICY,
   origin: "user_message" as const,
   maxSteps: 50,
 });
@@ -114,6 +119,7 @@ describe("SessionStoreManager", () => {
   function runningExecution(id: string, startedAt = 1000): SessionExecutionRecord {
     return {
       id,
+      memoryPolicy: TEST_MEMORY_POLICY,
       startedAt,
       status: "running",
       origin: "user_message",
@@ -131,6 +137,7 @@ describe("SessionStoreManager", () => {
   ): SessionExecutionRecord {
     return {
       id,
+      memoryPolicy: TEST_MEMORY_POLICY,
       startedAt,
       status: "interrupted",
       origin: "tool_call",
@@ -890,6 +897,10 @@ describe("SessionStoreManager", () => {
     expect((persisted.executions as Array<{ id: string; status: string }>).at(-1)).toMatchObject({
       id: "execution-1",
       status: "running",
+      memoryPolicy: {
+        policy: { useMemory: true, autoLearning: true },
+        epoch: { bootId: "persisted-memory-boot", generation: 4 },
+      },
     });
   });
 

@@ -1,5 +1,7 @@
+import type { MemoryTopicType } from "@archcode/protocol";
+
 /** Memory topic type — defines who/what the memory is about */
-export type MemoryTopicType = "user" | "feedback" | "project" | "reference";
+export type { MemoryTopicType } from "@archcode/protocol";
 
 /** A single entry in the memory index (one line of index.md).
  * `name` corresponds to the file identifier (without .md extension)

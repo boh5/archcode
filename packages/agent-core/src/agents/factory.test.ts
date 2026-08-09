@@ -79,8 +79,6 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     autoInjectReminder: true,
     todoStepReminder: true,
     todoQueryLoopContinuation: true,
-    memoryExtraction: true,
-    memoryConsolidation: true,
     titleGeneration: "enabled",
   },
   includeMemoryInPrompt: true,

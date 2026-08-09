@@ -29,7 +29,6 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
       prompt,
       abortSignal: input.abortSignal,
       tools,
-      toolChoice: { type: "tool", toolName },
       ...callOptions,
     }), "LLM object generation", undefined, {
       abortSignal: input.abortSignal,

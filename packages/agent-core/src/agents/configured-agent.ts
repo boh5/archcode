@@ -1,9 +1,7 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { lstat } from "node:fs/promises";
 import {
   PROJECT_STATE_DIR_NAME,
-  USER_DATA_DIR_NAME,
   type McpServerStatus,
   type ProjectTodo,
   type PromptTraceSnapshot,
@@ -12,10 +10,8 @@ import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import { CommandRegistry, createCompactCommand, createSkillCommand } from "../commands/index";
-import type { MemoryExtractionConfig } from "../config/index";
 import type { ExecutionModelBinding } from "../models";
-import type { MemoryRoots } from "../memory";
-import { MemoryFileManager } from "../memory/file-manager";
+import type { MemoryPolicySnapshot } from "../memory";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import { projectRuntimePath } from "../projects/runtime-path";
 import type { ProjectContext } from "../projects/types";
@@ -39,14 +35,15 @@ import type { AgentDefinition } from "./factory-types";
 import {
   createAutoInjectReminderHook,
   createHybridCompressionHook,
-  createMemoryConsolidationHook,
-  createMemoryExtractionHook,
   createTitleGenerationHook,
   createTodoContinuationHook,
 } from "./query/hooks";
-import type { AfterLoopEndContext, QueryLoopHooks } from "./query/loop-hooks";
+import type { QueryLoopHooks } from "./query/loop-hooks";
 import { DEFAULT_QUERY_MAX_STEPS, runQueryLoop } from "./query/loop";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./types";
+
+const PROMPT_MEMORY_READ_FAILURE =
+  "kind=memory-read code=MEMORY_PROMPT_READ_FAILED Memory could not be read. Continue without Memory.";
 
 export class UnknownExtraToolError extends Error {
   constructor(public readonly toolName: string) {
@@ -89,7 +86,6 @@ export interface ConfiguredAgentOptions {
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   readonly resolveMcpStatuses?: () => ReadonlyMap<string, McpServerStatus>;
-  readonly memoryConfig?: MemoryExtractionConfig;
   readonly logger: Logger;
 }
 
@@ -164,7 +160,6 @@ export class ConfiguredAgent implements Agent {
   private readonly sessionGoalService: SessionGoalService | undefined;
   private readonly resolveVersionControl: VersionControlDetector;
   private readonly depth: number;
-  private readonly memoryRoots: MemoryRoots;
   private readonly commandRegistry: CommandRegistry;
   private readonly hybridCompressionHook: ReturnType<typeof createHybridCompressionHook>;
   private readonly backgroundTaskManager: BackgroundTaskManager;
@@ -175,7 +170,6 @@ export class ConfiguredAgent implements Agent {
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly acquireSessionCwdTransition: ((workspaceRoot: string, sessionId: string) => () => void) | undefined;
   private readonly resolveMcpStatuses: (() => ReadonlyMap<string, McpServerStatus>) | undefined;
-  private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
   private agentsMd: PromptSource<string> = { status: "absent", source: "AGENTS.md search" };
   private disposed = false;
@@ -214,11 +208,6 @@ export class ConfiguredAgent implements Agent {
     this.resumeChildSession = options.resumeChildSession;
     this.acquireSessionCwdTransition = options.acquireSessionCwdTransition;
     this.resolveMcpStatuses = options.resolveMcpStatuses;
-    this.memoryConfig = options.memoryConfig;
-    this.memoryRoots = {
-      project: projectRuntimePath(this.projectRoot, "memory"),
-      user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
-    };
 
     this.commandRegistry = new CommandRegistry();
     this.commandRegistry.register(
@@ -296,6 +285,7 @@ export class ConfiguredAgent implements Agent {
       extraTools,
       toolProjection,
       consumeSteers,
+      memoryPolicy,
     } = options;
 
     const btm = this.backgroundTaskManager;
@@ -317,7 +307,7 @@ export class ConfiguredAgent implements Agent {
         this.definition.name === "discussion",
       );
       const agentSkills = this.definition.skills;
-      const memory = await this.resolveMemorySnapshot();
+      const memory = await this.resolveMemorySnapshot(projectContext, memoryPolicy);
       const mcpStatuses = this.resolveMcpStatuses?.() ?? new Map<string, McpServerStatus>();
       const env = buildEnv(
         this.projectRoot,
@@ -553,21 +543,31 @@ export class ConfiguredAgent implements Agent {
     };
   }
 
-  private async resolveMemorySnapshot(): Promise<PromptSource<PromptMemorySnapshot>> {
+  private async resolveMemorySnapshot(
+    projectContext: ProjectContext,
+    memoryPolicy: MemoryPolicySnapshot,
+  ): Promise<PromptSource<PromptMemorySnapshot>> {
     if (!this.definition.includeMemoryInPrompt) return { status: "absent", source: "agent-definition" };
+    if (!memoryPolicy.policy.useMemory) return { status: "absent", source: "memory-policy" };
     try {
-      const manager = new MemoryFileManager(this.memoryRoots);
-      const [index, preferences] = await Promise.all([manager.readIndex(), manager.readPreferences()]);
+      const manifest = await projectContext.memory.readPromptManifest();
       return {
         status: "present",
         source: "project-and-user-memory",
-        value: { index: index ?? "none", preferences: preferences ?? "none" },
+        value: {
+          index: manifest.index.availableForPrompt
+            ? manifest.index.content ?? "none"
+            : "[Project Memory index omitted because the project exceeds 200 topics. Manage it in Settings → Memory.]",
+          preferences: manifest.preferences?.availableForPrompt === false
+            ? "[Personal Memory omitted because preferences exceed 8 KiB. Manage it in Settings → Memory.]"
+            : manifest.preferences?.content ?? "none",
+        },
       };
-    } catch (error) {
+    } catch {
       return {
         status: "error",
         source: "project-and-user-memory",
-        error: error instanceof Error ? error.message : String(error),
+        error: PROMPT_MEMORY_READ_FAILURE,
       };
     }
   }
@@ -605,22 +605,6 @@ export class ConfiguredAgent implements Agent {
         ...(policy.todoStepReminder ? [todoContinuation.afterStepEnd] : []),
       ];
       if (policy.todoQueryLoopContinuation) afterLoopEnd.push(todoContinuation.afterLoopEnd);
-    }
-    // Memory hooks only run on a user-facing root Agent (depth 0).
-    // Sub-agents at depth > 0 must not write to project/user memory independently.
-    const isRootAgent = this.depth === 0;
-    const memoryEnabled = this.memoryConfig?.enabled ?? true;
-    if (memoryEnabled && policy.memoryExtraction && isRootAgent) {
-      const extractMemory = createMemoryExtractionHook(btm, this.memoryRoots, isCancelled, this.memoryConfig);
-      afterLoopEnd.push(async (context: AfterLoopEndContext) => {
-        if (context.loopOutcome.kind === "terminal") await extractMemory(context);
-      });
-    }
-    if (memoryEnabled && policy.memoryConsolidation && isRootAgent) {
-      const consolidateMemory = createMemoryConsolidationHook(btm, this.memoryRoots, isCancelled, this.memoryConfig);
-      afterLoopEnd.push(async (context: AfterLoopEndContext) => {
-        if (context.loopOutcome.kind === "terminal") await consolidateMemory(context);
-      });
     }
     if (afterLoopEnd.length > 0) {
       hooks.afterLoopEnd = afterLoopEnd;

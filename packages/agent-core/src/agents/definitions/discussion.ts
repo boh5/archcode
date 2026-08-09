@@ -73,8 +73,6 @@ export const discussionAgentDefinition = {
     autoInjectReminder: true,
     todoStepReminder: true,
     todoQueryLoopContinuation: true,
-    memoryExtraction: true,
-    memoryConsolidation: true,
     titleGeneration: "enabled",
   },
   childPolicy: {

@@ -22,7 +22,7 @@ import { runQueryLoop as runCanonicalQueryLoop } from "./loop";
 import { sessionFileInternals } from "../../store/helpers";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
 import { createTestTempRoot } from "../../testing/test-temp-root";
-import { createTestModelInfo } from "../../testing/test-execution-fixtures";
+import { createTestModelInfo, testExecutionMemoryPolicy } from "../../testing/test-execution-fixtures";
 import type { AttachmentModelProjector } from "../../attachments";
 
 const testTempRoot = createTestTempRoot("query-recovery");
@@ -111,6 +111,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
       type: "execution-start",
       executionId,
       binding: dummyBinding.summary,
+      memoryPolicy: testExecutionMemoryPolicy,
       origin: "tool_call",
       maxSteps: overrides.maxSteps ?? 50,
     });

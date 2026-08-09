@@ -64,7 +64,7 @@ const config: ServerConfig = {
     deep: { model: "local:demo-model" },
     fast: { model: "local:demo-model" },
   },
-  memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
+  memory: { useMemory: true, autoLearning: true },
 };
 
 const adapterCatalog: ProviderAdapterCatalog = [{

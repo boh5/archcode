@@ -11,34 +11,13 @@ export const PREFERENCES_FILE = "preferences.md";
 // Limits
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_MAX_INDEX_LINES = 200;
-export const CONSOLIDATION_THRESHOLD = 250;
-export const DEFAULT_MAX_PREFERENCES_BYTES = 25600; // 25 KB
-
-// ---------------------------------------------------------------------------
-// Session-extraction skip conditions
-// ---------------------------------------------------------------------------
-
-export const MIN_MESSAGES_FOR_EXTRACTION = 5;
-export const MIN_CONTENT_LENGTH_FOR_EXTRACTION = 1000;
-
-/**
- * Minimum interval (ms) between consecutive memory extraction dispatches.
- * Prevents rapid re-extraction after todo-continuation loops.
- */
-export const MIN_EXTRACTION_INTERVAL_MS = 300_000; // 5 minutes
-export const DEFAULT_EXTRACTION_MAX_MESSAGES = 50;
+export const DEFAULT_MAX_PREFERENCES_BYTES = 8 * 1024;
+export const MAX_MEMORY_TOPIC_BYTES = 16 * 1024;
+export const MAX_MEMORY_TOPICS = 200;
 
 // ---------------------------------------------------------------------------
 // Markers / suffixes
 // ---------------------------------------------------------------------------
-
-export const INDEX_TRUNCATION_SUFFIX =
-  "\n\n<!-- Memory index truncated. Use memory_read for full details. -->";
-
-export const DEFAULT_MAX_MANIFEST_CHARS = 2000;
-
-export const MANIFEST_PREFERENCES_SNIPPET_LENGTH = 200;
 
 export const MEMORY_CONTEXT_START = "<archcode-memory-context>";
 export const MEMORY_CONTEXT_END = "</archcode-memory-context>";

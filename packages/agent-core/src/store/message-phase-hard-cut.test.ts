@@ -5,6 +5,7 @@ import { createEmptySessionStats } from "@archcode/protocol";
 import { silentLogger } from "../logger";
 import { InvalidExecutionTransitionError } from "./types";
 import { SessionStoreManager } from "./session-store-manager";
+import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
 
 const ROOT = join("/tmp", "archcode-message-phase-hard-cut", crypto.randomUUID());
 const manager = new SessionStoreManager({ logger: silentLogger });
@@ -80,6 +81,7 @@ describe("runtime final Assistant selection", () => {
       origin: "user_message",
       maxSteps: 10,
       binding: BINDING,
+      memoryPolicy: testExecutionMemoryPolicy,
     });
     createAttempt(sessionId, "earlier-stop", 0, "stop", "earlier");
     createAttempt(sessionId, "latest-tool", 1, "tool-calls", "tool preamble");
@@ -115,6 +117,7 @@ describe("runtime final Assistant selection", () => {
         origin: "user_message",
         maxSteps: 10,
         binding: BINDING,
+        memoryPolicy: testExecutionMemoryPolicy,
       });
       createAttempt(sessionId, candidate.stepId, 0, candidate.finishReason, candidate.text);
       expect(() => store.getState().append(terminalEvent(sessionId, candidate.stepId)))

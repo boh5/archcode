@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import type { SessionStoreState, StoredMessage } from "./types";
 import {
@@ -36,6 +37,7 @@ import { atomicWrite } from "../utils/safe-file";
 import { DelegationRequestSchema } from "../delegation/schema";
 import { sessionGoalNoticeInvariantError } from "../session-goal/invariant";
 import { GoalNoticePartSchema, SessionGoalSchema } from "../session-goal/schema";
+import { MemoryLearningStateSchema } from "../memory/learning-schemas";
 
 const AgentNameSchema = z.enum(AGENT_NAMES);
 const ToolLifecycleIdSchema = z.string().min(1).refine(
@@ -276,6 +278,16 @@ const SessionExecutionRecordBaseShape = {
   durationMs: z.number().int().nonnegative(),
   stopRequestedAt: z.number().int().nonnegative().optional(),
   runs: z.array(SessionExecutionRunSchema).min(1),
+  memoryPolicy: z.strictObject({
+    policy: z.strictObject({
+      useMemory: z.boolean(),
+      autoLearning: z.boolean(),
+    }),
+    epoch: z.strictObject({
+      bootId: z.string().min(1),
+      generation: z.number().int().nonnegative(),
+    }),
+  }),
 };
 
 const SessionExecutionRecordSchema = z.discriminatedUnion("status", [
@@ -1135,6 +1147,7 @@ export const SessionFileSchema = z.strictObject({
       todoId: z.uuid().nullable(),
     }),
   ]).optional(),
+  memoryLearning: MemoryLearningStateSchema.optional(),
   eventCursor: z.number().int().min(-1),
 }).superRefine((session, ctx) => {
   const isChild = session.parentSessionId !== undefined;
@@ -1180,6 +1193,64 @@ export const SessionFileSchema = z.strictObject({
   const pendingById = new Map(session.pendingMessages.map((message) => [message.id, message]));
   const messageReceipts = session.inputRequestReceipts.filter((receipt) => receipt.kind === "message");
   const receiptsByMessageId = new Map(messageReceipts.map((receipt) => [receipt.messageId, receipt]));
+
+  if (session.memoryLearning !== undefined) {
+    const learning = session.memoryLearning;
+    const memoryEligible = session.parentSessionId === undefined
+      && session.rootSessionId === session.sessionId
+      && session.source?.kind !== "automation"
+      && (session.agentName === "lead" || session.agentName === "discussion");
+    if (!memoryEligible) {
+      ctx.addIssue({ code: "custom", path: ["memoryLearning"], message: "Only eligible root Sessions may own Memory learning state" });
+    }
+    const messageIndex = new Map(session.messages.map((message, index) => [message.id, index]));
+    const processedIndex = learning.processedThroughMessageId === null
+      ? -1
+      : messageIndex.get(learning.processedThroughMessageId);
+    const eligibleIndex = learning.eligibleThroughMessageId === undefined
+      ? undefined
+      : messageIndex.get(learning.eligibleThroughMessageId);
+    if (learning.processedThroughMessageId !== null && processedIndex === undefined) {
+      ctx.addIssue({ code: "custom", path: ["memoryLearning", "processedThroughMessageId"], message: "Processed Memory cursor must reference a canonical message" });
+    }
+    if (learning.eligibleThroughMessageId !== undefined && eligibleIndex === undefined) {
+      ctx.addIssue({ code: "custom", path: ["memoryLearning", "eligibleThroughMessageId"], message: "Eligible Memory cursor must reference a canonical message" });
+    }
+    if (processedIndex !== undefined && eligibleIndex !== undefined && processedIndex > eligibleIndex) {
+      ctx.addIssue({ code: "custom", path: ["memoryLearning"], message: "Processed Memory cursor cannot be after eligible cursor" });
+    }
+    const receipt = learning.pendingApply;
+    if (receipt !== undefined) {
+      if (receipt.captured.processedThroughMessageId !== learning.processedThroughMessageId) {
+        ctx.addIssue({ code: "custom", path: ["memoryLearning", "pendingApply", "captured"], message: "Receipt must capture the current processed cursor" });
+      }
+      const capturedEligibleIndex = messageIndex.get(receipt.captured.eligibleThroughMessageId);
+      if (capturedEligibleIndex === undefined || (processedIndex !== undefined && capturedEligibleIndex < processedIndex)) {
+        ctx.addIssue({ code: "custom", path: ["memoryLearning", "pendingApply", "captured", "eligibleThroughMessageId"], message: "Receipt eligible cursor must follow the processed cursor" });
+      }
+      let hasProjectTarget = false;
+      for (const [index, target] of receipt.targets.entries()) {
+        const validName = target.scope === "user"
+          ? target.name === "preferences"
+          : /^[a-zA-Z0-9_]+$/.test(target.name)
+            && target.name !== "index"
+            && target.name !== "preferences";
+        if (!validName) {
+          ctx.addIssue({ code: "custom", path: ["memoryLearning", "pendingApply", "targets", index, "name"], message: "Receipt target name is invalid for its scope" });
+        }
+        hasProjectTarget ||= target.scope === "project";
+        if (sha256(target.finalDocument) !== target.finalRevision) {
+          ctx.addIssue({ code: "custom", path: ["memoryLearning", "pendingApply", "targets", index, "finalRevision"], message: "Receipt target revision must hash its final document" });
+        }
+      }
+      if (hasProjectTarget !== (receipt.index !== undefined)) {
+        ctx.addIssue({ code: "custom", path: ["memoryLearning", "pendingApply", "index"], message: "Project receipt targets require one deterministic index document" });
+      }
+      if (receipt.index !== undefined && sha256(receipt.index.finalDocument) !== receipt.index.finalRevision) {
+        ctx.addIssue({ code: "custom", path: ["memoryLearning", "pendingApply", "index", "finalRevision"], message: "Receipt index revision must hash its final document" });
+      }
+    }
+  }
 
   for (const pending of session.pendingMessages) {
     if (canonicalById.has(pending.id)) {
@@ -1414,7 +1485,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "updatedAt" | "cwd" | "agentName" | "activeSkillNames" | "modelSelection" | "title" | "messages" | "pendingMessages" | "inputRequestReceipts" | "steps" | "stats" | "executions" | "promptTraces" | "compression" | "todos" | "reminders" | "childSessionLinks" | "delegationRequest" | "toolBatches" | "rootSessionId" | "nextEventId"
 > & Partial<Pick<
   SessionStoreState,
-  "parentSessionId" | "goal" | "source" | "queueDispatchBarrierAt"
+  "parentSessionId" | "goal" | "source" | "queueDispatchBarrierAt" | "memoryLearning"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -1443,6 +1514,10 @@ function boundedUtf8String(maxBytes: number) {
 
 function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function isBoundedJsonObject(value: unknown): value is JsonObject {
@@ -1508,6 +1583,7 @@ async function saveSessionTranscript(
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goal === undefined ? {} : { goal: state.goal }),
     ...(state.source === undefined ? {} : { source: state.source }),
+    ...(state.memoryLearning === undefined ? {} : { memoryLearning: state.memoryLearning }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -1562,6 +1638,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.goal === undefined ? {} : { goal: state.goal }),
     ...(state.source === undefined ? {} : { source: state.source }),
+    ...(state.memoryLearning === undefined ? {} : { memoryLearning: state.memoryLearning }),
   };
 }
 

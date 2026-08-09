@@ -1,6 +1,5 @@
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
-import type { MemoryExtractionConfig } from "../config/schema";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { McpServerStatus } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
@@ -36,7 +35,6 @@ export interface AgentFactoryConfig {
     rootSessionId: string,
   ) => Promise<ReadonlySet<string>>;
   readonly workspaceRoot: string;
-  readonly memoryConfig?: MemoryExtractionConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver: ProjectContextResolver;
   readonly sessionGoalService?: SessionGoalService;
@@ -200,7 +198,6 @@ function createConfiguredAgent(
     store,
     depth: options.depth,
     backgroundTaskManager: config.backgroundTaskManager,
-    memoryConfig: config.memoryConfig,
     projectContextResolver: config.projectContextResolver,
     ...(config.sessionGoalService === undefined ? {} : { sessionGoalService: config.sessionGoalService }),
     resolveVersionControl: config.versionControlDetector ?? detectVersionControl,

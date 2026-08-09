@@ -24,12 +24,13 @@ import { isRootAgentName } from "./root-session-identity";
 import type { AgentDefinition } from "./factory-types";
 import type { VersionControl } from "../version-control/detector";
 import { setLlmAdapterForTest } from "../llm/adapter";
-import type { MemoryExtractionConfig } from "../config";
-import { silentLogger } from "../logger";
+import { MemoryPolicyRuntime } from "../memory";
+import { createInMemoryLogger, silentLogger, type Logger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import type { AgentRunOptions } from "./types";
 import { SessionGoalService } from "../session-goal";
 import type { ProjectContextResolver } from "../projects/context-resolver";
+import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
 import {
   EMPTY_ATTACHMENT_MODEL_PROJECTOR,
   resolveEmptyAttachmentReadPaths,
@@ -62,6 +63,19 @@ function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
 
 function createTestSkillService(): SkillService {
   return new SkillService();
+}
+
+async function createPromptMemoryResolver(
+  projectRoot: string,
+  readPromptManifest: () => Promise<unknown>,
+): Promise<ProjectContextResolver> {
+  const resolver = createTestProjectContextResolver(storeManager);
+  const context = await resolver.resolve(projectRoot);
+  resolver.alias(projectRoot, {
+    ...context,
+    memory: { readPromptManifest } as unknown as typeof context.memory,
+  });
+  return resolver;
 }
 
 class RecordingBackgroundTaskManager {
@@ -216,11 +230,11 @@ function createAgent(options: {
   cwd?: string;
   depth?: number;
   toolRegistry?: ReturnType<typeof makeToolRegistry>;
-  memoryConfig?: MemoryExtractionConfig;
   skillService?: SkillService;
   projectContextResolver?: ProjectContextResolver;
   versionControl?: VersionControl;
   sessionGoalService?: SessionGoalService;
+  logger?: Logger;
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const projectRoot = options.projectRoot ?? tmpRoot;
@@ -269,11 +283,10 @@ function createAgent(options: {
     cwd,
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
-    memoryConfig: options.memoryConfig,
     toolOutputAccess: outputAccessFixture.createToolOutputAccess(projectRoot, store.getState().rootSessionId),
     attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
     resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
-    logger: silentLogger,
+    logger: options.logger ?? silentLogger,
     resolveAllowedTools: (definition, depth) => {
       const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];
       const resolved = toolRegistry.resolveForAgent(requested).descriptors.map((tool) => tool.name);
@@ -295,6 +308,7 @@ async function runAgent(
     executionId: `test-${id}`,
     runOrdinal: 0,
     initialStep: 0,
+    memoryPolicy: new MemoryPolicyRuntime().claim(),
     ...options,
   };
   const executionId = runOptions.executionId;
@@ -303,6 +317,7 @@ async function runAgent(
     type: "execution-start",
     executionId,
     binding: binding.summary,
+    memoryPolicy: runOptions.memoryPolicy,
     origin: "tool_call",
     maxSteps: runOptions.maxSteps ?? 50,
   });
@@ -805,6 +820,7 @@ describe("ConfiguredAgent", () => {
       type: "execution-start",
       executionId: id,
       binding: binding.summary,
+      memoryPolicy: testExecutionMemoryPolicy,
       origin: "tool_call",
       maxSteps: 50,
     });
@@ -825,6 +841,7 @@ describe("ConfiguredAgent", () => {
       executionId: id,
       runOrdinal: 0,
       initialStep: 0,
+      memoryPolicy: new MemoryPolicyRuntime().claim(),
     })).resolves.toEqual({
       outcome: "terminal",
       text: "explicit model ok",
@@ -952,129 +969,6 @@ describe("ConfiguredAgent", () => {
     const callArgs = streamFn.mock.calls[0]![0] as { messages: unknown[] };
     expect(JSON.stringify(callArgs.messages)).toContain("explorer reminder");
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
-  });
-
-  test("Lead definition dispatches memory background hooks", async () => {
-    setupMockStreamText("Lead memory ok");
-    const btm = new RecordingBackgroundTaskManager();
-    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
-    store.setState({
-      messages: [
-        {
-          id: "user-memory-1",
-          role: "user",
-          createdAt: Date.now(),
-          completedAt: Date.now(),
-          parts: [{ type: "text", id: "text-memory-1", text: "x".repeat(2_100), createdAt: Date.now(), completedAt: Date.now() }],
-        },
-        {
-          id: "user-memory-2",
-          role: "user",
-          createdAt: Date.now(),
-          completedAt: Date.now(),
-          parts: [{ type: "text", id: "text-memory-2", text: "y".repeat(2_100), createdAt: Date.now(), completedAt: Date.now() }],
-        },
-        ...[3, 4, 5].map((index) => ({
-          id: `user-memory-${index}`,
-          role: "user" as const,
-          createdAt: Date.now(),
-          completedAt: Date.now(),
-          parts: [{ type: "text" as const, id: `text-memory-${index}`, text: `message-${index}`, createdAt: Date.now(), completedAt: Date.now() }],
-        })),
-      ],
-    });
-    await writeFile(join(tmpRoot, ".archcode", "runtime", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
-
-    const agent = createAgent({ definition: leadAgentDefinition, store, btm });
-    await runAgent(agent, "root run");
-
-    expect(btm.dispatched).toContain("memory-extraction");
-    expect(btm.dispatched).toContain("memory-consolidation");
-  });
-
-  test("memory config disabled skips memory background hooks", async () => {
-    setupMockStreamText("memory disabled ok");
-    const btm = new RecordingBackgroundTaskManager();
-    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
-    store.setState({
-      messages: [
-        {
-          id: "user-memory-disabled-1",
-          role: "user",
-          createdAt: Date.now(),
-          completedAt: Date.now(),
-          parts: [{ type: "text", id: "text-memory-disabled-1", text: "x".repeat(2_100), createdAt: Date.now(), completedAt: Date.now() }],
-        },
-        {
-          id: "user-memory-disabled-2",
-          role: "user",
-          createdAt: Date.now(),
-          completedAt: Date.now(),
-          parts: [{ type: "text", id: "text-memory-disabled-2", text: "y".repeat(2_100), createdAt: Date.now(), completedAt: Date.now() }],
-        },
-      ],
-    });
-    await writeFile(join(tmpRoot, ".archcode", "runtime", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
-
-    const agent = createAgent({
-      definition: leadAgentDefinition,
-      store,
-      btm,
-      memoryConfig: { enabled: false, minMessages: 1, minContentLength: 100, cooldownMs: 0 },
-    });
-    await runAgent(agent, "root run");
-
-    expect(btm.dispatched).not.toContain("memory-extraction");
-    expect(btm.dispatched).not.toContain("memory-consolidation");
-  });
-
-  test("memory config custom thresholds are used by extraction hook", async () => {
-    setupMockStreamText("memory custom ok");
-    const btm = new RecordingBackgroundTaskManager();
-    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
-    store.setState({
-      messages: [
-        {
-          id: "user-memory-custom-1",
-          role: "user",
-          createdAt: Date.now(),
-          completedAt: Date.now(),
-          parts: [{ type: "text", id: "text-memory-custom-1", text: "z".repeat(150), createdAt: Date.now(), completedAt: Date.now() }],
-        },
-      ],
-    });
-
-    const agent = createAgent({
-      definition: leadAgentDefinition,
-      store,
-      btm,
-      memoryConfig: { enabled: true, minMessages: 1, minContentLength: 100, cooldownMs: 0 },
-    });
-    await runAgent(agent, "root run");
-
-    expect(btm.dispatched).toContain("memory-extraction");
-  });
-
-  test("memory config absent uses default extraction thresholds", async () => {
-    setupMockStreamText("memory defaults ok");
-    const btm = new RecordingBackgroundTaskManager();
-    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
-    store.setState({
-      messages: [
-        {
-          id: "user-memory-defaults-1",
-          role: "user",
-          createdAt: Date.now(),
-          completedAt: Date.now(),
-          parts: [{ type: "text", id: "text-memory-defaults-1", text: "z".repeat(150), createdAt: Date.now(), completedAt: Date.now() }],
-        },
-      ],
-    });
-
-    const agent = createAgent({ definition: leadAgentDefinition, store, btm });
-    await runAgent(agent, "root run");
-
-    expect(btm.dispatched).not.toContain("memory-extraction");
   });
 
   test('titleGeneration "unless-supplied" skips when store title already exists', async () => {
@@ -1379,17 +1273,185 @@ describe("ConfiguredAgent", () => {
     expect(errorIndex).toBeGreaterThan(traceIndex);
     expect(streamFn).not.toHaveBeenCalled();
   });
-  test("includeMemoryInPrompt controls memory roots in prompt context", async () => {
-    const withMemoryStreamFn = setupMockStreamText("memory ok");
-    await runAgent(createAgent({ definition: leadAgentDefinition }), "with memory");
-    const withMemory = withMemoryStreamFn.mock.calls[0]![0] as { system: string };
-    expect(withMemory.system).toContain("## Memory");
-    expect(withMemory.system).toContain("Memory is non-authoritative historical context");
+  test("injects complete prompt Memory only when enabled without changing explicit Memory tools", async () => {
+    const preferences = "# Preferences\n\nKeep conclusions concise and evidence-backed.";
+    const index = "- [Build Tooling](build_tools) — Bun commands and repository conventions\n";
+    const topicBody = "PRIVATE TOPIC BODY MUST REQUIRE memory_read";
+    const readPromptManifest = mock(async () => ({
+      preferences: { content: preferences, availableForPrompt: true },
+      index: { content: index, availableForPrompt: true },
+      topics: [{ name: "build_tools", content: topicBody }],
+    }));
+    const projectContextResolver = await createPromptMemoryResolver(tmpRoot, readPromptManifest);
+    const toolRegistry = makeToolRegistry();
+    toolRegistry.register(makeTool("memory_read"));
+    toolRegistry.register(makeTool("memory_write"));
 
-    const withoutMemoryStreamFn = setupMockStreamText("memory off ok");
-    await runAgent(createAgent({ definition: exploreAgentDefinition }), "without memory");
-    const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
-    expect(withoutMemory.system).toContain("Status: absent. Memory is non-authoritative historical context.");
+    const enabledStream = setupMockStreamText("memory enabled");
+    await runAgent(createAgent({ definition: leadAgentDefinition, projectContextResolver, toolRegistry }), "with memory", {
+      memoryPolicy: new MemoryPolicyRuntime({ useMemory: true, autoLearning: true }).claim(),
+    });
+    const enabled = enabledStream.mock.calls[0]![0] as { system: string; tools?: Record<string, unknown> };
+    expect(enabled.system).toContain(`Preferences:\n${preferences}`);
+    expect(enabled.system).toContain(`Index:\n${index}`);
+    expect(enabled.system).not.toContain(topicBody);
+    expect(Object.keys(enabled.tools ?? {})).toEqual(expect.arrayContaining(["memory_read", "memory_write"]));
+
+    const disabledStream = setupMockStreamText("memory disabled");
+    await runAgent(createAgent({ definition: leadAgentDefinition, projectContextResolver, toolRegistry }), "without memory", {
+      memoryPolicy: new MemoryPolicyRuntime({ useMemory: false, autoLearning: true }).claim(),
+    });
+    const disabled = disabledStream.mock.calls[0]![0] as { system: string; tools?: Record<string, unknown> };
+    expect(disabled.system).toContain("Status: absent. Memory is non-authoritative historical context.");
+    expect(disabled.system).not.toContain(preferences);
+    expect(disabled.system).not.toContain(index);
+    expect(Object.keys(disabled.tools ?? {})).toEqual(expect.arrayContaining(["memory_read", "memory_write"]));
+    expect(readPromptManifest).toHaveBeenCalledTimes(1);
+  });
+
+  test("omits only an over-cap prompt root and never injects topic bodies", async () => {
+    const compliantPreferences = "complete compliant preferences";
+    const compliantIndex = "- [Oversized](oversized) — legacy topic remains discoverable\n";
+    const oversizedPreferences = "OVERSIZED PERSONAL BODY";
+    const oversizedIndex = "OVERSIZED GENERATED INDEX";
+    const oversizedTopicBody = "OVERSIZED TOPIC BODY";
+    const cases = [
+      {
+        name: "preferences",
+        manifest: {
+          preferences: { content: oversizedPreferences, availableForPrompt: false },
+          index: { content: compliantIndex, availableForPrompt: true },
+        },
+        present: compliantIndex,
+        notice: "Personal Memory omitted because preferences exceed 8 KiB",
+        absent: oversizedPreferences,
+      },
+      {
+        name: "index",
+        manifest: {
+          preferences: { content: compliantPreferences, availableForPrompt: true },
+          index: { content: oversizedIndex, availableForPrompt: false },
+        },
+        present: compliantPreferences,
+        notice: "Project Memory index omitted because the project exceeds 200 topics",
+        absent: oversizedIndex,
+      },
+      {
+        name: "single oversized topic",
+        manifest: {
+          preferences: { content: compliantPreferences, availableForPrompt: true },
+          index: { content: compliantIndex, availableForPrompt: true },
+          topics: [{ name: "oversized", content: oversizedTopicBody }],
+        },
+        present: compliantIndex,
+        notice: null,
+        absent: oversizedTopicBody,
+      },
+    ] as const;
+
+    for (const scenario of cases) {
+      const resolver = await createPromptMemoryResolver(tmpRoot, async () => scenario.manifest);
+      const stream = setupMockStreamText(scenario.name);
+      await runAgent(createAgent({ definition: leadAgentDefinition, projectContextResolver: resolver }), scenario.name);
+      const system = (stream.mock.calls[0]![0] as { system: string }).system;
+      expect(system).toContain(scenario.present);
+      expect(system).not.toContain(scenario.absent);
+      if (scenario.notice === null) {
+        expect(system).not.toContain("omitted because");
+      } else {
+        expect(system).toContain(scenario.notice);
+      }
+    }
+  });
+
+  test("sanitizes Prompt Memory read failures before Prompt, durable trace, and logs", async () => {
+    const secret = "sk_test_prompt_memory_secret_1234567890";
+    const privatePath = `/private/sensitive/${secret}/index.md`;
+    const readFailure = new Error(`EACCES: permission denied, stat '${privatePath}'`, {
+      cause: new Error(`underlying storage failure ${secret}`),
+    });
+    const resolver = await createPromptMemoryResolver(tmpRoot, async () => {
+      throw readFailure;
+    });
+    const { logger, entries } = createInMemoryLogger();
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const stream = setupMockStreamText("memory unavailable");
+
+    await runAgent(createAgent({
+      definition: leadAgentDefinition,
+      projectContextResolver: resolver,
+      logger,
+      store,
+    }), "read memory safely");
+
+    const prompt = (stream.mock.calls[0]![0] as { system: string }).system;
+    expect(prompt).toContain(
+      "Status: unavailable. Continue from current runtime, files, tools, and user instructions.",
+    );
+    expect(prompt).not.toContain(privatePath);
+    expect(prompt).not.toContain(secret);
+
+    const expectedWarning =
+      "kind=memory-read code=MEMORY_PROMPT_READ_FAILED Memory could not be read. Continue without Memory.";
+    const trace = store.getState().promptTraces?.at(-1);
+    expect(trace).toMatchObject({
+      status: "compiled",
+      memory: "error",
+      warnings: [expectedWarning],
+    });
+    await storeManager.flushSession(store.getState().sessionId, tmpRoot);
+    const durableSession = await Bun.file(
+      join(tmpRoot, "sessions", store.getState().sessionId, "session.json"),
+    ).text();
+    expect(durableSession).toContain(expectedWarning);
+    expect(durableSession).not.toContain(privatePath);
+    expect(durableSession).not.toContain(secret);
+
+    const serializedLogs = JSON.stringify(entries);
+    expect(entries.some((entry) => entry.event === "prompt.compiled")).toBe(true);
+    expect(serializedLogs).toContain(expectedWarning);
+    expect(serializedLogs).not.toContain(privatePath);
+    expect(serializedLogs).not.toContain(secret);
+  });
+
+  test("reuses one Memory snapshot across multiple model builds in the same run", async () => {
+    let manifest = {
+      preferences: { content: "initial preferences", availableForPrompt: true },
+      index: { content: "initial index", availableForPrompt: true },
+    };
+    const readPromptManifest = mock(async () => manifest);
+    const resolver = await createPromptMemoryResolver(tmpRoot, readPromptManifest);
+    const toolRegistry = makeToolRegistry();
+    toolRegistry.register({
+      ...makeTool("mutate_memory_fixture"),
+      execute: () => {
+        manifest = {
+          preferences: { content: "changed preferences", availableForPrompt: true },
+          index: { content: "changed index", availableForPrompt: true },
+        };
+        return createTextToolResult("memory changed outside the active prompt snapshot");
+      },
+    });
+    const definition = {
+      ...leadAgentDefinition,
+      tools: {
+        ...leadAgentDefinition.tools,
+        tools: [...leadAgentDefinition.tools.tools, "mutate_memory_fixture"],
+      },
+    } satisfies AgentDefinition;
+    const stream = setupToolCallStreamText("mutate_memory_fixture");
+
+    await runAgent(createAgent({ definition, projectContextResolver: resolver, toolRegistry }), "build twice");
+
+    expect(stream).toHaveBeenCalledTimes(2);
+    for (const call of stream.mock.calls) {
+      const system = (call[0] as { system: string }).system;
+      expect(system).toContain("initial preferences");
+      expect(system).toContain("initial index");
+      expect(system).not.toContain("changed preferences");
+      expect(system).not.toContain("changed index");
+    }
+    expect(readPromptManifest).toHaveBeenCalledTimes(1);
   });
 
   test("Lead tool execution context uses Lead attribution at depth zero", async () => {

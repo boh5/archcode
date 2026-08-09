@@ -485,7 +485,7 @@ describe("ServerConfigService", () => {
     expect(contents).toEndWith("\n");
     expect(contents).toContain('\n  "profiles":');
     expect((await stat(service.configPath)).mode & 0o777).toBe(0o600);
-    expect(saved.modelRuntimeRevision).toBe(saved.revision);
+    expect(saved.modelRuntimeRevision).toBe(service.modelRuntime.current.revision);
     expect(saved.restartRequiredSections).toEqual([]);
   });
 
@@ -1384,6 +1384,7 @@ describe("ServerConfigService", () => {
   test("applies models live while reporting every mixed non-model restart section", async () => {
     const service = await createService();
     const snapshot = await service.getSnapshot();
+    const priorModelRuntimeRevision = snapshot.modelRuntimeRevision;
     const update = preserveSecrets(snapshot.config);
     update.provider.local.models["new-model"] = {
       name: "New model",
@@ -1391,13 +1392,35 @@ describe("ServerConfigService", () => {
       modalities: { input: ["text"], output: ["text"] },
     };
     update.mcp!.servers.custom.url = "https://changed.example.test";
-    update.memory = { enabled: false };
+    update.memory = { useMemory: false, autoLearning: false };
     update.integrations = { github: { enabled: false } };
 
     const saved = await service.save({ expectedRevision: snapshot.revision, config: update });
-    expect(saved.modelRuntimeRevision).toBe(saved.revision);
-    expect(service.modelRuntime.current.revision).toBe(saved.revision);
+    expect(saved.modelRuntimeRevision).not.toBe(priorModelRuntimeRevision);
+    expect(service.modelRuntime.current.revision).toBe(saved.modelRuntimeRevision);
     expect(service.modelRuntime.current.tryResolveSelection({ model: "local:new-model" })).toBeDefined();
-    expect(saved.restartRequiredSections).toEqual(["mcp", "memory", "integrations.github"]);
+    expect(service.memoryPolicyRuntime.current).toMatchObject({
+      policy: { useMemory: false, autoLearning: false },
+      epoch: { generation: 1 },
+    });
+    expect(saved.restartRequiredSections).toEqual(["mcp", "integrations.github"]);
+  });
+
+  test("publishes a memory-only save without replacing ModelRuntime", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const modelSnapshot = service.modelRuntime.current;
+    const update = preserveSecrets(snapshot.config);
+    update.memory = { useMemory: false, autoLearning: false };
+
+    const saved = await service.save({ expectedRevision: snapshot.revision, config: update });
+
+    expect(saved.modelRuntimeRevision).toBe(snapshot.modelRuntimeRevision);
+    expect(service.modelRuntime.current).toBe(modelSnapshot);
+    expect(service.memoryPolicyRuntime.current).toMatchObject({
+      policy: { useMemory: false, autoLearning: false },
+      epoch: { generation: 1 },
+    });
+    expect(saved.restartRequiredSections).toEqual([]);
   });
 });

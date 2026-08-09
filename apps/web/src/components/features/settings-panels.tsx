@@ -2,7 +2,7 @@ import type { ConfigSecretMutation, McpServerStatus, ProviderAdapterCatalog, Pro
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import type { ModelCallOptions, ServerConfig, ServerMcpConfig, ServerModelConfig } from "../../api/config";
 import { Field, JsonObjectField, NumberField, RenameInput, SecretField, SecretRecordEditor, TextInput } from "./settings-fields";
-import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow, missingProfileVariant, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
+import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, errorAtOrBelow, missingProfileVariant, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
 
 type JsonValidationChange = (path: string, error?: string) => void;
 
@@ -422,11 +422,6 @@ function McpEditor({ name, server, config, onChange, errors }: { name: string; s
 
 function draftHasProvider(config: ServerConfig, providerId: string): boolean {
   return config.provider[providerId] !== undefined;
-}
-
-export function SettingsMemoryPanel({ config, onChange, errors }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors }) {
-  const memory = { ...defaultMemoryConfig(), ...config.memory };
-  return <section className="space-y-5 pb-1"><PanelHeader title="Memory" description="Configure extraction thresholds for durable project memory." /><div className="space-y-4 rounded-md border border-border-default bg-bg-surface p-4"><SettingsToggle checked={memory?.enabled ?? true} onChange={(enabled) => onChange(withDraft(config, (draft) => { draft.memory = { ...(draft.memory ?? defaultMemoryConfig()), enabled }; }))} label="Memory extraction" description="Allow completed sessions to contribute durable memory." /><div className="grid gap-x-4 gap-y-4 border-t border-border-subtle pt-4 sm:grid-cols-2">{(["minMessages", "minContentLength", "cooldownMs"] as const).map((key) => <Field key={key} label={key} error={errors[`memory.${key}`]}><NumberField value={memory?.[key]} onChange={(next) => onChange(withDraft(config, (draft) => { draft.memory = { ...(draft.memory ?? defaultMemoryConfig()), [key]: next ?? 0 }; }))} /></Field>)}</div></div></section>;
 }
 
 export function SettingsGithubPanel({ config, onChange }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors }) {

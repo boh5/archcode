@@ -55,16 +55,18 @@ describe("runLlmObject", () => {
     expect(result).toEqual({ "[redacted]": "[redacted]" });
   });
 
-  test("returns parsed object and uses forced tool call", async () => {
+  test("returns parsed object and exposes the schema tool", async () => {
     const schema = z.strictObject({ name: z.string() });
     const result = await runLlmObject(makeInput({ schema, system: "You are a helper" }));
 
     expect(result).toEqual({ name: "Alice" });
-    expect(generateTextCalls()[0]![0]).toMatchObject({
+    const call = generateTextCalls()[0]![0]!;
+    expect(call).toMatchObject({
       system: "You are a helper",
-      toolChoice: { type: "tool", toolName: "result" },
+      tools: { result: expect.anything() },
       maxRetries: 0,
     });
+    expect(call).not.toHaveProperty("toolChoice");
   });
 
   test("reports normalized usage to internal maintenance callers", async () => {

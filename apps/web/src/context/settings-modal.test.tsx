@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import { SettingsModalProvider, useSettingsModal } from "./settings-modal";
+import { SettingsModalProvider, settingsProjectSlug, useSettingsModal } from "./settings-modal";
 
 let dom: JSDOM;
 let root: Root;
@@ -56,5 +56,12 @@ describe("SettingsModalProvider", () => {
     expect(container.querySelector('[data-testid="settings-state"]')?.textContent).toBe("true:models");
     click("Close");
     expect(container.querySelector('[data-testid="settings-state"]')?.textContent).toBe("false:models");
+  });
+
+  test("derives project scope only from the current project route", () => {
+    expect(settingsProjectSlug("/")).toBeUndefined();
+    expect(settingsProjectSlug("/projects/demo/todos")).toBe("demo");
+    expect(settingsProjectSlug("/projects/demo")).toBe("demo");
+    expect(settingsProjectSlug("/settings")).toBeUndefined();
   });
 });

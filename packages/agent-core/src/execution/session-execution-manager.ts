@@ -57,6 +57,7 @@ import type { Logger } from "../logger";
 import { nextSessionTimestamp, SessionInputConflictError, type ResolvedSessionInputSnapshot, type SessionInputService } from "../session-input/service";
 import { resolveDurableSessionModelOverride } from "../session-input/model-selection-service";
 import type { ExecutionModelBinding, ModelRuntime, ModelRuntimeSnapshot } from "../models";
+import type { MemoryPolicyRuntime, MemoryPolicySnapshot } from "../memory";
 import type { ModelSelectionResolver } from "../models/model-selection-resolver";
 import { sanitizeProviderError } from "../llm/provider-error-sanitizer";
 import {
@@ -100,6 +101,8 @@ export interface ActiveSessionExecution {
   readonly maxSteps: number;
   /** Full immutable binding used by every model call in this Execution. */
   readonly binding: ExecutionModelBinding;
+  /** Immutable Memory policy captured at the same claim boundary. */
+  readonly memoryPolicy: MemoryPolicySnapshot;
   /** Settles once input plus execution-start are durable, before model work. */
   readonly started: Promise<void>;
 }
@@ -265,6 +268,7 @@ const systemExecutionDeadlineScheduler: SessionExecutionDeadlineScheduler = {
 interface SessionExecutionManagerConfig {
   readonly sessionAgentManager: SessionAgentManager;
   readonly modelRuntime: ModelRuntime;
+  readonly memoryPolicyRuntime: MemoryPolicyRuntime;
   readonly modelSelectionResolver: ModelSelectionResolver;
   readonly createSessionStore: (
     sessionId: string,
@@ -483,6 +487,9 @@ export class SessionExecutionManager {
       throw new SessionInputConflictError("empty_queue", `Session ${sessionState.sessionId} has no queued input`);
     }
     const modelSnapshot = this.#config.modelRuntime.current;
+    const memoryPolicy = resumedRecord === undefined
+      ? this.#config.memoryPolicyRuntime.claim()
+      : resumedRecord.memoryPolicy;
     const profile = resolveSessionProfile(sessionState);
     const sessionOverride = resolveDurableSessionModelOverride(sessionState);
     const resolved = input.input.kind === "queue"
@@ -526,6 +533,7 @@ export class SessionExecutionManager {
       initialStep: nextExecutionStep(sessionState, resumedRecord?.id),
       maxSteps: resumedRecord?.maxSteps ?? input.maxSteps ?? DEFAULT_EXECUTION_MAX_STEPS,
       binding: resolved.binding,
+      memoryPolicy,
       initialUsage: { ...sessionState.stats.usage },
       ...(input.input.kind === "queue" ? { queueSnapshots: resolved.snapshots } : {}),
       ...(directRequestedModelSelection === undefined ? {} : { directRequestedModelSelection }),
@@ -2562,6 +2570,7 @@ export class SessionExecutionManager {
           type: "execution-start",
           executionId: execution.executionId,
           binding: execution.binding.summary,
+          memoryPolicy: execution.memoryPolicy,
           origin: execution.origin,
           maxSteps: execution.maxSteps,
           ...(input.activeTimeoutMs === undefined ? {} : { activeTimeoutMs: input.activeTimeoutMs }),
@@ -2653,6 +2662,7 @@ export class SessionExecutionManager {
           ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
           ...(input.toolProjection === undefined ? {} : { toolProjection: input.toolProjection }),
           consumeSteers: async () => await this.#consumeSteers(execution),
+          memoryPolicy: execution.memoryPolicy,
         });
         runEndedAt = Date.now();
         execution.newlyActivatedAgent = undefined;

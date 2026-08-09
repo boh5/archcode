@@ -145,7 +145,7 @@ describe("SettingsDialog interactions", () => {
       ["Models", "Providers and their model profiles"],
       ["Profiles", "Principal, deep, and fast model bindings"],
       ["MCP", "MCP servers"],
-      ["Memory", "Configure extraction thresholds"],
+      ["Memory", "Control prompt recall and background learning"],
       ["GitHub", "Optional GitHub integration settings"],
     ];
 
@@ -316,13 +316,13 @@ describe("SettingsDialog interactions", () => {
 
   test("reports live-applied Models separately from named restart sections", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json({
-      ...successfulSaveResponse(["mcp", "memory"]),
+      ...successfulSaveResponse(["mcp"]),
     })) });
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Add provider");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
     expect(container.textContent).toContain("Model and Profile changes applied live");
-    expect(container.textContent).toContain("Restart required for: MCP, Memory");
+    expect(container.textContent).toContain("Restart required for: MCP");
   });
 
   test("clears a prior live-applied notice before a failed follow-up save", async () => {
@@ -365,17 +365,16 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).not.toContain("Configuration saved. Retry Runtime to use the saved configuration.");
   });
 
-  test("names restart-only sections without claiming a model live-apply", async () => {
+  test("saves Memory switches without exposing obsolete extraction thresholds", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json(
-      successfulSaveResponse(["memory"]),
+      successfulSaveResponse([]),
     )) });
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Memory");
-    const enabled = container.querySelector('input[aria-label="Memory extraction"]') as HTMLInputElement;
+    const enabled = container.querySelector('input[aria-label="Use Memory"]') as HTMLInputElement;
     act(() => enabled.click());
     await act(async () => { click("Save changes"); await Promise.resolve(); });
-    expect(container.textContent).toContain("Restart required for: Memory");
-    expect(container.textContent).not.toContain("applied live");
+    expect(container.textContent).not.toContain("Restart required for: Memory");
   });
 
   test("submits explicit delete mutations for configured API and header secrets", async () => {
@@ -831,7 +830,7 @@ describe("SettingsDialog interactions", () => {
       ["Profiles", "Principal, deep, and fast model bindings"],
       ["Security", "Manage the one password"],
       ["MCP", "MCP servers"],
-      ["Memory", "Configure extraction thresholds"],
+      ["Memory", "Control prompt recall and background learning"],
       ["GitHub", "Optional GitHub integration settings"],
     ];
     for (const [label, expected] of destinations) {

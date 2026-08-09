@@ -5,6 +5,7 @@ import { createEmptySessionStats } from "@archcode/protocol";
 import { silentLogger } from "../logger";
 import { InvalidExecutionTransitionError } from "./types";
 import { SessionStoreManager } from "./session-store-manager";
+import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "logical-execution", crypto.randomUUID());
 const binding = {
@@ -37,6 +38,7 @@ describe("Session Store logical Execution hard cut", () => {
       origin: "user_message" as const,
       maxSteps: 50,
       binding,
+      memoryPolicy: testExecutionMemoryPolicy,
     };
 
     store.getState().append(start);
@@ -60,6 +62,7 @@ describe("Session Store logical Execution hard cut", () => {
       origin: "user_message",
       maxSteps: 50,
       binding,
+      memoryPolicy: testExecutionMemoryPolicy,
     });
     store.getState().append({ type: "step-start", stepId: "step-0", step: 0 });
     store.getState().append({
@@ -145,6 +148,7 @@ describe("Session Store logical Execution hard cut", () => {
       origin: "user_message",
       maxSteps: 50,
       binding,
+      memoryPolicy: testExecutionMemoryPolicy,
     });
     const run = store.getState().executions[0]!.runs[0]!;
     const runEndedAt = Math.max(Date.now(), run.startedAt);

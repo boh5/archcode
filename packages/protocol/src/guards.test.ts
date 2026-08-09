@@ -39,6 +39,10 @@ const binding = {
   resolution: "profile_default" as const,
   modelRuntimeRevision: "runtime-1",
 };
+const memoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 const refMap = {
   messageRefsById: { message: "m0001" as const },
   messageIdsByRef: { m0001: "message" },
@@ -128,7 +132,7 @@ const finalizedResult = {
 };
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
-  { type: "execution-start", executionId: "execution-1", binding, origin: "user_message", maxSteps: 50 },
+  { type: "execution-start", executionId: "execution-1", binding, memoryPolicy, origin: "user_message", maxSteps: 50 },
   {
     type: "execution-suspended",
     executionId: "execution-1",
@@ -355,6 +359,13 @@ describe("protocol event guards", () => {
 
   test("rejects malformed Session event payloads without throwing", () => {
     expect(validPayloads.filter((event) => !isSessionEventPayload(event)).map((event) => event.type)).toEqual([]);
+    expect(isSessionEventPayload({
+      type: "execution-start",
+      executionId: "execution-without-policy",
+      binding,
+      origin: "user_message",
+      maxSteps: 50,
+    })).toBe(false);
     expect(validPayloads.every(isSessionEventPayload)).toBe(true);
     const goalReminderEvent = validPayloads.find((event) =>
       event.type === "reminder" && event.reminder.source.type === "session_goal_changed"

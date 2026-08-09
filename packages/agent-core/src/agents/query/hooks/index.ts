@@ -1,8 +1,6 @@
 export { createAutoInjectReminderHook } from "./auto-inject-reminder";
 export { createTitleGenerationHook } from "./title-generation";
 export { createTodoContinuationHook } from "./todo-continuation";
-export { createMemoryExtractionHook } from "./memory-extraction";
-export { createMemoryConsolidationHook } from "./memory-consolidation";
 export { createAutoCompactHook, type AutoCompactHookResult } from "./auto-compact";
 export { createHybridCompressionHook, type HybridCompressionHookResult } from "./hybrid-compression";
 export type { BeforeModelCallContext, AfterStepEndContext, AfterLoopEndContext } from "../loop-hooks";
