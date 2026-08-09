@@ -12,6 +12,10 @@ const BINDING = {
   resolution: "profile_default" as const,
   modelRuntimeRevision: "runtime-1",
 };
+const MEMORY_POLICY = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 
 function projection(): SessionProjection {
   return {
@@ -53,6 +57,7 @@ function start(executionId = "execution"): StreamEvent {
     origin: "user_message",
     maxSteps: 10,
     binding: BINDING,
+    memoryPolicy: MEMORY_POLICY,
   };
 }
 

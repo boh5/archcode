@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/types";
 import type { ExecutionModelBinding } from "../models";
 import type { QueryLoopResult } from "./query";
+import type { MemoryPolicySnapshot } from "../memory";
 
 export interface AgentCommand {
   readonly name: string;
@@ -26,6 +27,8 @@ export interface AgentRunOptions {
   toolProjection?: readonly string[];
   /** Commits any steering messages to the canonical transcript before a model build. */
   consumeSteers?: () => Promise<void>;
+  /** Immutable Memory policy captured with the owning logical Execution. */
+  memoryPolicy: MemoryPolicySnapshot;
 }
 
 export interface Agent {

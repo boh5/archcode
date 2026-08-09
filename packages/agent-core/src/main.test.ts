@@ -909,8 +909,8 @@ describe("createRuntime", () => {
     });
 
     expect(saved.restartRequiredSections).toEqual([]);
-    expect(saved.modelRuntimeRevision).toBe(saved.revision);
-    expect(runtime.modelRuntime.current.revision).toBe(saved.revision);
+    expect(saved.modelRuntimeRevision).toBe(runtime.modelRuntime.current.revision);
+    expect(saved.modelRuntimeRevision).not.toBe(snapshot.modelRuntimeRevision);
     expect(runtime.modelRuntime.current.tryResolveSelection({ model: "local:new-model" }))
       .toBeDefined();
   });

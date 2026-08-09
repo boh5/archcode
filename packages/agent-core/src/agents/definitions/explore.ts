@@ -49,8 +49,6 @@ export const exploreAgentDefinition = {
     autoInjectReminder: true,
     todoStepReminder: true,
     todoQueryLoopContinuation: true,
-    memoryExtraction: false,
-    memoryConsolidation: false,
     titleGeneration: "unless-supplied",
   },
   includeMemoryInPrompt: false,

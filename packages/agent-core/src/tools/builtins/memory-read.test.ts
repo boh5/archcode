@@ -3,15 +3,15 @@ import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryReadTool } from "./memory-read";
-import { MemoryFileManager } from "../../memory";
+import { MemoryFileManager, MemoryPathError } from "../../memory";
+import { MemoryService } from "../../memory/service";
 import { storeManager } from "../../store/store";
 import type { ProjectContext } from "../../projects/types";
 import {
-  DEFAULT_MAX_INDEX_LINES,
   DEFAULT_MAX_PREFERENCES_BYTES,
   INDEX_FILE,
-  INDEX_TRUNCATION_SUFFIX,
   KNOWLEDGE_DIR_NAME,
+  MAX_MEMORY_TOPICS,
   MEMORY_CONTEXT_END,
   MEMORY_CONTEXT_START,
   PREFERENCES_FILE,
@@ -36,6 +36,7 @@ const userDir = join(testDir, "user");
 const knowledgeDir = join(projectDir, KNOWLEDGE_DIR_NAME);
 
 let fileManager: MemoryFileManager;
+let memoryService: MemoryService;
 let memoryReadTool: ReturnType<typeof createMemoryReadTool>;
 const testSkillService = new SkillService({ builtinSkills: {} });
 
@@ -44,6 +45,7 @@ beforeAll(async () => {
   await mkdir(userDir, { recursive: true });
   await mkdir(knowledgeDir, { recursive: true });
   fileManager = new MemoryFileManager({ project: projectDir, user: userDir });
+  memoryService = new MemoryService(fileManager);
   memoryReadTool = createMemoryReadTool();
 });
 
@@ -80,7 +82,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   const projectContext: ProjectContext = overrides.projectContext ?? {
     ...createTestProjectContext(workspaceRoot),
     project: { slug: "memory-read", name: "Memory Read", workspaceRoot, addedAt: new Date().toISOString() },
-    memory: fileManager,
+    memory: memoryService,
   };
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "memory_read",
   toolCallId: "call-1",
@@ -137,25 +139,40 @@ describe("createMemoryReadTool", () => {
       expect(result).toBe(`${MEMORY_CONTEXT_START}\n\n${MEMORY_CONTEXT_END}`);
     });
 
-    test("truncates index when exceeding max lines", async () => {
-      const manyLines = createIndexEntries(DEFAULT_MAX_INDEX_LINES + 10);
+    test("does not read or parse topic documents", async () => {
+      await Bun.write(join(projectDir, INDEX_FILE), "- [Opaque](opaque) — Indexed metadata\n");
+      await Bun.write(
+        join(knowledgeDir, "opaque.md"),
+        "This body is deliberately not a valid topic document.",
+      );
+
+      const result = expectTextDraft(await memoryReadTool.execute({}, makeCtx()));
+
+      expect(result).toContain("- [Opaque](opaque) — Indexed metadata");
+      expect(result).not.toContain("deliberately not a valid topic document");
+    });
+
+    test("omits the complete index when the project exceeds the topic limit", async () => {
+      const manyLines = createIndexEntries(MAX_MEMORY_TOPICS + 1);
       await Bun.write(join(projectDir, INDEX_FILE), manyLines);
+      await Promise.all(Array.from({ length: MAX_MEMORY_TOPICS + 1 }, (_, index) => (
+        Bun.write(
+          join(knowledgeDir, `topic_${index}.md`),
+          `---\nname: Topic ${index}\ndescription: Summary ${index}\ntype: project\n---\nBody`,
+        )
+      )));
 
       const result = expectTextDraft(await memoryReadTool.execute(
         {},
         makeCtx(),
       ));
 
-      const indexSection = result.slice(
-        result.indexOf("## Memory Index"),
-        result.indexOf(MEMORY_CONTEXT_END),
-      );
-      const lineCount = indexSection.split("\n").filter((l) => l.startsWith("- [")).length;
-      expect(lineCount).toBe(DEFAULT_MAX_INDEX_LINES);
-      expect(result).toContain(INDEX_TRUNCATION_SUFFIX.trim());
+      expect(result).not.toContain("## Memory Index");
+      expect(result).not.toContain("- [Topic 0]");
+      expect(result).toContain("Project Memory index is over capacity and omitted");
     });
 
-    test("truncates preferences when exceeding max bytes", async () => {
+    test("omits over-capacity preferences instead of truncating them", async () => {
       const largePref = "x".repeat(DEFAULT_MAX_PREFERENCES_BYTES + 1000);
       await Bun.write(join(userDir, PREFERENCES_FILE), largePref);
 
@@ -164,16 +181,9 @@ describe("createMemoryReadTool", () => {
         makeCtx(),
       ));
 
-      const prefsIndex = result.indexOf(PREFERENCES_MARKER_START);
-      const prefsEnd = result.indexOf(PREFERENCES_MARKER_END);
-      const prefsContent = result.slice(
-        prefsIndex + PREFERENCES_MARKER_START.length,
-        prefsEnd,
-      ).trim();
-
-      expect(new TextEncoder().encode(prefsContent).length).toBeLessThanOrEqual(
-        DEFAULT_MAX_PREFERENCES_BYTES,
-      );
+      expect(result).not.toContain(PREFERENCES_MARKER_START);
+      expect(result).not.toContain("x".repeat(100));
+      expect(result).toContain("Personal Memory is over capacity and omitted");
     });
   });
 
@@ -289,6 +299,38 @@ React hooks are powerful.`;
 
       expect(result.isError).toBe(true);
       expect(expectTextDraft(result)).toContain("Invalid memory name");
+    });
+
+    test("redacts path and secret sentinels from Memory path and filesystem failures", async () => {
+      const secret = "sk_test_memory_read_secret_1234567890";
+      const privatePath = `/private/sensitive/${secret}/topic.md`;
+      const readTopic = memoryService.readTopic.bind(memoryService);
+      const readPromptManifest = memoryService.readPromptManifest.bind(memoryService);
+
+      try {
+        memoryService.readTopic = async () => {
+          throw new MemoryPathError(privatePath, `escaped root with ${secret}`);
+        };
+        const pathResult = await memoryReadTool.execute({ name: "safe_topic" }, makeCtx());
+        expect(pathResult.isError).toBe(true);
+        expect(pathResult.details?.error?.code).toBe("TOOL_FILE_OUTSIDE_WORKSPACE");
+        expect(expectTextDraft(pathResult)).toContain("Memory path is outside the configured Memory roots");
+        expect(JSON.stringify(pathResult)).not.toContain(privatePath);
+        expect(JSON.stringify(pathResult)).not.toContain(secret);
+
+        memoryService.readPromptManifest = async () => {
+          throw new Error(`EACCES ${privatePath} ${secret}`);
+        };
+        const ioResult = await memoryReadTool.execute({}, makeCtx());
+        expect(ioResult.isError).toBe(true);
+        expect(ioResult.details?.error?.code).toBe("TOOL_MEMORY_READ_FAILED");
+        expect(expectTextDraft(ioResult)).toContain("Memory could not be read");
+        expect(JSON.stringify(ioResult)).not.toContain(privatePath);
+        expect(JSON.stringify(ioResult)).not.toContain(secret);
+      } finally {
+        memoryService.readTopic = readTopic;
+        memoryService.readPromptManifest = readPromptManifest;
+      }
     });
   });
 

@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod/v4";
 import type { Automation, AutomationAction, AutomationTrigger } from "@archcode/protocol";
 import type { ProjectHitlQueue } from "../hitl";
-import type { MemoryFileManager } from "../memory/file-manager";
+import type { MemoryService } from "../memory/service";
 import type { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectTodoService } from "../todos";
 
@@ -30,7 +30,7 @@ export interface ProjectContext {
   }): Promise<Automation>;
   todos: ProjectTodoService;
   hitl: ProjectHitlQueue;
-  memory: MemoryFileManager;
+  memory: MemoryService;
   approvals: ProjectApprovalManager;
 }
 

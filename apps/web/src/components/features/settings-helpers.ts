@@ -75,5 +75,5 @@ export function errorAtOrBelow(errors: FieldErrors, path: string): string | unde
 }
 
 export function defaultMemoryConfig() {
-  return { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300_000 };
+  return { useMemory: true, autoLearning: true };
 }

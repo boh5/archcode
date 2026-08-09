@@ -53,6 +53,7 @@ import type { AgentDefinition } from "../agents/factory-types";
 import { createEmptyCompressionState } from "../compression";
 import { SessionInputConflictError, SessionInputService } from "../session-input/service";
 import { EMPTY_SESSION_ATTACHMENT_RESOLVER } from "../session-input/test-helpers";
+import { MemoryPolicyRuntime } from "../memory";
 import type { ArchCodeConfig, ModelConfig } from "../config";
 import type { ExecutionModelBinding } from "../models";
 import { ModelRuntime, ModelRuntimeSnapshot, ModelSelectionResolver } from "../models";
@@ -316,6 +317,7 @@ interface FakeManagerOptions {
   sessionFamilyStopTimeoutMs?: number;
   deadlineScheduler?: TestDeadlineScheduler;
   modelRuntime?: ModelRuntime;
+  memoryPolicyRuntime?: MemoryPolicyRuntime;
   applyChildDependencyOutcome?: ConstructorParameters<typeof SessionExecutionManager>[0]["applyChildDependencyOutcome"];
   resolveGoalInstanceId?: ConstructorParameters<typeof SessionExecutionManager>[0]["resolveGoalInstanceId"];
   onExecutionSettlement?: ConstructorParameters<typeof SessionExecutionManager>[0]["onExecutionSettlement"];
@@ -480,7 +482,7 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
   const parentDefinition: AgentDefinition = {
     ...leadAgentDefinition,
     tools: { tools: ["delegate"], delegateTargets: ["explore"] },
-    hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
+    hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, titleGeneration: "disabled" },
     childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
     includeMemoryInPrompt: false,
     skills: [],
@@ -636,6 +638,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
   const rawManager = new SessionExecutionManager({
     sessionAgentManager,
     modelRuntime,
+    memoryPolicyRuntime: options.memoryPolicyRuntime ?? new MemoryPolicyRuntime(),
     modelSelectionResolver: new ModelSelectionResolver(),
     ...storeCallbacks(executionStoreManager),
     ...(options.resolveSessionDepth === undefined ? {} : { resolveSessionDepth: options.resolveSessionDepth }),
@@ -2082,8 +2085,6 @@ describe("SessionExecutionManager", () => {
         autoCompact: false,
         autoInjectReminder: true,
         todoStepReminder: false,
-        memoryExtraction: false,
-        memoryConsolidation: false,
         titleGeneration: "disabled" as const,
       },
     };
@@ -2250,11 +2251,18 @@ describe("SessionExecutionManager", () => {
     expect(durable).toContain("[REDACTED_PROVIDER_SECRET]");
   });
 
-  test("HITL suspends and resumes the same logical Execution with a fresh run binding", async () => {
+  test("HITL resume keeps its durable Memory policy while a new Execution claims the current policy", async () => {
     const sessionId = crypto.randomUUID();
+    const nextSessionId = crypto.randomUUID();
     const store = storeManager.create(sessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const nextStore = storeManager.create(nextSessionId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const modelRuntime = makeModelRuntime(true, "test:model", "runtime-before-hitl");
     const bindings: ExecutionModelBinding[] = [];
+    const memoryPolicies: AgentRunOptions["memoryPolicy"][] = [];
+    const memoryPolicyRuntime = new MemoryPolicyRuntime(
+      { useMemory: true, autoLearning: true },
+      "memory-boot",
+    );
     let invocation = 0;
     const agent = {
       store,
@@ -2263,6 +2271,7 @@ describe("SessionExecutionManager", () => {
       executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
       run: mock(async (binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> => {
         bindings.push(binding);
+        memoryPolicies.push(options!.memoryPolicy);
         invocation += 1;
         if (invocation === 1) {
           const batch = {
@@ -2285,12 +2294,32 @@ describe("SessionExecutionManager", () => {
       }),
       dispose: mock(() => undefined),
     } as Agent;
-    const { manager } = createManager({ [sessionId]: agent as MockAgent }, { modelRuntime });
+    const nextAgent = {
+      store: nextStore,
+      cwd: workspaceRoot,
+      classifyCommand: mock((_input: string) => null),
+      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+      run: mock(async (binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> => {
+        bindings.push(binding);
+        memoryPolicies.push(options!.memoryPolicy);
+        return { outcome: "terminal", text: "next", steps: 1, status: "completed" };
+      }),
+      dispose: mock(() => undefined),
+    } as Agent;
+    const { manager } = createManager(
+      { [sessionId]: agent as MockAgent, [nextSessionId]: nextAgent as MockAgent },
+      { modelRuntime, memoryPolicyRuntime },
+    );
 
     const waiting = await manager.startCheckedExecution({
       slug: "project", workspaceRoot, sessionId, input: { kind: "direct", text: "ask" },
     });
     await waiting.promise;
+    expect(store.getState().executions[0]?.memoryPolicy).toEqual({
+      policy: { useMemory: true, autoLearning: true },
+      epoch: { bootId: "memory-boot", generation: 0 },
+    });
+    await memoryPolicyRuntime.publish({ useMemory: false, autoLearning: false });
     modelRuntime.publish(makeModelRuntime(true, "test:other", "runtime-after-hitl").current);
     store.setState((state) => ({
       toolBatches: state.toolBatches.map((batch) => ({
@@ -2303,9 +2332,17 @@ describe("SessionExecutionManager", () => {
     });
     await resumed!.promise;
 
+    const next = await manager.startCheckedExecution({
+      slug: "project", workspaceRoot, sessionId: nextSessionId, input: { kind: "direct", text: "next" },
+    });
+    await next.promise;
+
     expect(waiting.executionId).toBe(resumed!.executionId);
     expect(store.getState().executions.map(({ id, status }) => ({ id, status }))).toEqual([
       { id: waiting.executionId, status: "completed" },
+    ]);
+    expect(nextStore.getState().executions.map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: next.executionId, status: "completed" },
     ]);
     expect(bindings.map((binding) => binding.summary)).toEqual([
       expect.objectContaining({
@@ -2316,6 +2353,15 @@ describe("SessionExecutionManager", () => {
         selection: { model: "test:other" },
         modelRuntimeRevision: "runtime-after-hitl",
       }),
+      expect.objectContaining({
+        selection: { model: "test:other" },
+        modelRuntimeRevision: "runtime-after-hitl",
+      }),
+    ]);
+    expect(memoryPolicies).toEqual([
+      expect.objectContaining({ policy: { useMemory: true, autoLearning: true } }),
+      expect.objectContaining({ policy: { useMemory: true, autoLearning: true } }),
+      expect.objectContaining({ policy: { useMemory: false, autoLearning: false } }),
     ]);
   });
 
@@ -3021,6 +3067,7 @@ describe("SessionExecutionManager", () => {
         getOrCreate: mock(async () => await new Promise<Agent>(() => undefined)),
       } as unknown as SessionAgentManager,
       modelRuntime: makeModelRuntime(),
+      memoryPolicyRuntime: new MemoryPolicyRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
       listSessionFamilyToolBatchHitlIds: async () => [],
@@ -3081,6 +3128,7 @@ describe("SessionExecutionManager", () => {
     const managerB = new SessionExecutionManager({
       sessionAgentManager,
       modelRuntime: makeModelRuntime(),
+      memoryPolicyRuntime: new MemoryPolicyRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...storeCallbacks(storeManager),
       listSessionFamilyToolBatchHitlIds: async () => [],
@@ -5373,6 +5421,7 @@ describe("SessionExecutionManager", () => {
     const manager = new SessionExecutionManager({
       sessionAgentManager: createFakeManager({}, { factory: makeFactory() }),
       modelRuntime: makeModelRuntime(),
+      memoryPolicyRuntime: new MemoryPolicyRuntime(),
       modelSelectionResolver: new ModelSelectionResolver(),
       ...callbacks,
       cancelSessionToolBatch: async () => undefined,

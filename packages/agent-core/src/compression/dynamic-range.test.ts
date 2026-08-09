@@ -123,8 +123,6 @@ function baseState(messages: StoredMessage[]): SessionStoreState {
     todoLoopContinuationCount: 0,
     todoContinuationStagnationCount: 0,
     lastTodoContinuationPendingCount: null,
-    lastExtractionIndex: 0,
-    lastExtractionTime: 0,
     readSnapshots: new Map(),
     events: [],
     eventOffset: 0,

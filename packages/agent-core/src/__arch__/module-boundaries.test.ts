@@ -332,8 +332,6 @@ function findAgentRunOwnershipViolations(): Violation[] {
     [normalize(join("tool-output", "ripgrep-search-runner.ts")), new Set(["this.processRunner"])],
     [normalize(join("version-control", "detector.ts")), new Set(["processRunner"])],
     [normalize(join("agents", "query", "hooks", "title-generation.ts")), new Set(["task"])],
-    [normalize(join("agents", "query", "hooks", "memory-extraction.ts")), new Set(["task"])],
-    [normalize(join("agents", "query", "hooks", "memory-consolidation.ts")), new Set(["task"])],
   ]);
   const violations: Violation[] = [];
   for (const file of findTsFiles(srcRoot)) {

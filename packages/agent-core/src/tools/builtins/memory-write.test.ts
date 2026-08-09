@@ -2,12 +2,21 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { FinalizedToolResult } from "@archcode/protocol";
 import { MemoryFileManager } from "../../memory/file-manager";
+import { MemoryPathError } from "../../memory";
+import { MemoryPolicyRuntime } from "../../memory/policy-runtime";
+import { MemoryService } from "../../memory/service";
+import { MAX_MEMORY_TOPIC_BYTES } from "../../memory/constants";
 import type { ProjectContext } from "../../projects/types";
 import { SkillService } from "../../skills";
 import { storeManager } from "../../store/store";
+import { createMemoryReadTool } from "./memory-read";
 import { createMemoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 import { createMockStore } from "../../store/test-helpers";
+import { toModelMessagesFromStoredMessages } from "../../store/projection";
+import type { StoredMessage } from "../../store/types";
+import { createTestToolRegistryFixture } from "../test-registry";
 import { expectTextDraft } from "../test-results";
 import { createToolExecutionContext, type RawToolResult, type ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
@@ -26,7 +35,7 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
   const projectContext: ProjectContext = {
     ...createTestProjectContext(TMP_DIR),
     project: { slug: "memory-write", name: "Memory Write", workspaceRoot: TMP_DIR, addedAt: new Date().toISOString() },
-    memory: fileManager,
+    memory: new MemoryService(fileManager),
   };
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "memory_write" as const,
   toolCallId,
@@ -47,6 +56,33 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
 function parseErrorResult(result: RawToolResult): RawToolResult {
   if (!result.isError) throw new Error(`Expected error result, got success: ${expectTextDraft(result)}`);
   return result;
+}
+
+function projectToolFailureForModel(result: FinalizedToolResult, toolCallId: string) {
+  const now = Date.now();
+  const message: StoredMessage = {
+    id: `message-${toolCallId}`,
+    role: "assistant",
+    executionId: "test-execution",
+    runOrdinal: 0,
+    stepId: "test-step",
+    outputPhase: "commentary",
+    createdAt: now,
+    completedAt: now,
+    parts: [{
+      type: "tool",
+      id: `part-${toolCallId}`,
+      state: "error",
+      toolCallId,
+      toolName: "memory_write",
+      input: { name: "safe_topic", content: "safe content", scope: "project" },
+      result,
+      createdAt: now,
+      startedAt: now,
+      endedAt: now,
+    }],
+  };
+  return toModelMessagesFromStoredMessages([message]);
 }
 
 describe("MemoryWriteInputSchema", () => {
@@ -192,6 +228,51 @@ describe("memory_write tool", () => {
     expect(index!).toContain("test_topic");
   });
 
+  it("makes an explicit write immediately visible to memory_read and the MemoryService when auto learning is disabled", async () => {
+    const policyRuntime = new MemoryPolicyRuntime(
+      { useMemory: true, autoLearning: false },
+      "memory-write-test",
+    );
+    expect(policyRuntime.current.policy.autoLearning).toBe(false);
+
+    const context = makeCtx(fileManager, "call-ac-01");
+    const writeResult = await createMemoryWriteTool().execute(
+      {
+        name: "ac_01_topic",
+        description: "AC-01 visibility",
+        type: "project",
+        content: "Explicit memory is durable before the tool returns.",
+        scope: "project",
+      },
+      context,
+    );
+    expect(writeResult.isError).toBe(false);
+
+    const readContext = { ...context, toolName: "memory_read" };
+    const readTool = createMemoryReadTool();
+    const readTopicResult = await readTool.execute(
+      { name: "ac_01_topic" },
+      readContext,
+    );
+    const readIndexResult = await readTool.execute(
+      { name: "index" },
+      readContext,
+    );
+    expect(expectTextDraft(readTopicResult)).toContain("Explicit memory is durable before the tool returns.");
+    expect(expectTextDraft(readIndexResult)).toContain("ac_01_topic");
+
+    const snapshot = await context.projectContext.memory.snapshot();
+    const topic = await context.projectContext.memory.readTopic("ac_01_topic");
+    expect(snapshot.index.topicCount.count).toBe(1);
+    expect(snapshot.index.revision).not.toBeNull();
+    expect(topic).toMatchObject({
+      title: "ac_01_topic",
+      description: "AC-01 visibility",
+      type: "project",
+      content: "Explicit memory is durable before the tool returns.",
+    });
+  });
+
   it("rejects writing to index name", async () => {
     const tool = createMemoryWriteTool();
     const result = parseErrorResult(
@@ -247,6 +328,41 @@ describe("memory_write tool", () => {
 
     expect(result.isError).toBe(true);
     expect(expectTextDraft(result)).toContain("secret");
+  });
+
+  it("keeps an existing topic and index byte-for-byte unchanged when a secret write fails", async () => {
+    const tool = createMemoryWriteTool();
+    const context = makeCtx(fileManager, "call-secret-unchanged");
+
+    await tool.execute(
+      {
+        name: "stable_topic",
+        description: "Stable topic",
+        type: "project",
+        content: "Original content",
+        scope: "project",
+      },
+      context,
+    );
+    const topicBefore = await fileManager.readTopicDocument("stable_topic");
+    const indexBefore = await fileManager.readIndex();
+
+    const result = parseErrorResult(
+      await tool.execute(
+        {
+          name: "stable_topic",
+          description: "Should not replace",
+          type: "project",
+          content: "api_key=sk_test_1234567890abcdef1234567890abcd",
+          scope: "project",
+        },
+        context,
+      ),
+    );
+
+    expect(result.details?.error?.code).toBe("TOOL_MEMORY_SECRET_DETECTED");
+    expect(await fileManager.readTopicDocument("stable_topic")).toBe(topicBefore);
+    expect(await fileManager.readIndex()).toBe(indexBefore);
   });
 
   it("updates existing file on duplicate name (idempotent)", async () => {
@@ -410,5 +526,128 @@ describe("memory_write tool", () => {
     expect(expectTextDraft(result)).toContain("Only");
     expect(expectTextDraft(result)).toContain("preferences");
     expect(expectTextDraft(result)).toContain("user level");
+  });
+
+  it("sanitizes Memory path and storage failures in raw, finalized, and model-visible results", async () => {
+    const secret = "sk_test_memory_write_secret_1234567890";
+    const privatePath = `/private/sensitive/${secret}/topic.md`;
+    const scenarios = [
+      {
+        name: "path",
+        failure: new MemoryPathError(privatePath, `escaped root with ${secret}`),
+        kind: "workspace",
+        code: "TOOL_FILE_OUTSIDE_WORKSPACE",
+        message: "Memory path is outside the configured Memory roots",
+      },
+      {
+        name: "storage",
+        failure: new Error(`EACCES: permission denied, open '${privatePath}'`, {
+          cause: new Error(`underlying storage failure ${secret}`),
+        }),
+        kind: "execution",
+        code: "TOOL_MEMORY_WRITE_FAILED",
+        message: "Memory could not be written",
+      },
+    ] as const;
+    const finalizerFixture = createTestToolRegistryFixture();
+
+    try {
+      for (const scenario of scenarios) {
+        const toolCallId = `call-sanitized-${scenario.name}`;
+        const context = makeCtx(fileManager, toolCallId);
+        context.projectContext.memory.writeExplicit = async () => {
+          throw scenario.failure;
+        };
+        const tool = createMemoryWriteTool();
+        const raw = parseErrorResult(await tool.execute(
+          {
+            name: "safe_topic",
+            description: "Safe topic",
+            type: "project",
+            content: "safe content",
+            scope: "project",
+          },
+          context,
+        ));
+        expect(raw.details?.error).toMatchObject({
+          kind: scenario.kind,
+          code: scenario.code,
+        });
+        expect(expectTextDraft(raw)).toContain(scenario.message);
+
+        const finalized = await finalizerFixture.finalizer.finalize({
+          descriptor: tool,
+          raw,
+          context,
+          capture: undefined,
+          attempted: true,
+        });
+        expect(finalized.details?.error).toMatchObject({
+          kind: scenario.kind,
+          code: scenario.code,
+        });
+        expect(finalized.output.preview).toContain(scenario.message);
+
+        const modelVisible = projectToolFailureForModel(finalized, toolCallId);
+        for (const surface of [raw, finalized, modelVisible]) {
+          const serialized = JSON.stringify(surface);
+          expect(serialized).toContain(scenario.code);
+          expect(serialized).not.toContain(privatePath);
+          expect(serialized).not.toContain(secret);
+        }
+      }
+    } finally {
+      await finalizerFixture.dispose();
+    }
+  });
+
+  it("rejects an explicit write that would exceed the unified capacity", async () => {
+    const tool = createMemoryWriteTool();
+    const result = parseErrorResult(await tool.execute(
+      {
+        name: "preferences",
+        content: Array.from({ length: 5_000 }, () => "a").join(" "),
+        scope: "user",
+      },
+      makeCtx(fileManager, "call-capacity"),
+    ));
+
+    expect(result.details?.error?.code).toBe("TOOL_MEMORY_CAPACITY_EXCEEDED");
+    expect(await fileManager.readPreferences()).toBeNull();
+  });
+
+  it("keeps an existing topic and index byte-for-byte unchanged when topic capacity is exceeded", async () => {
+    const tool = createMemoryWriteTool();
+    const context = makeCtx(fileManager, "call-topic-capacity-unchanged");
+
+    await tool.execute(
+      {
+        name: "stable_topic",
+        description: "Stable topic",
+        type: "project",
+        content: "Original content",
+        scope: "project",
+      },
+      context,
+    );
+    const topicBefore = await fileManager.readTopicDocument("stable_topic");
+    const indexBefore = await fileManager.readIndex();
+
+    const result = parseErrorResult(
+      await tool.execute(
+        {
+          name: "stable_topic",
+          description: "Should not replace",
+          type: "project",
+          content: Array.from({ length: MAX_MEMORY_TOPIC_BYTES }, () => "x").join(" "),
+          scope: "project",
+        },
+        context,
+      ),
+    );
+
+    expect(result.details?.error?.code).toBe("TOOL_MEMORY_CAPACITY_EXCEEDED");
+    expect(await fileManager.readTopicDocument("stable_topic")).toBe(topicBefore);
+    expect(await fileManager.readIndex()).toBe(indexBefore);
   });
 });

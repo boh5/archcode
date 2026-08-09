@@ -19,6 +19,10 @@ const binding = {
   modelRuntimeRevision: "runtime-1",
 };
 const usage = createEmptySessionStats().usage;
+const memoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 
 function projection(): SessionProjection {
   return {
@@ -63,6 +67,7 @@ function start(): Extract<ExecutionLifecycleEvent, { type: "execution-start" }> 
     origin: "user_message",
     maxSteps: 50,
     binding,
+    memoryPolicy,
   };
 }
 
@@ -121,6 +126,7 @@ describe("logical Execution lifecycle", () => {
       origin: "user_message",
       maxSteps: 50,
       binding,
+      memoryPolicy,
     }, 0);
     state = apply(state, {
       type: "execution-suspended",
@@ -193,6 +199,7 @@ describe("logical Execution lifecycle", () => {
       origin: "user_message",
       maxSteps: 50,
       binding,
+      memoryPolicy,
     }, 0);
     state = apply(state, {
       type: "step-start",

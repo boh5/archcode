@@ -45,9 +45,13 @@ const TEST_BINDING = {
   resolution: "profile_default" as const,
   modelRuntimeRevision: "runtime-1",
 };
+const TEST_MEMORY_POLICY = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 
 function executionStart(executionId: string): StreamEvent {
-  return { type: "execution-start", executionId, binding: TEST_BINDING, origin: "user_message", maxSteps: 50 };
+  return { type: "execution-start", executionId, binding: TEST_BINDING, memoryPolicy: TEST_MEMORY_POLICY, origin: "user_message", maxSteps: 50 };
 }
 
 function executionEnd(
@@ -1327,6 +1331,7 @@ describe("reduceStreamEvent", () => {
           endedAt: 2,
           durationMs: 1,
           maxSteps: 50,
+          memoryPolicy: TEST_MEMORY_POLICY,
           runs: [{
             ordinal: 0,
             startedAt: 1,

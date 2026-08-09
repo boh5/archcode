@@ -115,7 +115,50 @@ export function reduceStreamEvent(
     partial.lastTodoWriteStepIndex = currentStepIndex >= 0 ? currentStepIndex : null;
   }
 
+  if (event.type === "session.message_accepted"
+    && event.message.source === "user"
+    && isMemoryLearningRoot(state)) {
+    const current = state.memoryLearning ?? {
+      processedThroughMessageId: state.messages.at(-1)?.id ?? null,
+    };
+    partial.memoryLearning = {
+      ...current,
+      idleSince: undefined,
+    };
+  }
+
+  if (event.type === "execution-end"
+    && event.terminalStatus === "completed"
+    && event.finalOutputStepId !== undefined
+    && state.memoryLearning !== undefined
+    && isMemoryLearningRoot(state)
+    && state.executions.find((execution) => execution.id === event.executionId)?.origin === "user_message") {
+    const messages = partial.messages ?? state.messages;
+    const finalMessage = messages.find((message) => (
+      message.role === "assistant"
+      && message.executionId === event.executionId
+      && message.stepId === event.finalOutputStepId
+      && message.outputPhase === "final_answer"
+    ));
+    if (finalMessage !== undefined) {
+      const pendingMessages = partial.pendingMessages ?? state.pendingMessages;
+      const hasNewerUserInput = pendingMessages.some((message) => message.source === "user");
+      partial.memoryLearning = {
+        ...state.memoryLearning,
+        eligibleThroughMessageId: finalMessage.id,
+        idleSince: hasNewerUserInput ? undefined : event.endedAt,
+      };
+    }
+  }
+
   return partial;
+}
+
+function isMemoryLearningRoot(state: SessionStoreState): boolean {
+  return state.parentSessionId === undefined
+    && state.rootSessionId === state.sessionId
+    && state.source?.kind !== "automation"
+    && (state.agentName === "lead" || state.agentName === "discussion");
 }
 
 function isExecutionLifecycleEvent(

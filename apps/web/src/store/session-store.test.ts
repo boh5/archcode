@@ -62,6 +62,10 @@ const binding = {
   resolution: "profile_default" as const,
   modelRuntimeRevision: "m1",
 };
+const memoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 const executionUsage = {
   inputTokens: 0,
   outputTokens: 0,
@@ -217,6 +221,7 @@ describe("web session store registry", () => {
     store.getState().applyRemoteEnvelope({
       ...event(0, {
         type: "execution-start",
+        memoryPolicy,
         executionId: "execution-model",
         binding,
         origin: "user_message",
@@ -259,6 +264,7 @@ describe("web session store registry", () => {
     store.getState().applyRemoteEnvelope({
       ...event(0, {
         type: "execution-start",
+        memoryPolicy,
         executionId: "execution-model",
         binding,
         origin: "user_message",
@@ -470,6 +476,7 @@ describe("applyRemoteEnvelope", () => {
     const store = createWebSessionStore("session-1", "demo");
     store.getState().applyRemoteEnvelope(event(0, {
       type: "execution-start",
+      memoryPolicy,
       executionId: "execution-batch",
       binding,
       origin: "user_message",
@@ -523,6 +530,7 @@ describe("applyRemoteEnvelope", () => {
     const store = createWebSessionStore("lifecycle-duplicate", "demo");
     const start = {
       type: "execution-start" as const,
+      memoryPolicy,
       executionId: "execution-1",
       binding,
       origin: "user_message" as const,
@@ -549,6 +557,7 @@ describe("applyRemoteEnvelope", () => {
     const store = createWebSessionStore("lifecycle-invalid", "demo");
     const start = {
       type: "execution-start" as const,
+      memoryPolicy,
       executionId: "execution-1",
       binding,
       origin: "user_message" as const,
@@ -941,6 +950,7 @@ describe("authoritative snapshot", () => {
     store.getState().applyRemoteEnvelope({
       ...event(1, {
         type: "execution-start",
+        memoryPolicy,
         executionId: "run-1",
         binding,
         origin: "user_message",
@@ -968,6 +978,7 @@ describe("authoritative snapshot", () => {
     store.getState().applyRemoteEnvelope({
       ...event(4, {
         type: "execution-start",
+        memoryPolicy,
         executionId: "run-2",
         binding,
         origin: "user_message",
@@ -1047,6 +1058,7 @@ describe("authoritative snapshot", () => {
     store.getState().applyRemoteEnvelope({
       ...event(0, {
         type: "execution-start",
+        memoryPolicy,
         executionId: "execution-model",
         binding,
         origin: "user_message",
@@ -1071,6 +1083,7 @@ describe("authoritative snapshot", () => {
     store.getState().applyRemoteEnvelope({
       ...event(1, {
         type: "execution-start",
+        memoryPolicy,
         executionId: "run-1",
       } as SessionEventPayload),
       sessionId: "fresh-snapshot",
@@ -1118,6 +1131,7 @@ describe("authoritative snapshot", () => {
       executions: [
         {
           id: "recorded-running-execution",
+          memoryPolicy,
           startedAt: 1,
           status: "running",
           origin: "user_message",
@@ -1174,6 +1188,7 @@ describe("authoritative snapshot", () => {
       executions: [
         {
           id: executionId,
+          memoryPolicy,
           startedAt: 1,
           status: "running",
           origin: "user_message",
@@ -1251,6 +1266,7 @@ describe("authoritative snapshot", () => {
       executions: [
         {
           id: executionId,
+          memoryPolicy,
           startedAt: 1,
           status: "running",
           origin: "user_message",
@@ -1322,6 +1338,7 @@ describe("authoritative snapshot", () => {
       executions: [
         {
           id: executionId,
+          memoryPolicy,
           startedAt: 1,
           status: "running",
           origin: "user_message",
@@ -1415,6 +1432,7 @@ describe("authoritative snapshot", () => {
       executions: [
         {
           id: executionId,
+          memoryPolicy,
           startedAt: 2,
           status: "running",
           origin: "user_message",
@@ -1454,6 +1472,7 @@ describe("authoritative snapshot", () => {
     store.getState().applyRemoteEnvelope({
       ...event(1, {
         type: "execution-start",
+        memoryPolicy,
         executionId: "run-1",
       } as SessionEventPayload),
       sessionId: "stale-metadata",

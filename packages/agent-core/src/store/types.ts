@@ -22,6 +22,7 @@ import type { CompressionState } from "../compression";
 import type { AgentName } from "../agents/names";
 import type { PersistedSessionToolCallBlocker } from "../hitl/boundary-codec";
 import type { ModelMessagesProjection } from "./projection";
+import type { MemoryLearningState } from "../memory/learning-state";
 
 export type {
   StreamEvent,
@@ -266,9 +267,8 @@ export interface SessionStoreState {
   todoContinuationStagnationCount: number;
   lastTodoContinuationPendingCount: number | null;
 
-  // Memory extraction cursor tracking
-  lastExtractionIndex: number;
-  lastExtractionTime: number;
+  /** Durable root-Session cursor, warning, and deterministic Memory apply receipt. */
+  memoryLearning?: MemoryLearningState;
 
   readSnapshots: Map<string, number>;
 

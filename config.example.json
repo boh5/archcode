@@ -36,5 +36,9 @@
     "fast": {
       "model": "local:your-model-id"
     }
+  },
+  "memory": {
+    "useMemory": true,
+    "autoLearning": true
   }
 }

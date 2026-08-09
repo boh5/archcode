@@ -44,8 +44,9 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "shutdown":
       return exact(event, ["type"], ["reason"]) && optionalString(event.reason);
     case "execution-start":
-      return exact(event, ["type", "executionId", "origin", "maxSteps", "binding"], ["activeTimeoutMs"])
+      return exact(event, ["type", "executionId", "origin", "maxSteps", "binding", "memoryPolicy"], ["activeTimeoutMs"])
         && isString(event.executionId) && isExecutionModelBinding(event.binding)
+        && isMemoryPolicySnapshot(event.memoryPolicy)
         && oneOf(event.origin, ["user_message", "tool_call", "goal_continuation"])
         && isPositiveSafeInteger(event.maxSteps)
         && (event.activeTimeoutMs === undefined || isPositiveSafeInteger(event.activeTimeoutMs));
@@ -1275,6 +1276,22 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return isNonNegativeSafeInteger(value) && value > 0;
+}
+
+function isMemoryPolicySnapshot(value: unknown): boolean {
+  const snapshot = record(value);
+  const policy = record(snapshot?.policy);
+  const epoch = record(snapshot?.epoch);
+  return snapshot !== undefined
+    && exact(snapshot, ["policy", "epoch"])
+    && policy !== undefined
+    && exact(policy, ["useMemory", "autoLearning"])
+    && typeof policy.useMemory === "boolean"
+    && typeof policy.autoLearning === "boolean"
+    && epoch !== undefined
+    && exact(epoch, ["bootId", "generation"])
+    && isNonBlankString(epoch.bootId)
+    && isNonNegativeSafeInteger(epoch.generation);
 }
 
 function isSafeInteger(value: unknown): value is number {

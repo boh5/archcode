@@ -58,6 +58,11 @@ export const testExecutionUsage: NormalizedUsage = {
   cachedInputTokens: 0,
 };
 
+export const testExecutionMemoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+} as const;
+
 export function testExecutionStart(
   executionId: string,
   origin: SessionExecutionOrigin = "tool_call",
@@ -66,6 +71,7 @@ export function testExecutionStart(
     type: "execution-start",
     executionId,
     binding: testExecutionBinding,
+    memoryPolicy: testExecutionMemoryPolicy,
     origin,
     maxSteps: 50,
   };
@@ -121,6 +127,7 @@ export function testExecutionRecord(
   if (status === "running") {
     return {
       id,
+      memoryPolicy: testExecutionMemoryPolicy,
       startedAt: 1,
       status,
       origin: "tool_call",
@@ -132,6 +139,7 @@ export function testExecutionRecord(
   if (status === "suspended") {
     return {
       id,
+      memoryPolicy: testExecutionMemoryPolicy,
       startedAt: 1,
       status,
       origin: "tool_call",
@@ -143,6 +151,7 @@ export function testExecutionRecord(
   }
   return {
     id,
+    memoryPolicy: testExecutionMemoryPolicy,
     startedAt: 1,
     status,
     origin: "tool_call",

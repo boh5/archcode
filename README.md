@@ -117,6 +117,15 @@ Use an Automation when work should start once or on a recurring schedule. Goals
 and Automations are optional; both remain visible through Sessions inside the
 same workbench.
 
+## Durable, inspectable memory
+
+ArchCode keeps personal preferences and project knowledge as ordinary Markdown.
+Explicit requests to remember something are saved immediately through the
+Memory tool. Other durable context is considered only after a successful root
+conversation has been idle for 10 minutes, then reconciled against the complete
+Memory files it actually affects. Settings → Memory lets you inspect, edit,
+delete, disable recall, or opt out of automatic learning without deleting data.
+
 ## Run it your way
 
 | Where ArchCode runs | Good for | How you open it |

@@ -16,6 +16,10 @@ import {
 } from "@archcode/protocol";
 import { sortJsonValue } from "@archcode/utils";
 import { ModelRuntime, type ModelRuntimeSnapshot } from "../models";
+import {
+  MemoryPolicyRuntime,
+  type MemoryPolicy,
+} from "../memory/policy-runtime";
 import { SensitiveValueRedactor } from "../provider/sensitive-value-redactor";
 import { atomicWrite } from "../utils/safe-file";
 import { McpConfigEnvError, McpConfigError, resolveMcpConfig } from "./mcp";
@@ -71,6 +75,8 @@ export interface ServerConfigServiceOptions {
   homeDir?: string;
   /** Explicit test seam; production uses one service-owned model runtime. */
   modelRuntime?: ModelRuntime;
+  /** Explicit test seam; production uses one service-owned policy runtime. */
+  memoryPolicyRuntime?: MemoryPolicyRuntime;
 }
 
 export class ConfigRevisionConflictError extends Error {
@@ -168,6 +174,7 @@ export class ServerConfigService {
   readonly homeDir: string;
   readonly configPath: string;
   readonly modelRuntime: ModelRuntime;
+  readonly memoryPolicyRuntime: MemoryPolicyRuntime;
   private readonly invalidConfigRemovalSecret = randomBytes(32);
   private startupConfig: ArchCodeConfig | undefined;
   private writeTail: Promise<void> = Promise.resolve();
@@ -176,6 +183,7 @@ export class ServerConfigService {
     this.homeDir = resolve(options.homeDir ?? homedir());
     this.configPath = resolveServerConfigPath(this.homeDir);
     this.modelRuntime = options.modelRuntime ?? new ModelRuntime();
+    this.memoryPolicyRuntime = options.memoryPolicyRuntime ?? new MemoryPolicyRuntime();
   }
 
   async activateForStartup(): Promise<ServerConfigActivationResult> {
@@ -420,17 +428,25 @@ export class ServerConfigService {
         ? undefined
         : this.prepareModelRuntime(runtimeConfig, runtimeRevision);
 
-      if (!unchanged) {
-        try {
-          await atomicWrite(this.configPath, text, { mode: 0o600 });
-        } catch (cause) {
-          throw new ConfigSemanticValidationError([{
-            path: this.configPath,
-            message: `Failed to write global configuration at ${this.configPath}: ${errorMessage(cause)}`,
-          }]);
+      const commit = async (): Promise<void> => {
+        if (!unchanged) {
+          try {
+            await atomicWrite(this.configPath, text, { mode: 0o600 });
+          } catch (cause) {
+            throw new ConfigSemanticValidationError([{
+              path: this.configPath,
+              message: `Failed to write global configuration at ${this.configPath}: ${errorMessage(cause)}`,
+            }]);
+          }
         }
+        if (prepared !== undefined) this.modelRuntime.publish(prepared);
+      };
+      const nextPolicy = memoryPolicyForConfig(validated);
+      if (sameMemoryPolicy(this.memoryPolicyRuntime.current.policy, nextPolicy)) {
+        await commit();
+      } else {
+        await this.memoryPolicyRuntime.commitPolicy(nextPolicy, commit);
       }
-      if (prepared !== undefined) this.modelRuntime.publish(prepared);
       return {
         config: redactConfig(validated),
         revision,
@@ -494,6 +510,7 @@ export class ServerConfigService {
     ),
   ): ServerConfigInitialization {
     this.modelRuntime.publish(prepared);
+    this.memoryPolicyRuntime.initialize(memoryPolicyForConfig(config));
     this.startupConfig = config;
     const { auth, ...runtimeConfig } = config;
     return {
@@ -1477,7 +1494,22 @@ async function revisionForText(text: string): Promise<string> {
 }
 
 async function runtimeRevisionForConfig(config: ArchCodeConfig): Promise<string> {
-  return await revisionForText(stableJson(omitAuth(config)));
+  return await revisionForText(stableJson({
+    provider: config.provider,
+    profiles: config.profiles,
+  }));
+}
+
+function memoryPolicyForConfig(config: ArchCodeConfig): MemoryPolicy {
+  return {
+    useMemory: config.memory?.useMemory ?? true,
+    autoLearning: config.memory?.autoLearning ?? true,
+  };
+}
+
+function sameMemoryPolicy(left: MemoryPolicy, right: MemoryPolicy): boolean {
+  return left.useMemory === right.useMemory
+    && left.autoLearning === right.autoLearning;
 }
 
 function errorMessage(cause: unknown): string {
@@ -1542,11 +1574,10 @@ function asStringRecord(value: unknown): Record<string, string> | undefined {
 function restartRequiredSections(
   config: ArchCodeConfig,
   startupConfig: ArchCodeConfig | undefined,
-): Array<"mcp" | "memory" | "integrations.github"> {
+): Array<"mcp" | "integrations.github"> {
   if (!startupConfig) return [];
-  const sections: Array<"mcp" | "memory" | "integrations.github"> = [];
+  const sections: Array<"mcp" | "integrations.github"> = [];
   if (stableJson(config.mcp) !== stableJson(startupConfig.mcp)) sections.push("mcp");
-  if (stableJson(config.memory) !== stableJson(startupConfig.memory)) sections.push("memory");
   if (stableJson(config.integrations?.github) !== stableJson(startupConfig.integrations?.github)) {
     sections.push("integrations.github");
   }

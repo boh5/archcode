@@ -12,6 +12,7 @@ import type {
 import type { GlobalSSEUpdateChangedEvent } from "./update";
 import type { RootSessionSource } from "./project-todos";
 import type { AttachmentDescriptor } from "./attachments";
+import type { MemoryPolicySnapshot } from "./memory";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -26,6 +27,7 @@ export interface ExecutionStartEvent {
   maxSteps: number;
   activeTimeoutMs?: number;
   binding: ExecutionModelBindingSummary;
+  memoryPolicy: MemoryPolicySnapshot;
 }
 
 export type SessionExecutionOrigin =
@@ -128,6 +130,7 @@ export interface SessionExecutionRecordBase {
   durationMs: number;
   stopRequestedAt?: number;
   runs: SessionExecutionRun[];
+  memoryPolicy: MemoryPolicySnapshot;
 }
 
 export interface SessionExecutionSettlement {
@@ -920,10 +923,8 @@ export interface ConfigMcpServerSettings<Secret> {
 }
 
 export interface ConfigMemorySettings {
-  enabled?: boolean;
-  minMessages?: number;
-  minContentLength?: number;
-  cooldownMs?: number;
+  useMemory?: boolean;
+  autoLearning?: boolean;
 }
 
 export interface ConfigGithubIntegrationSettings {
@@ -957,7 +958,7 @@ export interface ServerConfigSnapshot {
   revision: string;
   modelRuntimeRevision: string;
   configPath: string;
-  restartRequiredSections: Array<"mcp" | "memory" | "integrations.github">;
+  restartRequiredSections: Array<"mcp" | "integrations.github">;
 }
 
 export interface UpdateServerConfigRequest {

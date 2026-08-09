@@ -43,6 +43,10 @@ the same model to all three required Profiles:
     "principal": { "model": "local:your-model-id" },
     "deep": { "model": "local:your-model-id" },
     "fast": { "model": "local:your-model-id" }
+  },
+  "memory": {
+    "useMemory": true,
+    "autoLearning": true
   }
 }
 ```
@@ -73,7 +77,15 @@ The catalog contains exactly these official AI SDK language Provider packages:
 - If a Profile still names a removed variant, Settings marks that Profile for attention but allows the document to save. Runtime omits the missing variant and uses the model default plus Profile options until the reference is repaired. An empty Profile variant is normalized to Default; an unknown Profile model remains a validation error.
 - A user-facing root Session override is a complete alternative selection. It resolves the chosen model and variant without inheriting `principal` options; clearing it returns to `principal`.
 
-Saving in **Settings → Models / Profiles** validates the complete document, prepares the new Provider registry, writes atomically, then publishes Models and Profile defaults immediately. It returns the disk revision, the published model-runtime revision, and any restart-required sections: `mcp`, `memory`, or `integrations.github`.
+Saving in **Settings → Models / Profiles** validates the complete document, prepares the new Provider registry, writes atomically, then publishes Models and Profile defaults immediately. It returns the disk revision, the published model-runtime revision, and any restart-required sections: `mcp` or `integrations.github`.
+
+## Memory
+
+`memory.useMemory` controls whether newly claimed Executions receive personal preferences and the current project's generated topic index. `memory.autoLearning` controls the separate background learner. Both default to `true` and apply without a restart.
+
+Successful root Lead and Discussion conversations become eligible after 10 minutes without a new user message. Explicit `memory_write` calls remain immediate and do not wait for that learner. Automatic learning uses the `fast` Profile, reconciles only the complete files it actually touches, and persists a bounded receipt before applying changes so restart recovery never reruns the model for the same prepared write.
+
+Memory remains Markdown: personal `preferences.md`, plus each project's generated `index.md` and `knowledge/*.md` topics. Settings → Memory provides the supported view, edit, delete, capacity, warning, and toggle controls. The limits are 8 KiB for preferences, 16 KiB for a complete topic file, and 200 topics per project; existing over-limit data stays readable and can be reduced or deleted, but cannot grow.
 
 Editing `~/.archcode/config.json` outside Settings has no watcher. Restart ArchCode, or make a Settings save against the current disk revision, to load it.
 

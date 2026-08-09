@@ -83,8 +83,6 @@ export const leadAgentDefinition = {
     autoInjectReminder: true,
     todoStepReminder: true,
     todoQueryLoopContinuation: true,
-    memoryExtraction: true,
-    memoryConsolidation: true,
     titleGeneration: "enabled",
   },
   childPolicy: {

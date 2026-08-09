@@ -175,6 +175,17 @@ describe("formatIndex", () => {
     expect(parsed).toEqual(entries);
   });
 
+  test("roundtrips an entry with an empty summary", () => {
+    const entries: MemoryIndexEntry[] = [
+      { title: "Topic Without Description", name: "empty_summary", summary: "" },
+    ];
+
+    const formatted = formatIndex(entries);
+
+    expect(formatted).toBe("- [Topic Without Description](empty_summary) — \n");
+    expect(parseIndex(formatted)).toEqual(entries);
+  });
+
   test("formats single entry correctly", () => {
     const entries: MemoryIndexEntry[] = [
       { title: "Test", name: "test_topic", summary: "A test" },
@@ -325,6 +336,13 @@ describe("MemoryFileManager — read methods", () => {
   test("listTopics returns empty array when knowledge dir does not exist", async () => {
     const result = await manager.listTopics();
     expect(result).toEqual([]);
+  });
+
+  test("listTopics propagates non-ENOENT filesystem failures", async () => {
+    const knowledgePath = join(TMP_DIR, "project", ".archcode", "runtime", "memory", "knowledge");
+    await Bun.write(knowledgePath, "not a directory");
+
+    await expect(manager.listTopics()).rejects.toMatchObject({ code: "ENOTDIR" });
   });
 
   test("listTopics returns sorted names (without .md) from knowledge dir", async () => {
@@ -488,7 +506,7 @@ describe("MemoryFileManager — rebuildIndex", () => {
     expect(titles).toContain("API Design");
   });
 
-  test("rebuildIndex skips files with invalid frontmatter", async () => {
+  test("rebuildIndex reports invalid topic frontmatter instead of silently omitting it", async () => {
     const knowledgeDir = join(TMP_DIR, "project", ".archcode", "runtime", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
 
@@ -497,13 +515,19 @@ describe("MemoryFileManager — rebuildIndex", () => {
     await Bun.write(join(knowledgeDir, "valid.md"), validTopic);
     await Bun.write(join(knowledgeDir, "invalid.md"), invalidTopic);
 
-    await manager.rebuildIndex();
+    await expect(manager.rebuildIndex()).rejects.toThrow("frontmatter");
+    expect(await manager.readIndex()).toBeNull();
+  });
 
-    const indexContent = await manager.readIndex();
-    expect(indexContent).not.toBeNull();
-    const entries = parseIndex(indexContent!);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].title).toBe("Valid");
+  test("rebuildIndex preserves the existing index when the topic directory cannot be read", async () => {
+    const memoryDir = join(TMP_DIR, "project", ".archcode", "runtime", "memory");
+    const knowledgePath = join(memoryDir, "knowledge");
+    const existingIndex = "- [Existing](existing) — Keep this index\n";
+    await Bun.write(join(memoryDir, "index.md"), existingIndex);
+    await Bun.write(knowledgePath, "not a directory");
+
+    await expect(manager.rebuildIndex()).rejects.toMatchObject({ code: "ENOTDIR" });
+    expect(await manager.readIndex()).toBe(existingIndex);
   });
 
   test("rebuildIndex handles empty knowledge dir", async () => {
