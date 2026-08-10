@@ -530,6 +530,7 @@ describe("SettingsDialog interactions", () => {
     expect((input("Provider ID") as HTMLInputElement).readOnly).toBe(true);
     click("MCP");
     expect((input("Name") as HTMLInputElement).readOnly).toBe(true);
+    expect((input("Transport") as HTMLSelectElement).disabled).toBe(true);
 
     const withoutMcpSecrets = structuredClone(snapshot);
     const serverWithoutSecrets = withoutMcpSecrets.config.mcp!.servers.custom;
@@ -718,6 +719,34 @@ describe("SettingsDialog interactions", () => {
     expect(draftSignal?.aborted).toBe(false);
 
     click("Models");
+    await act(async () => { await Promise.resolve(); });
+    expect(draftSignal?.aborted).toBe(true);
+  });
+
+  test("aborts an in-flight MCP draft test when its config changes", async () => {
+    let draftSignal: AbortSignal | undefined;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {
+      if (url === "/api/mcp/inventory") return Response.json({ servers: {} });
+      if (url === "/api/mcp/test/custom") {
+        draftSignal = init?.signal ?? undefined;
+        return await new Promise<Response>((_resolve, reject) => {
+          draftSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+    click("MCP");
+    const customRow = [...container.querySelectorAll("article")]
+      .find((article) => article.querySelector("h2")?.textContent === "custom");
+    const testButton = [...(customRow?.querySelectorAll("button") ?? [])]
+      .find((button) => button.textContent === "Test draft");
+    if (!testButton) throw new Error("Missing custom MCP Test draft button");
+    act(() => testButton.click());
+    await act(async () => { await Promise.resolve(); });
+    expect(draftSignal?.aborted).toBe(false);
+
+    change(input("HTTP URL"), "https://changed.example.com/mcp");
     await act(async () => { await Promise.resolve(); });
     expect(draftSignal?.aborted).toBe(true);
   });

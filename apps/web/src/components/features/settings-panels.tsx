@@ -509,6 +509,8 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
   }, []);
 
   useEffect(() => {
+    for (const controller of draftTestControllersRef.current.values()) controller.abort();
+    draftTestControllersRef.current.clear();
     setTestResults({});
     setActionErrors({});
   }, [config]);
@@ -575,6 +577,7 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
             draftTestControllersRef.current.set(testKey, controller);
             try {
               const result = await testMcpDraft(name, { expectedRevision, config }, { signal: controller.signal });
+              if (draftTestControllersRef.current.get(testKey) !== controller) return;
               setTestResults((current) => ({ ...current, [name]: result.tools }));
               if (result.warnings.length > 0) setActionErrors((current) => ({ ...current, [testKey]: result.warnings.join(" ") }));
             } catch (cause) {
@@ -612,17 +615,20 @@ function McpEditor({ name, server, config, onChange, errors }: { name: string; s
   const update = (apply: (target: ServerMcpConfig) => void) => onChange(withDraft(config, (draft) => apply(draft.mcp!.servers[name])));
   const secretRecord = server.type === "http" ? server.headers : server.env;
   const nameLocked = hasPreservedSecretRecord(secretRecord);
-  const replaceTransport = (type: "http" | "stdio") => onChange(withDraft(config, (draft) => {
-    const current = draft.mcp!.servers[name];
-    draft.mcp!.servers[name] = type === "http"
-      ? { type, enabled: current.enabled, url: "https://example.com/mcp", connectTimeoutMs: current.connectTimeoutMs, discoveryTimeoutMs: current.discoveryTimeoutMs, callTimeoutMs: current.callTimeoutMs }
-      : { type, enabled: current.enabled, command: "", args: [], connectTimeoutMs: current.connectTimeoutMs, discoveryTimeoutMs: current.discoveryTimeoutMs, callTimeoutMs: current.callTimeoutMs };
-  }));
+  const replaceTransport = (type: "http" | "stdio") => {
+    if (nameLocked) return;
+    onChange(withDraft(config, (draft) => {
+      const current = draft.mcp!.servers[name];
+      draft.mcp!.servers[name] = type === "http"
+        ? { type, enabled: current.enabled, url: "https://example.com/mcp", connectTimeoutMs: current.connectTimeoutMs, discoveryTimeoutMs: current.discoveryTimeoutMs, callTimeoutMs: current.callTimeoutMs }
+        : { type, enabled: current.enabled, command: "", args: [], connectTimeoutMs: current.connectTimeoutMs, discoveryTimeoutMs: current.discoveryTimeoutMs, callTimeoutMs: current.callTimeoutMs };
+    }));
+  };
   return <div className="mt-4 space-y-4 border-t border-border-subtle pt-4">
     <SettingsToggle checked={server.enabled} onChange={(enabled) => update((draft) => { draft.enabled = enabled; })} label={`Enable ${name}`} description="Connect and expose discovered tools through the live MCP runtime." />
     <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
       <Field label="Name"><RenameInput value={name} readOnly={nameLocked} onCommit={(next) => { if (next === name) return true; if (BUILT_IN_MCP_NAMES.includes(next as typeof BUILT_IN_MCP_NAMES[number]) || config.mcp!.servers[next]) return false; onChange(withDraft(config, (draft) => { draft.mcp!.servers[next] = draft.mcp!.servers[name]; delete draft.mcp!.servers[name]; })); return true; }} />{nameLocked && <span className="text-[11px] font-normal text-text-tertiary">Replace or clear configured secrets before renaming.</span>}</Field>
-      <Field label="Transport"><select className={selectClass} value={server.type} onChange={(event) => replaceTransport(event.target.value as "http" | "stdio")}><option value="http">HTTP</option><option value="stdio">STDIO</option></select></Field>
+      <Field label="Transport"><select disabled={nameLocked} title={nameLocked ? "Clear or replace configured secrets before changing transport" : undefined} className={selectClass} value={server.type} onChange={(event) => replaceTransport(event.target.value as "http" | "stdio")}><option value="http">HTTP</option><option value="stdio">STDIO</option></select>{nameLocked && <span className="text-[11px] font-normal text-text-tertiary">Clear or replace configured secrets before changing transport.</span>}</Field>
       {server.type === "http" ? <Field label="HTTP URL" error={errors[`mcp.servers.${name}.url`]}><TextInput value={server.url} onChange={(next) => update((draft) => { if (draft.type === "http") draft.url = next; })} /></Field> : <>
         <Field label="Command" error={errors[`mcp.servers.${name}.command`]}><TextInput value={server.command} onChange={(next) => update((draft) => { if (draft.type === "stdio") draft.command = next; })} /></Field>
         <Field label="Arguments (one per line)"><textarea rows={3} value={server.args?.join("\n") ?? ""} onChange={(event) => update((draft) => { if (draft.type === "stdio") { const args = event.target.value.split("\n").filter((line) => line.trim() !== ""); draft.args = args.length > 0 ? args : undefined; } })} className="min-h-20 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 font-mono text-[12px] leading-[18px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle" /></Field>

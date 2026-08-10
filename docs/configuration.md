@@ -65,6 +65,10 @@ optional `headers`; STDIO servers use `command`, optional `args`, and optional
 `discoveryTimeoutMs`, and `callTimeoutMs`, defaulting to 10,000 ms, 30,000 ms,
 and 60,000 ms respectively.
 
+This is a hard cut: legacy MCP server entries without explicit `type` and
+`enabled` fields are rejected rather than migrated. Update every existing
+server entry before the configuration can validate.
+
 `disabledBuiltins` may list only the fixed built-ins `context7`, `grep.app`, and
 `exa`; it disables those servers without allowing a user replacement. User MCP
 servers are process-global and live, and all six Agent identities receive their
