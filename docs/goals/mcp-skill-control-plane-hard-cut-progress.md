@@ -52,6 +52,7 @@ Goal contract: `docs/goals/mcp-skill-control-plane-hard-cut-plan-goal.md`
 | 2026-08-10 | Post-review `bun run typecheck` | Passed, 5/5 workspaces |
 | 2026-08-10 | Post-review `bun run test` | Passed, 8/8 Turbo tasks; Agent Core unit/integration/architecture, Server, Web, Protocol, and Utils all reported zero failures |
 | 2026-08-10 | Post-review `bun run build` | Passed; 2,740 Web modules, 308 embedded assets, executable present, and temporary production entrypoint removed |
+| 2026-08-10 | PR AI re-review on `55a4c744` | CodeRabbit and Cubic passed; CI and CodeQL passed; unresolved review threads = 0; PR was mergeable and `CLEAN` |
 
 ## Acceptance evidence
 
@@ -73,4 +74,4 @@ Goal contract: `docs/goals/mcp-skill-control-plane-hard-cut-plan-goal.md`
 - Fix-review iteration 2: **FAIL**. Discovery and AC-03 passed. Remaining gap is test evidence only: HTTP disable plus active shutdown, and STDIO draft-Test temporary child cleanup.
 - Fix-review iteration 3: **FAIL**. The added fixture exposed a production lifecycle gap: SDK HTTP `close()` aborts the stream but does not send session-termination DELETE.
 - Fix-review iteration 4: **PASS**. HTTP now executes idempotent best-effort `terminateSession -> local close`; failures are redacted and do not prevent local cleanup. Real fixtures prove remote HTTP sessions and STDIO children are closed. Reviewer passed AC-01 through AC-08.
-- PR review remediation: CodeRabbit and Cubic findings were verified against the locked Goal contract. Valid issues were fixed without restoring legacy compatibility or an MCP approval layer; full typecheck, test, and build gates passed. External reviewer re-review and PR merge remain delivery steps rather than Goal acceptance criteria.
+- PR review remediation: CodeRabbit and Cubic findings were verified against the locked Goal contract. Valid issues were fixed without restoring legacy compatibility or an MCP approval layer; full typecheck, test, and build gates passed. Both reviewers passed the corrected head with zero unresolved threads. PR merge remains a delivery step rather than a Goal acceptance criterion.
