@@ -90,7 +90,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
         || JSON.stringify(draft.profiles) !== JSON.stringify(snapshot.config.profiles);
       const response = await saveServerConfig({ expectedRevision: snapshot.revision, config: draft });
       const next = toConfigDraft(response, adapterCatalog);
-      useMcpStatusStore.getState().setServers(response.mcpApply.status.servers);
+      useMcpStatusStore.getState().mergeServerSnapshot(response.mcpApply.status.servers);
       setDraft(cloneConfig(next.config));
       setRestartRequiredSections(next.restartRequiredSections);
       if (response.mcpApply.state === "failed") {

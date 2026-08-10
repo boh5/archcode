@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import type { SessionStoreState, StoredMessage } from "./types";
 import {
+  SKILL_PROMPT_MAX_BYTES,
   SKILL_SOURCE_TIERS,
   isSessionEventPayload,
   isValidAttachmentMediaType,
@@ -927,8 +928,8 @@ const SkillPromptProjectionSchema = z.strictObject({
     source: z.enum(SKILL_SOURCE_TIERS),
   })),
   omittedCount: z.number().int().nonnegative(),
-  renderedText: boundedUtf8String(8_000),
-  byteLength: z.number().int().nonnegative().max(8_000),
+  renderedText: boundedUtf8String(SKILL_PROMPT_MAX_BYTES),
+  byteLength: z.number().int().nonnegative().max(SKILL_PROMPT_MAX_BYTES),
 }).superRefine((projection, ctx) => {
   if (utf8Bytes(projection.renderedText) !== projection.byteLength) {
     ctx.addIssue({ code: "custom", path: ["byteLength"], message: "Skill projection byteLength must match renderedText" });

@@ -605,7 +605,7 @@ function createServerRedactionPolicy(config: ResolvedMcpServerConfig): SecretRed
   const candidates = config.type === "http"
     ? Object.values(config.headers ?? {})
     : Object.values(config.env ?? {});
-  return new SecretRedactionPolicy(candidates);
+  return new SecretRedactionPolicy(candidates.filter((value) => value.length > 0));
 }
 
 function errorMessage(error: unknown): string {

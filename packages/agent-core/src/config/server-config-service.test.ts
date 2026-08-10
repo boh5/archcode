@@ -1519,6 +1519,23 @@ describe("ServerConfigService", () => {
     })).rejects.toMatchObject({
       issues: [{ path: "runtime.secretLiterals" }],
     });
+
+    const headerBytesOverflow = preserveSecrets(snapshot.config);
+    headerBytesOverflow.mcp!.servers.largeHeaders = {
+      type: "http",
+      enabled: true,
+      url: "https://large-headers.example.test",
+      headers: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [
+        `X-Secret-${index}`,
+        { action: "replace", value: `${index}${"h".repeat(14_000)}` },
+      ])),
+    };
+    await expect(service.resolveMcpDraft({
+      expectedRevision: snapshot.revision,
+      config: headerBytesOverflow,
+    })).rejects.toMatchObject({
+      issues: [{ path: "runtime.secretLiterals" }],
+    });
   });
 
   test("validates resolved MCP environment secrets before draft use or save commit", async () => {

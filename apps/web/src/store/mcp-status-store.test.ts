@@ -35,6 +35,39 @@ describe("McpStatusStore", () => {
     expect(servers).toEqual({ new: { state: "connecting", startedAt: 1 } });
   });
 
+  test("mergeServerSnapshot keeps newer SSE state while removing absent servers", () => {
+    useMcpStatusStore.getState().setServers({
+      docs: { state: "ready", toolCount: 2, warningCount: 0, connectedAt: 20 },
+      removed: { state: "failed", error: "old", failedAt: 10 },
+    });
+
+    useMcpStatusStore.getState().mergeServerSnapshot({
+      docs: { state: "connecting", startedAt: 15 },
+      added: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 15 },
+    });
+
+    expect(useMcpStatusStore.getState().servers).toEqual({
+      docs: { state: "ready", toolCount: 2, warningCount: 0, connectedAt: 20 },
+      added: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 15 },
+    });
+  });
+
+  test("mergeServerSnapshot accepts equal or newer save responses", () => {
+    useMcpStatusStore.getState().setServers({
+      docs: { state: "connecting", startedAt: 10 },
+    });
+
+    useMcpStatusStore.getState().mergeServerSnapshot({
+      docs: { state: "failed", error: "latest", failedAt: 10 },
+    });
+
+    expect(useMcpStatusStore.getState().servers.docs).toEqual({
+      state: "failed",
+      error: "latest",
+      failedAt: 10,
+    });
+  });
+
   test("updateServer merges a single server status into existing map", () => {
     useMcpStatusStore.getState().setServers({
       context7: { state: "connecting", startedAt: 1 },

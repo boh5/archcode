@@ -397,6 +397,13 @@ export function ChatInput({
   }, [modelSelection.revision, patchModelSelection, sessionId, slug]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu && event.key === "Escape") {
+      event.preventDefault();
+      setShowSlashMenu(false);
+      setSlashFilter("");
+      setSlashActiveIndex(0);
+      return;
+    }
     if (showSlashMenu && slashOptionCount > 0) {
       if (event.key === "ArrowUp") {
         event.preventDefault();
@@ -418,13 +425,6 @@ export function ChatInput({
         event.preventDefault();
         if (selectedSkill !== undefined) selectSkill(selectedSkill);
         else selectSlashCommand(filteredCommands[slashActiveIndex]);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setShowSlashMenu(false);
-        setSlashFilter("");
-        setSlashActiveIndex(0);
         return;
       }
     }

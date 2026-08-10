@@ -53,6 +53,7 @@ Goal contract: `docs/goals/mcp-skill-control-plane-hard-cut-plan-goal.md`
 | 2026-08-10 | Post-review `bun run test` | Passed, 8/8 Turbo tasks; Agent Core unit/integration/architecture, Server, Web, Protocol, and Utils all reported zero failures |
 | 2026-08-10 | Post-review `bun run build` | Passed; 2,740 Web modules, 308 embedded assets, executable present, and temporary production entrypoint removed |
 | 2026-08-10 | PR AI re-review on `55a4c744` | CodeRabbit and Cubic passed; CI and CodeQL passed; unresolved review threads = 0; PR was mergeable and `CLEAN` |
+| 2026-08-10 | Late PR review remediation | Verified and fixed empty MCP redaction literals, recovery preservation of manual-inspection calls, post-close/reconnect coverage, stale Settings status snapshots, bounded Prompt trace guards, forced-terminal snapshot cleanup, fake builtin projection, and empty-result Skill picker Escape. Focused 186/0, root test 8/8 tasks, root build, and diff-check passed |
 
 ## Acceptance evidence
 
@@ -75,3 +76,4 @@ Goal contract: `docs/goals/mcp-skill-control-plane-hard-cut-plan-goal.md`
 - Fix-review iteration 3: **FAIL**. The added fixture exposed a production lifecycle gap: SDK HTTP `close()` aborts the stream but does not send session-termination DELETE.
 - Fix-review iteration 4: **PASS**. HTTP now executes idempotent best-effort `terminateSession -> local close`; failures are redacted and do not prevent local cleanup. Real fixtures prove remote HTTP sessions and STDIO children are closed. Reviewer passed AC-01 through AC-08.
 - PR review remediation: CodeRabbit and Cubic findings were verified against the locked Goal contract. Valid issues were fixed without restoring legacy compatibility or an MCP approval layer; full typecheck, test, and build gates passed. Both reviewers passed the corrected head with zero unresolved threads. PR merge remains a delivery step rather than a Goal acceptance criterion.
+- Late asynchronous review comments were triaged the same way: contract-conflicting requests for legacy Session defaults, a second MCP approval gate, and per-Execution snapshots for delegated/lifecycle Skills were rejected; concrete lifecycle, bounds, race, accessibility, and test-fidelity findings were fixed and returned to the reviewers.

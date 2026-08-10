@@ -408,6 +408,43 @@ describe("SessionToolBatchScheduler output ownership", () => {
     expect(queued.execute).not.toHaveBeenCalled();
   });
 
+  test("startup recovery preserves a previously checkpointed manual MCP outcome", async () => {
+    const harness = await createHarness();
+    const effectful = makeMcpDescriptor("mcp__docs__effectful-manual", { readOnly: false });
+    const batch = await harness.scheduler.createBatch([
+      { toolCallId: "mcp-effectful-manual", toolName: effectful.descriptor.name, input: {} },
+    ], "step-0", 0, [effectful.descriptor]);
+    await harness.storeManager.updateToolBatches(harness.sessionId, TMP_DIR, (batches) => batches.map((candidate) =>
+      candidate.batchId !== batch.batchId ? candidate : {
+        ...candidate,
+        calls: candidate.calls.map((call) => ({
+          ...call,
+          state: "manual_inspection_required" as const,
+          recoveryFailure: { kind: "effectful_outcome_unknown" as const },
+        })),
+      }
+    ));
+
+    expect(await harness.scheduler.recoverInterruptedBatch()).toEqual({
+      status: "manual_inspection_required",
+      reason: {
+        kind: "effectful_outcome_unknown",
+        toolCallId: "mcp-effectful-manual",
+        toolName: effectful.descriptor.name,
+      },
+    });
+    expect(harness.store.getState().toolBatches[0]).toMatchObject({
+      archivedAt: expect.any(String),
+      manualInspectionReason: { kind: "effectful_outcome_unknown" },
+      calls: [{
+        state: "manual_inspection_required",
+        recoveryFailure: { kind: "effectful_outcome_unknown" },
+      }],
+    });
+    expect(eventResults(harness)).toHaveLength(0);
+    expect(effectful.execute).not.toHaveBeenCalled();
+  });
+
   test("archives a finalized unknown effectful MCP result before the model can continue", async () => {
     const harness = await createHarness();
     const raw = createToolErrorResult({

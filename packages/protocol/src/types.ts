@@ -48,6 +48,8 @@ export interface ExecutionSkillBinding {
   resolutionRoot: string;
 }
 
+export const SKILL_PROMPT_MAX_BYTES = 8_000;
+
 /** The bounded, deterministic Skill directory projected into the model Prompt. */
 export interface SkillPromptProjection {
   readonly includedEntries: readonly { name: string; description: string; source: SkillSourceTier }[];

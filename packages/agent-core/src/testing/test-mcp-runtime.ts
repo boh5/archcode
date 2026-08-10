@@ -1,9 +1,11 @@
 import type {
+  BuiltinMcpServerName,
   McpServerInventoryResponse,
   McpServerStatus,
   McpServerStatusResponse,
   McpToolInventoryItem,
 } from "@archcode/protocol";
+import { BUILTIN_MCP_SERVER_NAMES } from "@archcode/protocol";
 import type { ResolvedMcpConfig, ResolvedMcpServerConfig } from "../config/mcp";
 import type {
   McpRuntime,
@@ -24,6 +26,10 @@ export interface TestMcpRuntimeOptions {
   readonly statuses?: McpServerStatusResponse;
   readonly inventory?: McpServerInventoryResponse;
   readonly descriptors?: ReadonlyMap<string, AnyToolDescriptor>;
+  readonly builtinDescriptors?: Readonly<Partial<Record<
+    BuiltinMcpServerName,
+    ReadonlyMap<string, AnyToolDescriptor>
+  >>>;
   readonly apply?: (config: ResolvedMcpConfig) => Promise<void>;
   readonly reconnect?: (serverName: string) => Promise<void>;
   readonly testServer?: (
@@ -43,7 +49,14 @@ export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestM
   let statusSnapshot: McpServerStatusResponse = cloneStatus(options.statuses ?? { servers: {} });
   const inventorySnapshot = cloneInventory(options.inventory ?? { servers: {} });
   const descriptors = new Map(options.descriptors ?? []);
+  const builtinDescriptors = new Map(
+    Object.entries(options.builtinDescriptors ?? {}).map(([name, entries]) => [
+      name as BuiltinMcpServerName,
+      new Map(entries ?? []),
+    ]),
+  );
   const listeners = new Set<McpStatusListener>();
+  const builtinNames = new Set<string>(BUILTIN_MCP_SERVER_NAMES);
 
   const runtime: TestMcpRuntime = {
     apply: options.apply ?? (async () => undefined),
@@ -51,10 +64,23 @@ export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestM
     testServer: options.testServer ?? (async () => ({ tools: [], warnings: [] })),
     getStatus: () => cloneStatus(statusSnapshot),
     getInventory: () => cloneInventory(inventorySnapshot),
-    snapshotTools: ({ builtinServerNames: _builtinServerNames }): McpToolSnapshot => ({
-      descriptors: new Map(descriptors),
-      statuses: cloneStatus(statusSnapshot),
-    }),
+    snapshotTools: ({ builtinServerNames }): McpToolSnapshot => {
+      const allowedBuiltins = new Set<BuiltinMcpServerName>(builtinServerNames);
+      const snapshotDescriptors = new Map(descriptors);
+      for (const serverName of allowedBuiltins) {
+        for (const [name, descriptor] of builtinDescriptors.get(serverName) ?? []) {
+          snapshotDescriptors.set(name, descriptor);
+        }
+      }
+      return {
+        descriptors: snapshotDescriptors,
+        statuses: {
+          servers: Object.fromEntries(Object.entries(statusSnapshot.servers).filter(([name]) =>
+            !builtinNames.has(name) || allowedBuiltins.has(name as BuiltinMcpServerName)
+          ).map(([name, status]) => [name, { ...status }])),
+        },
+      };
+    },
     onStatusChange: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

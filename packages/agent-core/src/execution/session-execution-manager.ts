@@ -3234,6 +3234,11 @@ export class SessionExecutionManager {
     // The live run may unwind as soon as cancellation is observed. Transfer
     // lifecycle ownership before this force path awaits durable teardown.
     this.#active.delete(key);
+    this.#executionSkillSnapshots.delete(executionSkillSnapshotKey(
+      execution.workspaceRoot,
+      execution.sessionId,
+      execution.executionId,
+    ));
 
     const store = this.#config.getSessionStore(execution.sessionId, execution.workspaceRoot);
     if (

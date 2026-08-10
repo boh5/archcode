@@ -250,6 +250,20 @@ const validPayloads = [
 ] satisfies SessionEventPayload[];
 
 describe("protocol event guards", () => {
+  test("rejects Prompt Skill projections with forged or oversized byte counts", () => {
+    const event = validPayloads.find((candidate) => candidate.type === "prompt-trace")!;
+    const traceEvent = structuredClone(event);
+    if (traceEvent.type !== "prompt-trace") throw new Error("Expected prompt trace fixture");
+    traceEvent.trace.skills.available.byteLength = 5;
+    expect(isSessionEventPayload(traceEvent)).toBe(false);
+
+    const oversized = structuredClone(event);
+    if (oversized.type !== "prompt-trace") throw new Error("Expected prompt trace fixture");
+    oversized.trace.skills.available.renderedText = "x".repeat(8_001);
+    oversized.trace.skills.available.byteLength = 8_001;
+    expect(isSessionEventPayload(oversized)).toBe(false);
+  });
+
   test("accepts strict attachment-only pending and canonical messages", () => {
     expect(isSessionEventPayload({
       type: "session.message_accepted",

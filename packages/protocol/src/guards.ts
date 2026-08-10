@@ -7,6 +7,7 @@ import type {
   StreamEvent,
   ToolChildSessionLinkStatus,
 } from "./types";
+import { SKILL_PROMPT_MAX_BYTES } from "./types";
 import type { GlobalSSEUpdateChangedEvent, UpdateStatus } from "./update";
 import {
   COMPRESSION_SUMMARY_SECTION_NAMES,
@@ -277,7 +278,8 @@ function isPromptSkillProjection(value: unknown): boolean {
     })
     && isNonNegativeInteger(projection.omittedCount)
     && isString(projection.renderedText)
-    && isNonNegativeInteger(projection.byteLength);
+    && utf8ByteLength(projection.renderedText) <= SKILL_PROMPT_MAX_BYTES
+    && projection.byteLength === utf8ByteLength(projection.renderedText);
 }
 
 function isPendingSessionMessage(value: unknown): boolean {

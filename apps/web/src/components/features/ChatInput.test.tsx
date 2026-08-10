@@ -293,6 +293,30 @@ describe("ChatInput runtime controls", () => {
     expect(getCompleteProjectSkillInventory).toHaveBeenCalledWith("proj", "root-1");
   });
 
+  test("Escape closes a Skill menu with no selectable matches", () => {
+    activity = "idle";
+    hitlReady = true;
+    stateValues[0] = "/skill use missing";
+    stateValues[1] = true;
+    stateValues[2] = "skill use missing";
+    stateValues[3] = 0;
+    stateValues[4] = [];
+    stateValues[5] = "ready";
+
+    const tree = rerenderChatInput();
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0]!;
+    const preventDefault = mock(() => {});
+    (textarea.props?.onKeyDown as (event: unknown) => void)({
+      key: "Escape",
+      shiftKey: false,
+      nativeEvent: { isComposing: false },
+      preventDefault,
+    });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(stateValues[1]).toBe(false);
+  });
+
   test("sends Skill selection through the ordinary postMessage command path", () => {
     activity = "idle";
     hitlReady = true;

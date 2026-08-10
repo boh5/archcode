@@ -222,6 +222,7 @@ export class SessionToolBatchScheduler {
       isMcpToolName(candidate.toolName)
       && candidate.state !== "completed"
       && candidate.state !== "failed"
+      && candidate.state !== "manual_inspection_required"
       && !(candidate.state === "running" && !candidate.traits.readOnly)
     )) {
       const outcome = await this.#settleSystem(call, batch.step, mcpInterruptedResult());

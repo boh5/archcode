@@ -1,6 +1,7 @@
+import { SKILL_PROMPT_MAX_BYTES } from "@archcode/protocol";
 import type { SkillIndexEntry, SkillPromptProjection } from "./types";
 
-export const SKILL_PROMPT_MAX_BYTES = 8_000;
+export { SKILL_PROMPT_MAX_BYTES };
 export const SKILL_PROMPT_DESCRIPTION_MAX_BYTES = 160;
 const ELLIPSIS = "…";
 

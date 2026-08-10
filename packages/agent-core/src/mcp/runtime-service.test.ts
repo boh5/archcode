@@ -119,6 +119,17 @@ describe("McpRuntimeService", () => {
     expect(snapshot.statuses.servers.context7?.state).toBe("disabled");
   });
 
+  test("accepts empty optional MCP header and env values without building invalid redaction literals", async () => {
+    const runtime = serviceWith([sdk(), sdk()]);
+    await runtime.apply(CONFIG({
+      http: HTTP("https://http.test", { "X-Optional": "" }),
+      stdio: STDIO("mcp-stdio", { OPTIONAL_TOKEN: "" }),
+    }));
+
+    expect(runtime.getStatus().servers.http?.state).toBe("ready");
+    expect(runtime.getStatus().servers.stdio?.state).toBe("ready");
+  });
+
   test("retire before acquire makes an old run-local descriptor unavailable immediately", async () => {
     const nextConnect = deferred<void>();
     const first = sdk({ tools: [{ name: "lookup" }] });
@@ -308,6 +319,23 @@ describe("McpRuntimeService", () => {
     expect(temporary.connect).toHaveBeenCalledTimes(1);
   });
 
+  test("publishes failed and removes inventory when reconnect cannot establish a replacement", async () => {
+    const initial = sdk({ tools: [{ name: "lookup" }] });
+    const failed = sdk({ connect: async () => { throw new Error("credential rejected"); } });
+    const runtime = serviceWith([initial, failed]);
+    await runtime.apply(CONFIG({ docs: HTTP("https://docs.test") }));
+    expect(runtime.getInventory().servers.docs).toHaveLength(1);
+
+    await runtime.reconnect("docs");
+
+    const status = runtime.getStatus().servers.docs;
+    expect(status).toMatchObject({ state: "failed" });
+    expect(status?.state === "failed" ? status.error : undefined).toContain("credential rejected");
+    expect(runtime.getInventory().servers.docs).toBeUndefined();
+    expect(initial.close).toHaveBeenCalledTimes(1);
+    expect(failed.close).toHaveBeenCalledTimes(1);
+  });
+
   test("bounds concurrent draft transports across distinct drafts", async () => {
     const gates = Array.from({ length: MAX_CONCURRENT_MCP_DRAFT_TESTS }, () => deferred<void>());
     const clients = gates.map((gate) => sdk({ connect: () => gate.promise }));
@@ -360,6 +388,15 @@ describe("McpRuntimeService", () => {
     expect(temporary.close).toHaveBeenCalledTimes(1);
     await runtime.close();
     expect(temporary.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects lifecycle operations after close", async () => {
+    const runtime = serviceWith([]);
+    await runtime.close();
+
+    await expect(runtime.apply(CONFIG({ docs: HTTP("https://docs.test") }))).rejects.toThrow("closed");
+    expect(() => runtime.reconnect("docs")).toThrow("closed");
+    await expect(runtime.testServer("draft", HTTP("https://draft.test"))).rejects.toThrow("closed");
   });
 
   test("forwards a caller abort into an in-flight draft test", async () => {
