@@ -189,9 +189,11 @@ describe("McpClient SDK boundary", () => {
     const timeout = Object.assign(new Error("request timed out"), { code: -32001 });
     const fake = fakeFactories({ callTool: mock(async () => { throw timeout; }) });
     const client = new McpClient("docs", HTTP_CONFIG, new SecretRedactionPolicy([]), fake.factories);
-    await expect(client.callTool("lookup", {})).rejects.toEqual(expect.objectContaining({
+    const error = await client.callTool("lookup", {}).catch((cause) => cause);
+    expect(error).toEqual(expect.objectContaining({
       reason: "timeout",
     }) as McpToolExecutionError);
+    expect(String(error)).toContain("timed out");
   });
 
   test("redacts configured secrets from wrapped SDK failures", async () => {
@@ -257,6 +259,43 @@ describe("McpClient SDK boundary", () => {
 
     expect(fake.transport.terminateSession).toBeUndefined();
     expect(fake.transport.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("redacts split secrets and emits at most one UTF-8-safe bounded stderr log", async () => {
+    const listeners = new Map<string, Array<(chunk?: unknown) => void>>();
+    const stderr = {
+      on(event: "data" | "end" | "close", listener: (chunk?: unknown) => void) {
+        const current = listeners.get(event) ?? [];
+        current.push(listener);
+        listeners.set(event, current);
+      },
+    };
+    const emit = (event: "data" | "end" | "close", chunk?: unknown) => {
+      for (const listener of listeners.get(event) ?? []) listener(chunk);
+    };
+    const fake = fakeFactories({}, { stderr });
+    const { logger, entries } = createInMemoryLogger();
+    const client = new McpClient(
+      "stdio",
+      HTTP_CONFIG,
+      new SecretRedactionPolicy(["secret-value"]),
+      fake.factories,
+      logger,
+    );
+
+    emit("data", "before secret-");
+    emit("data", `value after ${"x".repeat(4_090)}🙂`);
+    emit("data", "dropped forever");
+    emit("end");
+    await client.close();
+
+    const stderrLogs = entries.filter((entry) => entry.event === "mcp.client.stdio.stderr");
+    expect(stderrLogs).toHaveLength(1);
+    const output = String(stderrLogs[0]?.context?.output);
+    expect(output).toContain("[REDACTED:SECRET]");
+    expect(output).not.toContain("secret-value");
+    expect(output).not.toContain("�");
+    expect(Buffer.byteLength(output, "utf8")).toBeLessThanOrEqual(4 * 1024);
   });
 
   test("reports SDK and transport lifecycle failures but suppresses intentional close", async () => {

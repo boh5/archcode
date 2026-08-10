@@ -306,6 +306,12 @@ describe("resolveMcpConfig URL validation", () => {
     }
   });
 
+  test("rejects a non-HTTP scheme produced by environment expansion", () => {
+    expect(() => resolveMcpConfig({
+      servers: { docs: { ...HTTP_SERVER, url: "${MCP_PROTO}://chat.example.test" } },
+    }, { MCP_PROTO: "ws" })).toThrow(McpConfigError);
+  });
+
   test("redacts invalid URL values", () => {
     try {
       resolveMcpConfig({ servers: { docs: { ...HTTP_SERVER, url: "ftp://secret.example.com" } } });

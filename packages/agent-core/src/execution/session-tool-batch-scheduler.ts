@@ -1355,7 +1355,51 @@ async function commitSessionToolResult(input: {
       && lastEvent.payload.type === "tool-result"
       && lastEvent.payload.toolCallId === input.call.toolCallId
     ) {
-      input.store.setState(stateBeforeCommit, true);
+      input.store.setState((live) => {
+        const beforeBatch = stateBeforeCommit.toolBatches.find((batch) => batch.batchId === input.batchId);
+        const toolBatches = beforeBatch === undefined
+          ? live.toolBatches
+          : live.toolBatches.map((batch) => {
+              if (batch.batchId !== input.batchId) return batch;
+              const calls = batch.calls.map((call) => {
+                if (
+                  call.toolCallId !== input.call.toolCallId
+                  || call.checkpointAt !== settledAt
+                  || call.settledAt !== settledAt
+                ) return call;
+                return beforeBatch.calls.find((candidate) => candidate.toolCallId === call.toolCallId) ?? call;
+              });
+              let reverted: SessionToolBatch = {
+                ...batch,
+                calls,
+                updatedAt: batch.updatedAt === updatedAt ? beforeBatch.updatedAt : batch.updatedAt,
+              };
+              if (
+                manualInspectionReason !== undefined
+                && batch.archivedAt === updatedAt
+                && batch.manualInspectionReason?.kind === manualInspectionReason.kind
+                && batch.manualInspectionReason.toolCallId === manualInspectionReason.toolCallId
+              ) {
+                const { archivedAt: _archivedAt, manualInspectionReason: _reason, ...activeBatch } = reverted;
+                reverted = {
+                  ...activeBatch,
+                  ...(beforeBatch.archivedAt === undefined ? {} : { archivedAt: beforeBatch.archivedAt }),
+                  ...(beforeBatch.manualInspectionReason === undefined
+                    ? {}
+                    : { manualInspectionReason: beforeBatch.manualInspectionReason }),
+                };
+              }
+              return reverted;
+            });
+        return {
+          ...live,
+          toolBatches,
+          events: stateBeforeCommit.events,
+          eventOffset: stateBeforeCommit.eventOffset,
+          nextEventId: stateBeforeCommit.nextEventId,
+          publishableNextEventId: stateBeforeCommit.publishableNextEventId,
+        };
+      }, true);
     }
     throw error;
   }

@@ -36,6 +36,8 @@ import type {
   ToolDiffMetadata,
   FinalizedToolResult,
   ExecutionSkillBinding,
+  McpServerInventoryResponse,
+  McpServerStatus,
   ServerConfigUpdate,
 } from "./types";
 import type { GlobalSSEUpdateChangedEvent } from "./update";
@@ -182,13 +184,13 @@ describe("current tool and config wire types", () => {
     const statuses = {
       docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 123 },
       local: { state: "disabled", updatedAt: 124 },
-    } as const;
+    } satisfies Record<string, McpServerStatus>;
     const inventory = {
       servers: {
         docs: [{ serverName: "docs", name: "search", registryName: "mcp__docs__search", description: "Search docs" }],
         local: [],
       },
-    } as const;
+    } satisfies McpServerInventoryResponse;
 
     expect(serializeRoundTrip(statuses)).toEqual(statuses);
     expect(serializeRoundTrip(inventory)).toEqual(inventory);

@@ -26,9 +26,14 @@ const binding: ExecutionModelBindingSummary = {
   resolution: "profile_default",
   modelRuntimeRevision: "r1",
 };
+const memoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 function suspended(): SessionExecutionRecord {
   return {
     id: "execution",
+    memoryPolicy,
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,

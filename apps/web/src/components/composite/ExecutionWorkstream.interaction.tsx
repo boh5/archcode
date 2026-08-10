@@ -33,6 +33,10 @@ const binding: ExecutionModelBindingSummary = {
   resolution: "profile_default",
   modelRuntimeRevision: "m1",
 };
+const memoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 const usage = {
   inputTokens: 0,
   outputTokens: 0,
@@ -44,6 +48,7 @@ const usage = {
 function completed(id = "execution"): SessionExecutionRecord {
   return {
     id,
+    memoryPolicy,
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,
@@ -69,6 +74,7 @@ function completed(id = "execution"): SessionExecutionRecord {
 function running(id = "execution"): SessionExecutionRecord {
   return {
     id,
+    memoryPolicy,
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,
@@ -96,6 +102,7 @@ function suspended(
         : { kind, toolBatchId: "batch", readyAt: 10 };
   return {
     id: "execution",
+    memoryPolicy,
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,

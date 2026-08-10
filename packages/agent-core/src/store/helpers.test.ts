@@ -32,6 +32,10 @@ const TEST_BINDING = {
   providerDisplayName: "Test", modelDisplayName: "Model",
   resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
+const TEST_MEMORY_POLICY = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 const TEST_MODEL_AUDIT = {
   requested: {
     mode: "profile_default" as const,
@@ -54,6 +58,7 @@ const executionStart = (executionId: string) => ({
   type: "execution-start" as const,
   executionId,
   binding: TEST_BINDING,
+  memoryPolicy: TEST_MEMORY_POLICY,
   origin: "user_message" as const,
   maxSteps: 50,
   executionSkills: [],
@@ -350,6 +355,7 @@ function persistedState(
       }));
       return {
         id: executionId,
+        memoryPolicy: TEST_MEMORY_POLICY,
         startedAt: runs[0]?.startedAt ?? 100,
         origin: "user_message",
         maxSteps: 50,
@@ -735,6 +741,7 @@ describe("session transcript serialization", () => {
     };
     const completedExecution: SessionExecutionRecord = {
       id: "execution-final",
+      memoryPolicy: TEST_MEMORY_POLICY,
       startedAt: 100,
       origin: "user_message",
       maxSteps: 50,
@@ -844,6 +851,7 @@ describe("session transcript serialization", () => {
     const stats = { ...createEmptySessionStats(), messages: { user: 1, assistant: 1, total: 2 } };
     const executions: SessionExecutionRecord[] = [{
       id: "run-1",
+      memoryPolicy: TEST_MEMORY_POLICY,
       startedAt: 1,
       status: "completed",
       endedAt: 3,

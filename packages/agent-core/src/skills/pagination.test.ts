@@ -48,4 +48,15 @@ describe("digest-bound pagination", () => {
       })).toThrow(DigestBoundCursorError);
     }
   });
+
+  test("applies the serialized byte limit to an empty terminal page", () => {
+    expect(() => paginateDigestBound({
+      items: [],
+      digest: "catalog-a",
+      maxItems: 1,
+      maxSerializedBytes: 2,
+      staleCursorCode: "CATALOG_CHANGED",
+      serialize: () => "oversized-empty-page",
+    })).toThrow("Empty pagination page exceeds");
+  });
 });

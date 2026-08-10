@@ -25,10 +25,15 @@ export interface McpDraftTestResponse {
   warnings: string[];
 }
 
-export function testMcpDraft(serverName: string, request: UpdateServerConfigRequest): Promise<McpDraftTestResponse> {
+export function testMcpDraft(
+  serverName: string,
+  request: UpdateServerConfigRequest,
+  options: { signal?: AbortSignal } = {},
+): Promise<McpDraftTestResponse> {
   return apiFetch<McpDraftTestResponse>(`/api/mcp/test/${encodeURIComponent(serverName)}`, {
     method: "POST",
     body: request as unknown as Record<string, unknown>,
+    signal: options.signal,
   });
 }
 

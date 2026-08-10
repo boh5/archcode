@@ -15,6 +15,10 @@ import {
 } from "@archcode/protocol";
 import { sortJsonValue } from "@archcode/utils";
 import { ModelRuntime, type ModelRuntimeSnapshot } from "../models";
+import {
+  MemoryPolicyRuntime,
+  type MemoryPolicy,
+} from "../memory/policy-runtime";
 import { SensitiveValueRedactor } from "../provider/sensitive-value-redactor";
 import { atomicWrite } from "../utils/safe-file";
 import {
@@ -23,7 +27,7 @@ import {
   resolveMcpConfig,
   type ResolvedMcpConfig,
 } from "./mcp";
-import { SecretLiteralRegistry, type RuntimeSecretLiteralInput } from "./runtime-secret-literals";
+import { collectRuntimeSecretLiterals } from "./runtime-secret-literals";
 import {
   MissingProviderOptionError,
   UnsupportedProviderOptionError,
@@ -35,6 +39,7 @@ import {
 import { findSecretBearingProviderOptionPaths } from "./provider";
 import {
   archcodeConfigSchema,
+  resolveGithubIntegrationConfig,
   type ArchCodeConfig,
   type AuthConfig,
 } from "./schema";
@@ -82,6 +87,8 @@ export interface ServerConfigServiceOptions {
   homeDir?: string;
   /** Explicit test seam; production uses one service-owned model runtime. */
   modelRuntime?: ModelRuntime;
+  /** Explicit test seam; production uses one service-owned policy runtime. */
+  memoryPolicyRuntime?: MemoryPolicyRuntime;
 }
 
 export class ConfigRevisionConflictError extends Error {
@@ -179,6 +186,7 @@ export class ServerConfigService {
   readonly homeDir: string;
   readonly configPath: string;
   readonly modelRuntime: ModelRuntime;
+  readonly memoryPolicyRuntime: MemoryPolicyRuntime;
   private readonly invalidConfigRemovalSecret = randomBytes(32);
   private startupConfig: ArchCodeConfig | undefined;
   private writeTail: Promise<void> = Promise.resolve();
@@ -187,6 +195,7 @@ export class ServerConfigService {
     this.homeDir = resolve(options.homeDir ?? homedir());
     this.configPath = resolveServerConfigPath(this.homeDir);
     this.modelRuntime = options.modelRuntime ?? new ModelRuntime();
+    this.memoryPolicyRuntime = options.memoryPolicyRuntime ?? new MemoryPolicyRuntime();
   }
 
   async activateForStartup(): Promise<ServerConfigActivationResult> {
@@ -446,17 +455,25 @@ export class ServerConfigService {
         ? undefined
         : this.prepareModelRuntime(runtimeConfig, runtimeRevision);
 
-      if (!unchanged) {
-        try {
-          await atomicWrite(this.configPath, text, { mode: 0o600 });
-        } catch (cause) {
-          throw new ConfigSemanticValidationError([{
-            path: this.configPath,
-            message: `Failed to write global configuration at ${this.configPath}: ${errorMessage(cause)}`,
-          }]);
+      const commit = async (): Promise<void> => {
+        if (!unchanged) {
+          try {
+            await atomicWrite(this.configPath, text, { mode: 0o600 });
+          } catch (cause) {
+            throw new ConfigSemanticValidationError([{
+              path: this.configPath,
+              message: `Failed to write global configuration at ${this.configPath}: ${errorMessage(cause)}`,
+            }]);
+          }
         }
+        if (preparedModelRuntime !== undefined) this.modelRuntime.publish(preparedModelRuntime);
+      };
+      const nextPolicy = memoryPolicyForConfig(validated);
+      if (sameMemoryPolicy(this.memoryPolicyRuntime.current.policy, nextPolicy)) {
+        await commit();
+      } else {
+        await this.memoryPolicyRuntime.commitPolicy(nextPolicy, commit);
       }
-      if (preparedModelRuntime !== undefined) this.modelRuntime.publish(preparedModelRuntime);
       return {
         snapshot: {
           config: redactConfig(validated),
@@ -538,6 +555,7 @@ export class ServerConfigService {
     ),
   ): ServerConfigInitialization {
     this.modelRuntime.publish(prepared);
+    this.memoryPolicyRuntime.initialize(memoryPolicyForConfig(config));
     this.startupConfig = config;
     const { auth, ...runtimeConfig } = config;
     return {
@@ -815,11 +833,14 @@ function validateConfig(value: unknown): ArchCodeConfig {
   }
   try {
     const resolvedMcpConfig = resolveMcpConfig(config.mcp);
-    validateMcpSecretLiteralPolicy(resolvedMcpConfig, issues);
+    const resolvedGithubConfig = resolveGithubIntegrationConfig(config.integrations?.github);
+    validateRuntimeSecretLiteralPolicy(config, resolvedMcpConfig, resolvedGithubConfig, issues);
   } catch (cause) {
     const serverName = mcpErrorServerName(cause, config);
     issues.push({
-      path: serverName === undefined ? "mcp" : `mcp.servers.${serverName}`,
+      path: serverName === undefined
+        ? cause instanceof McpConfigError || cause instanceof McpConfigEnvError ? "mcp" : "integrations.github"
+        : `mcp.servers.${serverName}`,
       message: errorMessage(cause),
       removalTarget: serverName === undefined
         ? undefined
@@ -841,26 +862,23 @@ function validateConfig(value: unknown): ArchCodeConfig {
   return config;
 }
 
-/** Keep MCP transport credentials inside the same runtime literal bounds used
- * by the redaction policy. Transport endpoints/commands are not credentials. */
-function validateMcpSecretLiteralPolicy(
-  config: ResolvedMcpConfig,
+/** Validate the complete persisted runtime redaction registry before commit.
+ * Transport endpoints/commands are not credentials. */
+function validateRuntimeSecretLiteralPolicy(
+  config: ArchCodeConfig,
+  mcp: ResolvedMcpConfig,
+  github: ReturnType<typeof resolveGithubIntegrationConfig>,
   issues: RecoverableConfigValidationIssue[],
 ): void {
-  const literals: RuntimeSecretLiteralInput[] = [];
-  for (const [serverName, server] of Object.entries(config.servers)) {
-    const field = server.type === "http" ? "headers" : "env";
-    const values = server.type === "http" ? server.headers : server.env;
-    for (const [key, value] of Object.entries(values ?? {})) {
-      literals.push({
-        path: `mcp.servers.${serverName}.${field}.${key}`,
-        value,
-      });
-    }
-  }
-  if (literals.length === 0) return;
   try {
-    new SecretLiteralRegistry(literals);
+    collectRuntimeSecretLiterals({
+      providers: config.provider,
+      userMcp: mcp,
+      github,
+      // External literals are process inputs, not persisted Config. Their
+      // aggregate is validated when createRuntime constructs its registry.
+      externalLiterals: [],
+    });
   } catch (cause) {
     if (cause instanceof ConfigSemanticValidationError) {
       issues.push(...cause.issues.map((issue) => ({ ...issue })));
@@ -1612,7 +1630,22 @@ async function revisionForText(text: string): Promise<string> {
 }
 
 async function runtimeRevisionForConfig(config: ArchCodeConfig): Promise<string> {
-  return await revisionForText(stableJson(omitAuth(config)));
+  return await revisionForText(stableJson({
+    provider: config.provider,
+    profiles: config.profiles,
+  }));
+}
+
+function memoryPolicyForConfig(config: ArchCodeConfig): MemoryPolicy {
+  return {
+    useMemory: config.memory?.useMemory ?? true,
+    autoLearning: config.memory?.autoLearning ?? true,
+  };
+}
+
+function sameMemoryPolicy(left: MemoryPolicy, right: MemoryPolicy): boolean {
+  return left.useMemory === right.useMemory
+    && left.autoLearning === right.autoLearning;
 }
 
 function errorMessage(cause: unknown): string {
@@ -1677,10 +1710,9 @@ function asStringRecord(value: unknown): Record<string, string> | undefined {
 function restartRequiredSections(
   config: ArchCodeConfig,
   startupConfig: ArchCodeConfig | undefined,
-): Array<"memory" | "integrations.github"> {
+): Array<"integrations.github"> {
   if (!startupConfig) return [];
-  const sections: Array<"memory" | "integrations.github"> = [];
-  if (stableJson(config.memory) !== stableJson(startupConfig.memory)) sections.push("memory");
+  const sections: Array<"integrations.github"> = [];
   if (stableJson(config.integrations?.github) !== stableJson(startupConfig.integrations?.github)) {
     sections.push("integrations.github");
   }

@@ -29,6 +29,10 @@ import {
   sessionAuthoritativeSnapshot,
   type SessionAuthoritativeSnapshotFixture,
 } from "../test-support/session-authoritative-snapshot";
+const memoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 import { hitlStore } from "../store/hitl-store";
 import {
   focusedSessionQueryOptions,
@@ -627,6 +631,7 @@ describe("SessionRoute focused view store behavior", () => {
     rootSession.executions = [
       {
         id: "execution-1",
+        memoryPolicy,
         origin: "user_message",
         status: "completed",
         startedAt: 1,
@@ -807,6 +812,7 @@ describe("SessionRoute focused view store behavior", () => {
     rootSession.executions = [
       {
         id: "root-execution",
+        memoryPolicy,
         origin: "tool_call",
         status: "completed",
         startedAt: 1,
@@ -850,6 +856,7 @@ describe("SessionRoute focused view store behavior", () => {
     childSession.executions = [
       {
         id: "child-execution",
+        memoryPolicy,
         origin: "goal_continuation",
         status: "completed",
         startedAt: 2,

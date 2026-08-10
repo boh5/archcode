@@ -487,7 +487,7 @@ describe("ServerConfigService", () => {
     expect(contents).toEndWith("\n");
     expect(contents).toContain('\n  "profiles":');
     expect((await stat(service.configPath)).mode & 0o777).toBe(0o600);
-    expect(saved.modelRuntimeRevision).toBe(saved.revision);
+    expect(saved.modelRuntimeRevision).toBe(service.modelRuntime.current.revision);
     expect(saved.restartRequiredSections).toEqual([]);
   });
 
@@ -1325,9 +1325,9 @@ describe("ServerConfigService", () => {
     const service = await createService();
     const before = await service.getSnapshot();
     const replace = preserveSecrets(before.config);
-    replace.provider.local.options.apiKey = { action: "replace", value: "api-2" };
+    replace.provider.local.options.apiKey = { action: "replace", value: "api-key-2" };
     replace.provider.local.options.headers = { Authorization: { action: "replace", value: "header-2" } };
-    replace.provider.local.options.queryParams = { token: { action: "replace", value: "query-2" } };
+    replace.provider.local.options.queryParams = { token: { action: "replace", value: "query-token-2" } };
     (replace.mcp!.servers.custom as any).headers = { Authorization: { action: "replace", value: "mcp-secret-2" } };
     const replaced = await service.save({ expectedRevision: before.revision, config: replace });
     const deleteAll = preserveSecrets(replaced.config);
@@ -1400,6 +1400,7 @@ describe("ServerConfigService", () => {
   test("applies models live while reporting every mixed non-model restart section", async () => {
     const service = await createService();
     const snapshot = await service.getSnapshot();
+    const priorModelRuntimeRevision = snapshot.modelRuntimeRevision;
     const update = preserveSecrets(snapshot.config);
     update.provider.local.models["new-model"] = {
       name: "New model",
@@ -1407,14 +1408,18 @@ describe("ServerConfigService", () => {
       modalities: { input: ["text"], output: ["text"] },
     };
     (update.mcp!.servers.custom as any).url = "https://changed.example.test";
-    update.memory = { enabled: false };
+    update.memory = { useMemory: false, autoLearning: false };
     update.integrations = { github: { enabled: false } };
 
     const saved = await service.save({ expectedRevision: snapshot.revision, config: update });
-    expect(saved.modelRuntimeRevision).toBe(saved.revision);
-    expect(service.modelRuntime.current.revision).toBe(saved.revision);
+    expect(saved.modelRuntimeRevision).not.toBe(priorModelRuntimeRevision);
+    expect(service.modelRuntime.current.revision).toBe(saved.modelRuntimeRevision);
     expect(service.modelRuntime.current.tryResolveSelection({ model: "local:new-model" })).toBeDefined();
-    expect(saved.restartRequiredSections).toEqual(["memory", "integrations.github"]);
+    expect(service.memoryPolicyRuntime.current).toMatchObject({
+      policy: { useMemory: false, autoLearning: false },
+      epoch: { generation: 1 },
+    });
+    expect(saved.restartRequiredSections).toEqual(["integrations.github"]);
   });
 
   test("validates a draft without writing and hot-applies the committed HTTP/STDIO result", async () => {
@@ -1497,6 +1502,23 @@ describe("ServerConfigService", () => {
     })).rejects.toMatchObject({
       issues: [{ path: "runtime.secretLiterals" }],
     });
+
+    const combinedOverflow = preserveSecrets(snapshot.config);
+    combinedOverflow.mcp!.servers.local = {
+      type: "stdio",
+      enabled: true,
+      command: "mcp-local",
+      env: Object.fromEntries(Array.from({ length: 253 }, (_, index) => [
+        `TOKEN_${index}`,
+        { action: "replace", value: `combined-secret-${index.toString().padStart(3, "0")}` },
+      ])),
+    };
+    await expect(service.saveWithRuntimeConfig({
+      expectedRevision: snapshot.revision,
+      config: combinedOverflow,
+    })).rejects.toMatchObject({
+      issues: [{ path: "runtime.secretLiterals" }],
+    });
   });
 
   test("validates resolved MCP environment secrets before draft use or save commit", async () => {
@@ -1546,5 +1568,23 @@ describe("ServerConfigService", () => {
       if (previous === undefined) delete process.env[envName];
       else process.env[envName] = previous;
     }
+  });
+
+  test("publishes a memory-only save without replacing ModelRuntime", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const modelSnapshot = service.modelRuntime.current;
+    const update = preserveSecrets(snapshot.config);
+    update.memory = { useMemory: false, autoLearning: false };
+
+    const saved = await service.save({ expectedRevision: snapshot.revision, config: update });
+
+    expect(saved.modelRuntimeRevision).toBe(snapshot.modelRuntimeRevision);
+    expect(service.modelRuntime.current).toBe(modelSnapshot);
+    expect(service.memoryPolicyRuntime.current).toMatchObject({
+      policy: { useMemory: false, autoLearning: false },
+      epoch: { generation: 1 },
+    });
+    expect(saved.restartRequiredSections).toEqual([]);
   });
 });

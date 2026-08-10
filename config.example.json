@@ -62,5 +62,9 @@
         }
       }
     }
+  },
+  "memory": {
+    "useMemory": true,
+    "autoLearning": true
   }
 }

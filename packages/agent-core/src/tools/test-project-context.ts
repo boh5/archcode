@@ -4,6 +4,7 @@ import type { StoreApi } from "zustand";
 
 import { HitlBoundaryCodec, ProjectHitlQueue } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
+import { MemoryService } from "../memory/service";
 import { silentLogger } from "../logger";
 import { ProjectTodoService } from "../todos";
 import type { ProjectContextResolverOptions } from "../projects/context-resolver";
@@ -37,10 +38,10 @@ export function createTestProjectContext(
     createAutomation: async () => { throw new Error("Automation creation is not configured for this test context"); },
     todos,
     hitl,
-    memory: new MemoryFileManager({
+    memory: new MemoryService(new MemoryFileManager({
       project: projectRuntimePath(workspaceRoot, "memory"),
       user: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "user-memory"),
-    }),
+    })),
     approvals: new ProjectApprovalManager(silentLogger),
   };
 }

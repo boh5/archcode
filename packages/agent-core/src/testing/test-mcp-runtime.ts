@@ -42,7 +42,7 @@ export interface TestMcpRuntimeOptions {
 export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestMcpRuntime {
   let statusSnapshot: McpServerStatusResponse = cloneStatus(options.statuses ?? { servers: {} });
   const inventorySnapshot = cloneInventory(options.inventory ?? { servers: {} });
-  const descriptors = options.descriptors ?? new Map<string, AnyToolDescriptor>();
+  const descriptors = new Map(options.descriptors ?? []);
   const listeners = new Set<McpStatusListener>();
 
   const runtime: TestMcpRuntime = {
@@ -52,7 +52,7 @@ export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestM
     getStatus: () => cloneStatus(statusSnapshot),
     getInventory: () => cloneInventory(inventorySnapshot),
     snapshotTools: ({ builtinServerNames: _builtinServerNames }): McpToolSnapshot => ({
-      descriptors,
+      descriptors: new Map(descriptors),
       statuses: cloneStatus(statusSnapshot),
     }),
     onStatusChange: (listener) => {

@@ -5,6 +5,10 @@ import type {
   McpServerStatusResponse,
   UpdateServerConfigRequest,
 } from "@archcode/protocol";
+import {
+  ConfigRevisionConflictError,
+  ConfigSemanticValidationError,
+} from "@archcode/agent-core";
 
 import { errorHandler } from "../error-handler";
 import { createMcpRoutes, type McpRuntimePort, type McpTestResponse } from "./mcp";
@@ -193,5 +197,24 @@ describe("MCP control-plane routes", () => {
     expect(await response.json()).toEqual({
       error: { code: "INTERNAL_ERROR", message: "Internal server error" },
     });
+  });
+
+  test("maps stale and invalid drafts to actionable Config errors", async () => {
+    for (const [error, expectedStatus, expectedCode] of [
+      [new ConfigRevisionConflictError("old", "current"), 409, "CONFIG_REVISION_CONFLICT"],
+      [new ConfigSemanticValidationError([{ path: "mcp.servers.docs.url", message: "Invalid URL" }]), 422, "CONFIG_VALIDATION_ERROR"],
+    ] as const) {
+      const runtime = createRuntime({
+        testMcpServerDraft: mock(async () => { throw error; }),
+      });
+      const response = await createApp(runtime).request("/api/mcp/test/docs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(draft()),
+      });
+
+      expect(response.status).toBe(expectedStatus);
+      expect(await response.json()).toMatchObject({ error: { code: expectedCode } });
+    }
   });
 });

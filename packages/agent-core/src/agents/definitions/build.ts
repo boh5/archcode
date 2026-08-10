@@ -73,8 +73,6 @@ export const buildAgentDefinition = {
     autoInjectReminder: true,
     todoStepReminder: true,
     todoQueryLoopContinuation: true,
-    memoryExtraction: false,
-    memoryConsolidation: false,
     titleGeneration: "unless-supplied",
   },
   childPolicy: {

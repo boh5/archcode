@@ -6,7 +6,7 @@ import { getModelRuntimeCatalog, getProviderAdapterCatalog, getServerConfig, sav
 const config: ServerConfig = {
   provider: {},
   profiles: {} as ServerConfig["profiles"],
-  memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
+  memory: { useMemory: true, autoLearning: true },
 };
 
 const adapterCatalog: ProviderAdapterCatalog = [{

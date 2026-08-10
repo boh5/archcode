@@ -21,6 +21,8 @@ import { DELEGATION_CORE_TOOLS } from "./constants";
 import type { AgentDefinition } from "./factory-types";
 import type { ToolExecutionContext } from "../tools/types";
 import type { DelegationRequest } from "@archcode/protocol";
+import { MemoryPolicyRuntime } from "../memory";
+import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
 import {
   EMPTY_ATTACHMENT_MODEL_PROJECTOR,
   resolveEmptyAttachmentReadPaths,
@@ -119,8 +121,6 @@ const identityLeadDefinition = {
     autoInjectReminder: false,
     todoStepReminder: false,
     todoQueryLoopContinuation: false,
-    memoryExtraction: false,
-    memoryConsolidation: false,
     titleGeneration: "disabled",
   },
   includeMemoryInPrompt: false,
@@ -352,6 +352,7 @@ describe("SessionAgentManager", () => {
         type: "execution-start",
         executionId,
         binding: binding.summary,
+        memoryPolicy: testExecutionMemoryPolicy,
         origin: "user_message",
         maxSteps: 1,
         executionSkills: [],
@@ -374,7 +375,13 @@ describe("SessionAgentManager", () => {
           },
         }],
       });
-      await agent.run(binding, { executionId, runOrdinal: 0, initialStep: 0, maxSteps: 1 });
+      await agent.run(binding, {
+        executionId,
+        runOrdinal: 0,
+        initialStep: 0,
+        maxSteps: 1,
+        memoryPolicy: new MemoryPolicyRuntime().claim(),
+      });
       const endedAt = Date.now();
       agent.store.getState().append({
         type: "execution-end",

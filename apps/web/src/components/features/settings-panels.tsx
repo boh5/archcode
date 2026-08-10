@@ -6,7 +6,7 @@ import { getMcpInventory, reconnectMcpServer, testMcpDraft } from "../../api/mcp
 import { getCompleteProjectSkillInventoryView, type CompleteProjectSkillInventory } from "../../api/skills";
 import { useMcpStatusStore } from "../../store/mcp-status-store";
 import { Field, JsonObjectField, NumberField, RenameInput, SecretField, SecretRecordEditor, TextInput } from "./settings-fields";
-import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, defaultMemoryConfig, errorAtOrBelow, missingProfileVariant, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
+import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, errorAtOrBelow, missingProfileVariant, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
 
 type JsonValidationChange = (path: string, error?: string) => void;
 
@@ -478,7 +478,12 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
   const [inventoryError, setInventoryError] = useState<string>();
   const [pendingActions, setPendingActions] = useState<Set<string>>(() => new Set());
   const pendingActionsRef = useRef(new Set<string>());
-  const setServers = useMcpStatusStore((state) => state.setServers);
+  const draftTestControllersRef = useRef(new Map<string, AbortController>());
+  const updateServer = useMcpStatusStore((state) => state.updateServer);
+  const inventoryStatusKey = Object.entries(servers)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, status]) => `${name}:${status.state}`)
+    .join("|");
 
   useEffect(() => {
     if (!runtimeAvailable || !active) return;
@@ -490,7 +495,18 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
       if (mounted) setInventoryError(cause instanceof Error ? cause.message : "Unable to load MCP tool inventory");
     });
     return () => { mounted = false; };
-  }, [active, expectedRevision, runtimeAvailable, servers]);
+  }, [active, expectedRevision, inventoryStatusKey, runtimeAvailable]);
+
+  useEffect(() => {
+    if (active && runtimeAvailable) return;
+    for (const controller of draftTestControllersRef.current.values()) controller.abort();
+    draftTestControllersRef.current.clear();
+  }, [active, runtimeAvailable]);
+
+  useEffect(() => () => {
+    for (const controller of draftTestControllersRef.current.values()) controller.abort();
+    draftTestControllersRef.current.clear();
+  }, []);
 
   useEffect(() => {
     setTestResults({});
@@ -555,12 +571,23 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
         }))} label={`Enable ${name}`} description="Expose this built-in server to the live MCP runtime." /> : <McpEditor name={name} server={server!} config={config} onChange={onChange} errors={errors} />}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button type="button" disabled={!runtimeAvailable || pendingActions.has(testKey)} title={!runtimeAvailable ? "Runtime is unavailable" : undefined} onClick={() => void runAction(testKey, async () => {
-            const result = await testMcpDraft(name, { expectedRevision, config });
-            setTestResults((current) => ({ ...current, [name]: result.tools }));
-            if (result.warnings.length > 0) setActionErrors((current) => ({ ...current, [testKey]: result.warnings.join(" ") }));
+            const controller = new AbortController();
+            draftTestControllersRef.current.set(testKey, controller);
+            try {
+              const result = await testMcpDraft(name, { expectedRevision, config }, { signal: controller.signal });
+              setTestResults((current) => ({ ...current, [name]: result.tools }));
+              if (result.warnings.length > 0) setActionErrors((current) => ({ ...current, [testKey]: result.warnings.join(" ") }));
+            } catch (cause) {
+              if (!controller.signal.aborted) throw cause;
+            } finally {
+              if (draftTestControllersRef.current.get(testKey) === controller) {
+                draftTestControllersRef.current.delete(testKey);
+              }
+            }
           })} className={secondaryActionClass}>{pendingActions.has(testKey) ? <Loader2 size={13} className="animate-activity" aria-hidden="true" /> : null}Test draft</button>
           <button type="button" disabled={!runtimeAvailable || !reconnectSaved || !reconnectEnabled || pendingActions.has(reconnectKey)} title={!reconnectEnabled ? "Enable and save this server before reconnecting" : !reconnectSaved ? "Save this server before reconnecting" : undefined} onClick={() => void runAction(reconnectKey, async () => {
-            setServers(await reconnectMcpServer(name));
+            const status = (await reconnectMcpServer(name))[name];
+            if (status !== undefined) updateServer(name, status);
             setInventory(await getMcpInventory());
           })} className={secondaryActionClass}>{pendingActions.has(reconnectKey) ? <Loader2 size={13} className="animate-activity" aria-hidden="true" /> : <RefreshCw size={13} aria-hidden="true" />}Reconnect</button>
           {!reconnectEnabled
@@ -598,7 +625,7 @@ function McpEditor({ name, server, config, onChange, errors }: { name: string; s
       <Field label="Transport"><select className={selectClass} value={server.type} onChange={(event) => replaceTransport(event.target.value as "http" | "stdio")}><option value="http">HTTP</option><option value="stdio">STDIO</option></select></Field>
       {server.type === "http" ? <Field label="HTTP URL" error={errors[`mcp.servers.${name}.url`]}><TextInput value={server.url} onChange={(next) => update((draft) => { if (draft.type === "http") draft.url = next; })} /></Field> : <>
         <Field label="Command" error={errors[`mcp.servers.${name}.command`]}><TextInput value={server.command} onChange={(next) => update((draft) => { if (draft.type === "stdio") draft.command = next; })} /></Field>
-        <Field label="Arguments (one per line)"><textarea rows={3} value={server.args?.join("\n") ?? ""} onChange={(event) => update((draft) => { if (draft.type === "stdio") draft.args = event.target.value ? event.target.value.split("\n") : undefined; })} className="min-h-20 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 font-mono text-[12px] leading-[18px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle" /></Field>
+        <Field label="Arguments (one per line)"><textarea rows={3} value={server.args?.join("\n") ?? ""} onChange={(event) => update((draft) => { if (draft.type === "stdio") { const args = event.target.value.split("\n").filter((line) => line.trim() !== ""); draft.args = args.length > 0 ? args : undefined; } })} className="min-h-20 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 font-mono text-[12px] leading-[18px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle" /></Field>
       </>}
       <Field label="Connect timeout (ms)"><NumberField value={server.connectTimeoutMs} onChange={(next) => update((draft) => { draft.connectTimeoutMs = next; })} /></Field>
       <Field label="Discovery timeout (ms)"><NumberField value={server.discoveryTimeoutMs} onChange={(next) => update((draft) => { draft.discoveryTimeoutMs = next; })} /></Field>
@@ -611,11 +638,6 @@ function McpEditor({ name, server, config, onChange, errors }: { name: string; s
 
 function draftHasProvider(config: ServerConfig, providerId: string): boolean {
   return config.provider[providerId] !== undefined;
-}
-
-export function SettingsMemoryPanel({ config, onChange, errors }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors }) {
-  const memory = { ...defaultMemoryConfig(), ...config.memory };
-  return <section className="space-y-5 pb-1"><PanelHeader title="Memory" description="Configure extraction thresholds for durable project memory." /><div className="space-y-4 rounded-md border border-border-default bg-bg-surface p-4"><SettingsToggle checked={memory?.enabled ?? true} onChange={(enabled) => onChange(withDraft(config, (draft) => { draft.memory = { ...(draft.memory ?? defaultMemoryConfig()), enabled }; }))} label="Memory extraction" description="Allow completed sessions to contribute durable memory." /><div className="grid gap-x-4 gap-y-4 border-t border-border-subtle pt-4 sm:grid-cols-2">{(["minMessages", "minContentLength", "cooldownMs"] as const).map((key) => <Field key={key} label={key} error={errors[`memory.${key}`]}><NumberField value={memory?.[key]} onChange={(next) => onChange(withDraft(config, (draft) => { draft.memory = { ...(draft.memory ?? defaultMemoryConfig()), [key]: next ?? 0 }; }))} /></Field>)}</div></div></section>;
 }
 
 export function SettingsGithubPanel({ config, onChange }: { config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors }) {

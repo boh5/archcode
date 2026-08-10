@@ -34,6 +34,8 @@ export interface McpTestResult {
   readonly warnings: string[];
 }
 
+export const MAX_CONCURRENT_MCP_DRAFT_TESTS = 8;
+
 export interface McpRuntimeServiceOptions {
   readonly builtinServers?: Readonly<Partial<Record<BuiltinMcpServerName, ResolvedMcpServerConfig>>>;
   readonly clientFactories?: McpClientFactories;
@@ -191,6 +193,9 @@ export class McpRuntimeService implements McpRuntime {
     const testKey = `${serverName}:${stableSerialize(config)}`;
     if (this.#testsInFlight.has(testKey)) {
       throw new Error(`MCP server test already in progress for "${serverName}"`);
+    }
+    if (this.#testsInFlight.size >= MAX_CONCURRENT_MCP_DRAFT_TESTS) {
+      throw new Error(`At most ${MAX_CONCURRENT_MCP_DRAFT_TESTS} MCP server tests may run concurrently`);
     }
     const controller = new AbortController();
     const removeAbortForwarder = forwardAbort(options.signal, controller);
@@ -363,7 +368,9 @@ export class McpRuntimeService implements McpRuntime {
       const tools = await candidate.handle.client.listTools(candidate.controller.signal);
       const projection = projectServerTools(serverName, tools, candidate.handle, policy, this.#logger);
       if (!this.#isWinning(serverName, desired, candidate.epoch) || this.#closed) {
-        await candidate.handle.retire();
+        await candidate.handle.retire().catch((closeError) => {
+          this.#logCloseFailure(serverName, closeError, policy);
+        });
         return;
       }
       candidate.handle.publish(projection);

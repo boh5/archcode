@@ -4,12 +4,9 @@ import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
 import type { RawToolResult, ToolExecutionContext } from "../types";
 import {
-  DEFAULT_MAX_INDEX_LINES,
-  DEFAULT_MAX_PREFERENCES_BYTES,
-  INDEX_TRUNCATION_SUFFIX,
   MEMORY_CONTEXT_END,
   MEMORY_CONTEXT_START,
-  MemoryFileManager,
+  MemoryService,
   MemoryPathError,
   PREFERENCES_MARKER_END,
   PREFERENCES_MARKER_START,
@@ -20,7 +17,7 @@ import { BoundedFileReadError, ONE_SHOT_FILE_READ_MAX_BYTES } from "../../utils/
 
 const MemoryReadInputSchema = z
   .object({
-    name: z.string().optional().describe("Omit for combined truncated context. Use \"preferences\" for full user preferences, \"index\" for the full project index, or an exact project topic matching /^[a-zA-Z0-9_]+$/. No scope parameter is accepted."),
+    name: z.string().optional().describe("Omit for complete in-capacity preferences plus the complete generated project index. Use \"preferences\" for the full user preferences, \"index\" for the full project index, or an exact project topic matching /^[a-zA-Z0-9_]+$/. No scope parameter is accepted."),
   })
   .strict();
 
@@ -39,46 +36,45 @@ function memoryReadFailure(error: unknown): RawToolResult {
       name: error.name,
     });
   }
+  if (error instanceof MemoryPathError) {
+    return createToolErrorResult({
+      kind: "workspace",
+      code: "TOOL_FILE_OUTSIDE_WORKSPACE",
+      message: "Memory path is outside the configured Memory roots",
+    });
+  }
   return createToolErrorResult({
     kind: "execution",
-    error: error instanceof Error ? error : new Error(String(error)),
+    code: "TOOL_MEMORY_READ_FAILED",
+    message: "Memory could not be read",
   });
-}
-
-function truncateIndex(content: string, maxLines: number): string {
-  const lines = content.split("\n");
-  if (lines.length <= maxLines) return content;
-  return lines.slice(0, maxLines).join("\n") + INDEX_TRUNCATION_SUFFIX;
-}
-
-function truncatePreferences(content: string, maxBytes: number): string {
-  const encoder = new TextEncoder();
-  const bytes = encoder.encode(content);
-  if (bytes.length <= maxBytes) return content;
-  return new TextDecoder().decode(bytes.slice(0, maxBytes));
 }
 
 // ─── Combined context (no-arg call) ───
 
 async function buildCombinedContext(
-  fileManager: MemoryFileManager,
+  memory: MemoryService,
 ): Promise<string> {
   const parts: string[] = [];
   parts.push(MEMORY_CONTEXT_START);
 
-  const userPrefs = await fileManager.readPreferences();
-  if (userPrefs !== null) {
-    const truncated = truncatePreferences(userPrefs, DEFAULT_MAX_PREFERENCES_BYTES);
+  const manifest = await memory.readPromptManifest();
+  if (manifest.preferences?.availableForPrompt) {
     parts.push(PREFERENCES_MARKER_START);
-    parts.push(truncated);
+    parts.push(manifest.preferences.content);
     parts.push(PREFERENCES_MARKER_END);
+  } else if (manifest.preferences?.capacity.state === "over-limit") {
+    parts.push("Personal Memory is over capacity and omitted. Manage it in Settings → Memory.");
   }
 
-  const indexContent = await fileManager.readIndex();
+  const indexContent = manifest.index.availableForPrompt
+    ? manifest.index.content
+    : null;
   if (indexContent !== null) {
-    const truncated = truncateIndex(indexContent, DEFAULT_MAX_INDEX_LINES);
     parts.push("## Memory Index");
-    parts.push(truncated);
+    parts.push(indexContent);
+  } else if (!manifest.index.availableForPrompt) {
+    parts.push("Project Memory index is over capacity and omitted. Manage it in Settings → Memory.");
   }
 
   parts.push(MEMORY_CONTEXT_END);
@@ -89,7 +85,7 @@ async function buildCombinedContext(
 // ─── Topic file reader ───
 
 async function readTopicFile(
-  fileManager: MemoryFileManager,
+  memory: MemoryService,
   name: string,
 ): Promise<RawToolResult> {
   if (!NAME_REGEX.test(name)) {
@@ -101,7 +97,7 @@ async function readTopicFile(
   }
 
   try {
-    const topic = await fileManager.readTopic(name);
+    const topic = await memory.readTopic(name);
     if (topic === null) {
       return createToolErrorResult({
         kind: "file-not-found",
@@ -110,17 +106,9 @@ async function readTopicFile(
       });
     }
 
-    const header = `---\nname: ${topic.name}\ndescription: ${topic.description}\ntype: ${topic.type}\n---`;
+    const header = `---\nname: ${topic.title}\ndescription: ${topic.description}\ntype: ${topic.type}\n---`;
     return createTextToolResult([MEMORY_CONTEXT_START, header, topic.content, MEMORY_CONTEXT_END].join("\n"));
   } catch (error) {
-    if (error instanceof MemoryPathError) {
-      return createToolErrorResult({
-        kind: "workspace",
-        code: "TOOL_FILE_OUTSIDE_WORKSPACE",
-        message: error.message,
-      });
-    }
-
     // Frontmatter parsing failed — return structured error instead of falling back to raw content
     return memoryReadFailure(error);
   }
@@ -133,7 +121,7 @@ export function createMemoryReadTool() {
     name: "memory_read",
     description:
       "Read persisted Memory when prior work, existing decisions, user preferences, project conventions, an unfamiliar module, or context lost after compaction may matter. " +
-      "Omit name to receive truncated user preferences plus the project memory index. " +
+      "Omit name to receive complete in-capacity user preferences plus the complete project memory index. " +
       'Use "preferences" for the full user preference file, "index" for the full project index, or an exact project knowledge topic name. ' +
       "This tool reads known entries and does not perform semantic search; read the index first when the topic name is unknown.",
     inputSchema: MemoryReadInputSchema,
@@ -144,25 +132,25 @@ export function createMemoryReadTool() {
       ctx: ToolExecutionContext,
     ) => {
       try {
-        const fileManager = ctx.projectContext.memory;
+        const memory = ctx.projectContext.memory;
         if (!input.name) {
-          return createTextToolResult(await buildCombinedContext(fileManager));
+          return createTextToolResult(await buildCombinedContext(memory));
         }
 
         if (input.name === "preferences") {
-          const content = await fileManager.readPreferences();
-          if (content === null) {
+          const preferences = await memory.readPreferences();
+          if (preferences === null) {
             return createToolErrorResult({
               kind: "file-not-found",
               code: "TOOL_FILE_NOT_FOUND",
               message: "Memory preferences not found",
             });
           }
-          return createTextToolResult(content);
+          return createTextToolResult(preferences.content);
         }
 
         if (input.name === "index") {
-          const content = await fileManager.readIndex();
+          const content = await memory.readIndex();
           if (content === null) {
             return createToolErrorResult({
               kind: "file-not-found",
@@ -173,7 +161,7 @@ export function createMemoryReadTool() {
           return createTextToolResult(content);
         }
 
-        return await readTopicFile(fileManager, input.name);
+        return await readTopicFile(memory, input.name);
       } catch (error) {
         return memoryReadFailure(error);
       }

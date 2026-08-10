@@ -1,5 +1,4 @@
 import type { BuiltinMcpServerName } from "@archcode/protocol";
-import type { MemoryExtractionConfig } from "../config/index";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { scopedKey } from "../store/key";
@@ -22,7 +21,6 @@ export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
-  readonly memoryConfig?: MemoryExtractionConfig;
   readonly projectContextResolver: ProjectContextResolver;
   readonly sessionGoalService?: SessionGoalService;
   readonly tombstoneTtlMs?: number;
@@ -236,7 +234,6 @@ export class SessionAgentManager {
         attachmentProjector: this.#config.attachmentProjector,
         resolveAttachmentReadPaths: this.#config.resolveAttachmentReadPaths,
         workspaceRoot,
-        memoryConfig: this.#config.memoryConfig,
         projectContextResolver: this.#config.projectContextResolver,
         sessionGoalService: this.#config.sessionGoalService,
         startChildExecution: (request) => {

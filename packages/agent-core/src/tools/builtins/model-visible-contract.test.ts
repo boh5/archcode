@@ -273,7 +273,7 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     runtimeSourceIds: ["tools/builtins/memory-read.ts:19-23,117-135"],
     descriptionPatterns: [/prior work|historical work/, /decisions/, /preferences/, /unfamiliar/, /compaction/],
     schema: [
-      { path: ["properties", "name"], descriptionPatterns: [/combined.*context/, /preferences/, /index/, /topic/] },
+      { path: ["properties", "name"], descriptionPatterns: [/complete in-capacity preferences/, /complete generated project index/, /preferences/, /index/, /topic/] },
     ],
   },
   {

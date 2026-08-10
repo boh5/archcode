@@ -173,7 +173,7 @@ packages/agent-core/src/
 ├── agents/tool-filter.test.ts  # Architecture coverage for definition-based capability filtering
 ├── agents/query/               # runLlmStream + tool execution cycle (max 50 steps), doom detection
 ├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
-├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation, memory-extraction, memory-consolidation
+├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation
 ├── execution/session-execution-manager.ts # Sole logical Execution lifecycle/admission, run resources, abort, recovery, and terminal owner
 ├── process/                    # ProcessRunner lifecycle, bounded streaming, timeout/abort, and structured results
 ├── tools/define-tool.ts        # defineTool() → ToolDescriptor (strict RawToolResult + explicit outputPolicy)
@@ -188,11 +188,11 @@ packages/agent-core/src/
 ├── tools/riipgrep/             # Ripgrep wrapper for search tools
 ├── core/                       # register-tools.ts: wires tools and finalized-result audit/logger hooks
 ├── store/                      # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
-├── background/                 # BackgroundTaskManager (fire-and-forget, dedup) + tasks: title-generation, memory-extraction, memory-consolidation
+├── background/                 # BackgroundTaskManager (fire-and-forget, dedup) + title-generation task
 ├── commands/                   # CommandRegistry + /compact command
 ├── compression/                # DCP-like dynamic range compression: model tool action, refs, block state, soft/strong nudges below hard threshold
 ├── compact/                    # Mandatory hard compact safety path at >=85% context pressure plus /compact command
-├── memory/                     # MemoryFileManager (atomic writes, frontmatter, index), schemas, types, constants
+├── memory/                     # MemoryService, Markdown adapter, idle learning coordinator, policy, schemas, limits
 ├── session-goal/               # Session.goal schema, ownership service, status, budget, and usage
 ├── hitl/                       # Durable project-scoped approval/question queue and redacted display payloads
 ├── automations/                # Canonical Automation schemas, schedule, durable Invocation, Session dispatch
@@ -414,8 +414,12 @@ it is independent of user-server visibility.
 beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-inject-reminder)
   → runLlmStream → consumeFullStream → afterStepEnd (todo-continuation)
   → executeToolCalls (doom detection → partition → guards → execute)
-→ afterLoopEnd (todo-continuation, memory-extraction, memory-consolidation)
+→ afterLoopEnd (todo-continuation)
 ```
+
+Successful root Lead/Discussion terminals update the durable Memory cursor;
+`MemoryIdleCoordinator` performs automatic learning outside the Query Loop after
+10 minutes of inactivity.
 
 ## Tool System
 
@@ -455,7 +459,7 @@ ArchCode has two intentionally separate context-reduction paths. Dynamic DCP-lik
 
 ## Memory System
 
-Project: `.archcode/runtime/memory/`, User: `~/.archcode/memory/` (user-global, not under project runtime). Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `runLlmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: ConfiguredAgent resolves one immutable Execution snapshot; PromptContractCompiler labels it non-authoritative and emits its source/status in the durable Prompt trace. `memory_write` rejects secrets.
+Project: `.archcode/runtime/memory/`, User: `~/.archcode/memory/` (user-global, not under project runtime). Structure: `index.md` (generated topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + Markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryService` is the sole mutation boundary over `MemoryFileManager`: it owns CAS revisions, secret rejection, 8 KiB preferences, 16 KiB complete topic documents, the 200-topic cap, legacy shrink-only edits, index rebuilds, and deterministic receipt replay. Existing `memory_write` remains the immediate explicit-write path. Automatic learning is owned by the runtime-scoped `MemoryIdleCoordinator`: successful root Lead/Discussion conversations wait for 10 minutes of inactivity, then use at most one `fast` extraction call and one full-file reconciliation call; durable cursors, receipts, policy epochs, and warnings make restart and opt-out behavior explicit. Injection: ConfiguredAgent resolves one immutable Execution snapshot containing complete in-capacity preferences and project index; PromptContractCompiler labels it non-authoritative and emits its source/status in the durable Prompt trace.
 
 ## Session Goal System
 

@@ -17,6 +17,7 @@ const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
 const executionCwd = join(tmpRoot, "project.worktrees", "session-skill");
 const executionSkillsRoot = join(executionCwd, ".archcode", "skills");
 const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
+const userAgentsSkillsRoot = join(tmpRoot, "user", ".agents", "skills");
 
 function makeContext(agentSkills: readonly string[], cwd = projectRoot): ToolExecutionContext {
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "skill_read",
@@ -30,7 +31,7 @@ function makeContext(agentSkills: readonly string[], cwd = projectRoot): ToolExe
   startedAt: 0,
   allowedTools: new Set(["skill_read"]),
   agentSkills,
-  skillService: new SkillService({ userSkillsRoot }),
+  skillService: new SkillService({ userSkillsRoot, userAgentsSkillsRoot }),
   projectContext: createTestProjectContext(projectRoot),
   cwd, });
 }
@@ -60,6 +61,7 @@ describe("skill_read tool", () => {
   beforeEach(async () => {
     await rm(tmpRoot, { recursive: true, force: true });
     await mkdir(userSkillsRoot, { recursive: true });
+    await mkdir(userAgentsSkillsRoot, { recursive: true });
     await mkdir(projectRoot, { recursive: true });
   });
 

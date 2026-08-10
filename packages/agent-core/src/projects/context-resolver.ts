@@ -4,6 +4,8 @@ import { USER_DATA_DIR_NAME } from "@archcode/protocol";
 
 import { HitlBoundaryCodec, ProjectHitlQueue, type ProjectHitlQueueOptions } from "../hitl";
 import { MemoryFileManager } from "../memory/file-manager";
+import { MemoryService } from "../memory/service";
+import type { MemoryDocumentTarget } from "../memory/service";
 import { silentLogger } from "../logger";
 import type { Logger } from "../logger";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
@@ -31,8 +33,10 @@ export interface ProjectContextResolverOptions {
   }) => Promise<Automation>;
   /** Factory primarily for testing alternate ProjectHitlQueue construction. */
   hitlFactory?: (options: ProjectHitlQueueOptions) => ProjectHitlQueue;
-  /** Factory primarily for testing alternate MemoryFileManager construction. */
-  memoryFactory?: (workspaceRoot: string) => MemoryFileManager;
+  /** Factory primarily for testing alternate MemoryService construction. */
+  memoryFactory?: (workspaceRoot: string) => MemoryService;
+  /** Narrow Runtime callback for retrying Session-owned learning after manual Memory changes. */
+  onMemoryChanged?: (workspaceRoot: string, target: MemoryDocumentTarget) => void | Promise<void>;
   /** Factory primarily for testing ProjectApprovalManager load behavior. */
   approvalsFactory?: () => ProjectApprovalManager;
   logger?: Logger;
@@ -46,7 +50,7 @@ export class ProjectContextResolver {
   readonly #projectTodoFactory: ProjectContextResolverOptions["projectTodoFactory"];
   readonly #createAutomation: ProjectContextResolverOptions["createAutomation"];
   readonly #hitlFactory: (options: ProjectHitlQueueOptions) => ProjectHitlQueue;
-  readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
+  readonly #memoryFactory: (workspaceRoot: string) => MemoryService;
   readonly #approvalsFactory: () => ProjectApprovalManager;
 
   constructor(options: ProjectContextResolverOptions) {
@@ -57,10 +61,10 @@ export class ProjectContextResolver {
     this.#createAutomation = options.createAutomation;
     this.#hitlFactory = options.hitlFactory ?? ((input) => new ProjectHitlQueue(input));
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
-      return new MemoryFileManager({
+      return new MemoryService(new MemoryFileManager({
         project: projectRuntimePath(workspaceRoot, "memory"),
         user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
-      });
+      }), (target) => options.onMemoryChanged?.(workspaceRoot, target));
     });
     this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager(this.#logger.child({ module: "project.approvals" })));
   }

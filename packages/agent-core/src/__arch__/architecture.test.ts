@@ -435,13 +435,12 @@ describe("monorepo package boundaries", () => {
       );
     });
 
-    test("every production LLM entry receives its model through an Execution binding", () => {
+    test("every production LLM entry receives its model through an immutable binding", () => {
       const files = [
         "packages/agent-core/src/agents/query/loop.ts",
         "packages/agent-core/src/compact/compact.ts",
         "packages/agent-core/src/title-generation/generator.ts",
-        "packages/agent-core/src/background/tasks/memory-extraction.ts",
-        "packages/agent-core/src/background/tasks/memory-consolidation.ts",
+        "packages/agent-core/src/memory/idle-coordinator.ts",
       ].map((file) => join(projectRoot, file));
 
       for (const file of files) {

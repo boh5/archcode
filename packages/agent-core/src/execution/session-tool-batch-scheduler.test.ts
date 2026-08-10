@@ -278,7 +278,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
     });
     harness.registry.register(replacement.descriptor);
 
-    await harness.scheduler.createBatch([
+    const batch = await harness.scheduler.createBatch([
       { toolCallId: "mcp-resolved", toolName: resolved.descriptor.name, input: {} },
     ], "step-0", 0, [resolved.descriptor]);
 
@@ -576,11 +576,19 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("does not append or publish a tool result when its durable checkpoint fails", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{
-      toolCallId: "read-checkpoint-failure",
-      toolName: "read_tool",
-      input: { value: "must-not-publish" },
-    }], "step-0", 0);
+    const batch = await harness.scheduler.createBatch([
+      {
+        toolCallId: "read-checkpoint-failure",
+        toolName: "read_tool",
+        input: { value: "must-not-publish" },
+      },
+      {
+        toolCallId: "concurrent-call",
+        toolName: "ask_user",
+        input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
+      },
+    ], "step-0", 0);
+    const concurrentCheckpointAt = batch.calls[1]!.checkpointAt;
 
     const published: string[] = [];
     const unsubscribe = harness.storeManager.subscribeToSessionEvents(({ envelope }) => {
@@ -592,7 +600,18 @@ describe("SessionToolBatchScheduler output ownership", () => {
       const checkpointed = state.toolBatches.some((batch) =>
         batch.calls.some((call) => call.toolCallId === "read-checkpoint-failure" && call.result !== undefined)
       );
-      if (checkpointed) throw failure;
+      if (checkpointed) {
+        harness.store.setState((live) => ({
+          ...live,
+          toolBatches: live.toolBatches.map((batch) => ({
+            ...batch,
+            calls: batch.calls.map((call) => call.toolCallId === "concurrent-call"
+              ? { ...call, state: "running", checkpointAt: call.checkpointAt + 1 }
+              : call),
+          })),
+        }), true);
+        throw failure;
+      }
       await originalSave(state, workspaceRoot);
     };
 
@@ -600,6 +619,14 @@ describe("SessionToolBatchScheduler output ownership", () => {
       await expect(harness.scheduler.advance()).rejects.toBe(failure);
       expect(eventResults(harness)).toEqual([]);
       expect(published).not.toContain("tool-result");
+      const calls = harness.store.getState().toolBatches[0]!.calls;
+      expect(calls[0]).toMatchObject({ toolCallId: "read-checkpoint-failure", state: "running" });
+      expect(calls[0]!.result).toBeUndefined();
+      expect(calls[1]).toMatchObject({
+        toolCallId: "concurrent-call",
+        state: "running",
+        checkpointAt: concurrentCheckpointAt + 1,
+      });
     } finally {
       unsubscribe();
       sessionFileInternals.saveSessionTranscript = originalSave;

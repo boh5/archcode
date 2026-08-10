@@ -86,7 +86,6 @@ export function collectRuntimeSecretLiterals(input: {
   for (const [serverName, server] of Object.entries(input.userMcp.servers)) {
     const prefix = `mcp.servers.${serverName}`;
     if (server.type === "http") {
-      literals.push({ path: `${prefix}.url`, value: server.url });
       collectRecordValues(literals, `${prefix}.headers`, server.headers);
     } else {
       collectRecordValues(literals, `${prefix}.env`, server.env);
@@ -109,6 +108,7 @@ function collectRecordValues(
   values: Readonly<Record<string, string>> | undefined,
 ): void {
   for (const [key, value] of Object.entries(values ?? {})) {
+    if (value === "") continue;
     target.push({ path: `${prefix}.${key}`, value });
   }
 }

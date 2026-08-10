@@ -42,6 +42,7 @@ export type { VersionControl, VersionControlDetector } from "./version-control/d
 export type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ChildSessionCwdMismatchError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "./agents/errors";
 export * from "./models";
+export * from "./memory";
 
 export type { SlashCommandResult } from "./commands/types";
 export {

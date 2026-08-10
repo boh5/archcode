@@ -88,12 +88,18 @@ describe("SkillService control plane", () => {
   });
 
   test("keeps reserved lifecycle builtins unshadowable", async () => {
-    const name = [...RESERVED_BUILTIN_SKILL_NAMES][0]!;
-    await writeSkill(projectArchcode, name, "project");
-    const resolved = await service({ [name]: builtin(name, "builtin") })
-      .readForAgent(projectRoot, name, [name]);
-    expect(resolved?.source).toBe("builtin");
-    expect(resolved?.body).toContain("builtin");
+    const builtinSkills = Object.fromEntries(
+      [...RESERVED_BUILTIN_SKILL_NAMES].map((name) => [name, builtin(name, "builtin")]),
+    );
+    for (const name of RESERVED_BUILTIN_SKILL_NAMES) {
+      await writeSkill(projectArchcode, name, "project");
+      const resolved = await service(builtinSkills).readForAgent(projectRoot, name, [name]);
+      expect(resolved?.source).toBe("builtin");
+      expect(resolved?.body).toContain("builtin");
+      expect(await service(builtinSkills).readForAgent(projectRoot, name, [])).toBeNull();
+      expect((await service(builtinSkills).listForAgent(projectRoot, []))
+        .some((entry) => entry.name === name)).toBeFalse();
+    }
   });
 
   test("allows custom winners outside the builtin allow-list while keeping builtin fallback gated", async () => {

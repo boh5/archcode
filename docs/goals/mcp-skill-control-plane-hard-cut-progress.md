@@ -10,7 +10,7 @@ Goal contract: `docs/goals/mcp-skill-control-plane-hard-cut-plan-goal.md`
 - Branch: `codex/mcp-skill-improvements`
 - Baseline: `9f1f47f619740c8d5b3c91d224a99688ef711d70`
 - Started: 2026-08-09
-- Last updated: 2026-08-09
+- Last updated: 2026-08-10
 
 ## First-principles corrections
 
@@ -48,6 +48,10 @@ Goal contract: `docs/goals/mcp-skill-control-plane-hard-cut-plan-goal.md`
 | 2026-08-09 | Real browser QA | 1440px/390px, light/dark, MCP Settings, Skill diagnostics/picker, keyboard/screen-reader states and no horizontal overflow passed; clean reload console errors = 0 |
 | 2026-08-09 | Hard-cut scans and `git diff --check` | Passed; forbidden legacy MCP names occur only in architecture-test deny patterns |
 | 2026-08-09 | Independent final review iteration 4 | **PASS**; AC-01 through AC-08 passed with no remaining blocking or material finding |
+| 2026-08-10 | CodeRabbit and Cubic PR review | All 41 review threads were triaged. Valid findings were fixed and covered, including MCP draft limits/cancellation/redaction, Skill persistence bounds, Config validation, UI status races, and tool-result rollback rebasing. Three contract-conflicting suggestions were rejected: legacy Session migration, per-MCP destructive approval, and treating literal STDIO args as credentials |
+| 2026-08-10 | Post-review `bun run typecheck` | Passed, 5/5 workspaces |
+| 2026-08-10 | Post-review `bun run test` | Passed, 8/8 Turbo tasks; Agent Core unit/integration/architecture, Server, Web, Protocol, and Utils all reported zero failures |
+| 2026-08-10 | Post-review `bun run build` | Passed; 2,740 Web modules, 308 embedded assets, executable present, and temporary production entrypoint removed |
 
 ## Acceptance evidence
 
@@ -69,3 +73,4 @@ Goal contract: `docs/goals/mcp-skill-control-plane-hard-cut-plan-goal.md`
 - Fix-review iteration 2: **FAIL**. Discovery and AC-03 passed. Remaining gap is test evidence only: HTTP disable plus active shutdown, and STDIO draft-Test temporary child cleanup.
 - Fix-review iteration 3: **FAIL**. The added fixture exposed a production lifecycle gap: SDK HTTP `close()` aborts the stream but does not send session-termination DELETE.
 - Fix-review iteration 4: **PASS**. HTTP now executes idempotent best-effort `terminateSession -> local close`; failures are redacted and do not prevent local cleanup. Real fixtures prove remote HTTP sessions and STDIO children are closed. Reviewer passed AC-01 through AC-08.
+- PR review remediation: CodeRabbit and Cubic findings were verified against the locked Goal contract. Valid issues were fixed without restoring legacy compatibility or an MCP approval layer; full typecheck, test, and build gates passed. External reviewer re-review and PR merge remain delivery steps rather than Goal acceptance criteria.

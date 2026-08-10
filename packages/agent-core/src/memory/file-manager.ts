@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { MemoryIndexEntry, MemoryRoots, MemoryTopicFile } from "./types";
 import type { MemoryFrontmatter } from "./schemas";
@@ -66,21 +66,33 @@ export { formatSimpleYaml, parseSimpleYaml };
 // Index parsing
 // ---------------------------------------------------------------------------
 
-const INDEX_LINE_REGEX = /^- \[(.+?)\]\((.+?)\) — (.+)$/;
+const INDEX_LINE_PREFIX = "- [";
+const INDEX_TITLE_NAME_SEPARATOR = "](";
+const INDEX_NAME_SUMMARY_SEPARATOR = ") —";
 
 export function parseIndex(content: string): MemoryIndexEntry[] {
   const entries: MemoryIndexEntry[] = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (trimmed === "" || trimmed.startsWith("#")) continue;
-    const match = trimmed.match(INDEX_LINE_REGEX);
-    if (match) {
-      entries.push({
-        title: match[1],
-        name: match[2],
-        summary: match[3],
-      });
-    }
+    if (!trimmed.startsWith(INDEX_LINE_PREFIX)) continue;
+    const titleEnd = trimmed.indexOf(
+      INDEX_TITLE_NAME_SEPARATOR,
+      INDEX_LINE_PREFIX.length,
+    );
+    if (titleEnd <= INDEX_LINE_PREFIX.length) continue;
+    const nameStart = titleEnd + INDEX_TITLE_NAME_SEPARATOR.length;
+    const nameEnd = trimmed.indexOf(INDEX_NAME_SUMMARY_SEPARATOR, nameStart);
+    if (nameEnd <= nameStart) continue;
+    const remainder = trimmed.slice(
+      nameEnd + INDEX_NAME_SUMMARY_SEPARATOR.length,
+    );
+    if (remainder !== "" && !remainder.startsWith(" ")) continue;
+    entries.push({
+      title: trimmed.slice(INDEX_LINE_PREFIX.length, titleEnd),
+      name: trimmed.slice(nameStart, nameEnd),
+      summary: remainder === "" ? "" : remainder.slice(1),
+    });
   }
   return entries;
 }
@@ -147,13 +159,13 @@ export class MemoryFileManager {
   }
 
   async readTopic(name: string): Promise<MemoryTopicFile | null> {
-    const resolvedPath = await this.resolveProjectPath(
-      join(KNOWLEDGE_DIR_NAME, `${name}.md`),
-    );
-    const content = await this.#readFileOrNull(resolvedPath);
+    const content = await this.readTopicDocument(name);
     if (content === null) return null;
 
     const { frontmatter, body } = parseFrontmatter(content);
+    const resolvedPath = await this.resolveProjectPath(
+      join(KNOWLEDGE_DIR_NAME, `${name}.md`),
+    );
     return {
       name: frontmatter.name,
       description: frontmatter.description,
@@ -161,6 +173,13 @@ export class MemoryFileManager {
       content: body,
       filePath: resolvedPath,
     };
+  }
+
+  async readTopicDocument(name: string): Promise<string | null> {
+    const resolvedPath = await this.resolveProjectPath(
+      join(KNOWLEDGE_DIR_NAME, `${name}.md`),
+    );
+    return await this.#readFileOrNull(resolvedPath);
   }
 
   async listTopics(): Promise<string[]> {
@@ -171,8 +190,11 @@ export class MemoryFileManager {
         .filter((e) => e.endsWith(".md"))
         .map((e) => e.slice(0, -3)) // Strip .md extension
         .sort();
-    } catch {
-      return [];
+    } catch (error) {
+      if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return [];
+      }
+      throw error;
     }
   }
 
@@ -188,6 +210,11 @@ export class MemoryFileManager {
     const resolvedPath = await this.resolveProjectPath(join(KNOWLEDGE_DIR_NAME, `${name}.md`));
     const fileContent = formatFrontmatter(frontmatter, content);
     await atomicWrite(resolvedPath, fileContent);
+  }
+
+  async writeTopicDocument(name: string, document: string): Promise<void> {
+    const resolvedPath = await this.resolveProjectPath(join(KNOWLEDGE_DIR_NAME, `${name}.md`));
+    await atomicWrite(resolvedPath, document);
   }
 
   async writePreferences(content: string): Promise<void> {
@@ -208,6 +235,20 @@ export class MemoryFileManager {
     await atomicWrite(indexPath, content);
   }
 
+  async writeIndexDocument(document: string): Promise<void> {
+    const indexPath = join(this.projectRoot, INDEX_FILE);
+    await atomicWrite(indexPath, document);
+  }
+
+  async deletePreferences(): Promise<void> {
+    await this.#unlinkIfPresent(join(this.userRoot, PREFERENCES_FILE));
+  }
+
+  async deleteTopic(name: string): Promise<void> {
+    const resolvedPath = await this.resolveProjectPath(join(KNOWLEDGE_DIR_NAME, `${name}.md`));
+    await this.#unlinkIfPresent(resolvedPath);
+  }
+
   async rebuildIndex(): Promise<void> {
     const topics = await this.listTopics();
     const entries: MemoryIndexEntry[] = [];
@@ -218,16 +259,12 @@ export class MemoryFileManager {
       const content = await this.#readFileOrNull(resolvedPath);
       if (content === null) continue;
 
-      try {
-        const { frontmatter } = parseFrontmatter(content);
-        entries.push({
-          title: frontmatter.name,
-          name: topicFile,
-          summary: frontmatter.description,
-        });
-      } catch {
-        // Skip files with invalid frontmatter
-      }
+      const { frontmatter } = parseFrontmatter(content);
+      entries.push({
+        title: frontmatter.name,
+        name: topicFile,
+        summary: frontmatter.description,
+      });
     }
 
     await this.writeIndex(entries);
@@ -267,6 +304,18 @@ export class MemoryFileManager {
     } catch (error) {
       if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") {
         return null;
+      }
+      throw error;
+    }
+  }
+
+
+  async #unlinkIfPresent(filePath: string): Promise<void> {
+    try {
+      await unlink(filePath);
+    } catch (error) {
+      if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return;
       }
       throw error;
     }

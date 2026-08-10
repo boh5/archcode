@@ -18,6 +18,7 @@ import { createAutomationsRoutes } from "./routes/automations";
 import { createAttachmentsRoutes } from "./routes/attachments";
 import { createMessagesRoutes } from "./routes/messages";
 import { createMcpRoutes } from "./routes/mcp";
+import { createMemoryRoutes } from "./routes/memory";
 import { createProjectsRoutes } from "./routes/projects";
 import { createSessionsRoutes } from "./routes/sessions";
 import { createSkillsRoutes } from "./routes/skills";
@@ -84,6 +85,7 @@ export function createRuntimeApp(
   const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
   const mcp = createMcpRoutes(serverRuntime);
+  const memory = createMemoryRoutes(serverRuntime);
 
   app.route("/api", globalWork);
   app.route("/api/projects", projects);
@@ -98,6 +100,7 @@ export function createRuntimeApp(
   app.route("/api/projects/:slug/sessions/:sessionId/tool-outputs", toolOutputs);
   app.route("/api/events", globalEvents);
   app.route("/api/projects", files);
+  app.route("/api/projects", memory);
   app.route("/api/mcp", mcp);
   app.route("/api/sessions", new Hono());
   app.route("/api/agents", agents);

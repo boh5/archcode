@@ -16,6 +16,8 @@ import {
 import { McpToolExecutionError } from "./errors";
 import { toMcpToolRegistryName } from "./naming";
 
+// The remote MCP server owns the detailed JSON Schema. Locally we enforce only
+// the object boundary so arbitrary valid server-defined arguments pass through unchanged.
 const mcpToolInputSchema = z.object({}).catchall(z.unknown());
 const EMPTY_MCP_RESULT = "MCP tool returned no content.";
 export const MAX_MCP_SERIALIZED_RESULT_BYTES = MAX_MCP_TRANSPORT_BYTES;
@@ -97,7 +99,7 @@ export function adaptMcpTool(
           : reason === "timeout"
             ? "TOOL_MCP_CALL_TIMEOUT"
             : "TOOL_MCP_ERROR";
-        const unknownResult = attempted && !traits.readOnly && (reason === "aborted" || reason === "timeout");
+        const unknownResult = attempted && !traits.readOnly;
         return createMcpErrorResult(
           serverName,
           toolName,

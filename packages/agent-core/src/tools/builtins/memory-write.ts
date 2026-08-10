@@ -1,8 +1,13 @@
 import { z } from "zod";
-import { MemoryPathError } from "../../memory/file-manager";
+import {
+  MemoryCapacityError,
+  MemoryPathError,
+  MemoryRevisionConflictError,
+  MemorySecretError,
+  MemoryValidationError,
+} from "../../memory";
 import { INDEX_FILE, PREFERENCES_FILE } from "../../memory/constants";
 import { containsSecretPattern } from "../../security/patterns";
-import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
@@ -48,7 +53,7 @@ export function createMemoryWriteTool() {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     outputPolicy: { kind: "inline", previewDirection: "head" },
     execute: async (input: MemoryWriteInput, ctx: ToolExecutionContext) => {
-      const fileManager = ctx.projectContext.memory;
+      const memory = ctx.projectContext.memory;
       // Resolve scope: preferences defaults to "user", topics default to "project"
       const resolvedScope = input.scope ?? (input.name === PREFERENCES_NAME ? "user" : "project");
 
@@ -89,49 +94,75 @@ export function createMemoryWriteTool() {
 
       // --- Preferences path (name="preferences", scope="user") ---
       if (input.name === PREFERENCES_NAME) {
-        return await sharedMutationQueue.enqueue(
-          fileManager.userRoot,
-          async () => {
-            const existing = await fileManager.readPreferences();
-            const merged = existing !== null
-              ? `${existing.trimEnd()}\n\n---\n\n${input.content.trimEnd()}\n`
-              : `${input.content.trimEnd()}\n`;
-            await fileManager.writePreferences(merged);
-            return createTextToolResult("Wrote user preferences to preferences.md");
-          },
-        );
+        try {
+          await memory.writeExplicit({
+            name: input.name,
+            content: input.content,
+            scope: resolvedScope,
+          });
+          return createTextToolResult("Wrote user preferences to preferences.md");
+        } catch (error) {
+          return memoryWriteFailure(error);
+        }
       }
 
       // --- Knowledge topic path (project-level only) ---
-      const frontmatter = {
-        name: input.name,
-        description: input.description ?? "",
-        type: input.type ?? "project",
-      };
-
       try {
-        return await sharedMutationQueue.enqueue(
-          fileManager.projectRoot,
-          async () => {
-            await fileManager.writeTopic(input.name, frontmatter, input.content);
-            await fileManager.rebuildIndex();
-            return createTextToolResult(`Wrote memory topic "${input.name}" to knowledge/${input.name}.md`);
-          },
-        );
-      } catch (error) {
-        if (error instanceof MemoryPathError) {
-          return createToolErrorResult({
-            kind: "workspace",
-            code: "TOOL_MEMORY_INVALID_NAME",
-            message: error.message,
-          });
-        }
-        return createToolErrorResult({
-          kind: "execution",
-          error: error instanceof Error ? error : new Error(String(error)),
+        await memory.writeExplicit({
+          name: input.name,
+          description: input.description ?? "",
+          type: input.type ?? "project",
+          content: input.content,
+          scope: resolvedScope,
         });
+        return createTextToolResult(`Wrote memory topic "${input.name}" to knowledge/${input.name}.md`);
+      } catch (error) {
+        return memoryWriteFailure(error);
       }
     },
+  });
+}
+
+function memoryWriteFailure(error: unknown) {
+  if (error instanceof MemoryPathError) {
+    return createToolErrorResult({
+      kind: "workspace",
+      code: "TOOL_FILE_OUTSIDE_WORKSPACE",
+      message: "Memory path is outside the configured Memory roots",
+    });
+  }
+  if (error instanceof MemoryValidationError) {
+    return createToolErrorResult({
+      kind: "workspace",
+      code: "TOOL_MEMORY_INVALID_NAME",
+      message: error.message,
+    });
+  }
+  if (error instanceof MemoryCapacityError) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_MEMORY_CAPACITY_EXCEEDED",
+      message: error.message,
+    });
+  }
+  if (error instanceof MemorySecretError) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_MEMORY_SECRET_DETECTED",
+      message: "Memory content contains a potential secret. Remove secrets before writing to Memory.",
+    });
+  }
+  if (error instanceof MemoryRevisionConflictError) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_MEMORY_REVISION_CONFLICT",
+      message: "Memory changed before the write could be applied. Read the latest Memory and retry.",
+    });
+  }
+  return createToolErrorResult({
+    kind: "execution",
+    code: "TOOL_MEMORY_WRITE_FAILED",
+    message: "Memory could not be written",
   });
 }
 

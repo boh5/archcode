@@ -15,15 +15,17 @@ describe("MCP control actions", () => {
   test("tests a named server with the complete unsaved Config request", async () => {
     globalThis.document = { cookie: "" } as Document;
     const request = { expectedRevision: "r1", config: { provider: {}, profiles: {} } } as never;
+    const controller = new AbortController();
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("/api/mcp/test/local%20draft");
       expect(init?.method).toBe("POST");
       expect(JSON.parse(String(init?.body))).toEqual(request);
+      expect(init?.signal).toBe(controller.signal);
       return jsonResponse({ tools: [], warnings: [] });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(testMcpDraft("local draft", request)).resolves.toEqual({ tools: [], warnings: [] });
+    await expect(testMcpDraft("local draft", request, { signal: controller.signal })).resolves.toEqual({ tools: [], warnings: [] });
   });
 
   test("loads inventory and reconnects only by saved server identity", async () => {

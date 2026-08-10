@@ -187,7 +187,7 @@ export class SessionInputService {
       : replayForReceipt(state, receipt, sessionInputFingerprint(input.source, input.text, [], input.requestedModelSelection));
   }
 
-  async getSkillCommandReplay(input: NormalizedSkillCommandInput): Promise<MessageAcceptance | undefined> {
+  async getSkillCommandReplay(input: NormalizedSkillCommandInput): Promise<CommandRequestReplay | undefined> {
     validateNormalizedSkillCommandInput(input);
     const activation = Object.freeze({ ...input.activation });
     const requestFingerprint = skillCommandInputFingerprint({ ...input, activation });
@@ -196,13 +196,20 @@ export class SessionInputService {
       (candidate) => candidate.clientRequestId === input.clientRequestId,
     );
     if (receipt === undefined) return undefined;
-    if (receipt.requestFingerprint !== requestFingerprint || receipt.kind !== "message") {
+    if (receipt.kind === "command") {
+      return replayForReceipt(
+        state,
+        receipt,
+        sessionInputFingerprint(input.source, input.text, [], input.requestedModelSelection),
+      );
+    }
+    if (receipt.requestFingerprint !== requestFingerprint) {
       throw new SessionInputConflictError(
         "idempotency",
         `clientRequestId ${input.clientRequestId} was already used for different input`,
       );
     }
-    return acceptanceForMessageReceipt(state, receipt);
+    return { kind: "message", acceptance: acceptanceForMessageReceipt(state, receipt) };
   }
 
   /**

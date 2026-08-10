@@ -7,7 +7,7 @@ import type {
   McpSdkClientLike,
   McpTransportLike,
 } from "./client";
-import { McpRuntimeService } from "./runtime-service";
+import { MAX_CONCURRENT_MCP_DRAFT_TESTS, McpRuntimeService } from "./runtime-service";
 
 const HTTP = (url: string, headers?: Record<string, string>): ResolvedMcpServerConfig => ({
   type: "http",
@@ -306,6 +306,22 @@ describe("McpRuntimeService", () => {
     testGate.resolve();
     await firstTest;
     expect(temporary.connect).toHaveBeenCalledTimes(1);
+  });
+
+  test("bounds concurrent draft transports across distinct drafts", async () => {
+    const gates = Array.from({ length: MAX_CONCURRENT_MCP_DRAFT_TESTS }, () => deferred<void>());
+    const clients = gates.map((gate) => sdk({ connect: () => gate.promise }));
+    const runtime = serviceWith(clients);
+    const tests = gates.map((_gate, index) => runtime.testServer(
+      `draft-${index}`,
+      HTTP(`https://draft-${index}.test`),
+    ));
+
+    await expect(runtime.testServer("overflow", HTTP("https://overflow.test"))).rejects.toThrow(
+      `At most ${MAX_CONCURRENT_MCP_DRAFT_TESTS}`,
+    );
+    gates.forEach((gate) => gate.resolve());
+    await Promise.all(tests);
   });
 
   test("close aborts candidates and closes every handle once", async () => {

@@ -13,18 +13,35 @@ export function projectAvailableSkills(
     ...entry,
     description: truncateUtf8(normalizeWhitespace(entry.description), SKILL_PROMPT_DESCRIPTION_MAX_BYTES),
   }));
-  let includedCount = normalized.length;
-  while (includedCount >= 0) {
-    const includedEntries = Object.freeze(normalized.slice(0, includedCount));
-    const omittedCount = normalized.length - includedCount;
-    const renderedText = renderProjection(includedEntries, omittedCount);
-    const byteLength = Buffer.byteLength(renderedText, "utf8");
-    if (byteLength <= maxBytes) {
-      return Object.freeze({ includedEntries, omittedCount, renderedText, byteLength });
+  const lines = normalized.map((entry) =>
+    `- ${entry.name}: ${entry.description} (source=${entry.source})`
+  );
+  let prefixBytes = 0;
+  let bestIncludedCount: number | undefined;
+  for (let includedCount = 0; includedCount <= normalized.length; includedCount += 1) {
+    if (includedCount > 0) {
+      prefixBytes += Buffer.byteLength(lines[includedCount - 1]!, "utf8");
+      if (includedCount > 1) prefixBytes += 1;
     }
-    includedCount -= 1;
+    const omittedCount = normalized.length - includedCount;
+    const bodyBytes = includedCount === 0 ? Buffer.byteLength("- none", "utf8") : prefixBytes;
+    const footerBytes = omittedCount === 0
+      ? 0
+      : 1 + Buffer.byteLength(renderOmissionFooter(omittedCount), "utf8");
+    if (bodyBytes + footerBytes <= maxBytes) bestIncludedCount = includedCount;
   }
-  throw new Error(`Skill projection fixed text exceeds ${maxBytes} UTF-8 bytes`);
+  if (bestIncludedCount === undefined) {
+    throw new Error(`Skill projection fixed text exceeds ${maxBytes} UTF-8 bytes`);
+  }
+  const includedEntries = Object.freeze(normalized.slice(0, bestIncludedCount));
+  const omittedCount = normalized.length - bestIncludedCount;
+  const renderedText = renderProjection(includedEntries, omittedCount);
+  return Object.freeze({
+    includedEntries,
+    omittedCount,
+    renderedText,
+    byteLength: Buffer.byteLength(renderedText, "utf8"),
+  });
 }
 
 export function normalizeSkillDescription(description: string): string {
@@ -35,8 +52,13 @@ function renderProjection(entries: readonly SkillIndexEntry[], omittedCount: num
   const lines = entries.length === 0
     ? ["- none"]
     : entries.map((entry) => `- ${entry.name}: ${entry.description} (source=${entry.source})`);
-  if (omittedCount > 0) lines.push(`- ${omittedCount} additional Skills omitted; use skill_list to continue discovery.`);
+  if (omittedCount > 0) lines.push(renderOmissionFooter(omittedCount));
   return lines.join("\n");
+}
+
+function renderOmissionFooter(omittedCount: number): string {
+  const noun = omittedCount === 1 ? "Skill" : "Skills";
+  return `- ${omittedCount} additional ${noun} omitted; use skill_list to continue discovery.`;
 }
 
 function normalizeWhitespace(value: string): string {

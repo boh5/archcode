@@ -127,7 +127,7 @@ afterEach(() => { act(() => root.unmount()); dom.window.close(); });
 describe("SettingsDialog interactions", () => {
   test("keeps the apply notice and Settings workspace inside one bounded column", () => {
     const withNotice = structuredClone(snapshot);
-    withNotice.restartRequiredSections = ["memory"];
+    withNotice.restartRequiredSections = ["integrations.github"];
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={withNotice} servers={{}} onReload={async () => {}} /></DialogRoot>));
 
     const layout = container.querySelector("[data-settings-layout]") as HTMLElement;
@@ -154,7 +154,7 @@ describe("SettingsDialog interactions", () => {
       ["Profiles", "Principal, deep, and fast model bindings"],
       ["MCP", "MCP servers"],
       ["Skills", "Open a project to inspect its Skills"],
-      ["Memory", "Configure extraction thresholds"],
+      ["Memory", "Control prompt recall and background learning"],
       ["GitHub", "Optional GitHub integration settings"],
     ];
 
@@ -325,13 +325,13 @@ describe("SettingsDialog interactions", () => {
 
   test("reports live-applied Models separately from named restart sections", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json({
-      ...successfulSaveResponse(["memory"]),
+      ...successfulSaveResponse(["integrations.github"]),
     })) });
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Add provider");
     await act(async () => { click("Save changes"); await Promise.resolve(); });
     expect(container.textContent).toContain("Model and Profile changes applied live");
-    expect(container.textContent).toContain("Restart required for: Memory");
+    expect(container.textContent).toContain("Restart required for: GitHub");
   });
 
   test("keeps the saved-but-MCP-apply-failed outcome through the matching reload", async () => {
@@ -394,17 +394,16 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).not.toContain("Configuration saved. Retry Runtime to use the saved configuration.");
   });
 
-  test("names restart-only sections without claiming a model live-apply", async () => {
+  test("saves Memory switches without exposing obsolete extraction thresholds", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async () => Response.json(
-      successfulSaveResponse(["memory"]),
+      successfulSaveResponse([]),
     )) });
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Memory");
-    const enabled = container.querySelector('input[aria-label="Memory extraction"]') as HTMLInputElement;
+    const enabled = container.querySelector('input[aria-label="Use Memory"]') as HTMLInputElement;
     act(() => enabled.click());
     await act(async () => { click("Save changes"); await Promise.resolve(); });
-    expect(container.textContent).toContain("Restart required for: Memory");
-    expect(container.textContent).not.toContain("applied live");
+    expect(container.textContent).not.toContain("Restart required for: Memory");
   });
 
   test("submits explicit delete mutations for configured API and header secrets", async () => {
@@ -679,6 +678,50 @@ describe("SettingsDialog interactions", () => {
     expect(reconnectButton.title).toContain("Enable and save");
   });
 
+  test("drops blank STDIO argument lines from the draft", () => {
+    const stdio = structuredClone(snapshot);
+    stdio.config.mcp!.servers.custom = {
+      type: "stdio",
+      enabled: true,
+      command: "mcp-server",
+      args: [],
+    };
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={stdio} servers={{}} onReload={async () => {}} /></DialogRoot>));
+    click("MCP");
+
+    const args = input("Arguments (one per line)");
+    change(args, "--first\n\n   \n--second\n");
+    expect(input("Arguments (one per line)").value).toBe("--first\n--second");
+  });
+
+  test("aborts an in-flight MCP draft test when leaving the panel", async () => {
+    let draftSignal: AbortSignal | undefined;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {
+      if (url === "/api/mcp/inventory") return Response.json({ servers: {} });
+      if (url === "/api/mcp/test/custom") {
+        draftSignal = init?.signal ?? undefined;
+        return await new Promise<Response>((_resolve, reject) => {
+          draftSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+    click("MCP");
+    const customRow = [...container.querySelectorAll("article")]
+      .find((article) => article.querySelector("h2")?.textContent === "custom");
+    const testButton = [...(customRow?.querySelectorAll("button") ?? [])]
+      .find((button) => button.textContent === "Test draft");
+    if (!testButton) throw new Error("Missing custom MCP Test draft button");
+    act(() => testButton.click());
+    await act(async () => { await Promise.resolve(); });
+    expect(draftSignal?.aborted).toBe(false);
+
+    click("Models");
+    await act(async () => { await Promise.resolve(); });
+    expect(draftSignal?.aborted).toBe(true);
+  });
+
   test("shows complete project Skill diagnostics and Prompt projection", async () => {
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string) => {
       expect(url).toBe("/api/projects/demo/skills");
@@ -910,7 +953,7 @@ describe("SettingsDialog interactions", () => {
       ["Profiles", "Principal, deep, and fast model bindings"],
       ["Security", "Manage the one password"],
       ["MCP", "MCP servers"],
-      ["Memory", "Configure extraction thresholds"],
+      ["Memory", "Control prompt recall and background learning"],
       ["GitHub", "Optional GitHub integration settings"],
     ];
     for (const [label, expected] of destinations) {

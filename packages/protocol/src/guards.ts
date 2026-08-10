@@ -44,9 +44,10 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "shutdown":
       return exact(event, ["type"], ["reason"]) && optionalString(event.reason);
     case "execution-start":
-      return exact(event, ["type", "executionId", "origin", "maxSteps", "binding", "executionSkills"], ["activeTimeoutMs"])
+      return exact(event, ["type", "executionId", "origin", "maxSteps", "binding", "executionSkills", "memoryPolicy"], ["activeTimeoutMs"])
         && isString(event.executionId) && isExecutionModelBinding(event.binding)
         && arrayOf(event.executionSkills, isExecutionSkillBinding)
+        && isMemoryPolicySnapshot(event.memoryPolicy)
         && oneOf(event.origin, ["user_message", "tool_call", "goal_continuation"])
         && isPositiveSafeInteger(event.maxSteps)
         && (event.activeTimeoutMs === undefined || isPositiveSafeInteger(event.activeTimeoutMs));
@@ -222,7 +223,7 @@ function isExecutionSkillBinding(value: unknown): boolean {
     && exact(binding, ["name", "source", "digest", "resolutionRoot"])
     && isString(binding.name)
     && oneOf(binding.source, ["project-archcode", "project-agents", "user-archcode", "user-agents", "builtin"])
-    && isString(binding.digest)
+    && isString(binding.digest) && /^[a-f0-9]{64}$/.test(binding.digest)
     && isString(binding.resolutionRoot);
 }
 
@@ -1305,6 +1306,22 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return isNonNegativeSafeInteger(value) && value > 0;
+}
+
+function isMemoryPolicySnapshot(value: unknown): boolean {
+  const snapshot = record(value);
+  const policy = record(snapshot?.policy);
+  const epoch = record(snapshot?.epoch);
+  return snapshot !== undefined
+    && exact(snapshot, ["policy", "epoch"])
+    && policy !== undefined
+    && exact(policy, ["useMemory", "autoLearning"])
+    && typeof policy.useMemory === "boolean"
+    && typeof policy.autoLearning === "boolean"
+    && epoch !== undefined
+    && exact(epoch, ["bootId", "generation"])
+    && isNonBlankString(epoch.bootId)
+    && isNonNegativeSafeInteger(epoch.generation);
 }
 
 function isSafeInteger(value: unknown): value is number {

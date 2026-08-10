@@ -174,7 +174,7 @@ export async function snapshotFilesystemSkill(
 ): Promise<SkillPackageSnapshot> {
   const { root } = location;
   await assertFilesystemSkillAncestry(location);
-  await assertRegularDirectory(root, "Skill package root");
+  const rootIdentity = await assertRegularDirectory(root, "Skill package root");
   await assertExactSkillEntryName(root);
   const entryBytes = await readRegularFileBounded(
     join(root, SKILL_ENTRY_FILE),
@@ -185,6 +185,7 @@ export async function snapshotFilesystemSkill(
   const { metadata, body } = parseSkillMarkdown(entryText);
   assertExpectedName(metadata, expectedName);
   const captured = await captureFilesystemResources(location, entryBytes.byteLength);
+  await assertSamePathIdentity(root, rootIdentity, "Skill package root");
   await assertFilesystemSkillAncestry(location);
   return createSnapshot({
     name: expectedName,
@@ -236,10 +237,10 @@ export function validateResourcePath(resource: string): void {
     throw new SkillPackageResourcePathError("Skill resource path contains an invalid segment");
   }
   if (segments.length > SKILL_RESOURCE_MAX_DEPTH) {
-    throw new Error(`Skill resource depth exceeds ${SKILL_RESOURCE_MAX_DEPTH}`);
+    throw new SkillPackageResourcePathError(`Skill resource depth exceeds ${SKILL_RESOURCE_MAX_DEPTH}`);
   }
   if (segments[0]?.toLowerCase() === SKILL_ENTRY_FILE.toLowerCase()) {
-    throw new Error("SKILL.md is the package entry and cannot be a resource directory");
+    throw new SkillPackageResourcePathError("SKILL.md is the package entry and cannot be a resource directory");
   }
 }
 

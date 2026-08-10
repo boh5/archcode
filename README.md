@@ -96,6 +96,13 @@ Responses-compatible endpoints. A user-facing root Session can also override
 its model without changing the Agent's tools or responsibility. See [provider and model
 configuration](docs/configuration.md).
 
+MCP servers are configured live under `mcp.servers`: every server requires
+`type` (`http` or `stdio`) and `enabled`. HTTP servers use `url` and optional
+`headers`; STDIO servers use `command` plus optional `args` and `env`. Optional
+`connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` replace the old
+single `timeout`, while `mcp.disabledBuiltins` disables selected built-ins. See
+[GitHub and MCP integrations](docs/integrations.md) for the complete schema.
+
 ## Stay in control
 
 Follow active work from the Web workbench, add instructions while it runs, queue
@@ -116,6 +123,15 @@ required review gate.
 Use an Automation when work should start once or on a recurring schedule. Goals
 and Automations are optional; both remain visible through Sessions inside the
 same workbench.
+
+## Durable, inspectable memory
+
+ArchCode keeps personal preferences and project knowledge as ordinary Markdown.
+Explicit requests to remember something are saved immediately through the
+Memory tool. Other durable context is considered only after a successful root
+conversation has been idle for 10 minutes, then reconciled against the complete
+Memory files it actually affects. Settings → Memory lets you inspect, edit,
+delete, disable recall, or opt out of automatic learning without deleting data.
 
 ## Run it your way
 
@@ -146,7 +162,7 @@ workbench.
   review, and repeatable working methods
 - Project memory and context compaction
 - Optional Git worktree execution
-- GitHub and custom MCP integrations
+- GitHub plus live HTTP/STDIO MCP integrations, with every enabled user server available to all Agents
 - Signed direct updates with an idle-only graceful restart
 
 Learn the product vocabulary in [workbench concepts](docs/concepts.md).

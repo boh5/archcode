@@ -43,6 +43,10 @@ the same model to all three required Profiles:
     "principal": { "model": "local:your-model-id" },
     "deep": { "model": "local:your-model-id" },
     "fast": { "model": "local:your-model-id" }
+  },
+  "memory": {
+    "useMemory": true,
+    "autoLearning": true
   }
 }
 ```
@@ -98,8 +102,16 @@ Saving in **Settings** validates the complete document and writes it atomically.
 Provider/Model/Profile changes publish their new model runtime immediately, and
 MCP changes are hot-applied to the live MCP runtime in the same save operation.
 The response includes the disk revision, model-runtime revision, and an
-independent `mcpApply` status. Only `memory` and `integrations.github` can
-appear in `restartRequiredSections`.
+independent `mcpApply` status. Memory policy changes also apply live. Only
+`integrations.github` can appear in `restartRequiredSections`.
+
+## Memory
+
+`memory.useMemory` controls whether newly claimed Executions receive personal preferences and the current project's generated topic index. `memory.autoLearning` controls the separate background learner. Both default to `true` and apply without a restart.
+
+Successful root Lead and Discussion conversations become eligible after 10 minutes without a new user message. Explicit `memory_write` calls remain immediate and do not wait for that learner. Automatic learning uses the `fast` Profile, reconciles only the complete files it actually touches, and persists a bounded receipt before applying changes so restart recovery never reruns the model for the same prepared write.
+
+Memory remains Markdown: personal `preferences.md`, plus each project's generated `index.md` and `knowledge/*.md` topics. Settings → Memory provides the supported view, edit, delete, capacity, warning, and toggle controls. The limits are 8 KiB for preferences, 16 KiB for a complete topic file, and 200 topics per project; existing over-limit data stays readable and can be reduced or deleted, but cannot grow.
 
 Editing `~/.archcode/config.json` outside Settings has no watcher. Restart
 ArchCode to load an external edit; a current-revision save through Settings

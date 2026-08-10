@@ -6,6 +6,7 @@ import { silentLogger } from "../logger";
 import { sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { SessionInputConflictError, SessionInputService } from "./service";
+import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
 
 const WORKSPACE = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const ROOT_SESSION_ID = "00000000-0000-4000-8000-000000000001";
@@ -267,6 +268,7 @@ describe("SessionInputService", () => {
       type: "execution-start",
       executionId: "execution-attachments",
       binding: BINDING,
+      memoryPolicy: testExecutionMemoryPolicy,
       origin: "user_message",
       maxSteps: 50,
       executionSkills: [],
@@ -521,7 +523,10 @@ describe("SessionInputService", () => {
     try {
       const accepted = await service.acceptSkillCommandMessage(input);
       const normalizedReplay = { ...input, text: "/skill use test inspect" };
-      expect(await service.getSkillCommandReplay(normalizedReplay)).toEqual(accepted);
+      expect(await service.getSkillCommandReplay(normalizedReplay)).toEqual({
+        kind: "message",
+        acceptance: accepted,
+      });
       expect(await service.acceptSkillCommandMessage(normalizedReplay)).toEqual(accepted);
       expect(persistedReceiptStates).toEqual([[{ kind: "message", status: "pending" }]]);
 

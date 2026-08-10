@@ -6,21 +6,14 @@ export { MEMORY_TOPIC_VALUES, MemoryTopicTypeSchema, MemoryFrontmatterSchema } f
 
 // ─── Constants ───
 export {
-  CONSOLIDATION_THRESHOLD,
-  DEFAULT_EXTRACTION_MAX_MESSAGES,
-  DEFAULT_MAX_INDEX_LINES,
-  DEFAULT_MAX_MANIFEST_CHARS,
   DEFAULT_MAX_PREFERENCES_BYTES,
+  MAX_MEMORY_TOPIC_BYTES,
+  MAX_MEMORY_TOPICS,
   INDEX_FILE,
-  INDEX_TRUNCATION_SUFFIX,
   KNOWLEDGE_DIR_NAME,
-  MANIFEST_PREFERENCES_SNIPPET_LENGTH,
   MEMORY_CONTEXT_END,
   MEMORY_CONTEXT_START,
   MEMORY_DIR_NAME,
-  MIN_CONTENT_LENGTH_FOR_EXTRACTION,
-  MIN_EXTRACTION_INTERVAL_MS,
-  MIN_MESSAGES_FOR_EXTRACTION,
   PREFERENCES_FILE,
   PREFERENCES_MARKER_END,
   PREFERENCES_MARKER_START,
@@ -38,5 +31,38 @@ export {
   parseSimpleYaml,
 } from "./file-manager";
 
-// ─── Manifest ───
-export { buildMemoryManifest } from "./manifest";
+// ─── Domain Service ───
+export { MemoryService, memoryRevision } from "./service";
+export type {
+  MemoryApplyResult,
+  MemoryDocumentSnapshot,
+  MemoryDocumentTarget,
+  MemoryExplicitWriteInput,
+  MemoryFinalDocumentTarget,
+  MemoryFinalIndexDocument,
+  MemoryIndexProjection,
+  MemoryChangeListener,
+  MemoryPromptManifest,
+  PutMemoryPreferencesInput,
+  PutMemoryTopicInput,
+} from "./service";
+export {
+  MemoryCapacityError,
+  MemoryDomainError,
+  MemoryRevisionConflictError,
+  MemorySecretError,
+  MemoryValidationError,
+} from "./errors";
+export type { MemoryDomainErrorCode } from "./errors";
+
+// ─── Runtime Policy ───
+export {
+  DEFAULT_MEMORY_POLICY,
+  MemoryPolicyRuntime,
+} from "./policy-runtime";
+export type {
+  MemoryApplyAdmission,
+  MemoryPolicy,
+  MemoryPolicyEpoch,
+  MemoryPolicySnapshot,
+} from "./policy-runtime";

@@ -49,7 +49,11 @@ export function paginateDigestBound<T>(
     if (byteLength(serialize(page)) <= options.maxSerializedBytes) return page;
   }
 
-  if (start === options.items.length) return Object.freeze({ items: Object.freeze([]) });
+  if (start === options.items.length) {
+    const empty = Object.freeze({ items: Object.freeze([]) });
+    if (byteLength(serialize(empty)) <= options.maxSerializedBytes) return empty;
+    throw new Error("Empty pagination page exceeds the serialized byte limit");
+  }
   throw new Error(`Pagination item at index ${start} exceeds the serialized byte limit`);
 }
 

@@ -4,8 +4,6 @@ import {
   MemoryIndexLineSchema,
   MemoryTopicTypeSchema,
   MEMORY_TOPIC_VALUES,
-  MemoryExtractionResultSchema,
-  MemoryConsolidationResultSchema,
   TitleGenerationResultSchema,
 } from "./schemas";
 
@@ -54,6 +52,23 @@ describe("MemoryFrontmatterSchema", () => {
         name: "Debugging",
         description: "Common patterns",
         type: "invalid",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects multiline metadata that can inject frontmatter fields", () => {
+    expect(() =>
+      MemoryFrontmatterSchema.parse({
+        name: "Safe\nextra: injected",
+        description: "Common patterns",
+        type: "project",
+      }),
+    ).toThrow();
+    expect(() =>
+      MemoryFrontmatterSchema.parse({
+        name: "Safe",
+        description: "Common patterns\ntype: feedback",
+        type: "project",
       }),
     ).toThrow();
   });
@@ -167,103 +182,6 @@ describe("MemoryTopicType", () => {
 
     const number = MemoryTopicTypeSchema.safeParse(42);
     expect(number.success).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// MemoryExtractionResultSchema
-// ---------------------------------------------------------------------------
-
-describe("MemoryExtractionResultSchema", () => {
-  test("accepts valid extraction result", () => {
-    const input = {
-      memories: [
-        {
-          title: "Debugging Tips",
-          name: "debugging_tips",
-          description: "Common debugging patterns",
-          type: "project" as const,
-          content: "When debugging, start by reproducing the issue.",
-          shouldCreate: true,
-        },
-      ],
-    };
-    const result = MemoryExtractionResultSchema.parse(input);
-    expect(result.memories).toHaveLength(1);
-    expect(result.memories[0].title).toBe("Debugging Tips");
-  });
-
-  test("rejects memories over max 10", () => {
-    const input = {
-      memories: Array.from({ length: 11 }, (_, i) => ({
-        title: `Memory ${i}`,
-        name: `memory_${i}`,
-        description: `Description ${i}`,
-        type: "project" as const,
-        content: "Content here",
-        shouldCreate: true,
-      })),
-    };
-    expect(() => MemoryExtractionResultSchema.parse(input)).toThrow();
-  });
-
-  test("accepts empty memories array", () => {
-    const result = MemoryExtractionResultSchema.parse({ memories: [] });
-    expect(result.memories).toEqual([]);
-  });
-
-  test("rejects unknown fields in extraction result", () => {
-    expect(() =>
-      MemoryExtractionResultSchema.parse({
-        memories: [],
-        extra: "field",
-      }),
-    ).toThrow();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// MemoryConsolidationResultSchema
-// ---------------------------------------------------------------------------
-
-describe("MemoryConsolidationResultSchema", () => {
-  test("accepts valid consolidation result", () => {
-    const input = {
-      entries: [
-        {
-          title: "Debugging",
-          name: "debugging",
-          summary: "Common patterns",
-        },
-      ],
-    };
-    const result = MemoryConsolidationResultSchema.parse(input);
-    expect(result.entries).toHaveLength(1);
-  });
-
-  test("accepts empty entries array", () => {
-    const result = MemoryConsolidationResultSchema.parse({ entries: [] });
-    expect(result.entries).toEqual([]);
-  });
-
-  test("rejects entries over max 200", () => {
-    const input = {
-      entries: Array.from({ length: 201 }, (_, i) => ({
-        title: `Entry ${i}`,
-        name: `entry_${i}`,
-        summary: `Summary ${i}`,
-      })),
-    };
-    expect(() => MemoryConsolidationResultSchema.parse(input)).toThrow();
-  });
-
-  test("rejects unknown fields", () => {
-    expect(() =>
-      MemoryConsolidationResultSchema.parse({
-        entries: [],
-        extra: true,
-      }),
-    ).toThrow();
   });
 });
 

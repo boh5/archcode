@@ -552,7 +552,7 @@ export function ChatInput({
         <div
           ref={slashMenuRef}
           id="composer-slash-menu"
-          role={skillUseInput !== null && skillInventoryState === "failed" ? "group" : "listbox"}
+          role={slashOptionCount === 0 ? "group" : "listbox"}
           aria-label={skillUseInput === null ? "Slash commands" : "Skills"}
           className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20 max-h-[200px] overflow-y-auto rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md"
           data-testid="composer-slash-menu"

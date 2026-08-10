@@ -7,6 +7,7 @@ import { storeManager } from "../../store/store";
 import { createTestProjectContext } from "../../tools/test-project-context";
 import { createTestToolRegistryFixture } from "../../tools/test-registry";
 import { createTestTempRoot } from "../../testing/test-temp-root";
+import { testExecutionMemoryPolicy } from "../../testing/test-execution-fixtures";
 import type { ExecutionModelBinding } from "../../models";
 import { runQueryLoop } from "./loop";
 
@@ -83,6 +84,7 @@ describe("Provider secret redaction integration", () => {
         type: "execution-start",
         executionId: `execution-${messageId}`,
         binding: binding.summary,
+        memoryPolicy: testExecutionMemoryPolicy,
         origin: "tool_call",
         maxSteps: 50,
         executionSkills: [],

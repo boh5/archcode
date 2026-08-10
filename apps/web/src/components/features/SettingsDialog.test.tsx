@@ -66,7 +66,7 @@ const config: ServerConfig = {
     deep: { model: "local:demo-model" },
     fast: { model: "local:demo-model" },
   },
-  memory: { enabled: true, minMessages: 5, minContentLength: 1000, cooldownMs: 300000 },
+  memory: { useMemory: true, autoLearning: true },
 };
 
 const adapterCatalog: ProviderAdapterCatalog = [{
@@ -141,9 +141,9 @@ describe("SettingsDialog", () => {
   test("distinguishes live model application from named restart-only sections", () => {
     expect(textContent(SettingsApplyNotice({ modelsAppliedLive: false, restartRequiredSections: [] }))).toBe("");
     expect(textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: [] }))).toContain("applied live");
-    const notice = textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: ["memory", "integrations.github"] }));
+    const notice = textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: ["integrations.github"] }));
     expect(notice).toContain("applied live");
-    expect(notice).toContain("Restart required for: Memory, GitHub");
+    expect(notice).toContain("Restart required for: GitHub");
   });
 
   test("does not claim live application while Runtime is unavailable", () => {

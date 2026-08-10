@@ -1,10 +1,6 @@
-export const SKILL_SOURCE_PRECEDENCE = [
-  "project-archcode",
-  "project-agents",
-  "user-archcode",
-  "user-agents",
-  "builtin",
-] as const;
+import { SKILL_SOURCE_TIERS } from "@archcode/protocol";
+
+export const SKILL_SOURCE_PRECEDENCE = SKILL_SOURCE_TIERS;
 
 export type SkillSource = typeof SKILL_SOURCE_PRECEDENCE[number];
 

@@ -263,7 +263,7 @@ function safeIssuePath(path: string, configPath: string): string {
   }
   if (segments[0] === "memory") {
     const field = segments[1];
-    return new Set(["enabled", "minMessages", "minContentLength", "cooldownMs"]).has(field ?? "")
+    return new Set(["useMemory", "autoLearning"]).has(field ?? "")
       ? `memory.${field}`
       : "memory.<field>";
   }

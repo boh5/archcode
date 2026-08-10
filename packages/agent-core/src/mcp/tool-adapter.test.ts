@@ -57,8 +57,12 @@ describe("MCP tool adapter", () => {
       acquired.handle,
       new SecretRedactionPolicy(["secret-value"]),
     );
-    const result = await execute(descriptor);
-    expect(callTool).toHaveBeenCalledWith("lookup.tool", {}, expect.any(AbortSignal), expect.any(Function));
+    const input = { nested: { enabled: true }, values: [1, "two", null] };
+    const result = await Promise.resolve(descriptor.execute(
+      input,
+      { abort: new AbortController().signal } as ToolExecutionContext,
+    ));
+    expect(callTool).toHaveBeenCalledWith("lookup.tool", input, expect.any(AbortSignal), expect.any(Function));
     expect(result.draft.kind === "text" ? result.draft.text : "").toContain("[REDACTED:SECRET]");
     expect(JSON.stringify(result)).not.toContain("secret-value");
     expect(acquired.release).toHaveBeenCalledTimes(1);
@@ -140,6 +144,29 @@ describe("MCP tool adapter", () => {
 
     expect(result.details?.error?.code).toBe("TOOL_MCP_CALL_ABORTED");
     expect(result.details?.unknownResult).toBeUndefined();
+  });
+
+  test("marks every post-dispatch effectful failure as an unknown result", async () => {
+    const callTool = mock(async (
+      _name: string,
+      _input: Record<string, unknown>,
+      _signal?: AbortSignal,
+      onDispatch?: () => void,
+    ) => {
+      onDispatch?.();
+      throw new McpToolExecutionError("docs", "work", new Error("connection reset"), "failed");
+    }) as McpClient["callTool"];
+    const descriptor = adaptMcpTool(
+      { name: "work" },
+      "docs",
+      handleWith(callTool).handle,
+      new SecretRedactionPolicy([]),
+    );
+
+    const result = await execute(descriptor);
+
+    expect(result.details?.error?.code).toBe("TOOL_MCP_ERROR");
+    expect(result.details?.unknownResult).toBe(true);
   });
 
   test("bounds invalid or cyclic structured results as tool errors", async () => {

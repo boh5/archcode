@@ -25,6 +25,10 @@ const binding = {
   resolution: "profile_default" as const,
   modelRuntimeRevision: "m1",
 };
+const memoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 
 beforeEach(() => {
   dom = new JSDOM(
@@ -256,6 +260,7 @@ describe("TodoProgressButton interactions", () => {
       executions: [
         {
           id: "e1",
+          memoryPolicy,
           startedAt: 1,
           status: "failed",
           endedAt: 2,
@@ -280,6 +285,7 @@ describe("TodoProgressButton interactions", () => {
         executions: [
           {
             id: "e2",
+            memoryPolicy,
             startedAt: 1,
             status: "completed",
             endedAt: 2,

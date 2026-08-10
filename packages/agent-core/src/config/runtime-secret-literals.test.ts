@@ -57,7 +57,6 @@ describe("collectRuntimeSecretLiterals", () => {
       "provider-api-key",
       "provider-header",
       "provider-query",
-      "https://mcp.example.test/private",
       "mcp-auth-header",
       "stdio-env-value",
       "github-token-value",

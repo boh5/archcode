@@ -30,6 +30,10 @@ describe("createRuntimeApp", () => {
       subscribeSessionEvents: mock((listener: (event: GlobalSSEEvent) => void) => {
         listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 1, createdAt: 1, agentName: "lead", payload: {
           type: "execution-start",
+          memoryPolicy: {
+            policy: { useMemory: true, autoLearning: true },
+            epoch: { bootId: "test-memory-boot", generation: 0 },
+          },
           executionId: "run-1",
           binding: {
             selection: { model: "local:test" },

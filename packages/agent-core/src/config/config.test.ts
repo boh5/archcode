@@ -337,49 +337,37 @@ describe("parseConfig", () => {
     expect(parsed.memory).toBeUndefined();
   });
 
-  test("memory config applies extraction defaults", () => {
+  test("memory config applies policy defaults", () => {
     const parsed = parseConfig({
       ...VALID_CONFIG_WITH_PROFILES,
       memory: {},
     });
 
     expect(parsed.memory).toEqual({
-      enabled: true,
-      minMessages: 5,
-      minContentLength: 1000,
-      cooldownMs: 300000,
+      useMemory: true,
+      autoLearning: true,
     });
   });
 
-  test("memory config accepts custom extraction values", () => {
+  test("memory config accepts independent policy values", () => {
     const parsed = parseConfig({
       ...VALID_CONFIG_WITH_PROFILES,
       memory: {
-        enabled: false,
-        minMessages: 2,
-        minContentLength: 250,
-        cooldownMs: 0,
+        useMemory: false,
+        autoLearning: true,
       },
     });
 
     expect(parsed.memory).toEqual({
-      enabled: false,
-      minMessages: 2,
-      minContentLength: 250,
-      cooldownMs: 0,
+      useMemory: false,
+      autoLearning: true,
     });
-  });
-
-  test("memory config rejects invalid values", () => {
-    expect(() => parseConfig({ ...VALID_CONFIG_WITH_PROFILES, memory: { minMessages: 0 } })).toThrow(ConfigValidationError);
-    expect(() => parseConfig({ ...VALID_CONFIG_WITH_PROFILES, memory: { minContentLength: 99 } })).toThrow(ConfigValidationError);
-    expect(() => parseConfig({ ...VALID_CONFIG_WITH_PROFILES, memory: { cooldownMs: -1 } })).toThrow(ConfigValidationError);
   });
 
   test("memory config rejects unknown fields", () => {
     expect(() => parseConfig({
       ...VALID_CONFIG_WITH_PROFILES,
-      memory: { enabled: true, unknown: true },
+      memory: { useMemory: true, unknown: true },
     })).toThrow(ConfigValidationError);
   });
 

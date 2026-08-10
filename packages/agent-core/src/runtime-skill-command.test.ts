@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { RequestedModelSelection } from "@archcode/protocol";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { silentLogger } from "./logger";
+import { setLlmAdapterForTest } from "./llm";
 import { ProjectRegistry } from "./projects/registry";
 import { createRuntime as createProductionRuntime } from "./runtime";
 import { sessionFileInternals } from "./store/helpers";
@@ -20,6 +21,7 @@ const requestedModelSelection: RequestedModelSelection = {
 afterAll(() => {
   for (const root of tmpRoots) rmSync(root, { recursive: true, force: true });
 });
+afterEach(() => setLlmAdapterForTest(undefined));
 
 async function makeTempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "archcode-runtime-skill-command-"));
@@ -28,6 +30,19 @@ async function makeTempRoot(): Promise<string> {
 }
 
 async function createRuntime() {
+  setLlmAdapterForTest({
+    streamText: mock(() => ({
+      fullStream: (async function* () {
+        yield { type: "text-start", id: "output" };
+        yield { type: "text-delta", id: "output", text: "Done." };
+        yield { type: "text-end", id: "output" };
+      })(),
+      finishReason: Promise.resolve("stop"),
+      usage: Promise.resolve({ totalTokens: 1 }),
+      text: Promise.resolve("Done."),
+      toolCalls: Promise.resolve([]),
+    })) as never,
+  });
   const configHome = await makeTempRoot();
   const configPath = resolveServerConfigPath(configHome);
   await mkdir(join(configHome, ".archcode"), { recursive: true });
@@ -191,6 +206,41 @@ describe("runtime Skill command admission", () => {
         "source",
         "valid",
         "winner",
+      ]);
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+    }
+  });
+
+  test("replays an invalid Skill command through its generic command receipt", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime();
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Invalid Skill command" });
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "direct" },
+    });
+    const input = {
+      slug: project.slug,
+      workspaceRoot,
+      sessionId: session.sessionId,
+      text: "/skill use missing-skill inspect",
+      attachmentIds: [],
+      clientRequestId: crypto.randomUUID(),
+      source: "user" as const,
+      requestedModelSelection,
+    };
+
+    try {
+      const first = await runtime.acceptSessionMessage(input);
+      const replay = await runtime.acceptSessionMessage(input);
+
+      expect(first).toEqual({ clientRequestId: input.clientRequestId, status: "command" });
+      expect(replay).toEqual(first);
+      const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
+      expect(file.inputRequestReceipts).toEqual([
+        expect.objectContaining({ kind: "command", clientRequestId: input.clientRequestId, status: "completed" }),
       ]);
     } finally {
       await runtime.abortAllSessionExecutions();

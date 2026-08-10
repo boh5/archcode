@@ -30,6 +30,7 @@ import {
 } from "./mcp/index";
 import { ModelSelectionResolver, type ModelRuntime } from "./models";
 import { ProjectContextResolver } from "./projects/context-resolver";
+import { MemoryIdleCoordinator } from "./memory/idle-coordinator";
 import type { ProjectRegistry } from "./projects/registry";
 import type { ProjectInfo } from "./projects/types";
 import { SessionLifecycleService } from "./projects/session-lifecycle-service";
@@ -59,6 +60,7 @@ import type {
   McpServerStatus,
   McpServerInventoryResponse,
   McpServerStatusResponse,
+  MemorySnapshot,
   NormalizedUsage,
   SessionNextModelSelection,
   SessionModelState,
@@ -371,6 +373,7 @@ export interface AgentRuntime {
   subscribeHitlEvents(listener: (event: GlobalSSEHitlRealtimeEvent) => void): () => void;
   listSessionRuntimeEvents(): Promise<GlobalSSESessionRuntimeSnapshotEvent[]>;
   getProjectControlPlaneSnapshot(workspaceRoot: string, projectSlug: string): Promise<ProjectControlPlaneSnapshot>;
+  getMemorySnapshot(workspaceRoot: string): Promise<MemorySnapshot>;
   subscribeSessionRuntimeChanges(listener: (event: GlobalSSESessionRuntimeChangedEvent) => void): () => void;
   subscribeModelRuntimeChanges(listener: (event: GlobalSSEModelRuntimeChangedEvent) => void): () => void;
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
@@ -726,6 +729,7 @@ export async function createRuntime(
       const rootSessionId = (await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId)).rootSessionId;
       return { projectSlug, hitlId: view.hitlId, ownerSessionId, rootSessionId, view };
     }));
+    let memoryIdleCoordinator!: MemoryIdleCoordinator;
     const contextResolver = new ProjectContextResolver({
       hitlCodec,
       projectInfoFactory: async (workspaceRoot) => {
@@ -795,8 +799,22 @@ export async function createRuntime(
         },
       }),
       createAutomation: (workspaceRoot, input) => createAutomation(workspaceRoot, input),
+      onMemoryChanged: (workspaceRoot, target) => {
+        memoryIdleCoordinator?.notifyTargetChanged(workspaceRoot, target);
+      },
       logger: runtimeLogger.child({ module: "projects" }),
     });
+    memoryIdleCoordinator = new MemoryIdleCoordinator({
+      sessionStores: sessionStoreManager,
+      policyRuntime: configService.memoryPolicyRuntime,
+      modelRuntime,
+      modelSelectionResolver,
+      resolveMemoryService: async (workspaceRoot) => (
+        await contextResolver.resolve(workspaceRoot)
+      ).memory,
+      logger: runtimeLogger.child({ module: "memory" }),
+    });
+    memoryIdleCoordinator.start();
     const resolveCurrentTodoAttachments = async (input: {
       readonly workspaceRoot: string;
       readonly rootSessionId: string;
@@ -838,7 +856,6 @@ export async function createRuntime(
       definitions: defaultAgentDefinitions,
       toolRegistry,
       skillService,
-      memoryConfig: config.memory,
       projectContextResolver: contextResolver,
       sessionGoalService,
       resolveMcpToolSnapshot: (builtinServerNames) => activeMcpRuntime.snapshotTools({
@@ -878,6 +895,7 @@ export async function createRuntime(
     executionManager = new SessionExecutionManager({
       sessionAgentManager,
       modelRuntime,
+      memoryPolicyRuntime: configService.memoryPolicyRuntime,
       modelSelectionResolver,
       createSessionStore: (sessionId, workspaceRoot, createOptions) => sessionStoreManager.create(sessionId, workspaceRoot, createOptions),
       flushSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.flushSession(sessionId, workspaceRoot),
@@ -1383,7 +1401,9 @@ export async function createRuntime(
               const skillInput = { ...replayInput, activation: skillActivation };
               const replay = await sessionInputService.getSkillCommandReplay(skillInput);
               if (replay !== undefined) {
-                accepted = replay;
+                const replayAcceptance = settledAcceptance(replay);
+                if (replayAcceptance.status === "command") return replayAcceptance;
+                accepted = replayAcceptance;
               } else {
                 const definition = defaultAgentDefinitions.find(({ name }) => name === state.agentName);
                 if (definition === undefined) throw new Error(`Unknown Agent definition: ${state.agentName}`);
@@ -1431,7 +1451,9 @@ export async function createRuntime(
                         "Skill activation outcome is unknown and cannot be replayed safely",
                       );
                     }
-                    accepted = joinedReplay;
+                    const replayAcceptance = settledAcceptance(joinedReplay);
+                    if (replayAcceptance.status === "command") return replayAcceptance;
+                    accepted = replayAcceptance;
                   } else {
                     accepted = commandRun.result;
                   }
@@ -1868,6 +1890,7 @@ export async function createRuntime(
           await continueRunnableToolBatches(project.workspaceRoot, project.slug);
           await reconcileAnsweredHitl(project.workspaceRoot, project.slug);
           await continueRunnableToolBatches(project.workspaceRoot, project.slug);
+          await memoryIdleCoordinator.recoverWorkspace(project.workspaceRoot);
           await recoverQueuedSessionInputs(project.workspaceRoot, project.slug);
           await reconcileAllActiveGoals(project.workspaceRoot, project.slug);
         }),
@@ -1948,6 +1971,7 @@ export async function createRuntime(
         await continueRunnableToolBatches(workspaceRoot, projectSlug);
         await reconcileAnsweredHitl(workspaceRoot, projectSlug);
         await continueRunnableToolBatches(workspaceRoot, projectSlug);
+        await memoryIdleCoordinator.recoverWorkspace(workspaceRoot);
         await recoverQueuedSessionInputs(workspaceRoot, projectSlug);
         await reconcileAllActiveGoals(workspaceRoot, projectSlug);
         projectReconcileRetries.delete(key);
@@ -2086,6 +2110,7 @@ export async function createRuntime(
         projectReconcileRetries.delete(projectRetryKey);
         projectSlugsByWorkspace.delete(project.workspaceRoot);
         automationRuntimeServices.delete(project.workspaceRoot);
+        await memoryIdleCoordinator.disposeWorkspace(project.workspaceRoot);
         await contextResolver.dispose(project.workspaceRoot);
         sessionAgentManager.releaseWorkspace(project.workspaceRoot);
         sessionStoreManager.releaseWorkspace(project.workspaceRoot);
@@ -2127,6 +2152,7 @@ export async function createRuntime(
     const shutdownSteps: ShutdownStep[] = [
       { completed: false, operation: stopAutomationSchedulers },
       { completed: false, operation: shutdownReconciliation },
+      { completed: false, operation: () => memoryIdleCoordinator.shutdown() },
       {
         completed: false,
         operation: () => internalOptions.executionManagerShutdown !== undefined
@@ -2258,6 +2284,12 @@ export async function createRuntime(
         }];
       },
       getProjectControlPlaneSnapshot,
+      getMemorySnapshot: async (workspaceRoot) => {
+        const context = await contextResolver.resolve(workspaceRoot);
+        return await context.memory.snapshot(
+          await memoryIdleCoordinator.listWarnings(workspaceRoot),
+        );
+      },
       subscribeSessionRuntimeChanges: (listener) => {
         sessionRuntimeListeners.add(listener);
         return () => {
@@ -2281,8 +2313,10 @@ export async function createRuntime(
       applyMcpConfig: (nextConfig) => activeMcpRuntime.apply(nextConfig),
       testMcpServerDraft: async (serverName, request, options) => {
         const draft = await configService.resolveMcpDraft(request);
-        const serverConfig = draft.servers[serverName]
-          ?? BUILTIN_MCP_SERVERS[serverName as keyof typeof BUILTIN_MCP_SERVERS];
+        const builtinConfig = Object.hasOwn(BUILTIN_MCP_SERVERS, serverName)
+          ? BUILTIN_MCP_SERVERS[serverName as keyof typeof BUILTIN_MCP_SERVERS]
+          : undefined;
+        const serverConfig = draft.servers[serverName] ?? builtinConfig;
         if (serverConfig === undefined) {
           throw new Error(`MCP server "${serverName}" is not configured`);
         }

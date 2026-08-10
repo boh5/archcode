@@ -143,7 +143,9 @@ describe("official MCP transports", () => {
       servers: { local: httpConfig(first.url) },
     };
 
+    const firstCloseCountBeforeDraft = first.sessionCloseCount;
     const draft = await runtime.testServer("draft", enabled.servers.local!);
+    await expectHttpSessionClose(first, firstCloseCountBeforeDraft);
     expect(draft.tools.map((tool) => tool.name)).toEqual(["http-first.one", "http-first.two"]);
     expect(runtime.getStatus().servers.draft).toBeUndefined();
     expect(runtime.getInventory().servers.draft).toBeUndefined();
@@ -161,6 +163,7 @@ describe("official MCP transports", () => {
 
     const firstCloseCountBeforeReconnect = first.sessionCloseCount;
     await runtime.reconnect("local");
+    await expectHttpSessionClose(first, firstCloseCountBeforeReconnect);
     expect(first.activeSessionCount).toBe(1);
     expect(first.sessionCloseCount).toBe(firstCloseCountBeforeReconnect + 1);
     expect(runtime.getInventory().servers.local?.map((tool) => tool.name)).toEqual([
@@ -173,6 +176,7 @@ describe("official MCP transports", () => {
       ...enabled,
       servers: { local: httpConfig(second.url) },
     });
+    await expectHttpSessionClose(first, firstCloseCountBeforeReplace);
     expect(first.activeSessionCount).toBe(0);
     expect(first.sessionCloseCount).toBe(firstCloseCountBeforeReplace + 1);
     expect(second.activeSessionCount).toBe(1);
@@ -219,6 +223,7 @@ describe("official MCP transports", () => {
     const sessionCloseCountBeforeShutdown = second.sessionCloseCount;
     expect(second.activeSessionCount).toBe(1);
     await runtime.close();
+    await expectHttpSessionClose(second, sessionCloseCountBeforeShutdown);
     expect(second.activeSessionCount).toBe(0);
     expect(second.sessionCloseCount).toBe(sessionCloseCountBeforeShutdown + 1);
     await Promise.all([first.close(), second.close()]);

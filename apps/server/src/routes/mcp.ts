@@ -5,8 +5,16 @@ import type {
   McpToolInventoryItem,
   UpdateServerConfigRequest,
 } from "@archcode/protocol";
+import {
+  ConfigRevisionConflictError,
+  ConfigSemanticValidationError,
+} from "@archcode/agent-core";
 
-import { BadRequestError } from "../errors";
+import {
+  BadRequestError,
+  ConfigRevisionConflictHttpError,
+  ConfigValidationHttpError,
+} from "../errors";
 import { readBoundedJsonBody } from "../request-body";
 
 const MCP_DRAFT_BODY_MAX_BYTES = 2 * 1024 * 1024;
@@ -45,9 +53,19 @@ export function createMcpRoutes(runtime: McpRuntimePort): Hono {
       maxBytes: MCP_DRAFT_BODY_MAX_BYTES,
       label: "MCP test draft",
     }));
-    return c.json(await runtime.testMcpServerDraft(serverName, request, {
-      signal: c.req.raw.signal,
-    }));
+    try {
+      return c.json(await runtime.testMcpServerDraft(serverName, request, {
+        signal: c.req.raw.signal,
+      }));
+    } catch (error) {
+      if (error instanceof ConfigRevisionConflictError) {
+        throw new ConfigRevisionConflictHttpError(error.expectedRevision, error.currentRevision);
+      }
+      if (error instanceof ConfigSemanticValidationError) {
+        throw new ConfigValidationHttpError(error.issues);
+      }
+      throw error;
+    }
   });
 
   app.post("/reconnect/:serverName", async (c) => {

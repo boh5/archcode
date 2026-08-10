@@ -38,9 +38,23 @@ describe("available Skill prompt projection", () => {
     const bounded = projectAvailableSkills(at8001);
     expect(bounded.byteLength).toBeLessThanOrEqual(8_000);
     expect(bounded.omittedCount).toBe(1);
-    expect(bounded.renderedText.endsWith("- 1 additional Skills omitted; use skill_list to continue discovery."))
+    expect(bounded.renderedText.endsWith("- 1 additional Skill omitted; use skill_list to continue discovery."))
       .toBeTrue();
     expect(projectAvailableSkills(at8001)).toEqual(bounded);
+  });
+
+  test("projects a large directory with a bounded prefix and plural footer", () => {
+    const entries = Array.from({ length: 10_000 }, (_, index) => ({
+      name: `skill-${index}`,
+      description: "bounded guidance",
+      source: "builtin" as const,
+    }));
+    const projection = projectAvailableSkills(entries, 512);
+
+    expect(projection.byteLength).toBeLessThanOrEqual(512);
+    expect(projection.includedEntries.length).toBeGreaterThan(0);
+    expect(projection.omittedCount).toBeGreaterThan(1);
+    expect(projection.renderedText).toContain("additional Skills omitted");
   });
 });
 

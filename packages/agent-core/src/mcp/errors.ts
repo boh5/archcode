@@ -39,10 +39,11 @@ export class McpConnectionError extends Error {
     public readonly cause?: unknown,
     public readonly reason: "aborted" | "timeout" | "failed" = "failed",
   ) {
+    const outcome = reason === "aborted" ? "was aborted" : reason === "timeout" ? "timed out" : "failed";
     const msg =
       cause instanceof Error
-        ? `MCP connection failed for server "${serverName}": ${cause.message}`
-        : `MCP connection failed for server "${serverName}"`;
+        ? `MCP connection ${outcome} for server "${serverName}": ${cause.message}`
+        : `MCP connection ${outcome} for server "${serverName}"`;
     super(msg);
     this.name = "McpConnectionError";
   }
@@ -55,10 +56,11 @@ export class McpToolExecutionError extends Error {
     public readonly cause?: unknown,
     public readonly reason: "aborted" | "timeout" | "failed" = "failed",
   ) {
+    const outcome = reason === "aborted" ? "was aborted" : reason === "timeout" ? "timed out" : "failed";
     const msg =
       cause instanceof Error
-        ? `MCP tool execution failed for "${serverName}.${toolName}": ${cause.message}`
-        : `MCP tool execution failed for "${serverName}.${toolName}"`;
+        ? `MCP tool execution ${outcome} for "${serverName}.${toolName}": ${cause.message}`
+        : `MCP tool execution ${outcome} for "${serverName}.${toolName}"`;
     super(msg);
     this.name = "McpToolExecutionError";
   }

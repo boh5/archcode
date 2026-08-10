@@ -3,6 +3,7 @@ import type { SessionStoreState } from "../store/types";
 import type { ExecutionModelBinding } from "../models";
 import type { QueryLoopResult } from "./query";
 import type { SkillPackageSnapshot } from "../skills";
+import type { MemoryPolicySnapshot } from "../memory";
 
 export interface AgentCommand {
   readonly name: string;
@@ -33,6 +34,8 @@ export interface AgentRunOptions {
   consumeSteers?: () => Promise<void>;
   /** Immutable one-shot Skill packages owned by this logical Execution. */
   executionSkillSnapshots?: ReadonlyMap<string, SkillPackageSnapshot>;
+  /** Immutable Memory policy captured with the owning logical Execution. */
+  memoryPolicy: MemoryPolicySnapshot;
 }
 
 export interface Agent {

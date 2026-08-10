@@ -23,7 +23,7 @@ import { createTestProjectContext } from "../../tools/test-project-context";
 import type { ToolExecutionContext } from "../../tools/types";
 import { runQueryLoop } from "./loop";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
-import { createTestModelInfo } from "../../testing/test-execution-fixtures";
+import { createTestModelInfo, testExecutionMemoryPolicy } from "../../testing/test-execution-fixtures";
 import { SessionGoalService } from "../../session-goal";
 import type { SessionToolBatch } from "../../store/types";
 import type { AttachmentDescriptor } from "@archcode/protocol";
@@ -205,6 +205,7 @@ async function createHarness() {
     type: "execution-start",
     executionId: options.executionId,
     binding: dummyBinding.summary,
+    memoryPolicy: testExecutionMemoryPolicy,
     origin: "tool_call",
     maxSteps: 50,
     executionSkills: [],

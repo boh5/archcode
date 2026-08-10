@@ -2,7 +2,8 @@ import { MCP_CLIENT_NAME } from "@archcode/protocol";
 import type { ResolvedMcpServerConfig } from "../config/mcp";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
-import type { SecretRedactionPolicy } from "../security";
+import { SECRET_LITERAL_MAX_BYTES, type SecretRedactionPolicy } from "../security";
+import { safeUtf8End } from "../tool-output/utf8";
 import { McpConnectionError, McpToolExecutionError } from "./errors";
 
 // The MCP SDK requires these external .js subpaths for its package exports map.
@@ -61,7 +62,7 @@ export interface McpTransportLike {
   terminateSession?: () => Promise<void>;
   close?: () => Promise<void>;
   stderr?: {
-    on(event: "data", listener: (chunk: unknown) => void): unknown;
+    on(event: "data" | "end" | "close", listener: (chunk?: unknown) => void): unknown;
   } | null;
 }
 
@@ -203,6 +204,8 @@ export class McpClient {
   #closed = false;
   #closePromise?: Promise<void>;
   #unexpectedFailure?: (error: Error) => void;
+  #stderrCapture = Buffer.alloc(0);
+  #stderrLogged = false;
 
   constructor(
     private readonly serverName: string,
@@ -329,22 +332,26 @@ export class McpClient {
   }
 
   async #closeOwnedResources(): Promise<void> {
-    if (this.#transport.terminateSession) {
-      try {
-        await this.#transport.terminateSession();
-      } catch (error) {
-        this.#logger.warn("mcp.client.terminate-session.failed", {
-          context: { serverName: this.serverName },
-          error: this.#redactedLogError(error),
-        });
+    try {
+      if (this.#transport.terminateSession) {
+        try {
+          await this.#transport.terminateSession();
+        } catch (error) {
+          this.#logger.warn("mcp.client.terminate-session.failed", {
+            context: { serverName: this.serverName },
+            error: this.#redactedLogError(error),
+          });
+        }
       }
-    }
 
-    if (this.#sdkClient.close) {
-      await this.#sdkClient.close();
-      return;
+      if (this.#sdkClient.close) {
+        await this.#sdkClient.close();
+        return;
+      }
+      await this.#transport.close?.();
+    } finally {
+      this.#flushStderr();
     }
-    await this.#transport.close?.();
   }
 
   #attachLifecycleHandlers(): void {
@@ -370,16 +377,39 @@ export class McpClient {
 
   #attachBoundedStderr(): void {
     this.#transport.stderr?.on("data", (chunk) => {
-      const raw = typeof chunk === "string"
-        ? chunk
+      if (this.#stderrLogged) return;
+      const bytes = typeof chunk === "string"
+        ? Buffer.from(chunk, "utf8")
         : chunk instanceof Uint8Array
-          ? Buffer.from(chunk).toString("utf8")
-          : String(chunk);
-      const bounded = Buffer.from(raw).subarray(0, MAX_STDERR_LOG_BYTES).toString("utf8");
-      this.#logger.warn("mcp.client.stdio.stderr", {
-        context: { serverName: this.serverName, output: this.redactionPolicy.redactString(bounded) },
-      });
+          ? Buffer.from(chunk)
+          : Buffer.from(String(chunk), "utf8");
+      const captureLimit = MAX_STDERR_LOG_BYTES + SECRET_LITERAL_MAX_BYTES;
+      const remaining = captureLimit - this.#stderrCapture.byteLength;
+      if (remaining > 0) {
+        this.#stderrCapture = Buffer.concat([
+          this.#stderrCapture,
+          bytes.subarray(0, remaining),
+        ]);
+      }
+      if (this.#stderrCapture.byteLength === captureLimit) this.#flushStderr();
     });
+    this.#transport.stderr?.on("end", () => this.#flushStderr());
+    this.#transport.stderr?.on("close", () => this.#flushStderr());
+  }
+
+  #flushStderr(): void {
+    if (this.#stderrLogged || this.#stderrCapture.byteLength === 0) return;
+    this.#stderrLogged = true;
+    const completeEnd = safeUtf8End(this.#stderrCapture, this.#stderrCapture.byteLength);
+    const redacted = this.redactionPolicy.redactString(
+      this.#stderrCapture.subarray(0, completeEnd).toString("utf8"),
+    );
+    const redactedBytes = Buffer.from(redacted, "utf8");
+    const boundedEnd = safeUtf8End(redactedBytes, MAX_STDERR_LOG_BYTES);
+    this.#logger.warn("mcp.client.stdio.stderr", {
+      context: { serverName: this.serverName, output: redactedBytes.subarray(0, boundedEnd).toString("utf8") },
+    });
+    this.#stderrCapture = Buffer.alloc(0);
   }
 
   #logFailure(event: string, error: unknown): void {
