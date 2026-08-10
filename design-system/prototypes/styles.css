@@ -28,7 +28,7 @@
   --success-field: #f0fdf4;
   --warning: #d97706;
   --warning-field: #fffbeb;
-  --error: #dc2626;
+  --error: #ef4444;
   --error-field: #fef2f2;
   --neutral: #71717a;
   --neutral-field: #f4f4f5;
@@ -779,7 +779,8 @@ p {
   transition:
     background var(--motion-hover) var(--ease-standard),
     color var(--motion-hover) var(--ease-standard),
-    box-shadow var(--motion-hover) var(--ease-standard);
+    box-shadow var(--motion-hover) var(--ease-standard),
+    transform var(--motion-hover) var(--ease-standard);
 }
 
 .icon-button:hover {
@@ -789,6 +790,7 @@ p {
 
 .icon-button:active {
   background: var(--bg-active);
+  transform: scale(0.98);
 }
 
 /* Shared action controls — pages may refine size/weight locally. */
@@ -837,7 +839,7 @@ p {
 
 .primary-button:active {
   background: var(--brand-hover);
-  transform: translateY(0);
+  transform: translateY(0) scale(0.98);
   box-shadow:
     0 1px 2px rgba(99, 102, 241, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
@@ -862,13 +864,6 @@ p {
   border-radius: 50%;
   background: transparent;
   box-sizing: border-box;
-}
-
-.home-orbit,
-.session-finder-orbit,
-.session-picker-state {
-  width: 9px;
-  height: 9px;
 }
 
 .status-orbit.attention,
