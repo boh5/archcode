@@ -271,8 +271,19 @@ function createAgent(options: {
     });
   }
   const depth = options.depth ?? 0;
-  const canDelegate = options.definition.childPolicy !== undefined
-    && depth < options.definition.childPolicy.maxDepth;
+  const resolveAllowedTools = (definition: AgentDefinition, agentDepth: number) => {
+    const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];
+    const resolved = toolRegistry.resolveForAgent(requested).descriptors.map((tool) => tool.name);
+    if (
+      definition.childPolicy === undefined
+      || (definition.tools.delegateTargets?.length ?? 0) === 0
+      || agentDepth >= definition.childPolicy.maxDepth
+    ) {
+      return resolved.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
+    }
+    return resolved;
+  };
+  const canDelegate = resolveAllowedTools(options.definition, depth).includes("delegate");
   const delegationTargets = canDelegate
     ? (options.definition.tools.delegateTargets ?? []).map((agentName) => {
         const target = defaultAgentDefinitions.find((candidate) => candidate.name === agentName);
@@ -306,18 +317,7 @@ function createAgent(options: {
       depth,
       targets: Object.freeze(delegationTargets),
     }),
-    resolveAllowedTools: (definition, depth) => {
-      const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];
-      const resolved = toolRegistry.resolveForAgent(requested).descriptors.map((tool) => tool.name);
-      if (
-        definition.childPolicy === undefined
-        || (definition.tools.delegateTargets?.length ?? 0) === 0
-        || depth >= definition.childPolicy.maxDepth
-      ) {
-        return resolved.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
-      }
-      return resolved;
-    },
+    resolveAllowedTools,
   });
 }
 

@@ -8,7 +8,7 @@ import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { silentLogger } from "./logger";
 import { setLlmAdapterForTest } from "./llm";
 import { ProjectRegistry } from "./projects/registry";
-import { createRuntime as createProductionRuntime } from "./runtime";
+import { type AgentRuntime, createRuntime as createProductionRuntime } from "./runtime";
 import { sessionFileInternals } from "./store/helpers";
 import { createTestMcpRuntime } from "./testing/test-mcp-runtime";
 
@@ -82,6 +82,19 @@ async function createRuntime() {
   });
 }
 
+function waitForFamilyIdle(runtime: AgentRuntime, projectSlug: string, rootSessionId: string): Promise<void> {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => {
+      if (event.projectSlug !== projectSlug
+        || event.rootSessionId !== rootSessionId
+        || event.activity !== "idle") return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
 describe("runtime Skill command admission", () => {
   test("admits a custom Skill outside the Agent builtin allow-list and replays its normalized activation", async () => {
     const workspaceRoot = await makeTempRoot();
@@ -126,6 +139,7 @@ describe("runtime Skill command admission", () => {
         source: "user" as const,
         requestedModelSelection,
       };
+      const familyIdle = waitForFamilyIdle(runtime, project.slug, session.sessionId);
       const accepted = await runtime.acceptSessionMessage({
         ...base,
         text: `/skill   use   ${skillName}   inspect   changes`,
@@ -140,6 +154,7 @@ describe("runtime Skill command admission", () => {
         ...base,
         text: "/skill use codemap inspect",
       })).rejects.toMatchObject({ reason: "idempotency" });
+      await familyIdle;
 
       const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
       expect(file.inputRequestReceipts).toEqual([
