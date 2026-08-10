@@ -403,7 +403,7 @@ describe("SessionAgentManager", () => {
       return {
         depth,
         allowedTools: [...context.allowedTools].sort(),
-        delegateTargets: factory.getDelegateTargetsFor(definition, depth),
+        delegateTargets: factory.resolveDelegationCapabilities(definition.name, depth).targets.map((target) => target.agentName),
         activeSkillNames: [...agent.store.getState().activeSkillNames],
         hasActiveSkillBody: prompt.includes(IDENTITY_SKILL_BODY),
       };

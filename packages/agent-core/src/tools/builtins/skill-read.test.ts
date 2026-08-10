@@ -356,6 +356,21 @@ Broken body.
     }
   });
 
+  test("model-facing schema is portable and omits the internal Skill-name regex", () => {
+    const schema = (skillReadTool.aiInputSchema as { readonly jsonSchema: Record<string, unknown> }).jsonSchema;
+    const serialized = JSON.stringify(schema);
+
+    expect(schema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["name"],
+    });
+    expect(serialized).not.toContain("pattern");
+    expect(serialized).not.toContain("?!");
+    expect(serialized).toContain("current-Agent Skill name");
+    expect(serialized).toContain("target-scoped delegation result");
+  });
+
   test("has correct read-only concurrency-safe traits and is registered", () => {
     expect(skillReadTool.traits).toEqual({
       readOnly: true,

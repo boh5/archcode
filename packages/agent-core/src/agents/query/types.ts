@@ -28,6 +28,7 @@ export interface QueryLoopOptions {
   allowedTools: readonly string[];
   agentSkills: readonly string[];
   skillService: SkillService;
+  resolveSkillListTargetSkills?: (agentType: string) => readonly string[] | undefined;
   executionSkillSnapshots?: ReadonlyMap<string, SkillPackageSnapshot>;
   storeManager: SessionStoreManager;
   /** Required model-boundary attachment projection; never inferred from provider identity. */

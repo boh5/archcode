@@ -13,13 +13,13 @@ import type { AnyToolDescriptor } from "../tools/types";
 import { createTextToolResult } from "../tools/results";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { worktreeEnterTool, worktreeExitTool } from "../tools/builtins/worktree";
-import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
+import { DELEGATION_CORE_TOOLS } from "./constants";
 import {
   ConfiguredAgent,
   IneligibleSessionWorktreeToolError,
   UnknownExtraToolError,
 } from "./configured-agent";
-import { discussionAgentDefinition, exploreAgentDefinition, leadAgentDefinition } from "./definitions";
+import { defaultAgentDefinitions, discussionAgentDefinition, exploreAgentDefinition, leadAgentDefinition } from "./definitions";
 import { isRootAgentName } from "./root-session-identity";
 import type { AgentDefinition } from "./factory-types";
 import type { VersionControl } from "../version-control/detector";
@@ -270,6 +270,31 @@ function createAgent(options: {
       },
     });
   }
+  const depth = options.depth ?? 0;
+  const resolveAllowedTools = (definition: AgentDefinition, agentDepth: number) => {
+    const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];
+    const resolved = toolRegistry.resolveForAgent(requested).descriptors.map((tool) => tool.name);
+    if (
+      definition.childPolicy === undefined
+      || (definition.tools.delegateTargets?.length ?? 0) === 0
+      || agentDepth >= definition.childPolicy.maxDepth
+    ) {
+      return resolved.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
+    }
+    return resolved;
+  };
+  const canDelegate = resolveAllowedTools(options.definition, depth).includes("delegate");
+  const delegationTargets = canDelegate
+    ? (options.definition.tools.delegateTargets ?? []).map((agentName) => {
+        const target = defaultAgentDefinitions.find((candidate) => candidate.name === agentName);
+        if (target === undefined) throw new Error(`Missing test Agent definition: ${agentName}`);
+        return Object.freeze({
+          agentName: target.name,
+          profiles: Object.freeze([...target.profiles]),
+          builtinSkillNames: Object.freeze([...target.skills]),
+        });
+      })
+    : [];
   return new ConfiguredAgent({
     definition: options.definition,
     toolRegistry,
@@ -287,14 +312,12 @@ function createAgent(options: {
     attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
     resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
     logger: options.logger ?? silentLogger,
-    resolveAllowedTools: (definition, depth) => {
-      const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];
-      const resolved = toolRegistry.resolveForAgent(requested).descriptors.map((tool) => tool.name);
-      if (depth >= MAX_SUB_AGENT_DEPTH) {
-        return resolved.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
-      }
-      return resolved;
-    },
+    delegationCapabilities: Object.freeze({
+      parentAgentName: options.definition.name,
+      depth,
+      targets: Object.freeze(delegationTargets),
+    }),
+    resolveAllowedTools,
   });
 }
 

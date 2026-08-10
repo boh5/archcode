@@ -3,7 +3,6 @@ export {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
   DELEGATION_CORE_TOOLS,
   MAX_CONCURRENT_SUB_AGENTS,
-  MAX_SUB_AGENT_DEPTH,
   SKILL_ACCESS_TOOLS,
 } from "./constants";
 export type { AgentType } from "./constants";
@@ -21,6 +20,8 @@ export type {
   AgentHookPolicy,
   AgentName,
   AgentToolPolicy,
+  DelegationCapabilitySnapshot,
+  DelegationTargetCapability,
 } from "./factory-types";
 export { AGENT_NAMES } from "./names";
 export {

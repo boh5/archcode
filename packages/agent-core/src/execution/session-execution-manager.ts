@@ -38,7 +38,6 @@ import {
   ChildSessionParentMismatchError,
   ConcurrentLimitError,
   DelegateTargetNotAllowedError,
-  DelegationToolNotAllowedError,
   DepthLimitError,
   SessionCwdTransitionConflictError,
   SessionCwdTransitionInProgressError,
@@ -1927,14 +1926,9 @@ export class SessionExecutionManager {
     const parentState = request.parentStore.getState();
     const targetAgentName = request.request.agent_type as AgentName;
     const parentDefinition = factory.getDefinition(parentAgentName);
-    const allowedTools = factory.resolveAllowedTools(parentDefinition, currentDepth);
-
-    if (!allowedTools.includes("delegate")) {
-      throw new DelegationToolNotAllowedError(parentAgentName, currentDepth);
-    }
-
-    const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, currentDepth);
-    if (!delegateTargets.includes(targetAgentName)) {
+    const delegationCapabilities = factory.resolveDelegationCapabilities(parentAgentName, currentDepth);
+    const targetCapability = delegationCapabilities.targets.find((target) => target.agentName === targetAgentName);
+    if (targetCapability === undefined) {
       throw new DelegateTargetNotAllowedError(parentAgentName, targetAgentName, currentDepth);
     }
 
@@ -1945,12 +1939,8 @@ export class SessionExecutionManager {
     }
     const childPolicy = configuredChildPolicy;
 
-    if (currentDepth >= childPolicy.maxDepth) {
-      throw new DepthLimitError(currentDepth);
-    }
-
     const validatedRequest = request.request;
-    if (!targetDefinition.profiles.includes(validatedRequest.profile)) {
+    if (!targetCapability.profiles.includes(validatedRequest.profile)) {
       throw new DelegationExecutionAdmissionError(
         "DELEGATION_PROFILE_NOT_ALLOWED",
         `${targetDefinition.displayName} does not allow Profile "${validatedRequest.profile}"`,
@@ -1966,7 +1956,7 @@ export class SessionExecutionManager {
     let activeSkillNames: readonly string[];
     try {
       activeSkillNames = await factory.resolveDelegatedSkillNames(
-        targetDefinition,
+        targetCapability,
         validatedRequest.skills,
         parentState.cwd,
       );
@@ -3903,7 +3893,6 @@ export class SessionExecutionManager {
   ): Promise<ExistingChildActivationAdmission | T> {
     const claimedChild = childActivationIdentitySnapshot(childStore.getState());
     this.#assertDurableChildDelegationIdentity(childStore.getState());
-    await this.#validatePersistedDelegationRequest(workspaceRoot, childStore.getState());
     const parentSessionId = childStore.getState().parentSessionId;
     if (parentSessionId === undefined) {
       throw new DelegationExecutionAdmissionError(
@@ -3963,23 +3952,26 @@ export class SessionExecutionManager {
       const parentDefinition = factory.getDefinition(parentState.agentName);
       const parentDepth = await this.#config.resolveSessionDepth(workspaceRoot, parentState.sessionId);
       const childDepth = await this.#config.resolveSessionDepth(workspaceRoot, childState.sessionId);
+      const delegationCapabilities = factory.resolveDelegationCapabilities(parentState.agentName, parentDepth);
+      const targetCapability = delegationCapabilities.targets.find((target) => target.agentName === childState.agentName);
+      if (targetCapability === undefined) {
+        throw new DelegateTargetNotAllowedError(parentState.agentName, childState.agentName, parentDepth);
+      }
+      const durableRequest = childState.delegationRequest!;
+      if (!targetCapability.profiles.includes(durableRequest.profile)) {
+        throw new DelegationExecutionAdmissionError(
+          "DELEGATION_PROFILE_NOT_ALLOWED",
+          `Child Agent "${targetCapability.agentName}" does not allow durable Profile "${durableRequest.profile}" at depth ${parentDepth}`,
+        );
+      }
       const configuredChildPolicy = parentDefinition.childPolicy;
       if (configuredChildPolicy === undefined) throw new AgentChildPolicyMissingError(parentState.agentName);
       const childPolicy = configuredChildPolicy;
-      if (parentDepth >= childPolicy.maxDepth || childDepth !== parentDepth + 1 || childDepth > childPolicy.maxDepth) {
+      if (childDepth !== parentDepth + 1 || childDepth > childPolicy.maxDepth) {
         throw new DepthLimitError(parentDepth);
       }
-      const allowedTools = factory.resolveAllowedTools(parentDefinition, parentDepth);
-      if (!allowedTools.includes("delegate")) {
-        throw new DelegationToolNotAllowedError(parentState.agentName, parentDepth);
-      }
-      const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, parentDepth);
-      if (!delegateTargets.includes(childState.agentName)) {
-        throw new DelegateTargetNotAllowedError(parentState.agentName, childState.agentName, parentDepth);
-      }
-      const targetDefinition = factory.getDefinition(childState.agentName);
       const activeSkillNames = await factory.resolveDelegatedSkillNames(
-        targetDefinition,
+        targetCapability,
         childState.activeSkillNames,
         childState.cwd,
       );
@@ -4065,20 +4057,6 @@ export class SessionExecutionManager {
         `Child Session "${state.sessionId}" active Skills do not match its durable delegation request`,
       );
     }
-  }
-
-  async #validatePersistedDelegationRequest(
-    workspaceRoot: string,
-    state: SessionStoreState,
-  ): Promise<void> {
-    if (state.parentSessionId === undefined) return;
-    const request = state.delegationRequest!;
-    const definition = this.#config.sessionAgentManager.getFactory(workspaceRoot).getDefinition(state.agentName);
-    if (definition.profiles.includes(request.profile)) return;
-    throw new DelegationExecutionAdmissionError(
-      "DELEGATION_PROFILE_NOT_ALLOWED",
-      `${definition.displayName} does not allow durable Profile "${request.profile}"`,
-    );
   }
 
   async #validateProspectiveChildExecutionScope(

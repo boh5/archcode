@@ -22,13 +22,13 @@ import {
 import { buildAgentDefinition, leadAgentDefinition, exploreAgentDefinition } from "../agents/definitions";
 import { ProviderRegistry } from "../provider";
 import { ModelInfo } from "../provider/model";
-import { SkillService } from "../skills";
+import { SkillNotFoundError, SkillService, SkillValidationError } from "../skills";
 import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
 import { createTestToolRegistryFixture } from "../tools/test-registry";
 import { testExecutionEnd, testExecutionRecord, testExecutionStart, testExecutionSuspended } from "../testing/test-execution-fixtures";
 import { applySessionToolBatchChildOutcome } from "./session-tool-batch-scheduler";
 import { setLlmAdapterForTest } from "../llm/adapter";
-import { AgentRunningError, ConcurrentLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError } from "../agents/errors";
+import { AgentRunningError, ConcurrentLimitError, DelegateTargetNotAllowedError, ChildSessionNotFoundError, ChildSessionParentMismatchError, ChildSessionNotDescendantError, ChildSessionCwdMismatchError, SessionCwdTransitionConflictError, SessionCwdTransitionInProgressError, SessionToolBatchActiveError, SkillNotAllowedError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "../store/errors";
 import { SessionDeleteInProgressError } from "./session-deletion";
@@ -497,7 +497,7 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
     tools: { tools: [] },
     childPolicy: undefined,
   };
-  return {
+  const factory = {
     createRootAgent: mock(() => { throw new Error("unused"); }),
     createAgent: mock(() => { throw new Error("unused"); }),
     getDefinition: mock((name: string) => {
@@ -507,10 +507,30 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
     }),
     listAgentNames: mock(() => ["lead", "explore"]),
     resolveAllowedTools: mock((definition: AgentDefinition) => definition.tools.tools),
-    getDelegateTargetsFor: mock((definition: AgentDefinition) => definition.tools.delegateTargets ?? []),
+    resolveDelegationCapabilities: mock((parentAgentName: AgentName, depth: number) => {
+      const definition = factory.getDefinition(parentAgentName);
+      const targetNames = definition.childPolicy !== undefined
+        && depth < definition.childPolicy.maxDepth
+        && definition.tools.tools.includes("delegate")
+        ? definition.tools.delegateTargets ?? []
+        : [];
+      return {
+        parentAgentName,
+        depth,
+        targets: targetNames.map((agentName) => {
+          const target = factory.getDefinition(agentName);
+          return {
+            agentName: target.name,
+            profiles: [...target.profiles],
+            builtinSkillNames: [...target.skills],
+          };
+        }),
+      };
+    }),
     resolveDelegatedSkillNames: mock(async () => []),
     ...overrides,
   } as AgentFactory;
+  return factory;
 }
 
 function makeFactoryWithChildPolicy(
@@ -2425,6 +2445,11 @@ describe("SessionExecutionManager", () => {
       projectContextResolver: createTestProjectContextResolver(storeManager),
       resolveVersionControl: async () => "git",
       resolveAllowedTools: (agentDefinition) => agentDefinition.tools.tools,
+      delegationCapabilities: {
+        parentAgentName: "lead",
+        depth: 0,
+        targets: [],
+      },
       logger: silentLogger,
     });
     const { manager } = createManager({ [sessionId]: configuredAgent as unknown as MockAgent });
@@ -3980,7 +4005,7 @@ describe("SessionExecutionManager", () => {
     expect(sessionAgentManager.get(workspaceRoot, failedChildId)).toBeUndefined();
   });
 
-  test("depth limit is checked before child session creation", async () => {
+  test("exhausted depth removes target capability before child session creation", async () => {
     const rootId = crypto.randomUUID();
     const middleId = crypto.randomUUID();
     const parentId = crypto.randomUUID();
@@ -4011,10 +4036,77 @@ describe("SessionExecutionManager", () => {
       toolName: "delegate",
       request: delegationRequest({ agent_type: "explore", title: "Delegated child", objective: "inspect", skills: [], background: false }),
       parentAbort: undefined,
-    })).rejects.toThrow(DepthLimitError);
+    })).rejects.toThrow(DelegateTargetNotAllowedError);
 
     expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
     expect(parentStore.getState().childSessionLinks).toEqual([]);
+  });
+
+  test("all known delegation admission failures leave no child artifact", async () => {
+    const cases: readonly {
+      label: string;
+      request: DelegationRequest;
+      factory: AgentFactory;
+      expected: Error | { readonly code: string };
+    }[] = [
+      {
+        label: "target",
+        request: delegationRequest({ agent_type: "build", profile: "deep" }),
+        factory: makeFactory(),
+        expected: new DelegateTargetNotAllowedError("lead", "build", 0),
+      },
+      {
+        label: "profile",
+        request: delegationRequest({ agent_type: "explore", profile: "deep" }),
+        factory: makeFactory(),
+        expected: { code: "DELEGATION_PROFILE_NOT_ALLOWED" },
+      },
+      ...[
+        new SkillNotFoundError("missing-skill"),
+        new SkillValidationError("invalid-skill", "project-archcode", "missing SKILL.md"),
+        new SkillNotAllowedError("explore", "run-goal", ["codemap"]),
+      ].map((error) => ({
+        label: error.name,
+        request: delegationRequest({ skills: ["candidate-skill"] }),
+        factory: makeFactory({
+          resolveDelegatedSkillNames: mock(async () => { throw error; }),
+        }),
+        expected: error,
+      })),
+    ];
+
+    for (const testCase of cases) {
+      const parentId = crypto.randomUUID();
+      const childSessionId = crypto.randomUUID();
+      const parentStore = storeManager.create(parentId, workspaceRoot, {
+        source: { kind: "direct" },
+        agentName: "lead",
+      });
+      const { manager, sessionAgentManager } = createManager({}, { factory: testCase.factory });
+
+      const start = manager.startChildExecution(workspaceRoot, {
+        parentStore,
+        parentSessionId: parentId,
+        parentToolCallId: `rejected-${testCase.label}`,
+        childSessionId,
+        toolName: "delegate",
+        request: testCase.request,
+        parentAbort: undefined,
+      });
+      if (testCase.expected instanceof Error) {
+        await expect(start, testCase.label).rejects.toMatchObject({
+          name: testCase.expected.name,
+          message: testCase.expected.message,
+        });
+      } else {
+        await expect(start, testCase.label).rejects.toMatchObject(testCase.expected);
+      }
+
+      expect(sessionAgentManager.createChildAgent, testCase.label).not.toHaveBeenCalled();
+      expect(parentStore.getState().childSessionLinks, testCase.label).toEqual([]);
+      expect(storeManager.get(childSessionId, workspaceRoot), testCase.label).toBeUndefined();
+      expect(await Bun.file(getSessionPath(workspaceRoot, childSessionId)).exists(), testCase.label).toBe(false);
+    }
   });
 
   test("startChildExecution appends link and canonical prompt before model execution", async () => {
@@ -5181,6 +5273,75 @@ describe("SessionExecutionManager", () => {
     });
   });
 
+  test("resumeChildExecution rejects a durable Profile outside the parent capability snapshot before activation", async () => {
+    const parentId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const childStore = storeManager.create(childId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Profile mismatch child",
+      activeSkillNames: [],
+      delegationRequest: delegationRequest({
+        agent_type: "explore",
+        profile: "deep",
+        title: "Profile mismatch child",
+        skills: [],
+      }),
+    });
+    const baseFactory = makeFactory();
+    const resolveDelegationCapabilities = mock((parentAgentName: AgentName, depth: number) => ({
+      parentAgentName,
+      depth,
+      targets: [{
+        agentName: "explore" as const,
+        profiles: ["fast" as const],
+        builtinSkillNames: [],
+      }],
+    }));
+    const resolveDelegatedSkillNames = mock(async () => [] as readonly string[]);
+    const factory = makeFactory({
+      getDefinition: mock((name: string) => {
+        const definition = baseFactory.getDefinition(name);
+        return name === "explore"
+          ? { ...definition, profiles: ["deep"] as const }
+          : definition;
+      }),
+      resolveDelegationCapabilities,
+      resolveDelegatedSkillNames,
+    });
+    const executionScopeValidator = { validate: mock(async () => undefined) };
+    const { manager, sessionAgentManager } = createManager({}, {
+      factory,
+      executionScopeValidator,
+    });
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "profile-mismatch-resume",
+      toolName: "resume_session",
+      sessionId: childId,
+      instruction: "resume",
+      background: false,
+    })).rejects.toMatchObject({
+      name: "DelegationExecutionAdmissionError",
+      code: "DELEGATION_PROFILE_NOT_ALLOWED",
+    });
+
+    expect(resolveDelegationCapabilities).toHaveBeenCalledWith("lead", 0);
+    expect(resolveDelegatedSkillNames).not.toHaveBeenCalled();
+    expect(executionScopeValidator.validate).not.toHaveBeenCalled();
+    expect(sessionAgentManager.createChildAgent).not.toHaveBeenCalled();
+    expect(childStore.getState().executions).toEqual([]);
+    expect(childStore.getState().messages).toEqual([]);
+    expect(parentStore.getState().childSessionLinks).toEqual([]);
+  });
+
   test("blocks cwd transitions for active descendants and never resumes an old child across checkouts", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
@@ -5998,7 +6159,7 @@ describe("SessionExecutionManager", () => {
     expect(parentStore.getState().childSessionLinks).toEqual([]);
   });
 
-  test("resumeChildExecution re-enforces canonical maxDepth", async () => {
+  test("resumeChildExecution re-enforces the canonical depth capability", async () => {
     const rootId = crypto.randomUUID();
     const middleId = crypto.randomUUID();
     const parentId = crypto.randomUUID();
@@ -6038,7 +6199,7 @@ describe("SessionExecutionManager", () => {
       sessionId: childId,
       instruction: "resume",
     background: false,
-    })).rejects.toThrow(DepthLimitError);
+    })).rejects.toThrow(DelegateTargetNotAllowedError);
   });
 
   test("resumeChildExecution re-enforces maxConcurrent", async () => {

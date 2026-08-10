@@ -76,6 +76,8 @@ export interface ToolExecutionContext {
   agentSkills?: readonly string[];
   /** Shared Skill service for agent-scoped skill lookup. */
   skillService?: SkillService;
+  /** Resolves the builtin Skill allow-list for an allowed direct delegation target. */
+  resolveSkillListTargetSkills?: (agentType: string) => readonly string[] | undefined;
   /** Execution-owned immutable package snapshots for explicit one-shot Skills. */
   executionSkillSnapshots?: ReadonlyMap<string, SkillPackageSnapshot>;
   projectContext: ProjectContext;
@@ -188,12 +190,9 @@ export interface ToolDescriptor<
   /**
    * Optional schema for the LLM. When set, this is used instead of
    * `inputSchema` when presenting the tool definition to the AI model via
-   * `toAITools()`. This allows MCP tools to expose their real JSON Schema
-   * parameter definitions so the model knows what arguments to pass, while
-   * keeping the loose Zod `inputSchema` for ArchCode's execution pipeline.
-   *
-   * Builtin tools leave this undefined — their Zod `inputSchema` serves both
-   * roles.
+   * `toAITools()`. Builtin and MCP tools may use this boundary to expose a
+   * portable model-facing contract while retaining `inputSchema` as the
+   * authoritative internal execution schema.
    */
   aiInputSchema?: AiToolInputSchema;
   traits: ToolTraits;

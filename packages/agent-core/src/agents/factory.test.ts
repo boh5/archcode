@@ -5,6 +5,10 @@ import { storeManager } from "../store/store";
 import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { createTextToolResult } from "../tools/results";
+import { delegateTool } from "../tools/builtins/delegate";
+import { skillListTool } from "../tools/builtins/skill-list";
+import { skillReadTool } from "../tools/builtins/skill-read";
+import { ResolvedToolSet } from "../tools/registry";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { DELEGATION_CORE_TOOLS } from "./constants";
 import { SkillNotAllowedError } from "./errors";
@@ -17,7 +21,8 @@ import {
 import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition, AgentName } from "./factory-types";
 import { leadRoleContract } from "./definitions/role-contracts";
-import { discussionAgentDefinition } from "./definitions";
+import { defaultAgentDefinitions, discussionAgentDefinition } from "./definitions";
+import { projectModelToolDescriptors } from "./model-tool-projection";
 import { silentLogger } from "../logger";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import { createTestTempRoot } from "../testing/test-temp-root";
@@ -83,6 +88,13 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     titleGeneration: "enabled",
   },
   includeMemoryInPrompt: true,
+  childPolicy: {
+    maxDepth: 3,
+    maxConcurrent: 10,
+    timeoutMs: 1_000,
+    abortCascade: true,
+    terminalReminders: true,
+  },
   skills: [], ...overrides,  };
 }
 
@@ -90,7 +102,16 @@ function makeFactory(
   definitions: readonly AgentDefinition[] = [definition()],
   options: { skillService?: SkillService } = {},
 ) {
-  return createAgentFactory({ definitions,
+  const completeDefinitions = [...definitions];
+  for (const agentDefinition of definitions) {
+    for (const targetName of agentDefinition.tools.delegateTargets ?? []) {
+      if (completeDefinitions.some((candidate) => candidate.name === targetName)) continue;
+      const target = defaultAgentDefinitions.find((candidate) => candidate.name === targetName);
+      if (target === undefined) throw new Error(`Missing test target definition: ${targetName}`);
+      completeDefinitions.push(target);
+    }
+  }
+  return createAgentFactory({ definitions: completeDefinitions,
   toolRegistry: createTestRegistry([
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
@@ -197,7 +218,7 @@ describe("createAgentFactory", () => {
 
   test("keeps active Skill identity on the supplied Session store", () => {
     const skillService = createTestSkillService();
-    const factory = createAgentFactory({ definitions: [definition()],
+    const factory = createAgentFactory({ definitions: [definition({ childPolicy: undefined })],
     toolRegistry: createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
@@ -261,12 +282,21 @@ describe("createAgentFactory", () => {
     expect(child.store.getState().parentSessionId).toBe(parentSessionId);
   });
 
-  test("resolves explicit tool lists and strips delegation tools at depth three", () => {
+  test("resolves explicit tool lists and strips delegation at the definition boundary", () => {
     const factory = makeFactory();
-    const customDefinition = definition({ tools: { tools: ["grep", "missing", "delegate"] } });
+    const customDefinition = definition({
+      tools: { tools: ["grep", "missing", "delegate"], delegateTargets: ["explore"] },
+      childPolicy: {
+        maxDepth: 2,
+        maxConcurrent: 10,
+        timeoutMs: 1_000,
+        abortCascade: true,
+        terminalReminders: true,
+      },
+    });
     const delegatingDefinition = definition({
       name: "lead",
-      tools: { tools: ["unknown_tool", ...explorerTools] },
+      tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
     });
 
     expect(factory.resolveAllowedTools(definition(), 0)).toEqual([
@@ -275,10 +305,8 @@ describe("createAgentFactory", () => {
       ...DELEGATION_CORE_TOOLS,
     ]);
     expect(factory.resolveAllowedTools(customDefinition, 0)).toEqual(["grep", "delegate"]);
-    // depth < MAX_SUB_AGENT_DEPTH (3): delegation tools still present
-    expect(factory.resolveAllowedTools(customDefinition, 2)).toEqual(["grep", "delegate"]);
-    // depth >= MAX_SUB_AGENT_DEPTH (3): delegation tools stripped
-    expect(factory.resolveAllowedTools(customDefinition, 3)).toEqual(["grep"]);
+    expect(factory.resolveAllowedTools(customDefinition, 1)).toEqual(["grep", "delegate"]);
+    expect(factory.resolveAllowedTools(customDefinition, 2)).toEqual(["grep"]);
     expect(factory.resolveAllowedTools(delegatingDefinition, 1)).toEqual([
       "unknown_tool",
       ...READ_ONLY_FIXTURE_TOOLS,
@@ -292,36 +320,81 @@ describe("createAgentFactory", () => {
     ]);
     // depth 3 (>= 3): delegation tools stripped
     expect(factory.resolveAllowedTools(delegatingDefinition, 3)).toEqual(["unknown_tool", ...READ_ONLY_FIXTURE_TOOLS]);
+    expect(factory.resolveAllowedTools(definition({ childPolicy: undefined }), 0)).toEqual([
+      "unknown_tool",
+      ...READ_ONLY_FIXTURE_TOOLS,
+    ]);
+    expect(factory.resolveAllowedTools(definition({
+      tools: { tools: ["grep", "delegate"] },
+    }), 0)).toEqual(["grep"]);
   });
 
-  test("resolves delegate targets only when depth allows delegation", () => {
-    const factory = makeFactory();
-    const depthFilteredDefinition = definition({
-      name: "explore",
-      tools: { tools: explorerTools, delegateTargets: ["explore", "analyst"] },
-    });
-    const explicitWithoutDelegate = definition({
-      name: "analyst",
-      tools: { tools: ["grep"], delegateTargets: ["explore"] },
-    });
+  test("resolves one immutable capability matrix from canonical registered definitions", () => {
+    const factory = makeFactory(defaultAgentDefinitions);
+    const cases = [
+      ["lead", 0, ["analyst", "build", "explore", "librarian"]],
+      ["lead", 2, ["analyst", "build", "explore", "librarian"]],
+      ["lead", 3, []],
+      ["discussion", 0, ["explore", "librarian"]],
+      ["discussion", 2, []],
+      ["analyst", 0, ["explore", "librarian"]],
+      ["analyst", 2, []],
+      ["build", 0, ["explore"]],
+      ["build", 2, []],
+      ["explore", 0, []],
+      ["librarian", 0, []],
+    ] as const;
 
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 1)).toEqual(["explore", "analyst"]);
-    // depth 2 (< MAX_SUB_AGENT_DEPTH=3): delegation still allowed, targets returned
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual(["explore", "analyst"]);
-    // depth 3 (>= MAX_SUB_AGENT_DEPTH): delegation stripped, targets empty
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 3)).toEqual([]);
-    expect(factory.getDelegateTargetsFor(explicitWithoutDelegate, 0)).toEqual([]);
+    for (const [parent, depth, expectedTargets] of cases) {
+      const snapshot = factory.resolveDelegationCapabilities(parent, depth);
+      expect(snapshot.targets.map((target) => target.agentName)).toEqual([...expectedTargets]);
+      expect(Object.isFrozen(snapshot)).toBe(true);
+      expect(Object.isFrozen(snapshot.targets)).toBe(true);
+      for (const target of snapshot.targets) {
+        const canonical = factory.getDefinition(target.agentName);
+        expect(target.profiles).toEqual(canonical.profiles);
+        expect(target.builtinSkillNames).toEqual(canonical.skills);
+        expect(Object.isFrozen(target)).toBe(true);
+        expect(Object.isFrozen(target.profiles)).toBe(true);
+        expect(Object.isFrozen(target.builtinSkillNames)).toBe(true);
+      }
+
+      const descriptors = expectedTargets.length === 0
+        ? [skillListTool, skillReadTool]
+        : [delegateTool, skillListTool, skillReadTool];
+      const aiTools = new ResolvedToolSet(
+        projectModelToolDescriptors(descriptors, snapshot),
+      ).toAITools();
+      const listSchema = z.toJSONSchema(aiTools.skill_list!.inputSchema as z.ZodType) as {
+        readonly properties: Record<string, { readonly enum?: readonly string[] }>;
+      };
+      if (expectedTargets.length === 0) {
+        expect(listSchema.properties.agent_type).toBeUndefined();
+        expect(aiTools.delegate).toBeUndefined();
+      } else {
+        expect(listSchema.properties.agent_type?.enum).toEqual([...expectedTargets]);
+        const delegateSchema = z.toJSONSchema(aiTools.delegate!.inputSchema as z.ZodType) as {
+          readonly properties: Record<string, { readonly enum?: readonly string[] }>;
+        };
+        expect(delegateSchema.properties.agent_type?.enum).toEqual([...expectedTargets]);
+        expect(delegateSchema.properties.profile?.enum).toEqual([
+          ...new Set(snapshot.targets.flatMap((target) => target.profiles)),
+        ]);
+      }
+    }
   });
 
   test("validates and deduplicates delegated Skill names before persistence", async () => {
-    const target = definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools }, skills: ["codemap", "git-master"] });
-    const factory = makeFactory([definition(), target], { skillService: createSkillServiceWithBuiltins() });
+    const target = definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools }, skills: ["codemap", "git-master"], childPolicy: undefined });
+    const parent = definition({ tools: { tools: explorerTools, delegateTargets: ["explore"] } });
+    const factory = makeFactory([parent, target], { skillService: createSkillServiceWithBuiltins() });
+    const targetCapability = factory.resolveDelegationCapabilities("lead", 0).targets[0]!;
 
-    const skillNames = await factory.resolveDelegatedSkillNames(target, ["codemap", "git-master", "codemap"], import.meta.dir);
+    const skillNames = await factory.resolveDelegatedSkillNames(targetCapability, ["codemap", "git-master", "codemap"], import.meta.dir);
 
     expect(skillNames).toEqual(["codemap", "git-master"]);
     try {
-      await factory.resolveDelegatedSkillNames(target, ["run-goal"], import.meta.dir);
+      await factory.resolveDelegatedSkillNames(targetCapability, ["run-goal"], import.meta.dir);
       throw new Error("Expected delegated Skill validation to fail");
     } catch (error) {
       expect(error).toBeInstanceOf(SkillNotAllowedError);
@@ -331,6 +404,26 @@ describe("createAgentFactory", () => {
         allowedSkills: ["codemap", "git-master"],
       });
     }
+  });
+
+  test("admits a target-only reserved builtin through the target capability", async () => {
+    const factory = makeFactory(defaultAgentDefinitions, {
+      skillService: new SkillService({
+        userSkillsRoot: `${TEST_WORKSPACE_ROOT}/missing-user-skills`,
+        userAgentsSkillsRoot: `${TEST_WORKSPACE_ROOT}/missing-user-agent-skills`,
+      }),
+    });
+    const lead = factory.getDefinition("lead");
+    const analyst = factory.resolveDelegationCapabilities("lead", 0).targets
+      .find((target) => target.agentName === "analyst");
+
+    expect(lead.skills).not.toContain("goal-review");
+    expect(analyst?.builtinSkillNames).toContain("goal-review");
+    await expect(factory.resolveDelegatedSkillNames(
+      analyst!,
+      ["goal-review"],
+      TEST_WORKSPACE_ROOT,
+    )).resolves.toEqual(["goal-review"]);
   });
 });
 

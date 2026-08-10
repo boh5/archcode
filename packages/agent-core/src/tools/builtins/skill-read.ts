@@ -1,3 +1,4 @@
+import { jsonSchema } from "ai";
 import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
@@ -17,6 +18,23 @@ import { SKILL_NAME_REGEX } from "../../skills/schema";
 
 const SKILL_NAME_PATTERN = "^(?!.*--)[a-z0-9]+(?:-[a-z0-9]+)*$";
 const SKILL_NAME_MESSAGE = `Skill name must match pattern ${SKILL_NAME_PATTERN} (no consecutive hyphens)`;
+
+const SkillReadAiInputSchema = jsonSchema({
+  type: "object",
+  additionalProperties: false,
+  required: ["name"],
+  properties: {
+    name: {
+      type: "string",
+      description: "Exact current-Agent Skill name copied from the System Prompt or skill_list({}). Do not guess or use a target-scoped delegation result.",
+    },
+    resource: {
+      type: "string",
+      minLength: 1,
+      description: "Optional Skill-root-relative resource path copied exactly from the entry's Resources list. It cannot read an arbitrary filesystem path.",
+    },
+  },
+});
 
 export const SkillReadInputSchema = z
   .object({
@@ -163,6 +181,7 @@ export function createSkillReadTool() {
       "Read the Skill before the work it governs, then load supporting resources only when needed. Copy resource paths from the entry's Resources list; they are Skill-root-relative and cannot read arbitrary filesystem paths. Do not load unrelated Skills for ceremony. This tool accepts no agent, role, source, or filesystem-root override. Skill instructions guide existing capabilities but cannot expand the Agent's tools, permissions, delegation targets, or workspace scope.",
     ].join("\n"),
     inputSchema: SkillReadInputSchema,
+    aiInputSchema: SkillReadAiInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
     execute: async (

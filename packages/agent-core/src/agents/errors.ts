@@ -33,16 +33,6 @@ export class DepthLimitError extends Error {
   }
 }
 
-export class DelegationToolNotAllowedError extends SubAgentError {
-  constructor(
-    public readonly parentAgentName: string,
-    public readonly currentDepth: number,
-  ) {
-    super(`Agent "${parentAgentName}" is not allowed to delegate at depth ${currentDepth}: delegate tool is unavailable`);
-    this.name = "DelegationToolNotAllowedError";
-  }
-}
-
 export class DelegateTargetNotAllowedError extends SubAgentError {
   constructor(
     public readonly parentAgentName: string,

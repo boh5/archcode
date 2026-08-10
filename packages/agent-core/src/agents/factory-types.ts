@@ -44,3 +44,16 @@ export interface AgentChildPolicy {
   readonly abortCascade: boolean;
   readonly terminalReminders: boolean;
 }
+
+export interface DelegationTargetCapability {
+  readonly agentName: AgentName;
+  readonly profiles: readonly ProfileName[];
+  readonly builtinSkillNames: readonly string[];
+}
+
+/** Immutable current-role/depth delegation authority derived from registered Agent definitions. */
+export interface DelegationCapabilitySnapshot {
+  readonly parentAgentName: AgentName;
+  readonly depth: number;
+  readonly targets: readonly DelegationTargetCapability[];
+}

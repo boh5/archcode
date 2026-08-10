@@ -165,13 +165,13 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
   },
   {
     tool: "delegate",
+    // This fixture owns only the global descriptor contract. Current-depth target/Profile
+    // presentation is projected later and is covered by model-tool-projection/factory tests.
     competitorEvidenceIds: ["CC-160-A:Agent", "OC:task", "OMO-D", "CX-MA:spawn_agent"],
     runtimeSourceIds: ["tools/builtins/delegate.ts", "delegation/schema.ts", "execution/session-execution-manager.ts"],
     descriptionPatterns: [
       /direct child Session/i,
-      /strict DelegationRequest/,
-      /Agent and its permitted Profile/i,
-      /deep or fast for Build according to task intensity/i,
+      /current parent\/depth capability admission authorizes the selected Agent\/Profile pair/i,
       /fresh child receives its own runtime-provided system context and visible tools/i,
       /does not inherit the parent conversation or prior tool results/i,
       /minimum self-contained task-specific handoff/i,
@@ -189,24 +189,15 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
       /terminal reminder/,
       /background_output/,
     ],
+    descriptionExcludes: [/Build.*deep or fast/i, /analyst requires deep/i],
     schema: [
       {
         path: ["properties", "agent_type"],
-        expectedEnum: ["analyst", "build", "explore", "librarian"],
-        descriptionPatterns: [
-          /allowed child Agent identity/i,
-          /assign this task/i,
-        ],
+        descriptionPatterns: [/Delegated child Agent identity value/i, /parent\/depth capability admission/i, /selected target is authorized/i],
       },
       {
         path: ["properties", "profile"],
-        expectedEnum: ["deep", "fast"],
-        descriptionPatterns: [
-          /model-resource Profile for the child/i,
-          /analyst requires deep/i,
-          /explore and librarian require fast/i,
-          /build allows deep or fast/i,
-        ],
+        descriptionPatterns: [/Delegated model-resource Profile value/i, /parent\/depth capability admission/i, /selected Agent\/Profile pair is authorized/i],
       },
       {
         path: ["properties", "title"],
@@ -326,7 +317,7 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     tool: "skill_list",
     competitorEvidenceIds: ["CC-160-A:Skill", "OC:skill"],
     runtimeSourceIds: ["tools/builtins/skill-list.ts:6-35"],
-    descriptionPatterns: [/currently allowed for this Agent/i, /System Prompt normally already lists the same allowed metadata/i, /fresh machine-readable copy/i, /call skill_read directly/i, /skill_list\(\{\}\)/, /exact returned name/i, /Never guess or invent/i, /exactly name, description, and source/i, /resource contents are omitted/i],
+    descriptionPatterns: [/current Agent or.*allowed direct delegation target/i, /System Prompt normally already lists current-Agent metadata/i, /fresh machine-readable copy/i, /call skill_read directly/i, /skill_list\(\{\}\)/, /same target's delegate\.skills/i, /do not grant.*parent Agent permission/i, /Never guess or invent/i, /exactly name, description, and source/i, /resource contents are omitted/i],
   },
   {
     tool: "skill_read",
@@ -334,7 +325,7 @@ const CONTRACTS: readonly ModelVisibleContract[] = [
     runtimeSourceIds: ["tools/builtins/skill-read.ts:10-14,83-105"],
     descriptionPatterns: [/allowed.*Agent/i, /available names are already listed in the System Prompt/i, /skill_read\(/, /metadata, filesystem root when available, sorted resource descriptors, and entry body/i, /exactly one listed UTF-8 text resource/i, /unsupported-binary error/i, /Read the Skill before the work it governs/i, /supporting resources only when needed/i, /Do not load unrelated Skills/i, /cannot expand/i, /permissions/, /workspace/],
     schema: [
-      { path: ["properties", "name"], descriptionPatterns: [/System Prompt's available-skill list or skill_list/i, /exact/i] },
+      { path: ["properties", "name"], descriptionPatterns: [/current-Agent Skill name/i, /System Prompt or skill_list/i, /target-scoped delegation result/i, /exact/i] },
       { path: ["properties", "resource"], descriptionPatterns: [/Skill-root-relative/i, /Resources list/i, /cannot.*arbitrary filesystem path/i] },
     ],
   },
@@ -421,6 +412,17 @@ function expectPatterns(value: string, patterns: readonly RegExp[]): void {
   }
 }
 
+function toModelJsonSchema(inputSchema: unknown): JsonObject {
+  if (
+    typeof inputSchema === "object"
+    && inputSchema !== null
+    && "jsonSchema" in inputSchema
+  ) {
+    return (inputSchema as { readonly jsonSchema: JsonObject }).jsonSchema;
+  }
+  return z.toJSONSchema(inputSchema as z.ZodType) as JsonObject;
+}
+
 const registryFixture = createTestToolRegistryFixture();
 const registry = registryFixture.registry;
 registerBuiltinTools(registry, silentLogger, { github: { enabled: false } });
@@ -448,7 +450,7 @@ describe("Lead model-visible Tool Contract", () => {
         expect(tool.description).not.toMatch(excluded);
       }
 
-      const schema = z.toJSONSchema(tool.inputSchema as z.ZodType) as JsonObject;
+      const schema = toModelJsonSchema(tool.inputSchema);
       for (const field of contract.schema ?? []) {
         const node = getSchemaNode(schema, field.path);
         if (field.descriptionPatterns !== undefined) {
