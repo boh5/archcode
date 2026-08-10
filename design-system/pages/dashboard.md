@@ -60,6 +60,8 @@ Do not add greetings, marketing copy, metrics, charts, or a global Todo board.
   never become a second Sessions, Automations, or Todos list.
 - Home section footnote and “work lives in Todos” cue stay quiet; Home only
   surfaces decisions and live execution.
+- Rows use subtle hover micro-interactions (0.5px `translateY` lift) with
+  background color change for perceived responsiveness without raised shadows.
 
 ## Search and Attention
 

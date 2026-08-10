@@ -204,11 +204,16 @@
         padding: 7px 9px;
         border-bottom: 1px solid var(--border-subtle);
         color: var(--text-secondary);
+        transition:
+          background var(--motion-hover) var(--ease-smooth),
+          color var(--motion-hover) var(--ease-smooth),
+          transform var(--motion-hover) var(--ease-smooth);
       }
 
       .session-row:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
+        transform: translateY(-0.5px);
       }
 
       /* session-orbit tones come from shared styles.css */

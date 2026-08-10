@@ -464,13 +464,15 @@
         border-radius: var(--shape-card);
         background: var(--bg-surface);
         transition:
-          background var(--motion-hover) var(--ease-standard),
-          border-color var(--motion-hover) var(--ease-standard);
+          background var(--motion-hover) var(--ease-smooth),
+          border-color var(--motion-hover) var(--ease-smooth),
+          transform var(--motion-hover) var(--ease-smooth);
       }
 
       .todo-card:hover {
         border-color: var(--border-default);
         background: var(--bg-hover);
+        transform: translateY(-1px);
       }
 
       .todo-card.is-focus,

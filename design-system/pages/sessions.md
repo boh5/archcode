@@ -27,6 +27,8 @@ attention, and start work directly without manufacturing a Todo first.
 
 - Row order is shared status orbit, Session title and source context, then action
   state or elapsed time.
+- Rows use subtle hover micro-interactions (0.5px `translateY` lift) with
+  background color change for perceived responsiveness without raised shadows.
 - Every row identifies one source: `Todo`, `Automation`, or `Direct`.
 - Todo and Automation sources include the durable parent name when it is still
   available, otherwise their stable parent ID. Direct Sessions show the root

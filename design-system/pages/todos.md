@@ -71,6 +71,8 @@ Lane rules:
   and a plain tabular count. Do not box the count as a badge.
 - Todo cards are the Board's only persistent card layer. Use one quiet border,
   6px radius, and no elevation.
+- Cards use subtle hover micro-interactions (1px `translateY` lift) with
+  background color change for perceived responsiveness without raised shadows.
 - Preserve the dedicated full-height drag activator and its 44px minimum hit
   area. Keep the grip visible but quiet; do not make the activator look like a
   frozen table column with a permanent vertical divider.

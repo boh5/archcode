@@ -258,7 +258,10 @@ Elevation:
 - Inspectors, drawers, and off-canvas navigation use
   `0 22px 56px rgb(25 28 22 / 18%)` in light mode and
   `0 22px 56px rgb(0 0 0 / 52%)` in dark mode.
-- Do not raise cards on hover; use border, fill, or a 2–3px inset rule.
+- Subtle hover micro-interactions use 0.5–1px `translateY` transforms on interactive
+  rows and cards for perceived responsiveness without raised shadows.
+- Primary buttons use brand-tinted shadows with inset highlights to reinforce depth
+  and intentionality.
 
 Layer scale:
 
@@ -423,11 +426,11 @@ colors.
 
 | State | Token / field | Visual |
 |---|---|---|
-| Running / live | `--signal` / `--signal-foreground` / `--running-field` | Lime orbit or live pulse + accessible state |
-| Needs you / HITL attention | `--warning` / `--attention-field` | Amber icon/orbit + `Needs you` (or mechanism tag where density rules allow) |
+| Running / live | `--signal` / `--signal-foreground` / `--running-field` | Lime orbit or live pulse + accessible state; running orbits use green glow (`0 0 12px rgba(101, 163, 13, 0.25)`) |
+| Needs you / HITL attention | `--warning` / `--attention-field` | Amber icon/orbit + `Needs you` (or mechanism tag where density rules allow); attention orbits use amber glow (`0 0 12px rgba(251, 146, 60, 0.3)`) |
 | Done / completed | `--success` / `--success-field` | Green check or completed text |
 | Failed / error | `--error` / `--error-field` | Red icon/orbit + `Failed` or recovery wording |
-| Ready to review | brand-tinted quiet marker (not lime) | Review-ready inventory cue |
+| Ready to review | brand-tinted quiet marker (not lime) | Review-ready inventory cue with brand color glow on focus |
 | Selected / active | `--brand` / `--selection-field` | Indigo field or inset rule |
 | Idle / stopped / neutral | `--neutral` / outline orbit | Outline neutral orbit; no lime |
 
@@ -447,11 +450,16 @@ pulse, status-orbit spin while running, and terminal cursor may loop.
 - Primary: shared `.primary-button` (or product equivalent) — indigo fill,
   4px radius, 32px default height, disabled state uses muted fill without a second
   “fake primary” style. Inventory CTAs such as `New Session` and `New Automation`
-  use this primitive; do not invent page-local primary button classes.
+  use this primitive; do not invent page-local primary button classes. Primary
+  buttons use brand-tinted shadows (`0 1px 3px rgba(99, 102, 241, 0.3)`) with
+  subtle inset highlights (`inset 0 1px 0 rgba(255, 255, 255, 0.1)`) and a 1px
+  upward hover transform to reinforce intentionality.
 - Secondary: elevated neutral surface, 1px border, 4px radius.
 - Icon button: 32–40px visible control; expand the hit area to 44px on coarse
   pointers.
-- Hover changes color, border, or surface only. No scale or vertical movement.
+- Hover micro-interactions use 0.5–1px `translateY(-1px)` transforms on buttons
+  and interactive cards for perceived responsiveness. Primary button hover deepens
+  the brand shadow and increases inset highlight opacity.
 - Each view has one visually dominant primary action.
 
 ### Rows and Cards

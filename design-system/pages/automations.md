@@ -40,6 +40,8 @@ attention, and recover the exact Session associated with every run.
   **`Failed`** with error tone; human gates show **`Needs you`** with attention
   tone. `dispatched` is not `Completed`; the final execution result is read from
   the linked Session. Use a flat row with separators, not a summary card.
+- Rows use subtle hover micro-interactions (0.5px `translateY` lift) with
+  background color change for perceived responsiveness without raised shadows.
 - Selection uses the shared indigo selected treatment. Needs-you state keeps
   explicit text in addition to amber color.
 - `Filter Automations` matches stable ID, name, instruction, schedule, linked

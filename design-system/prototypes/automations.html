@@ -128,12 +128,18 @@
         background: transparent;
         color: var(--text-secondary);
         text-align: left;
+        transition:
+          background var(--motion-hover) var(--ease-smooth),
+          color var(--motion-hover) var(--ease-smooth),
+          transform var(--motion-hover) var(--ease-smooth),
+          box-shadow var(--motion-hover) var(--ease-smooth);
       }
 
       .automation-row:hover,
       .automation-row[aria-selected="true"] {
         background: var(--bg-hover);
         color: var(--text-primary);
+        transform: translateY(-0.5px);
       }
 
       .automation-row[aria-selected="true"] {
@@ -506,12 +512,16 @@
         background: var(--bg-surface);
         color: var(--text-secondary);
         cursor: pointer;
-        transition: border-color var(--motion-hover) var(--ease-standard), background var(--motion-hover) var(--ease-standard);
+        transition:
+          border-color var(--motion-hover) var(--ease-smooth),
+          background var(--motion-hover) var(--ease-smooth),
+          transform var(--motion-hover) var(--ease-smooth);
       }
 
       .choice-card:hover {
         border-color: var(--border-default);
         background: var(--bg-hover);
+        transform: translateY(-1px);
       }
 
       .choice-card:has(input:checked) {
