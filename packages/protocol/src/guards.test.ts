@@ -90,6 +90,7 @@ const pendingMessage = {
   acceptedAt: 1,
   updatedAt: 1,
   requestedModelSelection,
+  executionSkillNames: [],
 };
 const attachment = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -132,7 +133,7 @@ const finalizedResult = {
 };
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
-  { type: "execution-start", executionId: "execution-1", binding, memoryPolicy, origin: "user_message", maxSteps: 50 },
+  { type: "execution-start", executionId: "execution-1", binding, executionSkills: [], memoryPolicy, origin: "user_message", maxSteps: 50 },
   {
     type: "execution-suspended",
     executionId: "execution-1",
@@ -245,10 +246,24 @@ const validPayloads = [
   { type: "compression.block_committed", block: compressionBlock, state: compressionState },
   { type: "compression.block_failed", failure: { id: "failure-1", reason: "overlap", failedAt: 1 }, state: compressionState },
   { type: "compression.ref_map_updated", refMap, updatedAt: 1 },
-  { type: "prompt-trace", trace: { version: "2", status: "compiled", hash: "a".repeat(64), sections: [{ name: "Shared Kernel", source: "prompt/shared-kernel@2", hash: "b".repeat(64) }], skills: { status: "present", active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] }, visibleTools: ["file_read"], agentsMd: "present", memory: "absent", mcp: { context7: "partial-warning" }, warnings: ["one tool was skipped"] } },
+  { type: "prompt-trace", trace: { version: "2", status: "compiled", hash: "a".repeat(64), sections: [{ name: "Shared Kernel", source: "prompt/shared-kernel@2", hash: "b".repeat(64) }], skills: { status: "present", available: { includedEntries: [], omittedCount: 0, renderedText: "- none", byteLength: 6 }, active: [{ name: "review-work", source: "/skills/review-work/SKILL.md" }] }, visibleTools: ["file_read"], agentsMd: "present", memory: "absent", mcp: { context7: "partial-warning" }, warnings: ["one tool was skipped"] } },
 ] satisfies SessionEventPayload[];
 
 describe("protocol event guards", () => {
+  test("rejects Prompt Skill projections with forged or oversized byte counts", () => {
+    const event = validPayloads.find((candidate) => candidate.type === "prompt-trace")!;
+    const traceEvent = structuredClone(event);
+    if (traceEvent.type !== "prompt-trace") throw new Error("Expected prompt trace fixture");
+    traceEvent.trace.skills.available.byteLength = 5;
+    expect(isSessionEventPayload(traceEvent)).toBe(false);
+
+    const oversized = structuredClone(event);
+    if (oversized.type !== "prompt-trace") throw new Error("Expected prompt trace fixture");
+    oversized.trace.skills.available.renderedText = "x".repeat(8_001);
+    oversized.trace.skills.available.byteLength = 8_001;
+    expect(isSessionEventPayload(oversized)).toBe(false);
+  });
+
   test("accepts strict attachment-only pending and canonical messages", () => {
     expect(isSessionEventPayload({
       type: "session.message_accepted",
@@ -587,6 +602,37 @@ describe("protocol event guards", () => {
     expect(isSessionEventPayload({})).toBe(false);
     expect(isSessionEventPayload(null)).toBe(false);
     expect(isSessionEventPayload("text-start")).toBe(false);
+  });
+
+  test("requires the claim-time resolution root for Execution Skill bindings", () => {
+    const event = {
+      type: "execution-start",
+      executionId: "execution-skill-root",
+      binding,
+      origin: "user_message",
+      maxSteps: 50,
+      memoryPolicy,
+      executionSkills: [{
+        name: "codemap",
+        source: "project-archcode",
+        digest: "a".repeat(64),
+        resolutionRoot: "/workspace/.worktrees/session",
+      }],
+    } as const;
+
+    expect(isSessionEventPayload(event)).toBe(true);
+    expect(isSessionEventPayload({
+      ...event,
+      executionSkills: [{
+        name: "codemap",
+        source: "project-archcode",
+        digest: "a".repeat(64),
+      }],
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...event,
+      executionSkills: [{ ...event.executionSkills[0], digest: "not-a-sha256-digest" }],
+    })).toBe(false);
   });
 
   test("recognizes terminal child statuses", () => {

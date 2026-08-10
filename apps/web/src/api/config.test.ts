@@ -72,6 +72,12 @@ describe("config API", () => {
             },
           },
         },
+        mcp: {
+          servers: {
+            http: { type: "http", enabled: true, url: "https://mcp.example.test", headers: { Authorization: { configured: true } } },
+            stdio: { type: "stdio", enabled: true, command: "server", env: { TOKEN: { configured: true } } },
+          },
+        },
       } as never,
       revision: "r1",
       modelRuntimeRevision: "m1",
@@ -86,6 +92,10 @@ describe("config API", () => {
     });
     expect(draft.config.provider.local!.options.advancedFeature).toEqual({ configured: true });
     expect(draft.config.provider.local!.options.nested).toEqual({ keep: [1, { enabled: true }] });
+    const http = draft.config.mcp!.servers.http;
+    const stdio = draft.config.mcp!.servers.stdio;
+    expect(http.type === "http" ? http.headers?.Authorization : undefined).toEqual({ action: "preserve" });
+    expect(stdio.type === "stdio" ? stdio.env?.TOKEN : undefined).toEqual({ action: "preserve" });
   });
 
   test("loads Provider adapters and model runtime from their stable endpoints", async () => {

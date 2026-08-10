@@ -61,6 +61,7 @@ const executionStart = (executionId: string) => ({
   memoryPolicy: TEST_MEMORY_POLICY,
   origin: "user_message" as const,
   maxSteps: 50,
+  executionSkills: [],
 });
 const sessionIds = new Set<string>();
 
@@ -358,6 +359,7 @@ function persistedState(
         startedAt: runs[0]?.startedAt ?? 100,
         origin: "user_message",
         maxSteps: 50,
+        executionSkills: [],
         durationMs: runs.length * 100,
         runs,
         status: "completed",
@@ -743,6 +745,7 @@ describe("session transcript serialization", () => {
       startedAt: 100,
       origin: "user_message",
       maxSteps: 50,
+      executionSkills: [],
       durationMs: 40,
       runs: [{
         ordinal: 0,
@@ -854,6 +857,7 @@ describe("session transcript serialization", () => {
       endedAt: 3,
       durationMs: 2,
       maxSteps: 50,
+      executionSkills: [],
       origin: "user_message",
       runs: [{
         ordinal: 0,

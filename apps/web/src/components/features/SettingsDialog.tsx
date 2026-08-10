@@ -6,18 +6,17 @@ import { getProviderAdapterCatalog, getServerConfig, saveServerConfig, toConfigD
 import { useMcpStatusStore } from "../../store/mcp-status-store";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "../ui/Dialog";
 import { cloneConfig, hasConfigChanges, missingProfileVariants, toFieldErrors, type SettingsSection } from "./settings-helpers";
-import { SettingsProfilesPanel, SettingsGithubPanel, SettingsMcpPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
+import { SettingsProfilesPanel, SettingsGithubPanel, SettingsMcpPanel, SettingsModelsPanel, SettingsNavigation, SettingsSkillsPanel } from "./settings-panels";
 import { SettingsMemoryPanel } from "./SettingsMemoryPanel";
 import { SettingsSecurityPanel } from "./SettingsSecurityPanel";
 import { SettingsRuntimeDataPanel } from "./SettingsRuntimeDataPanel";
 import { SettingsUpdatesPanel } from "./SettingsUpdatesPanel";
 
-export { SettingsMcpPanel, SettingsModelsPanel, SettingsNavigation } from "./settings-panels";
+export { SettingsMcpPanel, SettingsModelsPanel, SettingsNavigation, SettingsSkillsPanel } from "./settings-panels";
 
 type RestartRequiredSection = ServerConfigSnapshotView["restartRequiredSections"][number];
 
 const restartSectionLabels: Record<RestartRequiredSection, string> = {
-  mcp: "MCP",
   "integrations.github": "GitHub",
 };
 
@@ -32,7 +31,7 @@ export function SettingsApplyNotice({ modelsAppliedLive, restartRequiredSections
 }
 
 export function SettingsCloseButton({ onClose }: { onClose: () => void }) {
-  return <button type="button" aria-label="Close settings" onClick={onClose} className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"><X size={14} aria-hidden="true" /></button>;
+  return <button type="button" aria-label="Close settings" onClick={onClose} className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><X size={14} aria-hidden="true" /></button>;
 }
 
 export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runtime = { state: "ready" }, onRefreshRuntime = async () => {}, section: requestedSection = "models", onSectionChange, reloading = false, reloadError, projectSlug }: { snapshot: ServerConfigSnapshot; adapterCatalog: ProviderAdapterCatalog; servers: Record<string, McpServerStatus>; onReload: () => Promise<void>; runtime?: RuntimeStatus; onRefreshRuntime?: () => Promise<void>; section?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; reloading?: boolean; reloadError?: string; projectSlug?: string }) {
@@ -46,12 +45,15 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
   const [modelsAppliedLive, setModelsAppliedLive] = useState(false);
   const [savedWhileRuntimeUnavailable, setSavedWhileRuntimeUnavailable] = useState(false);
   const [jsonResetVersion, setJsonResetVersion] = useState(0);
+  const preserveSaveErrorRevision = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     setDraft(cloneConfig(snapshot.config));
     setErrors({});
     setJsonErrors({});
-    setSaveError(undefined);
+    const preserveSaveError = preserveSaveErrorRevision.current === snapshot.revision;
+    preserveSaveErrorRevision.current = undefined;
+    if (!preserveSaveError) setSaveError(undefined);
     setSavedWhileRuntimeUnavailable(false);
     setRestartRequiredSections(snapshot.restartRequiredSections);
     setJsonResetVersion((current) => current + 1);
@@ -86,16 +88,20 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
     try {
       const modelSettingsChanged = JSON.stringify(draft.provider) !== JSON.stringify(snapshot.config.provider)
         || JSON.stringify(draft.profiles) !== JSON.stringify(snapshot.config.profiles);
-      const next = toConfigDraft(
-        await saveServerConfig({ expectedRevision: snapshot.revision, config: draft }),
-        adapterCatalog,
-      );
+      const response = await saveServerConfig({ expectedRevision: snapshot.revision, config: draft });
+      const next = toConfigDraft(response, adapterCatalog);
+      useMcpStatusStore.getState().mergeServerSnapshot(response.mcpApply.status.servers);
       setDraft(cloneConfig(next.config));
       setRestartRequiredSections(next.restartRequiredSections);
+      if (response.mcpApply.state === "failed") {
+        preserveSaveErrorRevision.current = response.revision;
+        setSaveError(`Configuration saved, but MCP live apply failed: ${response.mcpApply.error}`);
+      }
       await onReload();
       setModelsAppliedLive(runtime.state === "ready" && modelSettingsChanged);
       setSavedWhileRuntimeUnavailable(runtime.state !== "ready");
     } catch (error) {
+      preserveSaveErrorRevision.current = undefined;
       const nextErrors = toFieldErrors(error);
       setErrors(nextErrors);
       const firstValidationMessage = Object.values(nextErrors)[0];
@@ -127,7 +133,8 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
             <div hidden={section !== "models"}><SettingsModelsPanel config={draft} adapterCatalog={adapterCatalog} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
             <div hidden={section !== "profiles"}><SettingsProfilesPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
             {section === "security" && <SettingsSecurityPanel onConfigChanged={onReload} />}
-            <div hidden={section !== "mcp"}><SettingsMcpPanel config={draft} servers={servers} onChange={setDraft} errors={errors} runtimeAvailable={runtime.state === "ready"} /></div>
+            <div hidden={section !== "mcp"}><SettingsMcpPanel active={section === "mcp"} config={draft} savedConfig={snapshot.config} expectedRevision={snapshot.revision} servers={servers} onChange={setDraft} errors={errors} runtimeAvailable={runtime.state === "ready"} /></div>
+            {section === "skills" && <SettingsSkillsPanel projectSlug={projectSlug} />}
             <div hidden={section !== "memory"}><SettingsMemoryPanel config={draft} onChange={setDraft} errors={errors} projectSlug={projectSlug} active={section === "memory"} /></div>
             <div hidden={section !== "github"}><SettingsGithubPanel config={draft} onChange={setDraft} errors={errors} /></div>
           </main><footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border-subtle bg-bg-surface px-5 py-3">{saveError || reloadError ? <div role="alert" className="text-[11px] leading-4 text-error">{saveError ?? reloadError}</div> : <span className={`text-[11px] leading-4 ${hasJsonErrors ? "text-error" : dirty ? "text-warning" : "text-text-tertiary"}`}>{hasJsonErrors ? "Fix invalid JSON before saving" : dirty ? "Unsaved changes" : "All changes saved"}</span>}<div className="flex gap-2"><button type="button" onClick={() => { setModelsAppliedLive(false); setSavedWhileRuntimeUnavailable(false); void onReload(); }} className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">{reloading ? "Reloading…" : "Reload"}</button><button type="button" disabled={!dirty || saving || reloading || hasJsonErrors} onClick={() => { void save(); }} className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving…" : "Save changes"}</button></div></footer></div>
@@ -137,7 +144,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
 }
 
 export function SettingsDialog({ open, section = "models", onClose, projectSlug }: { open: boolean; section?: SettingsSection; onClose: () => void; projectSlug?: string }) {
-  return <DialogRoot open={open} onOpenChange={(next) => { if (!next) onClose(); }}><DialogContent size="x-large" className="overflow-hidden p-0"><DialogTitle className="sr-only">Settings</DialogTitle><DialogDescription className="sr-only">Configure ArchCode server settings, Runtime data, and application updates.</DialogDescription><SettingsCloseButton onClose={onClose} /><SettingsWorkspace active={open} section={section} runtime={{ state: "ready" }} onRefreshRuntime={async () => {}} projectSlug={projectSlug} /></DialogContent></DialogRoot>;
+  return <DialogRoot open={open} onOpenChange={(next) => { if (!next) onClose(); }}><DialogContent size="x-large" className="overflow-hidden p-0"><DialogTitle className="sr-only">Settings</DialogTitle><DialogDescription className="sr-only">Configure ArchCode server settings, Project Skills, Memory, Runtime data, and application updates.</DialogDescription><SettingsCloseButton onClose={onClose} /><SettingsWorkspace active={open} section={section} runtime={{ state: "ready" }} onRefreshRuntime={async () => {}} projectSlug={projectSlug} /></DialogContent></DialogRoot>;
 }
 
 export function RuntimeRecoverySettings({ runtime, onRefreshRuntime }: { runtime: RuntimeStatus; onRefreshRuntime: () => Promise<void> }) {

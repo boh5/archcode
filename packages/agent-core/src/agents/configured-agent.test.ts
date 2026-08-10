@@ -320,6 +320,7 @@ async function runAgent(
     memoryPolicy: runOptions.memoryPolicy,
     origin: "tool_call",
     maxSteps: runOptions.maxSteps ?? 50,
+    executionSkills: [],
   });
   agent.store.getState().append({
     type: "session.messages_committed",
@@ -448,8 +449,9 @@ describe("ConfiguredAgent", () => {
 
     expect(result.kind).toBe("message");
     if (result.kind === "message") {
-      expect(result.content).toContain("skill_read");
-      expect(result.content).toContain("commit changes");
+      expect(result.content).toBe("commit changes");
+      expect(result.content).not.toContain("skill_read");
+      expect(result.executionSkillNames).toEqual(["git-master"]);
     }
     expect(agent.store.getState().messages).toHaveLength(1);
     expect(agent.store.getState().messages[0]!.parts[0]).toMatchObject({
@@ -458,13 +460,54 @@ describe("ConfiguredAgent", () => {
     });
   });
 
+  test("validates Skill commands against the Session cwd", async () => {
+    const skillName = "worktree-command-skill";
+    const canonicalSkillRoot = join(tmpRoot, ".archcode", "skills", skillName);
+    const worktreeSkillRoot = join(worktreeRoot, ".archcode", "skills", skillName);
+    await mkdir(canonicalSkillRoot, { recursive: true });
+    await mkdir(worktreeSkillRoot, { recursive: true });
+    await writeFile(join(canonicalSkillRoot, "SKILL.md"), [
+      "---",
+      `name: ${skillName}`,
+      "---",
+      "Invalid canonical package.",
+    ].join("\n"));
+    await writeFile(join(worktreeSkillRoot, "SKILL.md"), [
+      "---",
+      `name: ${skillName}`,
+      "description: Valid only in the Session worktree.",
+      "---",
+      "Worktree command guidance.",
+    ].join("\n"));
+    const agent = createAgent({ definition: leadAgentDefinition, projectRoot: tmpRoot, cwd: worktreeRoot });
+
+    try {
+      const command = agent.classifyCommand(`/skill use ${skillName} inspect worktree`);
+      expect(command).not.toBeNull();
+      await expect(agent.executeCommand(command!, makeBinding())).resolves.toEqual({
+        kind: "message",
+        content: "inspect worktree",
+        executionSkillNames: [skillName],
+      });
+    } finally {
+      await rm(canonicalSkillRoot, { recursive: true, force: true });
+      await rm(worktreeSkillRoot, { recursive: true, force: true });
+    }
+  });
+
   test("does not append a command notice or continuation after Stop wins during the handler", async () => {
     const abortController = new AbortController();
     const skillService = {
-      discoverForAgent: mock(async () => {
+      snapshotForAgent: mock(async () => {
         abortController.abort(new Error("Session family cancelled"));
         return { name: "git-master" };
       }),
+      projectPromptCatalog: mock(async () => ({
+        includedEntries: [],
+        omittedCount: 0,
+        renderedText: "- none",
+        byteLength: 6,
+      })),
     } as unknown as SkillService;
     const agent = createAgent({ definition: leadAgentDefinition, skillService });
     const command = agent.classifyCommand("/skill use git-master commit changes");
@@ -823,6 +866,7 @@ describe("ConfiguredAgent", () => {
       memoryPolicy: testExecutionMemoryPolicy,
       origin: "tool_call",
       maxSteps: 50,
+      executionSkills: [],
     });
     agent.store.getState().append({
       type: "session.messages_committed",
@@ -892,6 +936,22 @@ describe("ConfiguredAgent", () => {
   });
 
   test("uses Session cwd for prompt and tools while resolving project state from the canonical root", async () => {
+    const skillName = "worktree-prompt-skill";
+    const canonicalSkillRoot = join(tmpRoot, ".archcode", "skills", skillName);
+    const worktreeSkillRoot = join(worktreeRoot, ".archcode", "skills", skillName);
+    for (const [root, description] of [
+      [canonicalSkillRoot, "Canonical prompt metadata."],
+      [worktreeSkillRoot, "Session worktree prompt metadata."],
+    ] as const) {
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, "SKILL.md"), [
+        "---",
+        `name: ${skillName}`,
+        `description: ${description}`,
+        "---",
+        description,
+      ].join("\n"));
+    }
     let capturedContext: { cwd: string; projectRoot: string } | undefined;
     const toolRegistry = createTestRegistry([
       makeTool("file_read"),
@@ -918,17 +978,24 @@ describe("ConfiguredAgent", () => {
       cwd: worktreeRoot,
     });
 
-    await runAgent(agent, "capture workspace context");
+    try {
+      await runAgent(agent, "capture workspace context");
 
-    expect(capturedContext).toEqual({ cwd: worktreeRoot, projectRoot: tmpRoot });
-    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
-    expect(system).toContain(`Project root: ${tmpRoot}`);
-    expect(system).toContain(`Working directory: ${worktreeRoot}`);
-    expect(system).toContain("Execution mode: worktree");
-    expect(system).toContain("Version control: git");
-    expect(system).toContain("A Git repository is detected");
-    expect(system).toContain("Use the worktree checkout.");
-    expect(system).not.toContain("Minimal project context.");
+      expect(capturedContext).toEqual({ cwd: worktreeRoot, projectRoot: tmpRoot });
+      const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+      expect(system).toContain(`Project root: ${tmpRoot}`);
+      expect(system).toContain(`Working directory: ${worktreeRoot}`);
+      expect(system).toContain("Execution mode: worktree");
+      expect(system).toContain("Version control: git");
+      expect(system).toContain("A Git repository is detected");
+      expect(system).toContain("Use the worktree checkout.");
+      expect(system).not.toContain("Minimal project context.");
+      expect(system).toContain("Session worktree prompt metadata.");
+      expect(system).not.toContain("Canonical prompt metadata.");
+    } finally {
+      await rm(canonicalSkillRoot, { recursive: true, force: true });
+      await rm(worktreeSkillRoot, { recursive: true, force: true });
+    }
   });
 
   test("injects the resolved non-Git capability into the prompt", async () => {
@@ -1258,7 +1325,8 @@ describe("ConfiguredAgent", () => {
   test("persists an error Prompt trace before failing closed when Skill listing fails", async () => {
     const streamFn = setupMockStreamText("must not run");
     const skillService = {
-      listForAgent: mock(async () => { throw new Error("skill index unreadable"); }),
+      snapshotForAgent: mock(async () => null),
+      projectPromptCatalog: mock(async () => { throw new Error("skill index unreadable"); }),
     } as unknown as SkillService;
     const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
     const agent = createAgent({ definition: leadAgentDefinition, skillService, store });

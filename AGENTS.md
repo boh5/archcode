@@ -238,7 +238,7 @@ packages/utils/src/
 **Data flow:**
 ```
 ~/.archcode/config.json → startup activation or token-protected Setup
-  → optional Session auth → providers → registerBuiltinTools → fire-and-forget MCP background load
+  → optional Session auth → providers → registerBuiltinTools → live MCP runtime activation
   → Hono Runtime routes → Session-scoped Lead / Automation / HITL routes
   → SessionExecutionManager → ConfiguredAgent → query loop → store → SSE → Web UI
 
@@ -297,7 +297,7 @@ partitionToolCalls → global permissions
 
 Every descriptor declares an explicit `outputPolicy`. Registry is the sole Raw-to-Finalized conversion boundary: blocked requests produce no settled result, while settled and synthetic results are finalized exactly once. `ToolOutputFinalizer` owns redaction of output/details and streaming capture redacts before artifact persistence; model, Session/SSE/UI, audit, and logger consume only finalized data. Large one-shot output is recovered through authorized, bounded `output_read` and `output_search` pages rather than a full-output escape hatch.
 
-**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.servers.<id>.{url, headers, timeout}`. Strict Zod. Provider values are literal; MCP URL/headers and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
+**Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.{disabledBuiltins,servers}`. Each MCP server entry strictly requires `type: "http" | "stdio"` and `enabled`; HTTP uses `url`/`headers`, while STDIO uses `command`/`args`/`env`. Optional `connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` default to 10,000/30,000/60,000 ms. Provider values are literal; MCP URL/header or STDIO env values and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 
 **Model configuration** (`~/.archcode/config.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
@@ -398,22 +398,16 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) �
 - `plan-work` writes one ordinary Markdown Plan per Todo under `.archcode/plans/`. Plan has no service, state, ID, API, dedicated page, or Goal link. `execute-plan` is activated only by the Todo-to-work handoff when that file exists.
 - `review-work` guides Lead review orchestration. Analyst analysis/review Skills include `analyze-work`, `review-change`, and the reserved `goal-review` final gate.
 - A Skill is one package: required `SKILL.md`; optional `scripts/`, `references/`, `assets/`, and other contained resources. Its strict YAML frontmatter accepts `name`, `description`, optional `license`, `compatibility`, and `metadata`; `description` states both method and activation timing.
-- Discovery (`skill_list` and available Prompt metadata) returns exactly name, description, and source. Entry activation (`skill_read({ name })`) returns the entry plus sorted resource descriptors; `skill_read({ name, resource })` reads exactly one listed text resource on demand. Binary assets are valid package resources but are not returned by the text-only tool.
-- Project `.archcode/skills/<name>/` > user `~/.archcode/skills/<name>/` > embedded builtin is whole-package precedence: bodies and resources never merge or fall through. Reserved lifecycle builtins remain unshadowable and Agent-gated.
+- Skill precedence is whole-package and strict: project `.archcode/skills/<name>/` > project `.agents/skills/<name>/` > user `~/.archcode/skills/<name>/` > user `~/.agents/skills/<name>/` > embedded builtin. Bodies and resources never merge or fall through. Reserved lifecycle builtins remain unshadowable and Agent-gated.
+- Discovery (`skill_list` and available Prompt metadata) returns exactly name, description, and source. Prompt projection is bounded and reports omitted entries; `skill_list` returns digest-bound metadata pages with cursors for continuation. Entry activation (`skill_read({ name })`) returns the entry plus sorted resource descriptors; `skill_read({ name, resource })` reads exactly one listed text resource on demand. Binary assets are valid package resources but are not returned by the text-only tool.
+- Invalid package candidates are surfaced as `SKILL_INVALID_PACKAGE` diagnostics. A winning invalid package fails closed; resolution never falls through to a lower-precedence package. The same winning package is claimed once for one `/skill use` logical Execution; `skill_read` uses that Execution snapshot and resume revalidates its digest.
 - Skills remain guidance only: their package metadata and resources cannot grant tools or permissions, execute scripts automatically, change Agent/Profile/MCP/workspace scope/delegation, or grant completion authority. Scripts use only existing Bash permissions.
 
-**MCP visibility by agent:**
-
-| Agent | MCP servers |
-|-------|-------------|
-| `lead` | `context7`, `exa` |
-| `discussion` | — |
-| `analyst` | `context7` |
-| `build` | — |
-| `explore` | — |
-| `librarian` | `context7`, `grep.app`, `exa` |
-
-**MCP tool resolution**: `AgentDefinition.mcpTools` lists MCP server names (e.g. `["context7", "exa"]`). `factoryResolveAllowedTools` merges matching `mcp__{server}__*` tools from the registry. MCP tools load in background; agents see them on the next `run()` call after registration. See MCP section below.
+**MCP visibility**: User MCP servers are process-global and visible to all six
+Agent identities from the current live runtime at the next model-call
+boundary. They are not filtered by Agent role and do not add an approval step.
+Built-in visibility remains the hardcoded role matrix in the MCP section below;
+it is independent of user-server visibility.
 
 **Query loop lifecycle:**
 ```
@@ -453,7 +447,11 @@ Successful root Lead/Discussion terminals update the durable Memory cursor;
 
 ## Session Store
 
-Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and exactly one immutable `RootSessionSource` on every root: `direct`, `todo { todoId, entry }`, or `automation { automationId, invocationId, todoId }`, where Automation `todoId` is nullable; children never copy a root source. An optional `goal` belongs only to a root Lead Session. Strict identity validation requires Todo `discussion` entry ↔ Discussion Agent and every other root source ↔ Lead Agent. Active Skill bodies are resolved again for every Execution. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns logical Execution start/suspend/resume/end, admission, live run resources, and recovery. Store load performs no lifecycle repair; it exposes only current-schema durable facts and reducer state.
+Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Strict Session identity includes `agentName`, immutable resolved `profile`, `activeSkillNames`, root/parent ids, cwd, delegated identity, and exactly one immutable `RootSessionSource` on every root: `direct`, `todo { todoId, entry }`, or `automation { automationId, invocationId, todoId }`, where Automation `todoId` is nullable; children never copy a root source. An optional `goal` belongs only to a root Lead Session. Strict identity validation requires Todo `discussion` entry ↔ Discussion Agent and every other root source ↔ Lead Agent. Persistent active Skill names are resolved when a new logical Execution is claimed; that Execution then uses immutable package snapshots through suspension and resume. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) supports the edit guard. Reminders include todo continuation and child terminal notifications. Persisted under the project workspace at `.archcode/runtime/sessions/{id}/session.json`, validated by strict `SessionFileSchema` on load. `SessionExecutionManager` alone owns logical Execution start/suspend/resume/end, admission, live run resources, and recovery. Store load performs no lifecycle repair; it exposes only current-schema durable facts and reducer state.
+
+Explicit `/skill use` claims the winning Skill package once for one logical
+Execution; `skill_read` uses that Execution snapshot and a resumed Execution
+revalidates its digest before continuing.
 
 ## Context Compaction
 
@@ -487,13 +485,58 @@ HITL is a durable project-scoped approval/question queue backed by `.archcode/ru
 
 ## MCP
 
-HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_MCP_SERVERS` and non-overridable). User servers are read from `~/.archcode/config.json → mcp.servers`. Tool names: `mcp__{server}__{tool}`. Failed discovery = warning, not crash.
+MCP is a process-global live integration. `McpRuntimeService` is the high-
+cohesion owner for resolved configuration, HTTP/STDIO transports, discovery,
+tool inventory, status, Test, Reconnect, hot apply, and shutdown. It has no
+Session, Execution, Agent, Tool Registry, permission, retry, or persistence
+ownership. Tool names are `mcp__{server}__{tool}`; failed discovery is a
+per-server warning/failure, not a Runtime crash.
 
-**Background loading** (non-blocking): `McpManager.startBackgroundDiscovery()` fires-and-forgets at `createRuntime()` — server boots immediately while MCP servers connect in background. Per-server status: `pending → ready(toolCount, warningCount) | failed`; Prompt projection distinguishes `ready`, `ready-zero`, and `partial-warning`. Status is accessible via `AgentRuntime.getMcpServerStatuses()` and `AgentRuntime.subscribeMcpStatusChanges(listener)`.
+User servers are configured at `~/.archcode/config.json → mcp.servers`. Every
+entry requires `type` (`http` or `stdio`) and `enabled`. HTTP uses `url` and
+optional `headers`; STDIO uses `command`, optional `args`, and optional `env`.
+`connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` default to
+10,000/30,000/60,000 ms. `mcp.disabledBuiltins` can disable fixed built-ins
+(`context7`, `grep.app`, `exa`) but cannot replace them.
 
-**Agent visibility**: agents opt into MCP tools via `mcpTools: ["context7", "exa"]` (server names) in their `AgentDefinition`. `factoryResolveAllowedTools` merges `mcp__{server}__*` tools from `ToolRegistry.listByPrefix()` — picks up tools registered after background load completes. Tools become visible on the next `run()` call (per-message resolution at `ConfiguredAgent.run()` line 189), not mid-message.
+Initial activation is non-blocking: the server publishes `connecting` or
+`disabled` before transport work completes. Per-server status is
+`disabled → connecting → ready(toolCount, warningCount) | failed`; Prompt
+projection maps these to `disabled`, `connecting`, `ready`, `ready-zero`,
+`partial-warning`, and `failed`. Status and inventory are available through the
+global MCP routes and SSE status events; Settings also offers draft Test and
+Reconnect. A Config save commits once, then hot-applies the resolved MCP config;
+the independent `mcpApply` result reports whether live apply succeeded.
 
-**SSE bridge**: MCP status changes emit `GlobalSSEMcpStatusEvent` (`type: "mcp_status"`) via `globalEventBus` → Web `useMcpStatusStore`. API route: `GET /api/mcp/status` (global, not project-scoped). Web `GlobalSSEProvider` fetches the snapshot on mount and on SSE `reset` events (reconnect) to populate the store even when connecting after MCP servers became ready.
+At each model-call boundary, `ConfiguredAgent` takes a transient live MCP tool
+descriptor/status projection for that call. Tool execution uses those exact
+descriptors; a later reconnect, disable, or discovery change affects the next
+boundary, not a call already handed to the model. The projection exists only
+for that model-call boundary.
+
+All six Agent identities receive every configured user-server descriptor at
+their next model-call boundary, with no role filter and no additional MCP
+approval. Built-in visibility remains the locked role matrix:
+
+| Agent | Built-in MCP servers |
+|-------|----------------------|
+| `lead` | `context7`, `exa` |
+| `discussion` | — |
+| `analyst` | `context7` |
+| `build` | — |
+| `explore` | — |
+| `librarian` | `context7`, `grep.app`, `exa` |
+
+The matrix applies only to built-ins. A local read-only Agent can still invoke
+a user MCP tool that writes to an external system; local tool read-only status
+does not constrain external MCP side effects.
+
+MCP status changes emit `GlobalSSEMcpStatusEvent` (`type: "mcp_status"`) via
+`globalEventBus` → Web `useMcpStatusStore`. API routes are global (not
+project-scoped): `GET /api/mcp/status`, `GET /api/mcp/inventory`,
+`POST /api/mcp/test/:serverName`, and `POST /api/mcp/reconnect/:serverName`.
+Web `GlobalSSEProvider` fetches the status snapshot on mount and after an SSE
+`reset` so late subscribers still see the current live state.
 
 ## Key Dependencies
 

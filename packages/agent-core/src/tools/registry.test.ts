@@ -334,17 +334,6 @@ describe("ToolRegistry registration and resolution", () => {
     expect(created.registry.getAll()).toEqual(tools);
   });
 
-  test("listByPrefix returns only matching descriptors in order", () => {
-    const created = fixture({
-      descriptors: [descriptor({ name: "mcp__docs__read" }), descriptor({ name: "file_read" }), descriptor({ name: "mcp__docs__find" })],
-    });
-    expect(created.registry.listByPrefix("mcp__docs__").map(({ name }) => name)).toEqual([
-      "mcp__docs__read",
-      "mcp__docs__find",
-    ]);
-    expect(created.registry.listByPrefix("missing")).toEqual([]);
-  });
-
   test("resolveForAgent handles missing, empty, and ordered names", () => {
     const created = fixture({ descriptors: [descriptor({ name: "one" }), descriptor({ name: "two" })] });
     expect(created.registry.resolveForAgent().descriptors).toEqual([]);
@@ -510,6 +499,46 @@ describe("ToolRegistry strict execution pipeline", () => {
     created.registry.globalHooks.finalized.push(() => { order.push("finalized"); });
     await created.registry.execute({ toolName: "echo", toolCallId: "order-call", input: {} }, context("echo"));
     expect(order).toEqual(["global-before", "tool-before", "execute", "tool-after", "finalized"]);
+  });
+
+  test("executeResolved runs the same full pipeline without registry rebinding a run-local descriptor", async () => {
+    const order: string[] = [];
+    const pipelineDescriptor = (label: string): AnyToolDescriptor => descriptor({
+      prepareInput: (input) => { order.push(`${label}:prepare`); return input; },
+      hooks: {
+        before: [() => { order.push(`${label}:before`); }],
+        after: [() => { order.push(`${label}:after`); }],
+      },
+      permissions: [async () => { order.push(`${label}:permission`); return { outcome: "allow" as const }; }],
+      execute: async () => { order.push(`${label}:execute`); return createTextToolResult(label); },
+    });
+    const registered = pipelineDescriptor("registered");
+    const resolved = pipelineDescriptor("resolved");
+    const created = fixture({ descriptors: [registered] });
+    created.registry.globalHooks.before.push(() => { order.push("global-before"); });
+    created.registry.globalHooks.finalized.push(() => { order.push("finalized"); });
+    const finalize = spyOn(created.finalizer, "finalize");
+
+    const staticResult = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: "static-call", input: {} },
+      context("echo"),
+    ));
+    const resolvedResult = expectSettledResult(await created.registry.executeResolved(
+      resolved,
+      { toolName: "echo", toolCallId: "resolved-call", input: {} },
+      context("echo"),
+    ));
+
+    expect(created.registry.get("echo")).toBe(registered);
+    expect(staticResult.output.preview).toBe("registered");
+    expect(resolvedResult.output.preview).toBe("resolved");
+    expect(finalize).toHaveBeenCalledTimes(2);
+    expect(order).toEqual([
+      "registered:prepare", "global-before", "registered:before", "registered:permission",
+      "registered:execute", "registered:after", "finalized",
+      "resolved:prepare", "global-before", "resolved:before", "resolved:permission",
+      "resolved:execute", "resolved:after", "finalized",
+    ]);
   });
 
   test("execution context receives call identity, parsed input, traits, and original abort signal", async () => {

@@ -37,6 +37,7 @@ function suspended(): SessionExecutionRecord {
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,
+    executionSkills: [],
     durationMs: 1,
     status: "suspended",
     suspension: { kind: "hitl", toolBatchId: "batch", blockerIds: ["hitl"] },

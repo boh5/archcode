@@ -8,6 +8,8 @@ import {
   SkillPathError,
   SkillResourceNotFoundError,
   SkillValidationError,
+  SkillPackageResourceNotFoundError,
+  SkillPackageResourcePathError,
   type ResolvedSkill,
   type ResolvedSkillResource,
 } from "../../skills";
@@ -100,6 +102,23 @@ function skillReadError(error: unknown, name: string): RawToolResult {
     });
   }
 
+  if (error instanceof SkillPackageResourceNotFoundError) {
+    return createToolErrorResult({
+      kind: "file-not-found",
+      code: "TOOL_SKILL_RESOURCE_NOT_FOUND",
+      message: `Skill resource not found or not allowed for current agent: ${name}/${error.resource}`,
+    });
+  }
+
+  if (error instanceof SkillPackageResourcePathError) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_SKILL_INVALID",
+      message: error.message,
+      name: error.name,
+    });
+  }
+
   if (error instanceof SkillValidationError) {
     return createToolErrorResult({
       kind: "execution",
@@ -158,6 +177,12 @@ export function createSkillReadTool() {
         });
       }
       try {
+        const snapshot = ctx.executionSkillSnapshots?.get(input.name);
+        if (snapshot !== undefined) {
+          return input.resource === undefined
+            ? createTextToolResult(formatResolvedSkill(snapshot.readEntry()))
+            : formatResolvedSkillResource(snapshot.readResource(input.resource));
+        }
         if (input.resource !== undefined) {
           const resource = await ctx.skillService.readResourceForAgent(
             ctx.cwd,
@@ -174,7 +199,11 @@ export function createSkillReadTool() {
           }
           return formatResolvedSkillResource(resource);
         }
-        const skill = await ctx.skillService.readForAgent(ctx.cwd, input.name, ctx.agentSkills);
+        const skill = await ctx.skillService.readForAgent(
+          ctx.cwd,
+          input.name,
+          ctx.agentSkills,
+        );
         if (skill === null) {
           return createToolErrorResult({
             kind: "file-not-found",

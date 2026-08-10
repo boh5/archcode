@@ -104,6 +104,7 @@ function execution(
     return {
       id,
       memoryPolicy: MEMORY_POLICY,
+      executionSkills: [],
       startedAt: 1,
       status,
       origin: "user_message",
@@ -116,6 +117,7 @@ function execution(
     return {
       id,
       memoryPolicy: MEMORY_POLICY,
+      executionSkills: [],
       startedAt: 1,
       status,
       origin: "user_message",
@@ -128,6 +130,7 @@ function execution(
   return {
     id,
     memoryPolicy: MEMORY_POLICY,
+    executionSkills: [],
     startedAt: 1,
     status,
     origin: "user_message",

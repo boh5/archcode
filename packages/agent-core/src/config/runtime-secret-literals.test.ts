@@ -26,11 +26,26 @@ describe("collectRuntimeSecretLiterals", () => {
         },
       },
       userMcp: {
+        disabledBuiltins: [],
         servers: {
           private: {
+            type: "http",
+            enabled: true,
             url: "https://mcp.example.test/private",
             headers: { Authorization: "mcp-auth-header" },
-            timeout: 30_000,
+            connectTimeoutMs: 10_000,
+            discoveryTimeoutMs: 30_000,
+            callTimeoutMs: 60_000,
+          },
+          local: {
+            type: "stdio",
+            enabled: true,
+            command: "mcp-local",
+            args: ["--stdio"],
+            env: { TOKEN: "stdio-env-value" },
+            connectTimeoutMs: 10_000,
+            discoveryTimeoutMs: 30_000,
+            callTimeoutMs: 60_000,
           },
         },
       },
@@ -42,8 +57,8 @@ describe("collectRuntimeSecretLiterals", () => {
       "provider-api-key",
       "provider-header",
       "provider-query",
-      "https://mcp.example.test/private",
       "mcp-auth-header",
+      "stdio-env-value",
       "github-token-value",
       "server-password",
     ]);
@@ -65,7 +80,7 @@ describe("collectRuntimeSecretLiterals", () => {
           },
         },
       },
-      userMcp: { servers: {} },
+      userMcp: { disabledBuiltins: [], servers: {} },
       github: { enabled: false },
       externalLiterals: [],
     })).toThrow(ConfigSemanticValidationError);
@@ -86,7 +101,7 @@ describe("collectRuntimeSecretLiterals", () => {
             },
           },
         },
-        userMcp: { servers: {} },
+        userMcp: { disabledBuiltins: [], servers: {} },
         github: { enabled: false },
         externalLiterals: [],
       });

@@ -297,6 +297,7 @@ function execution(id: string): SessionExecutionRecord {
 		startedAt: 1,
 		endedAt: 2,
 		status: "completed",
+		executionSkills: [],
 		memoryPolicy: {
 			policy: { useMemory: true, autoLearning: true },
 			epoch: { bootId: "boot-test", generation: 0 },
@@ -650,6 +651,7 @@ async function createPersistentLearningSession(
 			clientRequestId: "request-1",
 			content: "Keep answers concise.",
 			attachments: [],
+			executionSkillNames: [],
 			source: "user",
 			state: "queued",
 			revision: 0,
@@ -665,6 +667,7 @@ async function createPersistentLearningSession(
 		type: "execution-start",
 		executionId,
 		binding: execution(executionId).runs[0]!.binding,
+		executionSkills: [],
 		memoryPolicy: {
 			policy: { useMemory: true, autoLearning: true },
 			epoch: { bootId: "fixture-boot", generation: 0 },
@@ -1962,6 +1965,7 @@ describe("MemoryIdleCoordinator", () => {
 					clientRequestId: "marker-request",
 					content: "Keep answers concise.",
 					attachments: [],
+					executionSkillNames: [],
 					source: "user",
 					state: "queued",
 					revision: 0,
@@ -1978,6 +1982,7 @@ describe("MemoryIdleCoordinator", () => {
 				type: "execution-start",
 				executionId: "tool-execution",
 				binding: executionBinding,
+				executionSkills: [],
 				memoryPolicy: {
 					policy: { useMemory: true, autoLearning: true },
 					epoch: { bootId: "tool-boot", generation: 0 },

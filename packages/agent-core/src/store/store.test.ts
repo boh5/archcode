@@ -48,6 +48,7 @@ function executionStart(executionId: string = crypto.randomUUID()) {
     memoryPolicy: testExecutionMemoryPolicy,
     origin: "user_message" as const,
     maxSteps: 50,
+    executionSkills: [],
   };
 }
 

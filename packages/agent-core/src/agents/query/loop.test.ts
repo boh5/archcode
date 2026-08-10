@@ -208,6 +208,7 @@ async function createHarness() {
     memoryPolicy: testExecutionMemoryPolicy,
     origin: "tool_call",
     maxSteps: 50,
+    executionSkills: [],
   });
   const appendUser = (text: string) => {
     const id = crypto.randomUUID();

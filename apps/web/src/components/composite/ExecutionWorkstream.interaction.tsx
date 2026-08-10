@@ -52,6 +52,7 @@ function completed(id = "execution"): SessionExecutionRecord {
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,
+    executionSkills: [],
     durationMs: 100,
     status: "completed",
     endedAt: 100,
@@ -77,6 +78,7 @@ function running(id = "execution"): SessionExecutionRecord {
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,
+    executionSkills: [],
     durationMs: 0,
     status: "running",
     runs: [{ ordinal: 0, startedAt: 0, binding }],
@@ -100,9 +102,11 @@ function suspended(
         : { kind, toolBatchId: "batch", readyAt: 10 };
   return {
     id: "execution",
+    memoryPolicy,
     startedAt: 0,
     origin: "user_message",
     maxSteps: 10,
+    executionSkills: [],
     durationMs: 10,
     status: "suspended",
     suspension,

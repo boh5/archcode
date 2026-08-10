@@ -67,6 +67,7 @@ function start(): Extract<ExecutionLifecycleEvent, { type: "execution-start" }> 
     origin: "user_message",
     maxSteps: 50,
     binding,
+    executionSkills: [],
     memoryPolicy,
   };
 }
@@ -126,6 +127,7 @@ describe("logical Execution lifecycle", () => {
       origin: "user_message",
       maxSteps: 50,
       binding,
+      executionSkills: [],
       memoryPolicy,
     }, 0);
     state = apply(state, {
@@ -199,6 +201,7 @@ describe("logical Execution lifecycle", () => {
       origin: "user_message",
       maxSteps: 50,
       binding,
+      executionSkills: [],
       memoryPolicy,
     }, 0);
     state = apply(state, {

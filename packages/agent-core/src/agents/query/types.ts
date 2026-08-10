@@ -6,11 +6,11 @@ import type {
 import type { ExecutionModelBinding } from "../../models";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { SessionStoreState } from "../../store/types";
-import type { ToolRegistry } from "../../tools/registry";
+import type { ResolvedToolSet, ToolRegistry } from "../../tools/registry";
 import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import type { ProjectContext } from "../../projects/types";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
-import type { SkillService } from "../../skills";
+import type { SkillPackageSnapshot, SkillService } from "../../skills";
 import type { QueryLoopHooks } from "./loop-hooks";
 import type { Logger } from "../../logger";
 import type { SessionGoalService } from "../../session-goal";
@@ -28,6 +28,7 @@ export interface QueryLoopOptions {
   allowedTools: readonly string[];
   agentSkills: readonly string[];
   skillService: SkillService;
+  executionSkillSnapshots?: ReadonlyMap<string, SkillPackageSnapshot>;
   storeManager: SessionStoreManager;
   /** Required model-boundary attachment projection; never inferred from provider identity. */
   attachmentProjector: AttachmentModelProjector;
@@ -42,6 +43,11 @@ export interface QueryLoopOptions {
   systemPrompt?: string;
   /** Rebuilds lifecycle-sensitive prompt state immediately before every model call. */
   resolveSystemPrompt?: () => Promise<string>;
+  /** Resolves the exact prompt and Tool descriptors used by one model attempt. */
+  resolveModelBoundary?: () => Promise<{
+    readonly systemPrompt?: string;
+    readonly tools: ResolvedToolSet;
+  }>;
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;
   /** Moves this Execution's accepted steer snapshots into the canonical transcript. */

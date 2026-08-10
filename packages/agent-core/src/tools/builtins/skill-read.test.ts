@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { SkillService } from "../../skills";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
@@ -10,12 +11,13 @@ import { createToolExecutionContext, type ToolExecutionContext } from "../types"
 import { createBuiltinToolDescriptors } from "./index";
 import { formatResolvedSkillResource, SkillReadInputSchema, skillReadTool } from "./skill-read";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-read", crypto.randomUUID());
+const tmpRoot = join(tmpdir(), "archcode-skill-read-tool", crypto.randomUUID());
 const projectRoot = join(tmpRoot, "project");
 const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
 const executionCwd = join(tmpRoot, "project.worktrees", "session-skill");
 const executionSkillsRoot = join(executionCwd, ".archcode", "skills");
 const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
+const userAgentsSkillsRoot = join(tmpRoot, "user", ".agents", "skills");
 
 function makeContext(agentSkills: readonly string[], cwd = projectRoot): ToolExecutionContext {
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "skill_read",
@@ -29,7 +31,7 @@ function makeContext(agentSkills: readonly string[], cwd = projectRoot): ToolExe
   startedAt: 0,
   allowedTools: new Set(["skill_read"]),
   agentSkills,
-  skillService: new SkillService({ userSkillsRoot }),
+  skillService: new SkillService({ userSkillsRoot, userAgentsSkillsRoot }),
   projectContext: createTestProjectContext(projectRoot),
   cwd, });
 }
@@ -59,6 +61,7 @@ describe("skill_read tool", () => {
   beforeEach(async () => {
     await rm(tmpRoot, { recursive: true, force: true });
     await mkdir(userSkillsRoot, { recursive: true });
+    await mkdir(userAgentsSkillsRoot, { recursive: true });
     await mkdir(projectRoot, { recursive: true });
   });
 
@@ -229,7 +232,7 @@ ENTRY_BODY
     }
   });
 
-  test("resolves project-local Skills from execution cwd, not canonical project root", async () => {
+  test("resolves same-name project Skills from the Session cwd", async () => {
     await writeProjectSkill("codemap", `---
 name: codemap
 description: Maps the canonical checkout when testing Skill resolution.
@@ -253,6 +256,39 @@ WORKTREE_SKILL_BODY
     const output = expectTextDraft(result);
     expect(output).toContain("WORKTREE_SKILL_BODY");
     expect(output).not.toContain("CANONICAL_SKILL_BODY");
+  });
+
+  test("reads the claimed execution Skill snapshot after the live package changes", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Stable execution snapshot fixture.
+---
+
+ORIGINAL_ENTRY_BODY
+`, { "references/guide.md": "ORIGINAL_RESOURCE\n" });
+    const service = new SkillService({ userSkillsRoot });
+    const snapshot = await service.snapshotForAgent(projectRoot, "codemap", ["codemap"]);
+    if (snapshot === null) throw new Error("Expected the project Skill snapshot");
+
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Changed live package.
+---
+
+CHANGED_ENTRY_BODY
+`, { "references/guide.md": "CHANGED_RESOURCE\n" });
+    const entryContext = makeContext(["codemap"]);
+    entryContext.executionSkillSnapshots = new Map([["codemap", snapshot]]);
+    const entry = await skillReadTool.execute({ name: "codemap" }, entryContext);
+    const resource = await skillReadTool.execute(
+      { name: "codemap", resource: "references/guide.md" },
+      entryContext,
+    );
+
+    expect(expectTextDraft(entry)).toContain("ORIGINAL_ENTRY_BODY");
+    expect(expectTextDraft(entry)).not.toContain("CHANGED_ENTRY_BODY");
+    expect(expectTextDraft(resource)).toContain("ORIGINAL_RESOURCE");
+    expect(expectTextDraft(resource)).not.toContain("CHANGED_RESOURCE");
   });
 
   test("not-allowed skill returns structured error", async () => {
@@ -300,7 +336,7 @@ Broken body.
     const result = await skillReadTool.execute({ name: "codemap" }, makeContext(["codemap"]));
 
     expect(result.isError).toBe(true);
-    expect(expectTextDraft(result)).toContain("Invalid project skill");
+    expect(expectTextDraft(result)).toContain("Invalid project-archcode skill");
     expect(result.details?.error).toBeDefined();
   });
 

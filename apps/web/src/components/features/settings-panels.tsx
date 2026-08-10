@@ -1,14 +1,18 @@
-import type { ConfigSecretMutation, McpServerStatus, ProviderAdapterCatalog, ProviderAdapterDescriptor, ProviderAdapterOptionDescriptor } from "@archcode/protocol";
-import { ChevronRight, Plus, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { ConfigSecretMutation, McpServerStatus, McpToolInventoryItem, ProviderAdapterCatalog, ProviderAdapterDescriptor, ProviderAdapterOptionDescriptor, SkillSourceTier } from "@archcode/protocol";
+import { ChevronRight, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { ModelCallOptions, ServerConfig, ServerMcpConfig, ServerModelConfig } from "../../api/config";
+import { getMcpInventory, reconnectMcpServer, testMcpDraft } from "../../api/mcp";
+import { getCompleteProjectSkillInventoryView, type CompleteProjectSkillInventory } from "../../api/skills";
+import { useMcpStatusStore } from "../../store/mcp-status-store";
 import { Field, JsonObjectField, NumberField, RenameInput, SecretField, SecretRecordEditor, TextInput } from "./settings-fields";
 import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, errorAtOrBelow, missingProfileVariant, type FieldErrors, type SettingsSection, withDraft } from "./settings-helpers";
 
 type JsonValidationChange = (path: string, error?: string) => void;
 
-const secondaryActionClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary";
-const subtleActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand";
-const dangerActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-error transition-colors duration-[var(--motion-hover)] hover:bg-error-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand";
+const secondaryActionClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
+const subtleActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
+const dangerActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-error transition-colors duration-[var(--motion-hover)] hover:bg-error-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
 const selectClass = "h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle";
 const MODEL_MODALITIES = ["text", "image", "audio", "video"] as const;
 type ModelModality = typeof MODEL_MODALITIES[number];
@@ -150,8 +154,8 @@ function mergeAdvancedOptions(
 }
 
 const MCP_STATUS_META: Record<McpServerStatus["state"] | "unreported", { label: string; dotClass: string; badgeClass: string }> = {
-  pending: {
-    label: "Pending",
+  connecting: {
+    label: "Connecting",
     dotClass: "bg-warning",
     badgeClass: "border-warning/30 bg-warning-muted text-warning",
   },
@@ -195,6 +199,7 @@ export function SettingsNavigation({
     ["security", "Security"],
     ["runtime-data", "Runtime Data"],
     ["mcp", "MCP"],
+    ["skills", "Skills"],
     ["memory", "Memory"],
     ["github", "GitHub"],
     ["updates", "About & Updates"],
@@ -379,24 +384,178 @@ export function SettingsProfilesPanel({ config, onChange, errors, onJsonValidati
   </section>;
 }
 
-export function SettingsMcpPanel({ config, servers, onChange, errors = {}, runtimeAvailable = true }: { config: ServerConfig; servers: Record<string, McpServerStatus>; onChange: (config: ServerConfig) => void; errors?: FieldErrors; runtimeAvailable?: boolean }) {
+const SKILL_SOURCE_LABELS: Record<SkillSourceTier, string> = {
+  "project-archcode": "Project .archcode",
+  "project-agents": "Project .agents",
+  "user-archcode": "User .archcode",
+  "user-agents": "User .agents",
+  builtin: "Built-in",
+};
+
+export function SettingsSkillsPanel({ projectSlug }: { projectSlug?: string }) {
+  const [view, setView] = useState<CompleteProjectSkillInventory>();
+  const [state, setState] = useState<"idle" | "loading" | "ready" | "failed">("idle");
+  const [error, setError] = useState<string>();
+  const [requestVersion, setRequestVersion] = useState(0);
+
+  useEffect(() => {
+    if (projectSlug === undefined) {
+      setView(undefined);
+      setState("idle");
+      setError(undefined);
+      return;
+    }
+    let mounted = true;
+    setState("loading");
+    setError(undefined);
+    void getCompleteProjectSkillInventoryView(projectSlug).then((next) => {
+      if (!mounted) return;
+      setView(next);
+      setState("ready");
+    }).catch((cause) => {
+      if (!mounted) return;
+      setView(undefined);
+      setState("failed");
+      setError(cause instanceof Error ? cause.message : "Unable to load Project Skills");
+    });
+    return () => { mounted = false; };
+  }, [projectSlug, requestVersion]);
+
+  return <section data-settings-skills className="min-w-0 space-y-5 pb-1">
+    <PanelHeader title="Project Skills" description="Inspect precedence, package diagnostics, and the bounded Skill directory projected into the model Prompt." />
+    {projectSlug === undefined && <p role="status" className="text-[13px] leading-5 text-text-tertiary">Open a project to inspect its Skills.</p>}
+    {projectSlug !== undefined && state === "loading" && <p role="status" className="text-[13px] leading-5 text-text-tertiary">Loading Project Skills…</p>}
+    {projectSlug !== undefined && state === "failed" && <div>
+      <p role="alert" className="break-words text-[12px] leading-5 text-error">Unable to load Project Skills: {error}</p>
+      <button type="button" className={`${secondaryActionClass} mt-3`} onClick={() => setRequestVersion((current) => current + 1)}>Retry</button>
+    </div>}
+    {projectSlug !== undefined && state === "ready" && view !== undefined && <>
+      <div className="min-w-0 rounded-md border border-border-default bg-bg-surface p-4">
+        <h2 className="text-[13px] font-medium text-text-primary">Prompt directory</h2>
+        <p className="mt-1 text-[11px] leading-4 text-text-tertiary">
+          {view.promptProjection.includedEntries.length} included · {view.promptProjection.omittedCount} omitted · {view.promptProjection.byteLength} bytes
+        </p>
+        <details className="mt-3 rounded-sm border border-border-subtle bg-bg-base">
+          <summary className="cursor-pointer px-3 py-2 text-[11px] font-medium text-text-secondary">Preview projected directory</summary>
+          <pre className="max-h-56 min-w-0 overflow-auto whitespace-pre-wrap break-words border-t border-border-subtle px-3 py-2 font-mono text-[11px] leading-4 text-text-tertiary">{view.promptProjection.renderedText || "No valid Skills are projected."}</pre>
+        </details>
+      </div>
+      <div className="overflow-hidden rounded-md border border-border-default bg-bg-surface">
+        <div className="border-b border-border-subtle px-4 py-3">
+          <h2 className="text-[13px] font-medium text-text-primary">Discovered packages</h2>
+          <p className="mt-1 text-[11px] text-text-tertiary">{view.items.length} candidate{view.items.length === 1 ? "" : "s"} across all precedence tiers</p>
+        </div>
+        {view.items.length === 0
+          ? <p role="status" className="px-4 py-4 text-[12px] text-text-tertiary">No Skills discovered for this project.</p>
+          : <ul className="divide-y divide-border-subtle" aria-label="Project Skill packages">{view.items.map((item, index) => <li key={`${item.source}:${item.name}:${index}`} className="min-w-0 px-4 py-3">
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <h3 className="break-all font-mono text-[12px] font-medium text-text-secondary">{item.name}</h3>
+                {item.description && <p className="mt-1 break-words text-[11px] leading-4 text-text-tertiary">{item.description}</p>}
+                {item.diagnostic && <p role="alert" className="mt-1 break-words text-[11px] leading-4 text-error">{item.diagnostic.message}</p>}
+              </div>
+              <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5 text-[10px]">
+                <span className="rounded-sm border border-border-subtle bg-bg-elevated px-1.5 py-1 text-text-tertiary">{SKILL_SOURCE_LABELS[item.source]}</span>
+                {item.winner && <span className="rounded-sm border border-border-default bg-bg-active px-1.5 py-1 text-text-secondary">Winner</span>}
+                {item.shadowed && <span className="rounded-sm border border-border-subtle bg-bg-elevated px-1.5 py-1 text-text-tertiary">Shadowed</span>}
+                {item.valid && <span className="rounded-sm border border-success/30 bg-success-muted px-1.5 py-1 text-success">Valid</span>}
+                {!item.valid && <span className="rounded-sm border border-error/30 bg-error-muted px-1.5 py-1 text-error">Invalid</span>}
+                {item.promptOmitted && <span className="rounded-sm border border-warning/30 bg-warning-muted px-1.5 py-1 text-warning">Prompt omitted</span>}
+              </div>
+            </div>
+          </li>)}</ul>}
+      </div>
+    </>}
+  </section>;
+}
+
+export function SettingsMcpPanel({ config, savedConfig = config, expectedRevision = "draft", servers, onChange, errors = {}, runtimeAvailable = true, active = true }: { config: ServerConfig; savedConfig?: ServerConfig; expectedRevision?: string; servers: Record<string, McpServerStatus>; onChange: (config: ServerConfig) => void; errors?: FieldErrors; runtimeAvailable?: boolean; active?: boolean }) {
   const custom = Object.entries(config.mcp?.servers ?? {}).filter(([name]) => !BUILT_IN_MCP_NAMES.includes(name as typeof BUILT_IN_MCP_NAMES[number]));
   const all = [...BUILT_IN_MCP_NAMES.map((name) => [name, undefined] as const), ...custom];
+  const [inventory, setInventory] = useState<Record<string, McpToolInventoryItem[]>>({});
+  const [testResults, setTestResults] = useState<Record<string, McpToolInventoryItem[]>>({});
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+  const [inventoryError, setInventoryError] = useState<string>();
+  const [pendingActions, setPendingActions] = useState<Set<string>>(() => new Set());
+  const pendingActionsRef = useRef(new Set<string>());
+  const draftTestControllersRef = useRef(new Map<string, AbortController>());
+  const updateServer = useMcpStatusStore((state) => state.updateServer);
+  const inventoryStatusKey = Object.entries(servers)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, status]) => `${name}:${status.state}`)
+    .join("|");
+
+  useEffect(() => {
+    if (!runtimeAvailable || !active) return;
+    let mounted = true;
+    setInventoryError(undefined);
+    void getMcpInventory().then((next) => {
+      if (mounted) setInventory(next);
+    }).catch((cause) => {
+      if (mounted) setInventoryError(cause instanceof Error ? cause.message : "Unable to load MCP tool inventory");
+    });
+    return () => { mounted = false; };
+  }, [active, expectedRevision, inventoryStatusKey, runtimeAvailable]);
+
+  useEffect(() => {
+    if (active && runtimeAvailable) return;
+    for (const controller of draftTestControllersRef.current.values()) controller.abort();
+    draftTestControllersRef.current.clear();
+  }, [active, runtimeAvailable]);
+
+  useEffect(() => () => {
+    for (const controller of draftTestControllersRef.current.values()) controller.abort();
+    draftTestControllersRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    for (const controller of draftTestControllersRef.current.values()) controller.abort();
+    draftTestControllersRef.current.clear();
+    setTestResults({});
+    setActionErrors({});
+  }, [config]);
+
+  const runAction = async (key: string, action: () => Promise<void>) => {
+    if (pendingActionsRef.current.has(key)) return;
+    pendingActionsRef.current.add(key);
+    setPendingActions((current) => new Set(current).add(key));
+    setActionErrors((current) => { const next = { ...current }; delete next[key]; return next; });
+    try { await action(); }
+    catch (cause) { setActionErrors((current) => ({ ...current, [key]: cause instanceof Error ? cause.message : "Action failed" })); }
+    finally {
+      pendingActionsRef.current.delete(key);
+      setPendingActions((current) => { const next = new Set(current); next.delete(key); return next; });
+    }
+  };
+
   return <section className="space-y-5 pb-1"><PanelHeader title="MCP servers" description="Configuration and discovery status are shown together for built-in and custom servers." />
+    {inventoryError && <p role="alert" className="text-[11px] leading-4 text-error">MCP inventory unavailable: {inventoryError}</p>}
     <div className="overflow-hidden rounded-md border border-border-default bg-bg-surface divide-y divide-border-subtle">
     {all.map(([name, server]) => {
       const status = runtimeAvailable ? servers[name] : undefined;
       const builtIn = BUILT_IN_MCP_NAMES.includes(name as typeof BUILT_IN_MCP_NAMES[number]);
+      const disabledBuiltins = config.mcp?.disabledBuiltins ?? [];
+      const savedDisabledBuiltins = savedConfig.mcp?.disabledBuiltins ?? [];
+      const savedServer = savedConfig.mcp?.servers[name];
+      const reconnectSaved = builtIn
+        ? disabledBuiltins.includes(name as typeof BUILT_IN_MCP_NAMES[number]) === savedDisabledBuiltins.includes(name as typeof BUILT_IN_MCP_NAMES[number])
+        : JSON.stringify(server) === JSON.stringify(savedServer);
+      const reconnectEnabled = builtIn
+        ? !disabledBuiltins.includes(name as typeof BUILT_IN_MCP_NAMES[number])
+        : server?.enabled === true;
+      const testKey = `test:${name}`;
+      const reconnectKey = `reconnect:${name}`;
       const statusMeta = runtimeAvailable ? MCP_STATUS_META[status?.state ?? "unreported"] : {
         label: "Unavailable",
         dotClass: "bg-text-muted",
         badgeClass: "border-border-default bg-bg-elevated text-text-tertiary",
       };
       return <article key={name} className="px-4 py-4 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover/40">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="truncate font-mono text-sm">{name}</h2>
-            <p className={`mt-1 text-xs ${status?.state === "failed" ? "text-error" : "text-text-tertiary"}`}>{runtimeAvailable ? describeStatus(status) : "Unavailable while Runtime is offline"}</p>
+            <h2 className="break-all font-mono text-sm">{name}</h2>
+            <p className={`mt-1 break-words text-xs ${status?.state === "failed" ? "text-error" : "text-text-tertiary"}`}>{runtimeAvailable ? describeStatus(status) : "Unavailable while Runtime is offline"}</p>
+            {status && <time className="mt-1 block text-[10px] text-text-tertiary" dateTime={new Date(statusTimestamp(status)).toISOString()}>Updated {new Date(statusTimestamp(status)).toLocaleString()}</time>}
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {builtIn && <span className="rounded-sm bg-bg-active px-2 py-1 text-[11px] font-medium text-text-tertiary">Built-in</span>}
@@ -406,18 +565,81 @@ export function SettingsMcpPanel({ config, servers, onChange, errors = {}, runti
             </span>
           </div>
         </div>
-        {builtIn ? <p className="mt-3 text-xs text-text-tertiary">Managed by ArchCode. This server cannot be edited, deleted, or overridden.</p> : <McpEditor name={name} server={server!} config={config} onChange={onChange} errors={errors} />}
+        {builtIn ? <SettingsToggle checked={!disabledBuiltins.includes(name as typeof BUILT_IN_MCP_NAMES[number])} onChange={(enabled) => onChange(withDraft(config, (draft) => {
+          draft.mcp ??= { servers: {} };
+          const current = new Set(draft.mcp.disabledBuiltins ?? []);
+          if (enabled) current.delete(name as typeof BUILT_IN_MCP_NAMES[number]); else current.add(name as typeof BUILT_IN_MCP_NAMES[number]);
+          draft.mcp.disabledBuiltins = BUILT_IN_MCP_NAMES.filter((entry) => current.has(entry));
+        }))} label={`Enable ${name}`} description="Expose this built-in server to the live MCP runtime." /> : <McpEditor name={name} server={server!} config={config} onChange={onChange} errors={errors} />}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" disabled={!runtimeAvailable || pendingActions.has(testKey)} title={!runtimeAvailable ? "Runtime is unavailable" : undefined} onClick={() => void runAction(testKey, async () => {
+            const controller = new AbortController();
+            draftTestControllersRef.current.set(testKey, controller);
+            try {
+              const result = await testMcpDraft(name, { expectedRevision, config }, { signal: controller.signal });
+              if (draftTestControllersRef.current.get(testKey) !== controller) return;
+              setTestResults((current) => ({ ...current, [name]: result.tools }));
+              if (result.warnings.length > 0) setActionErrors((current) => ({ ...current, [testKey]: result.warnings.join(" ") }));
+            } catch (cause) {
+              if (!controller.signal.aborted) throw cause;
+            } finally {
+              if (draftTestControllersRef.current.get(testKey) === controller) {
+                draftTestControllersRef.current.delete(testKey);
+              }
+            }
+          })} className={secondaryActionClass}>{pendingActions.has(testKey) ? <Loader2 size={13} className="animate-activity" aria-hidden="true" /> : null}Test draft</button>
+          <button type="button" disabled={!runtimeAvailable || !reconnectSaved || !reconnectEnabled || pendingActions.has(reconnectKey)} title={!reconnectEnabled ? "Enable and save this server before reconnecting" : !reconnectSaved ? "Save this server before reconnecting" : undefined} onClick={() => void runAction(reconnectKey, async () => {
+            const status = (await reconnectMcpServer(name))[name];
+            if (status !== undefined) updateServer(name, status);
+            setInventory(await getMcpInventory());
+          })} className={secondaryActionClass}>{pendingActions.has(reconnectKey) ? <Loader2 size={13} className="animate-activity" aria-hidden="true" /> : <RefreshCw size={13} aria-hidden="true" />}Reconnect</button>
+          {!reconnectEnabled
+            ? <span className="text-[11px] text-text-tertiary">Enable and save before reconnecting.</span>
+            : !reconnectSaved && <span className="text-[11px] text-text-tertiary">Save before reconnecting.</span>}
+        </div>
+        {(actionErrors[testKey] || actionErrors[reconnectKey]) && <p role="alert" className="mt-2 text-[11px] leading-4 text-error">{actionErrors[testKey] ?? actionErrors[reconnectKey]}</p>}
+        <McpToolList tools={testResults[name] ?? inventory[name] ?? []} tested={testResults[name] !== undefined} />
       </article>;
     })}
     </div>
-    <button type="button" onClick={() => onChange(withDraft(config, (draft) => { draft.mcp ??= { servers: {} }; const name = nextGeneratedId("server", draft.mcp.servers); draft.mcp.servers[name] = { url: "https://example.com/mcp" }; }))} className={secondaryActionClass}><Plus size={13} aria-hidden="true" />Add MCP server</button>
+    <button type="button" onClick={() => onChange(withDraft(config, (draft) => { draft.mcp ??= { servers: {} }; const name = nextGeneratedId("server", draft.mcp.servers); draft.mcp.servers[name] = { type: "http", enabled: true, url: "https://example.com/mcp" }; }))} className={secondaryActionClass}><Plus size={13} aria-hidden="true" />Add MCP server</button>
   </section>;
+}
+
+function McpToolList({ tools, tested }: { tools: McpToolInventoryItem[]; tested: boolean }) {
+  if (tools.length === 0) return <p className="mt-3 text-[11px] text-text-tertiary">{tested ? "Draft test discovered no tools." : "No discovered tools."}</p>;
+  return <details className="mt-3 min-w-0 rounded-sm border border-border-subtle bg-bg-base"><summary className="cursor-pointer px-3 py-2 text-[11px] font-medium text-text-secondary">{tested ? "Draft tools" : "Available tools"} · {tools.length}</summary><ul className="min-w-0 border-t border-border-subtle px-3 py-2" aria-label={`${tested ? "Draft" : "Available"} MCP tools`}>{tools.map((tool) => <li key={tool.registryName} className="min-w-0 py-1"><span className="break-all font-mono text-[11px] text-text-secondary">{tool.name}</span>{tool.description && <span className="ml-2 break-words text-[11px] text-text-tertiary">{tool.description}</span>}</li>)}</ul></details>;
 }
 
 function McpEditor({ name, server, config, onChange, errors }: { name: string; server: ServerMcpConfig; config: ServerConfig; onChange: (config: ServerConfig) => void; errors: FieldErrors }) {
   const update = (apply: (target: ServerMcpConfig) => void) => onChange(withDraft(config, (draft) => apply(draft.mcp!.servers[name])));
-  const nameLocked = hasPreservedSecretRecord(server.headers);
-  return <div className="mt-4 space-y-4 border-t border-border-subtle pt-4"><div className="grid gap-x-4 gap-y-4 sm:grid-cols-2"><Field label="Name"><RenameInput value={name} readOnly={nameLocked} onCommit={(next) => { if (next === name) return true; if (BUILT_IN_MCP_NAMES.includes(next as typeof BUILT_IN_MCP_NAMES[number]) || config.mcp!.servers[next]) return false; onChange(withDraft(config, (draft) => { draft.mcp!.servers[next] = draft.mcp!.servers[name]; delete draft.mcp!.servers[name]; })); return true; }} />{nameLocked && <span className="text-[11px] font-normal text-text-tertiary">Replace or clear configured headers before renaming.</span>}</Field><Field label="HTTP URL" error={errors[`mcp.servers.${name}.url`]}><TextInput value={server.url} onChange={(next) => update((draft) => { draft.url = next; })} /></Field><Field label="Timeout"><NumberField value={server.timeout} onChange={(next) => update((draft) => { draft.timeout = next; })} /></Field></div><SecretRecordEditor label="Headers" value={server.headers} onChange={(next) => update((draft) => { draft.headers = next; })} errors={errors} path={`mcp.servers.${name}.headers`} /><button type="button" onClick={() => onChange(withDraft(config, (draft) => { delete draft.mcp!.servers[name]; }))} className={dangerActionClass}><Trash2 size={12} aria-hidden="true" />Delete {name}</button></div>;
+  const secretRecord = server.type === "http" ? server.headers : server.env;
+  const nameLocked = hasPreservedSecretRecord(secretRecord);
+  const replaceTransport = (type: "http" | "stdio") => {
+    if (nameLocked) return;
+    onChange(withDraft(config, (draft) => {
+      const current = draft.mcp!.servers[name];
+      draft.mcp!.servers[name] = type === "http"
+        ? { type, enabled: current.enabled, url: "https://example.com/mcp", connectTimeoutMs: current.connectTimeoutMs, discoveryTimeoutMs: current.discoveryTimeoutMs, callTimeoutMs: current.callTimeoutMs }
+        : { type, enabled: current.enabled, command: "", args: [], connectTimeoutMs: current.connectTimeoutMs, discoveryTimeoutMs: current.discoveryTimeoutMs, callTimeoutMs: current.callTimeoutMs };
+    }));
+  };
+  return <div className="mt-4 space-y-4 border-t border-border-subtle pt-4">
+    <SettingsToggle checked={server.enabled} onChange={(enabled) => update((draft) => { draft.enabled = enabled; })} label={`Enable ${name}`} description="Connect and expose discovered tools through the live MCP runtime." />
+    <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
+      <Field label="Name"><RenameInput value={name} readOnly={nameLocked} onCommit={(next) => { if (next === name) return true; if (BUILT_IN_MCP_NAMES.includes(next as typeof BUILT_IN_MCP_NAMES[number]) || config.mcp!.servers[next]) return false; onChange(withDraft(config, (draft) => { draft.mcp!.servers[next] = draft.mcp!.servers[name]; delete draft.mcp!.servers[name]; })); return true; }} />{nameLocked && <span className="text-[11px] font-normal text-text-tertiary">Replace or clear configured secrets before renaming.</span>}</Field>
+      <Field label="Transport"><select disabled={nameLocked} title={nameLocked ? "Clear or replace configured secrets before changing transport" : undefined} className={selectClass} value={server.type} onChange={(event) => replaceTransport(event.target.value as "http" | "stdio")}><option value="http">HTTP</option><option value="stdio">STDIO</option></select>{nameLocked && <span className="text-[11px] font-normal text-text-tertiary">Clear or replace configured secrets before changing transport.</span>}</Field>
+      {server.type === "http" ? <Field label="HTTP URL" error={errors[`mcp.servers.${name}.url`]}><TextInput value={server.url} onChange={(next) => update((draft) => { if (draft.type === "http") draft.url = next; })} /></Field> : <>
+        <Field label="Command" error={errors[`mcp.servers.${name}.command`]}><TextInput value={server.command} onChange={(next) => update((draft) => { if (draft.type === "stdio") draft.command = next; })} /></Field>
+        <Field label="Arguments (one per line)"><textarea rows={3} value={server.args?.join("\n") ?? ""} onChange={(event) => update((draft) => { if (draft.type === "stdio") { const args = event.target.value.split("\n").filter((line) => line.trim() !== ""); draft.args = args.length > 0 ? args : undefined; } })} className="min-h-20 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 font-mono text-[12px] leading-[18px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle" /></Field>
+      </>}
+      <Field label="Connect timeout (ms)"><NumberField value={server.connectTimeoutMs} onChange={(next) => update((draft) => { draft.connectTimeoutMs = next; })} /></Field>
+      <Field label="Discovery timeout (ms)"><NumberField value={server.discoveryTimeoutMs} onChange={(next) => update((draft) => { draft.discoveryTimeoutMs = next; })} /></Field>
+      <Field label="Call timeout (ms)"><NumberField value={server.callTimeoutMs} onChange={(next) => update((draft) => { draft.callTimeoutMs = next; })} /></Field>
+    </div>
+    {server.type === "http" ? <SecretRecordEditor label="Headers" value={server.headers} onChange={(next) => update((draft) => { if (draft.type === "http") draft.headers = next; })} errors={errors} path={`mcp.servers.${name}.headers`} /> : <SecretRecordEditor label="Environment" value={server.env} onChange={(next) => update((draft) => { if (draft.type === "stdio") draft.env = next; })} errors={errors} path={`mcp.servers.${name}.env`} />}
+    <button type="button" onClick={() => onChange(withDraft(config, (draft) => { delete draft.mcp!.servers[name]; }))} className={dangerActionClass}><Trash2 size={12} aria-hidden="true" />Delete {name}</button>
+  </div>;
 }
 
 function draftHasProvider(config: ServerConfig, providerId: string): boolean {
@@ -432,8 +654,20 @@ export function SettingsGithubPanel({ config, onChange }: { config: ServerConfig
 
 function describeStatus(status?: McpServerStatus) {
   if (!status) return "Status not reported yet";
-  if (status.state === "ready") return `${status.toolCount} ${status.toolCount === 1 ? "tool" : "tools"} available`;
+  if (status.state === "ready") {
+    const tools = `${status.toolCount} ${status.toolCount === 1 ? "tool" : "tools"} available`;
+    return status.warningCount === 0
+      ? tools
+      : `${tools}; ${status.warningCount} ${status.warningCount === 1 ? "warning" : "warnings"}`;
+  }
   if (status.state === "failed") return status.error;
-  if (status.state === "pending") return "Discovery is still running";
+  if (status.state === "connecting") return "Connecting and discovering tools";
   return "Server is disabled in configuration";
+}
+
+function statusTimestamp(status: McpServerStatus): number {
+  if (status.state === "ready") return status.connectedAt;
+  if (status.state === "failed") return status.failedAt;
+  if (status.state === "connecting") return status.startedAt;
+  return status.updatedAt;
 }

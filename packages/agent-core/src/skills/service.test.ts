@@ -1,399 +1,276 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { BuiltinSkillPackage } from "./types";
 import {
+  DigestBoundCursorError,
   RESERVED_BUILTIN_SKILL_NAMES,
-  SkillPathError,
   SkillResourceNotFoundError,
+  SkillPackageChangedError,
   SkillService,
   SkillValidationError,
-} from "./service";
+} from "./index";
 
-const tmpRoot = join(import.meta.dir, "__test_tmp__", "service", crypto.randomUUID());
+const tmpRoot = join(tmpdir(), `archcode-skill-service-${crypto.randomUUID()}`);
 
-function skillMarkdown(
-  name: string,
-  description = `${name} guides work when ${name} is needed.`,
-  body = `${name} body`,
-): string {
-  return `---
-name: ${name}
-description: ${description}
----
-
-${body}
-`;
+function markdown(name: string, body: string, description = `${name} guidance for focused tests.`): string {
+  return `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`;
 }
 
-function builtinSkill(name: string, body: string, resources: BuiltinSkillPackage["resources"] = {}): BuiltinSkillPackage {
-  return { entry: skillMarkdown(name, `${name} builtin guidance when builtin behavior is needed.`, body), resources };
+function builtin(name: string, body: string, resources: BuiltinSkillPackage["resources"] = {}): BuiltinSkillPackage {
+  return { entry: markdown(name, body), resources };
 }
 
 async function writeSkill(
   root: string,
   name: string,
-  content: string,
+  body: string,
   resources: Readonly<Record<string, string | Uint8Array>> = {},
-): Promise<string> {
+  entry = markdown(name, body),
+): Promise<void> {
   const packageRoot = join(root, name);
   await mkdir(packageRoot, { recursive: true });
-  await Bun.write(join(packageRoot, "SKILL.md"), content);
+  await Bun.write(join(packageRoot, "SKILL.md"), entry);
   for (const [path, value] of Object.entries(resources)) {
     const destination = join(packageRoot, ...path.split("/"));
     await mkdir(dirname(destination), { recursive: true });
     await Bun.write(destination, value);
   }
-  return packageRoot;
 }
 
-describe("SkillService", () => {
+describe("SkillService control plane", () => {
   const projectRoot = join(tmpRoot, "project");
-  const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
-  const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
+  const projectArchcode = join(projectRoot, ".archcode", "skills");
+  const projectAgents = join(projectRoot, ".agents", "skills");
+  const userArchcode = join(tmpRoot, "user", ".archcode", "skills");
+  const userAgents = join(tmpRoot, "user", ".agents", "skills");
 
   beforeEach(async () => {
     await rm(tmpRoot, { recursive: true, force: true });
     await mkdir(projectRoot, { recursive: true });
-    await mkdir(userSkillsRoot, { recursive: true });
+    await mkdir(userArchcode, { recursive: true });
+    await mkdir(userAgents, { recursive: true });
   });
 
   afterAll(async () => {
     await rm(tmpRoot, { recursive: true, force: true });
   });
 
-  test("resolves one atomic package with project > user > builtin precedence", async () => {
-    const projectPackageRoot = await writeSkill(
-      projectSkillsRoot,
-      "codemap",
-      skillMarkdown("codemap", "Project mapping when this checkout is under investigation.", "PROJECT_ENTRY"),
-      { "references/project.md": "PROJECT_RESOURCE" },
-    );
-    await writeSkill(
-      userSkillsRoot,
-      "codemap",
-      skillMarkdown("codemap", "User mapping when any checkout is under investigation.", "USER_ENTRY"),
-      { "references/user.md": "USER_RESOURCE" },
-    );
-    const service = new SkillService({
-      userSkillsRoot,
-      builtinSkills: { codemap: builtinSkill("codemap", "BUILTIN_ENTRY", { "references/builtin.md": "BUILTIN_RESOURCE" }) },
+  function service(builtinSkills: Readonly<Record<string, BuiltinSkillPackage>> = {}) {
+    return new SkillService({
+      userSkillsRoot: userArchcode,
+      userAgentsSkillsRoot: userAgents,
+      builtinSkills,
     });
+  }
 
-    const skill = await service.readForAgent(projectRoot, "codemap", ["codemap"]);
-
-    expect(skill).toEqual({
-      metadata: {
-        name: "codemap",
-        description: "Project mapping when this checkout is under investigation.",
-      },
-      body: "\nPROJECT_ENTRY\n",
-      source: "project",
-      sourceLabel: projectPackageRoot,
-      root: projectPackageRoot,
-      resources: [{ path: "references/project.md", bytes: 16 }],
-    });
-  });
-
-  test("resolves user before builtin when no project package exists", async () => {
-    await writeSkill(userSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "User mapping when a checkout is under investigation.",
-      "USER_ENTRY",
-    ));
-    const service = new SkillService({
-      userSkillsRoot,
-      builtinSkills: { codemap: builtinSkill("codemap", "BUILTIN_ENTRY") },
-    });
-
-    expect((await service.readForAgent(projectRoot, "codemap", ["codemap"]))?.source).toBe("user");
-  });
-
-  test("never falls through to a lower package for an unlisted resource", async () => {
-    await writeSkill(projectSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "Project mapping when this checkout is under investigation.",
-    ));
-    await writeSkill(userSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "User mapping when a checkout is under investigation.",
-    ), { "references/lower.md": "LOWER_RESOURCE" });
-    const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
-
-    await expect(service.readResourceForAgent(
-      projectRoot,
-      "codemap",
-      "references/lower.md",
-      ["codemap"],
-    )).rejects.toBeInstanceOf(SkillResourceNotFoundError);
-  });
-
-  test("fails closed when the winning package is invalid", async () => {
-    await writeSkill(projectSkillsRoot, "codemap", skillMarkdown(
-      "wrong-name",
-      "Broken project override when validating precedence.",
-    ));
-    await writeSkill(userSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "Valid user package when validating precedence.",
-    ));
-    const service = new SkillService({ userSkillsRoot });
-
-    try {
-      await service.readForAgent(projectRoot, "codemap", ["codemap"]);
-      throw new Error("Expected invalid winning package to fail");
-    } catch (error) {
-      expect(error).toMatchObject({
-        name: "SkillValidationError",
-        source: "project",
-        skillName: "codemap",
-      } satisfies Partial<SkillValidationError>);
+  test("applies all five source tiers in exact precedence order", async () => {
+    const roots = [projectArchcode, projectAgents, userArchcode, userAgents] as const;
+    const expected = ["project-archcode", "project-agents", "user-archcode", "user-agents", "builtin"] as const;
+    for (let winner = 0; winner < expected.length; winner += 1) {
+      await rm(join(projectRoot, ".archcode"), { recursive: true, force: true });
+      await rm(join(projectRoot, ".agents"), { recursive: true, force: true });
+      await rm(userArchcode, { recursive: true, force: true });
+      await rm(userAgents, { recursive: true, force: true });
+      for (let index = winner; index < roots.length; index += 1) {
+        await writeSkill(roots[index]!, "tiered", expected[index]!, {
+          [`resources/${expected[index]}.txt`]: expected[index]!,
+        });
+      }
+      const resolved = await service({ tiered: builtin("tiered", "builtin") })
+        .readForAgent(projectRoot, "tiered", ["tiered"]);
+      expect(resolved?.source).toBe(expected[winner]);
+      expect(resolved?.resources).toEqual(winner < roots.length
+        ? [{ path: `resources/${expected[winner]}.txt`, bytes: expected[winner]!.length }]
+        : []);
     }
   });
 
-  test("fails closed when the winning SKILL.md is unreadable", async () => {
-    await mkdir(join(projectSkillsRoot, "codemap", "SKILL.md"), { recursive: true });
-    await writeSkill(userSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "Valid user package when validating unreadable precedence.",
-    ));
-    const service = new SkillService({ userSkillsRoot });
-
-    await expect(service.readForAgent(projectRoot, "codemap", ["codemap"]))
-      .rejects.toMatchObject({ source: "project", skillName: "codemap" });
-  });
-
-  test("fails closed when the winning package directory has no SKILL.md", async () => {
-    await mkdir(join(projectSkillsRoot, "codemap"), { recursive: true });
-    await writeSkill(userSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "Valid user package when a missing project entry is checked.",
-    ));
-    const service = new SkillService({ userSkillsRoot });
-
-    await expect(service.readForAgent(projectRoot, "codemap", ["codemap"]))
-      .rejects.toMatchObject({ source: "project", skillName: "codemap" });
-  });
-
-  test("does not touch a damaged lower user package after resolving a valid project winner", async () => {
-    await writeSkill(projectSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "Valid project mapping when lower sources are damaged.",
-      "PROJECT_ENTRY",
-    ), { "references/project.md": "PROJECT_RESOURCE" });
-    const damagedUserRoot = join(userSkillsRoot, "codemap");
-    await mkdir(damagedUserRoot, { recursive: true });
-    await Bun.write(join(damagedUserRoot, "SKILL.md"), "not valid Skill Markdown");
-    await symlink(join(tmpRoot, "outside"), join(damagedUserRoot, "linked-resource"));
-    const service = new SkillService({ userSkillsRoot });
-
-    const skill = await service.readForAgent(projectRoot, "codemap", ["codemap"]);
-    expect(skill?.source).toBe("project");
-    expect(skill?.body).toContain("PROJECT_ENTRY");
-    expect(skill?.resources).toEqual([{ path: "references/project.md", bytes: 16 }]);
-  });
-
-  test("re-resolves the current winner independently on every entry and resource read", async () => {
-    await writeSkill(userSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "User mapping when a checkout is under investigation.",
-      "USER_ENTRY",
-    ), { "references/user.md": "USER_RESOURCE" });
-    const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
-
-    expect((await service.readForAgent(projectRoot, "codemap", ["codemap"]))?.source).toBe("user");
-
-    await writeSkill(projectSkillsRoot, "codemap", skillMarkdown(
-      "codemap",
-      "Project mapping when this checkout is under investigation.",
-      "PROJECT_ENTRY",
-    ), { "references/project.md": "PROJECT_RESOURCE" });
-
-    const projectResource = await service.readResourceForAgent(
-      projectRoot,
-      "codemap",
-      "references/project.md",
-      ["codemap"],
+  test("keeps reserved lifecycle builtins unshadowable", async () => {
+    const builtinSkills = Object.fromEntries(
+      [...RESERVED_BUILTIN_SKILL_NAMES].map((name) => [name, builtin(name, "builtin")]),
     );
-    expect(projectResource?.source).toBe("project");
-    expect(new TextDecoder().decode(projectResource?.content)).toBe("PROJECT_RESOURCE");
-    await expect(service.readResourceForAgent(projectRoot, "codemap", "references/user.md", ["codemap"]))
+    for (const name of RESERVED_BUILTIN_SKILL_NAMES) {
+      await writeSkill(projectArchcode, name, "project");
+      const resolved = await service(builtinSkills).readForAgent(projectRoot, name, [name]);
+      expect(resolved?.source).toBe("builtin");
+      expect(resolved?.body).toContain("builtin");
+      expect(await service(builtinSkills).readForAgent(projectRoot, name, [])).toBeNull();
+      expect((await service(builtinSkills).listForAgent(projectRoot, []))
+        .some((entry) => entry.name === name)).toBeFalse();
+    }
+  });
+
+  test("allows custom winners outside the builtin allow-list while keeping builtin fallback gated", async () => {
+    await writeSkill(projectArchcode, "custom-overlay", "custom body");
+    const skills = service({
+      "custom-overlay": builtin("custom-overlay", "shadowed builtin"),
+      "builtin-only": builtin("builtin-only", "builtin body"),
+    });
+
+    const snapshot = await skills.snapshotForAgent(projectRoot, "custom-overlay", []);
+    expect(snapshot).toMatchObject({ name: "custom-overlay", source: "project-archcode" });
+    await expect(skills.restoreSnapshotForAgent(projectRoot, "custom-overlay", snapshot!, []))
+      .resolves.toMatchObject({ source: "project-archcode", digest: snapshot!.digest });
+    expect(await skills.snapshotForAgent(projectRoot, "builtin-only", [])).toBeNull();
+
+    await Bun.write(join(projectArchcode, "custom-overlay", "SKILL.md"), markdown("custom-overlay", "changed"));
+    await expect(skills.restoreSnapshotForAgent(projectRoot, "custom-overlay", snapshot!, []))
+      .rejects.toMatchObject({ code: "SKILL_PACKAGE_CHANGED" });
+  });
+
+  test("isolates an invalid winner, diagnoses every candidate, and never falls back or merges", async () => {
+    await writeSkill(
+      projectArchcode,
+      "atomic",
+      "broken",
+      {},
+      markdown("wrong-name", "broken"),
+    );
+    await writeSkill(userArchcode, "atomic", "lower", { "lower.txt": "lower" });
+    const skills = service({ atomic: builtin("atomic", "builtin", { "builtin.txt": "builtin" }) });
+    const catalog = await skills.catalogForAgent(projectRoot, ["atomic"]);
+
+    expect(catalog.entries).toEqual([]);
+    expect(catalog.inventory.map(({ source, winner, shadowed, valid }) => ({ source, winner, shadowed, valid })))
+      .toEqual([
+        { source: "project-archcode", winner: true, shadowed: false, valid: false },
+        { source: "user-archcode", winner: false, shadowed: true, valid: true },
+        { source: "builtin", winner: false, shadowed: true, valid: true },
+      ]);
+    expect(catalog.diagnostics).toHaveLength(1);
+    expect(catalog.diagnostics[0]).toMatchObject({
+      name: "atomic",
+      source: "project-archcode",
+      code: "SKILL_INVALID_PACKAGE",
+    });
+    expect(catalog.diagnostics[0]?.message).not.toContain(tmpRoot);
+    await expect(skills.readForAgent(projectRoot, "atomic", ["atomic"]))
+      .rejects.toBeInstanceOf(SkillValidationError);
+  });
+
+  test("never reads a missing winner resource from a shadowed package", async () => {
+    await writeSkill(projectArchcode, "atomic", "winner");
+    await writeSkill(userArchcode, "atomic", "lower", { "lower.txt": "lower" });
+    await expect(service().readResourceForAgent(projectRoot, "atomic", "lower.txt"))
       .rejects.toBeInstanceOf(SkillResourceNotFoundError);
   });
 
-  test("reserved lifecycle builtins are unshadowable and Agent-gated", async () => {
-    const builtinSkills: Record<string, BuiltinSkillPackage> = {};
-    for (const name of RESERVED_BUILTIN_SKILL_NAMES) {
-      builtinSkills[name] = builtinSkill(name, `BUILTIN_${name}`);
-      await writeSkill(projectSkillsRoot, name, skillMarkdown(
-        name,
-        `Project override when ${name} is activated.`,
-        `PROJECT_${name}`,
-      ));
-      await writeSkill(userSkillsRoot, name, skillMarkdown(
-        name,
-        `User override when ${name} is activated.`,
-        `USER_${name}`,
-      ));
-    }
-    const service = new SkillService({ userSkillsRoot, builtinSkills });
+  test("captures immutable private bytes and a digest sensitive to tier, entry, path, length, and content", async () => {
+    await writeSkill(projectAgents, "snapshot", "entry-a", { "a.bin": Uint8Array.from([1, 2, 3]) });
+    const skills = service();
+    const first = await skills.snapshotForAgent(projectRoot, "snapshot");
+    expect(first).not.toBeNull();
+    const firstDigest = first!.digest;
+    const firstRead = first!.readResource("a.bin");
+    firstRead.content[0] = 99;
 
-    for (const name of RESERVED_BUILTIN_SKILL_NAMES) {
-      const skill = await service.readForAgent(projectRoot, name, [name]);
-      expect(skill?.source).toBe("builtin");
-      expect(skill?.body).toContain(`BUILTIN_${name}`);
-      expect(await service.readForAgent(projectRoot, name, ["codemap"])).toBeNull();
-    }
-    const listed = (await service.listForAgent(projectRoot, ["codemap"]))
-      .map((entry) => entry.name);
-    for (const name of RESERVED_BUILTIN_SKILL_NAMES) {
-      expect(listed).not.toContain(name);
-    }
+    await Bun.write(join(projectAgents, "snapshot", "a.bin"), Uint8Array.from([9, 2, 3]));
+    expect([...first!.readResource("a.bin").content]).toEqual([1, 2, 3]);
+    expect((await skills.snapshotForAgent(projectRoot, "snapshot"))?.digest).not.toBe(firstDigest);
+    await expect(skills.restoreSnapshotForAgent(projectRoot, "snapshot", first!))
+      .rejects.toMatchObject({ code: "SKILL_PACKAGE_CHANGED" } satisfies Partial<SkillPackageChangedError>);
+
+    await Bun.write(join(projectAgents, "snapshot", "a.bin"), Uint8Array.from([1, 2, 3, 4]));
+    const lengthDigest = (await skills.snapshotForAgent(projectRoot, "snapshot"))!.digest;
+    expect(lengthDigest).not.toBe(firstDigest);
+
+    await rm(join(projectAgents, "snapshot", "a.bin"));
+    await Bun.write(join(projectAgents, "snapshot", "renamed.bin"), Uint8Array.from([1, 2, 3]));
+    expect((await skills.snapshotForAgent(projectRoot, "snapshot"))?.digest).not.toBe(firstDigest);
+
+    await Bun.write(join(projectAgents, "snapshot", "SKILL.md"), markdown("snapshot", "entry-b"));
+    expect((await skills.snapshotForAgent(projectRoot, "snapshot"))?.digest).not.toBe(firstDigest);
+
+    await writeSkill(projectArchcode, "snapshot", "entry-a", { "a.bin": Uint8Array.from([1, 2, 3]) });
+    const higher = await skills.snapshotForAgent(projectRoot, "snapshot");
+    expect(higher?.source).toBe("project-archcode");
+    expect(higher?.digest).not.toBe(firstDigest);
   });
 
-  test("lists custom packages regardless of builtin allow-list and only eligible builtins", async () => {
-    await writeSkill(projectSkillsRoot, "team-conventions", skillMarkdown(
-      "team-conventions",
-      "Applies team conventions when changing this project.",
-    ));
-    const service = new SkillService({
-      userSkillsRoot,
-      builtinSkills: {
-        codemap: builtinSkill("codemap", "CODEMAP"),
-        "git-master": builtinSkill("git-master", "GIT"),
-      },
-    });
+  test("maps every unavailable or changed restore state to SKILL_PACKAGE_CHANGED", async () => {
+    await writeSkill(projectAgents, "restore", "entry", { "resource.txt": "before" });
+    const skills = service();
+    const snapshot = (await skills.snapshotForAgent(projectRoot, "restore"))!;
 
-    expect(await service.listForAgent(projectRoot, ["codemap"])).toEqual([
-      {
-        name: "codemap",
-        description: "codemap builtin guidance when builtin behavior is needed.",
-        source: "builtin",
-      },
-      {
-        name: "team-conventions",
-        description: "Applies team conventions when changing this project.",
-        source: "project",
-      },
-    ]);
-    expect(await service.readForAgent(projectRoot, "git-master", ["codemap"])).toBeNull();
-  });
+    await rm(join(projectAgents, "restore"), { recursive: true, force: true });
+    await expect(skills.restoreSnapshotForAgent(projectRoot, "restore", snapshot))
+      .rejects.toMatchObject({ code: "SKILL_PACKAGE_CHANGED" });
 
-  test("metadata discovery does not read the body or walk package resources", async () => {
-    const packageRoot = await writeSkill(
-      projectSkillsRoot,
-      "codemap",
-      skillMarkdown(
-        "codemap",
-        "Maps code when repository discovery is needed.",
-        "VALID_PREFIX",
-      ),
+    await writeSkill(
+      projectAgents,
+      "restore",
+      "invalid",
+      {},
+      markdown("wrong-name", "invalid"),
     );
-    await Bun.write(join(packageRoot, "SKILL.md"), new Blob([
-      skillMarkdown(
-        "codemap",
-        "Maps code when repository discovery is needed.",
-        "VALID_PREFIX",
-      ),
-      Uint8Array.from([0xff]),
-    ]));
-    await symlink(join(tmpRoot, "outside"), join(packageRoot, "linked-resources"));
-    const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
+    await expect(skills.restoreSnapshotForAgent(projectRoot, "restore", snapshot))
+      .rejects.toMatchObject({ code: "SKILL_PACKAGE_CHANGED" });
 
-    expect(await service.listForAgent(projectRoot, [])).toEqual([{
-      name: "codemap",
-      description: "Maps code when repository discovery is needed.",
-      source: "project",
+    await rm(join(projectAgents, "restore"), { recursive: true, force: true });
+    await writeSkill(projectAgents, "restore", "entry", { "resource.txt": "before" });
+    await expect(skills.restoreSnapshotForAgent(projectRoot, "restore", {
+      source: "builtin",
+      digest: snapshot.digest,
+    })).rejects.toMatchObject({ code: "SKILL_PACKAGE_CHANGED" });
+
+    await Bun.write(join(projectAgents, "restore", "resource.txt"), "after");
+    await expect(skills.restoreSnapshotForAgent(projectRoot, "restore", snapshot))
+      .rejects.toMatchObject({ code: "SKILL_PACKAGE_CHANGED" });
+  });
+
+  test("keeps catalog discovery metadata-only and its digest bound to visible state", async () => {
+    await writeSkill(projectArchcode, "metadata-only", "entry", { "resource.txt": "before" });
+    await symlink(
+      join(projectArchcode, "metadata-only", "resource.txt"),
+      join(projectArchcode, "metadata-only", "linked-resource.txt"),
+    );
+    const skills = service();
+
+    const first = await skills.catalogForAgent(projectRoot, ["metadata-only"]);
+    expect(first.entries).toEqual([{
+      name: "metadata-only",
+      description: "metadata-only guidance for focused tests.",
+      source: "project-archcode",
     }]);
-    await expect(service.readForAgent(projectRoot, "codemap", []))
-      .rejects.toMatchObject({ source: "project", skillName: "codemap" });
+    expect(await skills.discoverForAgent(projectRoot, "metadata-only", ["metadata-only"]))
+      .toEqual(first.entries[0]!);
+    await Bun.write(join(projectArchcode, "metadata-only", "resource.txt"), "after");
+    expect((await skills.catalogForAgent(projectRoot, ["metadata-only"])).digest).toBe(first.digest);
+    await expect(skills.snapshotForAgent(projectRoot, "metadata-only", ["metadata-only"]))
+      .rejects.toBeInstanceOf(SkillValidationError);
   });
 
-  test("ignores non-directory discovery entries and validates directory-name equality", async () => {
-    await mkdir(projectSkillsRoot, { recursive: true });
-    await Bun.write(join(projectSkillsRoot, "plain-file"), skillMarkdown(
-      "plain-file",
-      "A plain file that must not be discovered as a package.",
-    ));
-    const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
-    expect(await service.listForAgent(projectRoot, [])).toEqual([]);
-
-    await rm(join(projectSkillsRoot, "plain-file"));
-    await writeSkill(projectSkillsRoot, "directory-name", skillMarkdown(
-      "different-name",
-      "A mismatched package when directory identity is checked.",
-    ));
-
-    await expect(service.listForAgent(projectRoot, [])).rejects.toMatchObject({
-      source: "project",
-      skillName: "directory-name",
-    });
-  });
-
-  test("rejects a symlinked project package root through list and direct read", async () => {
-    const externalPackage = join(tmpRoot, "external", "symlink-skill");
-    await writeSkill(
-      join(tmpRoot, "external"),
-      "symlink-skill",
-      skillMarkdown(
-        "symlink-skill",
-        "External guidance when symlink boundaries are being checked.",
-      ),
+  test("binds list cursors to whole-catalog content", async () => {
+    for (let index = 0; index < 51; index += 1) {
+      const name = `skill-${index}`;
+      await writeSkill(
+        projectArchcode,
+        name,
+        `body-${index}`,
+        {},
+        markdown(name, `body-${index}`, "x".repeat(200)),
+      );
+    }
+    const skills = service();
+    const first = await skills.listPageForAgent(projectRoot);
+    expect(first.items).toHaveLength(50);
+    expect(first.nextCursor).toBeString();
+    const inventoryFirst = await skills.inventoryPage(projectRoot);
+    expect(inventoryFirst.items).toHaveLength(50);
+    expect(inventoryFirst.nextCursor).toBeString();
+    const inventorySecond = await skills.inventoryPage(projectRoot, inventoryFirst.nextCursor);
+    expect(inventorySecond.items).toHaveLength(1);
+    expect(inventorySecond.nextCursor).toBeUndefined();
+    const projection = await skills.projectPromptCatalog(projectRoot);
+    expect(projection.omittedCount).toBeGreaterThan(0);
+    expect(projection.byteLength).toBeLessThanOrEqual(8_000);
+    await Bun.write(
+      join(projectArchcode, "skill-50", "SKILL.md"),
+      markdown("skill-50", "changed", "visible description changed"),
     );
-    await mkdir(projectSkillsRoot, { recursive: true });
-    await symlink(externalPackage, join(projectSkillsRoot, "symlink-skill"), "dir");
-    const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
-
-    await expect(service.listForAgent(projectRoot, []))
-      .rejects.toBeInstanceOf(SkillPathError);
-    await expect(service.readForAgent(projectRoot, "symlink-skill", []))
-      .rejects.toBeInstanceOf(SkillPathError);
-  });
-
-  test("rejects a project skills-root symlink that points outside the workspace", async () => {
-    const externalSkillsRoot = join(tmpRoot, "external-skills-root");
-    await writeSkill(
-      externalSkillsRoot,
-      "escaped-skill",
-      skillMarkdown(
-        "escaped-skill",
-        "External guidance when source-root ancestry is being checked.",
-      ),
-    );
-    await mkdir(join(projectRoot, ".archcode"), { recursive: true });
-    await rm(projectSkillsRoot, { recursive: true, force: true });
-    await symlink(externalSkillsRoot, projectSkillsRoot, "dir");
-    const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
-
-    await expect(service.listForAgent(projectRoot, []))
-      .rejects.toBeInstanceOf(SkillPathError);
-    await expect(service.readForAgent(projectRoot, "escaped-skill", []))
-      .rejects.toBeInstanceOf(SkillPathError);
-  });
-
-  test("rejects a source-root symlink before list discovery reads external names", async () => {
-    const emptyExternalSkillsRoot = join(tmpRoot, "empty-external-skills-root");
-    await mkdir(emptyExternalSkillsRoot, { recursive: true });
-    await mkdir(join(projectRoot, ".archcode"), { recursive: true });
-    await rm(projectSkillsRoot, { recursive: true, force: true });
-    await symlink(emptyExternalSkillsRoot, projectSkillsRoot, "dir");
-    const service = new SkillService({
-      userSkillsRoot,
-      builtinSkills: { codemap: builtinSkill("codemap", "BUILTIN") },
-    });
-
-    await expect(service.listForAgent(projectRoot, []))
-      .rejects.toBeInstanceOf(SkillPathError);
-    await expect(service.readForAgent(projectRoot, "codemap", ["codemap"]))
-      .rejects.toBeInstanceOf(SkillPathError);
-  });
-
-  test("does not resolve inherited object properties as builtin Skill names", async () => {
-    const service = new SkillService({ userSkillsRoot, builtinSkills: {} });
-
-    expect(await service.discoverForAgent(projectRoot, "constructor", ["constructor"]))
-      .toBeNull();
-    expect(await service.readForAgent(projectRoot, "constructor", ["constructor"]))
-      .toBeNull();
+    await expect(skills.listPageForAgent(projectRoot, undefined, first.nextCursor))
+      .rejects.toMatchObject({ code: "TOOL_SKILL_CATALOG_CHANGED" } satisfies Partial<DigestBoundCursorError>);
   });
 });

@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { McpServerStatus, ProviderAdapterCatalog } from "@archcode/protocol";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { ServerConfig } from "../../api/config";
 import {
   SettingsModelsPanel,
   SettingsMcpPanel,
   SettingsNavigation,
   SettingsApplyNotice,
+  SettingsSkillsPanel,
 } from "./SettingsDialog";
 
 interface ElementLike {
@@ -82,7 +84,7 @@ describe("SettingsDialog", () => {
     const labels = findAll(tree, (element) => element.type === "button").map(textContent);
 
     expect(textContent(tree)).toContain("Server");
-    expect(labels).toEqual(["Models", "Profiles", "Security", "Runtime Data", "MCP", "Memory", "GitHub", "About & Updates"]);
+    expect(labels).toEqual(["Models", "Profiles", "Security", "Runtime Data", "MCP", "Skills", "Memory", "GitHub", "About & Updates"]);
   });
 
   test("adds Config Recovery while disabling Config-dependent sections", () => {
@@ -119,30 +121,29 @@ describe("SettingsDialog", () => {
 
   test("locks the three built-in MCP servers while showing live status", () => {
     const servers: Record<string, McpServerStatus> = {
-      context7: { state: "ready", toolCount: 4, warningCount: 0 },
-      "grep.app": { state: "pending" },
-      exa: { state: "failed", error: "unreachable" },
+      context7: { state: "ready", toolCount: 4, warningCount: 0, connectedAt: 1 },
+      "grep.app": { state: "connecting", startedAt: 1 },
+      exa: { state: "failed", error: "unreachable", failedAt: 1 },
     };
-    const tree = SettingsMcpPanel({ config, servers, onChange: () => {} });
-    const buttons = findAll(tree, (element) => element.type === "button").map(textContent);
+    const markup = renderToStaticMarkup(<SettingsMcpPanel config={config} servers={servers} onChange={() => {}} />);
 
-    expect(textContent(tree)).toContain("Built-in");
-    expect(textContent(tree)).toContain("Ready");
-    expect(textContent(tree)).toContain("Pending");
-    expect(textContent(tree)).toContain("Failed");
-    expect(textContent(tree)).toContain("4 tools available");
-    expect(textContent(tree)).toContain("unreachable");
-    expect(buttons).not.toContain("Delete context7");
-    expect(buttons).not.toContain("Delete grep.app");
-    expect(buttons).not.toContain("Delete exa");
+    expect(markup).toContain("Built-in");
+    expect(markup).toContain("Ready");
+    expect(markup).toContain("Connecting");
+    expect(markup).toContain("Failed");
+    expect(markup).toContain("4 tools available");
+    expect(markup).toContain("unreachable");
+    expect(markup).not.toContain("Delete context7");
+    expect(markup).not.toContain("Delete grep.app");
+    expect(markup).not.toContain("Delete exa");
   });
 
   test("distinguishes live model application from named restart-only sections", () => {
     expect(textContent(SettingsApplyNotice({ modelsAppliedLive: false, restartRequiredSections: [] }))).toBe("");
     expect(textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: [] }))).toContain("applied live");
-    const notice = textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: ["mcp", "integrations.github"] }));
+    const notice = textContent(SettingsApplyNotice({ modelsAppliedLive: true, restartRequiredSections: ["integrations.github"] }));
     expect(notice).toContain("applied live");
-    expect(notice).toContain("Restart required for: MCP, GitHub");
+    expect(notice).toContain("Restart required for: GitHub");
   });
 
   test("does not claim live application while Runtime is unavailable", () => {
@@ -158,10 +159,17 @@ describe("SettingsDialog", () => {
   });
 
   test("keeps MCP configuration visible while live status is unavailable", () => {
-    const tree = SettingsMcpPanel({ config, servers: {}, onChange: () => {}, runtimeAvailable: false });
+    const markup = renderToStaticMarkup(<SettingsMcpPanel config={config} servers={{}} onChange={() => {}} runtimeAvailable={false} />);
 
-    expect(textContent(tree)).toContain("Unavailable while Runtime is offline");
-    expect(textContent(tree)).toContain("Unavailable");
-    expect(textContent(tree)).not.toContain("Failed");
+    expect(markup).toContain("Unavailable while Runtime is offline");
+    expect(markup).toContain("Unavailable");
+    expect(markup).not.toContain("Failed");
+  });
+
+  test("does not guess a project for the Skill diagnostics surface", () => {
+    const markup = renderToStaticMarkup(<SettingsSkillsPanel />);
+
+    expect(markup).toContain("Project Skills");
+    expect(markup).toContain("Open a project to inspect its Skills");
   });
 });

@@ -35,7 +35,6 @@ export {
   createReadBeforeEditPermission,
   createFileExistsPermission,
   createBashPermission,
-  createMcpDestructivePermission,
 } from "./permission";
 export type { WorkspacePermissionOptions } from "./permission";
 export {

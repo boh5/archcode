@@ -201,10 +201,24 @@ describe("Agent catalog", () => {
     expect(librarianAgentDefinition.profiles).toEqual(["fast"]);
   });
 
+  test("locks builtin MCP visibility as product policy", () => {
+    expect(Object.fromEntries(agentDefinitions.map((definition) => [
+      definition.name,
+      [...definition.builtinMcpServers],
+    ]))).toEqual({
+      lead: ["context7", "exa"],
+      discussion: [],
+      analyst: ["context7"],
+      build: [],
+      explore: [],
+      librarian: ["context7", "grep.app", "exa"],
+    });
+  });
+
   test("preserves the locked target and depth matrix", () => {
     expect(leadAgentDefinition.tools.delegateTargets).toEqual(["analyst", "build", "explore", "librarian"]);
     expect(discussionAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
-    expect(discussionAgentDefinition.mcpTools).toEqual([]);
+    expect(discussionAgentDefinition.builtinMcpServers).toEqual([]);
     expect(analystAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
     expect("delegateTargets" in exploreAgentDefinition.tools).toBe(false);

@@ -35,6 +35,9 @@ import type {
   Session,
   ToolDiffMetadata,
   FinalizedToolResult,
+  ExecutionSkillBinding,
+  McpServerInventoryResponse,
+  McpServerStatus,
   ServerConfigUpdate,
 } from "./types";
 import type { GlobalSSEUpdateChangedEvent } from "./update";
@@ -59,6 +62,17 @@ function compositeIdentity(event: GlobalSessionEventEnvelope): string {
 }
 
 describe("current tool and config wire types", () => {
+  test("requires the Skill resolution root in durable Execution bindings", () => {
+    const binding = {
+      name: "codemap",
+      source: "project-archcode",
+      digest: "a".repeat(64),
+      resolutionRoot: "/workspace/.worktrees/session",
+    } satisfies ExecutionSkillBinding;
+
+    expect(serializeRoundTrip(binding)).toEqual(binding);
+  });
+
   test("round-trips the strict finalized tool result contract", () => {
     const result: FinalizedToolResult = {
       isError: false,
@@ -117,7 +131,27 @@ describe("current tool and config wire types", () => {
     const config = {
       provider: {},
       profiles: {} as ServerConfigUpdate["profiles"],
-      mcp: { servers: { docs: { url: "https://mcp.example.test", timeout: 30000 } } },
+      mcp: {
+        disabledBuiltins: ["exa"],
+        servers: {
+          docs: {
+            type: "http",
+            enabled: true,
+            url: "https://mcp.example.test",
+            headers: { Authorization: { action: "preserve" } },
+            connectTimeoutMs: 10_000,
+            discoveryTimeoutMs: 30_000,
+            callTimeoutMs: 60_000,
+          },
+          local: {
+            type: "stdio",
+            enabled: false,
+            command: "local-mcp",
+            args: ["--stdio"],
+            env: { TOKEN: { action: "replace", value: "secret" } },
+          },
+        },
+      },
       integrations: { github: { enabled: true, tokenEnv: "GITHUB_TOKEN" } },
     } satisfies ServerConfigUpdate;
 
@@ -144,6 +178,22 @@ describe("current tool and config wire types", () => {
     } satisfies ServerConfigUpdate;
 
     expect(serializeRoundTrip(config)).toEqual(config);
+  });
+
+  test("keeps MCP status and inventory DTOs presentation-safe", () => {
+    const statuses = {
+      docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 123 },
+      local: { state: "disabled", updatedAt: 124 },
+    } satisfies Record<string, McpServerStatus>;
+    const inventory = {
+      servers: {
+        docs: [{ serverName: "docs", name: "search", registryName: "mcp__docs__search", description: "Search docs" }],
+        local: [],
+      },
+    } satisfies McpServerInventoryResponse;
+
+    expect(serializeRoundTrip(statuses)).toEqual(statuses);
+    expect(serializeRoundTrip(inventory)).toEqual(inventory);
   });
 });
 

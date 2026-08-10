@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/types";
 import type { ExecutionModelBinding } from "../models";
 import type { QueryLoopResult } from "./query";
+import type { SkillPackageSnapshot } from "../skills";
 import type { MemoryPolicySnapshot } from "../memory";
 
 export interface AgentCommand {
@@ -11,7 +12,11 @@ export interface AgentCommand {
 
 export type AgentCommandResult =
   | { readonly kind: "handled" }
-  | { readonly kind: "message"; readonly content: string };
+  | {
+      readonly kind: "message";
+      readonly content: string;
+      readonly executionSkillNames: readonly string[];
+    };
 
 export interface AgentRunOptions {
   abort?: AbortSignal;
@@ -27,6 +32,8 @@ export interface AgentRunOptions {
   toolProjection?: readonly string[];
   /** Commits any steering messages to the canonical transcript before a model build. */
   consumeSteers?: () => Promise<void>;
+  /** Immutable one-shot Skill packages owned by this logical Execution. */
+  executionSkillSnapshots?: ReadonlyMap<string, SkillPackageSnapshot>;
   /** Immutable Memory policy captured with the owning logical Execution. */
   memoryPolicy: MemoryPolicySnapshot;
 }

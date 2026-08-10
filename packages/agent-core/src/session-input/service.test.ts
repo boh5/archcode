@@ -190,6 +190,7 @@ describe("SessionInputService", () => {
       clientRequestId: "concurrent-message",
       source: "user" as const,
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
+      executionSkillNames: [],
     };
     const results = await observeConcurrentReplay(manager, () => service.acceptMessage(input));
 
@@ -270,6 +271,7 @@ describe("SessionInputService", () => {
       memoryPolicy: testExecutionMemoryPolicy,
       origin: "user_message",
       maxSteps: 50,
+      executionSkills: [],
     });
     const batch = await service.beginQueueExecution({
       sessionId: ROOT_SESSION_ID,
@@ -475,6 +477,7 @@ describe("SessionInputService", () => {
       clientRequestId: "skill-command-request",
       source: "user" as const,
       requestedModelSelection: REQUESTED_MODEL_SELECTION,
+      executionSkillNames: [],
     };
     await service.claimCommand(input);
     const accepted = await service.completeCommandAsMessage({
@@ -498,6 +501,79 @@ describe("SessionInputService", () => {
         status: "pending",
       }),
     ]);
+  });
+
+  test("atomically accepts and exactly replays normalized Skill activation without an executing receipt", async () => {
+    const input = {
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "/skill   use   test   inspect",
+      clientRequestId: "atomic-skill-command",
+      source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+      activation: { skillName: "test", content: "inspect" },
+    };
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const persistedReceiptStates: Array<Array<{ kind: string; status: string }>> = [];
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      persistedReceiptStates.push(state.inputRequestReceipts.map(({ kind, status }) => ({ kind, status })));
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      const accepted = await service.acceptSkillCommandMessage(input);
+      const normalizedReplay = { ...input, text: "/skill use test inspect" };
+      expect(await service.getSkillCommandReplay(normalizedReplay)).toEqual({
+        kind: "message",
+        acceptance: accepted,
+      });
+      expect(await service.acceptSkillCommandMessage(normalizedReplay)).toEqual(accepted);
+      expect(persistedReceiptStates).toEqual([[{ kind: "message", status: "pending" }]]);
+
+      const file = await manager.getSessionFile(WORKSPACE, ROOT_SESSION_ID);
+      expect(file.pendingMessages).toEqual([
+        expect.objectContaining({
+          id: accepted.messageId,
+          content: "inspect",
+          executionSkillNames: ["test"],
+        }),
+      ]);
+      expect(file.inputRequestReceipts).toEqual([
+        expect.objectContaining({
+          kind: "message",
+          clientRequestId: input.clientRequestId,
+          messageId: accepted.messageId,
+          status: "pending",
+        }),
+      ]);
+      expect(file.inputRequestReceipts.some((receipt) => (
+        receipt.kind === "command" && receipt.status === "executing"
+      ))).toBeFalse();
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("binds Skill command replay to the immutable normalized activation", async () => {
+    const input = {
+      sessionId: ROOT_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "/skill use test inspect",
+      clientRequestId: "skill-activation-fingerprint",
+      source: "user" as const,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+      activation: { skillName: "test", content: "inspect" },
+    };
+    await service.acceptSkillCommandMessage(input);
+
+    await expect(service.getSkillCommandReplay({
+      ...input,
+      activation: { ...input.activation, skillName: "other" },
+    })).rejects.toMatchObject({ reason: "idempotency" });
+    await expect(service.acceptSkillCommandMessage({
+      ...input,
+      activation: { ...input.activation, content: "different" },
+    })).rejects.toMatchObject({ reason: "idempotency" });
   });
 
   test("rejects reuse of a clientRequestId for different input", async () => {

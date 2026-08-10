@@ -82,10 +82,15 @@ describe("tool output ownership boundaries", () => {
       text: readFileSync(file, "utf8"),
     }));
 
-    const terminalAppendOwners = production.flatMap(({ file, text }) => (
+    const durableEventOwners = production.flatMap(({ file, text }) => (
+      /events:\s*\[\s*\{\s*type:\s*["']tool-result["']/.test(text) ? [file] : []
+    ));
+    expect(durableEventOwners).toEqual(["execution/session-tool-batch-scheduler.ts"]);
+
+    const directAppendOwners = production.flatMap(({ file, text }) => (
       /\.append\s*\(\s*\{\s*type:\s*["']tool-result["']/.test(text) ? [file] : []
     ));
-    expect(terminalAppendOwners).toEqual(["execution/session-tool-batch-scheduler.ts"]);
+    expect(directAppendOwners).toEqual([]);
 
     const liveAppendOwners = production.flatMap(({ file, text }) => (
       /\.append\s*\(\s*\{\s*type:\s*["']tool-output-delta["']/.test(text) ? [file] : []

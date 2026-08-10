@@ -87,6 +87,7 @@ describe("Provider secret redaction integration", () => {
         memoryPolicy: testExecutionMemoryPolicy,
         origin: "tool_call",
         maxSteps: 50,
+        executionSkills: [],
       });
       store.getState().append({
         type: "session.messages_committed",

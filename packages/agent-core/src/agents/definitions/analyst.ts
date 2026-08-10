@@ -59,7 +59,7 @@ export const analystAgentDefinition = {
     ],
     delegateTargets: ["explore", "librarian"],
   },
-  mcpTools: ["context7"],
+  builtinMcpServers: ["context7"],
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,

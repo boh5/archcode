@@ -37,6 +37,32 @@
       "model": "local:your-model-id"
     }
   },
+  "mcp": {
+    "disabledBuiltins": [
+      "grep.app"
+    ],
+    "servers": {
+      "internal-docs": {
+        "type": "http",
+        "enabled": true,
+        "url": "https://mcp.example.com/mcp",
+        "connectTimeoutMs": 10000,
+        "discoveryTimeoutMs": 30000,
+        "callTimeoutMs": 60000
+      },
+      "local-tools": {
+        "type": "stdio",
+        "enabled": false,
+        "command": "my-mcp-server",
+        "args": [
+          "--stdio"
+        ],
+        "env": {
+          "MCP_PROFILE": "local"
+        }
+      }
+    }
+  },
   "memory": {
     "useMemory": true,
     "autoLearning": true

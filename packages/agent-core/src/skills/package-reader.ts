@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
@@ -9,8 +10,10 @@ import {
 } from "./schema";
 import type {
   BuiltinSkillPackage,
+  SkillPackageSnapshot,
   SkillMetadata,
   SkillResourceDescriptor,
+  SkillSource,
 } from "./types";
 
 export const SKILL_ENTRY_FILE = "SKILL.md";
@@ -38,6 +41,13 @@ export class SkillPackageResourceNotFoundError extends Error {
   constructor(public readonly resource: string) {
     super(`Skill resource is not listed: ${resource}`);
     this.name = "SkillPackageResourceNotFoundError";
+  }
+}
+
+export class SkillPackageResourcePathError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SkillPackageResourcePathError";
   }
 }
 
@@ -156,20 +166,81 @@ export function readBuiltinSkillResource(
   return { descriptor, content };
 }
 
+export async function snapshotFilesystemSkill(
+  location: FilesystemSkillPackageLocation,
+  expectedName: string,
+  source: Exclude<SkillSource, "builtin">,
+  sourceLabel = location.root,
+): Promise<SkillPackageSnapshot> {
+  const { root } = location;
+  await assertFilesystemSkillAncestry(location);
+  const rootIdentity = await assertRegularDirectory(root, "Skill package root");
+  await assertExactSkillEntryName(root);
+  const entryBytes = await readRegularFileBounded(
+    join(root, SKILL_ENTRY_FILE),
+    SKILL_ENTRY_MAX_BYTES,
+    "SKILL.md",
+  );
+  const entryText = decodeEntry(entryBytes);
+  const { metadata, body } = parseSkillMarkdown(entryText);
+  assertExpectedName(metadata, expectedName);
+  const captured = await captureFilesystemResources(location, entryBytes.byteLength);
+  await assertSamePathIdentity(root, rootIdentity, "Skill package root");
+  await assertFilesystemSkillAncestry(location);
+  return createSnapshot({
+    name: expectedName,
+    source,
+    sourceLabel,
+    root,
+    metadata,
+    body,
+    entryBytes,
+    resources: captured,
+  });
+}
+
+export function snapshotBuiltinSkill(
+  skillPackage: BuiltinSkillPackage,
+  expectedName: string,
+): SkillPackageSnapshot {
+  const entryBytes = new TextEncoder().encode(skillPackage.entry);
+  if (entryBytes.byteLength > SKILL_ENTRY_MAX_BYTES) {
+    throw new Error(`SKILL.md exceeds ${SKILL_ENTRY_MAX_BYTES} bytes`);
+  }
+  const { metadata, body } = parseSkillMarkdown(skillPackage.entry);
+  assertExpectedName(metadata, expectedName);
+  const descriptors = builtinResourceDescriptors(skillPackage, entryBytes.byteLength);
+  const resources = descriptors.map((descriptor) => {
+    const value = skillPackage.resources[descriptor.path];
+    if (value === undefined) throw new Error(`Skill resource is missing: ${descriptor.path}`);
+    const content = typeof value === "string" ? new TextEncoder().encode(value) : value.slice();
+    return { descriptor, content };
+  });
+  return createSnapshot({
+    name: expectedName,
+    source: "builtin",
+    sourceLabel: "builtin",
+    metadata,
+    body,
+    entryBytes,
+    resources,
+  });
+}
+
 export function validateResourcePath(resource: string): void {
-  if (resource.length === 0) throw new Error("Skill resource path must not be empty");
-  if (resource.includes("\0")) throw new Error("Skill resource path must not contain NUL bytes");
-  if (resource.includes("\\")) throw new Error("Skill resource path must use POSIX separators");
-  if (posix.isAbsolute(resource)) throw new Error("Skill resource path must be relative");
+  if (resource.length === 0) throw new SkillPackageResourcePathError("Skill resource path must not be empty");
+  if (resource.includes("\0")) throw new SkillPackageResourcePathError("Skill resource path must not contain NUL bytes");
+  if (resource.includes("\\")) throw new SkillPackageResourcePathError("Skill resource path must use POSIX separators");
+  if (posix.isAbsolute(resource)) throw new SkillPackageResourcePathError("Skill resource path must be relative");
   const segments = resource.split("/");
   if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-    throw new Error("Skill resource path contains an invalid segment");
+    throw new SkillPackageResourcePathError("Skill resource path contains an invalid segment");
   }
   if (segments.length > SKILL_RESOURCE_MAX_DEPTH) {
-    throw new Error(`Skill resource depth exceeds ${SKILL_RESOURCE_MAX_DEPTH}`);
+    throw new SkillPackageResourcePathError(`Skill resource depth exceeds ${SKILL_RESOURCE_MAX_DEPTH}`);
   }
   if (segments[0]?.toLowerCase() === SKILL_ENTRY_FILE.toLowerCase()) {
-    throw new Error("SKILL.md is the package entry and cannot be a resource directory");
+    throw new SkillPackageResourcePathError("SKILL.md is the package entry and cannot be a resource directory");
   }
 }
 
@@ -230,6 +301,169 @@ async function walkFilesystemResources(
 
   await walk(root, []);
   return Object.freeze(resources.sort((a, b) => lexicalCompare(a.path, b.path)));
+}
+
+interface CapturedResource {
+  readonly descriptor: SkillResourceDescriptor;
+  readonly content: Uint8Array;
+}
+
+async function captureFilesystemResources(
+  location: FilesystemSkillPackageLocation,
+  entryBytes: number,
+): Promise<readonly CapturedResource[]> {
+  const captured: CapturedResource[] = [];
+  let totalEntries = 0;
+  let totalBytes = entryBytes;
+
+  async function walk(directory: string, prefix: readonly string[]): Promise<void> {
+    const label = prefix.length === 0
+      ? "Skill package root"
+      : `Skill resource directory "${prefix.join("/")}"`;
+    const directoryIdentity = await assertRegularDirectory(directory, label);
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((a, b) => lexicalCompare(a.name, b.name));
+    for (const entry of entries) {
+      totalEntries += 1;
+      if (totalEntries > SKILL_PACKAGE_MAX_ENTRIES) {
+        throw new Error(`Skill package contains more than ${SKILL_PACKAGE_MAX_ENTRIES} directory entries`);
+      }
+      const segments = [...prefix, entry.name];
+      const resourcePath = segments.join("/");
+      const absolutePath = join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Skill package symlinks are not allowed: ${resourcePath}`);
+      }
+      if (entry.isDirectory()) {
+        if (segments.length > SKILL_RESOURCE_MAX_DEPTH) {
+          throw new Error(`Skill resource depth exceeds ${SKILL_RESOURCE_MAX_DEPTH}: ${resourcePath}`);
+        }
+        await walk(absolutePath, segments);
+        continue;
+      }
+      if (!entry.isFile()) {
+        throw new Error(`Skill package entry must be a regular file: ${resourcePath}`);
+      }
+      if (prefix.length === 0 && entry.name === SKILL_ENTRY_FILE) continue;
+      validateResourcePath(resourcePath);
+      const content = await readRegularFileBounded(
+        absolutePath,
+        SKILL_RESOURCE_MAX_BYTES,
+        `Skill resource "${resourcePath}"`,
+      );
+      totalBytes += content.byteLength;
+      if (totalBytes > SKILL_PACKAGE_MAX_BYTES) {
+        throw new Error(`Skill package exceeds ${SKILL_PACKAGE_MAX_BYTES} aggregate bytes`);
+      }
+      captured.push({
+        descriptor: Object.freeze({ path: resourcePath, bytes: content.byteLength }),
+        content,
+      });
+      if (captured.length > SKILL_RESOURCE_MAX_FILES) {
+        throw new Error(`Skill package contains more than ${SKILL_RESOURCE_MAX_FILES} resource files`);
+      }
+    }
+    await assertSamePathIdentity(directory, directoryIdentity, label);
+  }
+
+  await walk(location.root, []);
+  return Object.freeze(captured.sort((a, b) => lexicalCompare(a.descriptor.path, b.descriptor.path)));
+}
+
+function createSnapshot(input: {
+  readonly name: string;
+  readonly source: SkillSource;
+  readonly sourceLabel: string;
+  readonly root?: string;
+  readonly metadata: SkillMetadata;
+  readonly body: string;
+  readonly entryBytes: Uint8Array;
+  readonly resources: readonly CapturedResource[];
+}): SkillPackageSnapshot {
+  const entryBytes = input.entryBytes.slice();
+  const resourceBytes = new Map(
+    input.resources.map(({ descriptor, content }) => [descriptor.path, content.slice()]),
+  );
+  const resources = Object.freeze(
+    input.resources.map(({ descriptor }) => Object.freeze({ ...descriptor })),
+  );
+  const metadata = freezeMetadata(input.metadata);
+  const digest = digestSnapshot(input.source, entryBytes, input.resources);
+  const resolved = Object.freeze({
+    metadata,
+    body: input.body,
+    source: input.source,
+    sourceLabel: input.sourceLabel,
+    ...(input.root === undefined ? {} : { root: input.root }),
+    resources,
+  });
+  return Object.freeze({
+    name: input.name,
+    source: input.source,
+    sourceLabel: input.sourceLabel,
+    ...(input.root === undefined ? {} : { root: input.root }),
+    metadata,
+    body: input.body,
+    resources,
+    digest,
+    readEntry: () => resolved,
+    readResource: (resource: string) => {
+      validateResourcePath(resource);
+      const descriptor = resources.find((candidate) => candidate.path === resource);
+      const content = resourceBytes.get(resource);
+      if (descriptor === undefined || content === undefined) {
+        throw new SkillPackageResourceNotFoundError(resource);
+      }
+      return {
+        skillName: input.name,
+        source: input.source,
+        sourceLabel: input.sourceLabel,
+        ...(input.root === undefined ? {} : { root: input.root }),
+        resource: descriptor,
+        content: content.slice(),
+      };
+    },
+  });
+}
+
+function digestSnapshot(
+  source: SkillSource,
+  entryBytes: Uint8Array,
+  resources: readonly CapturedResource[],
+): string {
+  const hash = createHash("sha256");
+  updateDigestField(hash, new TextEncoder().encode(source));
+  updateDigestField(hash, entryBytes);
+  for (const { descriptor, content } of resources) {
+    updateDigestField(hash, new TextEncoder().encode(descriptor.path));
+    updateDigestLength(hash, descriptor.bytes);
+    hash.update(content);
+  }
+  return hash.digest("hex");
+}
+
+function updateDigestField(hash: ReturnType<typeof createHash>, bytes: Uint8Array): void {
+  updateDigestLength(hash, bytes.byteLength);
+  hash.update(bytes);
+}
+
+function updateDigestLength(hash: ReturnType<typeof createHash>, length: number): void {
+  const value = Buffer.allocUnsafe(8);
+  value.writeBigUInt64BE(BigInt(length));
+  hash.update(value);
+}
+
+function freezeMetadata(metadata: SkillMetadata): SkillMetadata {
+  const values = metadata.metadata === undefined ? undefined : Object.freeze({ ...metadata.metadata });
+  return Object.freeze({ ...metadata, ...(values === undefined ? {} : { metadata: values }) });
+}
+
+function decodeEntry(entryBytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(entryBytes);
+  } catch {
+    throw new Error("SKILL.md must be valid UTF-8");
+  }
 }
 
 function builtinResourceDescriptors(

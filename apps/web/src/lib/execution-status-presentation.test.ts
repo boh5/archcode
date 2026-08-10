@@ -17,6 +17,10 @@ const binding: ExecutionModelBindingSummary = {
   resolution: "profile_default",
   modelRuntimeRevision: "r1",
 };
+const memoryPolicy = {
+  policy: { useMemory: true, autoLearning: true },
+  epoch: { bootId: "test-memory-boot", generation: 0 },
+};
 function record(
   status: SessionExecutionRecord["status"],
   suspension?: Extract<
@@ -29,6 +33,8 @@ function record(
     startedAt: 0,
     origin: "user_message" as const,
     maxSteps: 10,
+    executionSkills: [],
+    memoryPolicy,
     durationMs: 0,
     runs: status === "running" ? [{ ordinal: 0, startedAt: 0, binding }] : [],
   };

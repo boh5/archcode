@@ -1,4 +1,4 @@
-import type { McpServerStatus } from "@archcode/protocol";
+import type { BuiltinMcpServerName } from "@archcode/protocol";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { scopedKey } from "../store/key";
@@ -8,7 +8,7 @@ import type { SkillService } from "../skills";
 import type { StoreApi } from "zustand";
 import { createAgentFactory } from "./factory";
 import type { AgentFactory } from "./factory";
-import type { AgentDefinition } from "./factory-types";
+import type { AgentDefinition, AgentMcpToolSnapshot } from "./factory-types";
 import type { Agent } from "./types";
 import type { Logger } from "../logger";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
@@ -35,7 +35,9 @@ export interface SessionAgentManagerConfig {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
-  readonly resolveMcpStatuses?: () => ReadonlyMap<string, McpServerStatus>;
+  readonly resolveMcpToolSnapshot?: (
+    builtinServerNames: readonly BuiltinMcpServerName[],
+  ) => AgentMcpToolSnapshot;
   readonly logger: Logger;
 }
 
@@ -243,7 +245,7 @@ export class SessionAgentManager {
         cancelChildSession: this.#cancelChildSession,
         resumeChildSession: this.#resumeChildSession,
         acquireSessionCwdTransition: this.#acquireSessionCwdTransition,
-        resolveMcpStatuses: this.#config.resolveMcpStatuses,
+        resolveMcpToolSnapshot: this.#config.resolveMcpToolSnapshot,
         logger: this.#logger,
       });
       this.#factories.set(workspaceRoot, factory);

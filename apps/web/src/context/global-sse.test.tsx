@@ -417,6 +417,7 @@ describe("parseSSEEvent", () => {
       state: "ready",
       toolCount: 4,
       warningCount: 0,
+      connectedAt: 1,
     };
     const mcpEvent: GlobalSSEMcpStatusEvent = {
       type: "mcp_status",
@@ -1268,6 +1269,7 @@ describe("handleSSEEvent", () => {
       state: "ready",
       toolCount: 7,
       warningCount: 1,
+      connectedAt: 1,
     };
     const mcpEvent: GlobalSSEMcpStatusEvent = {
       type: "mcp_status",
@@ -1301,9 +1303,9 @@ describe("handleSSEEvent", () => {
 
   test("mcp_status event merges into existing servers without dropping them", () => {
     useMcpStatusStore.getState().setServers({
-      grep: { state: "pending" },
+      grep: { state: "connecting", startedAt: 1 },
     });
-    const status: McpServerStatus = { state: "failed", error: "timeout" };
+    const status: McpServerStatus = { state: "failed", error: "timeout", failedAt: 1 };
     const mcpEvent: GlobalSSEMcpStatusEvent = {
       type: "mcp_status",
       serverName: "exa",
@@ -1317,8 +1319,8 @@ describe("handleSSEEvent", () => {
     );
 
     expect(useMcpStatusStore.getState().servers).toEqual({
-      grep: { state: "pending" },
-      exa: { state: "failed", error: "timeout" },
+      grep: { state: "connecting", startedAt: 1 },
+      exa: { state: "failed", error: "timeout", failedAt: 1 },
     });
   });
 

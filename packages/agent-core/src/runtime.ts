@@ -23,8 +23,10 @@ import {
 import { registerBuiltinTools } from "./core/index";
 import {
   BUILTIN_MCP_SERVERS,
-  McpManager,
-  type McpWarning,
+  McpRuntimeService,
+  type McpRuntime,
+  type McpRuntimeServiceOptions,
+  type McpTestResult,
 } from "./mcp/index";
 import { ModelSelectionResolver, type ModelRuntime } from "./models";
 import { ProjectContextResolver } from "./projects/context-resolver";
@@ -33,6 +35,7 @@ import type { ProjectRegistry } from "./projects/registry";
 import type { ProjectInfo } from "./projects/types";
 import { SessionLifecycleService } from "./projects/session-lifecycle-service";
 import { SkillService } from "./skills";
+import { normalizeSkillUseArgs, validateSkillActivation } from "./commands/skill";
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import { projectSessionCompression } from "./store/session-read-projection";
 import { resolveSessionProfile } from "./agents/session-profile";
@@ -55,6 +58,8 @@ import type {
   HitlResponse,
   HitlView,
   McpServerStatus,
+  McpServerInventoryResponse,
+  McpServerStatusResponse,
   MemorySnapshot,
   NormalizedUsage,
   SessionNextModelSelection,
@@ -70,8 +75,10 @@ import type {
   RootSessionSummary,
   ProjectSessionInventoryItem,
   ProjectAutomationInventoryItem,
+  ProjectSkillInventoryResponse,
+  UpdateServerConfigRequest,
 } from "@archcode/protocol";
-import { createRegistry as createToolRegistry, createToolExecutionContext, DuplicateToolError, type ToolRegistry } from "./tools/index";
+import { createRegistry as createToolRegistry, createToolExecutionContext, type ToolRegistry } from "./tools/index";
 import {
   applySessionToolBatchResponse,
   applySessionToolBatchChildOutcome,
@@ -238,7 +245,8 @@ export interface AgentRuntimeOptions {
   configService: ServerConfigService;
   /** Explicit, validated startup activation. Runtime never reads configuration from disk. */
   activation: ServerConfigActivation;
-  mcpManagerFactory?: (config: ResolvedMcpConfig, redactionPolicy: SecretRedactionPolicy) => McpManager;
+  /** Test seam for the process-owned live MCP service. */
+  mcpRuntimeFactory?: (options: McpRuntimeServiceOptions) => McpRuntime;
   /** Already-resolved process-owned secret literals that are not part of global Config. */
   externalSecretLiterals?: readonly string[];
   /** Process-owned registry shared with the control plane. Runtime never constructs one. */
@@ -338,11 +346,15 @@ export interface AgentRuntime {
   readonly toolRegistry: ToolRegistry;
   readonly modelRuntime: ModelRuntime;
   readonly skillService: SkillService;
-  readonly warnings: McpWarning[];
   readonly configService: ServerConfigService;
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
   listAgentDescriptors(): readonly AgentDescriptor[];
+  getSessionSkillCatalog(
+    workspaceRoot: string,
+    sessionId: string,
+    cursor?: string,
+  ): Promise<ProjectSkillInventoryResponse>;
   removeProject(projectSlug: string): Promise<ProjectRemovalResult | undefined>;
   respondToHitl(input: {
     readonly slug: string;
@@ -366,7 +378,15 @@ export interface AgentRuntime {
   subscribeModelRuntimeChanges(listener: (event: GlobalSSEModelRuntimeChangedEvent) => void): () => void;
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
-  getMcpServerStatuses(): Map<string, McpServerStatus>;
+  getMcpServerStatus(): McpServerStatusResponse;
+  getMcpServerInventory(): McpServerInventoryResponse;
+  applyMcpConfig(config: ResolvedMcpConfig): Promise<void>;
+  testMcpServerDraft(
+    serverName: string,
+    request: UpdateServerConfigRequest,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<McpTestResult>;
+  reconnectMcpServer(serverName: string): Promise<void>;
   uploadSessionAttachment(input: UploadSessionAttachmentInput): Promise<UploadProjectAttachmentResult>;
   openSessionAttachment(input: OpenSessionAttachmentInput): Promise<OpenProjectAttachmentResult>;
   createSession(workspaceRoot: string, options: CreateRuntimeSessionOptions): Promise<RuntimeSessionFile>;
@@ -478,7 +498,6 @@ export async function createRuntime(
 ): Promise<AgentRuntime> {
   const internalOptions = options as AgentRuntimeInternalOptions;
   const logger = options.logger ?? createConsoleLogger({ level: "info" });
-  const warnings: McpWarning[] = [];
   const configService = options.configService;
   const config = configService.resolveRuntimeConfig(options.activation);
   const modelRuntime = configService.modelRuntime;
@@ -538,22 +557,15 @@ export async function createRuntime(
     ?? join(options.runtimeStorageHomeDir ?? options.configService.homeDir, USER_DATA_DIR_NAME, "tool-output");
   const toolOutputArtifactStore = internalOptions.toolOutputStoreFactory?.(toolOutputRootDir)
     ?? new ToolOutputArtifactStore({ rootDir: toolOutputRootDir });
-  let mcpManager: McpManager | undefined;
-  const recordWarning = (warning: McpWarning): void => {
-    const safeWarning = redactionPolicy.redactValue(warning);
-    warnings.push(safeWarning);
-    runtimeLogger.warn("mcp.discovery.warning", {
-      message: safeWarning.message,
-      context: safeWarning.toolName ? { toolName: safeWarning.toolName } : undefined,
-      meta: { warning: safeWarning },
-    });
-  };
+  let mcpRuntime: McpRuntime | undefined;
 
   try {
-    mcpManager = options.mcpManagerFactory
-      ? options.mcpManagerFactory(resolvedMcpConfig, redactionPolicy)
-      : new McpManager(BUILTIN_MCP_SERVERS, resolvedMcpConfig.servers, redactionPolicy, undefined, runtimeLogger.child({ module: "mcp" }));
-    const activeMcpManager = mcpManager;
+    const mcpOptions: McpRuntimeServiceOptions = {
+      logger: runtimeLogger.child({ module: "mcp" }),
+    };
+    mcpRuntime = options.mcpRuntimeFactory?.(mcpOptions)
+      ?? new McpRuntimeService(mcpOptions);
+    const activeMcpRuntime = mcpRuntime;
     await toolOutputArtifactStore.ready();
     const finalizer = new ToolOutputFinalizer({
       artifactStore: toolOutputArtifactStore,
@@ -571,33 +583,14 @@ export async function createRuntime(
     configureDefaultLspToolLogger(runtimeLogger.child({ module: "lsp.tools" }));
     configureDefaultWebFetchLogger(runtimeLogger.child({ module: "webfetch" }));
 
-    activeMcpManager.startBackgroundDiscovery(
-      (descriptors) => {
-        for (const descriptor of descriptors) {
-          if (toolRegistry.get(descriptor.name)) {
-            recordWarning({
-              toolName: descriptor.name,
-              message: `Duplicate MCP tool descriptor "${descriptor.name}" skipped during startup`,
-            });
-            continue;
-          }
-
-          try {
-            toolRegistry.register(descriptor);
-          } catch (err) {
-            if (err instanceof DuplicateToolError) {
-              recordWarning({
-                toolName: descriptor.name,
-                message: `Duplicate MCP tool descriptor "${descriptor.name}" skipped during startup`,
-              });
-              continue;
-            }
-            throw err;
-          }
-        }
-      },
-      (warning) => recordWarning(warning),
-    );
+    // Initial MCP connection is intentionally non-blocking. The synchronous
+    // prefix of apply publishes connecting/disabled before Runtime activation;
+    // each model boundary sees the current live projection thereafter.
+    void activeMcpRuntime.apply(resolvedMcpConfig).catch((error) => {
+      runtimeLogger.error("mcp.runtime.initial-apply.failed", {
+        error: { name: error instanceof Error ? error.name : "NonErrorThrow" },
+      });
+    });
 
     const projectRegistry = options.projectRegistry;
     const projectSlugsByWorkspace = new Map(
@@ -865,7 +858,9 @@ export async function createRuntime(
       skillService,
       projectContextResolver: contextResolver,
       sessionGoalService,
-      resolveMcpStatuses: () => activeMcpManager.getStatus(),
+      resolveMcpToolSnapshot: (builtinServerNames) => activeMcpRuntime.snapshotTools({
+        builtinServerNames,
+      }),
       storeManager: sessionStoreManager,
       createToolOutputAccess: (workspaceRoot, rootSessionId) => createScopeBoundToolOutputAccess(
         toolOutputArtifactStore,
@@ -917,6 +912,7 @@ export async function createRuntime(
         cancelSessionBatchAndHitl(sessionId, workspaceRoot, reason)
       ),
       sessionInputService,
+      skillService,
       trackSession,
       untrackSession,
       executionScopeValidator,
@@ -1128,6 +1124,7 @@ export async function createRuntime(
             hitlId: dispatching.hitlId,
             requestKey: dispatching.requestKey,
             response: dispatching.response!,
+            logger: runtimeLogger,
           });
 
           const execution = await executionManager.reconcileDurableSession({
@@ -1291,6 +1288,7 @@ export async function createRuntime(
         sessionId,
         workspaceRoot,
         reason,
+        logger: runtimeLogger,
       });
       if (cancelled.hitlIds.length === 0) return;
       const referenced = (await context.hitl.list({ owner: { type: "session", id: sessionId } }))
@@ -1396,83 +1394,152 @@ export async function createRuntime(
               }
               return { clientRequestId: replay.clientRequestId, status: "command" as const };
             };
-            const existingReplay = await sessionInputService.getCommandReplay(replayInput);
-            if (existingReplay !== undefined
-              && !(existingReplay.kind === "command" && existingReplay.status === "executing")) {
-              const replayAcceptance = settledAcceptance(existingReplay);
-              if (replayAcceptance.status === "command") {
-                return replayAcceptance;
-              }
-              accepted = replayAcceptance;
-            } else {
-              let commandRun;
-              try {
-                commandRun = await executionManager.runSessionCommand({
-                  workspaceRoot: input.workspaceRoot,
-                  sessionId: input.sessionId,
-                  clientRequestId: input.clientRequestId,
-                  requestedModelSelection: input.requestedModelSelection,
-                }, async (binding, signal): Promise<SessionMessageAcceptance> => {
-                  if ((await sessionStoreManager.listSessionFamilyToolBatchHitlIds(
-                    input.workspaceRoot,
-                    input.sessionId,
-                  )).length > 0) {
-                    throw new SessionCommandConflictError(input.sessionId);
-                  }
-                  const claim = await sessionInputService.claimCommand(replayInput);
-                  if (claim.kind !== "claimed") return settledAcceptance(claim);
-                  let result;
+            const skillActivation = command.name === "skill"
+              ? normalizeSkillUseArgs(command.args)
+              : null;
+            if (skillActivation !== null) {
+              const skillInput = { ...replayInput, activation: skillActivation };
+              const replay = await sessionInputService.getSkillCommandReplay(skillInput);
+              if (replay !== undefined) {
+                const replayAcceptance = settledAcceptance(replay);
+                if (replayAcceptance.status === "command") return replayAcceptance;
+                accepted = replayAcceptance;
+              } else {
+                const definition = defaultAgentDefinitions.find(({ name }) => name === state.agentName);
+                if (definition === undefined) throw new Error(`Unknown Agent definition: ${state.agentName}`);
+                const validation = await validateSkillActivation({
+                  skillService,
+                  cwd: state.cwd,
+                  agentName: definition.name,
+                  agentSkills: definition.skills,
+                  activation: skillActivation,
+                });
+                if (validation.success) {
+                  let commandRun;
                   try {
-                    signal.throwIfAborted();
-                    result = await agent.executeCommand(command, binding, { abort: signal });
-                    signal.throwIfAborted();
-                  } catch (error) {
-                    await sessionInputService.failCommand({
-                      sessionId: input.sessionId,
+                    commandRun = await executionManager.runSessionCommand({
                       workspaceRoot: input.workspaceRoot,
+                      sessionId: input.sessionId,
                       clientRequestId: input.clientRequestId,
-                      error: "Command execution failed before a durable result was recorded",
+                      requestedModelSelection: input.requestedModelSelection,
+                    }, async (_binding, signal): Promise<MessageAcceptance> => {
+                      if ((await sessionStoreManager.listSessionFamilyToolBatchHitlIds(
+                        input.workspaceRoot,
+                        input.sessionId,
+                      )).length > 0) {
+                        throw new SessionCommandConflictError(input.sessionId);
+                      }
+                      signal.throwIfAborted();
+                      return await sessionInputService.acceptSkillCommandMessage(skillInput);
                     });
+                  } catch (error) {
+                    if (error instanceof SessionFamilyActiveError
+                      || error instanceof SessionFamilyStopInProgressError
+                      || error instanceof SessionDeleteInProgressError) {
+                      throw new SessionCommandConflictError(input.sessionId);
+                    }
                     throw error;
                   }
-                  if (result.kind === "handled") {
-                    await sessionInputService.completeCommand({
+                  if (commandRun.kind === "joined") {
+                    const joinedReplay = await sessionInputService.getSkillCommandReplay(skillInput);
+                    if (joinedReplay === undefined) {
+                      if (commandRun.error !== undefined) throw commandRun.error;
+                      throw new SessionCommandOutcomeError(
+                        input.sessionId,
+                        input.clientRequestId,
+                        "indeterminate",
+                        "Skill activation outcome is unknown and cannot be replayed safely",
+                      );
+                    }
+                    const replayAcceptance = settledAcceptance(joinedReplay);
+                    if (replayAcceptance.status === "command") return replayAcceptance;
+                    accepted = replayAcceptance;
+                  } else {
+                    accepted = commandRun.result;
+                  }
+                }
+              }
+            }
+            if (accepted === undefined) {
+              const existingReplay = await sessionInputService.getCommandReplay(replayInput);
+              if (existingReplay !== undefined
+                && !(existingReplay.kind === "command" && existingReplay.status === "executing")) {
+                const replayAcceptance = settledAcceptance(existingReplay);
+                if (replayAcceptance.status === "command") {
+                  return replayAcceptance;
+                }
+                accepted = replayAcceptance;
+              } else {
+                let commandRun;
+                try {
+                  commandRun = await executionManager.runSessionCommand({
+                    workspaceRoot: input.workspaceRoot,
+                    sessionId: input.sessionId,
+                    clientRequestId: input.clientRequestId,
+                    requestedModelSelection: input.requestedModelSelection,
+                  }, async (binding, signal): Promise<SessionMessageAcceptance> => {
+                    if ((await sessionStoreManager.listSessionFamilyToolBatchHitlIds(
+                      input.workspaceRoot,
+                      input.sessionId,
+                    )).length > 0) {
+                      throw new SessionCommandConflictError(input.sessionId);
+                    }
+                    const claim = await sessionInputService.claimCommand(replayInput);
+                    if (claim.kind !== "claimed") return settledAcceptance(claim);
+                    let result;
+                    try {
+                      signal.throwIfAborted();
+                      result = await agent.executeCommand(command, binding, { abort: signal });
+                      signal.throwIfAborted();
+                    } catch (error) {
+                      await sessionInputService.failCommand({
+                        sessionId: input.sessionId,
+                        workspaceRoot: input.workspaceRoot,
+                        clientRequestId: input.clientRequestId,
+                        error: "Command execution failed before a durable result was recorded",
+                      });
+                      throw error;
+                    }
+                    if (result.kind === "handled") {
+                      await sessionInputService.completeCommand({
+                        sessionId: input.sessionId,
+                        workspaceRoot: input.workspaceRoot,
+                        clientRequestId: input.clientRequestId,
+                      });
+                      return { clientRequestId: input.clientRequestId, status: "command" };
+                    }
+                    return await sessionInputService.completeCommandAsMessage({
                       sessionId: input.sessionId,
                       workspaceRoot: input.workspaceRoot,
                       clientRequestId: input.clientRequestId,
+                      text: result.content,
+                      executionSkillNames: result.executionSkillNames,
+                      source: input.source,
+                      requestedModelSelection: input.requestedModelSelection,
                     });
-                    return { clientRequestId: input.clientRequestId, status: "command" };
-                  }
-                  return await sessionInputService.completeCommandAsMessage({
-                    sessionId: input.sessionId,
-                    workspaceRoot: input.workspaceRoot,
-                    clientRequestId: input.clientRequestId,
-                    text: result.content,
-                    source: input.source,
-                    requestedModelSelection: input.requestedModelSelection,
                   });
-                });
-              } catch (error) {
-                if (error instanceof SessionFamilyActiveError
-                  || error instanceof SessionFamilyStopInProgressError
-                  || error instanceof SessionDeleteInProgressError) {
-                  throw new SessionCommandConflictError(input.sessionId);
+                } catch (error) {
+                  if (error instanceof SessionFamilyActiveError
+                    || error instanceof SessionFamilyStopInProgressError
+                    || error instanceof SessionDeleteInProgressError) {
+                    throw new SessionCommandConflictError(input.sessionId);
+                  }
+                  throw error;
                 }
-                throw error;
+                const joinedReplay = commandRun.kind === "joined"
+                  ? await sessionInputService.getCommandReplay(replayInput)
+                  : undefined;
+                if (commandRun.kind === "joined" && joinedReplay === undefined && commandRun.error !== undefined) {
+                  throw commandRun.error;
+                }
+                const commandAcceptance = commandRun.kind === "joined"
+                  ? settledAcceptance(joinedReplay)
+                  : commandRun.result;
+                if (commandAcceptance.status === "command") {
+                  return commandAcceptance;
+                }
+                accepted = commandAcceptance;
               }
-              const joinedReplay = commandRun.kind === "joined"
-                ? await sessionInputService.getCommandReplay(replayInput)
-                : undefined;
-              if (commandRun.kind === "joined" && joinedReplay === undefined && commandRun.error !== undefined) {
-                throw commandRun.error;
-              }
-              const commandAcceptance = commandRun.kind === "joined"
-                ? settledAcceptance(joinedReplay)
-                : commandRun.result;
-              if (commandAcceptance.status === "command") {
-                return commandAcceptance;
-              }
-              accepted = commandAcceptance;
             }
           }
         }
@@ -2093,7 +2160,7 @@ export async function createRuntime(
           : executionManager.shutdown(),
       },
       { completed: false, operation: () => toolOutputArtifactStore.dispose() },
-      { completed: false, operation: () => closeMcpManager(activeMcpManager, warnings, runtimeLogger) },
+      { completed: false, operation: () => activeMcpRuntime.close() },
       {
         completed: false,
         operation: () => internalOptions.sessionAgentManagerDisposeAll !== undefined
@@ -2137,11 +2204,37 @@ export async function createRuntime(
       toolRegistry,
       modelRuntime,
       skillService,
-      warnings,
       configService,
       projectRegistry,
       contextResolver,
       listAgentDescriptors: () => defaultAgentDefinitions.map(({ name, displayName }) => ({ name, displayName })),
+      getSessionSkillCatalog: async (workspaceRoot, sessionId, cursor) => {
+        const state = (await sessionStoreManager.getOrLoad(sessionId, workspaceRoot)).getState();
+        const definition = defaultAgentDefinitions.find(({ name }) => name === state.agentName);
+        if (definition === undefined) throw new Error(`Unknown Agent definition: ${state.agentName}`);
+        const [page, promptProjection] = await Promise.all([
+          skillService.inventoryPage(state.cwd, cursor, definition.skills),
+          skillService.projectPromptCatalog(state.cwd, definition.skills),
+        ]);
+        return {
+          items: page.items.map((item) => ({
+            name: item.name,
+            source: item.source,
+            winner: item.winner,
+            shadowed: item.shadowed,
+            valid: item.valid,
+            ...(item.description === undefined ? {} : { description: item.description }),
+            ...(item.diagnostic === undefined ? {} : {
+              diagnostic: {
+                code: item.diagnostic.code,
+                message: item.diagnostic.message,
+              },
+            }),
+          })),
+          ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+          promptProjection,
+        };
+      },
       removeProject,
       respondToHitl,
       cancelHitl,
@@ -2214,8 +2307,22 @@ export async function createRuntime(
           resourceChangeListeners.delete(listener);
         };
       },
-      subscribeMcpStatusChanges: (listener) => activeMcpManager.onStatusChange(listener),
-      getMcpServerStatuses: () => activeMcpManager.getStatus(),
+      subscribeMcpStatusChanges: (listener) => activeMcpRuntime.onStatusChange(listener),
+      getMcpServerStatus: () => activeMcpRuntime.getStatus(),
+      getMcpServerInventory: () => activeMcpRuntime.getInventory(),
+      applyMcpConfig: (nextConfig) => activeMcpRuntime.apply(nextConfig),
+      testMcpServerDraft: async (serverName, request, options) => {
+        const draft = await configService.resolveMcpDraft(request);
+        const builtinConfig = Object.hasOwn(BUILTIN_MCP_SERVERS, serverName)
+          ? BUILTIN_MCP_SERVERS[serverName as keyof typeof BUILTIN_MCP_SERVERS]
+          : undefined;
+        const serverConfig = draft.servers[serverName] ?? builtinConfig;
+        if (serverConfig === undefined) {
+          throw new Error(`MCP server "${serverName}" is not configured`);
+        }
+        return await activeMcpRuntime.testServer(serverName, serverConfig, options);
+      },
+      reconnectMcpServer: (serverName) => activeMcpRuntime.reconnect(serverName),
       uploadSessionAttachment: (input) => sessionAttachmentService.upload(input),
       openSessionAttachment: (input) => sessionAttachmentService.openDownload(input),
       createSession: async (workspaceRoot, createOptions) => {
@@ -2436,7 +2543,7 @@ export async function createRuntime(
       message: redactionPolicy.redactString(errorMessage(err)),
       meta: { errorName, errorCode },
     });
-    if (mcpManager !== undefined) await closeMcpManager(mcpManager, warnings, runtimeLogger);
+    if (mcpRuntime !== undefined) await mcpRuntime.close();
     await toolOutputArtifactStore.dispose();
     throw err;
   }
@@ -2466,34 +2573,6 @@ function projectRootSessionSummary(file: SessionFile): RootSessionSummary {
     createdAt: file.createdAt,
     updatedAt: file.updatedAt,
   };
-}
-
-/**
- * MCP close failures cross a process boundary. Deliberately do not preserve
- * their message, server name, stderr, or stack: those values can contain
- * credentials, URLs, and local paths. The Runtime is the sole owner of this
- * boundary; callers only receive the stable warning record and log event.
- */
-async function closeMcpManager(
-  mcpManager: McpManager,
-  warnings: McpWarning[],
-  logger: Logger,
-): Promise<void> {
-  try {
-    const closeWarnings = await mcpManager.closeAll();
-    for (const _warning of closeWarnings) recordMcpShutdownWarning(warnings, logger);
-  } catch {
-    recordMcpShutdownWarning(warnings, logger);
-  }
-}
-
-function recordMcpShutdownWarning(warnings: McpWarning[], logger: Logger): void {
-  const warning: McpWarning = { message: "MCP shutdown failed" };
-  warnings.push(warning);
-  logger.warn("mcp.shutdown.warning", {
-    message: warning.message,
-    meta: { failure: { name: "McpShutdownError", code: "MCP_SHUTDOWN_FAILED" } },
-  });
 }
 
 function errorMessage(error: unknown): string {

@@ -141,6 +141,7 @@ describe("createTitleGenerationTask", () => {
       memoryPolicy: testExecutionMemoryPolicy,
       origin: "user_message",
       maxSteps: 50,
+      executionSkills: [],
     });
     store.getState().append({
       type: "session.messages_committed",

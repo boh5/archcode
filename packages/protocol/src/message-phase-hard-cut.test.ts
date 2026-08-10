@@ -57,6 +57,7 @@ function start(executionId = "execution"): StreamEvent {
     origin: "user_message",
     maxSteps: 10,
     binding: BINDING,
+    executionSkills: [],
     memoryPolicy: MEMORY_POLICY,
   };
 }

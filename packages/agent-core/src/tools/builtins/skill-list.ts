@@ -3,8 +3,11 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
 import type { ToolExecutionContext } from "../types";
+import { DigestBoundCursorError } from "../../skills";
 
-export const SkillListInputSchema = z.object({}).strict();
+export const SkillListInputSchema = z.object({
+  cursor: z.string().min(1).optional(),
+}).strict();
 
 type SkillListInput = z.infer<typeof SkillListInputSchema>;
 
@@ -20,7 +23,7 @@ export function createSkillListTool() {
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     outputPolicy: { kind: "inline", previewDirection: "head" },
     execute: async (
-      _input: SkillListInput,
+      input: SkillListInput,
       ctx: ToolExecutionContext,
     ) => {
       if (ctx.skillService === undefined || ctx.agentSkills === undefined) {
@@ -31,9 +34,20 @@ export function createSkillListTool() {
         });
       }
       try {
-        const entries = await ctx.skillService.listForAgent(ctx.cwd, ctx.agentSkills);
-        return createTextToolResult(JSON.stringify(entries));
+        const page = await ctx.skillService.listPageForAgent(
+          ctx.cwd,
+          ctx.agentSkills,
+          input.cursor,
+        );
+        return createTextToolResult(JSON.stringify(page));
       } catch (error) {
+        if (error instanceof DigestBoundCursorError) {
+          return createToolErrorResult({
+            kind: "execution",
+            code: error.code,
+            message: error.message,
+          });
+        }
         return createToolErrorResult({
           kind: "execution",
           error: error instanceof Error ? error : new Error(String(error)),

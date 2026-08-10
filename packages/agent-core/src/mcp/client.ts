@@ -2,17 +2,18 @@ import { MCP_CLIENT_NAME } from "@archcode/protocol";
 import type { ResolvedMcpServerConfig } from "../config/mcp";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
+import { SECRET_LITERAL_MAX_BYTES, type SecretRedactionPolicy } from "../security";
+import { safeUtf8End } from "../tool-output/utf8";
 import { McpConnectionError, McpToolExecutionError } from "./errors";
-import type { SecretRedactionPolicy } from "../security";
 
-// The MCP SDK requires this external .js subpath for its package exports map.
+// The MCP SDK requires these external .js subpaths for its package exports map.
 import { Client } from "@modelcontextprotocol/sdk/client";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 /** Transport boundary, before the MCP SDK parses JSON or SSE. */
 export const MAX_MCP_TRANSPORT_BYTES = 8 * 1024 * 1024;
-
-// ─── SDK Factory Seam ────────────────────────────────────────────────────────
+const MAX_STDERR_LOG_BYTES = 4 * 1024;
 
 export interface McpToolLike {
   name: string;
@@ -21,6 +22,8 @@ export interface McpToolLike {
   annotations?: {
     readOnlyHint?: boolean;
     destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
     [key: string]: unknown;
   };
 }
@@ -31,66 +34,62 @@ export interface CallToolResultLike {
   structuredContent?: unknown;
 }
 
+export interface McpSdkRequestOptions {
+  signal?: AbortSignal;
+  timeout: number;
+  maxTotalTimeout: number;
+}
+
 export interface McpSdkClientLike {
-  connect(transport: unknown): Promise<void>;
-  listTools(input?: { cursor?: string }): Promise<{
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  connect(transport: McpTransportLike, options?: McpSdkRequestOptions): Promise<void>;
+  listTools(input?: { cursor?: string }, options?: McpSdkRequestOptions): Promise<{
     tools: unknown[];
     nextCursor?: string;
   }>;
-  callTool(input: {
-    name: string;
-    arguments: Record<string, unknown>;
-  }): Promise<CallToolResultLike>;
+  callTool(
+    input: { name: string; arguments: Record<string, unknown> },
+    resultSchema: undefined,
+    options?: McpSdkRequestOptions,
+  ): Promise<CallToolResultLike>;
   close?: () => Promise<void>;
 }
 
 export interface McpTransportLike {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  terminateSession?: () => Promise<void>;
   close?: () => Promise<void>;
+  stderr?: {
+    on(event: "data" | "end" | "close", listener: (chunk?: unknown) => void): unknown;
+  } | null;
 }
 
 export interface McpClientFactories {
   createClient(): McpSdkClientLike;
-  createTransport(
-    url: URL,
-    options: { headers?: Record<string, string> },
-  ): McpTransportLike;
+  createTransport(config: ResolvedMcpServerConfig): McpTransportLike;
 }
-
-export interface McpDeadlineHandle {
-  readonly id?: unknown;
-}
-
-/** Owns MCP operation deadlines independently from the SDK transport. */
-export interface McpDeadlineScheduler {
-  schedule(delayMs: number, callback: () => void): McpDeadlineHandle;
-  cancel(handle: McpDeadlineHandle): void;
-}
-
-const systemMcpDeadlineScheduler: McpDeadlineScheduler = {
-  schedule: (delayMs, callback) => {
-    const id = setTimeout(callback, delayMs);
-    return { id };
-  },
-  cancel: (handle) => {
-    if (handle.id !== undefined) clearTimeout(handle.id as Timer);
-  },
-};
-
-// ─── Production Factories ────────────────────────────────────────────────────
 
 export function createDefaultMcpClientFactories(): McpClientFactories {
   return {
     createClient(): McpSdkClientLike {
-      return new Client({ name: MCP_CLIENT_NAME, version: "0.0.2" }) as McpSdkClientLike;
+      return new Client({ name: MCP_CLIENT_NAME, version: "0.0.2" }) as unknown as McpSdkClientLike;
     },
-    createTransport(
-      url: URL,
-      options: { headers?: Record<string, string> },
-    ): McpTransportLike {
-      return new StreamableHTTPClientTransport(url, {
-        requestInit: options.headers ? { headers: options.headers } : undefined,
+    createTransport(config: ResolvedMcpServerConfig): McpTransportLike {
+      if (config.type === "stdio") {
+        return new StdioClientTransport({
+          command: config.command,
+          args: config.args,
+          env: config.env,
+          stderr: "pipe",
+        }) as McpTransportLike;
+      }
+
+      return new StreamableHTTPClientTransport(new URL(config.url), {
+        requestInit: config.headers ? { headers: config.headers } : undefined,
         fetch: createMcpBoundedFetch(),
-      });
+      }) as McpTransportLike;
     },
   };
 }
@@ -108,8 +107,9 @@ export function createMcpBoundedFetch(): (
     const response = await fetch(input, init);
     if (response.body === null) return response;
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    const isSse = contentType.includes("text/event-stream");
-    const limiter = isSse ? new SsePayloadLimiter() : new TotalPayloadLimiter();
+    const limiter = contentType.includes("text/event-stream")
+      ? new SsePayloadLimiter()
+      : new TotalPayloadLimiter();
     const reader = response.body.getReader();
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
@@ -130,12 +130,17 @@ export function createMcpBoundedFetch(): (
         await reader.cancel(reason).catch(() => undefined);
       },
     });
-    return new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
+    return new Response(stream, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
   };
 }
 
 class TotalPayloadLimiter {
   #bytes = 0;
+
   observe(chunk: Uint8Array): void {
     this.#bytes += chunk.byteLength;
     if (this.#bytes > MAX_MCP_TRANSPORT_BYTES) {
@@ -186,19 +191,21 @@ class SsePayloadLimiter {
   }
 
   #finishLine(): void {
-    if (this.#lineBytes === 0) {
-      this.#eventBytes = 0;
-    }
+    if (this.#lineBytes === 0) this.#eventBytes = 0;
     this.#lineBytes = 0;
   }
 }
 
-// ─── Client Wrapper ──────────────────────────────────────────────────────────
-
+/** Thin SDK client boundary. The SDK owns cancellation and per-request deadlines. */
 export class McpClient {
   readonly #logger: Logger;
-  private readonly sdkClient: McpSdkClientLike;
-  private readonly transport: McpTransportLike;
+  readonly #sdkClient: McpSdkClientLike;
+  readonly #transport: McpTransportLike;
+  #closed = false;
+  #closePromise?: Promise<void>;
+  #unexpectedFailure?: (error: Error) => void;
+  #stderrCapture = Buffer.alloc(0);
+  #stderrLogged = false;
 
   constructor(
     private readonly serverName: string,
@@ -206,49 +213,68 @@ export class McpClient {
     private readonly redactionPolicy: SecretRedactionPolicy,
     factories: McpClientFactories = createDefaultMcpClientFactories(),
     logger: Logger = silentLogger,
-    private readonly deadlineScheduler: McpDeadlineScheduler = systemMcpDeadlineScheduler,
+    private readonly now: () => number = () => performance.now(),
   ) {
     this.#logger = logger.child({ module: "mcp.client" });
-    this.sdkClient = factories.createClient();
-    this.transport = factories.createTransport(new URL(config.url), {
-      headers: config.headers,
-    });
+    this.#sdkClient = factories.createClient();
+    this.#transport = factories.createTransport(config);
+    this.#attachLifecycleHandlers();
+    this.#attachBoundedStderr();
   }
 
-  async connect(): Promise<void> {
+  onUnexpectedFailure(listener: (error: Error) => void): void {
+    this.#unexpectedFailure = listener;
+  }
+
+  async connect(signal?: AbortSignal): Promise<void> {
     try {
-      await this.withTimeout(
-        this.sdkClient.connect(this.transport),
-        "connect",
+      await this.#sdkClient.connect(
+        this.#transport,
+        requestOptions(this.config.connectTimeoutMs, signal),
       );
-    } catch (err) {
-      this.#logger.warn("mcp.client.connect.failed", {
-        context: { serverName: this.serverName },
-        error: this.redactedLogError(err),
-      });
-      throw new McpConnectionError(this.serverName, this.redactCause(err));
+    } catch (error) {
+      this.#logFailure("mcp.client.connect.failed", error);
+      throw new McpConnectionError(this.serverName, this.#redactCause(error), classifySdkError(error));
     }
   }
 
-  async listTools(): Promise<McpToolLike[]> {
+  async listTools(signal?: AbortSignal): Promise<McpToolLike[]> {
     const tools: McpToolLike[] = [];
+    const seenCursors = new Set<string>();
+    const timeoutMs = this.config.discoveryTimeoutMs;
+    let deadline: number | undefined;
     let cursor: string | undefined;
 
     try {
-      do {
-        const result = await this.withTimeout(
-          this.sdkClient.listTools(cursor ? { cursor } : undefined),
-          "tools/list",
+      // tools/list is paginated, but discoveryTimeoutMs bounds the complete
+      // discovery operation. The SDK enforces each page's remaining budget.
+      while (true) {
+        throwIfAborted(signal);
+        const requestStartedAt = this.now();
+        const remainingMs = deadline === undefined
+          ? timeoutMs
+          : deadline - requestStartedAt;
+        deadline ??= requestStartedAt + timeoutMs;
+        if (remainingMs <= 0) throw discoveryTimeoutError(timeoutMs);
+
+        const result = await this.#sdkClient.listTools(
+          cursor === undefined ? undefined : { cursor },
+          requestOptions(remainingMs, signal),
         );
+
+        throwIfAborted(signal);
+        if (this.now() >= deadline) throw discoveryTimeoutError(timeoutMs);
+
         tools.push(...result.tools.map((tool) => tool as McpToolLike));
+        if (this.now() >= deadline) throw discoveryTimeoutError(timeoutMs);
+        if (result.nextCursor === undefined) break;
+        if (seenCursors.has(result.nextCursor)) throw repeatedCursorError();
+        seenCursors.add(result.nextCursor);
         cursor = result.nextCursor;
-      } while (cursor);
-    } catch (err) {
-      this.#logger.warn("mcp.client.list-tools.failed", {
-        context: { serverName: this.serverName },
-        error: this.redactedLogError(err),
-      });
-      throw new McpConnectionError(this.serverName, this.redactCause(err));
+      }
+    } catch (error) {
+      this.#logFailure("mcp.client.list-tools.failed", error);
+      throw new McpConnectionError(this.serverName, this.#redactCause(error), classifySdkError(error));
     }
 
     return tools;
@@ -257,68 +283,198 @@ export class McpClient {
   async callTool(
     toolName: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
+    onDispatch?: () => void,
   ): Promise<CallToolResultLike> {
-    try {
-      return await this.withTimeout(
-        this.sdkClient.callTool({ name: toolName, arguments: args }),
-        `tools/call:${toolName}`,
+    if (signal?.aborted) {
+      throw new McpToolExecutionError(
+        this.serverName,
+        this.redactionPolicy.redactString(toolName),
+        abortError(),
+        "aborted",
       );
-    } catch (err) {
+    }
+
+    try {
+      // This is the last synchronous boundary before the SDK receives the
+      // request. Callers use it to distinguish a pre-dispatch cancellation
+      // from an uncertain effectful result after transport hand-off.
+      onDispatch?.();
+      return await this.#sdkClient.callTool(
+        { name: toolName, arguments: args },
+        undefined,
+        requestOptions(this.config.callTimeoutMs, signal),
+      );
+    } catch (error) {
+      const safeToolName = this.redactionPolicy.redactString(toolName);
       this.#logger.warn("mcp.client.call-tool.failed", {
-        context: { serverName: this.serverName, toolName },
-        error: this.redactedLogError(err),
+        context: { serverName: this.serverName, toolName: safeToolName },
+        error: this.#redactedLogError(error),
       });
       throw new McpToolExecutionError(
         this.serverName,
-        toolName,
-        this.redactCause(err),
+        safeToolName,
+        this.#redactCause(error),
+        classifySdkError(error),
       );
     }
   }
 
-  async close(): Promise<void> {
-    await this.sdkClient.close?.();
-    await this.transport.close?.();
+  close(): Promise<void> {
+    if (this.#closePromise) return this.#closePromise;
+    this.#closed = true;
+    this.#closePromise = this.#closeOwnedResources();
+    return this.#closePromise;
   }
 
-  private withTimeout<T>(promise: Promise<T>, operation: string): Promise<T> {
-    let timeoutHandle: McpDeadlineHandle | undefined;
+  get closed(): boolean {
+    return this.#closed;
+  }
 
-    const timeoutPromise = new Promise<never>((_resolve, reject) => {
-      timeoutHandle = this.deadlineScheduler.schedule(this.config.timeout, () => {
-        reject(
-          new Error(
-            `MCP ${operation} timed out after ${this.config.timeout}ms`,
-          ),
-        );
-      });
-    });
-
-    return Promise.race([promise, timeoutPromise]).finally(() => {
-      if (timeoutHandle !== undefined) {
-        this.deadlineScheduler.cancel(timeoutHandle);
+  async #closeOwnedResources(): Promise<void> {
+    try {
+      if (this.#transport.terminateSession) {
+        try {
+          await this.#transport.terminateSession();
+        } catch (error) {
+          this.#logger.warn("mcp.client.terminate-session.failed", {
+            context: { serverName: this.serverName },
+            error: this.#redactedLogError(error),
+          });
+        }
       }
+
+      if (this.#sdkClient.close) {
+        await this.#sdkClient.close();
+        return;
+      }
+      await this.#transport.close?.();
+    } finally {
+      this.#flushStderr();
+    }
+  }
+
+  #attachLifecycleHandlers(): void {
+    const reportClose = () => {
+      this.#reportUnexpectedFailure(new Error("MCP connection closed unexpectedly"));
+    };
+    const reportError = (error: Error) => {
+      this.#reportUnexpectedFailure(error);
+    };
+    this.#sdkClient.onclose = reportClose;
+    this.#sdkClient.onerror = reportError;
+    // The SDK takes ownership of the transport and chains callbacks installed
+    // before connect. Listening at both public boundaries also covers a
+    // transport failure that occurs while the SDK is still connecting.
+    this.#transport.onclose = reportClose;
+    this.#transport.onerror = reportError;
+  }
+
+  #reportUnexpectedFailure(error: Error): void {
+    if (this.#closed) return;
+    this.#unexpectedFailure?.(error);
+  }
+
+  #attachBoundedStderr(): void {
+    this.#transport.stderr?.on("data", (chunk) => {
+      if (this.#stderrLogged) return;
+      const bytes = typeof chunk === "string"
+        ? Buffer.from(chunk, "utf8")
+        : chunk instanceof Uint8Array
+          ? Buffer.from(chunk)
+          : Buffer.from(String(chunk), "utf8");
+      const captureLimit = MAX_STDERR_LOG_BYTES + SECRET_LITERAL_MAX_BYTES;
+      const remaining = captureLimit - this.#stderrCapture.byteLength;
+      if (remaining > 0) {
+        this.#stderrCapture = Buffer.concat([
+          this.#stderrCapture,
+          bytes.subarray(0, remaining),
+        ]);
+      }
+      if (this.#stderrCapture.byteLength === captureLimit) this.#flushStderr();
+    });
+    this.#transport.stderr?.on("end", () => this.#flushStderr());
+    this.#transport.stderr?.on("close", () => this.#flushStderr());
+  }
+
+  #flushStderr(): void {
+    if (this.#stderrLogged || this.#stderrCapture.byteLength === 0) return;
+    this.#stderrLogged = true;
+    const completeEnd = safeUtf8End(this.#stderrCapture, this.#stderrCapture.byteLength);
+    const redacted = this.redactionPolicy.redactString(
+      this.#stderrCapture.subarray(0, completeEnd).toString("utf8"),
+    );
+    const redactedBytes = Buffer.from(redacted, "utf8");
+    const boundedEnd = safeUtf8End(redactedBytes, MAX_STDERR_LOG_BYTES);
+    this.#logger.warn("mcp.client.stdio.stderr", {
+      context: { serverName: this.serverName, output: redactedBytes.subarray(0, boundedEnd).toString("utf8") },
+    });
+    this.#stderrCapture = Buffer.alloc(0);
+  }
+
+  #logFailure(event: string, error: unknown): void {
+    this.#logger.warn(event, {
+      context: { serverName: this.serverName },
+      error: this.#redactedLogError(error),
     });
   }
 
-  private redactCause(cause: unknown): unknown {
+  #redactCause(cause: unknown): unknown {
     if (cause instanceof Error) {
       const redacted = new Error(this.redactionPolicy.redactString(cause.message));
       redacted.name = cause.name;
+      if ("code" in cause) (redacted as Error & { code?: unknown }).code = cause.code;
       return redacted;
     }
-
-    if (typeof cause === "string") {
-      return new Error(this.redactionPolicy.redactString(cause));
-    }
-
-    return undefined;
+    return typeof cause === "string"
+      ? new Error(this.redactionPolicy.redactString(cause))
+      : undefined;
   }
-  private redactedLogError(error: unknown): { name: string; message: string } {
+
+  #redactedLogError(error: unknown): { name: string; message: string } {
     if (error instanceof Error) {
-      return { name: error.name || "Error", message: this.redactionPolicy.redactString(error.message) };
+      return {
+        name: error.name || "Error",
+        message: this.redactionPolicy.redactString(error.message),
+      };
     }
-
-    return { name: typeof error, message: this.redactionPolicy.redactString(String(error)) };
+    return {
+      name: typeof error,
+      message: this.redactionPolicy.redactString(String(error)),
+    };
   }
+}
+
+function requestOptions(timeout: number, signal?: AbortSignal): McpSdkRequestOptions {
+  return { timeout, maxTotalTimeout: timeout, ...(signal ? { signal } : {}) };
+}
+
+function classifySdkError(error: unknown): "aborted" | "timeout" | "failed" {
+  if (error instanceof Error && error.name === "AbortError") return "aborted";
+  if (typeof error === "object" && error !== null && "code" in error && error.code === -32001) {
+    return "timeout";
+  }
+  if (error instanceof Error && /timed? out|timeout/i.test(error.message)) return "timeout";
+  return "failed";
+}
+
+function abortError(): Error {
+  const error = new Error("The MCP operation was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+function discoveryTimeoutError(timeoutMs: number): Error {
+  return Object.assign(
+    new Error(`MCP tools/list timed out after ${timeoutMs}ms`),
+    { code: -32001 },
+  );
+}
+
+function repeatedCursorError(): Error {
+  return new Error("MCP tools/list returned a repeated pagination cursor");
 }

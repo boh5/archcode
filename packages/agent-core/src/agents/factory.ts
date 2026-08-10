@@ -1,19 +1,18 @@
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import type { ProjectContextResolver } from "../projects/context-resolver";
-import type { McpServerStatus } from "@archcode/protocol";
+import type { BuiltinMcpServerName } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
 import { RESERVED_BUILTIN_SKILL_NAMES, SkillNotFoundError, type SkillService } from "../skills";
 import { assertSkillName } from "../skills/schema";
 import type { ToolRegistry } from "../tools/index";
-import { sanitizeMcpServerNameForRegistry } from "../mcp/naming";
 import { ConfiguredAgent } from "./configured-agent";
 import { SkillNotAllowedError } from "./errors";
 import type { StoreApi } from "zustand";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
-import type { AgentDefinition, AgentName } from "./factory-types";
+import type { AgentDefinition, AgentMcpToolSnapshot, AgentName } from "./factory-types";
 import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import type { Agent } from "./types";
 import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
@@ -43,7 +42,9 @@ export interface AgentFactoryConfig {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
-  readonly resolveMcpStatuses?: () => ReadonlyMap<string, McpServerStatus>;
+  readonly resolveMcpToolSnapshot?: (
+    builtinServerNames: readonly BuiltinMcpServerName[],
+  ) => AgentMcpToolSnapshot;
   readonly logger: Logger;
 }
 
@@ -207,7 +208,7 @@ function createConfiguredAgent(
     cancelChildSession: config.cancelChildSession,
     resumeChildSession: config.resumeChildSession,
     acquireSessionCwdTransition: config.acquireSessionCwdTransition,
-    resolveMcpStatuses: config.resolveMcpStatuses,
+    resolveMcpToolSnapshot: config.resolveMcpToolSnapshot,
   });
 }
 
@@ -216,21 +217,7 @@ function factoryResolveAllowedTools(
   definition: AgentDefinition,
   depth: number,
 ): string[] {
-  const resolved = config.toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
-
-  // Merge MCP tools for each server listed in definition.mcpTools.
-  // Server names are sanitized to match the registry name generation
-  // (dots and other unsafe chars become `_`), so "grep.app" → prefix "mcp__grep_app__".
-  const mcpToolNames: string[] = [];
-  if (definition.mcpTools) {
-    for (const serverName of definition.mcpTools) {
-      const prefix = `mcp__${sanitizeMcpServerNameForRegistry(serverName)}__`;
-      const tools = config.toolRegistry.listByPrefix(prefix);
-      mcpToolNames.push(...tools.map((t) => t.name));
-    }
-  }
-
-  const all = [...resolved, ...mcpToolNames];
+  const all = config.toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
 
   if (depth >= MAX_SUB_AGENT_DEPTH) {
     return all.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));

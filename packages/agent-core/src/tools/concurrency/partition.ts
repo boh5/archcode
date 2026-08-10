@@ -1,5 +1,9 @@
 import type { ToolCallLike } from "../types";
-import type { ToolRegistry } from "../registry";
+import type { AnyToolDescriptor } from "../types";
+
+export interface ToolDescriptorSource {
+  get(name: string): AnyToolDescriptor | undefined;
+}
 
 // ─── Types ───
 
@@ -20,7 +24,7 @@ export type ToolCallBatch =
  */
 export function partitionToolCalls(
   calls: ToolCallLike[],
-  registry: ToolRegistry,
+  descriptors: ToolDescriptorSource,
 ): ToolCallBatch[] {
   const batches: ToolCallBatch[] = [];
   let currentParallelBatch: ToolCallLike[] = [];
@@ -33,7 +37,7 @@ export function partitionToolCalls(
   }
 
   for (const call of calls) {
-    const descriptor = registry.get(call.toolName);
+    const descriptor = descriptors.get(call.toolName);
     const isConcurrencySafe = descriptor?.traits.concurrencySafe ?? false;
 
     if (isConcurrencySafe) {

@@ -27,7 +27,58 @@ export interface ExecutionStartEvent {
   maxSteps: number;
   activeTimeoutMs?: number;
   binding: ExecutionModelBindingSummary;
+  executionSkills: ExecutionSkillBinding[];
   memoryPolicy: MemoryPolicySnapshot;
+}
+
+export const SKILL_SOURCE_TIERS = [
+  "project-archcode",
+  "project-agents",
+  "user-archcode",
+  "user-agents",
+  "builtin",
+] as const;
+export type SkillSourceTier = typeof SKILL_SOURCE_TIERS[number];
+
+export interface ExecutionSkillBinding {
+  name: string;
+  source: SkillSourceTier;
+  digest: string;
+  /** Session execution root used to resolve this package when the Execution claimed it. */
+  resolutionRoot: string;
+}
+
+export const SKILL_PROMPT_MAX_BYTES = 8_000;
+
+/** The bounded, deterministic Skill directory projected into the model Prompt. */
+export interface SkillPromptProjection {
+  readonly includedEntries: readonly { name: string; description: string; source: SkillSourceTier }[];
+  readonly omittedCount: number;
+  readonly renderedText: string;
+  readonly byteLength: number;
+}
+
+export interface ProjectSkillInventoryDiagnostic {
+  readonly code: "SKILL_INVALID_PACKAGE";
+  readonly message: string;
+}
+
+/** Presentation-safe inventory record for one project Skill candidate. */
+export interface ProjectSkillInventoryItem {
+  readonly name: string;
+  readonly source: SkillSourceTier;
+  readonly winner: boolean;
+  readonly shadowed: boolean;
+  readonly valid: boolean;
+  readonly description?: string;
+  readonly diagnostic?: ProjectSkillInventoryDiagnostic;
+}
+
+/** Digest-bound project Skill inventory page and the canonical Prompt projection. */
+export interface ProjectSkillInventoryResponse {
+  readonly items: readonly ProjectSkillInventoryItem[];
+  readonly nextCursor?: string;
+  readonly promptProjection: SkillPromptProjection;
 }
 
 export type SessionExecutionOrigin =
@@ -130,6 +181,7 @@ export interface SessionExecutionRecordBase {
   durationMs: number;
   stopRequestedAt?: number;
   runs: SessionExecutionRun[];
+  executionSkills: ExecutionSkillBinding[];
   memoryPolicy: MemoryPolicySnapshot;
 }
 
@@ -225,6 +277,7 @@ export interface PendingSessionMessage {
   targetModelAudit?: MessageModelAudit;
   claimedAt?: number;
   requestedModelSelection: RequestedModelSelection;
+  executionSkillNames: string[];
 }
 
 export interface SessionMessageInputReceipt {
@@ -695,7 +748,7 @@ export type ExecutionErrorEvent =
     };
 
 export type PromptSourceStatus = "present" | "absent" | "error";
-export type PromptMcpStatus = "pending" | "ready" | "ready-zero" | "partial-warning" | "failed";
+export type PromptMcpStatus = "disabled" | "connecting" | "ready" | "ready-zero" | "partial-warning" | "failed";
 
 export interface PromptTraceSectionSnapshot {
   name: string;
@@ -711,6 +764,12 @@ export interface PromptTraceSnapshot {
   sections: PromptTraceSectionSnapshot[];
   skills: {
     status: "present" | "absent" | "error";
+    available: {
+      includedEntries: { name: string; description: string; source: SkillSourceTier }[];
+      omittedCount: number;
+      renderedText: string;
+      byteLength: number;
+    };
     active: { name: string; source: string }[];
   };
   visibleTools: string[];
@@ -916,11 +975,30 @@ export interface ConfigProfileSettings {
   options?: ConfigModelCallOptions;
 }
 
-export interface ConfigMcpServerSettings<Secret> {
+export interface ConfigMcpTimeoutSettings {
+  connectTimeoutMs?: number;
+  discoveryTimeoutMs?: number;
+  callTimeoutMs?: number;
+}
+
+export interface ConfigMcpHttpServerSettings<Secret> extends ConfigMcpTimeoutSettings {
+  type: "http";
+  enabled: boolean;
   url: string;
   headers?: Record<string, Secret>;
-  timeout?: number;
 }
+
+export interface ConfigMcpStdioServerSettings<Secret> extends ConfigMcpTimeoutSettings {
+  type: "stdio";
+  enabled: boolean;
+  command: string;
+  args?: string[];
+  env?: Record<string, Secret>;
+}
+
+export type ConfigMcpServerSettings<Secret> =
+  | ConfigMcpHttpServerSettings<Secret>
+  | ConfigMcpStdioServerSettings<Secret>;
 
 export interface ConfigMemorySettings {
   useMemory?: boolean;
@@ -942,7 +1020,10 @@ export interface ServerConfigDocument<Secret> {
     deep: ConfigProfileSettings;
     fast: ConfigProfileSettings;
   };
-  mcp?: { servers: Record<string, ConfigMcpServerSettings<Secret>> };
+  mcp?: {
+    disabledBuiltins?: BuiltinMcpServerName[];
+    servers: Record<string, ConfigMcpServerSettings<Secret>>;
+  };
   integrations?: { github?: ConfigGithubIntegrationSettings };
   memory?: ConfigMemorySettings;
 }
@@ -958,7 +1039,7 @@ export interface ServerConfigSnapshot {
   revision: string;
   modelRuntimeRevision: string;
   configPath: string;
-  restartRequiredSections: Array<"mcp" | "integrations.github">;
+  restartRequiredSections: Array<"integrations.github">;
 }
 
 export interface UpdateServerConfigRequest {
@@ -966,7 +1047,21 @@ export interface UpdateServerConfigRequest {
   config: ServerConfigUpdate;
 }
 
-export type UpdateServerConfigResponse = ServerConfigSnapshot;
+export type McpConfigApplyResult =
+  | {
+      state: "applied";
+      status: McpServerStatusResponse;
+    }
+  | {
+      state: "failed";
+      error: string;
+      status: McpServerStatusResponse;
+    };
+
+export type UpdateServerConfigResponse = ServerConfigSnapshot & {
+  /** Config is already committed; this reports the independent live MCP apply. */
+  mcpApply: McpConfigApplyResult;
+};
 
 export interface ServerConfigValidationIssue {
   path: string;
@@ -974,10 +1069,28 @@ export interface ServerConfigValidationIssue {
 }
 
 export type McpServerStatus =
-  | { state: "pending" }
-  | { state: "ready"; toolCount: number; warningCount: number }
-  | { state: "failed"; error: string }
-  | { state: "disabled" };
+  | { state: "disabled"; updatedAt: number }
+  | { state: "connecting"; startedAt: number }
+  | { state: "ready"; toolCount: number; warningCount: number; connectedAt: number }
+  | { state: "failed"; error: string; failedAt: number };
+
+/** The bounded, presentation-safe identity of one discovered MCP tool. */
+export interface McpToolInventoryItem {
+  serverName: string;
+  name: string;
+  registryName: string;
+  description?: string;
+}
+
+/** Global MCP status snapshot returned by the control-plane status route. */
+export interface McpServerStatusResponse {
+  servers: Record<string, McpServerStatus>;
+}
+
+/** Global MCP tool inventory snapshot returned by the control-plane inventory route. */
+export interface McpServerInventoryResponse {
+  servers: Record<string, McpToolInventoryItem[]>;
+}
 
 export interface GlobalSSEMcpStatusEvent {
   type: "mcp_status";

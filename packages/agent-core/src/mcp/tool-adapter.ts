@@ -2,99 +2,127 @@ import { jsonSchema } from "ai";
 import { z } from "zod";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
+import type { SecretRedactionPolicy } from "../security";
 import { defineTool } from "../tools/define-tool";
 import { createToolErrorResult } from "../tools/errors";
 import { createTextToolResult } from "../tools/results";
-import { createMcpDestructivePermission } from "../tools/permission";
-import type { SecretRedactionPolicy } from "../security";
-import type {
-  RawToolResult,
-  ToolDescriptor,
-  ToolTraits,
-} from "../tools/types";
+import type { RawToolResult, ToolDescriptor, ToolTraits } from "../tools/types";
 import {
   MAX_MCP_TRANSPORT_BYTES,
+  McpClient,
   type CallToolResultLike,
-  type McpClient,
   type McpToolLike,
 } from "./client";
+import { McpToolExecutionError } from "./errors";
 import { toMcpToolRegistryName } from "./naming";
 
+// The remote MCP server owns the detailed JSON Schema. Locally we enforce only
+// the object boundary so arbitrary valid server-defined arguments pass through unchanged.
 const mcpToolInputSchema = z.object({}).catchall(z.unknown());
 const EMPTY_MCP_RESULT = "MCP tool returned no content.";
 export const MAX_MCP_SERIALIZED_RESULT_BYTES = MAX_MCP_TRANSPORT_BYTES;
 
-// ─── Adapter ─────────────────────────────────────────────────────────────────
+export interface McpCallLease {
+  readonly client: McpClient;
+  release(): void;
+}
+
+export interface McpCallHandle {
+  tryAcquireCall(): McpCallLease | undefined;
+}
+
+export interface McpToolBinding {
+  /** Private protocol identity used only for dispatch and alias hashing. */
+  readonly rawName: string;
+  /** Presentation-safe alias exposed to the model and retained for execution lookup. */
+  readonly registryName: string;
+}
 
 export function adaptMcpTool(
   mcpTool: McpToolLike,
   serverName: string,
-  mcpClient: McpClient,
+  handle: McpCallHandle,
   redactionPolicy: SecretRedactionPolicy,
-  logger?: Logger,
+  logger: Logger = silentLogger,
+  binding?: McpToolBinding,
 ): ToolDescriptor<z.infer<typeof mcpToolInputSchema>, RawToolResult> {
   const toolName = mcpTool.name;
-  const execLogger = logger ?? silentLogger;
-
+  const rawToolName = binding?.rawName ?? toolName;
   const traits = traitsFromAnnotations(mcpTool.annotations);
 
   return defineTool({
-    name: toMcpToolRegistryName(serverName, toolName),
+    name: binding?.registryName ?? toMcpToolRegistryName(serverName, rawToolName, toolName),
     description: mcpTool.description ?? fallbackDescription(serverName, toolName),
     inputSchema: mcpToolInputSchema,
-    aiInputSchema: jsonSchema(mcpTool.inputSchema as Record<string, unknown>),
+    aiInputSchema: jsonSchema((mcpTool.inputSchema ?? { type: "object" }) as Record<string, unknown>),
     traits,
     outputPolicy: { kind: "artifact", previewDirection: "head-tail" },
-    ...(traits.destructive ? { permissions: [createMcpDestructivePermission(serverName, toolName)] } : {}),
-    async execute(input): Promise<RawToolResult> {
-      try {
-        const result = await mcpClient.callTool(
-          toolName,
-          input as Record<string, unknown>,
-        );
-        const output = formatMcpResult(result);
+    async execute(input, context): Promise<RawToolResult> {
+      if (context.abort.aborted) {
+        return createMcpErrorResult(serverName, toolName, "MCP tool call was aborted before dispatch", "TOOL_MCP_CALL_ABORTED");
+      }
 
-        if (result.isError === true) {
-          return createMcpErrorResult(serverName, toolName, output, redactionPolicy);
-        }
-
-        return createTextToolResult(output);
-      } catch (err) {
-        execLogger.warn("mcp.tool.execute.failed", {
-          context: { serverName, toolName: mcpTool.name },
-          error: logError(err, redactionPolicy),
-        });
+      const lease = handle.tryAcquireCall();
+      if (!lease) {
         return createMcpErrorResult(
           serverName,
           toolName,
-          errorMessage(err),
-          redactionPolicy,
+          "The MCP server connection was retired before this call started",
+          "TOOL_MCP_NOT_AVAILABLE",
         );
+      }
+
+      let attempted = false;
+      try {
+        if (context.abort.aborted) {
+          return createMcpErrorResult(serverName, toolName, "MCP tool call was aborted before dispatch", "TOOL_MCP_CALL_ABORTED");
+        }
+        const result = await lease.client.callTool(
+          rawToolName,
+          input as Record<string, unknown>,
+          context.abort,
+          () => { attempted = true; },
+        );
+        const output = redactionPolicy.redactString(formatMcpResult(result));
+        if (result.isError === true) {
+          return createMcpErrorResult(serverName, toolName, output, "TOOL_MCP_ERROR");
+        }
+        return createTextToolResult(output);
+      } catch (error) {
+        logger.warn("mcp.tool.execute.failed", {
+          context: { serverName, toolName },
+          error: logError(error, redactionPolicy),
+        });
+        const reason = error instanceof McpToolExecutionError ? error.reason : "failed";
+        const code = reason === "aborted"
+          ? "TOOL_MCP_CALL_ABORTED"
+          : reason === "timeout"
+            ? "TOOL_MCP_CALL_TIMEOUT"
+            : "TOOL_MCP_ERROR";
+        const unknownResult = attempted && !traits.readOnly;
+        return createMcpErrorResult(
+          serverName,
+          toolName,
+          redactionPolicy.redactString(errorMessage(error)),
+          code,
+          unknownResult,
+        );
+      } finally {
+        lease.release();
       }
     },
   });
 }
 
-// ─── Traits ──────────────────────────────────────────────────────────────────
-
-function traitsFromAnnotations(
-  annotations: McpToolLike["annotations"],
-): ToolTraits {
-  const destructive = annotations?.destructiveHint === true;
-  const readOnly = destructive
-    ? false
-    : typeof annotations?.readOnlyHint === "boolean"
-      ? annotations.readOnlyHint
-      : true;
-
+/** MCP annotation defaults are conservative: only explicit read-only is parallel-safe. */
+export function traitsFromAnnotations(annotations: McpToolLike["annotations"]): ToolTraits {
+  const readOnly = annotations?.readOnlyHint === true;
   return {
     readOnly,
-    destructive,
-    concurrencySafe: !destructive,
+    destructive: !readOnly && annotations?.destructiveHint !== false,
+    concurrencySafe: readOnly,
   };
 }
-
-// ─── Formatting ──────────────────────────────────────────────────────────────
 
 function formatMcpResult(result: CallToolResultLike): string {
   const writer = new BoundedUtf8Writer(MAX_MCP_SERIALIZED_RESULT_BYTES);
@@ -104,90 +132,58 @@ function formatMcpResult(result: CallToolResultLike): string {
     writeContentBlock(writer, block);
     wroteContent = true;
   }
-
   if (result.structuredContent !== undefined) {
     if (wroteContent) writer.append("\n");
     writer.append("Structured content:\n");
     writeJsonValue(writer, result.structuredContent, new Set(), 0);
   }
-
   const output = writer.finish().trim();
   return output.length > 0 ? output : EMPTY_MCP_RESULT;
 }
 
-function writeContentBlock(
-  writer: BoundedUtf8Writer,
-  block: CallToolResultLike["content"][number],
-): void {
+function writeContentBlock(writer: BoundedUtf8Writer, block: CallToolResultLike["content"][number]): void {
   if (block.type === "text") {
     if (typeof block.text === "string") writer.append(block.text);
     return;
   }
-
-  if (typeof block.type !== "string") {
-    throw new Error("MCP content block type must be a string");
-  }
-  writer.append("[Unsupported MCP content type: ");
-  writer.append(block.type);
-  writer.append("]");
+  if (typeof block.type !== "string") throw new Error("MCP content block type must be a string");
+  writer.append(`[Unsupported MCP content type: ${block.type}]`);
 }
 
-function writeJsonValue(
-  writer: BoundedUtf8Writer,
-  value: unknown,
-  ancestors: Set<object>,
-  depth: number,
-): boolean {
+function writeJsonValue(writer: BoundedUtf8Writer, value: unknown, ancestors: Set<object>, depth: number): boolean {
   if (depth > 64) throw new Error("MCP structured content exceeds the nesting limit");
   if (value === null) {
     writer.append("null");
     return true;
   }
   switch (typeof value) {
-    case "string":
-      writer.appendJsonString(value);
-      return true;
-    case "boolean":
-      writer.append(value ? "true" : "false");
-      return true;
-    case "number":
-      writer.append(Number.isFinite(value) ? `${value}` : "null");
-      return true;
+    case "string": writer.appendJsonString(value); return true;
+    case "boolean": writer.append(value ? "true" : "false"); return true;
+    case "number": writer.append(Number.isFinite(value) ? `${value}` : "null"); return true;
     case "undefined":
     case "function":
-    case "symbol":
-      return false;
-    case "bigint":
-      throw new Error("MCP structured content is not JSON serializable");
-    case "object":
-      break;
+    case "symbol": return false;
+    case "bigint": throw new Error("MCP structured content is not JSON serializable");
+    case "object": break;
   }
-
-  if (ancestors.has(value)) {
-    throw new Error("MCP structured content is not JSON serializable");
-  }
+  if (ancestors.has(value)) throw new Error("MCP structured content is not JSON serializable");
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
       writer.append("[");
       for (let index = 0; index < value.length; index += 1) {
         if (index > 0) writer.append(",");
-        if (!writeJsonValue(writer, value[index], ancestors, depth + 1)) {
-          writer.append("null");
-        }
+        if (!writeJsonValue(writer, value[index], ancestors, depth + 1)) writer.append("null");
       }
       writer.append("]");
       return true;
     }
-
     writer.append("{");
     let wroteProperty = false;
     for (const key in value) {
       if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
       const property = (value as Record<string, unknown>)[key];
-      if (property === undefined || typeof property === "function" || typeof property === "symbol") {
-        continue;
-      }
+      if (property === undefined || typeof property === "function" || typeof property === "symbol") continue;
       if (wroteProperty) writer.append(",");
       writer.appendJsonString(key);
       writer.append(":");
@@ -210,45 +206,15 @@ class BoundedUtf8Writer {
 
   append(value: string): void {
     const bytes = Buffer.byteLength(value, "utf8");
-    if (bytes > this.maxBytes - this.#length) {
-      throw new Error("MCP tool result exceeded the 8 MiB serialization limit");
-    }
+    if (bytes > this.maxBytes - this.#length) throw new Error("MCP tool result exceeded the 8 MiB serialization limit");
     this.#ensureCapacity(this.#length + bytes);
     const encoded = this.#encoder.encodeInto(value, this.#buffer.subarray(this.#length));
-    if (encoded.read !== value.length || encoded.written !== bytes) {
-      throw new Error("MCP tool result serialization failed");
-    }
+    if (encoded.read !== value.length || encoded.written !== bytes) throw new Error("MCP tool result serialization failed");
     this.#length += encoded.written;
   }
 
   appendJsonString(value: string): void {
-    this.append('"');
-    let start = 0;
-    for (let index = 0; index < value.length; index += 1) {
-      const code = value.charCodeAt(index);
-      let escaped: string | undefined;
-      switch (code) {
-        case 0x08: escaped = "\\b"; break;
-        case 0x09: escaped = "\\t"; break;
-        case 0x0a: escaped = "\\n"; break;
-        case 0x0c: escaped = "\\f"; break;
-        case 0x0d: escaped = "\\r"; break;
-        case 0x22: escaped = '\\"'; break;
-        case 0x5c: escaped = "\\\\"; break;
-        default:
-          if (code < 0x20 || (code >= 0xd800 && code <= 0xdfff && !isSurrogatePairAt(value, index))) {
-            escaped = `\\u${code.toString(16).padStart(4, "0")}`;
-          } else if (code >= 0xd800 && code <= 0xdbff) {
-            index += 1;
-          }
-      }
-      if (escaped === undefined) continue;
-      if (start < index) this.append(value.slice(start, index));
-      this.append(escaped);
-      start = index + 1;
-    }
-    if (start < value.length) this.append(value.slice(start));
-    this.append('"');
+    this.append(JSON.stringify(value));
   }
 
   finish(): string {
@@ -265,47 +231,36 @@ class BoundedUtf8Writer {
   }
 }
 
-function isSurrogatePairAt(value: string, index: number): boolean {
-  const code = value.charCodeAt(index);
-  if (code >= 0xd800 && code <= 0xdbff) {
-    const next = value.charCodeAt(index + 1);
-    return next >= 0xdc00 && next <= 0xdfff;
-  }
-  if (code >= 0xdc00 && code <= 0xdfff) {
-    const previous = value.charCodeAt(index - 1);
-    return previous >= 0xd800 && previous <= 0xdbff;
-  }
-  return false;
-}
-
 function createMcpErrorResult(
   serverName: string,
   toolName: string,
   message: string,
-  redactionPolicy: SecretRedactionPolicy,
+  code: string,
+  unknownResult = false,
 ): RawToolResult {
-  const redactedMessage = redactionPolicy.redactString(message);
-  return createToolErrorResult({
-    kind: "execution",
-    code: "TOOL_MCP_ERROR",
+  const result = createToolErrorResult({
+    kind: code === "TOOL_MCP_CALL_ABORTED" ? "cancelled" : "execution",
+    code,
     name: "McpToolError",
-    message: `MCP tool error from server "${serverName}", tool "${toolName}": ${redactedMessage}`,
-    hint: "Inspect the MCP tool error, adjust the input, then retry only if the tool call is still necessary.",
+    message: `MCP tool error from server "${serverName}", tool "${toolName}": ${message}`,
+    hint: unknownResult
+      ? "The external effect may have occurred. Inspect the external system before deciding whether to retry."
+      : "Inspect the MCP status or tool error, then retry only if the call is still necessary.",
   });
+  return unknownResult
+    ? { ...result, details: { ...result.details, unknownResult: true } }
+    : result;
 }
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return "Unknown MCP tool error";
+  return typeof error === "string" ? error : "Unknown MCP tool error";
 }
 
 function logError(error: unknown, policy: SecretRedactionPolicy): { name: string; message: string } {
-  if (error instanceof Error) {
-    return { name: error.name || "Error", message: policy.redactString(error.message) };
-  }
-
-  return { name: typeof error, message: "MCP tool execution failed" };
+  return error instanceof Error
+    ? { name: error.name || "Error", message: policy.redactString(error.message) }
+    : { name: typeof error, message: policy.redactString(String(error)) };
 }
 
 function fallbackDescription(serverName: string, toolName: string): string {

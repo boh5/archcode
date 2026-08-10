@@ -13,6 +13,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `SKILL.md` plus optional `scripts/`, `references/`, `assets/`, and other
   contained resources. Skill discovery is metadata-only; entry and listed
   resources are disclosed progressively.
+- Replace the legacy MCP configuration path with a process-global live runtime
+  supporting required `type` + `enabled` HTTP and STDIO server entries,
+  independent connect/discovery/call deadlines (10s/30s/60s defaults),
+  `disabledBuiltins`, hot apply on Settings save, and status/Test/Reconnect
+  controls. User MCP servers are visible to all six Agent identities; the
+  built-in visibility matrix remains role-defined.
 
 ### Breaking Changes
 
@@ -24,6 +30,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   paths. `when_to_use`, `allowed_tools`, and all other
   top-level frontmatter fields are rejected. There is no migration, fallback,
   compatibility reader, or resource merge with lower-precedence packages.
+- MCP configuration is a hard cut. Every server entry now requires
+  `type: "http" | "stdio"` and `enabled`; HTTP uses `url`/`headers`, STDIO
+  uses `command`/`args`/`env`, and the single `timeout` field is replaced by
+  `connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs`. Built-in
+  opt-out uses `disabledBuiltins`; user-server role filters and extra MCP
+  approval assumptions are removed. There is no migration, compatibility
+  reader, or fallback for the old configuration shape.
 
 ## [0.0.8] - 2026-08-04
 

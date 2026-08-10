@@ -10,6 +10,7 @@ import {
 import { PromptContractCompiler, createFailedPromptTrace } from "./compiler";
 import { IllegalPromptExecutionModeError, PromptContractLintError, lintRoleContract } from "./lint";
 import type { PromptContractV2, RuntimePromptEnvelope } from "./types";
+import { projectAvailableSkills } from "../skills/projection";
 
 function runtime(overrides: Partial<RuntimePromptEnvelope> = {}): RuntimePromptEnvelope {
   return {
@@ -24,7 +25,7 @@ function runtime(overrides: Partial<RuntimePromptEnvelope> = {}): RuntimePromptE
     todo: "none",
     remainingDepth: 3,
     maxConcurrentChildren: 4,
-    mcp: { context7: "ready", exa: "pending" },
+    mcp: { context7: "ready", exa: "connecting" },
     ...overrides,
   };
 }
@@ -53,7 +54,7 @@ function contract(overrides: Partial<PromptContractV2> = {}): PromptContractV2 {
     role: leadRoleContract,
     runtime: runtime(),
     allowedTools: ["file_read", "delegate"],
-    availableSkills: [],
+    availableSkills: projectAvailableSkills([]),
     activeSkills: [],
     guidanceAuthority: {
       skills: { kind: "guidance-only", grants: "none" },
@@ -79,11 +80,11 @@ function contract(overrides: Partial<PromptContractV2> = {}): PromptContractV2 {
 describe("PromptContractCompiler", () => {
   test("renders available Skill discovery as name, description, and source only", async () => {
     const result = await new PromptContractCompiler().compile(contract({
-      availableSkills: [{
+      availableSkills: projectAvailableSkills([{
         name: "codemap",
         description: "Map an unfamiliar codebase when locating architecture or entry points.",
         source: "builtin",
-      }],
+      }]),
     }));
 
     expect(result.prompt).toContain(
@@ -98,7 +99,7 @@ describe("PromptContractCompiler", () => {
           name: "codemap",
           description: "Map an unfamiliar codebase when locating architecture or entry points.",
         },
-        source: "project",
+        source: "project-archcode",
         sourceLabel: "/workspace/.archcode/skills/codemap",
         root: "/workspace/.archcode/skills/codemap",
         resources: [

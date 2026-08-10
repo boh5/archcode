@@ -85,7 +85,11 @@ function fakeRuntime(configService: ServerConfigService): AgentRuntime {
     subscribeMcpStatusChanges: mock(() => () => undefined),
     subscribeModelRuntimeChanges: mock(() => () => undefined),
     subscribeResourceChanges: mock(() => () => undefined),
-    getMcpServerStatuses: mock(() => new Map()),
+    getMcpServerStatus: mock(() => ({ servers: {} })),
+    getMcpServerInventory: mock(() => ({ servers: {} })),
+    applyMcpConfig: mock(async () => undefined),
+    testMcpServerDraft: mock(async () => ({ tools: [], warnings: [] })),
+    reconnectMcpServer: mock(async () => undefined),
     listSessionRuntimeEvents: mock(async () => []),
     listHitlSnapshotEvents: mock(async () => []),
   } as unknown as AgentRuntime;
@@ -1280,6 +1284,90 @@ describe("ArchCodeServerHost", () => {
     })).status).toBe(409);
   });
 
+  test("commits Config then hot-applies the exact resolved MCP config", async () => {
+    const home = await createHome();
+    await mkdir(join(home, ".archcode"), { recursive: true });
+    await writeFile(resolveServerConfigPath(home), `${JSON.stringify(diskConfig())}\n`, { mode: 0o600 });
+    const configService = new ServerConfigService({ homeDir: home });
+    const runtime = fakeRuntime(configService);
+    const host = await ArchCodeServerHost.create({
+      configService,
+      createRuntime: mock(async () => runtime),
+      logger: silentLogger,
+      ...hostInfrastructure(home),
+    });
+    host.startRuntimeActivation();
+    await waitForRuntimeState(host, "ready");
+    const snapshot = await (await host.app.request("/api/config")).json() as any;
+    snapshot.config.provider.local.options.apiKey = { action: "preserve" };
+    snapshot.config.mcp = {
+      disabledBuiltins: ["exa"],
+      servers: {
+        docs: { type: "http", enabled: true, url: "https://docs.test/mcp" },
+      },
+    };
+
+    const response = await host.app.request("/api/config", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: snapshot.revision, config: snapshot.config }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ mcpApply: { state: "applied", status: { servers: {} } } });
+    expect(runtime.applyMcpConfig).toHaveBeenCalledWith({
+      disabledBuiltins: ["exa"],
+      servers: {
+        docs: {
+          type: "http",
+          enabled: true,
+          url: "https://docs.test/mcp",
+          headers: undefined,
+          connectTimeoutMs: 10_000,
+          discoveryTimeoutMs: 30_000,
+          callTimeoutMs: 60_000,
+        },
+      },
+    });
+  });
+
+  test("keeps a committed Config when MCP hot-apply fails", async () => {
+    const home = await createHome();
+    await mkdir(join(home, ".archcode"), { recursive: true });
+    await writeFile(resolveServerConfigPath(home), `${JSON.stringify(diskConfig())}\n`, { mode: 0o600 });
+    const configService = new ServerConfigService({ homeDir: home });
+    const runtime = fakeRuntime(configService);
+    runtime.applyMcpConfig = mock(async () => { throw new Error("secret transport failure"); });
+    const host = await ArchCodeServerHost.create({
+      configService,
+      createRuntime: mock(async () => runtime),
+      logger: silentLogger,
+      ...hostInfrastructure(home),
+    });
+    host.startRuntimeActivation();
+    await waitForRuntimeState(host, "ready");
+    const snapshot = await (await host.app.request("/api/config")).json() as any;
+    snapshot.config.provider.local.options.apiKey = { action: "preserve" };
+    snapshot.config.provider.local.models["test-model"].name = "Committed despite MCP failure";
+
+    const response = await host.app.request("/api/config", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: snapshot.revision, config: snapshot.config }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as any;
+    expect(body.mcpApply).toEqual({
+      state: "failed",
+      error: "Configuration was saved, but MCP live apply failed",
+      status: { servers: {} },
+    });
+    expect(JSON.stringify(body)).not.toContain("secret transport failure");
+    expect((await configService.getSnapshot()).config.provider.local.models["test-model"].name)
+      .toBe("Committed despite MCP failure");
+  });
+
   test("serializes concurrent Config save before delete and retry recovery mutations", async () => {
     for (const recovery of ["delete", "retry"] as const) {
       const home = await createHome();
@@ -1328,12 +1416,12 @@ describe("ArchCodeServerHost", () => {
       await waitForRuntimeState(host, "error");
       order.length = 0;
 
-      const originalSave = configService.save.bind(configService);
+      const originalSave = configService.saveWithRuntimeConfig.bind(configService);
       let signalSaveEntered!: () => void;
       const saveEntered = new Promise<void>((resolve) => { signalSaveEntered = resolve; });
       let releaseSave!: () => void;
       const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
-      configService.save = mock(async (request) => {
+      configService.saveWithRuntimeConfig = mock(async (request) => {
         order.push("save:start");
         signalSaveEntered();
         await saveGate;

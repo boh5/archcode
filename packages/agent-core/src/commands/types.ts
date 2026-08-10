@@ -20,7 +20,10 @@ export interface CommandContext {
 export interface SlashCommandResult {
   success: boolean;
   message: string;
-  continueAsMessage?: string;
+  pendingMessage?: {
+    readonly content: string;
+    readonly executionSkillNames: readonly string[];
+  };
 }
 
 export type CommandHandler = (ctx: CommandContext, args?: string) => Promise<SlashCommandResult>;

@@ -67,7 +67,7 @@ export const discussionAgentDefinition = {
     ],
     delegateTargets: ["explore", "librarian"],
   },
-  mcpTools: [],
+  builtinMcpServers: [],
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,

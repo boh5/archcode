@@ -81,6 +81,7 @@ describe("runtime final Assistant selection", () => {
       origin: "user_message",
       maxSteps: 10,
       binding: BINDING,
+      executionSkills: [],
       memoryPolicy: testExecutionMemoryPolicy,
     });
     createAttempt(sessionId, "earlier-stop", 0, "stop", "earlier");
@@ -117,6 +118,7 @@ describe("runtime final Assistant selection", () => {
         origin: "user_message",
         maxSteps: 10,
         binding: BINDING,
+        executionSkills: [],
         memoryPolicy: testExecutionMemoryPolicy,
       });
       createAttempt(sessionId, candidate.stepId, 0, candidate.finishReason, candidate.text);

@@ -57,6 +57,7 @@ describe("SessionEventBridge", () => {
         acceptedAt: 10,
         updatedAt: 10,
         requestedModelSelection: testRequestedModelSelection,
+        executionSkillNames: [],
       } },
     });
 

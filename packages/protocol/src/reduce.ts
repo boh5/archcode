@@ -101,6 +101,7 @@ export function reduceStreamEvent(
           status: "running" as const,
           origin: event.origin,
           maxSteps: event.maxSteps,
+          executionSkills: event.executionSkills.map((skill) => ({ ...skill })),
           ...(event.activeTimeoutMs === undefined ? {} : { activeTimeoutMs: event.activeTimeoutMs }),
           memoryPolicy: event.memoryPolicy,
           durationMs: 0,

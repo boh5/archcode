@@ -22,6 +22,7 @@ import {
 export const exploreAgentDefinition = {
   name: "explore",
   displayName: "Explore",
+  builtinMcpServers: [],
   profiles: ["fast"],
   roleContract: exploreRoleContract,
   tools: {

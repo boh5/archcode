@@ -68,6 +68,15 @@ describe("tool error formatter", () => {
     expect(formatted.hint).toContain("5 MiB transport safety limit");
   });
 
+  test("classifies edit no-match messages without regex backtracking", () => {
+    const classifyMessage = (message: string) => formatToolError({ message, code: "UNCLASSIFIED" }).kind;
+
+    expect(classifyMessage("The oldString value was not found")).toBe("edit-no-match");
+    expect(classifyMessage("No match found for this edit")).toBe("edit-no-match");
+    expect(classifyMessage(`oldString${"oldString".repeat(10_000)}`)).toBe("execution");
+    expect(classifyMessage("not found before oldString")).toBe("execution");
+  });
+
   test("normalizes unstructured failures and preserves structured failures", () => {
     const unstructured = {
       isError: true,

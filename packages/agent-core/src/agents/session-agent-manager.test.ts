@@ -355,6 +355,7 @@ describe("SessionAgentManager", () => {
         memoryPolicy: testExecutionMemoryPolicy,
         origin: "user_message",
         maxSteps: 1,
+        executionSkills: [],
       });
       agent.store.getState().append({
         type: "session.messages_committed",

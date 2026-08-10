@@ -12,7 +12,7 @@ const requestedModelSelection = {
 };
 
 function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
-  const pending = { id: "message-1", clientRequestId: "request-1", content: "Hello", attachments: [], state: "queued" as const, revision: 0, requestedModelSelection };
+  const pending = { id: "message-1", clientRequestId: "request-1", content: "Hello", attachments: [], state: "queued" as const, revision: 0, requestedModelSelection, executionSkillNames: [] };
   return {
     projectRegistry,
     contextResolver: undefined,
@@ -28,7 +28,8 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     subscribeHitlEvents: mock(() => () => undefined),
     subscribeSessionRuntimeChanges: mock(() => () => undefined),
     subscribeMcpStatusChanges: mock(() => () => undefined),
-    getMcpServerStatuses: mock(() => new Map()),
+    getMcpServerStatus: mock(() => ({ servers: {} })),
+    getMcpServerInventory: mock(() => ({ servers: {} })),
     acceptSessionMessage: mock(async () => ({ clientRequestId: pending.clientRequestId, messageId: pending.id, status: "pending" as const, message: pending })),
     editPendingSessionMessage: mock(async () => ({ ...pending, content: "Edited", revision: 1 })),
     deletePendingSessionMessage: mock(async () => ({ messageId: pending.id, clientRequestId: pending.clientRequestId, revision: 2 })),

@@ -11,6 +11,7 @@ import type {
   ServerConfigSnapshot as ServerConfigSnapshotView,
   ServerConfigUpdate,
   UpdateServerConfigRequest,
+  UpdateServerConfigResponse,
 } from "@archcode/protocol";
 import { apiFetch } from "./client";
 
@@ -79,8 +80,11 @@ export function toConfigDraft(
     }
   }
   for (const server of Object.values(config.mcp?.servers ?? {})) {
-    if (server.headers !== undefined) {
+    if (server.type === "http" && server.headers !== undefined) {
       server.headers = secretViewsToMutations(server.headers) as typeof server.headers;
+    }
+    if (server.type === "stdio" && server.env !== undefined) {
+      server.env = secretViewsToMutations(server.env) as typeof server.env;
     }
   }
   return {
@@ -93,8 +97,8 @@ export async function getServerConfig(): Promise<ServerConfigSnapshotView> {
   return apiFetch<ServerConfigSnapshotView>("/api/config");
 }
 
-export async function saveServerConfig(input: SaveServerConfigInput): Promise<ServerConfigSnapshotView> {
-  return apiFetch<ServerConfigSnapshotView>("/api/config", {
+export async function saveServerConfig(input: SaveServerConfigInput): Promise<UpdateServerConfigResponse> {
+  return apiFetch<UpdateServerConfigResponse>("/api/config", {
     method: "PUT",
     body: input as unknown as Record<string, unknown>,
   });

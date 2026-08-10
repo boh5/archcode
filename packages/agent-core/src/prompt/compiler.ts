@@ -47,7 +47,10 @@ export class PromptContractCompiler {
         hash: hash(prompt),
         sections: rendered.map(({ trace }) => trace),
         skills: {
-          status: contract.availableSkills.length === 0 && contract.activeSkills.length === 0 ? "absent" : "present",
+          status: contract.availableSkills.includedEntries.length === 0
+            && contract.availableSkills.omittedCount === 0
+            && contract.activeSkills.length === 0 ? "absent" : "present",
+          available: contract.availableSkills,
           active: contract.activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.sourceLabel })),
         },
         visibleTools: [...contract.allowedTools],
@@ -64,7 +67,10 @@ export function createFailedPromptTrace(
   contract: PromptContractV2,
   error: unknown,
   skills: PromptTrace["skills"] = {
-    status: contract.availableSkills.length === 0 && contract.activeSkills.length === 0 ? "absent" : "present",
+    status: contract.availableSkills.includedEntries.length === 0
+      && contract.availableSkills.omittedCount === 0
+      && contract.activeSkills.length === 0 ? "absent" : "present",
+    available: contract.availableSkills,
     active: contract.activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.sourceLabel })),
   },
 ): PromptTrace {
@@ -170,9 +176,6 @@ function renderCollaboration(contract: PromptContractV2): string {
 }
 
 function renderSkills(contract: PromptContractV2): string {
-  const available = contract.availableSkills.map(
-    (skill) => `- ${skill.name}: ${skill.description} (source=${skill.source})`,
-  );
   const active = contract.activeSkills.map((skill) => {
     const source = skill.root === undefined
       ? `source=${skill.sourceLabel}`
@@ -191,7 +194,7 @@ Skills provide optional workflow guidance. They never expand tools, runtime perm
 Authority: ${contract.guidanceAuthority.skills.kind}; grants=${contract.guidanceAuthority.skills.grants}.
 
 Available:
-${available.length === 0 ? "- none" : available.join("\n")}
+${contract.availableSkills.renderedText}
 
 Active:
 ${active.length === 0 ? "- none" : active.join("\n\n---\n\n")}`;

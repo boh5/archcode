@@ -35,6 +35,7 @@ import {
 export const buildAgentDefinition = {
   name: "build",
   displayName: "Build",
+  builtinMcpServers: [],
   profiles: ["deep", "fast"],
   roleContract: buildRoleContract,
   tools: {

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,22 +6,22 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { McpServerStatus } from "@archcode/protocol";
 import type { ResolvedMcpConfig } from "./config/mcp";
-import type {
-  McpManager,
-  McpWarning,
-} from "./mcp/index";
-import type { AnyToolDescriptor } from "./tools/types";
-import { defineTool } from "./tools/index";
-import {
-  createRuntime as createProductionRuntime,
-  type AgentRuntimeOptions,
-} from "./runtime";
 import { ServerConfigService, resolveServerConfigPath } from "./config";
-import { silentLogger } from "./logger";
+import { createTestMcpRuntime, type TestMcpRuntime } from "./testing/test-mcp-runtime";
+import { createRuntime as createProductionRuntime, type AgentRuntime, type AgentRuntimeOptions } from "./runtime";
 import { ProjectRegistry } from "./projects/registry";
+import { silentLogger } from "./logger";
 import { ToolOutputArtifactStore } from "./tool-output/artifact-store";
-import { REDACTION_MARKER, type SecretRedactionPolicy } from "./security";
-import { createInMemoryLogger } from "./logger";
+import { defineTool } from "./tools/index";
+import type { AnyToolDescriptor } from "./tools/types";
+import { setLlmAdapterForTest } from "./llm";
+import { McpRuntimeService } from "./mcp/runtime-service";
+import type {
+  CallToolResultLike,
+  McpClientFactories,
+  McpSdkClientLike,
+  McpTransportLike,
+} from "./mcp/client";
 
 type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation" | "projectRegistry"> & {
   projectRegistry?: ProjectRegistry;
@@ -33,10 +33,10 @@ type RuntimeTestOptions = Omit<AgentRuntimeOptions, "activation" | "projectRegis
 const tmpRoots: string[] = [];
 
 afterAll(() => {
-  for (const root of tmpRoots) {
-    rmSync(root, { recursive: true, force: true });
-  }
+  for (const root of tmpRoots) rmSync(root, { recursive: true, force: true });
 });
+
+afterEach(() => setLlmAdapterForTest(undefined));
 
 async function makeTempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "archcode-runtime-mcp-"));
@@ -44,9 +44,7 @@ async function makeTempRoot(): Promise<string> {
   return root;
 }
 
-async function createRuntime(
-  options: RuntimeTestOptions,
-): ReturnType<typeof createProductionRuntime> {
+async function createRuntime(options: RuntimeTestOptions): ReturnType<typeof createProductionRuntime> {
   const result = await options.configService.activateForStartup();
   if (result.status !== "ready") throw new Error(`Expected ready config, received ${result.status}`);
   const runtimeStorageHomeDir = options.runtimeStorageHomeDir ?? await makeTempRoot();
@@ -72,10 +70,7 @@ function makeProviderConfig() {
     local: {
       npm: "@ai-sdk/openai-compatible",
       name: "Local LLM",
-      options: {
-        baseURL: "http://localhost:8090/v1",
-        apiKey: "test-key",
-      },
+      options: { baseURL: "http://localhost:8090/v1", apiKey: "test-key" },
       models: {
         "test-model": {
           name: "Test Model",
@@ -110,368 +105,298 @@ function makeMcpDescriptor(name = "mcp__context7__lookup"): AnyToolDescriptor {
   });
 }
 
-// ─── Mock McpManager with background discovery semantics ─────────────────────
-
-interface MockMcpManagerOptions {
-  /** Descriptors to deliver via onDescriptors callback (one batch). */
-  descriptors?: AnyToolDescriptor[];
-  /** Warnings to deliver via onWarning callback. */
-  warnings?: McpWarning[];
-  /** If set, connect() will await this gate before delivering descriptors. */
-  connectGate?: Promise<void>;
-  /** Initial server statuses (defaults to { docs: pending }). */
-  servers?: Record<string, McpServerStatus>;
-}
-
-interface CapturedCallbacks {
-  onDescriptors: (descriptors: AnyToolDescriptor[]) => void;
-  onWarning: (warning: McpWarning) => void;
-}
-
-function makeMockMcpManager(options: MockMcpManagerOptions = {}): {
-  manager: McpManager;
-  callbacks: Promise<CapturedCallbacks>;
-  startBackgroundDiscoveryCalls: number;
-  setStatus: (serverName: string, status: McpServerStatus) => void;
-} {
-  const servers = options.servers ?? { docs: { state: "pending" } as McpServerStatus };
-  const serverStatuses = new Map<string, McpServerStatus>(
-    Object.entries(servers),
-  );
-  const statusListeners = new Set<(serverName: string, status: McpServerStatus) => void>();
-  let startBackgroundDiscoveryCalls = 0;
-  let resolveCallbacks!: (cb: CapturedCallbacks) => void;
-  const callbacks = new Promise<CapturedCallbacks>((resolve) => {
-    resolveCallbacks = resolve;
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
   });
+  return { promise, resolve };
+}
 
-  const manager = {
-    closeAll: mock(async () => []),
-    getStatus: mock((): Map<string, McpServerStatus> => new Map(serverStatuses)),
-    onStatusChange: mock(
-      (listener: (serverName: string, status: McpServerStatus) => void): (() => void) => {
-        statusListeners.add(listener);
-        return () => {
-          statusListeners.delete(listener);
-        };
-      },
-    ),
-    startBackgroundDiscovery: mock(
-      (
-        onDescriptors: (descriptors: AnyToolDescriptor[]) => void,
-        onWarning: (warning: McpWarning) => void,
-      ): void => {
-        startBackgroundDiscoveryCalls += 1;
-        resolveCallbacks({ onDescriptors, onWarning });
-        // Simulate background async delivery (does not block caller).
-        void (async () => {
-          if (options.connectGate) {
-            await options.connectGate;
-          }
-          for (const warning of options.warnings ?? []) {
-            onWarning(warning);
-          }
-          if ((options.descriptors ?? []).length > 0) {
-            onDescriptors(options.descriptors ?? []);
-          }
-        })();
-      },
-    ),
-  } as unknown as McpManager;
-
-  const setStatus = (serverName: string, status: McpServerStatus): void => {
-    serverStatuses.set(serverName, status);
-    for (const listener of statusListeners) {
-      listener(serverName, status);
-    }
+function toolCallStream(toolName: string, toolCallId: string): unknown {
+  const input = { value: toolCallId };
+  return {
+    fullStream: (async function* () {
+      yield { type: "tool-input-start", id: toolCallId, toolName };
+      yield { type: "tool-call", toolCallId, toolName, input };
+    })(),
+    finishReason: Promise.resolve("tool-calls"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve(""),
+    toolCalls: Promise.resolve([{ toolCallId, toolName, input }]),
   };
-
-  return { manager, callbacks, get startBackgroundDiscoveryCalls() { return startBackgroundDiscoveryCalls; }, setStatus };
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+function stoppedStream(): unknown {
+  return {
+    fullStream: (async function* () {})(),
+    finishReason: Promise.resolve("stop"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve("done"),
+    toolCalls: Promise.resolve([]),
+  };
+}
 
-describe("createRuntime MCP background loading", () => {
-  test("owns MCP shutdown and records only stable safe failure data", async () => {
-    const secret = "shutdown-secret-123456";
-    const url = "https://shutdown.example.test/private";
-    const path = "/private/tmp/archcode-mcp-shutdown/stderr.log";
-    const rawStderr = `stderr=${secret} ${url} ${path}`;
-    const { manager } = makeMockMcpManager();
-    (manager as unknown as { closeAll: ReturnType<typeof mock> }).closeAll = mock(async () => [{
-      serverName: `server-${rawStderr}`,
-      message: `close failed ${rawStderr}`,
-    }]);
-    const { logger, entries } = createInMemoryLogger();
-
-    const runtime = await createRuntime({
-      configService: await writeConfig(makeConfig({ servers: {} })),
-      externalSecretLiterals: [secret],
-      logger,
-      mcpManagerFactory: () => manager,
-    });
-
-    await runtime.shutdown();
-    await runtime.shutdown();
-
-    expect((manager as unknown as { closeAll: ReturnType<typeof mock> }).closeAll).toHaveBeenCalledTimes(1);
-    expect(runtime.warnings).toContainEqual({ message: "MCP shutdown failed" });
-    const warning = entries.find((entry) => entry.event === "mcp.shutdown.warning");
-    expect(warning).toMatchObject({
-      event: "mcp.shutdown.warning",
-      message: "MCP shutdown failed",
-      meta: { failure: { name: "McpShutdownError", code: "MCP_SHUTDOWN_FAILED" } },
-    });
-    const serialized = JSON.stringify({ warnings: runtime.warnings, entries });
-    expect(serialized).not.toContain(secret);
-    expect(serialized).not.toContain(url);
-    expect(serialized).not.toContain(path);
-    expect(serialized).not.toContain("stderr=");
-    expect(serialized).not.toContain(REDACTION_MARKER);
-  });
-
-  test("passes one immutable runtime policy containing resolved secret literals", async () => {
-    const mcpUrl = "https://private.example.test/mcp";
-    const mcpHeader = "Bearer mcp-secret";
-    const externalSecret = "server-password";
-    const configService = await writeConfig(makeConfig({
-      servers: {
-        private: {
-          url: mcpUrl,
-          headers: { Authorization: mcpHeader },
-        },
-      },
-    }));
-    const { manager } = makeMockMcpManager();
-    let policy: SecretRedactionPolicy | undefined;
-
-    const runtime = await createRuntime({
-      configService,
-      externalSecretLiterals: [externalSecret],
-      mcpManagerFactory: (_config, runtimePolicy) => {
-        policy = runtimePolicy;
-        return manager;
-      },
-    });
-
-    expect(policy).toBeDefined();
-    const leaked = `test-key ${mcpUrl} ${mcpHeader} ${externalSecret}`;
-    const redacted = policy?.redactString(leaked) ?? leaked;
-    expect(redacted).not.toContain("test-key");
-    expect(redacted).not.toContain(mcpUrl);
-    expect(redacted).not.toContain(mcpHeader);
-    expect(redacted).not.toContain(externalSecret);
-    await runtime.disposeToolOutputs();
-  });
-
-  test("createRuntime returns with all MCP servers in pending state", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const { manager } = makeMockMcpManager({
-      servers: { docs: { state: "pending" } },
-    });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    const statuses = runtime.getMcpServerStatuses();
-    expect(statuses.get("docs")).toEqual({ state: "pending" });
-  });
-
-  test("createRuntime starts background discovery", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const { manager } = makeMockMcpManager();
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    expect((manager as unknown as { startBackgroundDiscovery: { mock: { calls: unknown[] } } }).startBackgroundDiscovery.mock.calls).toHaveLength(1);
-    expect(runtime.toolRegistry).toBeDefined();
-  });
-
-  test("discovered descriptors get registered into toolRegistry after background load", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const descriptor = makeMcpDescriptor("mcp__docs__lookup");
-    let releaseConnect!: () => void;
-    const connectGate = new Promise<void>((resolve) => {
-      releaseConnect = resolve;
-    });
-    const { manager, callbacks } = makeMockMcpManager({
-      descriptors: [descriptor],
-      connectGate,
-    });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    // Not registered yet (background hasn't delivered — gate still closed).
-    expect(runtime.toolRegistry.get("mcp__docs__lookup")).toBeUndefined();
-
-    // Wait for background callback to fire.
-    await callbacks;
-    releaseConnect();
-    for (let i = 0; i < 5; i++) await Promise.resolve();
-
-    expect(runtime.toolRegistry.get("mcp__docs__lookup")).toBe(descriptor);
-  });
-
-  test("duplicate tool descriptors are skipped with warning (not thrown)", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const duplicate = makeMcpDescriptor("file_read"); // collides with builtin
-    const { manager, callbacks } = makeMockMcpManager({
-      descriptors: [duplicate],
-    });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    await callbacks;
-    for (let i = 0; i < 5; i++) await Promise.resolve();
-
-    expect(runtime.toolRegistry.get("file_read")).not.toBe(duplicate);
-    expect(runtime.warnings).toContainEqual({
-      toolName: "file_read",
-      message: 'Duplicate MCP tool descriptor "file_read" skipped during startup',
+function waitForExecutionEnd(runtime: AgentRuntime, slug: string, sessionId: string): Promise<void> {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    unsubscribe = runtime.subscribeSessionEvents((event) => {
+      if (event.slug !== slug || event.sessionId !== sessionId || event.payload.type !== "execution-end") return;
+      unsubscribe();
+      resolve();
     });
   });
+}
 
-  test("onWarning callback routes into runtime.warnings", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const warning: McpWarning = {
-      serverName: "docs",
-      message: "MCP server \"docs\" returned no tools",
-    };
-    const { manager, callbacks } = makeMockMcpManager({
-      warnings: [warning],
+describe("createRuntime MCP facade", () => {
+  test("applies resolved configuration and exposes live status/inventory snapshots", async () => {
+    let applied: ResolvedMcpConfig | undefined;
+    const mcpRuntime = createTestMcpRuntime({
+      apply: async (config) => { applied = config; },
+      statuses: { servers: { docs: { state: "connecting", startedAt: 1 } } },
+      inventory: { servers: { docs: [] } },
     });
-
     const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
+      configService: await writeConfig(makeConfig()),
+      mcpRuntimeFactory: () => mcpRuntime,
     });
 
-    await callbacks;
-    for (let i = 0; i < 5; i++) await Promise.resolve();
-
-    expect(runtime.warnings).toContainEqual(warning);
+    await Promise.resolve();
+    expect(applied).toEqual({ disabledBuiltins: [], servers: {} });
+    expect(runtime.getMcpServerStatus()).toEqual({
+      servers: { docs: { state: "connecting", startedAt: 1 } },
+    });
+    expect(runtime.getMcpServerInventory()).toEqual({ servers: { docs: [] } });
   });
 
-  test("subscribeMcpStatusChanges returns an unsubscribe function", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const { manager } = makeMockMcpManager();
-
+  test("bridges status listeners and supports unsubscribe", async () => {
+    const mcpRuntime = createTestMcpRuntime();
     const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
+      configService: await writeConfig(makeConfig()),
+      mcpRuntimeFactory: () => mcpRuntime,
     });
-
     const calls: Array<{ serverName: string; status: McpServerStatus }> = [];
     const unsubscribe = runtime.subscribeMcpStatusChanges((serverName, status) => {
       calls.push({ serverName, status });
     });
-    expect(typeof unsubscribe).toBe("function");
-
-    // Manually emit a status change via the mock's listener set.
-    // We can't directly access listeners, but we can verify unsubscribe stops calls
-    // by checking that the function is callable and returns void.
-    unsubscribe();
-  });
-
-  test("subscribeMcpStatusChanges listener receives status updates", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const { manager, setStatus } = makeMockMcpManager({
-      servers: { docs: { state: "pending" } },
-    });
-
-    const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
-    });
-
-    const calls: Array<{ serverName: string; status: McpServerStatus }> = [];
-    runtime.subscribeMcpStatusChanges((serverName, status) => {
-      calls.push({ serverName, status });
-    });
-
-    setStatus("docs", { state: "ready", toolCount: 3, warningCount: 0 });
-
-    expect(calls).toContainEqual({
+    mcpRuntime.emitStatusChange("docs", { state: "ready", toolCount: 2, warningCount: 0, connectedAt: 2 });
+    expect(calls).toEqual([{
       serverName: "docs",
-      status: { state: "ready", toolCount: 3, warningCount: 0 },
+      status: { state: "ready", toolCount: 2, warningCount: 0, connectedAt: 2 },
+    }]);
+    unsubscribe();
+    mcpRuntime.emitStatusChange("docs", { state: "failed", error: "offline", failedAt: 3 });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("snapshotTools returns a run-local descriptor map and status projection", () => {
+    const descriptor = makeMcpDescriptor();
+    const mcpRuntime = createTestMcpRuntime({
+      descriptors: new Map([[descriptor.name, descriptor]]),
+      statuses: { servers: { docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 4 } } },
+    });
+    const snapshot = mcpRuntime.snapshotTools({ builtinServerNames: [] });
+    expect(snapshot.descriptors.get(descriptor.name)).toBe(descriptor);
+    expect(snapshot.statuses).toEqual({
+      servers: { docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 4 } },
     });
   });
 
-  test("getMcpServerStatuses returns a snapshot Map (mutations do not affect internal state)", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    const { manager } = makeMockMcpManager({
-      servers: { docs: { state: "pending" } },
+  test("runtime shutdown closes the MCP facade exactly once", async () => {
+    let closeCalls = 0;
+    const mcpRuntime = createTestMcpRuntime({
+      close: async () => { closeCalls += 1; },
     });
-
     const runtime = await createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
+      configService: await writeConfig(makeConfig()),
+      mcpRuntimeFactory: () => mcpRuntime,
     });
-
-    const snapshot = runtime.getMcpServerStatuses();
-    snapshot.set("docs", { state: "failed", error: "tampered" });
-    snapshot.delete("docs");
-
-    const fresh = runtime.getMcpServerStatuses();
-    expect(fresh.get("docs")).toEqual({ state: "pending" });
-    expect(fresh.size).toBe(1);
+    await runtime.shutdown();
+    await runtime.shutdown();
+    expect(closeCalls).toBe(1);
   });
 
-  test("createRuntime returns before pending MCP discovery settles", async () => {
-    const configService = await writeConfig(makeConfig({ servers: {} }));
-    let releaseConnect!: () => void;
-    const connectGate = new Promise<void>((resolve) => {
-      releaseConnect = resolve;
+  test("live MCP apply is visible at the next model boundary across projects without replacing Executions", async () => {
+    const firstCallsStarted = deferred<void>();
+    const secondCallsStarted = deferred<void>();
+    const releaseFirstCalls = deferred<void>();
+    const releaseSecondCalls = deferred<void>();
+    let firstCallCount = 0;
+    let secondCallCount = 0;
+    const sdkClient = (
+      toolName: string,
+      onCall: () => Promise<void>,
+    ): McpSdkClientLike => ({
+      connect: async () => undefined,
+      listTools: async () => ({
+        tools: [{
+          name: toolName,
+          inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+          annotations: { readOnlyHint: true },
+        }],
+      }),
+      callTool: async ({ arguments: input }): Promise<CallToolResultLike> => {
+        await onCall();
+        return { content: [{ type: "text", text: String(input.value) }] };
+      },
+      close: async () => undefined,
     });
-    const { manager } = makeMockMcpManager({
-      descriptors: [makeMcpDescriptor("mcp__docs__lookup")],
-      connectGate,
+    const clients = [
+      sdkClient("before.apply", async () => {
+        firstCallCount += 1;
+        if (firstCallCount === 2) firstCallsStarted.resolve();
+        await releaseFirstCalls.promise;
+      }),
+      sdkClient("after.apply", async () => {
+        secondCallCount += 1;
+        if (secondCallCount === 2) secondCallsStarted.resolve();
+        await releaseSecondCalls.promise;
+      }),
+    ];
+    const factories: McpClientFactories = {
+      createClient: () => {
+        const client = clients.shift();
+        if (client === undefined) throw new Error("Unexpected MCP connection");
+        return client;
+      },
+      createTransport: () => ({} as McpTransportLike),
+    };
+    const mcpRuntime = new McpRuntimeService({ builtinServers: {}, clientFactories: factories });
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpRuntimeFactory: () => mcpRuntime,
+      logger: silentLogger,
+    });
+    try {
+    const initialConfig: ResolvedMcpConfig = {
+      disabledBuiltins: [],
+      servers: {
+        shared: {
+          type: "http",
+          enabled: true,
+          url: "https://before.test/mcp",
+          connectTimeoutMs: 1_000,
+          discoveryTimeoutMs: 1_000,
+          callTimeoutMs: 1_000,
+        },
+      },
+    };
+    await runtime.applyMcpConfig(initialConfig);
+    const initialServer = initialConfig.servers.shared;
+    if (initialServer?.type !== "http") throw new Error("Expected the initial HTTP MCP config");
+    const initialAlias = runtime.getMcpServerInventory().servers.shared?.[0]?.registryName;
+    if (initialAlias === undefined) throw new Error("Initial MCP tool was not discovered");
+
+    const workspaceA = await makeTempRoot();
+    const workspaceB = await makeTempRoot();
+    const projectA = await runtime.projectRegistry.add({ workspaceRoot: workspaceA, name: "MCP project A" });
+    const projectB = await runtime.projectRegistry.add({ workspaceRoot: workspaceB, name: "MCP project B" });
+    const sessionA = await runtime.createSession(workspaceA, { agentName: "lead", source: { kind: "direct" } });
+    const sessionB = await runtime.createSession(workspaceB, { agentName: "lead", source: { kind: "direct" } });
+    const rounds = new Map<string, number>();
+    const boundaries: Array<{ project: string; round: number; tools: string[] }> = [];
+    let replacementAlias = "";
+
+    setLlmAdapterForTest({
+      streamText: mock((options: { messages: unknown; tools?: Record<string, unknown> }) => {
+        const serialized = JSON.stringify(options.messages);
+        const project = serialized.includes("PROJECT_A_BOUNDARY") ? "A" : "B";
+        const round = (rounds.get(project) ?? 0) + 1;
+        rounds.set(project, round);
+        boundaries.push({ project, round, tools: Object.keys(options.tools ?? {}) });
+        if (round === 1) return toolCallStream(initialAlias, `${project}-before`);
+        if (round === 2) return toolCallStream(replacementAlias, `${project}-after`);
+        return stoppedStream();
+      }) as never,
+      generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
     });
 
-    let runtimeReturned = false;
-    const runtimePromise = createRuntime({
-      configService,
-      mcpManagerFactory: () => manager,
+    const completedA = waitForExecutionEnd(runtime, projectA.slug, sessionA.sessionId);
+    const completedB = waitForExecutionEnd(runtime, projectB.slug, sessionB.sessionId);
+    await Promise.all([
+      runtime.acceptSessionMessage({
+        slug: projectA.slug,
+        workspaceRoot: workspaceA,
+        sessionId: sessionA.sessionId,
+        text: "PROJECT_A_BOUNDARY",
+        attachmentIds: [],
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+        requestedModelSelection: { mode: "profile_default", selection: { model: "local:test-model" } },
+      }),
+      runtime.acceptSessionMessage({
+        slug: projectB.slug,
+        workspaceRoot: workspaceB,
+        sessionId: sessionB.sessionId,
+        text: "PROJECT_B_BOUNDARY",
+        attachmentIds: [],
+        clientRequestId: crypto.randomUUID(),
+        source: "user",
+        requestedModelSelection: { mode: "profile_default", selection: { model: "local:test-model" } },
+      }),
+    ]);
+    await firstCallsStarted.promise;
+
+    await runtime.applyMcpConfig({
+      ...initialConfig,
+      servers: { shared: { ...initialServer, url: "https://after.test/mcp" } },
     });
-    // Resolve one microtask — if createRuntime awaited MCP, runtimeReturned would still be false.
-    await Promise.resolve();
-    const runtime = await runtimePromise;
-    runtimeReturned = true;
+    replacementAlias = runtime.getMcpServerInventory().servers.shared?.[0]?.registryName ?? "";
+    expect(replacementAlias).not.toBe("");
+    expect(replacementAlias).not.toBe(initialAlias);
+    releaseFirstCalls.resolve();
+    await secondCallsStarted.promise;
 
-    expect(runtimeReturned).toBe(true);
-    // Background discovery has not completed (gate not released).
-    expect(runtime.getMcpServerStatuses().get("docs")).toEqual({ state: "pending" });
-    expect(runtime.toolRegistry.get("mcp__docs__lookup")).toBeUndefined();
+    const liveA = await runtime.getSessionFile(workspaceA, sessionA.sessionId);
+    const liveB = await runtime.getSessionFile(workspaceB, sessionB.sessionId);
+    expect(liveA.isRunning).toBeTrue();
+    expect(liveB.isRunning).toBeTrue();
+    expect(liveA.currentExecutionId).toBeString();
+    expect(liveB.currentExecutionId).toBeString();
+    const executionIdA = liveA.currentExecutionId;
+    const executionIdB = liveB.currentExecutionId;
+    if (executionIdA === undefined || executionIdB === undefined) {
+      throw new Error("Expected both live Sessions to retain an active Execution");
+    }
+    await runtime.applyMcpConfig({
+      ...initialConfig,
+      servers: { shared: { ...initialServer, enabled: false } },
+    });
+    releaseSecondCalls.resolve();
+    await Promise.all([completedA, completedB]);
 
-    // Release the gate so background can complete (cleanup).
-    releaseConnect();
-    for (let i = 0; i < 5; i++) await Promise.resolve();
+    for (const project of ["A", "B"]) {
+      const projectBoundaries = boundaries.filter((entry) => entry.project === project);
+      expect(projectBoundaries).toHaveLength(3);
+      expect(projectBoundaries[0]!.tools).toContain(initialAlias);
+      expect(projectBoundaries[0]!.tools).not.toContain(replacementAlias);
+      expect(projectBoundaries[1]!.tools).toContain(replacementAlias);
+      expect(projectBoundaries[1]!.tools).not.toContain(initialAlias);
+      expect(projectBoundaries[2]!.tools).not.toContain(initialAlias);
+      expect(projectBoundaries[2]!.tools).not.toContain(replacementAlias);
+    }
+    const finalA = await runtime.getSessionFile(workspaceA, sessionA.sessionId);
+    const finalB = await runtime.getSessionFile(workspaceB, sessionB.sessionId);
+    expect(finalA.executions).toHaveLength(1);
+    expect(finalB.executions).toHaveLength(1);
+    expect(finalA.executions[0]?.id).toBe(executionIdA);
+    expect(finalB.executions[0]?.id).toBe(executionIdB);
+    } finally {
+      releaseFirstCalls.resolve();
+      releaseSecondCalls.resolve();
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+    }
   });
 });
 
 describe("createRuntime tool output lifecycle", () => {
   test("retries only failed shutdown steps after a best-effort round", async () => {
     const configService = await writeConfig(makeConfig({ servers: {} }));
-    const { manager } = makeMockMcpManager();
-    const root = await makeTempRoot();
     const cleanupCalls: string[] = [];
     let executionShutdownAttempts = 0;
-
-    (manager as unknown as { closeAll: () => Promise<McpWarning[]> }).closeAll = mock(async () => {
-      cleanupCalls.push("mcp");
-      return [];
-    });
+    const mcpRuntime = createTestMcpRuntime({ close: async () => { cleanupCalls.push("mcp"); } });
+    const root = await makeTempRoot();
     class TrackingStore extends ToolOutputArtifactStore {
       override async dispose(): Promise<void> {
         cleanupCalls.push("artifacts");
@@ -481,7 +406,7 @@ describe("createRuntime tool output lifecycle", () => {
 
     const runtime = await createRuntime({
       configService,
-      mcpManagerFactory: () => manager,
+      mcpRuntimeFactory: () => mcpRuntime,
       toolOutputRootDir: root,
       toolOutputStoreFactory: (rootDir) => new TrackingStore({ rootDir }),
       executionManagerShutdown: async () => {
@@ -489,9 +414,7 @@ describe("createRuntime tool output lifecycle", () => {
         cleanupCalls.push(`executions:${executionShutdownAttempts}`);
         if (executionShutdownAttempts === 1) throw new Error("execution cleanup failed");
       },
-      sessionAgentManagerDisposeAll: () => {
-        cleanupCalls.push("agents");
-      },
+      sessionAgentManagerDisposeAll: () => { cleanupCalls.push("agents"); },
     });
 
     const firstShutdown = runtime.shutdown();
@@ -506,36 +429,29 @@ describe("createRuntime tool output lifecycle", () => {
     expect(retryShutdown).not.toBe(firstShutdown);
     await retryShutdown;
     expect(cleanupCalls).toEqual(["executions:1", "artifacts", "mcp", "agents", "executions:2"]);
-
     expect(runtime.shutdown()).toBe(retryShutdown);
-    await runtime.shutdown();
-    expect(cleanupCalls).toEqual(["executions:1", "artifacts", "mcp", "agents", "executions:2"]);
   });
 
   test("initializes the configured store and exposes awaited disposal", async () => {
     const configService = await writeConfig(makeConfig({ servers: {} }));
-    const { manager } = makeMockMcpManager();
     const root = await makeTempRoot();
     let receivedRoot = "";
     let disposeCalls = 0;
-
     class TrackingStore extends ToolOutputArtifactStore {
       override async dispose(): Promise<void> {
         disposeCalls += 1;
         await super.dispose();
       }
     }
-
     const runtime = await createRuntime({
       configService,
-      mcpManagerFactory: () => manager,
+      mcpRuntimeFactory: () => createTestMcpRuntime(),
       toolOutputRootDir: root,
       toolOutputStoreFactory: (rootDir) => {
         receivedRoot = rootDir;
         return new TrackingStore({ rootDir });
       },
     });
-
     expect(receivedRoot).toBe(root);
     await runtime.disposeToolOutputs();
     expect(disposeCalls).toBe(1);
@@ -543,29 +459,22 @@ describe("createRuntime tool output lifecycle", () => {
 
   test("disposes the store and closes MCP when store initialization fails", async () => {
     const configService = await writeConfig(makeConfig({ servers: {} }));
-    const { manager } = makeMockMcpManager();
+    const mcpRuntime = createTestMcpRuntime();
     const root = await makeTempRoot();
     let disposeCalls = 0;
-
     class FailingStore extends ToolOutputArtifactStore {
-      override async ready(): Promise<void> {
-        throw new Error("artifact init failed");
-      }
-
+      override async ready(): Promise<void> { throw new Error("artifact init failed"); }
       override async dispose(): Promise<void> {
         disposeCalls += 1;
         await super.dispose();
       }
     }
-
     await expect(createRuntime({
       configService,
-      mcpManagerFactory: () => manager,
+      mcpRuntimeFactory: () => mcpRuntime,
       toolOutputRootDir: root,
       toolOutputStoreFactory: (rootDir) => new FailingStore({ rootDir }),
     })).rejects.toThrow("artifact init failed");
-
     expect(disposeCalls).toBe(1);
-    expect((manager as unknown as { closeAll: ReturnType<typeof mock> }).closeAll).toHaveBeenCalledTimes(1);
   });
 });

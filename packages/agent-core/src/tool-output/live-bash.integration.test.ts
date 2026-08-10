@@ -126,7 +126,7 @@ describe("live Bash output through the durable Session tool path", () => {
         source: "runtime/snapshot",
         hash: "b".repeat(64),
       }],
-      skills: { status: "absent" as const, active: [] },
+      skills: { status: "absent" as const, available: { includedEntries: [], omittedCount: 0, renderedText: "- none", byteLength: 6 }, active: [] },
       visibleTools: ["bash"],
       agentsMd: "present" as const,
       memory: "absent" as const,

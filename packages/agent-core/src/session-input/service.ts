@@ -78,6 +78,19 @@ export interface MessageAcceptance {
   readonly message?: PendingSessionMessage;
 }
 
+export interface NormalizedSkillCommandInput {
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+  readonly text: string;
+  readonly clientRequestId: string;
+  readonly source: SessionMessageSource;
+  readonly requestedModelSelection: RequestedModelSelection;
+  readonly activation: {
+    readonly skillName: string;
+    readonly content: string;
+  };
+}
+
 export type CommandRequestReplay =
   | {
       readonly kind: "command";
@@ -174,6 +187,105 @@ export class SessionInputService {
       : replayForReceipt(state, receipt, sessionInputFingerprint(input.source, input.text, [], input.requestedModelSelection));
   }
 
+  async getSkillCommandReplay(input: NormalizedSkillCommandInput): Promise<CommandRequestReplay | undefined> {
+    validateNormalizedSkillCommandInput(input);
+    const activation = Object.freeze({ ...input.activation });
+    const requestFingerprint = skillCommandInputFingerprint({ ...input, activation });
+    const state = await this.#store.getSessionFile(input.workspaceRoot, input.sessionId);
+    const receipt = state.inputRequestReceipts.find(
+      (candidate) => candidate.clientRequestId === input.clientRequestId,
+    );
+    if (receipt === undefined) return undefined;
+    if (receipt.kind === "command") {
+      return replayForReceipt(
+        state,
+        receipt,
+        sessionInputFingerprint(input.source, input.text, [], input.requestedModelSelection),
+      );
+    }
+    if (receipt.requestFingerprint !== requestFingerprint) {
+      throw new SessionInputConflictError(
+        "idempotency",
+        `clientRequestId ${input.clientRequestId} was already used for different input`,
+      );
+    }
+    return { kind: "message", acceptance: acceptanceForMessageReceipt(state, receipt) };
+  }
+
+  /**
+   * Atomically accepts a validated `/skill use` activation as one pending user
+   * message. No command ownership receipt is created before this durable cut.
+   */
+  async acceptSkillCommandMessage(input: NormalizedSkillCommandInput): Promise<MessageAcceptance> {
+    validateNormalizedSkillCommandInput(input);
+    const activation = Object.freeze({ ...input.activation });
+    const requestFingerprint = skillCommandInputFingerprint({ ...input, activation });
+    return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
+      assertRootSession(state);
+      const existing = state.inputRequestReceipts.find(
+        (receipt) => receipt.clientRequestId === input.clientRequestId,
+      );
+      if (existing !== undefined) {
+        if (existing.requestFingerprint !== requestFingerprint || existing.kind !== "message") {
+          throw new SessionInputConflictError(
+            "idempotency",
+            `clientRequestId ${input.clientRequestId} was already used for different input`,
+          );
+        }
+        return { result: acceptanceForMessageReceipt(state, existing) };
+      }
+
+      const conflicting = state.pendingMessages.find((message) => {
+        const pendingSkill = message.executionSkillNames[0];
+        return pendingSkill !== undefined && pendingSkill !== activation.skillName;
+      });
+      if (conflicting !== undefined) {
+        throw new SessionInputConflictError(
+          "state",
+          `Pending Skill "${conflicting.executionSkillNames[0]}" conflicts with "${activation.skillName}"`,
+        );
+      }
+
+      const messageId = crypto.randomUUID();
+      assertMessageIdentityAvailable(state, messageId);
+      const acceptedAt = nextSessionTimestamp(state);
+      const message: PendingSessionMessage = {
+        id: messageId,
+        clientRequestId: input.clientRequestId,
+        content: activation.content,
+        attachments: [],
+        source: input.source,
+        state: "queued",
+        revision: 0,
+        acceptedAt,
+        updatedAt: acceptedAt,
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+        executionSkillNames: [activation.skillName],
+      };
+      const receipt: SessionMessageInputReceipt = {
+        kind: "message",
+        clientRequestId: input.clientRequestId,
+        messageId,
+        requestFingerprint,
+        status: "pending",
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+      };
+      return {
+        result: {
+          clientRequestId: input.clientRequestId,
+          messageId,
+          status: "pending" as const,
+          message: copyPendingMessage(message),
+        },
+        patch: { inputRequestReceipts: [...state.inputRequestReceipts, receipt] },
+        events: [
+          { type: "system-notice", message: `Activating skill "${activation.skillName}"...` },
+          { type: "session.message_accepted", message },
+        ],
+      };
+    });
+  }
+
   async claimCommand(input: {
     sessionId: string;
     workspaceRoot: string;
@@ -234,14 +346,31 @@ export class SessionInputService {
     text: string;
     source: SessionMessageSource;
     requestedModelSelection: RequestedModelSelection;
+    executionSkillNames: readonly string[];
     messageId?: string;
   }): Promise<MessageAcceptance> {
     assertNonEmpty(input.text, "message text");
+    const executionSkillNames = [...new Set(input.executionSkillNames)];
+    if (executionSkillNames.length !== input.executionSkillNames.length || executionSkillNames.length > 1) {
+      throw new SessionInputConflictError("state", "A pending message may activate at most one unique Skill");
+    }
+    for (const name of executionSkillNames) assertNonEmpty(name, "execution Skill name");
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
       assertRootSession(state);
       const commandReceipt = requireExecutingCommandReceipt(state.inputRequestReceipts, input.clientRequestId);
       if (!sameRequestedSelection(commandReceipt.requestedModelSelection, input.requestedModelSelection)) {
         throw new SessionInputConflictError("idempotency", `Command ${input.clientRequestId} model selection changed before completion`);
+      }
+      const requestedSkill = executionSkillNames[0];
+      const conflicting = state.pendingMessages.find((message) => {
+        const pendingSkill = message.executionSkillNames[0];
+        return requestedSkill !== undefined && pendingSkill !== undefined && pendingSkill !== requestedSkill;
+      });
+      if (conflicting !== undefined) {
+        throw new SessionInputConflictError(
+          "state",
+          `Pending Skill "${conflicting.executionSkillNames[0]}" conflicts with "${requestedSkill}"`,
+        );
       }
       const messageId = input.messageId ?? crypto.randomUUID();
       assertMessageIdentityAvailable(state, messageId);
@@ -257,6 +386,7 @@ export class SessionInputService {
         acceptedAt,
         updatedAt: acceptedAt,
         requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+        executionSkillNames,
       };
       const receipt: SessionMessageInputReceipt = {
         kind: "message",
@@ -392,6 +522,7 @@ export class SessionInputService {
           acceptedAt,
           updatedAt: acceptedAt,
           requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+          executionSkillNames: [],
         };
         const receipt: SessionInputReceipt = {
           kind: "message",
@@ -594,6 +725,7 @@ export class SessionInputService {
         acceptedAt: createdAt,
         updatedAt: createdAt,
         requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+        executionSkillNames: [],
       };
       validateAudit(pending, input.modelAudit, input.binding);
       const message = toCanonicalMessage(
@@ -1018,6 +1150,32 @@ export function sessionInputFingerprint(
   return hash.digest("hex");
 }
 
+export function skillCommandInputFingerprint(input: Pick<
+  NormalizedSkillCommandInput,
+  "source" | "requestedModelSelection" | "activation"
+>): string {
+  return createHash("sha256")
+    .update("skill-command\0")
+    .update(sessionInputFingerprint(
+      input.source,
+      input.activation.content,
+      [],
+      input.requestedModelSelection,
+    ))
+    .update("\0")
+    .update(input.activation.skillName)
+    .update("\0")
+    .update(input.activation.content)
+    .digest("hex");
+}
+
+function validateNormalizedSkillCommandInput(input: NormalizedSkillCommandInput): void {
+  assertNonEmpty(input.text, "command text");
+  assertNonEmpty(input.clientRequestId, "clientRequestId");
+  assertNonEmpty(input.activation.skillName, "execution Skill name");
+  assertNonEmpty(input.activation.content, "message text");
+}
+
 function assertNonEmpty(value: string, field: string): void {
   if (value.trim().length === 0) throw new TypeError(`${field} must not be empty`);
 }
@@ -1061,6 +1219,7 @@ function copyPendingMessage(message: PendingSessionMessage): PendingSessionMessa
     ...message,
     attachments: message.attachments.map((attachment) => ({ ...attachment })),
     requestedModelSelection: copyRequestedSelection(message.requestedModelSelection),
+    executionSkillNames: [...message.executionSkillNames],
     ...(message.targetModelAudit === undefined
       ? {}
       : { targetModelAudit: copyModelAudit(message.targetModelAudit) }),

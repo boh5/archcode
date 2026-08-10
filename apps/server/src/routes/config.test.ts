@@ -2,8 +2,14 @@ import { describe, expect, mock, test } from "bun:test";
 import {
   ConfigRevisionConflictError,
   ConfigSemanticValidationError,
-  type ServerConfigService,
 } from "@archcode/agent-core";
+import type {
+  ModelRuntimeCatalog,
+  ProviderAdapterCatalog,
+  ServerConfigSnapshot,
+  UpdateServerConfigRequest,
+  UpdateServerConfigResponse,
+} from "@archcode/protocol";
 import { createConfigRoutes } from "./config";
 import { errorHandler } from "../error-handler";
 
@@ -29,7 +35,15 @@ const snapshot = {
   modelRuntimeRevision: "revision-1",
   configPath: "/Users/test/.archcode/config.json",
   restartRequiredSections: [],
-} as const;
+} as unknown as ServerConfigSnapshot;
+
+const savedResponse: UpdateServerConfigResponse = {
+  ...snapshot,
+  mcpApply: {
+    state: "applied",
+    status: { servers: {} },
+  },
+};
 
 const modelRuntimeCatalog = {
   revision: "revision-1",
@@ -49,17 +63,19 @@ const providerAdapterCatalog = [{
   }],
 }] as const;
 
-type ConfigServiceTestPort = Pick<
-  ServerConfigService,
-  "getSnapshot" | "getModelRuntimeCatalog" | "getProviderAdapterCatalog" | "save"
->;
+type ConfigServiceTestPort = {
+  getSnapshot(): Promise<ServerConfigSnapshot>;
+  getModelRuntimeCatalog(): ModelRuntimeCatalog;
+  getProviderAdapterCatalog(): ProviderAdapterCatalog;
+  save(request: UpdateServerConfigRequest): Promise<UpdateServerConfigResponse>;
+};
 
 function createService(overrides: Partial<ConfigServiceTestPort> = {}) {
   return {
     getSnapshot: mock(async () => snapshot),
     getModelRuntimeCatalog: mock(() => modelRuntimeCatalog),
     getProviderAdapterCatalog: mock(() => providerAdapterCatalog),
-    save: mock(async () => snapshot),
+    save: mock(async () => savedResponse),
     ...overrides,
   } as ConfigServiceTestPort;
 }
@@ -77,6 +93,18 @@ describe("config routes", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(snapshot);
+  });
+
+  test("returns the independent MCP apply result with a config save", async () => {
+    const service = createService();
+    const response = await createApp(service).request("/", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expectedRevision: "revision-1", config: snapshot.config }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(savedResponse);
   });
 
   test("returns the secret-free model runtime catalog", async () => {

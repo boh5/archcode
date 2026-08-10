@@ -70,6 +70,7 @@ const stopSessionMutate = mock((_variables: unknown) => {});
 const addLocalSendingMessage = mock((_input: unknown) => {});
 const removeLocalSendingMessage = mock((_clientRequestId: string) => {});
 const setLocalSendingMessageStatus = mock((_clientRequestId: string, _status: string) => {});
+const getCompleteProjectSkillInventory = mock(async (_slug: string, _sessionId?: string) => []);
 let activity: SessionFamilyActivity | undefined;
 let pendingHitlCount = 0;
 let hitlReady = false;
@@ -126,6 +127,9 @@ let modelCatalog: ModelRuntimeCatalog = { revision: "m1", providers: [], profile
 
 mock.module("../../api/queries", () => ({
   useModelRuntime: () => ({ data: modelCatalog, isFetching: modelRuntimeFetching }),
+}));
+mock.module("../../api/skills", () => ({
+  getCompleteProjectSkillInventory,
 }));
 mock.module("../../context/settings-modal", () => ({ useSettingsModal: () => ({ openSettingsModal: mock(() => {}) }) }));
 
@@ -206,6 +210,7 @@ describe("ChatInput runtime controls", () => {
     addLocalSendingMessage.mockClear();
     removeLocalSendingMessage.mockClear();
     setLocalSendingMessageStatus.mockClear();
+    getCompleteProjectSkillInventory.mockClear();
   });
 
   test("renders one unified composer card with a real attachment control", () => {
@@ -231,6 +236,110 @@ describe("ChatInput runtime controls", () => {
     expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-file-input")).toHaveLength(1);
     expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(1);
     expect(textContent(tree)).not.toContain("Images may be sent to the selected model provider.");
+  });
+
+  test("renders the complete Skill inventory with accessible availability states", () => {
+    activity = "idle";
+    hitlReady = true;
+    stateValues[0] = "/skill use ";
+    stateValues[1] = true;
+    stateValues[2] = "skill use ";
+    stateValues[3] = 0;
+    stateValues[4] = [
+      { name: "ready", source: "builtin", winner: true, shadowed: false, valid: true, description: "Ready Skill" },
+      { name: "omitted", source: "builtin", winner: true, shadowed: false, valid: true, promptOmitted: true },
+      { name: "shadowed", source: "user-agents", winner: false, shadowed: true, valid: true },
+      { name: "invalid", source: "project-archcode", winner: true, shadowed: false, valid: false, diagnostic: { code: "SKILL_INVALID_PACKAGE", message: "Invalid frontmatter" } },
+    ];
+    stateValues[5] = "ready";
+
+    const tree = rerenderChatInput();
+    const menu = findAll(tree, (element) => element.props?.role === "listbox")[0];
+    const options = findAll(tree, (element) => element.props?.role === "option");
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
+
+    expect(menu?.props?.["aria-label"]).toBe("Skills");
+    expect(options).toHaveLength(4);
+    expect(options.map(textContent)).toEqual([
+      "readyReady SkillbuiltinWinnerValid",
+      "omittedbuiltinWinnerValidPrompt omitted",
+      "shadoweduser-agentsShadowedValid",
+      "invalidInvalid frontmatterproject-archcodeWinnerInvalid",
+    ]);
+    expect(options.map((option) => option.props?.disabled)).toEqual([false, false, true, true]);
+    expect(options[0]?.props?.className).toContain("flex-wrap");
+    expect(findAll(options[0], (element) => element.type === "span" && String(element.props?.className).includes("break-all"))).not.toHaveLength(0);
+    expect(textarea?.props?.["aria-controls"]).toBe("composer-slash-menu");
+    expect(textarea?.props?.["aria-activedescendant"]).toBe("composer-slash-option-0");
+  });
+
+  test("offers an actual retry after Skill inventory loading fails", () => {
+    activity = "idle";
+    hitlReady = true;
+    stateValues[0] = "/skill use ";
+    stateValues[1] = true;
+    stateValues[2] = "skill use ";
+    stateValues[3] = 0;
+    stateValues[4] = [];
+    stateValues[5] = "failed";
+
+    const tree = rerenderChatInput();
+    const retry = findAll(tree, (element) => element.type === "button" && textContent(element) === "Retry")[0];
+
+    expect(findAll(tree, (element) => element.props?.role === "group" && element.props?.["aria-label"] === "Skills")).toHaveLength(1);
+    expect(retry).toBeDefined();
+    (retry?.props?.onClick as () => void)();
+    expect(stateValues[5]).toBe("loading");
+    expect(getCompleteProjectSkillInventory).toHaveBeenCalledWith("proj", "root-1");
+  });
+
+  test("Escape closes a Skill menu with no selectable matches", () => {
+    activity = "idle";
+    hitlReady = true;
+    stateValues[0] = "/skill use missing";
+    stateValues[1] = true;
+    stateValues[2] = "skill use missing";
+    stateValues[3] = 0;
+    stateValues[4] = [];
+    stateValues[5] = "ready";
+
+    const tree = rerenderChatInput();
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0]!;
+    const preventDefault = mock(() => {});
+    (textarea.props?.onKeyDown as (event: unknown) => void)({
+      key: "Escape",
+      shiftKey: false,
+      nativeEvent: { isComposing: false },
+      preventDefault,
+    });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(stateValues[1]).toBe(false);
+  });
+
+  test("sends Skill selection through the ordinary postMessage command path", () => {
+    activity = "idle";
+    hitlReady = true;
+    stateValues[0] = "/skill use ready";
+    stateValues[1] = true;
+    stateValues[2] = "skill use ready";
+    stateValues[3] = 0;
+    stateValues[4] = [{ name: "ready", source: "builtin", winner: true, shadowed: false, valid: true }];
+    stateValues[5] = "ready";
+    const tree = rerenderChatInput();
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    const preventDefault = mock(() => {});
+
+    (textarea.props?.onKeyDown as (event: unknown) => void)({ key: "Enter", shiftKey: false, nativeEvent: { isComposing: false }, preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(postMessageMutate).toHaveBeenCalledTimes(1);
+    expect(postMessageMutate.mock.calls[0]?.[0]).toMatchObject({
+      slug: "proj",
+      sessionId: "root-1",
+      content: "/skill use ready",
+      attachmentIds: [],
+    });
   });
 
   test("accepts a selected file and enables an attachment-only send", () => {
