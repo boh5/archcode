@@ -27,22 +27,27 @@ attention, and recover the exact Session associated with every run.
 
 ## Automation List
 
-- Group rows by decision value: `Needs attention`, `Scheduled`, `Paused`, then
-  `Inactive`. Groups are mutually exclusive.
-- A latest Invocation with `failed` or `missed` always belongs in `Needs
-  attention`, even when the Automation definition is disabled. When no failed or
-  missed Invocation overrides it, active definitions belong in `Scheduled`,
-  paused definitions in `Paused`, and disabled definitions in `Inactive`.
-- Each row shows status orbit, name, concise schedule or latest-run context, and
-  the real definition/Invocation state. `dispatched` is not `Completed`; the
-  final execution result is read from the linked Session. Use a flat row with
-  separators, not a summary card.
-- Selection uses the shared indigo selected treatment. Needs-attention state
-  keeps explicit text in addition to amber color.
+- Group rows by decision value: **`Needs you`**, **`Scheduled`**, **`Paused`**,
+  then **`Inactive`**. Groups are mutually exclusive. Prefer the product phrase
+  `Needs you` over `Needs attention` for the attention group title and primary
+  row state (compat aliases may still parse older strings in prototypes).
+- A latest Invocation with `failed` or `missed` always belongs in `Needs you`,
+  even when the Automation definition is disabled. When no failed or missed
+  Invocation overrides it, active definitions belong in `Scheduled`, paused
+  definitions in `Paused`, and disabled definitions in `Inactive`.
+- Each row shows the shared status orbit, name, concise schedule or latest-run
+  context, and the real definition/Invocation state. Terminal failures show
+  **`Failed`** with error tone; human gates show **`Needs you`** with attention
+  tone. `dispatched` is not `Completed`; the final execution result is read from
+  the linked Session. Use a flat row with separators, not a summary card.
+- Selection uses the shared indigo selected treatment. Needs-you state keeps
+  explicit text in addition to amber color.
 - `Filter Automations` matches stable ID, name, instruction, schedule, linked
   Todo canonical content, and visible run state. Show a
   helpful no-results state in place of the list without hiding the filter or
   New Automation action.
+- `New Automation` / primary detail actions use the shared primary button
+  primitive where a single dominant CTA is required.
 
 ## Selected Detail
 
@@ -79,6 +84,8 @@ attention, and recover the exact Session associated with every run.
 - treating an Automation definition as if it were the execution transcript;
 - hiding failed or missed invocations behind schedule state, including for
   disabled definitions;
+- titling the attention group `Needs attention` instead of product `Needs you`;
+- painting `Failed` invocations with amber attention styling;
 - deriving `Completed` from a `dispatched` Invocation instead of showing the
   real Invocation state and linked Session result;
 - sharing one Session identity across multiple runs;

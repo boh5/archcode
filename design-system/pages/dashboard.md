@@ -41,18 +41,25 @@ Do not add greetings, marketing copy, metrics, charts, or a global Todo board.
 ## Rows
 
 - Use one full-width row per actionable item:
-  `state icon → entity/title/project context → time or action state`.
+  `state orbit → entity/title/project context → time or action state`.
 - Every row identifies its project and entity type because Home crosses project
   boundaries.
-- Needs-you rows use amber plus the exact actionable state, including
-  `Inspection`, `Permission`, `Question`, `Blocked`, `Budget limited`,
-  `Failed`, or `Timed out`.
-  Running rows use the live orbit plus elapsed time. Review rows say what result
+- Section and chip labels use the shared product lexicon from Master:
+  **`Needs you`**, **`Running`**, **`Ready to review`**, **`Upcoming`**.
+- Needs-you rows use the shared amber attention orbit plus product state text.
+  Prefer the inventory label **`Needs you`** for actionable human gates; use
+  **`Failed`** with the error (red) tone for terminal failures — never restyle
+  failure as amber attention. Mechanism detail (`Permission`, `Question`, etc.)
+  may appear in accessible names or secondary copy without replacing the section
+  title.
+- Running rows use the live orbit plus elapsed time. Review rows say what result
   is awaiting review. Upcoming rows identify the Automation schedule.
 - Current-project rows use exact Todo, Automation, or Session deep links. Other
   project rows may remain explicit prototype actions rather than fake deep links.
 - Prefer a few decision-worthy rows over exhaustive recent activity. Home must
   never become a second Sessions, Automations, or Todos list.
+- Home section footnote and “work lives in Todos” cue stay quiet; Home only
+  surfaces decisions and live execution.
 
 ## Search and Attention
 

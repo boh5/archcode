@@ -1,8 +1,10 @@
 # Signal Workbench Design System
 
 > Target UI specification synchronized with the current effective prototypes on
-> 2026-08-03. Until product implementation catches up, current product code
+> 2026-08-10. Until product implementation catches up, current product code
 > remains authoritative for existing runtime behavior and state mechanics.
+> Prototypes under `design-system/prototypes/` lead visual and copy decisions for
+> surfaces they cover; page files record those decisions for implementation.
 >
 > When designing or implementing a page, read this file first and then read
 > `pages/[page-name].md`. A page file overrides this Master only where it says
@@ -355,10 +357,12 @@ Narrow-screen rules:
   generic `EntityFilter` component. Page-specific source or view controls may
   sit beside it without restyling the field.
 - Session and Automation pages use one compact row per item:
-  `state icon → single-line title → optional goal/attention/time marker`.
-- Use icons for running, completed, Goal, permission, question, and Automation
-  states. Reserve short text tags for states that require immediate user action,
-  such as `Permission` or `Question`.
+  `status orbit → single-line title → optional goal/attention/time marker`.
+- Use icons/orbits for running, completed, Goal, permission, question, Automation,
+  failed, and review states. Inventory and Home surfaces use the product phrase
+  **`Needs you`** for human action groups; reserve short mechanism tags
+  (`Permission`, `Question`) for tool/HITL detail and accessible names when
+  density requires it. **`Failed`** always uses error tone.
 - Do not repeat ordinary state and time in a second descriptive line. Put the
   full state explanation in the accessible name and tooltip.
 - Organize Sessions by decision value: `Needs you`, `Running`, then `Recent`.
@@ -392,29 +396,58 @@ Narrow-screen rules:
 ## Status Language
 
 Use visible text or a recognizable icon in addition to color. Always provide
-the complete state in the accessible name:
+the complete state in the accessible name.
 
-| State | Visual |
-|---|---|
-| Running/live | Lime-accented spinner/orbit or live pulse plus accessible state |
-| Completed | Green check/status text |
-| Needs attention | Amber icon plus short `Permission` or `Question` tag |
-| Selected/active | Indigo field or inset rule |
-| Idle/neutral | Outline neutral orbit |
-| Error/destructive | Red icon/field and recovery wording |
+### Product lexicon vs mechanism detail
+
+| Layer | Label | Where it appears |
+|---|---|---|
+| Product decision | **`Needs you`** | Home sections, Sessions/Automations inventory groups and row states, Session header badge, Composer state, Todo operational line, rail attention inbox |
+| Mechanism detail | **`Permission`**, **`Question`**, tool/HITL tab copy | Tool rows, HITL request family, Context Inspector Execution binding, agent-tree trailing state when mirroring a gate |
+| Terminal failure | **`Failed`** | Own red tone — never restyled as amber `Needs you` |
+| Live work | **`Running`** / elapsed | Inventories, header, Composer, agent tree |
+| Success | **`Done`** / **`Completed`** / **`Ready to review`** | Inventories and review surfaces |
+
+Rules:
+
+- Prefer **`Needs you`** as the cross-surface product phrase for “user action required.” Do not compete with **`Needs attention`**, **`Waiting`**, or bare **`Permission`** as the primary inventory/header label.
+- **`Permission`** remains correct for the *kind* of gate (tool status, HITL family, Execution `Suspended · Permission`). It is not a substitute for the product group name `Needs you`.
+- On a single Session canvas, do **not** repeat `Needs you` on every chrome layer. Strong product labels stay on **header + Composer**; Work folds, agent tree, and inspector summary use mechanism or time wording (see [`pages/session.md`](pages/session.md)).
+- Failed runs use **`--error`** tone and the word **`Failed`**. Do not map failure onto the attention/amber channel.
+
+### Status visual map
+
+Core decision triad is **Running / Needs you / Done**. The full map also covers
+failure, review, selection, and idle so implementers do not invent competing
+colors.
+
+| State | Token / field | Visual |
+|---|---|---|
+| Running / live | `--signal` / `--signal-foreground` / `--running-field` | Lime orbit or live pulse + accessible state |
+| Needs you / HITL attention | `--warning` / `--attention-field` | Amber icon/orbit + `Needs you` (or mechanism tag where density rules allow) |
+| Done / completed | `--success` / `--success-field` | Green check or completed text |
+| Failed / error | `--error` / `--error-field` | Red icon/orbit + `Failed` or recovery wording |
+| Ready to review | brand-tinted quiet marker (not lime) | Review-ready inventory cue |
+| Selected / active | `--brand` / `--selection-field` | Indigo field or inset rule |
+| Idle / stopped / neutral | `--neutral` / outline orbit | Outline neutral orbit; no lime |
+
+Shared **status-orbit** (and page aliases: home/session/automation/session-finder/session-picker) is one primitive: same sizes, tones, spin only while `.running`, and `prefers-reduced-motion` freezes spin. Do not fork per-page orbit CSS.
 
 Automation invocation state is not Session or Execution completion: a
 `dispatched` invocation remains visibly `Dispatched` and must never be labeled
 `Completed` without a terminal result from the relevant Session/Execution.
 
 Avoid decorative status animation. Only a running Session spinner, live Work
-pulse, and terminal cursor may loop.
+pulse, status-orbit spin while running, and terminal cursor may loop.
 
 ## Component Specifications
 
 ### Buttons
 
-- Primary: indigo fill, 4px radius, 32px default height.
+- Primary: shared `.primary-button` (or product equivalent) — indigo fill,
+  4px radius, 32px default height, disabled state uses muted fill without a second
+  “fake primary” style. Inventory CTAs such as `New Session` and `New Automation`
+  use this primitive; do not invent page-local primary button classes.
 - Secondary: elevated neutral surface, 1px border, 4px radius.
 - Icon button: 32–40px visible control; expand the hit area to 44px on coarse
   pointers.
@@ -458,8 +491,12 @@ Execution is a mandatory product entity, not an optional visual section.
 - Running Work is expanded so current progress remains visible. Completed Work
   collapses to `Worked for {duration}` with only a chevron and expansion
   affordance.
-- A running summary reads `Working · {duration}` and may append one current
-  activity label after an em dash.
+- A running summary reads `Working for {duration}` (or `Working · {duration}`) and
+  may append one current activity label after an em dash.
+- When Work is suspended for the user (HITL / permission), the fold label uses
+  time/mechanism wording such as **`Paused · Worked for {duration}`** — not a
+  second `Needs you` slogan. Product urgency remains on the Session header and
+  Composer.
 - Do not show Execution number, model, message count, step count, Tool count, or
   Child count in the visible Work row. Preserve Execution identity in product
   data and stable DOM identity.
@@ -528,16 +565,28 @@ Execution is a mandatory product entity, not an optional visual section.
 
 ### Inspector, Drawers, and Entity Detail
 
-- Context Inspector owns Agents, Changes, and Context; do not remove or merge
-  these tabs.
-- Inspector is a persistent right column on wide Session layouts and an overlay
-  below 1181px.
+- Context Inspector owns **Agents**, **Changes**, and **Context**; do not remove
+  or merge these tabs, and do not add a fourth tab for HITL or tokens.
+- Inspector is a persistent right column on wide Session layouts (**312px** default,
+  resizable 280–460px) and an overlay below 1181px.
 - Persistent desktop navigation and Inspector widths are user-resizable and
   restored after collapse or focus mode.
+- **Role split:** main canvas owns narrative work (transcript, Work, HITL
+  decision UI, Composer). The inspector owns machine state — agent structure,
+  file artifacts, and session bindings — not a second chat or primary CTA strip.
+- **Quiet IDE density:** list rows and property rows, not card stacks; type floor
+  **≥11px** (primary ~12–12.5px, meta ~11–11.5px). Prefer hover fields and a 2px
+  brand inset edge for selection over large brand washes.
+- **Header vs inspector anti-duplication:** header is glance (title, product
+  status, `N tools · tokens`); inspector is structure/precise bindings. If a fact
+  appears in both, header stays one number or short badge; inspector holds the
+  full path, ratio, or objective.
 - Todo detail is an independent project route because it owns durable Markdown,
   Plan, linked Sessions and Automations, and lifecycle actions. The Todo Board
   never duplicates this surface in a drawer.
 - Overlays use a scrim and a visible close action.
+- Detailed Agents / Changes / Context presentation lives in
+  [`pages/session.md`](pages/session.md).
 
 ### Todo References and Live Source Context
 
@@ -640,6 +689,12 @@ Motion explains state changes; it is not decoration.
       and expanded ordinary rows show their targets.
 - [ ] Confirm the Session header preserves Tool count and Token usage without
       restoring Execution/model/message metadata at 390px, 760px, and desktop.
+- [ ] Confirm product status copy uses `Needs you` on inventories/header/Composer
+      and does not paint `Failed` as amber attention.
+- [ ] Confirm Session canvas does not stack `Needs you` on Work, agent tree, and
+      inspector summary in addition to header + Composer.
+- [ ] Confirm Context Inspector remains three tabs, quiet list density, and no
+      hosted HITL primary actions.
 - [ ] Confirm keyboard focus and accessible expansion state.
 - [ ] Confirm `prefers-reduced-motion`.
 - [ ] Confirm browser console is clean.

@@ -615,6 +615,7 @@
 
       .todo-operational.running { color: var(--signal-foreground); }
       .todo-operational.attention { color: var(--warning); }
+      .todo-operational.failed { color: var(--error); }
       .todo-operational.review { color: var(--brand); }
 
       .lane-orbit {
@@ -951,6 +952,11 @@
         background: var(--brand-field);
       }
 
+      .peek-runtime.is-failed {
+        border-color: color-mix(in srgb, var(--error) 26%, var(--border-subtle));
+        background: var(--error-field);
+      }
+
       .peek-runtime-mark {
         flex: 0 0 auto;
         width: 8px;
@@ -970,6 +976,11 @@
       .peek-runtime.is-review .peek-runtime-mark {
         background: var(--brand);
         box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent);
+      }
+
+      .peek-runtime.is-failed .peek-runtime-mark {
+        background: var(--error);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--error) 18%, transparent);
       }
 
       .peek-runtime strong,
@@ -1052,6 +1063,7 @@
       }
 
       .peek-orbit.attention { background: var(--warning); }
+      .peek-orbit.failed { background: var(--error); }
       .peek-orbit.review { background: var(--brand); }
       .peek-orbit.automation,
       .peek-orbit.discussion { background: var(--text-tertiary); }
@@ -1084,6 +1096,7 @@
 
       .peek-link-state.running { color: var(--signal-foreground); }
       .peek-link-state.attention { color: var(--warning); }
+      .peek-link-state.failed { color: var(--error); }
       .peek-link-state.review { color: var(--brand); }
 
       .peek-footnote {
@@ -1659,6 +1672,7 @@
 
       .row-operational.running { color: var(--signal-foreground); }
       .row-operational.attention { color: var(--warning); }
+      .row-operational.failed { color: var(--error); }
       .row-operational.review { color: var(--brand); }
 
       .row-actions {
@@ -1983,6 +1997,11 @@
         background: var(--success);
       }
 
+      .work-orbit.failed {
+        border-color: var(--error);
+        background: var(--error);
+      }
+
       .work-row strong {
         display: block;
         font-size: 12px;
@@ -2010,6 +2029,10 @@
 
       .work-row-state.attention {
         color: var(--warning);
+      }
+
+      .work-row-state.failed {
+        color: var(--error);
       }
 
       .work-row-state.review {
@@ -2389,7 +2412,7 @@
                     <span data-icon="circle-play" aria-hidden="true"></span>
                     <h2>In Progress</h2>
                     <p>Execution is attached here</p>
-                    <span class="list-group-count" data-list-count="in_progress">3</span>
+                    <span class="list-group-count" data-list-count="in_progress">4</span>
                   </header>
                   <div class="list-rows" data-list-rows="in_progress"></div>
                 </section>
@@ -2435,22 +2458,30 @@
 
                 <section class="todo-lane" aria-label="In Progress">
                   <header class="lane-header">
-                    <span class="lane-orbit progress" data-icon="circle-play" aria-hidden="true"></span><div><h2>In Progress</h2><p>Execution is attached here</p></div><span class="lane-count" data-lane-count="in_progress">3</span>
+                    <span class="lane-orbit progress" data-icon="circle-play" aria-hidden="true"></span><div><h2>In Progress</h2><p>Execution is attached here</p></div><span class="lane-count" data-lane-count="in_progress">4</span>
                   </header>
                   <div class="lane-content" data-lane-content="in_progress">
-                    <article class="todo-card" data-runtime="running">
-                      <button class="drag-handle" aria-label="Drag Live execution recovery" data-action="拖动 Todo" data-icon="grip"></button>
-                      <button class="todo-card-content" data-open-todo data-todo-id="todo-live-recovery">
-                        <span class="todo-excerpt">Live execution recovery Repair missed runtime events from the next authoritative Session snapshot.</span>
-                        <span class="todo-operational running"><span class="runtime-dot"></span>Working</span>
-                      </button>
-                    </article>
-
                     <article class="todo-card" data-runtime="needs_you">
                       <button class="drag-handle" aria-label="Drag Review worktree deletion permission" data-action="拖动 Todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-worktree-permission">
                         <span class="todo-excerpt">Review worktree deletion permission One bound Session is waiting for permission on a resolved worktree path.</span>
                         <span class="todo-operational attention"><span class="runtime-dot"></span>Needs you</span>
+                      </button>
+                    </article>
+
+                    <article class="todo-card" data-runtime="failed">
+                      <button class="drag-handle" aria-label="Drag Repair failed Automation verification" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="todo-card-content" data-open-todo data-todo-id="todo-failed-verification">
+                        <span class="todo-excerpt">Repair failed Automation verification The latest linked run failed with preserved evidence and needs recovery.</span>
+                        <span class="todo-operational failed"><span class="runtime-dot"></span>Failed</span>
+                      </button>
+                    </article>
+
+                    <article class="todo-card" data-runtime="running">
+                      <button class="drag-handle" aria-label="Drag Live execution recovery" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="todo-card-content" data-open-todo data-todo-id="todo-live-recovery">
+                        <span class="todo-excerpt">Live execution recovery Repair missed runtime events from the next authoritative Session snapshot.</span>
+                        <span class="todo-operational running"><span class="runtime-dot"></span>Working</span>
                       </button>
                     </article>
 
@@ -2860,6 +2891,30 @@ Resolve the exact managed worktree before requesting deletion. Never use broad p
           ],
           session: { id: "sess-worktree-permission", title: "Worktree cleanup review", summary: "Lead · waiting on one resolved permission", state: "Needs you" },
         },
+        "todo-failed-verification": {
+          id: "todo-failed-verification",
+          content: `# Repair failed Automation verification
+
+## Outcome
+The latest linked Automation run failed with preserved evidence. Recover the exact Session result without inventing a second completion.
+
+## Acceptance
+- The operational line shows Failed with error tone, never amber Needs you.
+- Opening the linked Session lands on the failed invocation transcript.
+- A newer successful attempt can supersede this failure later.`,
+          status: "In Progress",
+          lane: "in_progress",
+          updated: "Updated 12m ago",
+          hasPlan: false,
+          showPlanPrompt: false,
+          work: "failed",
+          session: {
+            id: "sess-aut-regression-failed",
+            title: "Regression check · failed run",
+            summary: "Automation · focused verification exited with status 1",
+            state: "Failed",
+          },
+        },
         "todo-work-search": {
           id: "todo-work-search",
           content: `# Unify project work search
@@ -3141,12 +3196,21 @@ Session storage remains project-root owned while every managed worktree executio
       }
 
       function sampleRuntime(sample) {
-        return sample.work === "attention" ? "needs_you" : sample.work === "running" ? "running" : sample.work === "review" ? "review" : "";
+        return sample.work === "attention"
+          ? "needs_you"
+          : sample.work === "failed"
+            ? "failed"
+            : sample.work === "running"
+              ? "running"
+              : sample.work === "review"
+                ? "review"
+                : "";
       }
 
       function operationalMarkup(sample, { row = false } = {}) {
         const cls = row ? "row-operational" : "todo-operational";
         if (sample.work === "attention") return `<span class="${cls} attention"><span class="runtime-dot"></span>Needs you</span>`;
+        if (sample.work === "failed") return `<span class="${cls} failed"><span class="runtime-dot"></span>Failed</span>`;
         if (sample.work === "running") return `<span class="${cls} running"><span class="runtime-dot"></span>Working</span>`;
         if (sample.work === "review") return `<span class="${cls} review"><span class="runtime-dot"></span>Ready to review</span>`;
         return "";
@@ -3185,8 +3249,8 @@ Session storage remains project-root owned while every managed worktree executio
           const lane = sampleLane(sample);
           if (grouped[lane]) grouped[lane].push(sample);
         });
-        const priority = { needs_you: 0, review: 1, running: 2 };
-        grouped.in_progress.sort((a, b) => (priority[sampleRuntime(a)] ?? 3) - (priority[sampleRuntime(b)] ?? 3));
+        const priority = { needs_you: 0, failed: 1, review: 2, running: 3 };
+        grouped.in_progress.sort((a, b) => (priority[sampleRuntime(a)] ?? 4) - (priority[sampleRuntime(b)] ?? 4));
         laneOrder.forEach((lane) => {
           const host = listPanel.querySelector(`[data-list-rows="${lane}"]`);
           const count = listPanel.querySelector(`[data-list-count="${lane}"]`);
@@ -3364,20 +3428,27 @@ Session storage remains project-root owned while every managed worktree executio
 
         const workMode = sample.work || "none";
         if (peekRuntime) {
-          const show = workMode === "attention" || workMode === "running" || workMode === "review";
+          const show =
+            workMode === "attention" ||
+            workMode === "failed" ||
+            workMode === "running" ||
+            workMode === "review";
           peekRuntime.hidden = !show;
           peekRuntime.classList.toggle("is-visible", show);
           peekRuntime.classList.toggle("is-running", workMode === "running");
           peekRuntime.classList.toggle("is-review", workMode === "review");
+          peekRuntime.classList.toggle("is-failed", workMode === "failed");
           if (peekRuntimeTitle) {
             peekRuntimeTitle.textContent =
               workMode === "attention" ? "Needs you" :
+              workMode === "failed" ? "Failed" :
               workMode === "running" ? "Working" :
               workMode === "review" ? "Ready to review" : "";
           }
           if (peekRuntimeCopy) {
             peekRuntimeCopy.textContent =
               workMode === "attention" ? (sample.session?.summary || "A bound Session is waiting for permission.") :
+              workMode === "failed" ? (sample.session?.summary || "The latest linked attempt failed and needs recovery.") :
               workMode === "running" ? (sample.session?.summary || "Execution is attached to this Todo.") :
               workMode === "review" ? (sample.session?.summary || "Implementation is waiting for review.") : "";
           }
@@ -3411,6 +3482,7 @@ Session storage remains project-root owned while every managed worktree executio
           if (sample.session) {
             const stateClass = sample.session.state === "Running" ? "running" :
               sample.session.state === "Needs you" ? "attention" :
+              sample.session.state === "Failed" ? "failed" :
               sample.session.state === "Ready to review" ? "review" : "";
             const href = `./session.html?todo=${encodeURIComponent(sample.id)}&session=${encodeURIComponent(sample.session.id)}&title=${encodeURIComponent(title)}`;
             links.push(`<a class="peek-link" href="${href}">
@@ -3499,8 +3571,17 @@ Session storage remains project-root owned while every managed worktree executio
           const sessionState = workSession.querySelector("[data-work-session-state]");
           const sessionOrbit = workSession.querySelector(".work-orbit");
           sessionState.textContent = sample.session.state;
-          sessionState.className = `work-row-state${sample.session.state === "Running" ? " running" : sample.session.state === "Needs you" ? " attention" : sample.session.state === "Ready to review" ? " review" : ""}`;
-          sessionOrbit.className = `work-orbit${sample.session.state === "Running" ? " running" : sample.session.state === "Done" ? " done" : ""}`;
+          sessionState.className = `work-row-state${
+            sample.session.state === "Running" ? " running" :
+            sample.session.state === "Needs you" ? " attention" :
+            sample.session.state === "Failed" ? " failed" :
+            sample.session.state === "Ready to review" ? " review" : ""
+          }`;
+          sessionOrbit.className = `work-orbit${
+            sample.session.state === "Running" ? " running" :
+            sample.session.state === "Done" ? " done" :
+            sample.session.state === "Failed" ? " failed" : ""
+          }`;
         }
         if (automationsSection) automationsSection.hidden = false;
         if (workAutomation) workAutomation.hidden = !sample.automation;

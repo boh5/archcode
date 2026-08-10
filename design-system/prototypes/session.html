@@ -11,10 +11,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=prototype-polish-2" />
+    <link rel="stylesheet" href="./styles.css?v=prototype-polish-3" />
     <style>
       :root {
-        --inspector-width: 320px;
+        --inspector-width: 312px;
       }
 
       .session-page .app-shell {
@@ -1633,6 +1633,7 @@
 
       .composer-state.running { color: var(--signal-foreground); }
       .composer-state.attention { color: var(--warning); }
+      .composer-state.failed { color: var(--error); }
       .composer-state.idle,
       .composer-state.unavailable { color: var(--text-tertiary); }
 
@@ -1851,23 +1852,73 @@
       .inspector-close {
         position: absolute;
         z-index: 2;
-        top: 6px;
-        right: 6px;
+        top: 8px;
+        right: 8px;
+      }
+
+      .inspector-summary {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 36px;
+        padding: 8px 12px 0;
+        color: var(--text-tertiary);
+        font-size: 11.5px;
+        font-weight: 560;
+        letter-spacing: -0.01em;
+      }
+
+      .inspector-summary-status {
+        color: var(--text-secondary);
+        font-weight: 650;
+      }
+
+      .inspector-summary-status.attention,
+      .inspector-summary-status.needs-you { color: var(--warning); }
+      .inspector-summary-status.running { color: var(--signal-foreground); }
+      .inspector-summary-status.done,
+      .inspector-summary-status.completed { color: var(--success); }
+      .inspector-summary-status.failed { color: var(--error); }
+
+      .inspector-summary-sep {
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: var(--border-default);
+        flex: 0 0 auto;
+      }
+
+      .inspector-summary-meta {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .inspector-tabs {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        flex: 0 0 48px;
-        border-bottom: 1px solid var(--border-default);
+        flex: 0 0 40px;
+        margin-top: 4px;
+        padding: 0 4px;
+        border-bottom: 1px solid var(--border-subtle);
       }
 
       .inspector-tabs button {
         position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
         background: transparent;
-        color: var(--text-secondary);
-        font-size: 11px;
+        color: var(--text-tertiary);
+        font-size: 12px;
         font-weight: 600;
+      }
+
+      .inspector-tabs button:hover {
+        color: var(--text-secondary);
       }
 
       .inspector-tabs button[aria-selected="true"] {
@@ -1876,39 +1927,58 @@
 
       .inspector-tabs button[aria-selected="true"]::after {
         position: absolute;
-        right: 7px;
+        right: 6px;
         bottom: -1px;
-        left: 7px;
+        left: 6px;
         height: 2px;
         background: var(--brand);
         content: "";
       }
 
+      .inspector-tab-count {
+        min-width: 16px;
+        padding: 0 5px;
+        border-radius: 999px;
+        background: var(--bg-muted);
+        color: var(--text-tertiary);
+        font-size: 11px;
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+        line-height: 16px;
+      }
+
+      .inspector-tabs button[aria-selected="true"] .inspector-tab-count {
+        background: color-mix(in srgb, var(--brand) 14%, var(--bg-muted));
+        color: var(--text-secondary);
+      }
+
       .inspector-panel {
         min-height: 0;
         overflow: auto;
-        padding: 12px 12px 18px;
+        padding: 8px 8px 16px;
       }
 
       .agent-tree {
         display: grid;
-        gap: 0;
+        gap: 1px;
       }
 
       .agent-node {
         position: relative;
         display: grid;
         width: 100%;
-        grid-template-columns: 28px minmax(0, 1fr) auto;
+        grid-template-columns: 22px minmax(0, 1fr) auto;
         gap: 8px;
         align-items: start;
-        min-height: 60px;
-        padding: 9px 9px;
-        border-bottom: 1px solid var(--border-subtle);
-        border-radius: 0;
+        min-height: 44px;
+        padding: 8px 8px 8px 8px;
+        border: 0;
+        border-radius: 6px;
         background: transparent;
         color: inherit;
         text-align: left;
+        cursor: pointer;
+        transition: background var(--motion-hover) var(--ease-standard);
       }
 
       .agent-node:hover:not(.active) {
@@ -1921,95 +1991,107 @@
       }
 
       .agent-node.child {
-        width: calc(100% - 14px);
-        margin-left: 14px;
+        padding-left: 22px;
       }
 
       .agent-node.child::before {
         position: absolute;
-        top: -8px;
+        top: 0;
         bottom: 0;
-        left: -7px;
-        width: 14px;
-        border-bottom: 1px solid var(--border-default);
-        border-left: 1px solid var(--border-default);
+        left: 18px;
+        width: 1px;
+        background: var(--border-subtle);
         content: "";
       }
 
       .agent-node.active {
-        border-bottom-color: transparent;
-        border-radius: 7px;
-        background: color-mix(in srgb, var(--brand-field) 68%, var(--bg-surface));
+        background: var(--bg-hover);
+      }
+
+      .agent-node.active::after {
+        position: absolute;
+        top: 8px;
+        bottom: 8px;
+        left: 0;
+        width: 2px;
+        border-radius: 2px;
+        background: var(--brand);
+        content: "";
       }
 
       .agent-mark {
         display: grid;
         place-items: center;
-        width: 28px;
-        height: 28px;
-        border-radius: 4px;
-        border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--border-subtle));
-        background: var(--bg-elevated);
-        color: var(--brand);
-      }
-
-      .agent-node:not(.active) .agent-mark {
-        border-color: var(--border-subtle);
+        width: 22px;
+        height: 22px;
+        margin-top: 1px;
+        border-radius: 5px;
+        border: 1px solid var(--border-subtle);
         background: var(--bg-base);
         color: var(--text-tertiary);
       }
 
+      .agent-node.active .agent-mark {
+        border-color: color-mix(in srgb, var(--brand) 22%, var(--border-subtle));
+        color: var(--brand);
+      }
+
       .agent-mark svg {
-        width: 13px;
-        height: 13px;
+        width: 12px;
+        height: 12px;
       }
 
       .agent-copy {
         min-width: 0;
+        display: grid;
+        gap: 2px;
       }
 
       .agent-line {
         display: flex;
         gap: 6px;
         align-items: baseline;
+        min-width: 0;
       }
 
       .agent-line strong {
-        font-size: 11px;
+        color: var(--text-primary);
+        font-size: 12.5px;
+        font-weight: 650;
+        letter-spacing: -0.015em;
       }
 
       .agent-line span {
+        overflow: hidden;
         color: var(--text-tertiary);
         font-family: var(--font-stack-mono);
-        font-size: 9px;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .agent-title {
         display: block;
-        margin-top: 2px;
         overflow: hidden;
         color: var(--text-secondary);
-        font-size: 9px;
+        font-size: 11.5px;
+        line-height: 1.35;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
       .agent-skill {
-        display: block;
-        margin-top: 2px;
-        overflow: hidden;
-        color: var(--text-tertiary);
-        font-size: 9px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        display: none;
       }
 
       .agent-state {
         display: inline-flex;
         align-items: center;
-        gap: 4px;
+        gap: 5px;
+        margin-top: 2px;
         color: var(--text-tertiary);
-        font-size: 9px;
+        font-size: 11px;
+        font-weight: 600;
         white-space: nowrap;
       }
 
@@ -2036,45 +2118,158 @@
         color: var(--error);
       }
 
+      .changes-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 28px;
+        padding: 4px 6px 8px;
+        color: var(--text-tertiary);
+        font-size: 11.5px;
+        font-weight: 560;
+      }
+
+      .changes-summary strong {
+        color: var(--text-secondary);
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .changes-summary .diffstat {
+        font-size: 11px;
+      }
+
       .inspector-list,
       .context-list {
         display: grid;
-        gap: 5px;
+        gap: 1px;
       }
 
-      .change-row,
-      .context-row {
+      .change-row {
         display: grid;
         grid-template-columns: auto minmax(0, 1fr) auto;
         align-items: center;
         gap: 8px;
-        min-height: 38px;
-        padding: 6px 8px;
-        border: 1px solid var(--border-subtle);
-        border-radius: 4px;
-        background: var(--bg-muted);
-        font-size: 10px;
+        min-height: 32px;
+        padding: 6px 6px;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 12px;
+        text-align: left;
+        cursor: pointer;
+        transition: background var(--motion-hover) var(--ease-standard);
+      }
+
+      .change-row:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
       }
 
       .change-kind {
+        width: 14px;
         color: var(--warning);
         font-family: var(--font-stack-mono);
+        font-size: 11px;
         font-weight: 700;
+        text-align: center;
       }
 
-      .change-path,
-      .context-row strong {
+      .change-kind.A { color: var(--success); }
+      .change-kind.D { color: var(--error); }
+
+      .change-path {
         overflow: hidden;
+        font-family: var(--font-stack-mono);
+        font-size: 11.5px;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
+      .change-row .diffstat {
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .inspector-empty {
+        padding: 14px 8px;
+        color: var(--text-tertiary);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .inspector-action {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 34px;
+        margin-top: 10px;
+        padding: 0 12px;
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          background var(--motion-hover) var(--ease-standard),
+          color var(--motion-hover) var(--ease-standard),
+          border-color var(--motion-hover) var(--ease-standard);
+      }
+
+      .inspector-action:hover {
+        border-color: var(--border-strong, var(--border-default));
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .context-list {
+        gap: 0;
+        padding: 2px 4px;
+      }
+
       .context-row {
-        grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
+        display: grid;
+        grid-template-columns: minmax(84px, 34%) minmax(0, 1fr);
+        align-items: start;
+        gap: 12px;
+        min-height: 0;
+        padding: 9px 4px;
+        border: 0;
+        border-bottom: 1px solid var(--border-subtle);
+        border-radius: 0;
+        background: transparent;
+        font-size: 12px;
+      }
+
+      .context-row:last-child {
+        border-bottom: 0;
       }
 
       .context-row span:first-child {
         color: var(--text-tertiary);
+        font-size: 11.5px;
+        font-weight: 560;
+        line-height: 1.4;
+      }
+
+      .context-row strong {
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 560;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+        text-align: right;
+      }
+
+      .context-row.priority strong {
+        color: var(--text-primary);
+        font-weight: 650;
       }
 
       @media (max-width: 1180px) {
@@ -2115,6 +2310,7 @@
           display: inline-grid;
         }
 
+        .context-inspector .inspector-summary,
         .context-inspector .inspector-tabs {
           padding-right: 44px;
         }
@@ -2271,7 +2467,7 @@
         }
       }
     </style>
-    <script src="./app.js?v=prototype-polish-2" defer></script>
+    <script src="./app.js?v=prototype-polish-3" defer></script>
   </head>
   <body class="session-page todo-first-shell">
     <a class="skip-link" href="#work-canvas">跳到工作区</a>
@@ -2432,12 +2628,12 @@
                     class="work-toggle"
                     aria-expanded="true"
                     aria-controls="current-work"
-                    aria-label="Work segment needs user input, Needs you · Worked for 38s"
+                    aria-label="Work segment needs user input, Paused · Worked for 38s"
                     data-work-toggle
                     data-current-work-toggle
                   >
                     <span data-icon="chevron"></span>
-                    <strong data-current-work-label>Needs you · Worked for 38s</strong>
+                    <strong data-current-work-label>Paused · Worked for 38s</strong>
                     <span class="live-dot" data-current-work-live hidden aria-hidden="true"></span>
                   </button>
                   <div class="work-detail" id="current-work" data-current-work-detail>
@@ -2697,30 +2893,35 @@
         <div class="resize-handle inspector-resize" role="separator" tabindex="0" aria-label="Resize context inspector" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="460" aria-valuenow="312" data-resize-inspector></div>
         <div class="inspector-shell">
           <button class="icon-button mobile-close inspector-close" aria-label="Close context inspector" data-close-overlay data-icon="close"></button>
+          <div class="inspector-summary" aria-label="Session inspector summary" data-inspector-summary>
+            <span class="inspector-summary-status attention" data-inspector-summary-status>Permission</span>
+            <span class="inspector-summary-sep" aria-hidden="true"></span>
+            <span class="inspector-summary-meta" data-inspector-summary-meta>4 agents · 3 files</span>
+          </div>
           <div class="inspector-tabs" role="tablist" aria-label="Session context sections">
-            <button role="tab" aria-selected="true" data-inspector-tab="agents">Agents</button>
-            <button role="tab" aria-selected="false" data-inspector-tab="changes">Changes</button>
+            <button role="tab" aria-selected="true" data-inspector-tab="agents">Agents <span class="inspector-tab-count" data-agents-count>4</span></button>
+            <button role="tab" aria-selected="false" data-inspector-tab="changes">Changes <span class="inspector-tab-count" data-changes-count>3</span></button>
             <button role="tab" aria-selected="false" data-inspector-tab="context">Context</button>
           </div>
 
           <section class="inspector-panel" role="tabpanel" data-inspector-panel="agents">
             <nav class="agent-tree" aria-label="Agents">
-              <button class="agent-node active" aria-current="true">
+              <button class="agent-node active" aria-current="true" type="button">
                 <span class="agent-mark" data-icon="workflow" title="Lead agent"></span>
-                <span class="agent-copy"><span class="agent-line"><strong>Lead</strong><span>principal</span></span><span class="agent-title" data-lead-objective>Implement project Profile recommendation</span><span class="agent-skill">Skills: orchestrate-work, execute-plan</span></span>
-                <span class="agent-state needs-you" data-lead-state><span class="state-dot"></span><span data-lead-state-text>Needs you</span></span>
+                <span class="agent-copy"><span class="agent-line"><strong>Lead</strong><span>principal</span></span><span class="agent-title" data-lead-objective>Implement project Profile recommendation</span></span>
+                <span class="agent-state needs-you" data-lead-state><span class="state-dot"></span><span data-lead-state-text>Permission</span></span>
               </button>
-              <button class="agent-node child" data-profile-agent="analyst">
+              <button class="agent-node child" data-profile-agent="analyst" type="button">
                 <span class="agent-mark" data-icon="scan" title="Analyst agent"></span>
-                <span class="agent-copy"><span class="agent-line"><strong>Analyst</strong><span>deep</span></span><span class="agent-title">Review Profile precedence</span><span class="agent-skill">Skills: review-change</span></span>
+                <span class="agent-copy"><span class="agent-line"><strong>Analyst</strong><span>deep</span></span><span class="agent-title">Review Profile precedence</span></span>
                 <span class="agent-state completed"><span class="state-dot"></span>Completed</span>
               </button>
-              <button class="agent-node child" data-profile-agent="build">
+              <button class="agent-node child" data-profile-agent="build" type="button">
                 <span class="agent-mark" data-icon="hammer" title="Build agent"></span>
-                <span class="agent-copy"><span class="agent-line"><strong>Build</strong><span>deep</span></span><span class="agent-title">Add Session admission coverage</span><span class="agent-skill">Skills: execute-plan</span></span>
+                <span class="agent-copy"><span class="agent-line"><strong>Build</strong><span>deep</span></span><span class="agent-title">Add Session admission coverage</span></span>
                 <span class="agent-state running"><span class="state-dot"></span>Running</span>
               </button>
-              <button class="agent-node child" data-profile-agent="explore">
+              <button class="agent-node child" data-profile-agent="explore" type="button">
                 <span class="agent-mark" data-icon="telescope" title="Explore agent"></span>
                 <span class="agent-copy"><span class="agent-line"><strong>Explore</strong><span>fast</span></span><span class="agent-title">Trace persisted Profile bindings</span></span>
                 <span class="agent-state stopped"><span class="state-dot"></span>Stopped</span>
@@ -2729,20 +2930,25 @@
           </section>
 
           <section class="inspector-panel" role="tabpanel" data-inspector-panel="changes" hidden>
-            <div class="inspector-list" data-inspector-changes>
-              <div class="change-row"><span class="change-kind">M</span><span class="change-path">project-session-profile.test.ts</span><span class="diffstat"><span class="plus">+18</span> <span class="minus">−6</span></span></div>
-              <div class="change-row"><span class="change-kind">M</span><span class="change-path">projects/registry.ts</span><span class="diffstat"><span class="plus">+9</span> <span class="minus">−2</span></span></div>
-              <div class="change-row"><span class="change-kind">M</span><span class="change-path">routes/sessions.ts</span><span class="diffstat"><span class="plus">+4</span> <span class="minus">−1</span></span></div>
+            <div class="changes-summary" data-changes-summary>
+              <span><strong data-changes-summary-count>3</strong> files</span>
+              <span class="diffstat" data-changes-summary-stat><span class="plus">+31</span> <span class="minus">−9</span></span>
             </div>
+            <div class="inspector-list" data-inspector-changes>
+              <button type="button" class="change-row" data-action="在画布打开 project-session-profile.test.ts 的 diff"><span class="change-kind">M</span><span class="change-path">project-session-profile.test.ts</span><span class="diffstat"><span class="plus">+18</span> <span class="minus">−6</span></span></button>
+              <button type="button" class="change-row" data-action="在画布打开 projects/registry.ts 的 diff"><span class="change-kind">M</span><span class="change-path">projects/registry.ts</span><span class="diffstat"><span class="plus">+9</span> <span class="minus">−2</span></span></button>
+              <button type="button" class="change-row" data-action="在画布打开 routes/sessions.ts 的 diff"><span class="change-kind">M</span><span class="change-path">routes/sessions.ts</span><span class="diffstat"><span class="plus">+4</span> <span class="minus">−1</span></span></button>
+            </div>
+            <button type="button" class="inspector-action" data-action="在画布打开完整 diff">Open full diff</button>
           </section>
 
           <section class="inspector-panel" role="tabpanel" data-inspector-panel="context" hidden>
             <div class="context-list">
-              <div class="context-row"><span>Goal</span><strong data-context-goal>Active · Implement project Profile recommendation</strong></div>
+              <div class="context-row priority"><span>Goal</span><strong data-context-goal>Active · Implement project Profile recommendation</strong></div>
+              <div class="context-row priority"><span>Execution</span><strong data-context-execution>Suspended · Permission</strong></div>
               <div class="context-row"><span>Model</span><strong>GPT-5.6 Luna · deep</strong></div>
-              <div class="context-row"><span>Context</span><strong data-context-tokens>48,206 / 200,000 tokens</strong></div>
-              <div class="context-row"><span>Working dir</span><strong>/workspace/archcode</strong></div>
-              <div class="context-row"><span>Execution</span><strong data-context-execution>Suspended · Permission</strong></div>
+              <div class="context-row"><span>Tokens</span><strong data-context-tokens>48,206 / 200,000</strong></div>
+              <div class="context-row"><span>Working dir</span><strong data-context-cwd>/workspace/archcode</strong></div>
             </div>
           </section>
         </div>
@@ -2817,7 +3023,78 @@
       const contextGoal = document.querySelector("[data-context-goal]");
       const contextTokens = document.querySelector("[data-context-tokens]");
       const contextExecution = document.querySelector("[data-context-execution]");
+      const contextCwd = document.querySelector("[data-context-cwd]");
       const inspectorChanges = document.querySelector("[data-inspector-changes]");
+      const inspectorSummaryStatus = document.querySelector("[data-inspector-summary-status]");
+      const inspectorSummaryMeta = document.querySelector("[data-inspector-summary-meta]");
+      const agentsCountEl = document.querySelector("[data-agents-count]");
+      const changesCountEl = document.querySelector("[data-changes-count]");
+      const changesSummary = document.querySelector("[data-changes-summary]");
+      const changesSummaryCount = document.querySelector("[data-changes-summary-count]");
+      const changesSummaryStat = document.querySelector("[data-changes-summary-stat]");
+      const changesFullDiff = document.querySelector('[data-action="在画布打开完整 diff"]');
+
+      const changeDiffHints = {
+        "project-session-profile.test.ts": { plus: 18, minus: 6 },
+        "projects/registry.ts": { plus: 9, minus: 2 },
+        "routes/sessions.ts": { plus: 4, minus: 1 },
+        "session.tsx": { plus: 12, minus: 4 },
+        "global-sse.tsx": { plus: 7, minus: 2 },
+        "session.interaction.tsx": { plus: 9, minus: 1 },
+        "app.js": { plus: 14, minus: 5 },
+        "todos.html": { plus: 11, minus: 3 },
+        "styles.css": { plus: 8, minus: 2 },
+        "types.ts": { plus: 3, minus: 1 },
+        "session-cwd-migration.ts": { plus: 16, minus: 4 },
+        "session-cwd-migration.test.ts": { plus: 10, minus: 0 },
+      };
+
+      function changeDiffFor(path) {
+        return changeDiffHints[path] || { plus: 4, minus: 1 };
+      }
+
+      function renderInspectorChanges(paths) {
+        const list = Array.isArray(paths) ? paths : [];
+        if (changesCountEl) changesCountEl.textContent = String(list.length);
+        if (changesSummary) changesSummary.hidden = list.length === 0;
+        if (changesFullDiff) changesFullDiff.hidden = list.length === 0;
+        if (!list.length) {
+          if (inspectorChanges) {
+            inspectorChanges.innerHTML = '<p class="inspector-empty">No file changes yet.</p>';
+          }
+          if (changesSummaryCount) changesSummaryCount.textContent = "0";
+          if (changesSummaryStat) changesSummaryStat.innerHTML = "";
+          return;
+        }
+        let plusTotal = 0;
+        let minusTotal = 0;
+        const rows = list.map((path) => {
+          const stat = changeDiffFor(path);
+          plusTotal += stat.plus;
+          minusTotal += stat.minus;
+          return `<button type="button" class="change-row" data-action="在画布打开 ${escapeSessionHtml(path)} 的 diff"><span class="change-kind">M</span><span class="change-path" title="${escapeSessionHtml(path)}">${escapeSessionHtml(path)}</span><span class="diffstat"><span class="plus">+${stat.plus}</span> <span class="minus">−${stat.minus}</span></span></button>`;
+        });
+        if (inspectorChanges) inspectorChanges.innerHTML = rows.join("");
+        if (changesSummaryCount) changesSummaryCount.textContent = String(list.length);
+        if (changesSummaryStat) {
+          changesSummaryStat.innerHTML = `<span class="plus">+${plusTotal}</span> <span class="minus">−${minusTotal}</span>`;
+        }
+      }
+
+      function syncInspectorSummary(sample, leadTone) {
+        const visibleAgents = 1 + document.querySelectorAll("[data-profile-agent]:not([hidden])").length;
+        const changeCount = Array.isArray(sample.changes) ? sample.changes.length : 0;
+        if (agentsCountEl) agentsCountEl.textContent = String(visibleAgents);
+        if (inspectorSummaryStatus) {
+          inspectorSummaryStatus.textContent = presentInspectorSummaryStatus(sample, leadTone);
+          inspectorSummaryStatus.className = `inspector-summary-status ${leadTone}`;
+        }
+        if (inspectorSummaryMeta) {
+          const agentLabel = visibleAgents === 1 ? "1 agent" : `${visibleAgents} agents`;
+          const fileLabel = changeCount === 1 ? "1 file" : `${changeCount} files`;
+          inspectorSummaryMeta.textContent = `${agentLabel} · ${fileLabel}`;
+        }
+      }
       const hitlTitle = document.querySelector("[data-hitl-title]");
       const hitlSummary = document.querySelector("[data-hitl-summary]");
       const hitlDetail = document.querySelector("[data-hitl-detail]");
@@ -2871,7 +3148,7 @@
             { title: "Request recoverable deletion permission", state: "current" },
             { title: "Move only the resolved worktree to Trash", state: "pending" },
           ],
-          primaryMessage: "Resolve the exact managed worktree and stop before deleting anything that cannot be recovered.", primaryWorkLabel: "Worked for 54s", primaryCommentary: "Resolved the managed worktree record and verified it is not the project root or an active Session directory.", primaryReasoning: "Only the exact stale worktree path is eligible; the parent workspace and runtime state remain outside the requested operation.", primaryTools: "git_status, file_read", primaryTarget: "managed worktree registry", primaryResponse: "<strong>Target resolved.</strong> Cleanup is paused at the recoverable permission boundary.", showSecondary: true, secondaryMessage: "Remove only the resolved stale worktree and leave all other project data untouched.", currentWorkLabel: "Needs you · Worked for 22s", currentCommentary: "The exact stale worktree is ready to move to Trash after your approval.", currentReasoning: "The target passed project-root, active-Session, and runtime-path guards.", needsHitl: true, showQueue: false, composerState: "Needs you", objective: "Review recoverable worktree cleanup", execution: "Suspended · Permission", goal: "None · ordinary work", tokens: "21,804 / 200,000 tokens", changes: [],
+          primaryMessage: "Resolve the exact managed worktree and stop before deleting anything that cannot be recovered.", primaryWorkLabel: "Worked for 54s", primaryCommentary: "Resolved the managed worktree record and verified it is not the project root or an active Session directory.", primaryReasoning: "Only the exact stale worktree path is eligible; the parent workspace and runtime state remain outside the requested operation.", primaryTools: "git_status, file_read", primaryTarget: "managed worktree registry", primaryResponse: "<strong>Target resolved.</strong> Cleanup is paused at the recoverable permission boundary.", showSecondary: true, secondaryMessage: "Remove only the resolved stale worktree and leave all other project data untouched.", currentWorkLabel: "Paused · Worked for 22s", currentCommentary: "The exact stale worktree is ready to move to Trash after your approval.", currentReasoning: "The target passed project-root, active-Session, and runtime-path guards.", needsHitl: true, showQueue: false, composerState: "Needs you", objective: "Review recoverable worktree cleanup", execution: "Suspended · Permission", goal: "None · ordinary work", tokens: "21,804 / 200,000 tokens", changes: [],
           hitlTitle: "Move one stale worktree to Trash", hitlSummary: "The exact managed worktree has been resolved and can be recovered from Trash.", hitlDetail: "/workspace/.archcode-worktrees/stale-profile-review", questionTitle: "What should happen to the stale worktree?", questionSummary: "Choose one recovery-safe option. No project source has been changed.",
         },
         "sess-work-search-discussion": {
@@ -2985,7 +3262,7 @@
               { title: "Run focused contract verification", state: "current" },
               { title: "Return Todo for review", state: "pending" },
             ],
-            primaryWorkLabel: "Needs you · Worked for 3m 41s",
+            primaryWorkLabel: "Paused · Worked for 3m 41s",
             primaryCommentary: "The implementation is ready. One scoped verification command is waiting for permission.",
             primaryReasoning: "The command is limited to the new Session-admission contract and does not mutate project data.",
             primaryTools: "bash",
@@ -3022,7 +3299,7 @@
             primaryResponse: "<strong>First pass complete.</strong> The recommendation can remain project-owned and apply only when a new root Session has no explicit Profile override.",
             showSecondary: true,
             secondaryMessage: "Add the focused contract coverage. Stop if this requires changing existing Session bindings.",
-            currentWorkLabel: "Needs you · Worked for 38s",
+            currentWorkLabel: "Paused · Worked for 38s",
             preserveRepresentative: true,
             needsHitl: true,
             showQueue: true,
@@ -3097,7 +3374,7 @@
             showSecondary: false,
             needsHitl: false,
             showQueue: false,
-            composerState: failed ? "Needs you" : running ? "Running" : "Idle",
+            composerState: failed ? "Failed" : running ? "Running" : "Idle",
             objective: `Run ${title}`,
             execution: failed ? "Failed · Needs decision" : running ? "Running" : "Completed",
             goal: "None · Automation invocation",
@@ -3164,10 +3441,43 @@
       }
 
       function presentWorkLabel({ running = false, needsYou = false, duration = "0s", explicit } = {}) {
-        if (explicit) return explicit;
+        // Work fold mirrors mechanism/time — product "Needs you" lives on header + composer only.
+        if (explicit) {
+          return String(explicit).replace(/^Needs you\s*·\s*/i, "Paused · ");
+        }
         if (running) return `Working for ${duration}`;
-        if (needsYou) return `Needs you · Worked for ${duration}`;
+        if (needsYou) return `Paused · Worked for ${duration}`;
         return `Worked for ${duration}`;
+      }
+
+      function presentGateMechanism(sample) {
+        const family = String(sample.hitlFamily || sample.hitlKind || "").toLowerCase();
+        if (family === "question" || family === "ask_user" || family === "ask-user") return "Question";
+        const execution = String(sample.execution || "");
+        if (/\bquestion\b/i.test(execution) || /ask user/i.test(execution)) return "Question";
+        return "Permission";
+      }
+
+      function presentAgentStateLabel(sample, leadTone) {
+        if (leadTone === "failed" || sample.statusTone === "failed" || sample.status === "Failed") return "Failed";
+        if (leadTone === "needs-you" || leadTone === "attention" || sample.needsHitl || sample.status === "Needs you") {
+          return presentGateMechanism(sample);
+        }
+        if (leadTone === "completed" || leadTone === "done") return "Completed";
+        if (leadTone === "running") return "Running";
+        if (leadTone === "idle") return "Idle";
+        return sample.status || "Stopped";
+      }
+
+      function presentInspectorSummaryStatus(sample, leadTone) {
+        if (leadTone === "failed" || sample.statusTone === "failed" || sample.status === "Failed") return "Failed";
+        if (leadTone === "needs-you" || leadTone === "attention" || sample.needsHitl || sample.status === "Needs you") {
+          return presentGateMechanism(sample);
+        }
+        if (leadTone === "running") return "Running";
+        if (leadTone === "completed" || leadTone === "done") return "Done";
+        if (leadTone === "idle") return "Idle";
+        return sample.status || "Session";
       }
 
       function syncWorkToggle({ toggle, labelNode, liveNode, label, running = false, needsYou = false }) {
@@ -3236,7 +3546,18 @@
         const unavailable = sample.composerState === "Unavailable";
         const idle = sample.composerState === "Idle";
         const running = sample.composerState === "Running";
-        const attention = sample.composerState === "Needs attention" || sample.composerState === "Needs you";
+        const failed =
+          sample.composerState === "Failed" ||
+          sample.statusTone === "failed" ||
+          sample.statusTone === "error" ||
+          sample.status === "Failed";
+        // Product "Needs you" is only for real attention/HITL — never for terminal Failed.
+        const attention =
+          !failed &&
+          (sample.composerState === "Needs attention" ||
+            sample.composerState === "Needs you" ||
+            sample.needsHitl ||
+            sample.statusTone === "attention");
         const queueing = running || attention;
         const composerPrompt = sample.empty
           ? "What should the Agent do?"
@@ -3244,7 +3565,9 @@
             ? "Send a follow-up"
             : unavailable
               ? "Session unavailable"
-              : "Queue a message";
+              : failed
+                ? "Send a recovery follow-up"
+                : "Queue a message";
 
         composer?.setAttribute("aria-label", composerPrompt);
         collapsedComposer?.setAttribute("aria-label", composerPrompt);
@@ -3255,7 +3578,15 @@
         }
 
         composerStates.forEach((state) => {
-          const tone = running ? " running" : attention ? " attention" : idle || unavailable ? " idle" : "";
+          const tone = running
+            ? " running"
+            : failed
+              ? " failed"
+              : attention
+                ? " attention"
+                : idle || unavailable
+                  ? " idle"
+                  : "";
           state.className = `composer-state${tone}`;
           state.hidden = false;
         });
@@ -3266,9 +3597,11 @@
               ? "Ready"
               : running
                 ? "Running"
-                : attention
-                  ? "Needs you"
-                  : sample.composerState;
+                : failed
+                  ? "Failed"
+                  : attention
+                    ? "Needs you"
+                    : sample.composerState;
         });
 
         if (composerCollapse) composerCollapse.hidden = !sample.needsHitl;
@@ -3347,7 +3680,12 @@
               ? `automation=${encodeURIComponent(sample.automationId)}&`
               : "";
           const href = item.href || `./session.html?${todoParam}session=${encodeURIComponent(item.id)}`;
-          const tone = item.tone === "attention" ? "attention" : item.tone === "running" ? "running" : item.tone === "done" ? "done" : "";
+          const tone =
+            item.tone === "attention" ? "attention" :
+            item.tone === "running" ? "running" :
+            item.tone === "done" ? "done" :
+            item.tone === "failed" || item.tone === "error" ? "failed" :
+            "";
           return `<a href="${escapeSessionHtml(href)}" data-session-option="${escapeSessionHtml(item.id)}"${item.id === currentId ? ' aria-current="page"' : ""}><i class="session-picker-state ${tone}"></i><span><strong>${escapeSessionHtml(item.title)}</strong><small>${escapeSessionHtml(item.meta || "")}</small></span><em class="session-picker-status">${escapeSessionHtml(item.status)}</em></a>`;
         }).join("")}`;
         closeSessionPicker();
@@ -3526,13 +3864,17 @@
                   ? "idle"
                   : "stopped";
         leadState.className = `agent-state ${leadTone}`;
-        leadStateText.textContent = sample.status;
+        leadStateText.textContent = presentAgentStateLabel(sample, leadTone);
         contextGoal.textContent = sample.goal;
-        contextTokens.textContent = sample.tokens;
+        contextTokens.textContent = String(sample.tokens || "").replace(/\s*tokens$/i, "");
         contextExecution.textContent = sample.execution;
+        if (contextCwd) contextCwd.textContent = sample.cwd || "/workspace/archcode";
         const supportingAgents = new Set(sample.supportingAgents || []);
-        document.querySelectorAll("[data-profile-agent]").forEach((node) => { node.hidden = !(sample.preserveRepresentative || supportingAgents.has(node.dataset.profileAgent)); });
-        inspectorChanges.innerHTML = sample.changes.length ? sample.changes.map((path) => `<div class="change-row"><span class="change-kind">M</span><span class="change-path">${escapeSessionHtml(path)}</span><span class="diffstat"><span class="plus">Changed</span></span></div>`).join("") : '<div class="context-row"><span>No uncommitted changes in this Session.</span></div>';
+        document.querySelectorAll("[data-profile-agent]").forEach((node) => {
+          node.hidden = !(sample.preserveRepresentative || supportingAgents.has(node.dataset.profileAgent));
+        });
+        renderInspectorChanges(sample.changes || []);
+        syncInspectorSummary(sample, leadTone);
 
         const projectLink = document.querySelector("[data-session-project-link]");
         if (projectLink) {
@@ -3706,6 +4048,21 @@
           hitlPanels.forEach((panel) => {
             panel.hidden = panel.dataset.hitlPanel !== button.dataset.hitlTab;
           });
+        });
+      });
+
+      // Prototype affordance only: selection chrome + toast for transcript focus.
+      // Product may scroll the canvas to that agent's turns when it supports it.
+      document.querySelectorAll(".agent-node").forEach((node) => {
+        node.addEventListener("click", () => {
+          document.querySelectorAll(".agent-node").forEach((other) => {
+            const active = other === node;
+            other.classList.toggle("active", active);
+            if (active) other.setAttribute("aria-current", "true");
+            else other.removeAttribute("aria-current");
+          });
+          const role = node.querySelector(".agent-line strong")?.textContent?.trim() || "Agent";
+          window.showToast?.(`Focus ${role} turns in transcript when product supports it`);
         });
       });
 

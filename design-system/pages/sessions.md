@@ -16,22 +16,28 @@ attention, and start work directly without manufacturing a Todo first.
 - Do not repeat a visible `Sessions` page title below the toolbar.
 - Use one compact command row: local Session filter, one source filter, and the
   single primary `New Session` action.
-- The list is centered at a maximum width of 1080px and grouped as `Needs you`,
-  `Running`, then `Recent`.
+- The list is centered at a maximum width of 1080px and grouped as **`Needs you`**,
+  **`Running`**, then **`Recent`**. Group titles match the product lexicon in
+  Master; do not title the first group `Needs attention`.
 - Use flat rows and thin separators. Do not add summary cards, charts, runtime
   metrics, or a second dashboard above the list.
+- `New Session` uses the shared primary button primitive.
 
 ## Session Rows
 
-- Row order is status orbit, Session title and source context, then action state
-  or elapsed time.
+- Row order is shared status orbit, Session title and source context, then action
+  state or elapsed time.
 - Every row identifies one source: `Todo`, `Automation`, or `Direct`.
 - Todo and Automation sources include the durable parent name when it is still
   available, otherwise their stable parent ID. Direct Sessions show the root
   Agent identity instead of inventing a parent work item.
-- `Needs you` uses an amber icon plus `Inspection`, `Permission`, `Question`, or `Failed` text;
-  `Running` uses the live orbit plus elapsed time; completed Recent rows use a
-  green check or explicit `Completed` text.
+- **`Needs you`** group rows use the amber attention orbit plus product state
+  text (`Needs you`, or more specific gate copy in the accessible name).
+  **`Failed`** rows use the error orbit/tone and the word `Failed` — they may
+  still sort under the Needs you *decision group* but must not look like amber
+  HITL.
+- **`Running`** uses the live orbit plus elapsed time; completed Recent rows use a
+  green check or explicit completed text.
 - The whole row opens the exact Session URL. Destructive actions remain in an
   overflow menu or the Session detail and never compete with row navigation.
 

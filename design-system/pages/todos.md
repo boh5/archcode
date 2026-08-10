@@ -87,16 +87,19 @@ Lane rules:
   Execution, and Automation inventory already loaded by the page.
 - Do not render a provisional operational line until Session and Automation
   inventory plus runtime and HITL snapshots are authoritative. Once ready, use
-  this precedence: `Needs you` for unresolved HITL or blocked/budget-limited
-  Goals; `Working` for live work; `Needs attention` for the latest stopped or
-  failed result; `Ready to review` for the latest completed result; `Scheduled`
-  for a future active Automation; otherwise `Idle`. A newer active or terminal
-  attempt supersedes an older failure, while an Automation dispatch alone is
-  never completion.
-- The operational line uses one icon plus visible text and an optional short
-  detail after a separator. Keep it inside the existing card boundary without
-  a badge stack, nested card, action, lifecycle control, or full-width internal
-  divider.
+  this precedence: **`Needs you`** for unresolved HITL or blocked/budget-limited
+  Goals (product phrase; pair with attention tone); **`Failed`** for the latest
+  terminal failed/stopped attempt with **error** tone — never amber attention;
+  **`Working`** for live work (signal tone); **`Ready to review`** for the latest
+  completed result awaiting acceptance; **`Scheduled`** for a future active
+  Automation; otherwise **`Idle`**. A newer active or terminal attempt supersedes
+  an older failure, while an Automation dispatch alone is never completion. The
+  Board prototype demonstrates Needs you, Failed, Working, and Ready to review
+  operational lines.
+- The operational line uses one shared status cue (orbit or icon) plus visible
+  text and an optional short detail after a separator. Keep it inside the existing
+  card boundary without a badge stack, nested card, action, lifecycle control, or
+  full-width internal divider.
 - Empty-lane guidance stays close to the lane header and aligns with card text;
   do not center it inside the full desktop drop target.
 - Pointer and touch dragging target the lane under the pointer rather than the

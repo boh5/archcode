@@ -102,7 +102,12 @@ running:    user message → expanded Work
 - `Work` is the visual disclosure for one authoritative Execution. It does not
   merge multiple Executions or infer ownership from visual proximity.
 - A completed Work summary reads `Worked for {duration}`. A running summary
-  reads `Working · {duration}` and may append `— {current activity}`.
+  reads `Working for {duration}` (prototype) or `Working · {duration}` and may
+  append `— {current activity}`.
+- When Work is waiting on the user, the fold uses **`Paused · Worked for
+  {duration}`** (or equivalent time/mechanism copy). Do **not** put product
+  `Needs you` on the Work chevron row; that slogan belongs on the Session header
+  badge and Composer state only.
 - Do not show `Execution {number}`, steps, Tool count, Child count, model, or
   binding metadata in the visible Work row.
 - Preserve the Execution identity in product data even though it is visually
@@ -204,11 +209,68 @@ running:    user message → expanded Work
 
 ## Context Inspector
 
-- Keep the three tabs: Agents, Changes, Context.
-- Agents uses a compact tree showing role, title, Skill, Profile, and status.
-- Changes shows summary counts and a navigable file list.
-- Context shows working directory, model, and execution counters.
-- Do not move the dark-mode switch here; it remains on the project rail.
+Keep the three tabs: **Agents**, **Changes**, **Context**. Do not host HITL
+Approve/Reject, Goal editing, or Queue management here — those stay in the
+Composer dock and main canvas. Do not move the dark-mode switch here; it remains
+on the project rail.
+
+### Shell
+
+- Default width **312px** (resize 280–460px); collapse and focus mode preserve the
+  last expanded width.
+- Optional one-line **summary strip** under the chrome close control:
+  mechanism-or-product-short status + `N agents · N files`. When the Session
+  product status is `Needs you`, this strip prefers the HITL **request family**
+  (**`Permission`** or **`Question`**) so the canvas does not shout `Needs you`
+  three times. Terminal **`Failed`** uses the error word, never amber attention.
+- Tab bar may carry counts (`Agents 4`, `Changes 3`). Active tab uses a brand
+  underline, not a filled pill block.
+- Type floor ≥11px; primary labels ~12–12.5px; meta ~11–11.5px. No sub-11px
+  operational text in the inspector.
+
+### Agents
+
+- Compact operational tree: Lead root, children indented with a quiet vertical
+  guide (depth padding), not heavy L-shaped chrome or per-row card borders.
+- Each row: role mark · **Role** + profile · one-line objective · trailing state.
+  Skills/profile extras stay muted or hidden by default; do not force a third
+  equal-weight text line.
+- Selection: quiet hover field and/or 2px brand inset edge — not a large brand
+  wash card.
+- Trailing state uses the shared status map. When Lead is gated, show the HITL
+  request family (**`Permission`** or **`Question`**) rather than repeating
+  product `Needs you`. Use **`Failed`**, **`Running`**, or **`Completed`** for
+  non-gate states.
+- Activating a node selects it in the tree. When the product supports it, also
+  focus or scroll the main transcript to that agent’s turns; do not open a second
+  chat surface.
+
+### Changes
+
+- Summary line first: `N files` plus aggregate `+additions −deletions` when known.
+- Flat navigable file rows: kind (M/A/D) · mono path · optional per-file diffstat.
+  No bordered mini-cards per file.
+- Empty state: one muted line such as `No file changes yet.`
+- Optional footer action: **Open full diff** into the Session canvas. Row click
+  opens that path’s diff in canvas when the product supports it.
+
+### Context
+
+- Property list (label left / value right), not a stack of bordered cells.
+- Priority rows first: **Goal**, **Execution** (binding such as
+  `Suspended · Permission`, `Running`, `Completed`).
+- Supporting rows: Model/Profile, Tokens (`used / limit` without vanity charts),
+  Working directory.
+- Goal full prose control remains in Composer; Context only mirrors the binding.
+
+### Density and anti-patterns
+
+- Prefer rows and rules over cards; semantic color only on state dots, short
+  labels, and diffstat ±.
+- Do not duplicate the transcript, auto-expand every agent/file, or place primary
+  Send/Approve actions in the inspector.
+- Phase-aware default tab is allowed (Agents while multi-agent live work;
+  Changes when review/diff is the job; Context for bindings) without adding tabs.
 
 ## Composer
 
@@ -217,6 +279,12 @@ running:    user message → expanded Work
 - Pending HITL is rendered first and receives the strongest semantic field in
   the dock. Its question or permission and response actions must be immediately
   visible; Goal and Queue never sit above it.
+- Composer chrome may show product state **`Needs you`** while a real HITL
+  decision is pending (paired with the Session header badge). Tool-level copy
+  inside HITL may still say **Permission** / **Question** for the request family.
+- Terminal **`Failed`** Sessions keep error tone on both header and Composer
+  chrome (`Failed`). Do not restyle failure as amber product `Needs you` merely
+  because recovery still needs a human.
 - Goal is one compact textual summary showing status and objective with an entry
   to its controls. Never add a Goal progress bar.
 - Queued messages remain visible as compact rows with their content and
@@ -240,6 +308,9 @@ running:    user message → expanded Work
 - an expandable Composer or Goal progress bar;
 - HITL placed below Goal, Queue, or ordinary input;
 - live lime used on completed rows;
+- stacked product `Needs you` labels on Work, agent tree, and inspector summary
+  in addition to header + Composer;
+- inspector card stacks, sub-10px type, or brand-wash agent selection;
 - collapsed state that hides the existence of Execution;
 - tool output that expands beyond the work canvas;
 - raw parameter tables for ordinary read/search tools;
