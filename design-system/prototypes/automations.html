@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="ArchCode Automation management prototype" />
     <title>ArchCode — Automations Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=theme-rail-1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css?v=prototype-polish-2" />
     <style>
       [hidden] { display: none !important; }
 
@@ -28,42 +31,6 @@
         border-bottom: 1px solid var(--border-default);
         background: var(--bg-surface);
       }
-
-      .primary-button,
-      .secondary-button,
-      .quiet-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 36px;
-        padding: 0 13px;
-        border-radius: 5px;
-        font-size: 11px;
-        font-weight: 650;
-        white-space: nowrap;
-      }
-
-      .primary-button {
-        border: 1px solid var(--brand);
-        background: var(--brand);
-        color: var(--brand-ink);
-      }
-
-      .secondary-button {
-        border: 1px solid var(--border-default);
-        background: var(--bg-elevated);
-        color: var(--text-secondary);
-      }
-
-      .quiet-button {
-        border: 0;
-        background: transparent;
-        color: var(--text-tertiary);
-      }
-
-      .primary-button:hover { background: var(--brand-hover); }
-      .secondary-button:hover,
-      .quiet-button:hover { background: var(--bg-hover); color: var(--text-primary); }
 
       .automation-layout {
         display: grid;
@@ -173,26 +140,8 @@
         box-shadow: inset 2px 0 0 var(--brand);
       }
 
-      .automation-orbit {
-        width: 10px;
-        height: 10px;
-        margin-top: 3px;
-        border: 1px solid var(--text-tertiary);
-        border-radius: 50%;
-      }
-
-      .automation-orbit.running {
-        border-color: var(--signal);
-        background: var(--signal);
-        box-shadow: inset 0 0 0 2px var(--bg-surface);
-      }
-
-      .automation-orbit.attention {
-        border-color: var(--warning);
-        background: var(--warning);
-      }
-
-      .automation-orbit.paused { border-color: var(--text-tertiary); }
+      /* automation-orbit tones come from shared styles.css */
+      .automation-orbit { margin-top: 3px; }
 
       .automation-row strong,
       .automation-row small { display: block; }
@@ -218,6 +167,7 @@
 
       .automation-row-state.attention { color: var(--warning); }
       .automation-row-state.running { color: var(--signal-foreground); }
+      .automation-row-state.failed { color: var(--error); }
 
       .automation-detail-pane {
         background: var(--bg-surface);
@@ -250,6 +200,7 @@
       }
 
       .detail-status.attention { background: var(--warning-field); color: var(--warning); }
+      .detail-status.failed { background: var(--error-field); color: var(--error); }
       .detail-status.paused { background: var(--bg-muted); color: var(--text-tertiary); }
 
       .detail-title-row {
@@ -305,21 +256,19 @@
       .detail-facts {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 1px;
+        gap: 0 28px;
         margin-top: 12px;
-        overflow: hidden;
-        border: 1px solid var(--border-default);
-        border-radius: 6px;
-        background: var(--border-default);
       }
 
       .detail-fact {
-        padding: 12px;
-        background: var(--bg-base);
+        display: grid;
+        grid-template-columns: 76px minmax(0, 1fr);
+        align-items: baseline;
+        gap: 12px;
+        min-width: 0;
+        padding: 10px 0;
+        border-top: 1px solid var(--border-subtle);
       }
-
-      .detail-fact span,
-      .detail-fact strong { display: block; }
 
       .detail-fact span {
         color: var(--text-tertiary);
@@ -328,7 +277,6 @@
       }
 
       .detail-fact strong {
-        margin-top: 5px;
         overflow: hidden;
         font-family: var(--font-stack-mono);
         font-size: 10px;
@@ -380,48 +328,304 @@
       }
 
       .automation-editor {
-        width: min(560px, calc(100vw - 32px));
+        width: min(840px, calc(100vw - 24px));
+        max-height: calc(100vh - 32px);
         padding: 0;
         border: 1px solid var(--border-strong);
-        border-radius: 8px;
+        border-radius: 12px;
         background: var(--bg-overlay);
         color: var(--text-primary);
         box-shadow: var(--elevation-lg);
+        overflow: hidden;
       }
 
       .automation-editor::backdrop { background: rgba(8, 10, 8, 0.56); }
 
-      .automation-editor header {
-        padding: 16px 18px 12px;
-        border-bottom: 1px solid var(--border-default);
+      .automation-editor-form {
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100vh - 32px);
       }
 
-      .automation-editor h2 { font-size: 15px; }
-      .automation-editor header p { margin-top: 4px; color: var(--text-tertiary); font-size: 11px; }
+      .automation-editor-top {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        flex: 0 0 auto;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
 
-      .automation-editor-fields { display: grid; gap: 14px; padding: 16px 18px; }
+      .automation-editor-mark {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--border-subtle));
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--brand) 12%, var(--bg-surface));
+        color: var(--brand);
+        flex: 0 0 auto;
+      }
 
-      .automation-editor label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 11px; font-weight: 640; }
+      .automation-editor-top h2 {
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+
+      .automation-editor-top p {
+        margin-top: 4px;
+        color: var(--text-tertiary);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .automation-editor-close {
+        margin-left: auto;
+        width: 28px;
+        height: 28px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text-tertiary);
+        cursor: pointer;
+      }
+
+      .automation-editor-close:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .automation-editor-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow: hidden;
+      }
+
+      .automation-editor-pane {
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+        padding: 16px 18px 18px;
+      }
+
+      .automation-editor-pane + .automation-editor-pane {
+        border-left: 1px solid var(--border-subtle);
+      }
+
+      .automation-editor-section + .automation-editor-section,
+      .automation-editor-pane > .field-block + .automation-editor-section,
+      .automation-editor-pane > .automation-editor-section + .field-block,
+      .automation-editor-pane > .field-block + .field-block {
+        margin-top: 18px;
+      }
+
+      .automation-editor-section h3 {
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .automation-editor-section > p {
+        margin-top: 4px;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .field-block {
+        display: grid;
+        gap: 6px;
+      }
+
+      .field-block > span,
+      .field-block > legend {
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .field-hint {
+        color: var(--text-tertiary);
+        font-size: 11px;
+        line-height: 1.4;
+      }
 
       .automation-editor input,
+      .automation-editor select,
       .automation-editor textarea {
         width: 100%;
         border: 1px solid var(--control-border);
-        border-radius: 5px;
+        border-radius: 6px;
         background: var(--bg-base);
         color: var(--text-primary);
-        font-size: 13px;
+        font-size: 12.5px;
+        transition: border-color var(--motion-hover) var(--ease-standard);
       }
 
-      .automation-editor input { height: 40px; padding: 0 10px; }
-      .automation-editor textarea { min-height: 104px; padding: 10px; resize: vertical; line-height: 1.5; }
+      .automation-editor input,
+      .automation-editor select {
+        height: 34px;
+        padding: 0 10px;
+      }
+
+      .automation-editor textarea {
+        min-height: 148px;
+        padding: 10px;
+        resize: vertical;
+        line-height: 1.5;
+      }
+
+      .automation-editor input:focus,
+      .automation-editor select:focus,
+      .automation-editor textarea:focus {
+        outline: none;
+        border-color: var(--brand);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent);
+      }
+
+      .choice-grid {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .choice-grid.is-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .choice-grid.is-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+      .choice-card {
+        position: relative;
+        display: grid;
+        gap: 4px;
+        min-height: 72px;
+        padding: 10px 11px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        background: var(--bg-surface);
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: border-color var(--motion-hover) var(--ease-standard), background var(--motion-hover) var(--ease-standard);
+      }
+
+      .choice-card:hover {
+        border-color: var(--border-default);
+        background: var(--bg-hover);
+      }
+
+      .choice-card:has(input:checked) {
+        border-color: color-mix(in srgb, var(--brand) 42%, var(--border-default));
+        background: color-mix(in srgb, var(--brand) 10%, var(--bg-surface));
+        color: var(--text-primary);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 18%, transparent);
+      }
+
+      .choice-card input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .choice-card strong {
+        font-size: 12.5px;
+        font-weight: 650;
+      }
+
+      .choice-card small {
+        color: var(--text-tertiary);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .choice-card:has(input:checked) small { color: var(--text-secondary); }
+
+      .compact-choice {
+        display: grid;
+        gap: 2px;
+        min-height: 58px;
+        padding: 9px 11px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        background: var(--bg-elevated);
+        cursor: pointer;
+      }
+
+      .compact-choice:has(input:checked) {
+        border-color: color-mix(in srgb, var(--brand) 42%, var(--border-default));
+        background: color-mix(in srgb, var(--brand) 10%, var(--bg-surface));
+      }
+
+      .compact-choice input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .compact-choice strong {
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .compact-choice small {
+        color: var(--text-tertiary);
+        font-size: 10.5px;
+      }
+
+      .editor-panel {
+        margin-top: 10px;
+        padding: 12px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        background: var(--bg-elevated);
+      }
+
+      .editor-panel[hidden] { display: none !important; }
+
+      .split-2 {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 132px;
+        gap: 8px;
+      }
+
+      .split-cron {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+        gap: 8px;
+      }
 
       .automation-editor-actions {
         display: flex;
         justify-content: flex-end;
         gap: 8px;
-        padding: 12px 18px 16px;
-        border-top: 1px solid var(--border-default);
+        flex: 0 0 auto;
+        padding: 12px 18px 14px;
+        border-top: 1px solid var(--border-subtle);
+        background: var(--bg-surface);
+      }
+
+      .automation-editor-actions .primary-button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      @media (max-width: 760px) {
+        .automation-editor-body {
+          grid-template-columns: minmax(0, 1fr);
+          overflow: auto;
+        }
+
+        .automation-editor-pane + .automation-editor-pane {
+          border-left: 0;
+          border-top: 1px solid var(--border-subtle);
+        }
+
+        .choice-grid.is-3,
+        .choice-grid.is-2,
+        .split-2,
+        .split-cron {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
 
       @media (max-width: 1040px) {
@@ -466,15 +670,16 @@
         .detail-actions { margin-top: 14px; }
         .detail-actions button { min-height: 44px; }
         .detail-facts { grid-template-columns: minmax(0, 1fr); }
+        .detail-fact { grid-template-columns: 72px minmax(0, 1fr); }
       }
     </style>
-    <script src="./app.js?v=rail-search-1" defer></script>
+    <script src="./app.js?v=prototype-polish-2" defer></script>
   </head>
   <body class="automation-page todo-first-shell">
     <a class="skip-link" href="#work-canvas">跳到工作区</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
-        <a class="brand-mark" href="./dashboard.html?v=home-shell-1" aria-label="Open Home"><span>A</span></a>
+        <a class="brand-mark" href="./dashboard.html" aria-label="Open Home"><img src="./logo.svg" alt="" width="20" height="20" /></a>
         <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
         <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
         <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
@@ -491,45 +696,42 @@
         <header class="project-toolbar">
           <div class="project-identity">
             <span class="project-identity-mark">ar</span>
-            <div class="project-identity-copy"><h1>archcode</h1><span>/workspace/archcode</span></div>
+            <div class="project-identity-copy"><h1>ArchCode</h1><span>/workspace/archcode</span></div>
           </div>
           <nav class="project-toolbar-nav" aria-label="Project pages">
             <a href="./todos.html"><span>Todos</span></a>
             <a class="active" href="./automations.html" aria-current="page"><span>Automations</span></a>
             <a href="./sessions.html"><span>Sessions</span></a>
           </nav>
-          <div class="project-toolbar-actions">
-            <button class="icon-button" aria-label="Project actions" data-project-actions data-action="打开项目操作" data-icon="more"></button>
-          </div>
         </header>
 
         <div class="project-view">
           <div class="automation-page-shell">
             <header class="automation-header">
-              <label class="surface-filter">
+              <div class="surface-filter">
                 <span data-icon="search"></span>
-                <span class="sr-only">Filter Automations</span>
-                <input type="search" placeholder="Filter Automations…" autocomplete="off" data-automation-search />
-              </label>
+                <input type="search" aria-label="Filter Automations" placeholder="Filter Automations…" autocomplete="off" spellcheck="false" data-automation-search />
+                <button class="surface-filter-clear" type="button" aria-label="Clear Automation filter" hidden data-filter-clear="data-automation-search"><span data-icon="close"></span></button>
+              </div>
               <button class="primary-button" data-new-automation>New Automation</button>
             </header>
 
             <div class="automation-layout">
               <section class="automation-list-pane" aria-label="Automation list">
                 <div class="automation-list-inner">
-                  <p class="surface-filter-empty" hidden aria-live="polite" data-automation-filter-empty><strong data-automation-filter-empty-title>No Automations match this filter.</strong><span>Try another name, instruction, schedule, or stable ID.</span></p>
+                  <p class="surface-filter-empty" hidden aria-live="polite" data-automation-filter-empty><strong data-automation-filter-empty-title>No Automations match this filter.</strong><span>Try another name, message, or schedule.</span></p>
                   <section class="automation-group" aria-labelledby="attention-title">
-                    <header class="automation-group-header"><h2 id="attention-title">Needs attention</h2><span>2</span></header>
+                    <header class="automation-group-header"><h2 id="attention-title">Needs you</h2><span>2</span></header>
                     <div class="automation-rows">
                       <button class="automation-row" aria-selected="false" data-automation-row="aut-health">
-                        <span class="automation-orbit attention"></span>
+                        <span class="automation-orbit failed"></span>
                         <span><strong>Daily project health check</strong><small>Every day at 09:00 · definition inactive · last run failed</small></span>
-                        <span class="automation-row-state attention">Needs attention</span>
+                        <span class="automation-row-state failed">Failed</span>
                       </button>
                       <button class="automation-row" aria-selected="false" data-automation-row="aut-disabled">
                         <span class="automation-orbit attention"></span>
                         <span><strong>Legacy dependency update</strong><small>Monthly · definition disabled · last run missed</small></span>
-                        <span class="automation-row-state attention">Needs attention</span>
+                        <span class="automation-row-state attention">Needs you</span>
                       </button>
                     </div>
                   </section>
@@ -577,11 +779,10 @@
               <section class="automation-detail-pane" aria-label="Selected Automation detail">
                 <article class="automation-detail">
                   <button class="automation-mobile-back" type="button" data-automation-back><span data-icon="chevron"></span>Automations</button>
-                  <div class="detail-kicker"><span class="detail-status" data-detail-status>Scheduled</span><span data-detail-id>aut-regression</span><span>Updated 2h ago</span></div>
+                  <div class="detail-kicker"><span class="detail-status" data-detail-status>Scheduled</span><span data-detail-updated>Updated 2h ago</span></div>
                   <div class="detail-title-row">
                     <div>
                       <h2 tabindex="-1" data-detail-title>Regression check</h2>
-                      <p data-detail-summary>Run the focused verification suite against the current Todo implementation and return only actionable failures.</p>
                     </div>
                     <div class="detail-actions">
                       <button class="secondary-button" data-edit-automation>Edit</button>
@@ -594,13 +795,13 @@
                     <div class="detail-facts">
                       <div class="detail-fact"><span>Trigger</span><strong data-detail-trigger>Weekdays at 09:00</strong></div>
                       <div class="detail-fact"><span>Next run</span><strong data-detail-next>Tomorrow, 09:00</strong></div>
-                      <div class="detail-fact"><span>Action</span><strong>start_session · Lead + principal (fixed)</strong></div>
-                      <div class="detail-fact"><span>Workspace</span><strong>/workspace/archcode</strong></div>
+                      <div class="detail-fact"><span>Action</span><strong data-detail-action>New Session · Project</strong></div>
+                      <div class="detail-fact"><span>Location</span><strong data-detail-location>Project checkout</strong></div>
                     </div>
                   </section>
 
                   <section class="detail-section">
-                    <h3>Instructions</h3>
+                    <h3>Message</h3>
                     <p class="detail-section-copy" data-detail-instructions>Read the linked Todo and its Plan, run the focused package checks, and create a durable Session containing the exact result and any failure evidence. Do not change the Todo lifecycle automatically.</p>
                   </section>
 
@@ -615,8 +816,8 @@
                     <h3>Recent runs</h3>
                     <p class="detail-section-copy">Invocation state is separate from Session result: <code>dispatched</code> is never <code>Completed</code>.</p>
                     <div class="run-list" data-run-list>
-                      <a class="run-row" href="./session.html?automation=aut-regression&amp;session=sess-aut-regression-20260801"><span class="automation-orbit running"></span><span>Verification passed · sess-aut-regression-20260801</span><time>Yesterday 09:04</time></a>
-                      <a class="run-row" href="./session.html?automation=aut-regression&amp;session=sess-aut-regression-20260731"><span class="automation-orbit running"></span><span>Verification passed · sess-aut-regression-20260731</span><time>Mon 09:03</time></a>
+                      <a class="run-row" href="./session.html?automation=aut-regression&amp;session=sess-aut-regression-20260801"><span class="automation-orbit done"></span><span>Verification passed</span><time>Yesterday 09:04</time></a>
+                      <a class="run-row" href="./session.html?automation=aut-regression&amp;session=sess-aut-regression-20260731"><span class="automation-orbit done"></span><span>Verification passed</span><time>Mon 09:03</time></a>
                     </div>
                   </section>
                 </article>
@@ -628,14 +829,138 @@
     </div>
 
     <dialog class="automation-editor" data-automation-editor aria-labelledby="automation-editor-title">
-      <form data-automation-editor-form>
-        <header><h2 id="automation-editor-title" data-automation-editor-title>New Automation</h2><p>Define repeated work once; every invocation opens its associated Session.</p><p>Prototype only · <strong>start_session · Lead + principal (fixed)</strong></p></header>
-        <div class="automation-editor-fields">
-          <label>Name<input name="name" autocomplete="off" required /></label>
-          <label>Schedule<input name="schedule" autocomplete="off" placeholder="Weekdays at 09:00" required /></label>
-          <label>Instructions<textarea name="instructions" required></textarea></label>
+      <form class="automation-editor-form" data-automation-editor-form>
+        <header class="automation-editor-top">
+          <span class="automation-editor-mark" data-icon="workflow" aria-hidden="true"></span>
+          <div>
+            <h2 id="automation-editor-title" data-automation-editor-title>New Automation</h2>
+            <p>Schedule an ordinary Session message. The Session keeps its existing tools and permissions.</p>
+          </div>
+          <button class="automation-editor-close" type="button" data-cancel-automation aria-label="Close"><span data-icon="close"></span></button>
+        </header>
+
+        <div class="automation-editor-body">
+          <div class="automation-editor-pane">
+            <label class="field-block">
+              <span>Name</span>
+              <input id="automation-name" name="name" autocomplete="off" placeholder="e.g. Daily project health check" required />
+            </label>
+
+            <section class="automation-editor-section">
+              <h3>Schedule</h3>
+              <p>Choose when this message should be dispatched. Missed occurrences are not replayed.</p>
+              <div class="choice-grid is-3" role="radiogroup" aria-label="Trigger kind">
+                <label class="choice-card">
+                  <input type="radio" name="triggerKind" value="once" data-editor-trigger />
+                  <strong>Once</strong>
+                  <small>A specific time</small>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="triggerKind" value="interval" data-editor-trigger checked />
+                  <strong>Every</strong>
+                  <small>Fixed cadence</small>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="triggerKind" value="cron" data-editor-trigger />
+                  <strong>Cron</strong>
+                  <small>Cron schedule</small>
+                </label>
+              </div>
+
+              <div class="editor-panel" data-trigger-panel="once" hidden>
+                <label class="field-block">
+                  <span>Run at</span>
+                  <input id="automation-once-at" name="onceAt" type="datetime-local" />
+                  <p class="field-hint">Uses your current local time.</p>
+                </label>
+              </div>
+
+              <div class="editor-panel" data-trigger-panel="interval">
+                <div class="field-block">
+                  <span>Repeat every</span>
+                  <div class="split-2">
+                    <input id="automation-interval-value" name="intervalValue" type="number" min="1" step="1" value="1" aria-label="Interval amount" />
+                    <select name="intervalUnit" aria-label="Interval unit">
+                      <option value="seconds">Seconds</option>
+                      <option value="minutes" selected>Minutes</option>
+                      <option value="hours">Hours</option>
+                    </select>
+                  </div>
+                  <p class="field-hint">Minimum interval: 30 seconds.</p>
+                </div>
+              </div>
+
+              <div class="editor-panel" data-trigger-panel="cron" hidden>
+                <div class="split-cron">
+                  <label class="field-block">
+                    <span>Expression</span>
+                    <input id="automation-cron" name="cron" value="0 9 * * 1-5" placeholder="*/15 * * * *" spellcheck="false" />
+                  </label>
+                  <label class="field-block">
+                    <span>Timezone</span>
+                    <input id="automation-timezone" name="timezone" value="Asia/Shanghai" placeholder="Asia/Shanghai" />
+                  </label>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="automation-editor-pane">
+            <section class="automation-editor-section">
+              <h3>Action</h3>
+              <p>Start fresh work or continue a Session that already has context.</p>
+              <div class="choice-grid is-2" role="radiogroup" aria-label="Action kind">
+                <label class="choice-card">
+                  <input type="radio" name="actionKind" value="start_session" data-editor-action checked />
+                  <strong>New Session</strong>
+                  <small>Create a new Lead Session</small>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="actionKind" value="send_message" data-editor-action />
+                  <strong>Existing Session</strong>
+                  <small>Continue existing context</small>
+                </label>
+              </div>
+
+              <div class="editor-panel" data-action-panel="start_session">
+                <fieldset class="field-block" style="border:0;padding:0;margin:0">
+                  <legend>Run location</legend>
+                  <div class="choice-grid is-2" style="margin-top:8px">
+                    <label class="compact-choice">
+                      <input type="radio" name="location" value="project" checked />
+                      <strong>Project</strong>
+                      <small>Use the current checkout</small>
+                    </label>
+                    <label class="compact-choice">
+                      <input type="radio" name="location" value="worktree" />
+                      <strong>Worktree</strong>
+                      <small>Create an isolated checkout</small>
+                    </label>
+                  </div>
+                  <p class="field-hint" style="margin-top:8px">Every run starts a root Lead Session with the principal profile.</p>
+                </fieldset>
+              </div>
+
+              <div class="editor-panel" data-action-panel="send_message" hidden>
+                <label class="field-block">
+                  <span>Session ID</span>
+                  <input id="automation-session-id" name="sessionId" placeholder="Paste an existing Session ID" spellcheck="false" />
+                </label>
+              </div>
+            </section>
+
+            <label class="field-block">
+              <span>Message</span>
+              <textarea id="automation-message" name="message" rows="7" placeholder="Describe the work to perform. You can use /skill use … just like in a normal Session." required></textarea>
+              <p class="field-hint">This is sent through the normal Session command, permission, and HITL flow.</p>
+            </label>
+          </div>
         </div>
-        <div class="automation-editor-actions"><button class="secondary-button" type="button" data-cancel-automation>Cancel</button><button class="primary-button" type="submit">Save Automation</button></div>
+
+        <div class="automation-editor-actions">
+          <button class="secondary-button" type="button" data-cancel-automation>Cancel</button>
+          <button class="primary-button" type="submit" data-editor-submit>Create Automation</button>
+        </div>
       </form>
     </dialog>
 
@@ -645,17 +970,24 @@
         "aut-health": {
           id: "aut-health",
           name: "Daily project health check",
-          status: "Needs attention",
+          status: "Needs you",
           definitionStatus: "Inactive",
           latestInvocation: "failed",
-          tone: "attention",
+          tone: "failed",
+          updated: "Updated 8m ago",
           summary: "Check repository health, surface failed verification, and ask for a decision only when an exact recovery path is known.",
+          triggerKind: "cron",
           trigger: "Every day at 09:00",
+          cron: "0 9 * * *",
+          timezone: "Asia/Shanghai",
           next: "Blocked pending review",
+          actionKind: "start_session",
+          location: "project",
+          sessionId: "",
           instructions: "Inspect current checks and recent Sessions. If a failure is actionable, preserve the exact logs and ask the user before any destructive recovery.",
           linkedTodo: null,
           runs: [
-            { sessionId: "sess-aut-health-failed", label: "Run stopped before final report", time: "Today 09:02", status: "Needs attention", tone: "attention" },
+            { sessionId: "sess-aut-health-failed", label: "Run stopped before final report", time: "Today 09:02", status: "Failed", tone: "failed" },
           ],
         },
         "aut-regression": {
@@ -663,14 +995,21 @@
           name: "Regression check",
           status: "Scheduled",
           tone: "",
+          updated: "Updated 2h ago",
           summary: "Run the focused verification suite against the current Todo implementation and return only actionable failures.",
+          triggerKind: "cron",
           trigger: "Weekdays at 09:00",
+          cron: "0 9 * * 1-5",
+          timezone: "Asia/Shanghai",
           next: "Tomorrow, 09:00",
+          actionKind: "start_session",
+          location: "project",
+          sessionId: "",
           instructions: "Read the linked Todo and its Plan, run the focused package checks, and create a durable Session containing the exact result and any failure evidence. Do not change the Todo lifecycle automatically.",
           linkedTodo: { id: "todo-profile-defaults", title: "Model profile defaults per project", meta: "Ready · PRD and Plan available" },
           runs: [
-            { sessionId: "sess-aut-regression-20260801", label: "Verification passed", time: "Yesterday 09:04", status: "Done", tone: "running" },
-            { sessionId: "sess-aut-regression-20260731", label: "Verification passed", time: "Mon 09:03", status: "Done", tone: "running" },
+            { sessionId: "sess-aut-regression-20260801", label: "Verification passed", time: "Yesterday 09:04", status: "Done", tone: "done" },
+            { sessionId: "sess-aut-regression-20260731", label: "Verification passed", time: "Mon 09:03", status: "Done", tone: "done" },
           ],
         },
         "aut-release-report": {
@@ -678,13 +1017,20 @@
           name: "Release report",
           status: "Scheduled",
           tone: "",
+          updated: "Updated yesterday",
           summary: "Summarize merged work, verification evidence, and unresolved risk for the weekly release handoff.",
+          triggerKind: "cron",
           trigger: "Friday at 18:00",
+          cron: "0 18 * * 5",
+          timezone: "Asia/Shanghai",
           next: "Friday, 18:00",
+          actionKind: "start_session",
+          location: "project",
+          sessionId: "",
           instructions: "Read merged commits and verified results from the current week. Separate shipped work from local or pending changes.",
           linkedTodo: null,
           runs: [
-            { sessionId: "sess-aut-release-20260725", label: "Weekly report completed", time: "Last Fri 18:03", status: "Done", tone: "running" },
+            { sessionId: "sess-aut-release-20260725", label: "Weekly report completed", time: "Last Fri 18:03", status: "Done", tone: "done" },
           ],
         },
         "aut-dependencies": {
@@ -692,9 +1038,16 @@
           name: "Dependency update",
           status: "Paused",
           tone: "paused",
+          updated: "Updated 5d ago",
           summary: "Review bounded dependency updates without silently widening the package or runtime scope.",
+          triggerKind: "cron",
           trigger: "Monthly on day 1",
+          cron: "0 9 1 * *",
+          timezone: "Asia/Shanghai",
           next: "Paused",
+          actionKind: "start_session",
+          location: "worktree",
+          sessionId: "",
           instructions: "Inspect available package updates, isolate breaking changes, and stop before applying any migration that changes runtime contracts.",
           linkedTodo: null,
           runs: [],
@@ -702,13 +1055,20 @@
         "aut-disabled": {
           id: "aut-disabled",
           name: "Legacy dependency update",
-          status: "Needs attention",
+          status: "Needs you",
           definitionStatus: "Inactive",
           latestInvocation: "missed",
           tone: "attention",
+          updated: "Updated 12d ago",
           summary: "The disabled definition missed its last scheduled run; inspect the associated Session before re-enabling it.",
+          triggerKind: "cron",
           trigger: "Monthly on day 1",
+          cron: "0 9 1 * *",
+          timezone: "Asia/Shanghai",
           next: "Inactive",
+          actionKind: "start_session",
+          location: "project",
+          sessionId: "",
           instructions: "Review the missed invocation and preserve its Session evidence before changing the definition status.",
           linkedTodo: null,
           runs: [
@@ -722,9 +1082,16 @@
           definitionStatus: "Inactive",
           latestInvocation: null,
           tone: "paused",
+          updated: "Updated 30d ago",
           summary: "An intentionally disabled reminder with no pending invocation.",
+          triggerKind: "cron",
           trigger: "Friday at 18:00",
+          cron: "0 18 * * 5",
+          timezone: "Asia/Shanghai",
           next: "Inactive",
+          actionKind: "send_message",
+          location: "project",
+          sessionId: "sess-release-channel",
           instructions: "Re-enable only when the release handoff needs a scheduled reminder again.",
           linkedTodo: null,
           runs: [],
@@ -746,10 +1113,11 @@
       const scheduledRows = document.querySelector("#scheduled-title")?.closest(".automation-group")?.querySelector(".automation-rows");
       const detailTitle = document.querySelector("[data-detail-title]");
       const detailStatus = document.querySelector("[data-detail-status]");
-      const detailId = document.querySelector("[data-detail-id]");
-      const detailSummary = document.querySelector("[data-detail-summary]");
+      const detailUpdated = document.querySelector("[data-detail-updated]");
       const detailTrigger = document.querySelector("[data-detail-trigger]");
       const detailNext = document.querySelector("[data-detail-next]");
+      const detailAction = document.querySelector("[data-detail-action]");
+      const detailLocation = document.querySelector("[data-detail-location]");
       const detailInstructions = document.querySelector("[data-detail-instructions]");
       const linkedTodoSection = document.querySelector("[data-linked-todo-section]");
       const linkedTodo = document.querySelector("[data-linked-todo]");
@@ -764,8 +1132,134 @@
       const automationEditor = document.querySelector("[data-automation-editor]");
       const automationEditorForm = document.querySelector("[data-automation-editor-form]");
       const automationEditorTitle = document.querySelector("[data-automation-editor-title]");
+      const editorSubmit = document.querySelector("[data-editor-submit]");
       let currentAutomationId = "aut-regression";
       let editingAutomationId = null;
+
+      function defaultTimezone() {
+        try {
+          return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai";
+        } catch {
+          return "Asia/Shanghai";
+        }
+      }
+
+      function localDateTimeInputValue(date = new Date()) {
+        const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+        return local.toISOString().slice(0, 16);
+      }
+
+      function actionLabel(sample) {
+        if (sample.actionKind === "send_message") return "Existing Session";
+        return sample.location === "worktree" ? "New Session · Worktree" : "New Session · Project";
+      }
+
+      function locationLabel(sample) {
+        if (sample.actionKind === "send_message") return "Target Session selected";
+        return sample.location === "worktree" ? "Isolated worktree" : "Project checkout";
+      }
+
+      function formatTriggerLabel(values) {
+        if (values.triggerKind === "once") {
+          if (!values.onceAt) return "Once · unset";
+          const date = new Date(values.onceAt);
+          if (Number.isNaN(date.getTime())) return "Once · invalid time";
+          return `Once · ${date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
+        }
+        if (values.triggerKind === "interval") {
+          const amount = Math.max(1, Number(values.intervalValue) || 1);
+          const unit = values.intervalUnit || "minutes";
+          const unitLabel = amount === 1 ? unit.replace(/s$/, "") : unit;
+          return `Every ${amount} ${unitLabel}`;
+        }
+        const expression = values.cron || "*/15 * * * *";
+        if (expression === "0 9 * * 1-5") return "Weekdays at 09:00";
+        if (expression === "0 9 * * *") return "Every day at 09:00";
+        if (expression === "0 18 * * 5") return "Friday at 18:00";
+        if (expression === "0 9 1 * *") return "Monthly on day 1";
+        return `Cron · ${expression}`;
+      }
+
+      function nextRunLabel(values) {
+        if (values.triggerKind === "once") {
+          if (!values.onceAt) return "Unset";
+          const date = new Date(values.onceAt);
+          if (Number.isNaN(date.getTime())) return "Invalid";
+          return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        }
+        if (values.triggerKind === "interval") return "Upcoming";
+        if (values.cron === "0 9 * * 1-5") return "Tomorrow, 09:00";
+        if (values.cron === "0 9 * * *") return "Tomorrow, 09:00";
+        if (values.cron === "0 18 * * 5") return "Friday, 18:00";
+        if (values.cron === "0 9 1 * *") return "Next month, day 1";
+        return "Upcoming";
+      }
+
+      function readEditorValues() {
+        const data = new FormData(automationEditorForm);
+        return {
+          name: String(data.get("name") || "").trim(),
+          triggerKind: String(data.get("triggerKind") || "interval"),
+          onceAt: String(data.get("onceAt") || ""),
+          intervalValue: String(data.get("intervalValue") || "1"),
+          intervalUnit: String(data.get("intervalUnit") || "minutes"),
+          cron: String(data.get("cron") || "").trim(),
+          timezone: String(data.get("timezone") || "").trim() || defaultTimezone(),
+          actionKind: String(data.get("actionKind") || "start_session"),
+          location: String(data.get("location") || "project"),
+          sessionId: String(data.get("sessionId") || "").trim(),
+          message: String(data.get("message") || "").trim(),
+        };
+      }
+
+      function setRadioValue(name, value) {
+        const match = automationEditorForm.querySelector(`input[name="${name}"][value="${CSS.escape(value)}"]`);
+        if (match) match.checked = true;
+      }
+
+      function syncEditorPanels() {
+        const values = readEditorValues();
+        automationEditorForm.querySelectorAll("[data-trigger-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.triggerPanel !== values.triggerKind;
+        });
+        automationEditorForm.querySelectorAll("[data-action-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.actionPanel !== values.actionKind;
+        });
+        const onceAt = automationEditorForm.elements.onceAt;
+        const intervalValue = automationEditorForm.elements.intervalValue;
+        const cron = automationEditorForm.elements.cron;
+        const timezone = automationEditorForm.elements.timezone;
+        const sessionId = automationEditorForm.elements.sessionId;
+        if (onceAt) onceAt.required = values.triggerKind === "once";
+        if (intervalValue) intervalValue.required = values.triggerKind === "interval";
+        if (cron) cron.required = values.triggerKind === "cron";
+        if (timezone) timezone.required = values.triggerKind === "cron";
+        if (sessionId) sessionId.required = values.actionKind === "send_message";
+      }
+
+      function editorIsValid() {
+        const values = readEditorValues();
+        if (!values.name || !values.message) return false;
+        if (values.triggerKind === "once") {
+          if (!values.onceAt || Number.isNaN(new Date(values.onceAt).getTime())) return false;
+        }
+        if (values.triggerKind === "interval") {
+          const amount = Number(values.intervalValue);
+          if (!Number.isInteger(amount) || amount < 1) return false;
+          const ms = amount * ({ seconds: 1000, minutes: 60_000, hours: 3_600_000 }[values.intervalUnit] || 60_000);
+          if (ms < 30_000) return false;
+        }
+        if (values.triggerKind === "cron") {
+          if (values.cron.split(/\s+/).filter(Boolean).length !== 5) return false;
+          if (!values.timezone) return false;
+        }
+        if (values.actionKind === "send_message" && !values.sessionId) return false;
+        return true;
+      }
+
+      function refreshEditorValidity() {
+        if (editorSubmit) editorSubmit.disabled = !editorIsValid();
+      }
 
       function escapeAutomationHtml(value) {
         return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
@@ -788,14 +1282,32 @@
 
       function renderRuns(sample) {
         runList.innerHTML = sample.runs.length ? sample.runs.map((run) => `
-          <a class="run-row" href="${runHref(sample, run)}"><span class="automation-orbit ${escapeAutomationHtml(run.tone || "")}"></span><span>${escapeAutomationHtml(run.label)} · ${escapeAutomationHtml(run.sessionId)}</span><time>${escapeAutomationHtml(run.time)}</time></a>`).join("") : '<p class="automation-run-empty">No runs yet. Run now will create the first durable Session.</p>';
+          <a class="run-row" href="${runHref(sample, run)}"><span class="automation-orbit ${escapeAutomationHtml(run.tone || "")}"></span><span>${escapeAutomationHtml(run.label)}</span><time>${escapeAutomationHtml(run.time)}</time></a>`).join("") : '<p class="automation-run-empty">No runs yet. Run now will create the first durable Session.</p>';
+      }
+
+      function rowStateMarkup(sample) {
+        const attention = sample.status === "Needs you" || sample.status === "Needs attention";
+        const failed = sample.tone === "failed" || sample.latestInvocation === "failed" || sample.status === "Failed";
+        const paused = sample.status === "Paused" || sample.status === "Inactive";
+        const stateClass = failed ? " failed" : attention ? " attention" : paused ? "" : sample.next && sample.next !== sample.status ? " running" : "";
+        const stateLabel = failed && sample.status !== "Failed" ? (sample.status === "Needs you" || sample.status === "Needs attention" ? "Failed" : sample.status) : attention || paused ? (sample.status === "Needs attention" ? "Needs you" : sample.status) : (sample.next || sample.status);
+        return `<span class="automation-row-state${stateClass}">${escapeAutomationHtml(stateLabel)}</span>`;
       }
 
       function rowMarkup(sample) {
+        const orbitClass = sample.tone === "failed"
+          ? "failed"
+          : sample.tone === "attention"
+            ? "attention"
+            : sample.tone === "paused"
+              ? "paused"
+              : sample.tone === "done"
+                ? "done"
+                : "running";
         return `<button class="automation-row" aria-selected="false" data-automation-row="${escapeAutomationHtml(sample.id)}">
-          <span class="automation-orbit running"></span>
+          <span class="automation-orbit ${orbitClass}"></span>
           <span><strong>${escapeAutomationHtml(sample.name)}</strong><small>${escapeAutomationHtml(sample.trigger)} · no runs yet</small></span>
-          <span class="automation-row-state running">${escapeAutomationHtml(sample.next)}</span>
+          ${rowStateMarkup(sample)}
         </button>`;
       }
 
@@ -840,7 +1352,7 @@
       function selectAutomation(id, { updateHistory = true, openDetail = true } = {}) {
         const sample = automationSamples[id];
         if (!sample) {
-          notify(`Automation ${id} was not found`);
+          notify("That Automation could not be found");
           return false;
         }
         currentAutomationId = id;
@@ -848,10 +1360,11 @@
         detailTitle.textContent = sample.name;
         detailStatus.textContent = sample.status;
         detailStatus.className = `detail-status${sample.tone ? ` ${sample.tone}` : ""}`;
-        detailId.textContent = sample.id;
-        detailSummary.textContent = sample.summary;
+        if (detailUpdated) detailUpdated.textContent = sample.updated || "Updated recently";
         detailTrigger.textContent = sample.trigger;
         detailNext.textContent = sample.next;
+        if (detailAction) detailAction.textContent = actionLabel(sample);
+        if (detailLocation) detailLocation.textContent = locationLabel(sample);
         detailInstructions.textContent = sample.instructions;
         linkedTodoSection.hidden = !sample.linkedTodo;
         if (sample.linkedTodo) {
@@ -871,9 +1384,22 @@
         editingAutomationId = id;
         const sample = id ? automationSamples[id] : null;
         automationEditorTitle.textContent = sample ? "Edit Automation" : "New Automation";
+        if (editorSubmit) editorSubmit.textContent = sample ? "Save changes" : "Create Automation";
+
         automationEditorForm.elements.name.value = sample?.name || "";
-        automationEditorForm.elements.schedule.value = sample?.trigger || "";
-        automationEditorForm.elements.instructions.value = sample?.instructions || "";
+        automationEditorForm.elements.message.value = sample?.instructions || "";
+        automationEditorForm.elements.onceAt.value = sample?.onceAt || localDateTimeInputValue(new Date(Date.now() + 60 * 60 * 1000));
+        automationEditorForm.elements.intervalValue.value = sample?.intervalValue || "1";
+        automationEditorForm.elements.intervalUnit.value = sample?.intervalUnit || "minutes";
+        automationEditorForm.elements.cron.value = sample?.cron || "0 9 * * 1-5";
+        automationEditorForm.elements.timezone.value = sample?.timezone || defaultTimezone();
+        automationEditorForm.elements.sessionId.value = sample?.sessionId || "";
+
+        setRadioValue("triggerKind", sample?.triggerKind || "interval");
+        setRadioValue("actionKind", sample?.actionKind || "start_session");
+        setRadioValue("location", sample?.location || "project");
+        syncEditorPanels();
+        refreshEditorValidity();
         automationEditor.showModal();
         requestAnimationFrame(() => automationEditorForm.elements.name.focus());
       }
@@ -885,34 +1411,96 @@
 
       document.querySelector("[data-new-automation]")?.addEventListener("click", () => openEditor());
       document.querySelector("[data-edit-automation]")?.addEventListener("click", () => openEditor(currentAutomationId));
-      document.querySelector("[data-cancel-automation]")?.addEventListener("click", () => automationEditor.close());
+      document.querySelectorAll("[data-cancel-automation]").forEach((button) => {
+        button.addEventListener("click", () => automationEditor.close());
+      });
       automationEditor.addEventListener("click", (event) => {
         if (event.target === automationEditor) automationEditor.close();
       });
+      automationEditorForm.addEventListener("change", () => {
+        syncEditorPanels();
+        refreshEditorValidity();
+      });
+      automationEditorForm.addEventListener("input", refreshEditorValidity);
 
       automationEditorForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        const values = new FormData(automationEditorForm);
-        const name = String(values.get("name") || "").trim();
-        const trigger = String(values.get("schedule") || "").trim();
-        const instructions = String(values.get("instructions") || "").trim();
-        if (!name || !trigger || !instructions) return;
+        if (!editorIsValid()) {
+          refreshEditorValidity();
+          return;
+        }
+        const values = readEditorValues();
+        const trigger = formatTriggerLabel(values);
+        const next = nextRunLabel(values);
+        const actionKind = values.actionKind;
+        const location = values.location;
+        const sessionId = values.sessionId;
+        const instructions = values.message;
+        const name = values.name;
+
         if (editingAutomationId) {
           if (!Object.hasOwn(automationSamples, editingAutomationId)) return;
           const sample = automationSamples[editingAutomationId];
           sample.name = name;
+          sample.triggerKind = values.triggerKind;
           sample.trigger = trigger;
+          sample.onceAt = values.onceAt;
+          sample.intervalValue = values.intervalValue;
+          sample.intervalUnit = values.intervalUnit;
+          sample.cron = values.cron;
+          sample.timezone = values.timezone;
+          sample.next = sample.status === "Paused" || sample.status === "Inactive" || sample.status === "Needs you" || sample.status === "Needs attention"
+            ? sample.next
+            : next;
+          sample.actionKind = actionKind;
+          sample.location = location;
+          sample.sessionId = sessionId;
           sample.instructions = instructions;
           sample.summary = instructions;
           const row = document.querySelector(`[data-automation-row="${CSS.escape(editingAutomationId)}"]`);
-          row.querySelector("strong").textContent = name;
-          row.querySelector("small").textContent = `${trigger} · ${sample.runs.length ? `${sample.runs.length} recent run${sample.runs.length === 1 ? "" : "s"}` : "no runs yet"}`;
+          if (row) {
+            row.querySelector("strong").textContent = name;
+            row.querySelector("small").textContent = `${trigger} · ${sample.runs.length ? `${sample.runs.length} recent run${sample.runs.length === 1 ? "" : "s"}` : "no runs yet"}`;
+            const state = row.querySelector(".automation-row-state");
+            if (state) {
+              const attention = sample.status === "Needs you" || sample.status === "Needs attention";
+              const failed = sample.tone === "failed" || sample.latestInvocation === "failed" || sample.status === "Failed";
+              const paused = sample.status === "Paused" || sample.status === "Inactive";
+              state.className = `automation-row-state${failed ? " failed" : attention ? " attention" : paused ? "" : sample.next && sample.next !== sample.status ? " running" : ""}`;
+              state.textContent = failed && sample.status !== "Failed"
+                ? (attention ? "Failed" : sample.status)
+                : attention || paused
+                  ? (sample.status === "Needs attention" ? "Needs you" : sample.status)
+                  : (sample.next || sample.status);
+            }
+          }
           selectAutomation(editingAutomationId, { updateHistory: false });
           applyAutomationFilter();
           notify(`Updated “${name}”`);
         } else {
           const id = `aut-local-${Date.now()}`;
-          automationSamples[id] = { id, name, status: "Scheduled", tone: "", summary: instructions, trigger, next: "Upcoming", instructions, linkedTodo: null, runs: [] };
+          automationSamples[id] = {
+            id,
+            name,
+            status: "Scheduled",
+            tone: "",
+            updated: "Updated just now",
+            summary: instructions,
+            triggerKind: values.triggerKind,
+            trigger,
+            onceAt: values.onceAt,
+            intervalValue: values.intervalValue,
+            intervalUnit: values.intervalUnit,
+            cron: values.cron,
+            timezone: values.timezone,
+            next,
+            actionKind,
+            location,
+            sessionId,
+            instructions,
+            linkedTodo: null,
+            runs: [],
+          };
           scheduledRows.insertAdjacentHTML("beforeend", rowMarkup(automationSamples[id]));
           refreshCounts();
           selectAutomation(id);

@@ -1,22 +1,37 @@
 const icons = {
   app: "M5 5h14v14H5zM9 9h6v6H9z",
+  "arrow-up": "M12 19V5M5 12l7-7 7 7",
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4",
+  board: "M4 5h4v14H4zM10 5h4v14h-4zM16 5h4v14h-4z",
   check: "m5 12 4 4L19 6",
   chevron: "m9 6 6 6-6 6",
+  "circle-check": "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-12 0 2 2 4-4",
+  "circle-dot": "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-6 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
+  "circle-play": "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-11-4 6 4-6 4Z",
   close: "M6 6l12 12M18 6 6 18",
   dashboard: "M4 4h6v6H4zm10 0h6v9h-6zM4 14h6v6H4zm10 3h6v3h-6z",
+  "file-plus": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M12 18v-6M9 15h6",
+  list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
   filter: "M4 6h16M7 12h10M10 18h4",
   grip: "M9 7h.01M15 7h.01M9 12h.01M15 12h.01M9 17h.01M15 17h.01",
+  hammer: "m15 12-8.5 8.5-3-3L12 9m2-6 7 7-4 4-7-7 4-4Z",
+  layers: "m12 2 9 5-9 5-9-5 9-5Zm-9 10 9 5 9-5M3 17l9 5 9-5",
+  lightbulb: "M9 18h6M10 22h4M8.2 14.6A7 7 0 1 1 15.8 14.6C15.2 15.1 15 15.7 15 16H9c0-.3-.2-.9-.8-1.4Z",
   menu: "M4 7h16M4 12h16M4 17h16",
   moon: "M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z",
   more: "M6 12h.01M12 12h.01M18 12h.01",
   panel: "M4 4h16v16H4zM15 4v16",
   plus: "M12 5v14M5 12h14",
   search: "m20 20-4.3-4.3M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z",
+  scan: "M3 3v5M3 3h5M21 3h-5M21 3v5M3 21v-5M3 21h5M21 21h-5M21 21v-5M8 15l3-3 2 2 4-5",
   settings:
     "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM19 13.5l2 1-2 3-2-1.1a8 8 0 0 1-2 1.2L14.8 20h-3.6l-.2-2.4a8 8 0 0 1-2-1.2L7 17.5l-2-3 2-1a8 8 0 0 1 0-3L5 9.5l2-3 2 1.1a8 8 0 0 1 2-1.2l.2-2.4h3.6l.2 2.4a8 8 0 0 1 2 1.2L19 6.5l2 3-2 1a8 8 0 0 1 0 3Z",
+  square: "M6 6h12v12H6z",
   sun: "M12 4V2m0 20v-2M4 12H2m20 0h-2m-2.3-5.7 1.4-1.4M4.9 19.1l1.4-1.4m0-11.4L4.9 4.9m14.2 14.2-1.4-1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z",
+  sparkles: "m12 3-1.1 3.1L8 7.2l2.9 1.1L12 11l1.1-2.7L16 7.2l-2.9-1.1L12 3Zm6 9-.7 2-1.8.7 1.8.7.7 2 .7-2 1.8-.7-1.8-.7-.7-2ZM6 13l-1 2.6-2.5 1L5 17.5 6 20l1-2.5 2.5-.9-2.5-1L6 13Z",
+  telescope: "m10 6 8-3 2 4-8 3M10 6l2 4M8 12l-4 9M12 12l4 9",
   todo: "M8 6h12M8 12h12M8 18h12M3.5 6h.01M3.5 12h.01M3.5 18h.01",
+  workflow: "M3 5h6v6H3zM15 13h6v6h-6zM9 8h3a3 3 0 0 1 3 3v2",
 };
 
 const baseWorkSearchItems = [
@@ -25,10 +40,10 @@ const baseWorkSearchItems = [
     workKey: "todo-profile-defaults",
     type: "Session",
     tone: "attention",
-    state: "Permission",
+    state: "Needs you",
     title: "Implementation Session",
     meta: "Todo · Model profile defaults per project",
-    href: "./session.html?todo=todo-profile-defaults&session=sess-profile-implementation",
+    href: "./session.html?todo=todo-profile-defaults&session=sess-profile-implementation&state=hitl",
   },
   {
     group: "Needs you",
@@ -44,8 +59,8 @@ const baseWorkSearchItems = [
     group: "Needs you",
     workKey: "automation-aut-health",
     type: "Automation",
-    tone: "attention",
-    state: "Failed run",
+    tone: "failed",
+    state: "Failed",
     title: "Daily project health check",
     meta: "Automation · latest run needs a decision",
     href: "./session.html?automation=aut-health&session=sess-aut-health-failed&title=Daily%20project%20health%20check",
@@ -65,7 +80,7 @@ const baseWorkSearchItems = [
     workKey: "todo-work-search",
     type: "Todo",
     tone: "review",
-    state: "Review",
+    state: "Ready to review",
     title: "Unify project work search",
     meta: "In Progress · Lead + Build · result ready",
     href: "./todos.html#todo=todo-work-search",
@@ -134,6 +149,20 @@ document.querySelectorAll("[data-icon]").forEach((element) => {
   if (icons[name]) element.innerHTML = icon(name);
 });
 
+document.querySelectorAll("[data-filter-clear]").forEach((button) => {
+  const attribute = button.dataset.filterClear;
+  const input = attribute ? document.querySelector(`[${attribute}]`) : null;
+  if (!(input instanceof HTMLInputElement)) return;
+  const sync = () => { button.hidden = input.value.length === 0; };
+  input.addEventListener("input", sync);
+  button.addEventListener("click", () => {
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+  });
+  sync();
+});
+
 const root = document.documentElement;
 const toast = document.querySelector(".toast");
 let toastTimer;
@@ -166,6 +195,90 @@ function showToast(message) {
 
 window.showToast = showToast;
 
+function createProjectContextMenu() {
+  const identities = [...document.querySelectorAll(".project-identity")];
+  if (!identities.length) return;
+
+  const menu = document.createElement("div");
+  menu.id = "project-context-menu";
+  menu.className = "project-context-menu";
+  menu.hidden = true;
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", "Project actions");
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-project-context-action="Edit project">Edit project</button>
+    <button class="danger" type="button" role="menuitem" data-project-context-action="Close project">Close project</button>`;
+  document.body.append(menu);
+
+  let activeIdentity = null;
+
+  function projectName(identity) {
+    return identity.querySelector("h1, strong")?.textContent.trim() || "project";
+  }
+
+  function close({ restoreFocus = false } = {}) {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    if (restoreFocus) activeIdentity?.focus();
+    activeIdentity = null;
+  }
+
+  function open(identity, clientX, clientY) {
+    activeIdentity = identity;
+    menu.hidden = false;
+    menu.style.visibility = "hidden";
+    const menuRect = menu.getBoundingClientRect();
+    const left = Math.max(8, Math.min(clientX, window.innerWidth - menuRect.width - 8));
+    const top = Math.max(8, Math.min(clientY, window.innerHeight - menuRect.height - 8));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.visibility = "visible";
+    requestAnimationFrame(() => menu.querySelector("button")?.focus());
+  }
+
+  identities.forEach((identity) => {
+    const name = projectName(identity);
+    identity.tabIndex = 0;
+    identity.setAttribute("aria-haspopup", "menu");
+    identity.setAttribute("aria-controls", menu.id);
+    identity.setAttribute("aria-label", `${name} project actions`);
+    identity.setAttribute("aria-keyshortcuts", "Enter Space Shift+F10");
+    identity.setAttribute("role", "button");
+    identity.setAttribute("title", "Right-click for project actions");
+    identity.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      open(identity, event.clientX, event.clientY);
+    });
+    identity.addEventListener("keydown", (event) => {
+      if (!(event.key === "Enter" || event.key === " " || event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
+      event.preventDefault();
+      const rect = identity.getBoundingClientRect();
+      open(identity, rect.left, rect.bottom + 4);
+    });
+  });
+
+  menu.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-project-context-action]");
+    if (!action || !activeIdentity) return;
+    showToast(`${action.dataset.projectContextAction}: ${projectName(activeIdentity)}`);
+    close({ restoreFocus: true });
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!menu.hidden && !menu.contains(event.target)) close();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !menu.hidden) {
+      event.preventDefault();
+      close({ restoreFocus: true });
+    }
+  });
+  window.addEventListener("resize", () => close());
+  window.addEventListener("scroll", () => close(), true);
+}
+
+createProjectContextMenu();
+
 function readPrototypeSessions() {
   try {
     const value = JSON.parse(localStorage.getItem("archcode-prototype-sessions") || "[]");
@@ -176,6 +289,99 @@ function readPrototypeSessions() {
 }
 
 window.readArchcodePrototypeSessions = readPrototypeSessions;
+
+/** Shared static Sessions catalog for list pages + Home Needs-you slice. */
+const archcodePrototypeStaticSessions = [
+  {
+    group: "Needs you",
+    tone: "attention",
+    state: "Needs you",
+    source: "Todo",
+    title: "Implementation Session",
+    sessionId: "sess-profile-implementation",
+    parent: "Model profile defaults per project",
+    agent: "Lead → Build",
+    href: "./session.html?todo=todo-profile-defaults&session=sess-profile-implementation&state=hitl",
+  },
+  {
+    group: "Needs you",
+    tone: "failed",
+    state: "Failed",
+    source: "Automation",
+    title: "Daily project health check",
+    sessionId: "sess-aut-health-failed",
+    parent: "Daily project health check",
+    agent: "Lead",
+    href: "./session.html?automation=aut-health&session=sess-aut-health-failed&title=Daily%20project%20health%20check",
+  },
+  {
+    group: "Needs you",
+    tone: "attention",
+    state: "Needs you",
+    source: "Todo",
+    title: "Review recoverable worktree cleanup",
+    sessionId: "sess-worktree-permission",
+    parent: "Review recoverable worktree cleanup",
+    agent: "Lead",
+    href: "./session.html?todo=todo-worktree-permission&session=sess-worktree-permission",
+  },
+  {
+    group: "Running",
+    tone: "running",
+    state: "12m",
+    source: "Todo",
+    title: "Live execution recovery",
+    sessionId: "sess-live-recovery",
+    parent: "Live execution recovery",
+    agent: "Lead → Explore",
+    href: "./session.html?todo=todo-live-recovery&session=sess-live-recovery",
+  },
+  {
+    group: "Running",
+    tone: "running",
+    state: "34s",
+    source: "Direct",
+    title: "Fix incorrect model type",
+    sessionId: "sess-direct-model-type",
+    parent: "Lead",
+    agent: "Lead",
+    href: "./session.html?session=sess-direct-model-type&title=Fix%20incorrect%20model%20type",
+  },
+  {
+    group: "Recent",
+    tone: "done",
+    state: "Completed · 1h",
+    source: "Todo",
+    title: "Review Session",
+    sessionId: "sess-profile-review",
+    parent: "Model profile defaults per project",
+    agent: "Analyst",
+    href: "./session.html?todo=todo-profile-defaults&session=sess-profile-review",
+  },
+  {
+    group: "Recent",
+    tone: "done",
+    state: "Completed · Yesterday",
+    source: "Automation",
+    title: "Regression check · Aug 1",
+    sessionId: "sess-aut-regression-20260801",
+    parent: "Regression check",
+    agent: "Lead",
+    href: "./session.html?automation=aut-regression&session=sess-aut-regression-20260801&title=Regression%20check",
+  },
+  {
+    group: "Recent",
+    tone: "done",
+    state: "Completed · Jul 30",
+    source: "Direct",
+    title: "Audit project context loading",
+    sessionId: "sess-legacy-context-audit",
+    parent: "Lead",
+    agent: "Lead",
+    href: "./session.html?session=sess-legacy-context-audit",
+  },
+];
+window.archcodePrototypeStaticSessions = archcodePrototypeStaticSessions;
 
 function escapePrototypeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
@@ -361,7 +567,7 @@ function createSearchDialog({ triggerSelector, scope, title, description, placeh
   return { finder, open, close };
 }
 
-const currentProjectName = document.querySelector(".project-identity-copy h1")?.textContent.trim() || "project";
+const currentProjectName = document.querySelector(".project-identity h1")?.textContent.trim() || "project";
 const globalSearch = createSearchDialog({
   triggerSelector: "[data-open-global-search]",
   scope: "global",
@@ -386,22 +592,25 @@ const attentionItems = [
   {
     type: "Session",
     title: "Implementation Session",
-    meta: "Permission · Model profile defaults per project",
-    state: "Permission",
-    href: "./session.html?todo=todo-profile-defaults&session=sess-profile-implementation",
+    meta: "Permission gate · Model profile defaults per project",
+    state: "Needs you",
+    tone: "attention",
+    href: "./session.html?todo=todo-profile-defaults&session=sess-profile-implementation&state=hitl",
   },
   {
     type: "Todo",
     title: "Review worktree deletion permission",
     meta: "Lead is waiting on one scoped decision",
-    state: "Decision",
+    state: "Needs you",
+    tone: "attention",
     href: "./todos.html#todo=todo-worktree-permission",
   },
   {
     type: "Automation",
     title: "Daily project health check",
     meta: "Latest run stopped before the final report",
-    state: "Failed run",
+    state: "Failed",
+    tone: "failed",
     href: "./session.html?automation=aut-health&session=sess-aut-health-failed&title=Daily%20project%20health%20check",
   },
 ];
@@ -421,9 +630,9 @@ function createAttentionInbox() {
     <div class="attention-inbox-list">
       ${attentionItems.map((item) => `
         <a class="session-finder-row" href="${escapePrototypeHtml(item.href)}">
-          <span class="session-finder-orbit attention"></span>
+          <span class="session-finder-orbit ${escapePrototypeHtml(item.tone || "attention")}"></span>
           <span class="session-finder-copy"><span class="session-finder-type">${escapePrototypeHtml(item.type)}</span><strong>${escapePrototypeHtml(item.title)}</strong><small>${escapePrototypeHtml(item.meta)}</small></span>
-          <span class="session-finder-state attention">${escapePrototypeHtml(item.state)}</span>
+          <span class="session-finder-state ${escapePrototypeHtml(item.tone || "attention")}">${escapePrototypeHtml(item.state)}</span>
         </a>`).join("")}
     </div>`;
   document.body.append(inbox);

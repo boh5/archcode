@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="ArchCode">
+  <!-- ArchCode logo — indigo A, transparent background.
+       Use on any surface; pair with dark container (#09090b) for brand consistency. -->
+  <path fill="#6366f1"
+        d="M120 36 L212 204 H176 L160 176 H80 L64 204 H28 Z
+           M96 140 H144 L120 88 Z"/>
+</svg>

@@ -5,17 +5,156 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="ArchCode Project Todos 工作台原型" />
     <title>ArchCode — Todos Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=theme-rail-1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css?v=prototype-polish-2" />
     <style>
       [hidden] {
         display: none !important;
       }
 
-      .todos-route,
-      .todo-detail-route {
+      .todos-route {
         display: flex;
         flex-direction: column;
         height: 100%;
+        min-height: 0;
+      }
+
+      .todos-workspace {
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      /*
+        Interaction layers:
+        - scan: full-width List/Board
+        - peek: right slide-over drawer (does NOT compress the scan surface)
+        - full: authoritative Todo document page
+      */
+      .todos-route.is-full-todo .todos-main {
+        display: none;
+      }
+
+      .todos-route.is-full-todo .todos-header .layout-switcher,
+      .todos-route.is-full-todo .todos-header .view-switcher {
+        display: none;
+      }
+
+      .todos-main {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        background: var(--bg-base);
+      }
+
+      /* Click-outside layer: dims scan surface and closes the drawer. */
+      .todo-peek-scrim {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+        border: 0;
+        padding: 0;
+        margin: 0;
+        background:
+          linear-gradient(90deg, rgb(0 0 0 / 22%) 0%, rgb(0 0 0 / 34%) 100%);
+        opacity: 0;
+        pointer-events: none;
+        cursor: pointer;
+        transition: opacity 180ms var(--ease-standard);
+      }
+
+      html[data-theme="light"] .todo-peek-scrim {
+        background:
+          linear-gradient(90deg, rgb(15 23 42 / 10%) 0%, rgb(15 23 42 / 18%) 100%);
+      }
+
+      .todos-route.has-peek .todo-peek-scrim {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .todo-detail-pane {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: var(--bg-surface);
+      }
+
+      .todo-detail-pane[hidden] {
+        display: none !important;
+      }
+
+      /*
+        Peek = full-height right slide-over.
+        List/Board stay full width underneath; scrim + outside click close it.
+      */
+      .todo-detail-pane.is-peek {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 30;
+        width: min(420px, calc(100% - 48px));
+        max-width: 420px;
+        border-left: 1px solid var(--border-default);
+        border-radius: 0;
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 55%, var(--bg-surface)) 0%, var(--bg-surface) 120px);
+        box-shadow:
+          -1px 0 0 color-mix(in srgb, var(--border-subtle) 70%, transparent),
+          -24px 0 64px rgb(0 0 0 / 28%);
+        transform: translateX(0);
+        animation: todo-peek-in 200ms var(--ease-standard);
+      }
+
+      html[data-theme="light"] .todo-detail-pane.is-peek {
+        box-shadow:
+          -1px 0 0 color-mix(in srgb, var(--border-subtle) 80%, transparent),
+          -18px 0 48px rgb(15 23 42 / 12%);
+      }
+
+      .todo-detail-pane.is-full {
+        position: relative;
+        top: auto;
+        right: auto;
+        bottom: auto;
+        z-index: auto;
+        width: auto;
+        max-width: none;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+        background: var(--bg-base);
+        animation: none;
+      }
+
+      @keyframes todo-peek-in {
+        from {
+          transform: translateX(18px);
+          opacity: 0.55;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .todo-detail-pane.is-peek {
+          animation: none;
+        }
+
+        .todo-peek-scrim {
+          transition: none;
+        }
       }
 
       .todos-header,
@@ -27,7 +166,7 @@
 
       .todos-header {
         display: grid;
-        grid-template-columns: minmax(240px, 420px) auto;
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
@@ -35,13 +174,38 @@
         padding: 10px 24px;
       }
 
+      .todos-header-lead {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .todos-header-lead .surface-filter {
+        flex: 1 1 auto;
+        width: min(100%, 420px);
+        max-width: 420px;
+      }
+
+      .todos-command-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .new-todo-button {
+        min-height: 36px;
+        white-space: nowrap;
+      }
+
       .view-switcher {
         display: inline-flex;
         align-items: center;
-        width: 202px;
+        width: auto;
+        min-width: 268px;
         padding: 3px;
         border: 1px solid var(--border-default);
-        border-radius: 7px;
+        border-radius: var(--shape-control);
         background: var(--bg-muted);
       }
 
@@ -49,18 +213,71 @@
         min-width: 0;
         flex: 1;
         height: 30px;
-        padding: 0 9px;
-        border-radius: 5px;
+        padding: 0 10px;
+        border-radius: calc(var(--shape-control) - 2px);
         background: transparent;
         color: var(--text-secondary);
         font-size: 11px;
-        font-weight: 620;
+        font-weight: 600;
       }
 
       .view-switcher button[aria-pressed="true"] {
         background: var(--bg-elevated);
         color: var(--text-primary);
-        box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+        box-shadow: var(--elevation-sm);
+      }
+
+      /* Quiet icon layout toggle — secondary to surface switcher, lives with filter. */
+      .layout-switcher {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 1px;
+        padding: 2px;
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--shape-control);
+        background: var(--bg-surface);
+      }
+
+      .layout-switcher button {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        min-width: 30px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        border-radius: calc(var(--shape-control) - 2px);
+        background: transparent;
+        color: var(--text-tertiary);
+        cursor: pointer;
+        transition:
+          background var(--motion-hover) var(--ease-standard),
+          color var(--motion-hover) var(--ease-standard);
+      }
+
+      .layout-switcher button:hover {
+        color: var(--text-secondary);
+        background: var(--bg-hover);
+      }
+
+      .layout-switcher button[aria-pressed="true"] {
+        background: var(--bg-muted);
+        color: var(--text-primary);
+      }
+
+      .layout-switcher button [data-icon],
+      .layout-switcher button svg {
+        display: block;
+        width: 15px;
+        height: 15px;
+      }
+
+      .todos-main .todos-body,
+      .todo-detail-pane .detail-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
       }
 
       .todos-body,
@@ -70,64 +287,15 @@
       }
 
       .todos-inner {
-        width: min(100%, 1440px);
+        width: min(100%, 1500px);
         margin: 0 auto;
-        padding: 16px 24px 40px;
+        padding: 16px 20px 40px;
       }
 
-      .capture {
-        display: grid;
-        grid-template-columns: 18px minmax(0, 1fr) auto;
-        align-items: center;
-        gap: 9px;
-        margin-bottom: 20px;
-        padding: 6px 8px 6px 12px;
-        border: 1px solid var(--control-border);
-        border-radius: 6px;
-        background: var(--bg-elevated);
-        transition: border-color var(--motion-hover) var(--ease-standard), box-shadow var(--motion-hover) var(--ease-standard);
+      .todos-route.is-full-todo .todos-header {
+        border-bottom-color: var(--border-subtle);
       }
 
-      .capture:focus-within {
-        border-color: var(--brand);
-        box-shadow: var(--focus);
-      }
-
-      .capture > [data-icon] {
-        color: var(--text-tertiary);
-      }
-
-      .capture-copy {
-        min-width: 0;
-      }
-
-      .capture textarea {
-        width: 100%;
-        min-width: 0;
-        height: 36px;
-        min-height: 36px;
-        padding: 3px 4px;
-        border: 0;
-        outline: 0;
-        resize: vertical;
-        background: transparent;
-        font: inherit;
-        font-size: 13px;
-        line-height: 1.5;
-      }
-
-      .capture textarea:focus {
-        box-shadow: none;
-      }
-
-      .capture-hint {
-        display: block;
-        padding: 0 4px 2px;
-        color: var(--text-tertiary);
-        font-size: 10px;
-      }
-
-      .capture-actions,
       .document-actions,
       .lifecycle-actions {
         display: flex;
@@ -135,61 +303,106 @@
         gap: 8px;
       }
 
-      .primary-button,
-      .secondary-button,
-      .quiet-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 7px;
-        min-height: 36px;
-        padding: 0 13px;
-        border-radius: 5px;
-        font-size: 11px;
-        font-weight: 650;
-        white-space: nowrap;
-      }
-
-      .primary-button {
-        border: 1px solid var(--brand);
-        background: var(--brand);
-        color: var(--brand-ink);
-      }
-
-      .primary-button:hover {
-        border-color: var(--brand-hover);
-        background: var(--brand-hover);
-      }
-
-      .secondary-button {
+      .todo-create-dialog {
+        width: min(640px, calc(100vw - 32px));
+        max-height: min(680px, calc(100dvh - 32px));
+        margin: auto;
+        padding: 0;
+        overflow: hidden;
         border: 1px solid var(--border-default);
-        background: var(--bg-elevated);
-        color: var(--text-secondary);
-      }
-
-      .secondary-button:hover,
-      .quiet-button:hover {
-        background: var(--bg-hover);
+        border-radius: var(--shape-dialog);
+        background: var(--bg-overlay);
         color: var(--text-primary);
+        box-shadow: var(--elevation-lg);
       }
 
-      .quiet-button {
-        min-height: 32px;
-        padding: 0 9px;
-        border: 0;
-        background: transparent;
+      .todo-create-dialog::backdrop {
+        background: rgb(0 0 0 / 58%);
+      }
+
+      .todo-create-form {
+        display: flex;
+        flex-direction: column;
+        max-height: inherit;
+        min-height: 0;
+      }
+
+      .todo-create-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 56px;
+        padding: 0 12px 0 20px;
+        border-bottom: 1px solid var(--border-subtle);
+        flex: 0 0 auto;
+      }
+
+      .todo-create-header h2 {
+        flex: 1;
+        font-size: 15px;
+        font-weight: 640;
+      }
+
+      .todo-create-body {
+        min-height: 0;
+        padding: 20px;
+        overflow-y: auto;
+      }
+
+      .todo-create-body label {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 620;
+      }
+
+      .todo-create-body textarea {
+        width: 100%;
+        min-height: 142px;
+        max-height: 320px;
+        padding: 12px 14px;
+        resize: vertical;
+        border: 1px solid var(--control-border);
+        border-radius: 8px;
+        outline: 0;
+        background: var(--bg-elevated);
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      .todo-create-body textarea:focus {
+        border-color: var(--brand);
+        box-shadow: var(--focus);
+      }
+
+      .todo-create-hint {
+        margin-top: 10px;
         color: var(--text-tertiary);
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .todo-create-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        padding: 14px 20px;
+        border-top: 1px solid var(--border-subtle);
+        background: var(--bg-surface);
+        flex: 0 0 auto;
       }
 
       .todo-board {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
-        gap: 18px;
+        gap: 28px;
       }
 
       .todo-lane {
         min-width: 0;
-        min-height: 160px;
+        min-height: 168px;
         padding: 0;
         border: 0;
         border-radius: 0;
@@ -198,51 +411,61 @@
 
       .lane-header {
         display: grid;
-        grid-template-columns: 14px minmax(0, 1fr) auto;
+        grid-template-columns: 16px minmax(0, 1fr) auto;
         align-items: start;
-        gap: 8px;
-        min-height: 49px;
-        padding: 0 2px 10px;
+        gap: 10px;
+        min-height: 52px;
+        padding: 0 2px 14px;
         border-bottom: 1px solid var(--border-subtle);
       }
 
       .lane-header h2 {
-        font-size: 13px;
-        font-weight: 670;
+        font-size: 11px;
+        font-weight: 720;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
       }
 
       .lane-header p {
         margin-top: 4px;
         color: var(--text-tertiary);
-        font-size: 10px;
+        font-size: 11.5px;
       }
 
       .lane-count {
         align-self: center;
-        min-width: 18px;
+        min-width: 22px;
         margin-top: -2px;
-        padding: 0 2px;
+        padding: 2px 7px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--bg-muted) 70%, transparent);
         color: var(--text-tertiary);
         font-size: 11px;
-        text-align: right;
+        font-weight: 650;
+        text-align: center;
         font-variant-numeric: tabular-nums;
       }
 
       .lane-content {
         display: grid;
-        gap: 9px;
-        padding-top: 10px;
+        gap: 11px;
+        padding-top: 14px;
       }
 
       .todo-card {
+        position: relative;
         display: grid;
-        grid-template-columns: 44px minmax(0, 1fr);
-        min-height: 48px;
+        grid-template-columns: 30px minmax(0, 1fr);
+        min-height: 56px;
         overflow: hidden;
         border: 1px solid var(--border-subtle);
-        border-radius: 6px;
-        background: var(--bg-elevated);
-        transition: border-color var(--motion-hover) var(--ease-standard), background var(--motion-hover) var(--ease-standard), box-shadow var(--motion-hover) var(--ease-standard);
+        border-radius: var(--shape-card);
+        background: var(--bg-surface);
+        transition:
+          background var(--motion-hover) var(--ease-standard),
+          border-color var(--motion-hover) var(--ease-standard);
       }
 
       .todo-card:hover {
@@ -250,9 +473,19 @@
         background: var(--bg-hover);
       }
 
+      .todo-card.is-focus,
       .todo-card:focus-within {
-        border-color: var(--brand);
+        border-color: color-mix(in srgb, var(--brand) 45%, var(--border-default));
+        background: var(--selection-field);
         box-shadow: inset 2px 0 0 var(--brand);
+      }
+
+      .todo-card[data-runtime="running"] {
+        box-shadow: inset 2px 0 0 var(--signal);
+      }
+
+      .todo-card[data-runtime="needs_you"] {
+        box-shadow: inset 2px 0 0 var(--warning);
       }
 
       .drag-handle {
@@ -261,6 +494,13 @@
         background: transparent;
         color: var(--text-muted);
         cursor: grab;
+        opacity: 0;
+        transition: opacity var(--motion-hover) var(--ease-standard);
+      }
+
+      .todo-card:hover .drag-handle,
+      .todo-card:focus-within .drag-handle,
+      .todo-card.is-focus .drag-handle {
         opacity: 0.72;
       }
 
@@ -274,7 +514,7 @@
         flex-direction: column;
         justify-content: center;
         min-width: 0;
-        padding: 8px 10px 8px 0;
+        padding: 8px 12px 8px 0;
         background: transparent;
         text-align: left;
       }
@@ -347,20 +587,29 @@
       .todo-excerpt {
         display: -webkit-box;
         overflow: hidden;
-        font-size: 13px;
-        font-weight: 550;
-        line-height: 1.5;
+        color: var(--text-secondary);
+        font-size: 13.75px;
+        font-weight: 500;
+        letter-spacing: -0.012em;
+        line-height: 1.48;
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
+        transition: color var(--motion-hover) var(--ease-standard);
+      }
+
+      .todo-card:hover .todo-excerpt,
+      .todo-card.is-focus .todo-excerpt {
+        color: var(--text-primary);
       }
 
       .todo-operational {
         display: flex;
         align-items: center;
         gap: 6px;
-        margin-top: 5px;
+        margin-top: 6px;
         color: var(--text-secondary);
-        font-size: 11px;
+        font-size: 11.5px;
+        font-weight: 520;
         line-height: 16px;
       }
 
@@ -369,37 +618,50 @@
       .todo-operational.review { color: var(--brand); }
 
       .lane-orbit {
-        width: 12px;
-        height: 12px;
-        margin-top: 3px;
-        border: 1px solid var(--text-tertiary);
-        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        margin-top: 1px;
+        color: var(--neutral);
       }
 
-      .lane-orbit.idea { border-color: var(--brand); }
-      .lane-orbit.progress { border-color: var(--signal); }
-      .lane-orbit.done { border-color: var(--success); }
+      .lane-orbit svg {
+        width: 15px;
+        height: 15px;
+        stroke-width: 1.9;
+      }
+
+      .lane-orbit.idea { color: var(--brand); }
+      .lane-orbit.progress { color: var(--signal-foreground); }
+      .lane-orbit.done { color: var(--success); }
 
       .lane-empty {
         min-height: 0;
-        padding: 14px 2px;
+        margin-top: 2px;
+        padding: 18px 14px 18px 16px;
+        border: 1px dashed color-mix(in srgb, var(--border-default) 80%, transparent);
+        border-radius: var(--shape-card);
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--bg-muted) 55%, transparent), transparent);
         text-align: left;
       }
 
       .lane-empty strong {
         display: block;
         color: var(--text-secondary);
-        font-size: 12px;
-        font-weight: 600;
+        font-size: 12.5px;
+        font-weight: 640;
+        letter-spacing: -0.01em;
       }
 
       .lane-empty span {
         display: block;
-        max-width: 220px;
+        max-width: 280px;
         margin-top: 6px;
         color: var(--text-tertiary);
-        font-size: 10px;
-        line-height: 1.5;
+        font-size: 11px;
+        line-height: 1.55;
       }
 
       .flat-view {
@@ -433,7 +695,601 @@
       }
 
       .detail-header {
-        padding: 10px 22px 17px;
+        flex: 0 0 auto;
+        padding: 10px 18px 0;
+        border-bottom: 1px solid var(--border-default);
+        background: var(--bg-surface);
+      }
+
+      .detail-dismiss {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border: 0;
+        border-radius: var(--shape-control);
+        background: transparent;
+        color: var(--text-tertiary);
+        cursor: pointer;
+      }
+
+      .detail-dismiss:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .detail-dismiss svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .detail-topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 36px;
+      }
+
+      .detail-topline .detail-id-block {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .detail-id-block {
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
+        min-width: 0;
+      }
+
+      .detail-updated {
+        overflow: hidden;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .detail-hero {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 0 14px;
+        flex-wrap: wrap;
+      }
+
+      /* Peek chrome: light header, no lifecycle band (that lives on full page). */
+      .todo-detail-pane.is-peek .detail-header {
+        padding: 0;
+        border-bottom: 1px solid var(--border-subtle);
+        background: transparent;
+      }
+
+      .todo-detail-pane.is-peek .detail-topline {
+        min-height: 52px;
+        padding: 12px 14px 12px 16px;
+        gap: 10px;
+      }
+
+      .todo-detail-pane.is-peek .detail-dismiss {
+        order: 2;
+        margin-left: auto;
+      }
+
+      .todo-detail-pane.is-peek .peek-kicker {
+        order: 1;
+      }
+
+      .todo-detail-pane.is-peek .detail-id-block {
+        display: none;
+      }
+
+      .todo-detail-pane.is-peek .detail-hero,
+      .todo-detail-pane.is-peek .reject-banner {
+        display: none;
+      }
+
+      .detail-open-full {
+        display: none;
+        min-height: 30px;
+        padding: 0 10px;
+        white-space: nowrap;
+      }
+
+      .todo-detail-pane.is-peek .detail-open-full {
+        display: none; /* primary open lives in the peek body/footer */
+      }
+
+      .peek-kicker {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .todo-detail-pane.is-peek .peek-kicker {
+        display: inline-flex;
+        flex: 1 1 auto;
+      }
+
+      .peek-kicker-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--brand);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent);
+      }
+
+      .detail-back-scan,
+      .todo-detail-pane.is-peek .detail-back-scan {
+        display: none !important;
+      }
+
+      .todo-detail-pane.is-full .detail-back-scan {
+        display: inline-flex !important;
+      }
+
+      .todo-detail-pane.is-full .detail-dismiss {
+        display: none;
+      }
+
+      .todo-detail-pane.is-full .peek-kicker {
+        display: none;
+      }
+
+      .todo-detail-pane.is-peek .detail-body {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .peek-stack {
+        display: none;
+        flex: 1 1 auto;
+        flex-direction: column;
+        min-height: 0;
+        padding: 0;
+      }
+
+      .todo-detail-pane.is-peek .peek-stack {
+        display: flex;
+      }
+
+      .todo-detail-pane.is-peek .detail-full-body {
+        display: none;
+      }
+
+      .todo-detail-pane.is-full .peek-stack {
+        display: none;
+      }
+
+      .todo-detail-pane.is-full .detail-full-body {
+        display: block;
+      }
+
+      .peek-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        padding: 18px 18px 12px;
+      }
+
+      .peek-title {
+        margin: 0;
+        color: var(--text-primary);
+        font-size: 18px;
+        font-weight: 680;
+        letter-spacing: -0.03em;
+        line-height: 1.28;
+      }
+
+      .peek-excerpt {
+        margin-top: 10px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.55;
+        display: -webkit-box;
+        -webkit-line-clamp: 5;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .peek-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 14px;
+      }
+
+      .peek-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 0 9px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 999px;
+        background: var(--bg-muted);
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .peek-chip.is-status {
+        color: var(--text-primary);
+      }
+
+      .peek-runtime {
+        display: none;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 16px;
+        padding: 12px 12px 12px 14px;
+        border: 1px solid color-mix(in srgb, var(--warning) 26%, var(--border-subtle));
+        border-radius: 10px;
+        background: var(--attention-field);
+      }
+
+      .peek-runtime.is-visible {
+        display: flex;
+      }
+
+      .peek-runtime.is-running {
+        border-color: color-mix(in srgb, var(--signal) 24%, var(--border-subtle));
+        background: var(--signal-field);
+      }
+
+      .peek-runtime.is-review {
+        border-color: color-mix(in srgb, var(--brand) 22%, var(--border-subtle));
+        background: var(--brand-field);
+      }
+
+      .peek-runtime-mark {
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        margin-top: 5px;
+        border-radius: 999px;
+        background: var(--warning);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 18%, transparent);
+      }
+
+      .peek-runtime.is-running .peek-runtime-mark {
+        background: transparent;
+        border: 1.5px solid var(--signal-foreground);
+        box-shadow: none;
+      }
+
+      .peek-runtime.is-review .peek-runtime-mark {
+        background: var(--brand);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent);
+      }
+
+      .peek-runtime strong,
+      .peek-runtime span {
+        display: block;
+      }
+
+      .peek-runtime strong {
+        font-size: 12.5px;
+        font-weight: 650;
+        color: var(--text-primary);
+        letter-spacing: -0.01em;
+      }
+
+      .peek-runtime span {
+        margin-top: 3px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .peek-section {
+        margin-top: 22px;
+      }
+
+      .peek-section-label {
+        margin: 0 0 8px;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        font-weight: 680;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .peek-links {
+        display: grid;
+        gap: 6px;
+      }
+
+      .peek-links[hidden] {
+        display: none !important;
+      }
+
+      .peek-link {
+        display: grid;
+        grid-template-columns: 10px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 52px;
+        padding: 10px 12px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--bg-muted) 70%, transparent);
+        color: inherit;
+        text-decoration: none;
+        transition:
+          background var(--motion-hover) var(--ease-standard),
+          border-color var(--motion-hover) var(--ease-standard);
+      }
+
+      .peek-link:hover {
+        border-color: var(--border-default);
+        background: var(--bg-hover);
+      }
+
+      .peek-link:hover strong {
+        color: var(--text-primary);
+      }
+
+      .peek-orbit {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--border-strong);
+      }
+
+      .peek-orbit.running {
+        border: 1.5px solid var(--signal-foreground);
+        background: transparent;
+      }
+
+      .peek-orbit.attention { background: var(--warning); }
+      .peek-orbit.review { background: var(--brand); }
+      .peek-orbit.automation,
+      .peek-orbit.discussion { background: var(--text-tertiary); }
+
+      .peek-link strong {
+        display: block;
+        overflow: hidden;
+        font-size: 12.5px;
+        font-weight: 620;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .peek-link small {
+        display: block;
+        margin-top: 2px;
+        overflow: hidden;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .peek-link-state {
+        color: var(--text-tertiary);
+        font-size: 11px;
+        font-weight: 640;
+        white-space: nowrap;
+      }
+
+      .peek-link-state.running { color: var(--signal-foreground); }
+      .peek-link-state.attention { color: var(--warning); }
+      .peek-link-state.review { color: var(--brand); }
+
+      .peek-footnote {
+        margin-top: 18px;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .peek-footer {
+        flex: 0 0 auto;
+        display: grid;
+        gap: 8px;
+        padding: 14px 16px 16px;
+        border-top: 1px solid var(--border-subtle);
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 82%, transparent), var(--bg-surface));
+      }
+
+      .peek-footer .primary-button,
+      .peek-footer .secondary-button {
+        width: 100%;
+        min-height: 36px;
+        justify-content: center;
+      }
+
+      .peek-footer-secondary {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .peek-footer .quiet-button {
+        width: 100%;
+        min-height: 34px;
+        justify-content: center;
+        color: var(--text-secondary);
+      }
+
+      .peek-footer .quiet-button[hidden] {
+        display: none !important;
+      }
+
+      .todo-detail-pane.is-full .peek-footer {
+        display: none;
+      }
+
+      .detail-lane-hint {
+        color: var(--text-tertiary);
+        font-size: 11.5px;
+        font-weight: 520;
+        white-space: nowrap;
+      }
+
+      .status-band {
+        position: relative;
+        display: inline-flex;
+        align-items: stretch;
+        height: 36px;
+        padding: 3px;
+        border: 1px solid var(--border-default);
+        border-radius: var(--shape-control);
+        background: var(--bg-muted);
+      }
+
+      .status-segment {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        padding: 0 12px;
+        border-radius: calc(var(--shape-control) - 2px);
+        color: var(--text-tertiary);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        transition:
+          color var(--motion-hover) var(--ease-standard),
+          background var(--motion-hover) var(--ease-standard);
+      }
+
+      .status-segment:hover {
+        color: var(--text-secondary);
+        background: color-mix(in srgb, var(--bg-hover) 70%, transparent);
+      }
+
+      .status-segment svg {
+        width: 14px;
+        height: 14px;
+        stroke-width: 1.7;
+      }
+
+      .status-segment.is-current {
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+        box-shadow: inset 0 0 0 1px var(--border-default);
+      }
+
+      .status-segment.is-current[data-segment="idea"] {
+        color: var(--brand);
+        background: var(--brand-field);
+        box-shadow: none;
+      }
+
+      .status-segment.is-current[data-segment="ready"] {
+        color: var(--text-primary);
+      }
+
+      .status-segment.is-current[data-segment="in_progress"] {
+        color: var(--signal-foreground);
+        background: var(--signal-field);
+        box-shadow: none;
+      }
+
+      .status-segment.is-current[data-segment="done"] {
+        color: var(--success);
+        background: var(--success-field);
+        box-shadow: none;
+      }
+
+      .status-segment.is-current[data-segment="in_progress"] svg {
+        animation: band-pulse var(--motion-activity) ease-in-out infinite;
+      }
+
+      .status-segment.is-past {
+        color: var(--text-secondary);
+      }
+
+      .status-band.is-done {
+        border-color: color-mix(in srgb, var(--success) 30%, var(--border-default));
+        background: var(--success-field);
+      }
+
+      .status-band.is-done .done-flash {
+        margin-left: 4px;
+        padding: 0 10px 0 4px;
+      }
+
+      .reject-banner {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        margin-top: 12px;
+        padding: 11px 14px 12px 16px;
+        border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--border-default));
+        border-radius: var(--shape-card);
+        background: var(--attention-field);
+        box-shadow: inset 3px 0 0 var(--warning);
+      }
+
+      .reject-banner strong,
+      .reject-banner span {
+        display: block;
+      }
+
+      .reject-banner strong {
+        color: var(--warning);
+        font-size: 12px;
+        font-weight: 640;
+      }
+
+      .reject-banner span {
+        margin-top: 3px;
+        color: var(--text-secondary);
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .reject-banner .quiet-button {
+        margin-left: auto;
+      }
+
+      .done-flash {
+        display: none;
+        align-items: center;
+        gap: 7px;
+        color: var(--success);
+        font-size: 12px;
+        font-weight: 680;
+        letter-spacing: -0.01em;
+      }
+
+      .status-band.is-done .done-flash {
+        display: inline-flex;
+      }
+
+      .done-flash.is-popping {
+        animation: done-pop 420ms var(--ease-standard);
+      }
+
+      .done-flash svg {
+        width: 15px;
+        height: 15px;
+        stroke-width: 2.4;
+      }
+
+      @keyframes band-pulse {
+        0%, 100% { opacity: 0.45; }
+        50% { opacity: 1; }
+      }
+
+      @keyframes done-pop {
+        0% { opacity: 0; transform: scale(0.86) translateY(2px); }
+        60% { opacity: 1; transform: scale(1.04) translateY(0); }
+        100% { opacity: 1; transform: none; }
       }
 
       .breadcrumb-button {
@@ -441,15 +1297,19 @@
         align-items: center;
         gap: 6px;
         min-height: 32px;
-        padding: 0 7px 0 2px;
+        padding: 0 8px 0 2px;
+        border-radius: 6px;
         background: transparent;
         color: var(--text-secondary);
-        font-size: 11px;
-        font-weight: 620;
+        font-size: 12px;
+        font-weight: 640;
+        letter-spacing: -0.01em;
+        transition: color var(--motion-hover) var(--ease-standard), background var(--motion-hover) var(--ease-standard);
       }
 
       .breadcrumb-button:hover {
         color: var(--brand);
+        background: color-mix(in srgb, var(--brand-field) 45%, transparent);
       }
 
       .breadcrumb-button [data-icon] {
@@ -479,18 +1339,35 @@
 
       .detail-inner {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 318px;
-        gap: 38px;
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 28px;
+        width: 100%;
+        margin: 0;
+        padding: 18px 20px 48px;
+      }
+
+      .todo-detail-pane.is-full .detail-header {
+        padding: 10px 24px 0;
+        background: var(--bg-surface);
+      }
+
+      .todo-detail-pane.is-full .detail-inner {
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 28px;
         width: min(100%, 1280px);
         margin: 0 auto;
-        padding: 26px 30px 64px;
+        padding: 18px 24px 48px;
+      }
+
+      .todo-detail-pane.is-full .document-copy {
+        max-width: 820px;
       }
 
       .document-stack {
         min-width: 0;
         border-top: 1px solid var(--border-subtle);
         border-bottom: 1px solid var(--border-subtle);
-        background: var(--bg-surface);
+        background: transparent;
       }
 
       .document-surface {
@@ -509,18 +1386,21 @@
         align-items: flex-start;
         justify-content: space-between;
         gap: 16px;
-        padding: 18px 22px 10px;
+        padding: 22px 0 12px;
       }
 
       .document-header h2 {
-        font-size: 14px;
+        font-size: 11px;
         font-weight: 680;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
       }
 
       .document-meta {
-        margin-top: 5px;
+        margin-top: 6px;
         color: var(--text-tertiary);
-        font-size: 10px;
+        font-size: 11px;
       }
 
       .artifact-badge {
@@ -529,11 +1409,11 @@
       }
 
       .document-copy {
-        max-width: 74ch;
-        padding: 8px 22px 28px;
+        max-width: 68ch;
+        padding: 10px 0 32px;
         color: var(--text-secondary);
-        font-size: 13px;
-        line-height: 1.68;
+        font-size: 16px;
+        line-height: 1.7;
       }
 
       .document-copy h3 {
@@ -559,20 +1439,344 @@
       }
 
       .document-copy code {
-        padding: 1px 5px;
+        padding: 2px 6px;
         border: 1px solid var(--border-subtle);
-        border-radius: 4px;
+        border-radius: 6px;
         background: var(--bg-muted);
         color: var(--text-primary);
         font-family: var(--font-stack-mono);
+        font-size: 12px;
+      }
+
+      .plan-checklist {
+        display: grid;
+        max-width: 72ch;
+        margin: 10px 0 0;
+        padding: 10px 12px 12px;
+        gap: 2px;
+        border: 1px solid var(--border-default);
+        border-radius: var(--shape-card);
+        background: var(--bg-elevated);
+        box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 3%, transparent);
+        font-family: var(--font-stack-mono);
+      }
+
+      .plan-step {
+        display: grid;
+        grid-template-columns: 18px 22px minmax(0, 1fr);
+        align-items: start;
+        gap: 10px;
+        padding: 9px 8px;
+        margin: 0;
+        border: 0;
+        border-radius: calc(var(--shape-control) - 1px);
+        background: transparent;
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 13px;
+        line-height: 1.55;
+        text-align: left;
+        transition:
+          background var(--motion-hover) var(--ease-standard),
+          box-shadow var(--motion-hover) var(--ease-standard);
+      }
+
+      .plan-step:hover {
+        background: color-mix(in srgb, var(--brand-field) 35%, var(--bg-hover));
+      }
+
+      .plan-check {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        margin-top: 1px;
+        border: 1.5px solid var(--border-strong);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--brand-ink);
+        transition:
+          border-color var(--motion-hover) var(--ease-standard),
+          background var(--motion-hover) var(--ease-standard),
+          box-shadow var(--motion-hover) var(--ease-standard);
+      }
+
+      .plan-check svg {
+        width: 11px;
+        height: 11px;
+        stroke-width: 3;
+      }
+
+      .plan-check svg path {
+        stroke-dasharray: 17;
+        stroke-dashoffset: 17;
+        transition: stroke-dashoffset var(--motion-icon) var(--ease-standard);
+      }
+
+      .plan-step:hover .plan-check {
+        border-color: var(--brand);
+      }
+
+      .plan-step.is-done .plan-check {
+        border-color: var(--brand);
+        background: var(--brand);
+      }
+
+      /* P2 — Linear-style Active list (default). Board stays secondary. */
+      .todo-list {
+        display: grid;
+        gap: 22px;
+        width: 100%;
+        max-width: 980px;
+      }
+
+      .list-group {
+        display: grid;
+        gap: 0;
+      }
+
+      .list-group-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 36px;
+        padding: 0 4px 8px;
+        border-bottom: 1px solid var(--border-subtle);
+        color: var(--text-tertiary);
+      }
+
+      .list-group-header h2 {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+      }
+
+      .list-group-header p {
+        flex: 1;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .list-group-count {
+        font-family: var(--font-stack-mono);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-muted);
+      }
+
+      .list-rows {
+        display: grid;
+      }
+
+      .todo-row {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        min-height: 52px;
+        padding: 8px 6px;
+        border-bottom: 1px solid var(--border-subtle);
+        background: transparent;
+        transition: background var(--motion-hover) var(--ease-standard);
+      }
+
+      .todo-row:hover,
+      .todo-row.is-focus {
+        background: var(--bg-hover);
+      }
+
+      .todo-row.is-focus {
+        box-shadow: inset 2px 0 0 var(--brand);
+      }
+
+      .todo-row.is-selected {
+        background: var(--bg-hover);
+        box-shadow: inset 2px 0 0 var(--brand);
+      }
+
+      .todo-row.is-selected .row-excerpt {
+        color: var(--text-primary);
+      }
+
+      .todo-card.is-selected {
+        outline: 1px solid color-mix(in srgb, var(--brand) 40%, var(--border-default));
+        background: var(--bg-hover);
+      }
+
+      .todo-row[data-runtime="running"] .row-glyph { color: var(--signal-foreground); }
+      .todo-row[data-runtime="needs_you"] .row-glyph { color: var(--warning); }
+      .todo-row[data-runtime="review"] .row-glyph { color: var(--brand); }
+
+      .row-glyph {
+        display: grid;
+        place-items: center;
+        color: var(--text-muted);
+      }
+
+      .row-glyph svg {
+        width: 14px;
+        height: 14px;
+        stroke-width: 1.7;
+      }
+
+      .row-main {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+        text-align: left;
+        background: transparent;
+      }
+
+      .row-excerpt {
+        overflow: hidden;
+        color: var(--text-primary);
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 1.35;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .row-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-muted);
         font-size: 11px;
       }
 
-      .plan-empty {
-        padding: 8px 22px 26px;
+      .row-operational {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         color: var(--text-tertiary);
-        font-size: 12px;
-        line-height: 1.55;
+        font-weight: 600;
+      }
+
+      .row-operational.running { color: var(--signal-foreground); }
+      .row-operational.attention { color: var(--warning); }
+      .row-operational.review { color: var(--brand); }
+
+      .row-actions {
+        display: none;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .todo-row:hover .row-actions,
+      .todo-row.is-focus .row-actions,
+      .todo-row:focus-within .row-actions {
+        display: inline-flex;
+      }
+
+      .row-action {
+        min-height: 28px;
+        padding: 0 8px;
+        border-radius: var(--shape-control);
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .row-action:hover {
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+      }
+
+      @media (max-width: 760px) {
+        .todo-row {
+          grid-template-columns: 18px minmax(0, 1fr);
+        }
+
+        .row-actions {
+          grid-column: 2;
+          display: inline-flex;
+          justify-content: flex-start;
+        }
+      }
+
+      .plan-step.is-done .plan-check svg path {
+        stroke-dashoffset: 0;
+      }
+
+      .plan-index {
+        margin-top: 3px;
+        color: var(--text-muted);
+        font-family: var(--font-stack-mono);
+        font-size: 11px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .plan-step.is-done .plan-index {
+        color: var(--brand);
+      }
+
+      .plan-step-text {
+        color: var(--text-secondary);
+        font-size: 15px;
+        line-height: 1.6;
+        transition: color var(--motion-hover) var(--ease-standard);
+      }
+
+      .plan-step:hover .plan-step-text {
+        color: var(--text-primary);
+      }
+
+      .plan-step.is-done .plan-step-text {
+        color: var(--text-tertiary);
+        text-decoration: line-through;
+        text-decoration-color: var(--border-strong);
+        text-decoration-thickness: 1px;
+      }
+
+      .plan-progress {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--brand);
+        font-size: 11px;
+        font-weight: 620;
+      }
+
+      .plan-progress::before {
+        width: 12px;
+        height: 12px;
+        background: currentColor;
+        content: "";
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 4 4L19 6'/%3E%3C/svg%3E") center / contain no-repeat;
+      }
+
+      .plan-notes {
+        max-width: 72ch;
+        padding: 0 0 32px;
+        color: var(--text-tertiary);
+        font-size: 13px;
+        line-height: 1.65;
+      }
+
+      .plan-notes h3 {
+        margin: 20px 0 6px;
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 680;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .plan-notes h3:first-child {
+        margin-top: 0;
+      }
+
+      .plan-empty {
+        padding: 8px 0 28px;
+        color: var(--text-tertiary);
+        font-size: 14px;
+        line-height: 1.6;
       }
 
       .references-surface {
@@ -660,51 +1864,52 @@
       .work-panel {
         min-width: 0;
         padding-left: 26px;
-        border-left: 1px solid var(--border-default);
+        border-left: 1px solid var(--border-subtle);
       }
 
       .work-panel > section + section {
-        margin-top: 24px;
-        padding-top: 22px;
+        margin-top: 26px;
+        padding-top: 24px;
         border-top: 1px solid var(--border-subtle);
       }
 
       .work-panel h2 {
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: 0;
-        text-transform: none;
+        font-size: 11px;
+        font-weight: 680;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
       }
 
       .work-panel-intro {
-        margin-top: 6px;
+        margin-top: 8px;
         color: var(--text-tertiary);
-        font-size: 11px;
+        font-size: 12px;
         line-height: 1.5;
       }
 
       .work-action-group {
-        margin-top: 15px;
+        margin-top: 16px;
       }
 
       .work-action-group + .work-action-group {
-        padding-top: 13px;
+        padding-top: 14px;
         border-top: 1px solid var(--border-subtle);
       }
 
       .work-action-group h3 {
         color: var(--text-tertiary);
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.07em;
+        font-size: 11px;
+        font-weight: 680;
+        letter-spacing: 0.05em;
         text-transform: uppercase;
       }
 
       .work-actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 7px;
-        margin-top: 8px;
+        gap: 8px;
+        margin-top: 10px;
       }
 
       .attention-summary {
@@ -845,6 +2050,96 @@
         }
       }
 
+      @media (max-width: 960px) {
+        /* Narrow tablet: drawer still overlays the list. */
+        .todo-detail-pane.is-peek {
+          width: min(100%, 420px);
+          max-width: none;
+        }
+
+        .todo-detail-pane.is-peek .peek-stack {
+          display: flex;
+        }
+
+        .todo-detail-pane.is-peek .detail-full-body {
+          display: none;
+        }
+      }
+
+      @media (max-width: 720px) {
+        /* Very narrow: open as full document chrome instead of a useless strip. */
+        .todos-route.has-peek .todos-main {
+          display: none;
+        }
+
+        .todos-route.has-peek .todo-peek-scrim {
+          display: none;
+        }
+
+        .todo-detail-pane.is-peek {
+          position: relative;
+          top: auto;
+          right: auto;
+          bottom: auto;
+          width: auto;
+          max-width: none;
+          border: 0;
+          border-radius: 0;
+          box-shadow: none;
+          animation: none;
+          background: var(--bg-base);
+        }
+
+        .todo-detail-pane.is-peek .peek-stack,
+        .todo-detail-pane.is-peek .peek-footer,
+        .todo-detail-pane.is-peek .peek-kicker {
+          display: none !important;
+        }
+
+        .todo-detail-pane.is-peek .detail-full-body {
+          display: block;
+        }
+
+        .todo-detail-pane.is-peek .detail-hero {
+          display: flex;
+        }
+
+        .todo-detail-pane.is-peek .detail-id-block {
+          display: flex;
+        }
+
+        .todo-detail-pane.is-peek .detail-open-full {
+          display: none;
+        }
+
+        .todo-detail-pane.is-peek .detail-back-scan {
+          display: inline-flex !important;
+        }
+
+        .todo-detail-pane.is-peek .detail-dismiss {
+          display: none;
+        }
+
+        .todo-detail-pane.is-peek .detail-header {
+          padding: 10px 18px 0;
+          background: var(--bg-surface);
+        }
+
+        .todo-detail-pane.is-peek .detail-inner {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 0;
+          padding: 14px 16px 40px;
+        }
+
+        .todo-detail-pane.is-peek .work-panel {
+          margin-top: 4px;
+          padding-top: 18px;
+          padding-left: 0;
+          border-top: 1px solid var(--border-default);
+          border-left: 0;
+        }
+      }
+
       @media (max-width: 760px) {
         .todos-header {
           grid-template-columns: minmax(0, 1fr);
@@ -853,33 +2148,97 @@
           padding: 10px 12px;
         }
 
-        .view-switcher {
-          justify-self: stretch;
+        .todos-header-lead {
           width: 100%;
+        }
+
+        .todos-header-lead .surface-filter {
+          max-width: none;
+        }
+
+        .layout-switcher button {
+          width: 36px;
+          min-width: 36px;
+          height: 36px;
+        }
+
+        .view-switcher {
+          flex: 1;
+          min-width: 0;
+          width: 100%;
+        }
+
+        .todos-command-actions {
+          width: 100%;
+        }
+
+        .new-todo-button,
+        .todo-create-actions button {
+          min-height: 44px;
         }
 
         .todos-inner {
           padding: 14px 12px 32px;
         }
 
-        .capture {
-          grid-template-columns: 18px minmax(0, 1fr);
+        .todo-create-dialog {
+          width: calc(100vw - 20px);
+          max-height: calc(100dvh - 20px);
         }
 
-        .capture-actions {
-          grid-column: 1 / -1;
+        .todo-create-body {
+          padding: 16px;
+        }
+
+        .todo-create-body textarea {
+          min-height: 180px;
+          font-size: 16px;
+        }
+
+        .todo-create-actions {
           display: grid;
           grid-template-columns: 1fr 1fr;
+          padding: 12px 16px 16px;
         }
 
-        .capture-actions button {
-          min-height: 44px;
+        .todo-create-actions .quiet-button {
+          display: none;
         }
 
         .todo-lane { min-height: 160px; }
 
         .detail-header {
-          padding: 8px 14px 14px;
+          padding: 8px 14px 0;
+        }
+
+        .detail-hero {
+          display: grid;
+          gap: 10px;
+          padding: 12px 0 14px;
+        }
+
+        .status-band {
+          width: 100%;
+          overflow-x: auto;
+        }
+
+        .status-segment {
+          flex: 1;
+          justify-content: center;
+          min-height: 44px;
+          padding: 0 8px;
+        }
+
+        .status-segment span {
+          display: none;
+        }
+
+        .status-segment.is-current span {
+          display: inline;
+        }
+
+        .detail-lane-hint {
+          display: none;
         }
 
         .detail-heading-row {
@@ -944,13 +2303,13 @@
         }
       }
     </style>
-    <script src="./app.js?v=rail-search-1" defer></script>
+    <script src="./app.js?v=prototype-polish-2" defer></script>
   </head>
   <body class="todos-page todo-first-shell">
     <a class="skip-link" href="#work-canvas">跳到工作区</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
-        <a class="brand-mark" href="./dashboard.html?v=home-shell-1" aria-label="Open Home"><span>A</span></a>
+        <a class="brand-mark" href="./dashboard.html" aria-label="Open Home"><img src="./logo.svg" alt="" width="20" height="20" /></a>
         <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
         <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
         <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
@@ -965,56 +2324,90 @@
 
       <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
         <header class="project-toolbar">
-          <div class="project-identity">
+          <div class="project-identity" role="button" aria-haspopup="menu" aria-keyshortcuts="Enter Space Shift+F10">
             <span class="project-identity-mark">ar</span>
-            <div class="project-identity-copy"><h1>archcode</h1><span>/workspace/archcode</span></div>
+            <div class="project-identity-copy"><h1>ArchCode</h1><span>/workspace/archcode</span></div>
           </div>
           <nav class="project-toolbar-nav" aria-label="Project pages">
             <a class="active" href="./todos.html" aria-current="page"><span>Todos</span></a>
             <a href="./automations.html"><span>Automations</span></a>
             <a href="./sessions.html"><span>Sessions</span></a>
           </nav>
-          <div class="project-toolbar-actions">
-            <button class="icon-button" aria-label="Project actions" data-project-actions data-action="打开项目操作" data-icon="more"></button>
-          </div>
         </header>
 
         <div class="project-view">
         <div class="todos-route" data-board-route>
           <header class="todos-header">
-            <label class="surface-filter">
-              <span data-icon="search"></span>
-              <span class="sr-only">Filter Todos</span>
-              <input type="search" placeholder="Filter Todos…" autocomplete="off" data-todo-filter />
-            </label>
-            <div class="view-switcher" role="group" aria-label="Todo views">
-              <button aria-pressed="true" data-todo-view="board">Board</button>
-              <button aria-pressed="false" data-todo-view="rejected">Rejected</button>
-              <button aria-pressed="false" data-todo-view="archived">Archived</button>
+            <div class="todos-header-lead">
+              <div class="surface-filter">
+                <span data-icon="search"></span>
+                <input type="search" aria-label="Filter Todos" placeholder="Filter Todos…" autocomplete="off" spellcheck="false" data-todo-filter />
+                <button class="surface-filter-clear" type="button" aria-label="Clear Todo filter" hidden data-filter-clear="data-todo-filter"><span data-icon="close"></span></button>
+              </div>
+              <div class="layout-switcher" role="group" aria-label="Active layout" data-layout-switcher>
+                <button type="button" aria-pressed="true" aria-label="List layout" title="List" data-active-layout="list"><span data-icon="list"></span></button>
+                <button type="button" aria-pressed="false" aria-label="Board layout" title="Board" data-active-layout="board"><span data-icon="board"></span></button>
+              </div>
+            </div>
+            <div class="todos-command-actions">
+              <div class="view-switcher" role="group" aria-label="Todo surfaces">
+                <button aria-pressed="true" data-todo-view="active">Active</button>
+                <button aria-pressed="false" data-todo-view="rejected">Rejected</button>
+                <button aria-pressed="false" data-todo-view="archived">Archived</button>
+              </div>
+              <button class="primary-button new-todo-button" type="button" data-open-new-todo><span data-icon="plus"></span>New Todo</button>
             </div>
           </header>
 
-          <div class="todos-body">
-            <div class="todos-inner">
-              <form class="capture" data-capture-form>
-                <span data-icon="plus"></span>
-                <div class="capture-copy">
-                  <label class="sr-only" for="new-todo">New Todo content</label>
-                  <textarea id="new-todo" rows="2" placeholder="Capture an idea, bug, feature, or paste a PRD…"></textarea>
-                  <span class="capture-hint">Save it for later, or run it now with a Lead Agent.</span>
-                </div>
-                <div class="capture-actions">
-                  <button class="secondary-button" type="submit" name="mode" value="save">Save</button>
-                  <button class="primary-button" type="submit" name="mode" value="run">Run now</button>
-                </div>
-              </form>
+          <div class="todos-workspace" data-todos-workspace>
+            <div class="todos-main" data-todos-main>
+              <div class="todos-body">
+                <div class="todos-inner">
+              <p class="surface-filter-empty" hidden aria-live="polite" data-todo-filter-empty><strong data-todo-filter-empty-title>No Todos match this filter.</strong><span>Try another title, content, or PRD term.</span></p>
 
-              <p class="surface-filter-empty" hidden aria-live="polite" data-todo-filter-empty><strong data-todo-filter-empty-title>No Todos match this filter.</strong><span>Try another content or PRD term, or a stable ID.</span></p>
+              <section class="todo-list" data-todo-panel="active" data-list-panel aria-label="Active Todos">
+                <section class="list-group" data-list-group="idea">
+                  <header class="list-group-header">
+                    <span data-icon="lightbulb" aria-hidden="true"></span>
+                    <h2>Ideas</h2>
+                    <p>Captured, not committed</p>
+                    <span class="list-group-count" data-list-count="idea">1</span>
+                  </header>
+                  <div class="list-rows" data-list-rows="idea"></div>
+                </section>
+                <section class="list-group" data-list-group="ready">
+                  <header class="list-group-header">
+                    <span data-icon="circle-dot" aria-hidden="true"></span>
+                    <h2>Ready</h2>
+                    <p>Clear enough to start</p>
+                    <span class="list-group-count" data-list-count="ready">1</span>
+                  </header>
+                  <div class="list-rows" data-list-rows="ready"></div>
+                </section>
+                <section class="list-group" data-list-group="in_progress">
+                  <header class="list-group-header">
+                    <span data-icon="circle-play" aria-hidden="true"></span>
+                    <h2>In Progress</h2>
+                    <p>Execution is attached here</p>
+                    <span class="list-group-count" data-list-count="in_progress">3</span>
+                  </header>
+                  <div class="list-rows" data-list-rows="in_progress"></div>
+                </section>
+                <section class="list-group" data-list-group="done">
+                  <header class="list-group-header">
+                    <span data-icon="circle-check" aria-hidden="true"></span>
+                    <h2>Done</h2>
+                    <p>Explicitly accepted</p>
+                    <span class="list-group-count" data-list-count="done">1</span>
+                  </header>
+                  <div class="list-rows" data-list-rows="done"></div>
+                </section>
+              </section>
 
-              <section class="todo-board" data-todo-panel="board" aria-label="Todo board">
+              <section class="todo-board" data-todo-panel="board" hidden aria-label="Todo board">
                 <section class="todo-lane" aria-label="Ideas">
                   <header class="lane-header">
-                    <span class="lane-orbit idea"></span><div><h2>Ideas</h2><p>Captured, not committed</p></div><span class="lane-count" data-lane-count="idea">1</span>
+                    <span class="lane-orbit idea" data-icon="lightbulb" aria-hidden="true"></span><div><h2>Ideas</h2><p>Captured, not committed</p></div><span class="lane-count" data-lane-count="idea">1</span>
                   </header>
                   <div class="lane-content" data-lane-content="idea">
                     <article class="todo-card" data-runtime="">
@@ -1028,7 +2421,7 @@
 
                 <section class="todo-lane" aria-label="Ready">
                   <header class="lane-header">
-                    <span class="lane-orbit"></span><div><h2>Ready</h2><p>Clear enough to start</p></div><span class="lane-count" data-lane-count="ready">1</span>
+                    <span class="lane-orbit" data-icon="circle-dot" aria-hidden="true"></span><div><h2>Ready</h2><p>Clear enough to start</p></div><span class="lane-count" data-lane-count="ready">1</span>
                   </header>
                   <div class="lane-content" data-lane-content="ready">
                     <article class="todo-card" data-runtime="">
@@ -1042,14 +2435,14 @@
 
                 <section class="todo-lane" aria-label="In Progress">
                   <header class="lane-header">
-                    <span class="lane-orbit progress"></span><div><h2>In Progress</h2><p>Execution is attached here</p></div><span class="lane-count" data-lane-count="in_progress">3</span>
+                    <span class="lane-orbit progress" data-icon="circle-play" aria-hidden="true"></span><div><h2>In Progress</h2><p>Execution is attached here</p></div><span class="lane-count" data-lane-count="in_progress">3</span>
                   </header>
                   <div class="lane-content" data-lane-content="in_progress">
                     <article class="todo-card" data-runtime="running">
                       <button class="drag-handle" aria-label="Drag Live execution recovery" data-action="拖动 Todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-live-recovery">
                         <span class="todo-excerpt">Live execution recovery Repair missed runtime events from the next authoritative Session snapshot.</span>
-                        <span class="todo-operational running"><span class="runtime-dot"></span>Running 12m</span>
+                        <span class="todo-operational running"><span class="runtime-dot"></span>Working</span>
                       </button>
                     </article>
 
@@ -1073,7 +2466,7 @@
 
                 <section class="todo-lane" aria-label="Done">
                   <header class="lane-header">
-                    <span class="lane-orbit done"></span><div><h2>Done</h2><p>Explicitly accepted</p></div><span class="lane-count" data-lane-count="done">1</span>
+                    <span class="lane-orbit done" data-icon="circle-check" aria-hidden="true"></span><div><h2>Done</h2><p>Explicitly accepted</p></div><span class="lane-count" data-lane-count="done">1</span>
                   </header>
                   <div class="lane-content" data-lane-content="done">
                     <article class="todo-card" data-runtime="">
@@ -1093,22 +2486,72 @@
               <section class="flat-view" data-todo-panel="archived" hidden>
                 <div class="flat-empty">No archived Todos.</div>
               </section>
-            </div>
-          </div>
-        </div>
-
-        <article class="todo-detail-route" data-detail-route hidden aria-labelledby="todo-detail-title">
-          <header class="detail-header">
-            <button class="breadcrumb-button" type="button" data-close-todo><span data-icon="chevron"></span>Todos</button>
-            <div class="detail-heading-row">
-              <div class="detail-heading">
-                <div class="detail-kicker"><span class="todo-state" data-detail-status>Ready</span><span data-detail-id>todo-profile-defaults</span><span data-detail-updated>Updated 18m ago</span></div>
-                <h1 class="sr-only" id="todo-detail-title" tabindex="-1" data-detail-heading>Todo detail</h1>
+                </div>
               </div>
             </div>
+
+            <button class="todo-peek-scrim" type="button" data-peek-scrim data-close-todo hidden aria-label="Close Todo preview"></button>
+            <article class="todo-detail-pane is-peek" data-detail-route hidden aria-labelledby="todo-detail-title">
+          <header class="detail-header">
+            <div class="detail-topline">
+              <button class="detail-dismiss" type="button" data-close-todo aria-label="Close preview"><span data-icon="close"></span></button>
+              <button class="breadcrumb-button detail-back-scan" type="button" data-close-todo aria-label="Back to Todos list">
+                <span data-icon="chevron-right"></span>
+                <span>Todos</span>
+              </button>
+              <span class="peek-kicker"><span class="peek-kicker-dot" aria-hidden="true"></span>Preview</span>
+              <div class="detail-id-block"><span class="detail-updated" data-detail-updated>Updated 18m ago</span></div>
+              <button class="secondary-button detail-open-full" type="button" data-open-full-todo>Open full Todo</button>
+            </div>
+            <div class="detail-hero">
+              <div class="status-band" role="group" aria-label="Todo lifecycle" data-status-band>
+                <button class="status-segment" type="button" data-segment="idea" data-status-move="Idea"><span data-icon="lightbulb"></span><span>Ideas</span></button>
+                <button class="status-segment" type="button" data-segment="ready" data-status-move="Ready"><span data-icon="circle-dot"></span><span>Ready</span></button>
+                <button class="status-segment" type="button" data-segment="in_progress" data-status-move="In Progress"><span data-icon="circle-play"></span><span>In Progress</span></button>
+                <button class="status-segment" type="button" data-segment="done" data-status-move="Done"><span data-icon="circle-check"></span><span>Done</span></button>
+                <span class="done-flash" data-done-flash aria-hidden="true"><span data-icon="circle-check"></span>Accepted</span>
+              </div>
+              <span class="detail-lane-hint" data-detail-lane-hint>Ready · clear enough to start</span>
+            </div>
+            <div class="reject-banner" data-reject-banner hidden>
+              <div><strong data-reject-title>Rejected</strong><span data-reject-copy>Returned to the idea pool for reconsideration. Restore it when the intent matters again.</span></div>
+              <button class="quiet-button" type="button" data-action="恢复 Todo">Restore</button>
+            </div>
+            <h1 class="sr-only" id="todo-detail-title" tabindex="-1" data-detail-heading>Todo detail</h1>
           </header>
 
           <div class="detail-body">
+            <div class="peek-stack" data-peek-stack>
+              <div class="peek-scroll">
+                <h2 class="peek-title" data-peek-title>Model profile defaults per project</h2>
+                <p class="peek-excerpt" data-peek-excerpt>Projects often prefer different model profiles, but a global default cannot express that preference without overriding the choice a user made for one Session.</p>
+                <div class="peek-meta">
+                  <span class="peek-chip" data-peek-updated>Updated 18m ago</span>
+                  <span class="peek-chip is-status" data-peek-status>Ready</span>
+                </div>
+                <div class="peek-runtime" data-peek-runtime hidden>
+                  <span class="peek-runtime-mark" aria-hidden="true"></span>
+                  <div>
+                    <strong data-peek-runtime-title>Needs you</strong>
+                    <span data-peek-runtime-copy>A bound Session is waiting before work can continue.</span>
+                  </div>
+                </div>
+                <div class="peek-section" data-peek-links-section hidden>
+                  <p class="peek-section-label">Linked work</p>
+                  <div class="peek-links" data-peek-links></div>
+                </div>
+                <p class="peek-footnote">Preview only. Brief, Plan, and References live on the full Todo page.</p>
+              </div>
+              <div class="peek-footer">
+                <button class="primary-button" type="button" data-peek-primary>Continue Work</button>
+                <div class="peek-footer-secondary">
+                  <button class="secondary-button" type="button" data-open-full-todo>Open full Todo</button>
+                  <button class="quiet-button" type="button" data-peek-discuss>New Discussion</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="detail-full-body" data-detail-full-body>
             <div class="detail-inner">
               <div class="document-stack">
                 <section class="document-surface" aria-labelledby="brief-title">
@@ -1156,23 +2599,13 @@
                   <header class="document-header">
                     <div>
                       <h2 id="plan-title">Plan</h2>
-                      <div class="document-meta"><span data-plan-path>.archcode/plans/todo-profile-defaults.md</span><span>From Discussion</span></div>
+                      <div class="document-meta"><span class="plan-progress" data-plan-progress>2 of 5 steps done</span><span data-plan-path>.archcode/plans/todo-profile-defaults.md</span></div>
                     </div>
                     <div class="document-actions">
-                      <span class="artifact-badge"><span data-icon="check"></span>Ready</span>
                       <button class="secondary-button" data-action="改进 Plan">Improve</button>
                     </div>
                   </header>
-                  <div class="document-copy" data-plan-copy>
-                    <ol>
-                      <li>Extend the project-facing preference projection without changing provider configuration ownership.</li>
-                      <li>Resolve the project recommendation only when a new root Lead Session has no explicit override.</li>
-                      <li>Expose the resolved source in the existing Session header metadata.</li>
-                      <li>Add package-scoped protocol, server, and Web interaction coverage.</li>
-                    </ol>
-                    <h3>Verification</h3>
-                    <p>Run package typechecks, targeted Session creation tests, Web interaction tests, and the production Web build.</p>
-                  </div>
+                  <div data-plan-copy></div>
                 </section>
 
                 <section class="document-surface" aria-labelledby="plan-empty-title" data-plan-empty hidden>
@@ -1219,13 +2652,19 @@
                       <button class="quiet-button" data-action="基于 Todo 创建 Automation">Create Automation</button>
                     </div>
                   </div>
+                  <div class="work-action-group" data-complete-group hidden>
+                    <h3>Complete</h3>
+                    <div class="work-actions">
+                      <button class="secondary-button" data-mark-done><span data-icon="circle-check"></span>Mark done</button>
+                    </div>
+                  </div>
                 </section>
 
                 <section aria-labelledby="todo-sessions-title" data-sessions-section>
                   <h2 id="todo-sessions-title">Sessions</h2>
                   <p class="work-panel-intro">Discussion and execution history stays attached to this Todo.</p>
                   <div class="attention-summary" data-detail-attention hidden>
-                    <strong>Needs your decision</strong>
+                    <strong>Needs you</strong>
                     <span>A bound Session is waiting for permission before it can continue.</span>
                   </div>
                   <div class="work-list">
@@ -1235,7 +2674,7 @@
                       <span><strong data-work-discussion-title>Plan Discussion</strong><small data-work-discussion-summary>Shaped the PRD and wrote the current Plan.</small></span>
                       <span class="work-row-state" data-work-discussion-state>Done</span>
                     </a>
-                    <a class="work-row" href="./session.html?todo=todo-profile-defaults&amp;session=sess-profile-implementation" data-work-session>
+                    <a class="work-row" href="./session.html?todo=todo-profile-defaults&amp;session=sess-profile-implementation&amp;state=hitl" data-work-session>
                       <span class="work-orbit running"></span>
                       <span><strong data-work-session-title>Implementation Session</strong><small data-work-session-summary>Lead with Build and Explore agents · Goal active</small></span>
                       <span class="work-row-state running" data-work-session-state>Running</span>
@@ -1268,15 +2707,57 @@
                 </section>
               </aside>
             </div>
+            </div>
           </div>
-        </article>
+          </article>
+          </div>
+        </div>
         </div>
       </main>
     </div>
 
+    <dialog class="todo-create-dialog" aria-labelledby="new-todo-title" data-new-todo-dialog>
+      <form class="todo-create-form" data-capture-form>
+        <header class="todo-create-header">
+          <h2 id="new-todo-title">New Todo</h2>
+          <button class="icon-button" type="button" aria-label="Close New Todo" data-close-new-todo data-icon="close"></button>
+        </header>
+        <div class="todo-create-body">
+          <label for="new-todo">Todo content</label>
+          <textarea id="new-todo" rows="6" placeholder="Describe an idea, bug, feature, or paste a PRD…" aria-describedby="new-todo-hint"></textarea>
+          <p class="todo-create-hint" id="new-todo-hint">Markdown is supported. Save it for later, or start a bound Lead Session now.</p>
+        </div>
+        <footer class="todo-create-actions">
+          <button class="quiet-button" type="button" data-close-new-todo>Cancel</button>
+          <button class="secondary-button" type="submit" name="mode" value="save">Save</button>
+          <button class="primary-button" type="submit" name="mode" value="run">Run now</button>
+        </footer>
+      </form>
+    </dialog>
+
     <button class="scrim" aria-label="Close overlay" data-close-overlay></button>
     <div class="toast" role="status" aria-live="polite"></div>
     <script>
+      const newTodoTrigger = document.querySelector("[data-open-new-todo]");
+      const newTodoDialog = document.querySelector("[data-new-todo-dialog]");
+      const newTodoInput = document.querySelector("#new-todo");
+
+      function openNewTodo() {
+        if (!newTodoDialog?.open) newTodoDialog?.showModal();
+        requestAnimationFrame(() => newTodoInput?.focus());
+      }
+
+      function closeNewTodo() {
+        if (newTodoDialog?.open) newTodoDialog.close();
+      }
+
+      newTodoTrigger?.addEventListener("click", openNewTodo);
+      document.querySelectorAll("[data-close-new-todo]").forEach((button) => button.addEventListener("click", closeNewTodo));
+      newTodoDialog?.addEventListener("click", (event) => {
+        if (event.target === newTodoDialog) closeNewTodo();
+      });
+      newTodoDialog?.addEventListener("close", () => newTodoTrigger?.focus());
+
       const todoSamples = {
         "todo-context-presets": {
           id: "todo-context-presets",
@@ -1312,6 +2793,13 @@ Projects often prefer different model profiles, but a global default cannot expr
           updated: "Updated 18m ago",
           hasPlan: true,
           work: "planned",
+          planSteps: [
+            { text: "Extend the project-facing preference projection without changing provider configuration ownership.", done: true },
+            { text: "Resolve the project recommendation only when a new root Lead Session has no explicit override.", done: true },
+            { text: "Expose the resolved source in the existing Session header metadata.", done: false },
+            { text: "Add package-scoped protocol, server, and Web interaction coverage.", done: false },
+          ],
+          planNotes: "<h3>Verification</h3><p>Run package typechecks, targeted Session creation tests, Web interaction tests, and the production Web build.</p>",
           references: [
             { name: "profile-resolution-contract.pdf", meta: "1.8 MB · application/pdf", type: "PDF", action: "Open" },
             { name: "settings-current-state.png", meta: "684 KB · image/png", type: "PNG", action: "Open" },
@@ -1336,6 +2824,13 @@ When an SSE event is missed, the next authoritative Session snapshot repairs the
           updated: "Updated now",
           hasPlan: true,
           work: "running",
+          planSteps: [
+            { text: "Keep one logical Execution identity across SSE recovery.", done: true },
+            { text: "Repair visible runtime state from the next authoritative Session snapshot.", done: true },
+            { text: "Surface the recovery marker inside the Session transcript.", done: true },
+            { text: "Prove no duplicate running work is invented during replay.", done: false },
+          ],
+          planNotes: "<h3>Verification</h3><p>Replay a dropped-event trace against a live Session and assert one Execution id, one running indicator, and a durable transcript entry.</p>",
           references: [
             { name: "sse-replay-trace.txt", meta: "42 KB · text/plain", type: "TXT", action: "Download" },
           ],
@@ -1385,7 +2880,13 @@ A Session-only finder makes the project look execution-first and forces users to
           lane: "in_progress",
           updated: "Updated 4m ago",
           hasPlan: true,
-          plan: "<ol><li>Index Todo, Session, and Automation records with explicit result types and stable deep links.</li><li>Order empty search by decision urgency: Needs you, Running, Ready to review, then Recent.</li><li>Keep execution status on Todo cards and order action-required work first inside In Progress.</li><li>Verify keyboard search, narrow layouts, and Todo-to-Session recovery paths.</li></ol><h3>Verification</h3><p>Check typed and empty search, runtime ordering, Todo deep links, exact Session recovery, and 390px layout behavior.</p>",
+          planSteps: [
+            { text: "Index Todo, Session, and Automation records with explicit result types and stable deep links.", done: true },
+            { text: "Order empty search by decision urgency: Needs you, Running, Ready to review, then Recent.", done: true },
+            { text: "Keep execution status on Todo cards and order action-required work first inside In Progress.", done: true },
+            { text: "Verify keyboard search, narrow layouts, and Todo-to-Session recovery paths.", done: true },
+          ],
+          planNotes: "<h3>Verification</h3><p>Check typed and empty search, runtime ordering, Todo deep links, exact Session recovery, and 390px layout behavior.</p>",
           work: "review",
           discussion: { id: "sess-work-search-discussion", title: "Search model discussion", summary: "Defined the cross-entity search and runtime ordering.", state: "Done" },
           session: { id: "sess-work-search-review", title: "Project work search review", summary: "Lead + Build · implementation complete and waiting for review", state: "Ready to review" },
@@ -1419,25 +2920,34 @@ Session storage remains project-root owned while every managed worktree executio
 
       const todoViewButtons = document.querySelectorAll("[data-todo-view]");
       const todoPanels = document.querySelectorAll("[data-todo-panel]");
+      const layoutButtons = document.querySelectorAll("[data-active-layout]");
+      const layoutSwitcher = document.querySelector("[data-layout-switcher]");
+      const listPanel = document.querySelector("[data-list-panel]");
+      const boardPanel = document.querySelector('[data-todo-panel="board"]');
       const todoFilterInput = document.querySelector("[data-todo-filter]");
       const todoFilterEmpty = document.querySelector("[data-todo-filter-empty]");
       const todoFilterEmptyTitle = document.querySelector("[data-todo-filter-empty-title]");
       const boardRoute = document.querySelector("[data-board-route]");
       const detailRoute = document.querySelector("[data-detail-route]");
       const detailHeading = document.querySelector("[data-detail-heading]");
-      const detailStatus = document.querySelector("[data-detail-status]");
-      const detailId = document.querySelector("[data-detail-id]");
       const detailUpdated = document.querySelector("[data-detail-updated]");
+      const detailLaneHint = document.querySelector("[data-detail-lane-hint]");
+      const statusBand = document.querySelector("[data-status-band]");
+      const rejectBanner = document.querySelector("[data-reject-banner]");
+      const rejectTitle = document.querySelector("[data-reject-title]");
       const detailPrd = document.querySelector("[data-detail-prd]");
       const detailPrimary = document.querySelector("[data-detail-primary]");
       const detailDiscuss = document.querySelector("[data-discuss-todo]");
       const newDiscussion = document.querySelector("[data-new-discussion]");
       const executionGroup = document.querySelector("[data-execution-group]");
+      const completeGroup = document.querySelector("[data-complete-group]");
+      const markDoneButton = document.querySelector("[data-mark-done]");
       const newWorkSession = document.querySelector("[data-new-work-session]");
       const detailAttention = document.querySelector("[data-detail-attention]");
       const planPresent = document.querySelector("[data-plan-present]");
       const planEmpty = document.querySelector("[data-plan-empty]");
       const planPath = document.querySelector("[data-plan-path]");
+      const planProgress = document.querySelector("[data-plan-progress]");
       const planCopy = document.querySelector("[data-plan-copy]");
       const resultPresent = document.querySelector("[data-result-present]");
       const resultCopy = document.querySelector("[data-result-copy]");
@@ -1452,24 +2962,107 @@ Session storage remains project-root owned while every managed worktree executio
       const automationEmpty = document.querySelector("[data-automation-empty]");
       const automationsSection = document.querySelector("[data-automations-section]");
       const todoCount = document.querySelector("[data-todo-count]");
+      const peekTitle = document.querySelector("[data-peek-title]");
+      const peekExcerpt = document.querySelector("[data-peek-excerpt]");
+            const peekUpdated = document.querySelector("[data-peek-updated]");
+      const peekStatus = document.querySelector("[data-peek-status]");
+      const peekRuntime = document.querySelector("[data-peek-runtime]");
+      const peekRuntimeTitle = document.querySelector("[data-peek-runtime-title]");
+      const peekRuntimeCopy = document.querySelector("[data-peek-runtime-copy]");
+      const peekPrimary = document.querySelector("[data-peek-primary]");
+      const peekDiscuss = document.querySelector("[data-peek-discuss]");
+      const peekLinks = document.querySelector("[data-peek-links]");
+      const peekLinksSection = document.querySelector("[data-peek-links-section]");
+      const peekScrim = document.querySelector("[data-peek-scrim]");
       const storedTodoKey = "archcode-prototype-created-todos";
       let lastTodoTrigger = null;
       let currentTodo = null;
+      let detailMode = null; // "peek" | "full" | null
       let detailOpenedFromBoard = false;
-      let activeTodoView = "board";
+      let activeTodoView = "active";
+      let activeLayout = "list";
+      let listFocusIndex = -1;
+
+      const laneHints = {
+        idea: "Ideas · captured, not committed",
+        ready: "Ready · clear enough to start",
+        in_progress: "In Progress · execution is attached",
+        done: "Done · explicitly accepted",
+      };
+
+      const laneOrder = ["idea", "ready", "in_progress", "done"];
+      const laneGlyph = {
+        idea: "lightbulb",
+        ready: "circle-dot",
+        in_progress: "circle-play",
+        done: "circle-check",
+      };
+
+      const sampleOverrides = {};
+
+      function syncStatusBand(status) {
+        const lanes = ["idea", "ready", "in_progress", "done"];
+        const lane = status === "Idea" ? "idea" : status === "Ready" ? "ready" : status === "In Progress" ? "in_progress" : "done";
+        const currentIndex = lanes.indexOf(lane);
+        statusBand?.classList.toggle("is-done", lane === "done");
+        statusBand?.querySelectorAll("[data-segment]").forEach((segment) => {
+          const index = lanes.indexOf(segment.dataset.segment);
+          segment.classList.toggle("is-current", index === currentIndex);
+          segment.classList.toggle("is-past", index < currentIndex);
+        });
+        if (detailLaneHint) detailLaneHint.textContent = laneHints[lane] || "";
+      }
 
       function escapeHtml(value) {
         return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
       }
 
+      const defaultPlanSteps = [
+        { text: "Extend the requested contract without changing global ownership.", done: false },
+        { text: "Preserve explicit user choices and durable Session bindings.", done: false },
+        { text: "Expose the resolved state in the existing workbench UI.", done: false },
+        { text: "Add focused protocol, server, and Web interaction coverage.", done: false },
+      ];
+
+      const checkIconPath = "m5 12 4 4L19 6";
+
+      function planStepsMarkup(steps) {
+        return `<div class="plan-checklist" data-plan-checklist>${steps.map((step, index) => `
+          <button class="plan-step${step.done ? " is-done" : ""}" type="button" data-plan-step aria-pressed="${step.done}">
+            <span class="plan-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="${checkIconPath}"/></svg></span>
+            <span class="plan-index">${String(index + 1).padStart(2, "0")}</span>
+            <span class="plan-step-text">${escapeHtml(step.text)}</span>
+          </button>`).join("")}</div>`;
+      }
+
+      function syncPlanProgress() {
+        const steps = [...(planCopy?.querySelectorAll("[data-plan-step]") || [])];
+        if (!steps.length || !planProgress) return;
+        const done = steps.filter((step) => step.classList.contains("is-done")).length;
+        planProgress.textContent = done === steps.length ? "All steps done" : `${done} of ${steps.length} steps done`;
+      }
+
+      planCopy?.addEventListener("click", (event) => {
+        const step = event.target.closest("[data-plan-step]");
+        if (!step) return;
+        const done = step.classList.toggle("is-done");
+        step.setAttribute("aria-pressed", String(done));
+        syncPlanProgress();
+      });
+
       function contentExcerpt(content) {
-        const compact = (content || "")
+        const lines = (content || "")
           .split(/\r?\n/)
-          .map((line) => line.trim().replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/, "").replace(/^\[[ xX]\]\s*/, ""))
-          .filter(Boolean)
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim();
+          .map((line) => line.trim())
+          .filter(Boolean);
+        const heading = lines.find((line) => /^#{1,6}\s+/.test(line));
+        const source = heading
+          ? heading.replace(/^#{1,6}\s+/, "")
+          : lines
+              .map((line) => line.replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/, "").replace(/^\[[ xX]\]\s*/, ""))
+              .filter(Boolean)
+              .join(" ");
+        const compact = source.replace(/\s+/g, " ").trim();
         return compact.length <= 80 ? compact : `${compact.slice(0, 79).trimEnd()}…`;
       }
 
@@ -1526,51 +3119,139 @@ Session storage remains project-root owned while every managed worktree executio
           hasPlan: false,
           showPlanPrompt: false,
           work: running ? "running" : "none",
-          session: running ? { id: record.sessionId, title: excerpt, summary: "Lead · started directly from quick capture", state: "Running" } : undefined,
+          session: running ? { id: record.sessionId, title: excerpt, summary: "Lead · started from New Todo", state: "Running" } : undefined,
         };
       }
 
       function allSamples() {
-        return { ...todoSamples, ...Object.fromEntries(readStoredTodos().map((record) => [record.id, dynamicSample(record)])) };
+        const base = { ...todoSamples, ...Object.fromEntries(readStoredTodos().map((record) => [record.id, dynamicSample(record)])) };
+        Object.entries(sampleOverrides).forEach(([id, patch]) => {
+          if (base[id]) base[id] = { ...base[id], ...patch };
+        });
+        return base;
+      }
+
+      function sampleLane(sample) {
+        if (sample.lane) return sample.lane;
+        if (sample.status === "Idea") return "idea";
+        if (sample.status === "Ready") return "ready";
+        if (sample.status === "In Progress") return "in_progress";
+        if (sample.status === "Done") return "done";
+        return "idea";
+      }
+
+      function sampleRuntime(sample) {
+        return sample.work === "attention" ? "needs_you" : sample.work === "running" ? "running" : sample.work === "review" ? "review" : "";
+      }
+
+      function operationalMarkup(sample, { row = false } = {}) {
+        const cls = row ? "row-operational" : "todo-operational";
+        if (sample.work === "attention") return `<span class="${cls} attention"><span class="runtime-dot"></span>Needs you</span>`;
+        if (sample.work === "running") return `<span class="${cls} running"><span class="runtime-dot"></span>Working</span>`;
+        if (sample.work === "review") return `<span class="${cls} review"><span class="runtime-dot"></span>Ready to review</span>`;
+        return "";
+      }
+
+      function rowMarkup(sample) {
+        const excerpt = contentExcerpt(sample.content);
+        const lane = sampleLane(sample);
+        const runtime = sampleRuntime(sample);
+        const quick = lane === "idea"
+          ? `<div class="row-actions">
+              <button class="row-action" type="button" data-row-discuss data-todo-id="${escapeHtml(sample.id)}">Discuss</button>
+              <button class="row-action" type="button" data-row-plan data-todo-id="${escapeHtml(sample.id)}">Plan</button>
+            </div>`
+          : lane === "ready"
+            ? `<div class="row-actions"><button class="row-action" type="button" data-open-todo data-todo-id="${escapeHtml(sample.id)}">Open</button></div>`
+            : `<div class="row-actions"><button class="row-action" type="button" data-open-todo data-todo-id="${escapeHtml(sample.id)}">Open</button></div>`;
+        return `<article class="todo-row" data-runtime="${runtime}" data-todo-lane="${lane}">
+          <span class="row-glyph" data-icon="${laneGlyph[lane] || "circle-dot"}" aria-hidden="true"></span>
+          <button class="row-main" type="button" data-open-todo data-todo-id="${escapeHtml(sample.id)}">
+            <span class="row-excerpt">${escapeHtml(excerpt)}</span>
+            <span class="row-meta">
+              <span>${escapeHtml(sample.updated || "")}</span>
+              ${operationalMarkup(sample, { row: true })}
+            </span>
+          </button>
+          ${quick}
+        </article>`;
+      }
+
+      function renderList() {
+        if (!listPanel) return;
+        const samples = Object.values(allSamples()).filter((sample) => sample.status !== "Rejected" && sample.status !== "Archived");
+        const grouped = { idea: [], ready: [], in_progress: [], done: [] };
+        samples.forEach((sample) => {
+          const lane = sampleLane(sample);
+          if (grouped[lane]) grouped[lane].push(sample);
+        });
+        const priority = { needs_you: 0, review: 1, running: 2 };
+        grouped.in_progress.sort((a, b) => (priority[sampleRuntime(a)] ?? 3) - (priority[sampleRuntime(b)] ?? 3));
+        laneOrder.forEach((lane) => {
+          const host = listPanel.querySelector(`[data-list-rows="${lane}"]`);
+          const count = listPanel.querySelector(`[data-list-count="${lane}"]`);
+          if (host) host.innerHTML = grouped[lane].map(rowMarkup).join("");
+          if (count) count.textContent = String(grouped[lane].length);
+        });
+        if (window.archcodePrototypeIcon) {
+          listPanel.querySelectorAll("[data-icon]").forEach((el) => {
+            if (!el.querySelector("svg")) el.innerHTML = window.archcodePrototypeIcon(el.dataset.icon);
+          });
+        }
+        clearListFocus();
+        if (currentTodo) setSelectedTodo(currentTodo.id);
       }
 
       function applyTodoFilter() {
         const rawQuery = todoFilterInput?.value.trim() || "";
         const query = rawQuery.toLowerCase();
         const samples = allSamples();
-        let visibleCount = 0;
+
         document.querySelectorAll(".todo-card").forEach((card) => {
-          const id = card.querySelector("[data-todo-id]")?.dataset.todoId;
+          const id = card.querySelector("[data-todo-id]")?.dataset.todoId || card.querySelector("[data-open-todo]")?.dataset.todoId;
           const sample = id ? samples[id] : null;
           const haystack = `${id || ""} ${sample?.content || ""} ${sample?.status || ""} ${card.textContent}`.toLowerCase();
-          const matches = !query || haystack.includes(query);
-          card.hidden = !matches;
-          if (matches) visibleCount += 1;
+          card.hidden = Boolean(query) && !haystack.includes(query);
         });
+
+        document.querySelectorAll(".todo-row").forEach((row) => {
+          const id = row.querySelector("[data-open-todo]")?.dataset.todoId;
+          const sample = id ? samples[id] : null;
+          const haystack = `${id || ""} ${sample?.content || ""} ${sample?.status || ""} ${row.textContent}`.toLowerCase();
+          row.hidden = Boolean(query) && !haystack.includes(query);
+        });
+
         document.querySelectorAll(".todo-lane").forEach((lane) => {
           const visibleCards = [...lane.querySelectorAll(".todo-card")].filter((card) => !card.hidden).length;
           const counter = lane.querySelector("[data-lane-count]");
           if (counter) counter.textContent = String(visibleCards);
         });
-        if (todoFilterEmpty) todoFilterEmpty.hidden = !query || activeTodoView !== "board" || visibleCount > 0;
+
+        laneOrder.forEach((lane) => {
+          const host = listPanel?.querySelector(`[data-list-rows="${lane}"]`);
+          const count = listPanel?.querySelector(`[data-list-count="${lane}"]`);
+          if (!host || !count) return;
+          count.textContent = String([...host.querySelectorAll(".todo-row")].filter((row) => !row.hidden).length);
+        });
+
+        if (todoFilterEmpty) {
+          const boardVisible = [...document.querySelectorAll(".todo-card")].filter((card) => !card.hidden).length;
+          const listVisible = [...document.querySelectorAll(".todo-row")].filter((row) => !row.hidden).length;
+          const visible = activeLayout === "list" ? listVisible : boardVisible;
+          todoFilterEmpty.hidden = !query || activeTodoView !== "active" || visible > 0;
+        }
         if (todoFilterEmptyTitle) todoFilterEmptyTitle.textContent = `No Todos match “${rawQuery}”.`;
+        clearListFocus();
       }
 
       function cardMarkup(sample) {
         const excerpt = contentExcerpt(sample.content);
-        const runtime = sample.work === "attention" ? "needs_you" : sample.work === "running" ? "running" : sample.work === "review" ? "review" : "";
-        const operational = sample.work === "attention"
-          ? '<span class="todo-operational attention"><span class="runtime-dot"></span>Needs you</span>'
-          : sample.work === "running"
-            ? '<span class="todo-operational running"><span class="runtime-dot"></span>Running now</span>'
-            : sample.work === "review"
-              ? '<span class="todo-operational review"><span class="runtime-dot"></span>Ready to review</span>'
-            : "";
+        const runtime = sampleRuntime(sample);
         return `<article class="todo-card" data-runtime="${runtime}">
           <button class="drag-handle" aria-label="Drag ${escapeHtml(excerpt)}" data-action="拖动 Todo" data-icon="grip"></button>
           <button class="todo-card-content" data-open-todo data-todo-id="${escapeHtml(sample.id)}">
             <span class="todo-excerpt">${escapeHtml(excerpt)}</span>
-            ${operational}
+            ${operationalMarkup(sample)}
           </button>
         </article>`;
       }
@@ -1587,6 +3268,36 @@ Session storage remains project-root owned while every managed worktree executio
           const counter = lane.querySelector("[data-lane-count]");
           if (counter) counter.textContent = String(lane.querySelectorAll(".todo-card").length);
         });
+        clearBoardFocus();
+      }
+
+      function syncActivePanels() {
+        const showActive = activeTodoView === "active";
+        if (layoutSwitcher) layoutSwitcher.hidden = !showActive;
+        if (listPanel) listPanel.hidden = !(showActive && activeLayout === "list");
+        if (boardPanel) boardPanel.hidden = !(showActive && activeLayout === "board");
+        document.querySelectorAll('[data-todo-panel="rejected"], [data-todo-panel="archived"]').forEach((panel) => {
+          panel.hidden = panel.dataset.todoPanel !== activeTodoView;
+        });
+        layoutButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.activeLayout === activeLayout)));
+      }
+
+      function setTodoSurface(view) {
+        activeTodoView = view;
+        todoViewButtons.forEach((item) => item.setAttribute("aria-pressed", String(item.dataset.todoView === view)));
+        syncActivePanels();
+        applyTodoFilter();
+        syncDetailChrome();
+      }
+
+      function setActiveLayout(layout) {
+        activeLayout = layout === "board" ? "board" : "list";
+        syncActivePanels();
+        applyTodoFilter();
+        clearBoardFocus();
+        clearListFocus();
+        syncDetailChrome();
+        if (currentTodo) setSelectedTodo(currentTodo.id);
       }
 
       function renderStoredTodos() {
@@ -1594,28 +3305,140 @@ Session storage remains project-root owned while every managed worktree executio
           const lane = document.querySelector(`[data-lane-content="${record.lane}"]`);
           if (lane && !lane.querySelector(`[data-todo-id="${record.id}"]`)) lane.insertAdjacentHTML("afterbegin", cardMarkup(dynamicSample(record)));
         });
-        if (todoCount) todoCount.textContent = String(document.querySelectorAll("[data-open-todo]").length);
+        renderList();
+        if (todoCount) todoCount.textContent = String(Object.keys(allSamples()).length);
         if (window.archcodePrototypeIcon) {
           document.querySelectorAll('[data-icon="grip"]:empty').forEach((element) => {
             element.innerHTML = window.archcodePrototypeIcon("grip");
           });
         }
         organizeBoard();
+        syncActivePanels();
         applyTodoFilter();
       }
 
       todoViewButtons.forEach((button) => {
-        button.addEventListener("click", () => {
-          activeTodoView = button.dataset.todoView;
-          todoViewButtons.forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
-          todoPanels.forEach((panel) => {
-            panel.hidden = panel.dataset.todoPanel !== button.dataset.todoView;
-          });
-          applyTodoFilter();
-        });
+        button.addEventListener("click", () => setTodoSurface(button.dataset.todoView));
+      });
+
+      layoutButtons.forEach((button) => {
+        button.addEventListener("click", () => setActiveLayout(button.dataset.activeLayout));
+      });
+
+      listPanel?.addEventListener("click", (event) => {
+        const discuss = event.target.closest("[data-row-discuss]");
+        const plan = event.target.closest("[data-row-plan]");
+        if (discuss) {
+          event.preventDefault();
+          event.stopPropagation();
+          showToast("Discuss · 原型演示");
+          return;
+        }
+        if (plan) {
+          event.preventDefault();
+          event.stopPropagation();
+          showToast("Plan · 原型演示");
+        }
       });
 
       todoFilterInput?.addEventListener("input", applyTodoFilter);
+
+      function plainExcerpt(content, max = 180) {
+        const text = (content || "")
+          .replace(/^#+\s+/gm, "")
+          .replace(/^[-*+]\s+/gm, "")
+          .replace(/^\d+[.)]\s+/gm, "")
+          .replace(/[#>*_`]/g, "")
+          .replace(/\n+/g, " ")
+          .trim();
+        if (text.length <= max) return text;
+        return `${text.slice(0, max - 1).trim()}…`;
+      }
+
+      function renderPeek(sample) {
+        const title = contentExcerpt(sample.content);
+        if (peekTitle) peekTitle.textContent = title;
+        if (peekExcerpt) peekExcerpt.textContent = plainExcerpt(sample.content);
+        if (peekUpdated) peekUpdated.textContent = sample.updated || "";
+        if (peekStatus) peekStatus.textContent = sample.status || "";
+
+        const workMode = sample.work || "none";
+        if (peekRuntime) {
+          const show = workMode === "attention" || workMode === "running" || workMode === "review";
+          peekRuntime.hidden = !show;
+          peekRuntime.classList.toggle("is-visible", show);
+          peekRuntime.classList.toggle("is-running", workMode === "running");
+          peekRuntime.classList.toggle("is-review", workMode === "review");
+          if (peekRuntimeTitle) {
+            peekRuntimeTitle.textContent =
+              workMode === "attention" ? "Needs you" :
+              workMode === "running" ? "Working" :
+              workMode === "review" ? "Ready to review" : "";
+          }
+          if (peekRuntimeCopy) {
+            peekRuntimeCopy.textContent =
+              workMode === "attention" ? (sample.session?.summary || "A bound Session is waiting for permission.") :
+              workMode === "running" ? (sample.session?.summary || "Execution is attached to this Todo.") :
+              workMode === "review" ? (sample.session?.summary || "Implementation is waiting for review.") : "";
+          }
+        }
+
+        const hasWorkSession = Boolean(sample.session);
+        const canExecute = sample.status === "Ready" || sample.status === "In Progress";
+        const canDiscuss = sample.status !== "Done" && sample.status !== "Rejected" && sample.status !== "Archived";
+        if (peekPrimary) {
+          if (canExecute) {
+            peekPrimary.hidden = false;
+            peekPrimary.textContent = hasWorkSession ? "Continue Work" : "Start Work";
+            peekPrimary.dataset.peekPrimaryMode = "work";
+          } else if (canDiscuss) {
+            peekPrimary.hidden = false;
+            peekPrimary.textContent = sample.discussion ? "Continue Discussion" : "New Discussion";
+            peekPrimary.dataset.peekPrimaryMode = "discuss";
+          } else {
+            peekPrimary.hidden = true;
+            peekPrimary.dataset.peekPrimaryMode = "";
+          }
+        }
+        if (peekDiscuss) {
+          // When primary already owns Discuss, keep secondary as Open full only.
+          peekDiscuss.hidden = !canDiscuss || !canExecute;
+          peekDiscuss.textContent = sample.discussion ? "Continue Discussion" : "New Discussion";
+        }
+
+        if (peekLinks) {
+          const links = [];
+          if (sample.session) {
+            const stateClass = sample.session.state === "Running" ? "running" :
+              sample.session.state === "Needs you" ? "attention" :
+              sample.session.state === "Ready to review" ? "review" : "";
+            const href = `./session.html?todo=${encodeURIComponent(sample.id)}&session=${encodeURIComponent(sample.session.id)}&title=${encodeURIComponent(title)}`;
+            links.push(`<a class="peek-link" href="${href}">
+              <span class="peek-orbit ${stateClass || "review"}"></span>
+              <span><strong>${escapeHtml(sample.session.title)}</strong><small>${escapeHtml(sample.session.summary || "Session")}</small></span>
+              <span class="peek-link-state ${stateClass}">${escapeHtml(sample.session.state)}</span>
+            </a>`);
+          }
+          if (sample.discussion) {
+            const href = `./session.html?todo=${encodeURIComponent(sample.id)}&session=${encodeURIComponent(sample.discussion.id)}&kind=discussion`;
+            links.push(`<a class="peek-link" href="${href}">
+              <span class="peek-orbit discussion"></span>
+              <span><strong>${escapeHtml(sample.discussion.title)}</strong><small>${escapeHtml(sample.discussion.summary || "Discussion")}</small></span>
+              <span class="peek-link-state">${escapeHtml(sample.discussion.state)}</span>
+            </a>`);
+          }
+          if (sample.automation) {
+            links.push(`<a class="peek-link" href="./automations.html?automation=aut-regression">
+              <span class="peek-orbit automation"></span>
+              <span><strong>Regression check</strong><small>Linked Automation</small></span>
+              <span class="peek-link-state">Scheduled</span>
+            </a>`);
+          }
+          peekLinks.innerHTML = links.join("");
+          peekLinks.hidden = links.length === 0;
+          if (peekLinksSection) peekLinksSection.hidden = links.length === 0;
+        }
+      }
 
       function renderDetail(trigger) {
         if (!trigger) return false;
@@ -1623,18 +3446,20 @@ Session storage remains project-root owned while every managed worktree executio
         if (!sample) return false;
         currentTodo = sample;
         const workMode = sample.work || "none";
-        detailStatus.textContent = sample.status;
-        detailStatus.dataset.tone = sample.status === "Done" ? "done" : sample.status === "In Progress" ? "running" : "";
-        detailId.textContent = sample.id;
         detailUpdated.textContent = sample.updated;
+        syncStatusBand(sample.status);
+        rejectBanner.hidden = sample.status !== "Rejected";
+        if (rejectTitle) rejectTitle.textContent = sample.status === "Rejected" ? "Rejected" : "Archived";
         detailPrd.innerHTML = contentBodyHtml(sample.content);
         const hasWorkSession = Boolean(sample.session);
         const canExecute = sample.status === "Ready" || sample.status === "In Progress";
+        const canDiscuss = sample.status !== "Done" && sample.status !== "Rejected" && sample.status !== "Archived";
         detailPrimary.textContent = hasWorkSession ? "Continue Work" : "Start Work";
         detailDiscuss.textContent = sample.discussion ? "Continue Discussion" : "New Discussion";
-        detailDiscuss.hidden = false;
-        newDiscussion.hidden = !sample.discussion;
+        detailDiscuss.hidden = !canDiscuss;
+        newDiscussion.hidden = !(canDiscuss && sample.discussion);
         executionGroup.hidden = !canExecute;
+        completeGroup.hidden = sample.status !== "In Progress" && workMode !== "review";
         newWorkSession.hidden = !hasWorkSession;
         detailAttention.hidden = !sample.attention;
         const references = sample.references || [];
@@ -1649,7 +3474,9 @@ Session storage remains project-root owned while every managed worktree executio
         planPresent.hidden = !sample.hasPlan;
         planEmpty.hidden = sample.hasPlan;
         planPath.textContent = `.archcode/plans/${sample.id}.md`;
-        planCopy.innerHTML = sample.plan || "<ol><li>Extend the requested contract without changing global ownership.</li><li>Preserve explicit user choices and durable Session bindings.</li><li>Expose the resolved state in the existing workbench UI.</li><li>Add focused protocol, server, and Web interaction coverage.</li></ol><h3>Verification</h3><p>Run package typechecks, focused interaction tests, and the production Web build.</p>";
+        const steps = (sample.planSteps || defaultPlanSteps).map((step) => ({ ...step }));
+        planCopy.innerHTML = planStepsMarkup(steps) + `<div class="plan-notes">${sample.planNotes || "<h3>Verification</h3><p>Run package typechecks, focused interaction tests, and the production Web build.</p>"}</div>`;
+        syncPlanProgress();
         resultPresent.hidden = !sample.result;
         resultCopy.innerHTML = sample.result || "";
         resultHeading.textContent = sample.status === "Done" ? "Accepted outcome" : "Result for review";
@@ -1675,39 +3502,153 @@ Session storage remains project-root owned while every managed worktree executio
           sessionState.className = `work-row-state${sample.session.state === "Running" ? " running" : sample.session.state === "Needs you" ? " attention" : sample.session.state === "Ready to review" ? " review" : ""}`;
           sessionOrbit.className = `work-orbit${sample.session.state === "Running" ? " running" : sample.session.state === "Done" ? " done" : ""}`;
         }
-        automationsSection.hidden = !sample.automation;
-        workAutomation.hidden = !sample.automation;
-        automationEmpty.hidden = Boolean(sample.automation);
+        if (automationsSection) automationsSection.hidden = false;
+        if (workAutomation) workAutomation.hidden = !sample.automation;
+        if (automationEmpty) automationEmpty.hidden = Boolean(sample.automation);
+        renderPeek(sample);
         return true;
       }
 
-      function openTodo(trigger, updateHistory = true) {
+      function markTodoDone() {
+        if (!currentTodo) return;
+        const id = currentTodo.id;
+        currentTodo = { ...currentTodo, status: "Done", work: "done", updated: "Accepted just now" };
+        sampleOverrides[id] = { status: "Done", work: "done", updated: "Accepted just now" };
+        syncStatusBand("Done");
+        detailUpdated.textContent = "Accepted just now";
+        if (completeGroup) completeGroup.hidden = true;
+        const flash = statusBand?.querySelector("[data-done-flash]");
+        if (flash) {
+          flash.classList.remove("is-popping");
+          void flash.offsetWidth;
+          flash.classList.add("is-popping");
+        }
+        const card = document.querySelector(`[data-open-todo][data-todo-id="${CSS.escape(id)}"]`);
+        if (card) {
+          card.closest(".todo-card")?.setAttribute("data-runtime", "");
+          card.querySelector(".todo-operational")?.remove();
+          const doneLane = document.querySelector('[data-lane-content="done"]');
+          if (doneLane) doneLane.prepend(card.closest(".todo-card"));
+          organizeBoard();
+        }
+        showToast("Marked as Done");
+      }
+
+      markDoneButton?.addEventListener("click", markTodoDone);
+
+      statusBand?.addEventListener("click", (event) => {
+        const segment = event.target.closest("[data-status-move]");
+        if (!segment || !currentTodo || segment.classList.contains("is-current")) return;
+        if (segment.dataset.statusMove === "Done") {
+          markTodoDone();
+          return;
+        }
+        showToast(`Move to ${segment.dataset.statusMove} · 原型演示`);
+      });
+
+      function syncDetailChrome() {
+        const open = Boolean(currentTodo) && !detailRoute.hidden;
+        const isPeek = open && detailMode === "peek";
+        const isFull = open && detailMode === "full";
+        boardRoute?.classList.toggle("has-peek", isPeek);
+        boardRoute?.classList.toggle("is-full-todo", isFull);
+        boardRoute?.classList.toggle("is-board", activeTodoView === "active" && activeLayout === "board");
+        detailRoute?.classList.toggle("is-peek", isPeek);
+        detailRoute?.classList.toggle("is-full", isFull);
+        if (peekScrim) peekScrim.hidden = !isPeek;
+      }
+
+      function setSelectedTodo(id) {
+        document.querySelectorAll(".todo-row.is-selected, .todo-card.is-selected").forEach((el) => el.classList.remove("is-selected"));
+        if (!id) return;
+        document.querySelectorAll(`[data-open-todo][data-todo-id="${CSS.escape(id)}"]`).forEach((trigger) => {
+          trigger.closest(".todo-row")?.classList.add("is-selected");
+          trigger.closest(".todo-card")?.classList.add("is-selected");
+        });
+      }
+
+      function todoHash(id, mode = "peek") {
+        const base = `#todo=${encodeURIComponent(id)}`;
+        return mode === "full" ? `${base}&view=full` : base;
+      }
+
+      function parseTodoHash() {
+        // Support #todo=id and #todo=id&view=full
+        const m = location.hash.slice(1).match(/^todo=([^&]+)(?:&view=(full|peek))?$/);
+        if (!m) return null;
+        return { id: decodeURIComponent(m[1]), mode: m[2] === "full" ? "full" : "peek" };
+      }
+
+      function openTodo(trigger, { mode = "peek", updateHistory = true } = {}) {
         if (!renderDetail(trigger)) return;
+        // Phone-width: drawer strip is too tight — open full document chrome.
+        const effectiveMode = window.matchMedia("(max-width: 720px)").matches ? "full" : mode;
         lastTodoTrigger = trigger;
-        boardRoute.hidden = true;
+        const wasOpen = !detailRoute.hidden;
+        const prevMode = detailMode;
+        detailMode = effectiveMode === "full" ? "full" : "peek";
         detailRoute.hidden = false;
-        detailOpenedFromBoard = updateHistory;
-        if (updateHistory) history.pushState({ todo: trigger.dataset.todoId }, "", `#todo=${encodeURIComponent(trigger.dataset.todoId)}`);
-        requestAnimationFrame(() => detailHeading.focus());
+        if (updateHistory && !wasOpen) detailOpenedFromBoard = true;
+        setSelectedTodo(trigger.dataset.todoId);
+        syncDetailChrome();
+        const hash = todoHash(trigger.dataset.todoId, detailMode);
+        // One history entry for the open Todo: first open pushes, mode switches replace.
+        if (updateHistory) {
+          if (!wasOpen) history.pushState({ todo: trigger.dataset.todoId, mode: detailMode }, "", hash);
+          else if (location.hash !== hash) history.replaceState({ todo: trigger.dataset.todoId, mode: detailMode }, "", hash);
+        } else if (location.hash !== hash) {
+          history.replaceState({ todo: trigger.dataset.todoId, mode: detailMode }, "", hash);
+        }
+        requestAnimationFrame(() => {
+          if (!wasOpen || prevMode !== detailMode) detailHeading?.focus();
+          detailRoute.querySelector(".detail-body")?.scrollTo({ top: 0 });
+        });
+      }
+
+      function openFullTodo(updateHistory = true) {
+        if (!currentTodo || !lastTodoTrigger) return;
+        openTodo(lastTodoTrigger, { mode: "full", updateHistory });
       }
 
       function closeTodo(updateHistory = true) {
+        const wasOpen = !detailRoute.hidden;
         detailRoute.hidden = true;
-        boardRoute.hidden = false;
-        if (updateHistory && detailOpenedFromBoard) history.back();
-        else history.replaceState({}, "", location.pathname + location.search);
+        currentTodo = null;
+        detailMode = null;
+        setSelectedTodo(null);
+        syncDetailChrome();
+        if (updateHistory && wasOpen) {
+          if (detailOpenedFromBoard) history.back();
+          else history.replaceState({}, "", location.pathname + location.search);
+        }
         detailOpenedFromBoard = false;
         requestAnimationFrame(() => lastTodoTrigger?.focus());
       }
 
       document.addEventListener("click", (event) => {
+        const openFull = event.target.closest("[data-open-full-todo]");
+        if (openFull) {
+          event.preventDefault();
+          openFullTodo(true);
+          return;
+        }
         const trigger = event.target.closest("[data-open-todo]");
-        if (trigger) openTodo(trigger);
+        if (trigger) openTodo(trigger, { mode: "peek" });
       });
 
-      document.querySelector("[data-close-todo]")?.addEventListener("click", () => closeTodo());
+      document.querySelectorAll("[data-close-todo]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          closeTodo();
+        });
+      });
 
-      detailPrimary?.addEventListener("click", () => {
+      peekScrim?.addEventListener("click", (event) => {
+        event.preventDefault();
+        closeTodo();
+      });
+
+      function goToWorkSession() {
         if (!currentTodo) return;
         const sessionId = currentTodo.session?.id || `sess-${currentTodo.id}-work-1`;
         const records = readStoredTodos();
@@ -1718,31 +3659,147 @@ Session storage remains project-root owned while every managed worktree executio
           localStorage.setItem(storedTodoKey, JSON.stringify(records));
         }
         location.href = rememberRunningSession({ id: currentTodo.id, title: contentExcerpt(currentTodo.content), sessionId });
-      });
+      }
 
-      detailDiscuss?.addEventListener("click", () => {
+      function goToDiscussion() {
         if (!currentTodo) return;
         const sessionId = currentTodo.discussion?.id || `sess-${currentTodo.id}-discussion-1`;
         location.href = `./session.html?todo=${encodeURIComponent(currentTodo.id)}&session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(contentExcerpt(currentTodo.content))}&kind=discussion`;
+      }
+
+      detailPrimary?.addEventListener("click", goToWorkSession);
+      peekPrimary?.addEventListener("click", () => {
+        if (peekPrimary?.dataset.peekPrimaryMode === "discuss") goToDiscussion();
+        else goToWorkSession();
       });
+      detailDiscuss?.addEventListener("click", goToDiscussion);
+      peekDiscuss?.addEventListener("click", goToDiscussion);
 
       window.addEventListener("popstate", () => {
-        if (location.hash.startsWith("#todo=")) {
-          const requestedId = decodeURIComponent(location.hash.slice(6));
-          const trigger = document.querySelector(`[data-open-todo][data-todo-id="${CSS.escape(requestedId)}"]`);
-          if (trigger) openTodo(trigger, false);
+        const parsed = parseTodoHash();
+        if (parsed) {
+          const trigger = document.querySelector(`[data-open-todo][data-todo-id="${CSS.escape(parsed.id)}"]`);
+          if (trigger) openTodo(trigger, { mode: parsed.mode, updateHistory: false });
           else {
             closeTodo(false);
-            showToast(`Todo ${requestedId} was not found`);
+            showToast("That Todo could not be found");
           }
           return;
         }
-        detailRoute.hidden = true;
-        boardRoute.hidden = false;
+        closeTodo(false);
       });
 
+      let boardFocusIndex = -1;
+
+      function boardCards() {
+        return [...boardRoute.querySelectorAll(".todo-card")].filter((card) => !card.hidden && card.offsetParent !== null);
+      }
+
+      function listRows() {
+        return [...(listPanel?.querySelectorAll(".todo-row") || [])].filter((row) => !row.hidden && row.offsetParent !== null);
+      }
+
+      function setBoardFocus(index, { scroll = true } = {}) {
+        const cards = boardCards();
+        if (!cards.length) return;
+        boardFocusIndex = Math.max(0, Math.min(index, cards.length - 1));
+        cards.forEach((card, i) => card.classList.toggle("is-focus", i === boardFocusIndex));
+        if (scroll) cards[boardFocusIndex].scrollIntoView({ block: "nearest" });
+      }
+
+      function clearBoardFocus() {
+        boardFocusIndex = -1;
+        boardRoute.querySelectorAll(".todo-card.is-focus").forEach((card) => card.classList.remove("is-focus"));
+      }
+
+      function setListFocus(index, { scroll = true } = {}) {
+        const rows = listRows();
+        if (!rows.length) return;
+        listFocusIndex = Math.max(0, Math.min(index, rows.length - 1));
+        rows.forEach((row, i) => row.classList.toggle("is-focus", i === listFocusIndex));
+        if (scroll) rows[listFocusIndex].scrollIntoView({ block: "nearest" });
+      }
+
+      function clearListFocus() {
+        listFocusIndex = -1;
+        listPanel?.querySelectorAll(".todo-row.is-focus").forEach((row) => row.classList.remove("is-focus"));
+      }
+
       window.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && !detailRoute.hidden) closeTodo();
+        if (event.key === "Escape" && newTodoDialog?.open) {
+          event.preventDefault();
+          closeNewTodo();
+          return;
+        }
+        if (event.key === "Escape" && !detailRoute.hidden) {
+          event.preventDefault();
+          const narrow = window.matchMedia("(max-width: 720px)").matches;
+          // Full page steps back to drawer first; drawer (or phone full) closes to scan.
+          if (detailMode === "full" && !narrow && lastTodoTrigger) {
+            openTodo(lastTodoTrigger, { mode: "peek", updateHistory: true });
+            return;
+          }
+          closeTodo();
+          return;
+        }
+        const typing = event.target.closest("input, textarea, select, [contenteditable]");
+        if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+        if (newTodoDialog?.open) return;
+        if (activeTodoView !== "active") return;
+        const key = event.key.toLowerCase();
+        const usingList = activeLayout === "list";
+        const detailOpen = !detailRoute.hidden;
+        if (key === "j" || key === "k") {
+          event.preventDefault();
+          const items = usingList ? listRows() : boardCards();
+          if (!items.length) return;
+          const delta = key === "j" ? 1 : -1;
+          if (usingList) {
+            const next = listFocusIndex === -1 ? (delta === 1 ? 0 : items.length - 1) : listFocusIndex + delta;
+            setListFocus(next);
+            if (detailOpen && detailMode === "peek") {
+              const trigger = listRows()[listFocusIndex]?.querySelector("[data-open-todo]");
+              if (trigger) openTodo(trigger, { mode: "peek", updateHistory: false });
+            }
+          } else {
+            const next = boardFocusIndex === -1 ? (delta === 1 ? 0 : items.length - 1) : boardFocusIndex + delta;
+            setBoardFocus(next);
+            if (detailOpen && detailMode === "peek") {
+              const trigger = boardCards()[boardFocusIndex]?.querySelector("[data-open-todo]");
+              if (trigger) openTodo(trigger, { mode: "peek", updateHistory: false });
+            }
+          }
+          return;
+        }
+        if (event.key === "Enter" && !detailOpen) {
+          if (usingList && listFocusIndex !== -1) {
+            const row = listRows()[listFocusIndex];
+            const trigger = row?.querySelector("[data-open-todo]");
+            if (trigger) {
+              event.preventDefault();
+              openTodo(trigger, { mode: "peek" });
+            }
+            return;
+          }
+          if (!usingList && boardFocusIndex !== -1) {
+            const card = boardCards()[boardFocusIndex];
+            const trigger = card?.querySelector("[data-open-todo]");
+            if (trigger) {
+              event.preventDefault();
+              openTodo(trigger, { mode: "peek" });
+            }
+            return;
+          }
+        }
+        if (event.key === "Enter" && detailOpen && detailMode === "peek") {
+          event.preventDefault();
+          openFullTodo(true);
+          return;
+        }
+        if (key === "c" && !detailOpen) {
+          event.preventDefault();
+          openNewTodo();
+        }
       });
 
       document.querySelector("[data-capture-form]")?.addEventListener("submit", (event) => {
@@ -1768,15 +3825,16 @@ Session storage remains project-root owned while every managed worktree executio
           return;
         }
         renderStoredTodos();
+        closeNewTodo();
         showToast(`Saved “${excerpt}” to Ideas`);
       });
 
       renderStoredTodos();
-      if (location.hash.startsWith("#todo=")) {
-        const requestedId = decodeURIComponent(location.hash.slice(6));
-        const trigger = document.querySelector(`[data-open-todo][data-todo-id="${CSS.escape(requestedId)}"]`);
-        if (trigger) openTodo(trigger, false);
-        else showToast(`Todo ${requestedId} was not found`);
+      const boot = parseTodoHash();
+      if (boot) {
+        const trigger = document.querySelector(`[data-open-todo][data-todo-id="${CSS.escape(boot.id)}"]`);
+        if (trigger) openTodo(trigger, { mode: boot.mode, updateHistory: false });
+        else showToast(`Todo ${boot.id} was not found`);
       }
     </script>
   </body>

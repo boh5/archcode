@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="ArchCode project Sessions prototype" />
     <title>ArchCode — Sessions Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=theme-rail-1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css?v=prototype-polish-2" />
     <style>
       [hidden] { display: none !important; }
 
@@ -32,35 +35,56 @@
         flex: 0 1 420px;
       }
 
-      .sessions-source-control {
+      .sessions-source-picker {
+        position: relative;
+        flex: 0 0 142px;
+        width: 142px;
+      }
+
+      .sessions-source-trigger {
         display: grid;
         grid-template-columns: 15px minmax(0, 1fr) 12px;
         align-items: center;
-        gap: 6px;
-        flex: 0 0 142px;
-        width: 142px;
+        gap: 8px;
+        width: 100%;
         height: 36px;
-        padding: 0 8px;
-        border: 1px solid var(--control-border);
-        border-radius: 5px;
-        background: var(--bg-elevated);
-        color: var(--text-tertiary);
+        padding: 0 11px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 6px;
+        background: var(--bg-base);
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 650;
+        text-align: left;
         transition:
           border-color var(--motion-hover) ease,
           background var(--motion-hover) ease,
           box-shadow var(--motion-hover) ease;
       }
 
-      .sessions-source-control:hover { background: var(--bg-hover); }
+      .sessions-source-trigger:hover {
+        border-color: var(--border-default);
+        background: var(--bg-elevated);
+      }
 
-      .sessions-source-control:focus-within {
+      .sessions-source-trigger:focus-visible,
+      .sessions-source-trigger[aria-expanded="true"] {
         border-color: var(--brand);
+        background: var(--bg-elevated);
         box-shadow: var(--focus);
       }
 
-      .sessions-source-control [data-icon] svg {
+      .sessions-source-trigger [data-icon] svg {
         width: 14px;
         height: 14px;
+      }
+
+      .sessions-source-trigger[aria-expanded="true"] > [data-icon="filter"] { color: var(--brand); }
+
+      .sessions-source-value {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .sessions-source-chevron {
@@ -68,40 +92,71 @@
         place-items: center;
         pointer-events: none;
         transform: rotate(90deg);
+        transition: transform var(--motion-icon) var(--ease-standard);
       }
 
-      .sessions-source {
+      .sessions-source-trigger[aria-expanded="true"] .sessions-source-chevron { transform: rotate(-90deg); }
+
+      .sessions-source-menu {
+        position: absolute;
+        z-index: 30;
+        top: calc(100% + 6px);
+        left: 0;
+        width: min(220px, calc(100vw - 24px));
+        padding: 6px;
+        border: 1px solid var(--border-default);
+        border-radius: 8px;
+        background: var(--bg-overlay);
+        box-shadow: var(--elevation-md);
+      }
+
+      .sessions-source-menu-header {
+        padding: 6px 10px 8px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .sessions-source-menu-header strong,
+      .sessions-source-menu-header span { display: block; }
+
+      .sessions-source-menu-header strong { font-size: 11px; font-weight: 680; }
+
+      .sessions-source-menu-header span {
+        margin-top: 2px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+        line-height: 16px;
+      }
+
+      .sessions-source-options { padding-top: 4px; }
+
+      .sessions-source-option {
+        display: grid;
+        grid-template-columns: 16px minmax(0, 1fr) 14px;
+        align-items: center;
+        gap: 10px;
         width: 100%;
-        height: 100%;
-        min-width: 0;
-        padding: 0;
-        border: 0;
-        outline: 0;
-        appearance: none;
+        min-height: 44px;
+        padding: 6px 8px;
+        border-radius: 4px;
         background: transparent;
         color: var(--text-secondary);
-        cursor: pointer;
-        font-size: 11px;
-        font-weight: 620;
+        text-align: left;
       }
 
-      .new-session-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 36px;
-        padding: 0 14px;
-        border: 1px solid var(--brand);
-        border-radius: 5px;
-        background: var(--brand);
-        color: var(--brand-ink);
-        font-size: 11px;
-        font-weight: 680;
-        white-space: nowrap;
-        margin-left: auto;
-      }
+      .sessions-source-option:hover,
+      .sessions-source-option:focus-visible { background: var(--bg-hover); color: var(--text-primary); }
 
-      .new-session-button:hover { border-color: var(--brand-hover); background: var(--brand-hover); }
+      .sessions-source-option > [data-icon] { color: var(--text-muted); }
+      .sessions-source-option[aria-checked="true"] > [data-icon] { color: var(--brand); }
+      .sessions-source-option-copy strong,
+      .sessions-source-option-copy span { display: block; }
+      .sessions-source-option-copy strong { font-size: 12px; font-weight: 650; }
+      .sessions-source-option-copy span { margin-top: 1px; color: var(--text-tertiary); font-size: 10px; line-height: 16px; }
+      .sessions-source-check { display: grid; place-items: center; color: var(--brand); }
+      .sessions-source-option[aria-checked="false"] .sessions-source-check { visibility: hidden; }
+
+      /* new-session uses shared .primary-button; keep layout pull only */
+      .sessions-commandbar .primary-button { margin-left: auto; }
 
       .sessions-scroll {
         min-height: 0;
@@ -145,8 +200,8 @@
         grid-template-columns: 14px minmax(0, 1fr) auto;
         align-items: center;
         gap: 11px;
-        min-height: 68px;
-        padding: 11px 9px;
+        min-height: 56px;
+        padding: 7px 9px;
         border-bottom: 1px solid var(--border-subtle);
         color: var(--text-secondary);
       }
@@ -156,44 +211,7 @@
         color: var(--text-primary);
       }
 
-      .session-orbit {
-        width: 10px;
-        height: 10px;
-        border: 1.5px solid var(--neutral);
-        border-radius: 50%;
-      }
-
-      .session-orbit.attention {
-        border-color: var(--warning);
-        background: var(--warning-field);
-        box-shadow: inset 0 0 0 2px var(--bg-base);
-      }
-
-      .session-orbit.running {
-        border-color: var(--signal);
-        border-top-color: transparent;
-        animation: session-spin 1.2s linear infinite;
-      }
-
-      .session-orbit.done {
-        position: relative;
-        border-color: var(--success);
-        background: var(--success-field);
-      }
-
-      .session-orbit.done::after {
-        position: absolute;
-        top: 1px;
-        left: 2px;
-        width: 4px;
-        height: 2px;
-        border-bottom: 1.5px solid var(--success);
-        border-left: 1.5px solid var(--success);
-        transform: rotate(-45deg);
-        content: "";
-      }
-
-      @keyframes session-spin { to { transform: rotate(360deg); } }
+      /* session-orbit tones come from shared styles.css */
 
       .session-row-copy { min-width: 0; }
 
@@ -210,7 +228,7 @@
       }
 
       .session-row-copy small {
-        margin-top: 5px;
+        margin-top: 2px;
         overflow: hidden;
         color: var(--text-tertiary);
         font-size: 11px;
@@ -221,18 +239,13 @@
       .session-source-label {
         display: inline-flex;
         align-items: center;
-        min-height: 18px;
-        margin-right: 5px;
-        padding: 0 5px;
-        border: 1px solid var(--border-subtle);
-        border-radius: 4px;
-        background: var(--bg-muted);
-        color: var(--text-secondary);
+        margin-right: 4px;
+        color: var(--text-tertiary);
         font-size: 9px;
-        font-weight: 680;
-        letter-spacing: 0.02em;
+        font-weight: 700;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
-        vertical-align: 1px;
+        vertical-align: 0;
       }
 
       .session-row-state {
@@ -246,6 +259,7 @@
       .session-row-state.attention { color: var(--warning); font-weight: 680; }
       .session-row-state.running { color: var(--signal-foreground); }
       .session-row-state.done { color: var(--success); }
+      .session-row-state.failed { color: var(--error); font-weight: 680; }
 
       .sessions-empty {
         display: grid;
@@ -270,10 +284,10 @@
         }
 
         .sessions-commandbar .surface-filter { grid-column: 1 / -1; }
-        .sessions-source-control,
-        .new-session-button { min-height: 44px; }
-        .sessions-source-control { width: 150px; }
-        .new-session-button { margin-left: 0; }
+        .sessions-source-trigger,
+        .sessions-commandbar .primary-button { min-height: 44px; }
+        .sessions-source-picker { width: 150px; }
+        .sessions-commandbar .primary-button { margin-left: 0; }
         .sessions-inner { padding: 18px 12px 40px; }
         .session-row { min-height: 74px; padding-right: 6px; padding-left: 6px; }
       }
@@ -291,16 +305,16 @@
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .session-orbit.running { animation: none; border-top-color: var(--signal); }
+        /* shared status-orbit reduced-motion lives in styles.css */
       }
     </style>
-    <script src="./app.js?v=rail-search-1" defer></script>
+    <script src="./app.js?v=prototype-polish-2" defer></script>
   </head>
   <body class="sessions-page todo-first-shell">
     <a class="skip-link" href="#work-canvas">跳到工作区</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
-        <a class="brand-mark" href="./dashboard.html?v=home-shell-1" aria-label="Open Home"><span>A</span></a>
+        <a class="brand-mark" href="./dashboard.html" aria-label="Open Home"><img src="./logo.svg" alt="" width="20" height="20" /></a>
         <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
         <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
         <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
@@ -317,43 +331,45 @@
         <header class="project-toolbar">
           <div class="project-identity">
             <span class="project-identity-mark">ar</span>
-            <div class="project-identity-copy"><h1>archcode</h1><span>/workspace/archcode</span></div>
+            <div class="project-identity-copy"><h1>ArchCode</h1><span>/workspace/archcode</span></div>
           </div>
           <nav class="project-toolbar-nav" aria-label="Project pages">
             <a href="./todos.html"><span>Todos</span></a>
             <a href="./automations.html"><span>Automations</span></a>
             <a class="active" href="./sessions.html" aria-current="page"><span>Sessions</span></a>
           </nav>
-          <div class="project-toolbar-actions">
-            <button class="icon-button" aria-label="Project actions" data-project-actions data-action="打开项目操作" data-icon="more"></button>
-          </div>
         </header>
 
         <section class="sessions-route" aria-label="Sessions">
           <div class="sessions-commandbar">
-            <label class="surface-filter">
+            <div class="surface-filter">
               <span data-icon="search"></span>
-              <span class="sr-only">Filter Sessions</span>
-              <input type="search" placeholder="Filter Sessions…" autocomplete="off" data-session-search />
-            </label>
-            <label class="sessions-source-control">
-              <span class="sr-only">Filter by source</span>
-              <span data-icon="filter"></span>
-              <select class="sessions-source" data-session-source-filter>
-                <option value="all">All sources</option>
-                <option value="todo">Todo</option>
-                <option value="automation">Automation</option>
-                <option value="direct">Direct</option>
-              </select>
-              <span class="sessions-source-chevron" data-icon="chevron"></span>
-            </label>
-            <button class="new-session-button" type="button" data-new-session>New Session</button>
+              <input type="search" aria-label="Filter Sessions" placeholder="Filter Sessions…" autocomplete="off" spellcheck="false" data-session-search />
+              <button class="surface-filter-clear" type="button" aria-label="Clear Session filter" hidden data-filter-clear="data-session-search"><span data-icon="close"></span></button>
+            </div>
+            <div class="sessions-source-picker">
+              <button class="sessions-source-trigger" type="button" aria-label="Session source: All sources" aria-haspopup="menu" aria-expanded="false" data-session-source-trigger data-value="all">
+                <span data-icon="filter"></span>
+                <span class="sessions-source-value" data-session-source-value>All sources</span>
+                <span class="sessions-source-chevron" data-icon="chevron"></span>
+              </button>
+              <div class="sessions-source-menu" role="menu" aria-label="Session source" hidden data-session-source-menu>
+                <div class="sessions-source-menu-header"><strong>Session source</strong><span>Narrow Sessions by how they started.</span></div>
+                <div class="sessions-source-options">
+                  <button class="sessions-source-option" type="button" role="menuitemradio" aria-checked="true" data-source-value="all"><span data-icon="layers"></span><span class="sessions-source-option-copy"><strong>All sources</strong><span>Every Session origin</span></span><span class="sessions-source-check" data-icon="check"></span></button>
+                  <button class="sessions-source-option" type="button" role="menuitemradio" aria-checked="false" data-source-value="todo"><span data-icon="todo"></span><span class="sessions-source-option-copy"><strong>Todo</strong><span>Started from a Todo</span></span><span class="sessions-source-check" data-icon="check"></span></button>
+                  <button class="sessions-source-option" type="button" role="menuitemradio" aria-checked="false" data-source-value="automation"><span data-icon="workflow"></span><span class="sessions-source-option-copy"><strong>Automation</strong><span>Started by Automation</span></span><span class="sessions-source-check" data-icon="check"></span></button>
+                  <button class="sessions-source-option" type="button" role="menuitemradio" aria-checked="false" data-source-value="direct"><span data-icon="app"></span><span class="sessions-source-option-copy"><strong>Direct</strong><span>Started directly</span></span><span class="sessions-source-check" data-icon="check"></span></button>
+                </div>
+              </div>
+            </div>
+            <button class="primary-button" type="button" data-new-session>New Session</button>
           </div>
 
           <div class="sessions-scroll">
             <div class="sessions-inner" data-session-groups></div>
             <div class="sessions-empty" hidden data-sessions-empty>
-              <p><strong>No Sessions match this filter.</strong><span>Try another title, source name, or stable ID.</span></p>
+              <p><strong>No Sessions match this filter.</strong><span>Try another title, parent name, or source.</span></p>
             </div>
           </div>
         </section>
@@ -363,21 +379,25 @@
     <div class="toast" role="status" aria-live="polite"></div>
 
     <script>
-      const staticSessions = [
-        { group: "Needs you", tone: "attention", state: "Permission · now", source: "Todo", title: "Implementation Session", sessionId: "sess-profile-implementation", parent: "Model profile defaults per project", agent: "Lead → Build", href: "./session.html?todo=todo-profile-defaults&session=sess-profile-implementation" },
-        { group: "Needs you", tone: "attention", state: "Failed · 8m", source: "Automation", title: "Daily project health", sessionId: "sess-aut-health-failed", parent: "Daily project health check", agent: "Lead", href: "./session.html?automation=aut-health&session=sess-aut-health-failed&title=Daily%20project%20health%20check" },
+      const staticSessions = (window.archcodePrototypeStaticSessions || [
+        { group: "Needs you", tone: "attention", state: "Needs you", source: "Todo", title: "Implementation Session", sessionId: "sess-profile-implementation", parent: "Model profile defaults per project", agent: "Lead → Build", href: "./session.html?todo=todo-profile-defaults&session=sess-profile-implementation&state=hitl" },
+        { group: "Needs you", tone: "failed", state: "Failed", source: "Automation", title: "Daily project health check", sessionId: "sess-aut-health-failed", parent: "Daily project health check", agent: "Lead", href: "./session.html?automation=aut-health&session=sess-aut-health-failed&title=Daily%20project%20health%20check" },
+        { group: "Needs you", tone: "attention", state: "Needs you", source: "Todo", title: "Review recoverable worktree cleanup", sessionId: "sess-worktree-permission", parent: "Review recoverable worktree cleanup", agent: "Lead", href: "./session.html?todo=todo-worktree-permission&session=sess-worktree-permission" },
         { group: "Running", tone: "running", state: "12m", source: "Todo", title: "Live execution recovery", sessionId: "sess-live-recovery", parent: "Live execution recovery", agent: "Lead → Explore", href: "./session.html?todo=todo-live-recovery&session=sess-live-recovery" },
         { group: "Running", tone: "running", state: "34s", source: "Direct", title: "Fix incorrect model type", sessionId: "sess-direct-model-type", parent: "Lead", agent: "Lead", href: "./session.html?session=sess-direct-model-type&title=Fix%20incorrect%20model%20type" },
         { group: "Recent", tone: "done", state: "Completed · 1h", source: "Todo", title: "Review Session", sessionId: "sess-profile-review", parent: "Model profile defaults per project", agent: "Analyst", href: "./session.html?todo=todo-profile-defaults&session=sess-profile-review" },
         { group: "Recent", tone: "done", state: "Completed · Yesterday", source: "Automation", title: "Regression check · Aug 1", sessionId: "sess-aut-regression-20260801", parent: "Regression check", agent: "Lead", href: "./session.html?automation=aut-regression&session=sess-aut-regression-20260801&title=Regression%20check" },
         { group: "Recent", tone: "done", state: "Completed · Jul 30", source: "Direct", title: "Audit project context loading", sessionId: "sess-legacy-context-audit", parent: "Lead", agent: "Lead", href: "./session.html?session=sess-legacy-context-audit" },
-      ];
+      ]).map((item) => ({ ...item }));
 
       const groupOrder = ["Needs you", "Running", "Recent"];
       const groupsRoot = document.querySelector("[data-session-groups]");
       const emptyState = document.querySelector("[data-sessions-empty]");
       const searchInput = document.querySelector("[data-session-search]");
-      const sourceFilter = document.querySelector("[data-session-source-filter]");
+      const sourceTrigger = document.querySelector("[data-session-source-trigger]");
+      const sourceValue = document.querySelector("[data-session-source-value]");
+      const sourceMenu = document.querySelector("[data-session-source-menu]");
+      const sourceOptions = [...document.querySelectorAll("[data-source-value]")];
 
       function escapeSessionsHtml(value) {
         return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
@@ -415,10 +435,10 @@
 
       function renderSessions() {
         const query = searchInput.value.trim().toLowerCase();
-        const selectedSource = sourceFilter.value;
+        const selectedSource = sourceTrigger.dataset.value;
         const matches = sessionItems().filter((item) => {
           const matchesSource = selectedSource === "all" || item.source.toLowerCase() === selectedSource;
-          const haystack = `${item.title} ${item.sessionId} ${item.source} ${item.parent} ${item.agent}`.toLowerCase();
+          const haystack = `${item.title} ${item.source} ${item.parent} ${item.agent}`.toLowerCase();
           return matchesSource && (!query || haystack.includes(query));
         });
 
@@ -440,7 +460,57 @@
       }
 
       searchInput.addEventListener("input", renderSessions);
-      sourceFilter.addEventListener("change", renderSessions);
+
+      function setSourceMenuOpen(open, { focusSelected = false } = {}) {
+        sourceMenu.hidden = !open;
+        sourceTrigger.setAttribute("aria-expanded", String(open));
+        if (open && focusSelected) {
+          const selected = sourceOptions.find((option) => option.getAttribute("aria-checked") === "true") || sourceOptions[0];
+          requestAnimationFrame(() => selected.focus());
+        }
+      }
+
+      function selectSource(option) {
+        const value = option.dataset.sourceValue;
+        const label = option.querySelector("strong").textContent;
+        sourceTrigger.dataset.value = value;
+        sourceTrigger.setAttribute("aria-label", `Session source: ${label}`);
+        sourceValue.textContent = label;
+        sourceOptions.forEach((candidate) => candidate.setAttribute("aria-checked", String(candidate === option)));
+        setSourceMenuOpen(false);
+        renderSessions();
+        sourceTrigger.focus();
+      }
+
+      sourceTrigger.addEventListener("click", () => setSourceMenuOpen(sourceMenu.hidden));
+      sourceTrigger.addEventListener("keydown", (event) => {
+        if (!["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        setSourceMenuOpen(true, { focusSelected: true });
+      });
+      sourceOptions.forEach((option) => option.addEventListener("click", () => selectSource(option)));
+      sourceMenu.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setSourceMenuOpen(false);
+          sourceTrigger.focus();
+          return;
+        }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const current = sourceOptions.indexOf(document.activeElement);
+        const next = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? sourceOptions.length - 1
+            : event.key === "ArrowDown"
+              ? (current + 1) % sourceOptions.length
+              : (current - 1 + sourceOptions.length) % sourceOptions.length;
+        sourceOptions[next].focus();
+      });
+      document.addEventListener("click", (event) => {
+        if (!event.target.closest(".sessions-source-picker")) setSourceMenuOpen(false);
+      });
 
       document.querySelector("[data-new-session]").addEventListener("click", () => {
         const sessionId = `sess-direct-${Date.now()}`;
