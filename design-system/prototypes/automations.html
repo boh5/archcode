@@ -333,9 +333,25 @@
       .automation-mobile-back { display: none; }
 
       .automation-run-empty {
-        padding: 14px 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px 0;
         color: var(--text-tertiary);
         font-size: 11px;
+        text-align: center;
+      }
+
+      .automation-run-empty-icon {
+        display: inline-grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        margin-bottom: 8px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--neutral) 8%, transparent);
+        color: var(--neutral);
+        font-size: 14px;
       }
 
       .automation-editor {
@@ -348,9 +364,29 @@
         color: var(--text-primary);
         box-shadow: var(--elevation-lg);
         overflow: hidden;
+        animation: modal-in 200ms var(--ease-smooth);
       }
 
-      .automation-editor::backdrop { background: rgba(8, 10, 8, 0.56); }
+      @keyframes modal-in {
+        from {
+          opacity: 0;
+          transform: scale(0.96);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      .automation-editor::backdrop {
+        background: rgba(8, 10, 8, 0.56);
+        animation: backdrop-in 200ms var(--ease-standard);
+      }
+
+      @keyframes backdrop-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
 
       .automation-editor-form {
         display: flex;
@@ -1304,7 +1340,7 @@
 
       function renderRuns(sample) {
         runList.innerHTML = sample.runs.length ? sample.runs.map((run) => `
-          <a class="run-row" href="${runHref(sample, run)}"><span class="automation-orbit ${escapeAutomationHtml(run.tone || "")}"></span><span>${escapeAutomationHtml(run.label)}</span><time>${escapeAutomationHtml(run.time)}</time></a>`).join("") : '<p class="automation-run-empty">No runs yet. Run now will create the first durable Session.</p>';
+          <a class="run-row" href="${runHref(sample, run)}"><span class="automation-orbit ${escapeAutomationHtml(run.tone || "")}"></span><span>${escapeAutomationHtml(run.label)}</span><time>${escapeAutomationHtml(run.time)}</time></a>`).join("") : '<div class="automation-run-empty"><div class="automation-run-empty-icon"><span data-icon="play"></span></div>No runs yet. Run now will create the first durable Session.</div>';
       }
 
       function rowStateMarkup(sample) {

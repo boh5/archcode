@@ -315,10 +315,32 @@
         background: var(--bg-overlay);
         color: var(--text-primary);
         box-shadow: var(--elevation-lg);
+        animation: modal-in 200ms var(--ease-smooth);
+      }
+
+      @keyframes modal-in {
+        from {
+          opacity: 0;
+          transform: scale(0.96);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
       }
 
       .todo-create-dialog::backdrop {
         background: rgb(0 0 0 / 58%);
+        animation: backdrop-in 200ms var(--ease-standard);
+      }
+
+      @keyframes backdrop-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
       }
 
       .todo-create-form {
@@ -658,6 +680,19 @@
         text-align: left;
       }
 
+      .lane-empty-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        margin-bottom: 8px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--neutral) 8%, transparent);
+        color: var(--neutral);
+        font-size: 16px;
+      }
+
       .lane-empty strong {
         display: block;
         color: var(--text-secondary);
@@ -688,6 +723,26 @@
         font-size: 12px;
         text-align: center;
       }
+
+      .flat-empty-icon {
+        display: grid;
+        place-items: center;
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 16px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--brand) 8%, var(--bg-surface));
+        color: var(--brand);
+      }
+
+      .flat-empty-icon [data-icon] {
+        font-size: 24px;
+      }
+
+      .flat-empty strong,
+      .flat-empty span { display: block; }
+      .flat-empty strong { color: var(--text-secondary); font-size: 13px; margin-bottom: 6px; }
+      .flat-empty span { font-size: 11px; }
 
       .sidebar-toolbar.sessions-only {
         grid-template-columns: minmax(0, 1fr);

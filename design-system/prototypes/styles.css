@@ -815,9 +815,11 @@ p {
 }
 
 .primary-button {
+  position: relative;
   border: 1px solid var(--brand);
   background: var(--brand);
   color: var(--brand-ink);
+  overflow: hidden;
   box-shadow:
     0 1px 3px rgba(99, 102, 241, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
@@ -826,6 +828,27 @@ p {
     border-color var(--motion-hover) var(--ease-smooth),
     box-shadow var(--motion-hover) var(--ease-smooth),
     transform var(--motion-hover) var(--ease-smooth);
+}
+
+.primary-button::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+}
+
+.primary-button:active::after {
+  width: 300px;
+  height: 300px;
+  opacity: 1;
+  transition: width 400ms var(--ease-smooth), height 400ms var(--ease-smooth), opacity 300ms var(--ease-smooth);
 }
 
 .primary-button:hover {

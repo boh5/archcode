@@ -281,6 +281,21 @@
         text-align: center;
       }
 
+      .sessions-empty-icon {
+        display: grid;
+        place-items: center;
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 16px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--brand) 8%, var(--bg-surface));
+        color: var(--brand);
+      }
+
+      .sessions-empty-icon [data-icon] {
+        font-size: 24px;
+      }
+
       .sessions-empty strong,
       .sessions-empty span { display: block; }
       .sessions-empty strong { color: var(--text-secondary); font-size: 13px; }
@@ -380,6 +395,7 @@
           <div class="sessions-scroll">
             <div class="sessions-inner" data-session-groups></div>
             <div class="sessions-empty" hidden data-sessions-empty>
+              <div class="sessions-empty-icon"><span data-icon="search"></span></div>
               <p><strong>No Sessions match this filter.</strong><span>Try another title, parent name, or source.</span></p>
             </div>
           </div>
