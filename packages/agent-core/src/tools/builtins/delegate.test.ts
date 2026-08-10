@@ -1,7 +1,13 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { DelegationRequest } from "@archcode/protocol";
 import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
-import { SkillNotAllowedError } from "../../agents/errors";
+import {
+  AgentChildPolicyMissingError,
+  DelegateTargetNotAllowedError,
+  DepthLimitError,
+  SkillNotAllowedError,
+} from "../../agents/errors";
+import { SkillNotFoundError, SkillValidationError } from "../../skills";
 import { storeManager } from "../../store/store";
 import { expectTextDraft } from "../test-results";
 import type { ToolExecutionContext } from "../types";
@@ -134,15 +140,47 @@ describe("delegate request", () => {
     });
   });
 
-  it("returns target Skill recovery details", async () => {
-    const result = await executeDelegate(request({ skills: ["research-docs"] }), makeContext({
+  it("maps known child-start admission failures to stable tool error codes", async () => {
+    const profileError = Object.assign(new Error('Explore does not allow Profile "deep"'), {
+      code: "DELEGATION_PROFILE_NOT_ALLOWED",
+      name: "DelegationExecutionAdmissionError",
+    });
+    const cases: readonly [string, Error, string][] = [
+      ["delegate target", new DelegateTargetNotAllowedError("lead", "build", 3), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
+      ["missing child policy", new AgentChildPolicyMissingError("lead"), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
+      ["depth limit", new DepthLimitError(3), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
+      ["profile", profileError, "TOOL_DELEGATE_PROFILE_NOT_ALLOWED"],
+      ["missing Skill", new SkillNotFoundError("research-docs"), "TOOL_DELEGATE_SKILL_NOT_FOUND"],
+      ["invalid Skill", new SkillValidationError("research-docs", "project-archcode", "missing SKILL.md"), "TOOL_DELEGATE_SKILL_INVALID"],
+      ["disallowed Skill", new SkillNotAllowedError("explore", "research-docs", ["codemap"]), "TOOL_DELEGATE_SKILL_NOT_ALLOWED"],
+    ];
+
+    for (const [label, error, expectedCode] of cases) {
+      const result = await executeDelegate(request({ skills: ["research-docs"] }), makeContext({
+        startChildExecution: async () => {
+          throw error;
+        },
+      }));
+      expect(JSON.parse(textResult(result)), label).toMatchObject({
+        code: expectedCode,
+        name: error.name,
+        message: error.message,
+      });
+    }
+  });
+
+  it("uses the generic code only for an unknown child-start failure", async () => {
+    const error = new Error("unexpected launch failure");
+    error.name = "UnexpectedLaunchError";
+    const result = await executeDelegate(request(), makeContext({
       startChildExecution: async () => {
-        throw new SkillNotAllowedError("explore", "research-docs", ["codemap"]);
+        throw error;
       },
     }));
     expect(JSON.parse(textResult(result))).toMatchObject({
       code: "TOOL_DELEGATE_FAILED",
-      name: "SkillNotAllowedError",
+      name: error.name,
+      message: error.message,
     });
   });
 

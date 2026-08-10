@@ -384,6 +384,9 @@ export async function runQueryLoop(
       attachmentReadPaths,
       agentSkills: options.agentSkills.filter((skill) => persistedSkills.has(skill)),
       skillService: options.skillService,
+      ...(options.resolveSkillListTargetSkills === undefined
+        ? {}
+        : { resolveSkillListTargetSkills: options.resolveSkillListTargetSkills }),
       ...(options.executionSkillSnapshots === undefined
         ? {}
         : { executionSkillSnapshots: options.executionSkillSnapshots }),

@@ -31,7 +31,8 @@ import { ProjectTodoNotFoundError } from "../todos/errors";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
-import type { AgentDefinition, AgentMcpToolSnapshot } from "./factory-types";
+import type { AgentDefinition, AgentMcpToolSnapshot, DelegationCapabilitySnapshot } from "./factory-types";
+import { projectModelToolDescriptors } from "./model-tool-projection";
 import {
   createAutoInjectReminderHook,
   createHybridCompressionHook,
@@ -81,6 +82,7 @@ export interface ConfiguredAgentOptions {
   readonly sessionGoalService?: SessionGoalService;
   readonly resolveVersionControl: VersionControlDetector;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
+  readonly delegationCapabilities: DelegationCapabilitySnapshot;
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
@@ -174,6 +176,7 @@ export class ConfiguredAgent implements Agent {
   private readonly backgroundTaskManager: BackgroundTaskManager;
   private readonly ownsBackgroundTaskManager: boolean;
   private readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
+  private readonly delegationCapabilities: DelegationCapabilitySnapshot;
   private readonly startChildExecution: ((request: ChildExecutionRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly cancelChildSession: ((workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean) | undefined;
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
@@ -212,6 +215,7 @@ export class ConfiguredAgent implements Agent {
     });
     this.ownsBackgroundTaskManager = options.backgroundTaskManager === undefined;
     this.resolveAllowedTools = options.resolveAllowedTools;
+    this.delegationCapabilities = options.delegationCapabilities;
     this.startChildExecution = options.startChildExecution;
     this.cancelChildSession = options.cancelChildSession;
     this.resumeChildSession = options.resumeChildSession;
@@ -437,6 +441,9 @@ export class ConfiguredAgent implements Agent {
             acquireSessionCwdTransition: this.acquireSessionCwdTransition,
             agentName: this.definition.name,
             currentDepth: this.depth,
+            resolveSkillListTargetSkills: (agentType: string) => this.delegationCapabilities.targets
+              .find((target) => target.agentName === agentType)
+              ?.builtinSkillNames,
             hooks,
             maxSteps: totalMaxSteps,
           },
@@ -537,7 +544,7 @@ export class ConfiguredAgent implements Agent {
       throw new Error(`Parent Session "${state.parentSessionId}" identity is unavailable while compiling the Prompt contract`);
     }
     const allowedDelegateTargets = input.allowedTools.includes("delegate")
-      ? [...(this.definition.tools.delegateTargets ?? [])]
+      ? this.delegationCapabilities.targets.map((target) => target.agentName)
       : [];
     const effectiveMaxDepth = this.definition.childPolicy?.maxDepth ?? this.depth;
     const runtime: RuntimePromptEnvelope = {
@@ -650,7 +657,10 @@ export class ConfiguredAgent implements Agent {
     readonly tools: ResolvedToolSet;
     readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
   } {
-    const base = this.toolRegistry.resolveForAgent(baseAllowedTools).descriptors;
+    const base = projectModelToolDescriptors(
+      this.toolRegistry.resolveForAgent(baseAllowedTools).descriptors,
+      this.delegationCapabilities,
+    );
     const mcp = this.resolveMcpToolSnapshot?.(this.definition.builtinMcpServers);
     const descriptors = [...base];
     const names = new Set(base.map((descriptor) => descriptor.name));

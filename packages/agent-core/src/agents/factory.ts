@@ -12,8 +12,14 @@ import { ConfiguredAgent } from "./configured-agent";
 import { SkillNotAllowedError } from "./errors";
 import type { StoreApi } from "zustand";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
-import type { AgentDefinition, AgentMcpToolSnapshot, AgentName } from "./factory-types";
-import { DELEGATION_CORE_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
+import type {
+  AgentDefinition,
+  AgentMcpToolSnapshot,
+  AgentName,
+  DelegationCapabilitySnapshot,
+  DelegationTargetCapability,
+} from "./factory-types";
+import { DELEGATION_CORE_TOOLS } from "./constants";
 import type { Agent } from "./types";
 import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
@@ -59,8 +65,8 @@ export interface AgentFactory {
   getDefinition(name: string): AgentDefinition;
   listAgentNames(): string[];
   resolveAllowedTools(definition: AgentDefinition, depth: number): string[];
-  getDelegateTargetsFor(definition: AgentDefinition, depth: number): string[];
-  resolveDelegatedSkillNames(targetDefinition: AgentDefinition, requestedSkills: readonly string[], cwd: string): Promise<readonly string[]>;
+  resolveDelegationCapabilities(parentAgentName: AgentName, depth: number): DelegationCapabilitySnapshot;
+  resolveDelegatedSkillNames(target: DelegationTargetCapability, requestedSkills: readonly string[], cwd: string): Promise<readonly string[]>;
 }
 
 export class DuplicateAgentDefinitionError extends Error {
@@ -107,11 +113,21 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
         agentName: definition.name,
         source: { kind: "direct" },
       });
-      return createConfiguredAgent(rootConfig, definition, { ...options, store });
+      return createConfiguredAgent(
+        rootConfig,
+        definition,
+        { ...options, store },
+        factory.resolveDelegationCapabilities,
+      );
     },
 
     createAgent(name, options = {}) {
-      return createConfiguredAgent(agentConfig, factory.getDefinition(name), options);
+      return createConfiguredAgent(
+        agentConfig,
+        factory.getDefinition(name),
+        options,
+        factory.resolveDelegationCapabilities,
+      );
     },
 
     getDefinition(name) {
@@ -130,17 +146,26 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       return factoryResolveAllowedTools(config, definition, depth);
     },
 
-    getDelegateTargetsFor(definition, depth) {
+    resolveDelegationCapabilities(parentAgentName, depth) {
+      const definition = factory.getDefinition(parentAgentName);
       const allowedTools = factory.resolveAllowedTools(definition, depth);
       if (!allowedTools.includes("delegate")) {
-        return [];
+        return freezeDelegationCapabilities(parentAgentName, depth, []);
       }
 
-      return [...(definition.tools.delegateTargets ?? [])];
+      const targets = (definition.tools.delegateTargets ?? []).map((agentName) => {
+        const target = factory.getDefinition(agentName);
+        return {
+          agentName: target.name,
+          profiles: target.profiles,
+          builtinSkillNames: target.skills,
+        };
+      });
+      return freezeDelegationCapabilities(parentAgentName, depth, targets);
     },
 
-    resolveDelegatedSkillNames(targetDefinition, requestedSkills, cwd) {
-      return resolveDelegatedSkillNames(agentConfig.skillService, cwd, targetDefinition, requestedSkills);
+    resolveDelegatedSkillNames(target, requestedSkills, cwd) {
+      return resolveDelegatedSkillNames(agentConfig.skillService, cwd, target, requestedSkills);
     },
   };
 
@@ -150,7 +175,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
 async function resolveDelegatedSkillNames(
   skillService: SkillService,
   workspaceRoot: string,
-  targetDefinition: AgentDefinition,
+  target: DelegationTargetCapability,
   requestedSkills: readonly string[],
 ): Promise<readonly string[]> {
   const dedupedNames: string[] = [];
@@ -158,8 +183,8 @@ async function resolveDelegatedSkillNames(
 
   for (const skillName of requestedSkills) {
     assertSkillName(skillName);
-    if (RESERVED_BUILTIN_SKILL_NAMES.has(skillName) && !targetDefinition.skills.includes(skillName)) {
-      throw new SkillNotAllowedError(targetDefinition.name, skillName, targetDefinition.skills);
+    if (RESERVED_BUILTIN_SKILL_NAMES.has(skillName) && !target.builtinSkillNames.includes(skillName)) {
+      throw new SkillNotAllowedError(target.agentName, skillName, target.builtinSkillNames);
     }
     if (seen.has(skillName)) continue;
     seen.add(skillName);
@@ -167,7 +192,7 @@ async function resolveDelegatedSkillNames(
   }
 
   for (const skillName of dedupedNames) {
-    const skill = await skillService.discoverForAgent(workspaceRoot, skillName, targetDefinition.skills);
+    const skill = await skillService.discoverForAgent(workspaceRoot, skillName, target.builtinSkillNames);
     if (skill === null) {
       throw new SkillNotFoundError(skillName);
     }
@@ -180,8 +205,10 @@ function createConfiguredAgent(
   config: AgentFactoryConfig,
   definition: AgentDefinition,
   options: CreateAgentOptions,
+  resolveDelegationCapabilities: AgentFactory["resolveDelegationCapabilities"],
 ): Agent {
   const store = prepareStore(config, definition, options);
+  const delegationCapabilities = resolveDelegationCapabilities(definition.name, options.depth ?? 0);
 
   return new ConfiguredAgent({
     definition,
@@ -203,6 +230,7 @@ function createConfiguredAgent(
     ...(config.sessionGoalService === undefined ? {} : { sessionGoalService: config.sessionGoalService }),
     resolveVersionControl: config.versionControlDetector ?? detectVersionControl,
     logger: config.logger,
+    delegationCapabilities,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
     startChildExecution: config.startChildExecution,
     cancelChildSession: config.cancelChildSession,
@@ -219,11 +247,32 @@ function factoryResolveAllowedTools(
 ): string[] {
   const all = config.toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
 
-  if (depth >= MAX_SUB_AGENT_DEPTH) {
+  if (
+    definition.childPolicy === undefined
+    || (definition.tools.delegateTargets?.length ?? 0) === 0
+    || depth >= definition.childPolicy.maxDepth
+  ) {
     return all.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
   }
 
   return all;
+}
+
+function freezeDelegationCapabilities(
+  parentAgentName: AgentName,
+  depth: number,
+  targets: readonly DelegationTargetCapability[],
+): DelegationCapabilitySnapshot {
+  const frozenTargets = targets.map((target) => Object.freeze({
+    agentName: target.agentName,
+    profiles: Object.freeze([...target.profiles]),
+    builtinSkillNames: Object.freeze([...target.builtinSkillNames]),
+  }));
+  return Object.freeze({
+    parentAgentName,
+    depth,
+    targets: Object.freeze(frozenTargets),
+  });
 }
 
 function prepareStore(config: AgentFactoryConfig, definition: AgentDefinition, options: CreateAgentOptions): StoreApi<SessionStoreState> {

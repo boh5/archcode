@@ -3,8 +3,15 @@ import type {
   SessionExecutionRecord,
   SessionExecutionTerminalStatus,
 } from "@archcode/protocol";
+import {
+  AgentChildPolicyMissingError,
+  DelegateTargetNotAllowedError,
+  DepthLimitError,
+  SkillNotAllowedError,
+} from "../../agents/errors";
 import { DelegationRequestSchema } from "../../delegation/schema";
 import type { ChildExecutionHandle, ChildExecutionOutcome } from "../../delegation/types";
+import { SkillNotFoundError, SkillValidationError } from "../../skills";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
@@ -60,7 +67,7 @@ export async function executeDelegate(
     const safeError = error instanceof Error ? error : new Error(String(error));
     return createToolErrorResult({
       kind: "execution",
-      code: "TOOL_DELEGATE_FAILED",
+      code: delegateStartErrorCode(error),
       message: safeError.message,
       name: safeError.name,
       error: safeError,
@@ -77,6 +84,32 @@ export async function executeDelegate(
     sessionId: handle.sessionId,
     agentName: handle.store.getState().agentName,
   }, outcome));
+}
+
+function delegateStartErrorCode(error: unknown): string {
+  if (
+    error instanceof DelegateTargetNotAllowedError
+    || error instanceof AgentChildPolicyMissingError
+    || error instanceof DepthLimitError
+  ) {
+    return "TOOL_DELEGATE_TARGET_NOT_ALLOWED";
+  }
+
+  if (hasErrorCode(error, "DELEGATION_PROFILE_NOT_ALLOWED")) {
+    return "TOOL_DELEGATE_PROFILE_NOT_ALLOWED";
+  }
+
+  if (error instanceof SkillNotFoundError) return "TOOL_DELEGATE_SKILL_NOT_FOUND";
+  if (error instanceof SkillValidationError) return "TOOL_DELEGATE_SKILL_INVALID";
+  if (error instanceof SkillNotAllowedError) return "TOOL_DELEGATE_SKILL_NOT_ALLOWED";
+  return "TOOL_DELEGATE_FAILED";
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { readonly code?: unknown }).code === code;
 }
 
 export function formatAsyncChildOutput(handle: ChildExecutionHandle): string {
@@ -154,7 +187,7 @@ export const delegateTool = defineTool({
   name: "delegate",
   description: [
     "Create one direct child Session from a strict DelegationRequest.",
-    "Select the allowed child Agent and its permitted Profile; use deep or fast for Build according to task intensity, and list only the workflow Skills it needs.",
+    "Provide the delegated Agent, Profile, and only the workflow Skills it needs. Current parent/depth capability admission authorizes the selected Agent/Profile pair before child creation.",
     "A fresh child receives its own runtime-provided system context and visible tools, but does not inherit the parent conversation or prior tool results.",
     "Write objective as the minimum self-contained task-specific handoff: state the requested outcome or question, material parent-local facts or decisions, scope or non-goals, expected final output or evidence, and verification when applicable.",
     "Do not rely on the child to reconstruct parent-local understanding, and do not repeat generic context already supplied by the runtime.",

@@ -11,11 +11,13 @@ import type { SessionToolBatchCall } from "../store/types";
 import { ToolOutputArtifactStore } from "../tool-output/artifact-store";
 import { ToolOutputFinalizer } from "../tool-output/finalizer";
 import { askUserTool } from "../tools/builtins/ask-user";
+import { skillListTool } from "../tools/builtins/skill-list";
 import { defineTool } from "../tools/define-tool";
 import { createToolErrorResult } from "../tools/errors";
 import { ToolRegistry } from "../tools/registry";
 import { createTextToolResult } from "../tools/results";
 import { SecretRedactionPolicy } from "../security";
+import { SkillService } from "../skills";
 import { createTestProjectContext } from "../tools/test-project-context";
 import type { AnyToolDescriptor, RawToolResult, ToolCallLike, ToolExecutionContext } from "../tools/types";
 import { testExecutionStart } from "../testing/test-execution-fixtures";
@@ -1172,6 +1174,123 @@ describe("SessionToolBatchScheduler output ownership", () => {
     await markRunning(harness, batch.calls[0]!, 1);
     expect(await harness.scheduler.recoverInterruptedBatch()).toMatchObject({ status: "ready_for_continuation" });
     expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({ state: "completed", attempt: 2 });
+  });
+
+  test("rebuilds target Skill authorization when retrying skill_list after restart", async () => {
+    const harness = await createHarness();
+    harness.registry.register(skillListTool);
+    const skillService = new SkillService({
+      userSkillsRoot: join(TMP_DIR, "user-skills"),
+      userAgentsSkillsRoot: join(TMP_DIR, "user-agent-skills"),
+    });
+    const resolveSkillListTargetSkills = mock((agentType: string) => (
+      agentType === "explore" ? ["codemap", "research-docs"] : undefined
+    ));
+    const createRestartableContext = async (call: ToolCallLike, step: number): Promise<ToolExecutionContext> => ({
+      ...await harness.createContext(call, step),
+      agentSkills: [],
+      skillService,
+      resolveSkillListTargetSkills,
+    });
+    const schedulerOptions = {
+      executionId: "test-execution",
+      runOrdinal: 0,
+      store: harness.store,
+      storeManager: harness.storeManager,
+      workspaceRoot: TMP_DIR,
+      registry: harness.registry,
+      hitlQueue: harness.hitlQueue,
+      agentName: "lead",
+      allowedTools: ["skill_list"],
+      agentSkills: [],
+      logger: harness.logger,
+      createContext: createRestartableContext,
+    } as const;
+    const initialScheduler = new SessionToolBatchScheduler(schedulerOptions);
+    const batch = await initialScheduler.createBatch([{
+      toolCallId: "skill-list-target",
+      toolName: "skill_list",
+      input: { agent_type: "explore" },
+    }], "step-0", 0);
+    await markRunning(harness, batch.calls[0]!, 1);
+
+    const restartedScheduler = new SessionToolBatchScheduler(schedulerOptions);
+    expect(await restartedScheduler.recoverInterruptedBatch()).toMatchObject({
+      status: "ready_for_continuation",
+    });
+    expect(resolveSkillListTargetSkills).toHaveBeenCalledWith("explore");
+    expect(restartedScheduler.activeBatch()!.calls[0]).toMatchObject({
+      state: "completed",
+      attempt: 2,
+      result: { isError: false },
+    });
+    expect(restartedScheduler.activeBatch()!.calls[0]!.result?.output.preview).toContain('"name":"codemap"');
+  });
+
+  test("fails closed when target Skill authorization is revoked before restart recovery", async () => {
+    const harness = await createHarness();
+    harness.registry.register(skillListTool);
+    const skillService = new SkillService({
+      userSkillsRoot: join(TMP_DIR, "user-skills"),
+      userAgentsSkillsRoot: join(TMP_DIR, "user-agent-skills"),
+    });
+    const listPageForAgent = mock(async () => ({
+      items: [{ name: "parent-only", description: "Must not leak", source: "project-archcode" as const }],
+    }));
+    Object.defineProperty(skillService, "listPageForAgent", { value: listPageForAgent });
+    const createContextWith = (
+      resolveSkillListTargetSkills: ToolExecutionContext["resolveSkillListTargetSkills"],
+    ) => async (call: ToolCallLike, step: number): Promise<ToolExecutionContext> => ({
+      ...await harness.createContext(call, step),
+      agentSkills: ["parent-only"],
+      skillService,
+      resolveSkillListTargetSkills,
+    });
+    const schedulerOptions = {
+      executionId: "test-execution",
+      runOrdinal: 0,
+      store: harness.store,
+      storeManager: harness.storeManager,
+      workspaceRoot: TMP_DIR,
+      registry: harness.registry,
+      hitlQueue: harness.hitlQueue,
+      agentName: "lead",
+      allowedTools: ["skill_list"],
+      agentSkills: ["parent-only"],
+      logger: harness.logger,
+    } as const;
+    const initialScheduler = new SessionToolBatchScheduler({
+      ...schedulerOptions,
+      createContext: createContextWith((agentType) => (
+        agentType === "explore" ? ["codemap", "research-docs"] : undefined
+      )),
+    });
+    const batch = await initialScheduler.createBatch([{
+      toolCallId: "skill-list-revoked-target",
+      toolName: "skill_list",
+      input: { agent_type: "explore" },
+    }], "step-0", 0);
+    await markRunning(harness, batch.calls[0]!, 1);
+
+    const restartedScheduler = new SessionToolBatchScheduler({
+      ...schedulerOptions,
+      createContext: createContextWith(() => undefined),
+    });
+    expect(await restartedScheduler.recoverInterruptedBatch()).toMatchObject({
+      status: "ready_for_continuation",
+    });
+    const recoveredCall = restartedScheduler.activeBatch()!.calls[0]!;
+    expect(recoveredCall).toMatchObject({
+      state: "failed",
+      attempt: 2,
+      result: {
+        isError: true,
+        details: { error: { code: "TOOL_SKILL_TARGET_NOT_ALLOWED" } },
+      },
+    });
+    expect(listPageForAgent).not.toHaveBeenCalled();
+    expect(recoveredCall.result?.output.preview).not.toContain("parent-only");
+    expect(recoveredCall.result?.output.preview).not.toContain("codemap");
   });
 
   test("finalizes an exhausted read-only recovery through the Registry system lane", async () => {

@@ -3,10 +3,10 @@ import { SKILL_NAME_REGEX } from "../skills/schema";
 
 const NON_EMPTY = z.string().trim().min(1);
 const DELEGATION_AGENT_TYPE = z.enum(["analyst", "build", "explore", "librarian"]).describe(
-  "Allowed child Agent identity to assign this task to.",
+  "Delegated child Agent identity value. Current parent/depth capability admission determines whether the selected target is authorized.",
 );
 const DELEGATION_PROFILE = z.enum(["deep", "fast"]).describe(
-  "Model-resource Profile for the child: analyst requires deep; explore and librarian require fast; build allows deep or fast.",
+  "Delegated model-resource Profile value. Current parent/depth capability admission determines whether the selected Agent/Profile pair is authorized.",
 );
 const DELEGATION_TITLE = NON_EMPTY.describe(
   "Short user-facing title for the child Session.",
@@ -31,19 +31,6 @@ export const DelegationRequestSchema = z.strictObject({
   objective: DELEGATION_OBJECTIVE,
   skills: DELEGATION_SKILLS,
   background: DELEGATION_BACKGROUND,
-}).superRefine((request, ctx) => {
-  const requiredProfile = request.agent_type === "analyst"
-    ? "deep"
-    : request.agent_type === "explore" || request.agent_type === "librarian"
-      ? "fast"
-      : undefined;
-  if (requiredProfile !== undefined && request.profile !== requiredProfile) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["profile"],
-      message: `${request.agent_type} delegation requires the ${requiredProfile} Profile`,
-    });
-  }
 });
 
 export type DelegationRequestInput = z.input<typeof DelegationRequestSchema>;

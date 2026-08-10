@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod/v4";
 import { DelegationRequestSchema } from "./schema";
 
 function request(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -35,17 +36,31 @@ describe("DelegationRequestSchema", () => {
     }
   });
 
-  test("enforces the target Profile matrix before child creation", () => {
+  test("accepts the static delegated Profile domain without owning target authorization", () => {
     expect(DelegationRequestSchema.parse(request({ agent_type: "analyst", profile: "deep" })).profile).toBe("deep");
-    expect(() => DelegationRequestSchema.parse(request({ agent_type: "analyst", profile: "fast" }))).toThrow();
+    expect(DelegationRequestSchema.parse(request({ agent_type: "analyst", profile: "fast" })).profile).toBe("fast");
     expect(DelegationRequestSchema.parse(request({ agent_type: "build", profile: "fast" })).profile).toBe("fast");
     expect(DelegationRequestSchema.parse(request({ agent_type: "build", profile: "deep" })).profile).toBe("deep");
     for (const agent_type of ["explore", "librarian"]) {
       expect(DelegationRequestSchema.parse(request({ agent_type, profile: "fast" })).profile).toBe("fast");
-      expect(() => DelegationRequestSchema.parse(request({ agent_type, profile: "deep" }))).toThrow();
+      expect(DelegationRequestSchema.parse(request({ agent_type, profile: "deep" })).profile).toBe("deep");
     }
     expect(() => DelegationRequestSchema.parse(request({ profile: "principal" }))).toThrow();
     expect(() => DelegationRequestSchema.parse(request({ profile: "visual" }))).toThrow();
+  });
+
+  test("describes static values while leaving target and Profile authorization to runtime capabilities", () => {
+    const schema = z.toJSONSchema(DelegationRequestSchema) as {
+      readonly properties: Record<string, { readonly description?: string }>;
+    };
+    const agentDescription = schema.properties.agent_type?.description ?? "";
+    const profileDescription = schema.properties.profile?.description ?? "";
+
+    expect(agentDescription).toContain("Delegated child Agent identity value");
+    expect(agentDescription).toContain("parent/depth capability admission");
+    expect(profileDescription).toContain("Delegated model-resource Profile value");
+    expect(profileDescription).toContain("selected Agent/Profile pair is authorized");
+    expect(profileDescription).not.toMatch(/analyst|build|explore|librarian/i);
   });
 
   test("keeps objective, title, and Skill names strict and non-empty", () => {
