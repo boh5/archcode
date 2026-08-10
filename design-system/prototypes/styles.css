@@ -46,6 +46,8 @@
   --elevation-sm: 0 10px 30px rgb(26 31 25 / 9%);
   --elevation-md: 0 14px 34px rgb(0 0 0 / 10%);
   --elevation-lg: 0 22px 56px rgb(25 28 22 / 18%);
+  --shadow-base: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08);
   --shape-control: 6px;
   --shape-card: 8px;
   --shape-popover: 8px;

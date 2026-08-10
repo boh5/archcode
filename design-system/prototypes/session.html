@@ -1408,23 +1408,22 @@
       }
 
       .queue-list {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
         border-top: 1px solid var(--border-subtle);
-        border-bottom: 1px solid var(--border-subtle);
+        background: var(--bg-muted);
       }
 
       .queue-row {
         display: grid;
-        grid-template-columns: 58px minmax(0, 1fr) auto auto;
-        align-items: center;
+        grid-template-columns: minmax(0, 1fr);
         gap: 8px;
-        min-height: 36px;
-        padding: 5px 8px;
-        color: var(--text-secondary);
-        font-size: 10px;
-      }
-
-      .queue-row + .queue-row {
-        border-top: 1px solid var(--border-subtle);
+        padding: 12px 14px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        background: var(--bg-surface);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
       }
 
       body[data-prototype-state="hitl"] .queue-row:nth-child(n + 2) {
@@ -1434,9 +1433,13 @@
       .queue-status {
         display: inline-flex;
         align-items: center;
-        gap: 5px;
+        gap: 6px;
+        margin-bottom: 6px;
         color: var(--text-tertiary);
-        font-weight: 650;
+        font-size: 10px;
+        font-weight: 680;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
       }
 
       .queue-status.steering {
@@ -1444,34 +1447,44 @@
       }
 
       .queue-copy {
-        overflow: hidden;
+        margin-bottom: 8px;
         color: var(--text-primary);
-        font-size: 11px;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1.5;
       }
 
       .queue-model {
+        margin-bottom: 10px;
         color: var(--text-tertiary);
         font-family: var(--font-stack-mono);
-        font-size: 9px;
-        white-space: nowrap;
+        font-size: 11px;
       }
 
       .queue-actions {
         display: flex;
-        gap: 2px;
+        gap: 6px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border-subtle);
       }
 
       .queue-actions button {
-        min-height: 26px;
-        padding: 0 5px;
-        border-radius: 3px;
-        color: var(--text-tertiary);
-        font-size: 9px;
+        min-height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--border-default);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 600;
+        transition:
+          background var(--motion-hover) var(--ease-smooth),
+          border-color var(--motion-hover) var(--ease-smooth),
+          color var(--motion-hover) var(--ease-smooth);
       }
 
       .queue-actions button:hover {
+        border-color: var(--border-strong);
         background: var(--bg-hover);
         color: var(--text-primary);
       }
@@ -2892,15 +2905,15 @@
               <section class="queue-list" aria-label="Queued instructions" data-session-queue>
                 <div class="queue-row">
                   <span class="queue-status">Queued</span>
-                  <span class="queue-copy">After verification, summarize Profile precedence and remaining risk.</span>
+                  <p class="queue-copy">After verification, summarize Profile precedence and remaining risk.</p>
                   <span class="queue-model">GPT-5.6 Luna · deep</span>
-                  <span class="queue-actions"><button data-action="立即引导此消息">Steer</button><button data-action="编辑队列消息">Edit</button><button data-action="删除队列消息">Delete</button></span>
+                  <div class="queue-actions"><button data-action="立即引导此消息">Steer</button><button data-action="编辑队列消息">Edit</button><button data-action="删除队列消息">Delete</button></div>
                 </div>
                 <div class="queue-row">
                   <span class="queue-status steering"><span class="state-dot"></span>Steering</span>
-                  <span class="queue-copy">Also verify the recommendation is visible before Start Work.</span>
+                  <p class="queue-copy">Also verify the recommendation is visible before Start Work.</p>
                   <span class="queue-model">GPT-5.6 Luna · deep</span>
-                  <span class="queue-actions"><button data-action="编辑引导消息">Edit</button><button data-action="删除引导消息">Delete</button></span>
+                  <div class="queue-actions"><button data-action="编辑引导消息">Edit</button><button data-action="删除引导消息">Delete</button></div>
                 </div>
               </section>
 
