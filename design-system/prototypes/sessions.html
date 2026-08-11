@@ -16,7 +16,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=prototype-polish-16" />
+    <link rel="stylesheet" href="./styles.css?v=prototype-polish-17" />
     <style>
       [hidden] { display: none !important; }
 
@@ -343,17 +343,22 @@
         /* shared status-orbit reduced-motion lives in styles.css */
       }
     </style>
-    <script src="./app.js?v=prototype-polish-16" defer></script>
+    <script src="./app.js?v=prototype-polish-17" defer></script>
   </head>
   <body class="sessions-page todo-first-shell">
     <a class="skip-link" href="#work-canvas">Skip to work canvas</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
         <a class="brand-mark" href="./dashboard.html" aria-label="Open Home"><img src="./logo.svg" alt="" width="20" height="20" /></a>
-        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos" aria-current="page">ar</a>
-        <button type="button" class="rail-project" aria-label="Open archcode-readme-demo-workspace" data-action="Open archcode-readme-demo-workspace Todos">ar</button>
-        <button type="button" class="rail-project" aria-label="Open specra-test-projects" data-action="Open specra-test-projects Todos">sp</button>
-        <button type="button" class="rail-icon" aria-label="Open project" title="Open project" data-action="Open project" data-icon="plus"></button>
+        <div class="rail-projects">
+          <a class="rail-project active" href="./todos.html" aria-label="Open ArchCode Todos" aria-current="page" data-project-key="archcode" data-project-name="ArchCode" data-project-path="/Users/bo/Developer/AI/archcode">ac</a>
+          <button type="button" class="rail-project" aria-label="Open archcode-readme-demo-workspace Todos, 2 items need you" data-project-key="archcode-demo" data-project-name="archcode-readme-demo-workspace" data-project-path="/Users/bo/Developer/Demos/archcode-readme" data-project-attention="2" data-action="Open archcode-readme-demo-workspace Todos">ad<span class="rail-attention-count" aria-hidden="true">2</span></button>
+          <button type="button" class="rail-project" aria-label="Open specra-test-projects Todos" data-project-key="specra" data-project-name="specra-test-projects" data-project-path="/Users/bo/Developer/AI/specra-test-projects" data-action="Open specra-test-projects Todos">sp</button>
+          <button type="button" class="rail-project" aria-label="Open Perler Todos" data-project-key="perler" data-project-name="Perler" data-project-path="/Users/bo/Developer/AI/Perler" data-action="Open Perler Todos">pl</button>
+          <button type="button" class="rail-project" aria-label="Open OpenMontage Todos" data-project-key="openmontage" data-project-name="OpenMontage" data-project-path="/Users/bo/Developer/AI/OpenMontage" data-action="Open OpenMontage Todos">om</button>
+          <button type="button" class="rail-icon rail-project-more" aria-label="More projects" title="More projects" aria-haspopup="dialog" aria-expanded="false" aria-controls="project-picker" data-open-project-picker data-icon="more"></button>
+          <button type="button" class="rail-icon" aria-label="Open project" title="Open project" data-action="Open project" data-icon="plus"></button>
+        </div>
         <div class="rail-spacer"></div>
         <div class="rail-separator" aria-hidden="true"></div>
         <button type="button" class="rail-icon rail-search" aria-label="Search all work" title="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
@@ -365,7 +370,7 @@
       <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
         <header class="project-toolbar">
           <div class="project-identity">
-            <span class="project-identity-mark">ar</span>
+            <span class="project-identity-mark">ac</span>
             <div class="project-identity-copy"><h1>ArchCode</h1><span>/workspace/archcode</span></div>
           </div>
           <nav class="project-toolbar-nav" aria-label="Project pages">

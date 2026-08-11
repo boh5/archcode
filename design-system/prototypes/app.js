@@ -671,6 +671,109 @@ document.querySelectorAll("[data-action]").forEach((element) => {
   element.addEventListener("click", () => showToast(element.dataset.action));
 });
 
+function createProjectPicker() {
+  const trigger = document.querySelector("[data-open-project-picker]");
+  const projects = [...document.querySelectorAll(".rail-project[data-project-key]")];
+  if (!(trigger instanceof HTMLButtonElement) || !projects.length) return;
+
+  const picker = document.createElement("section");
+  picker.id = "project-picker";
+  picker.className = "project-picker";
+  picker.hidden = true;
+  picker.setAttribute("role", "dialog");
+  picker.setAttribute("aria-modal", "false");
+  picker.setAttribute("aria-label", "Switch project");
+  picker.setAttribute("aria-hidden", "true");
+  picker.innerHTML = `
+    <div class="project-picker-header">
+      <strong>Switch project</strong>
+      <span>${projects.length} projects</span>
+    </div>
+    <label class="project-picker-filter">
+      ${icon("search")}
+      <span class="sr-only">Filter projects</span>
+      <input type="search" autocomplete="off" placeholder="Filter projects…" aria-label="Filter projects" data-project-picker-filter />
+    </label>
+    <div class="project-picker-list">
+      ${projects.map((project) => {
+        const name = project.dataset.projectName || project.dataset.projectKey || "Project";
+        const path = project.dataset.projectPath || "";
+        const mark = [...project.childNodes].find((node) => node.nodeType === Node.TEXT_NODE)?.textContent?.trim() || name.slice(0, 2).toLowerCase();
+        const attention = project.dataset.projectAttention;
+        const current = project.classList.contains("active");
+        return `<button type="button" class="project-picker-row" data-project-picker-key="${escapePrototypeHtml(project.dataset.projectKey)}" data-project-picker-search="${escapePrototypeHtml(`${name} ${path}`.toLowerCase())}"${current ? ' aria-current="page"' : ""}>
+          <span class="project-picker-mark">${escapePrototypeHtml(mark)}</span>
+          <span class="project-picker-copy"><strong>${escapePrototypeHtml(name)}</strong><small>${escapePrototypeHtml(path)}</small></span>
+          ${attention ? `<span class="project-picker-count" aria-label="${escapePrototypeHtml(attention)} items need you">${escapePrototypeHtml(attention)}</span>` : ""}
+        </button>`;
+      }).join("")}
+      <p class="project-picker-empty" role="status" hidden>No projects match.</p>
+    </div>`;
+  document.body.append(picker);
+
+  const filter = picker.querySelector("[data-project-picker-filter]");
+  const rows = [...picker.querySelectorAll("[data-project-picker-key]")];
+  const empty = picker.querySelector(".project-picker-empty");
+
+  function close({ restoreFocus = true } = {}) {
+    if (picker.hidden) return;
+    picker.hidden = true;
+    picker.setAttribute("aria-hidden", "true");
+    trigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus) requestAnimationFrame(() => trigger.focus());
+  }
+
+  function open() {
+    picker.hidden = false;
+    picker.setAttribute("aria-hidden", "false");
+    trigger.setAttribute("aria-expanded", "true");
+    if (filter instanceof HTMLInputElement) {
+      filter.value = "";
+      rows.forEach((row) => { row.hidden = false; });
+      if (empty) empty.hidden = true;
+      requestAnimationFrame(() => filter.focus());
+    }
+  }
+
+  trigger.addEventListener("click", () => {
+    if (picker.hidden) open();
+    else close();
+  });
+
+  filter?.addEventListener("input", () => {
+    const query = filter instanceof HTMLInputElement ? filter.value.trim().toLowerCase() : "";
+    let visible = 0;
+    rows.forEach((row) => {
+      const match = query.length === 0 || row.dataset.projectPickerSearch?.includes(query);
+      row.hidden = !match;
+      if (match) visible += 1;
+    });
+    if (empty) empty.hidden = visible !== 0;
+  });
+
+  picker.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-project-picker-key]");
+    if (!(row instanceof HTMLButtonElement)) return;
+    const source = projects.find((project) => project.dataset.projectKey === row.dataset.projectPickerKey);
+    close({ restoreFocus: false });
+    source?.click();
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (picker.hidden || picker.contains(event.target) || trigger.contains(event.target)) return;
+    close({ restoreFocus: false });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !picker.hidden) {
+      event.preventDefault();
+      close();
+    }
+  });
+}
+
+createProjectPicker();
+
 const sidebar = document.querySelector(".project-sidebar");
 
 function closeOverlays() {

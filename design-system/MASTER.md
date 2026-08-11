@@ -322,12 +322,23 @@ Narrow-screen rules:
 ## Navigation
 
 - Project rail is the stable global anchor. Project entries use the **Quiet
-  monogram spine**: two-letter lowercase initials derived from the project name
-  (e.g. `ar`, `sp`), not single-letter marks, Discord-style avatars, or per-project
-  icon inventiveness. Utility controls (search, Needs you, Settings, theme) stay
-  outline SVG icons.
-- Active project uses a lime edge marker because it represents the live
-  workspace; active in-project navigation uses indigo.
+  monogram spine**: stable, distinctive two-letter lowercase marks derived from
+  the project name (e.g. `ac`, `ad`, `sp`). Resolve collisions instead of
+  showing duplicate marks; do not use single-letter marks, Discord-style
+  avatars, or per-project icon inventiveness. Utility controls (search, Needs
+  you, Settings, theme) stay outline SVG icons.
+- Active project uses the same indigo selection language as other navigation:
+  a quiet brand field, brand-colored mark, and narrow indigo edge. Lime remains
+  exclusive to genuinely running/live work and never doubles as selection.
+- Keep the active project and the most recently opened projects directly on the
+  rail. At five or more registered projects, show up to five project marks plus
+  one explicit `More projects` control. It opens a searchable project picker
+  with project name, workspace path, current-project state, and project-level
+  Needs-you count. Registry recency determines ordering; the active project must
+  remain directly reachable even if it falls outside that recent slice.
+- `More projects` is a scalable navigation escape hatch, not Add Project and not
+  global work search. Keep the existing plus control for registering/opening a
+  project, and keep `Command/Ctrl+K` reserved for `Search all work`.
 - The project rail is theme-adaptive: warm neutral in light mode and graphite
   in dark mode. Its brand mark, hover fields, selected project, separators, and
   icon contrast use the matching `--rail-*` tokens; never leave a permanently
@@ -398,6 +409,8 @@ Narrow-screen rules:
 - On mobile, keep all three project tabs reachable in a second toolbar row when
   they do not fit beside the project identity. Do not replace them with an
   unrelated bottom-tab model or hide Sessions in overflow.
+- At `≤760px`, show only the active project mark plus `More projects` and Add
+  Project on the rail. The picker remains the complete project inventory.
 
 ## Status Language
 
