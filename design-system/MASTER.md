@@ -1,7 +1,7 @@
 # Signal Workbench Design System
 
 > Target UI specification synchronized with the current effective prototypes on
-> 2026-08-10. Until product implementation catches up, current product code
+> 2026-08-11. Until product implementation catches up, current product code
 > remains authoritative for existing runtime behavior and state mechanics.
 > Prototypes under `design-system/prototypes/` lead visual and copy decisions for
 > surfaces they cover; page files record those decisions for implementation.
@@ -321,7 +321,10 @@ Narrow-screen rules:
 
 ## Navigation
 
-- Project rail is the stable global anchor and uses initials or consistent
+- Project rail is the stable global anchor. Project entries use the **Quiet
+  monogram spine**: two-letter lowercase initials derived from the project name
+  (e.g. `ar`, `sp`), not single-letter marks, Discord-style avatars, or per-project
+  icon inventiveness. Utility controls (search, Needs you, Settings, theme) stay
   outline SVG icons.
 - Active project uses a lime edge marker because it represents the live
   workspace; active in-project navigation uses indigo.
@@ -415,26 +418,27 @@ Rules:
 
 - Prefer **`Needs you`** as the cross-surface product phrase for “user action required.” Do not compete with **`Needs attention`**, **`Waiting`**, or bare **`Permission`** as the primary inventory/header label.
 - **`Permission`** remains correct for the *kind* of gate (tool status, HITL family, Execution `Suspended · Permission`). It is not a substitute for the product group name `Needs you`.
-- On a single Session canvas, do **not** repeat `Needs you` on every chrome layer. Strong product labels stay on **header + Composer**; Work folds, agent tree, and inspector summary use mechanism or time wording (see [`pages/session.md`](pages/session.md)).
+- On a single Session canvas, do **not** repeat `Needs you` on every chrome layer. Strong product labels stay on **header + Composer**; Work folds and agent-tree trailing state use mechanism or time wording (see [`pages/session.md`](pages/session.md)). Do not invent an inspector summary strip to restate the same status.
 - Failed runs use **`--error`** tone and the word **`Failed`**. Do not map failure onto the attention/amber channel.
 
 ### Status visual map
 
 Core decision triad is **Running / Needs you / Done**. The full map also covers
 failure, review, selection, and idle so implementers do not invent competing
-colors.
+colors. **`Ready to review`** is a real product decision state (Home section,
+Todo operational line, inventory cue) — not decorative copy.
 
 | State | Token / field | Visual |
 |---|---|---|
 | Running / live | `--signal` / `--signal-foreground` / `--running-field` | Lime orbit or live pulse + accessible state; running orbits use green glow (`0 0 12px rgba(101, 163, 13, 0.25)`) |
 | Needs you / HITL attention | `--warning` / `--attention-field` | Amber icon/orbit + `Needs you` (or mechanism tag where density rules allow); attention orbits use amber glow (`0 0 12px rgba(251, 146, 60, 0.3)`) |
-| Done / completed | `--success` / `--success-field` | Green check or completed text |
+| Done / completed | `--success` / `--success-field` | Shared **circle-check** SVG (same path as Todos Done `data-icon="circle-check"`) or completed text — never a freehand CSS border-hack check |
 | Failed / error | `--error` / `--error-field` | Red icon/orbit + `Failed` or recovery wording |
 | Ready to review | brand-tinted quiet marker (not lime) | Review-ready inventory cue with brand color glow on focus |
 | Selected / active | `--brand` / `--selection-field` | Indigo field or inset rule |
 | Idle / stopped / neutral | `--neutral` / outline orbit | Outline neutral orbit; no lime |
 
-Shared **status-orbit** (and page aliases: home/session/automation/session-finder/session-picker) is one primitive: same sizes, tones, spin only while `.running`, and `prefers-reduced-motion` freezes spin. Do not fork per-page orbit CSS.
+Shared **status-orbit** (and page aliases: home/session/automation/session-finder/session-picker) is one primitive: same sizes, tones, spin only while `.running`, and `prefers-reduced-motion` freezes spin. Done/completed orbits use the same SVG glyph language as Todos lane Done — do not fork a CSS pseudo-element check. Do not fork per-page orbit CSS.
 
 Automation invocation state is not Session or Execution completion: a
 `dispatched` invocation remains visibly `Dispatched` and must never be labeled
@@ -564,8 +568,17 @@ Execution is a mandatory product entity, not an optional visual section.
 - Queued messages remain directly visible as compact rows with their message
   text and management actions. Do not reduce them to only a count or a `View`
   disclosure.
-- Input, Agent, Profile, next-model selection, Queue/Send, and Stop remain in
-  one quiet surface below the priority band and compact summaries.
+- Input, next-model selection, Queue/Send, and Stop remain in one quiet surface
+  below the priority band and compact summaries.
+- **Next model control** is a single quiet trigger (`Model · effort`) opening one
+  menu. Models are user-configured catalog entries — show **display names only**,
+  with no marketing blurbs. Mark the project/principal default model with a small
+  **Default** badge on that row; do **not** add a separate “Use Principal default”
+  menu item for ordinary selection. Effort (variant) options are free-form config
+  keys from the model definition (plus **Default** when no variant is selected);
+  label the section **Effort**, not Thinking, and do not invent effort descriptions.
+- **Attachments** already on the draft are compact chips: file glyph + name + one
+  remove control. No reorder up/down affordances — order is attach order.
 - A running Session keeps ordinary queue composition available and exposes Stop
   clearly.
 - The dock consumes layout space and never floats over Work or conversation
@@ -579,6 +592,9 @@ Execution is a mandatory product entity, not an optional visual section.
   resizable 280–460px) and an overlay below 1181px.
 - Persistent desktop navigation and Inspector widths are user-resizable and
   restored after collapse or focus mode.
+- **No inspector summary strip** above the tab bar. Status, agent count, and file
+  count already live on header/Composer, Agents/Changes tab badges, and Context
+  rows — restating them wastes chrome and duplicates product urgency.
 - **Role split:** main canvas owns narrative work (transcript, Work, HITL
   decision UI, Composer). The inspector owns machine state — agent structure,
   file artifacts, and session bindings — not a second chat or primary CTA strip.
@@ -699,10 +715,15 @@ Motion explains state changes; it is not decoration.
       restoring Execution/model/message metadata at 390px, 760px, and desktop.
 - [ ] Confirm product status copy uses `Needs you` on inventories/header/Composer
       and does not paint `Failed` as amber attention.
-- [ ] Confirm Session canvas does not stack `Needs you` on Work, agent tree, and
-      inspector summary in addition to header + Composer.
+- [ ] Confirm Session canvas does not stack `Needs you` on Work or agent tree in
+      addition to header + Composer, and that the inspector has no summary strip.
 - [ ] Confirm Context Inspector remains three tabs, quiet list density, and no
       hosted HITL primary actions.
+- [ ] Confirm composer model menu shows bare model names + Default badge, Effort
+      (not Thinking) without marketing blurbs, and attachments are remove-only chips.
+- [ ] Confirm shared done/completed status-orbit uses the same circle-check glyph
+      as Todos Done.
+- [ ] Confirm project rail uses Quiet two-letter monograms for projects.
 - [ ] Confirm keyboard focus and accessible expansion state.
 - [ ] Confirm `prefers-reduced-motion`.
 - [ ] Confirm browser console is clean.

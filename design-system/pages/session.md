@@ -218,11 +218,9 @@ on the project rail.
 
 - Default width **312px** (resize 280–460px); collapse and focus mode preserve the
   last expanded width.
-- Optional one-line **summary strip** under the chrome close control:
-  mechanism-or-product-short status + `N agents · N files`. When the Session
-  product status is `Needs you`, this strip prefers the HITL **request family**
-  (**`Permission`** or **`Question`**) so the canvas does not shout `Needs you`
-  three times. Terminal **`Failed`** uses the error word, never amber attention.
+- **No summary strip** above the tab bar. Do not restate Session status, agent
+  count, or file count as a chrome line — those already live on the Session
+  header/Composer, Agents/Changes tab badges, and Context property rows.
 - Tab bar may carry counts (`Agents 4`, `Changes 3`). Active tab uses a brand
   underline, not a filled pill block.
 - Type floor ≥11px; primary labels ~12–12.5px; meta ~11–11.5px. No sub-11px
@@ -290,11 +288,27 @@ on the project rail.
 - Queued messages remain visible as compact rows with their content and
   management actions. Never collapse the queue to only a count or `View`
   control.
-- Agent, Profile, next model, and the current Send/Queue/Stop actions remain in
-  the quiet input surface below those priority cues.
+- **Next model picker** (prototype `composer-model-picker`):
+  - Trigger shows `Model display name · effort` (effort omitted only when the
+    catalog model has no variants).
+  - Menu lists **model display names only** — no marketing descriptions
+    (“Balanced default…”, etc.). Models are user-added configuration.
+  - The project/principal default model, if known, carries a small **Default**
+    badge on that row. Do not add a separate “Use Principal default” option for
+    ordinary next-run selection in the prototype; product may still expose
+    profile-default reset only when the session already holds an explicit
+    override (see product `ModelPicker`).
+  - Effort section label is **Effort** (not Thinking). Options are free-form
+    variant keys from model config (e.g. `fast`, `deep`) plus **Default** when
+    no variant is selected. No effort description hints.
+- **Draft attachments** are chips: file glyph + truncated name + one remove (×)
+  control. Size/ready secondary text is optional and may stay hidden at this
+  density. No up/down reorder controls — attach order is enough.
+- Agent identity and the current Send/Queue/Stop actions remain in the quiet
+  input surface below those priority cues.
 - A running Session may queue ordinary messages while Stop remains a separate,
   unmistakable action.
-- On very narrow layouts, hide secondary Profile/model metadata before removing
+- On very narrow layouts, hide secondary model/effort metadata before removing
   Agent identity or the primary Queue/Send/Stop controls.
 
 ## Session-Specific Avoidances
@@ -308,8 +322,12 @@ on the project rail.
 - an expandable Composer or Goal progress bar;
 - HITL placed below Goal, Queue, or ordinary input;
 - live lime used on completed rows;
-- stacked product `Needs you` labels on Work, agent tree, and inspector summary
-  in addition to header + Composer;
+- stacked product `Needs you` labels on Work or agent tree in addition to
+  header + Composer;
+- an inspector summary strip that restates status or counts already on tabs;
+- model marketing blurbs, a separate Principal-default menu row, or Thinking
+  intensity copy with invented effort descriptions;
+- attachment reorder arrows on already-attached draft chips;
 - inspector card stacks, sub-10px type, or brand-wash agent selection;
 - collapsed state that hides the existence of Execution;
 - tool output that expands beyond the work canvas;

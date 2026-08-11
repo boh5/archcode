@@ -68,7 +68,9 @@ Lane rules:
   large filled empty box. A current drag target may use one temporary quiet
   field.
 - Lane headers use a status orbit, title, short explanation, one bottom rule,
-  and a plain tabular count. Do not box the count as a badge.
+  and a plain tabular count. Do not box the count as a badge. The Done lane
+  orbit uses the shared **circle-check** glyph (`data-icon="circle-check"`);
+  other inventory done orbits must match this glyph, not invent a CSS check.
 - Todo cards are the Board's only persistent card layer. Use one quiet border,
   6px radius, and no elevation.
 - Cards use subtle hover micro-interactions (1px `translateY` lift) with

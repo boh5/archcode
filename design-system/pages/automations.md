@@ -38,8 +38,10 @@ attention, and recover the exact Session associated with every run.
 - Each row shows the shared status orbit, name, concise schedule or latest-run
   context, and the real definition/Invocation state. Terminal failures show
   **`Failed`** with error tone; human gates show **`Needs you`** with attention
-  tone. `dispatched` is not `Completed`; the final execution result is read from
-  the linked Session. Use a flat row with separators, not a summary card.
+  tone. Completed/successful recent cues use the shared circle-check done orbit
+  when an orbit is shown. `dispatched` is not `Completed`; the final execution
+  result is read from the linked Session. Use a flat row with separators, not a
+  summary card.
 - Rows use subtle hover micro-interactions (0.5px `translateY` lift) with
   background color change for perceived responsiveness without raised shadows.
 - Selection uses the shared indigo selected treatment. Needs-you state keeps

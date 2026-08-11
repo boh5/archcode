@@ -20,8 +20,9 @@ analytics dashboard.
 
 - Keep only the theme-adaptive project rail and global work canvas. Do not render
   a project toolbar, persistent project sidebar, or project-level New Session.
-- The ArchCode brand mark represents the current Home destination. Project icons
-  open each project's Todos page.
+- The ArchCode brand mark represents the current Home destination. Project
+  entries on the rail use Quiet two-letter monograms and open each project's
+  Todos page.
 - Main content width is at most 1180px with 40px desktop gutters and 18px narrow
   gutters.
 - Pair `Needs you` with `Running` and `Ready to review` with `Upcoming` on wide
@@ -52,8 +53,10 @@ Do not add greetings, marketing copy, metrics, charts, or a global Todo board.
   failure as amber attention. Mechanism detail (`Permission`, `Question`, etc.)
   may appear in accessible names or secondary copy without replacing the section
   title.
-- Running rows use the live orbit plus elapsed time. Review rows say what result
-  is awaiting review. Upcoming rows identify the Automation schedule.
+- Running rows use the live orbit plus elapsed time. **Ready to review** is a
+  real Home decision section and row state (brand-tinted review cue), not a
+  synonym for Done. Review rows say what result is awaiting review. Upcoming
+  rows identify the Automation schedule.
 - Current-project rows use exact Todo, Automation, or Session deep links. Other
   project rows may remain explicit prototype actions rather than fake deep links.
 - Prefer a few decision-worthy rows over exhaustive recent activity. Home must

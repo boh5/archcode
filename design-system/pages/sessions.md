@@ -38,8 +38,9 @@ attention, and start work directly without manufacturing a Todo first.
   **`Failed`** rows use the error orbit/tone and the word `Failed` — they may
   still sort under the Needs you *decision group* but must not look like amber
   HITL.
-- **`Running`** uses the live orbit plus elapsed time; completed Recent rows use a
-  green check or explicit completed text.
+- **`Running`** uses the live orbit plus elapsed time; completed Recent rows use
+  the shared **circle-check** done orbit (same glyph as Todos Done) or explicit
+  completed text — not a CSS border-hack check.
 - The whole row opens the exact Session URL. Destructive actions remain in an
   overflow menu or the Session detail and never compete with row navigation.
 
