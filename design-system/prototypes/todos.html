@@ -2,13 +2,21 @@
 <html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("archcode-prototype-theme");
+          if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="ArchCode Project Todos 工作台原型" />
+    <meta name="description" content="ArchCode Project Todos workbench prototype" />
     <title>ArchCode — Todos Prototype</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=prototype-polish-2" />
+    <link rel="stylesheet" href="./styles.css?v=prototype-polish-16" />
     <style>
       [hidden] {
         display: none !important;
@@ -2392,23 +2400,23 @@
         }
       }
     </style>
-    <script src="./app.js?v=prototype-polish-2" defer></script>
+    <script src="./app.js?v=prototype-polish-16" defer></script>
   </head>
   <body class="todos-page todo-first-shell">
-    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+    <a class="skip-link" href="#work-canvas">Skip to work canvas</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
         <a class="brand-mark" href="./dashboard.html" aria-label="Open Home"><img src="./logo.svg" alt="" width="20" height="20" /></a>
-        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
-        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
-        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
-        <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
+        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos" aria-current="page">ar</a>
+        <button type="button" class="rail-project" aria-label="Open archcode-readme-demo-workspace" data-action="Open archcode-readme-demo-workspace Todos">ar</button>
+        <button type="button" class="rail-project" aria-label="Open specra-test-projects" data-action="Open specra-test-projects Todos">sp</button>
+        <button type="button" class="rail-icon" aria-label="Open project" title="Open project" data-action="Open project" data-icon="plus"></button>
         <div class="rail-spacer"></div>
-        <div class="rail-separator"></div>
-        <button class="rail-icon rail-search" aria-label="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
-        <button class="rail-icon" aria-label="Open 3 requests needing attention" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
-        <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
-        <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
+        <div class="rail-separator" aria-hidden="true"></div>
+        <button type="button" class="rail-icon rail-search" aria-label="Search all work" title="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
+        <button type="button" class="rail-icon" aria-label="Open 3 requests needing attention" title="Needs you" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
+        <button type="button" class="rail-icon" aria-label="Settings" title="Settings" data-action="Open settings" data-icon="settings"></button>
+        <button type="button" class="rail-icon" aria-label="Toggle theme" title="Toggle theme" data-theme-toggle data-icon="sun"></button>
       </nav>
 
       <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">
@@ -2500,7 +2508,7 @@
                   </header>
                   <div class="lane-content" data-lane-content="idea">
                     <article class="todo-card" data-runtime="">
-                      <button class="drag-handle" aria-label="Drag Add per-project context presets" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="drag-handle" aria-label="Drag Add per-project context presets" data-action="Drag todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-context-presets">
                         <span class="todo-excerpt">Add per-project context presets Capture reusable context without turning it into global configuration.</span>
                       </button>
@@ -2514,7 +2522,7 @@
                   </header>
                   <div class="lane-content" data-lane-content="ready">
                     <article class="todo-card" data-runtime="">
-                      <button class="drag-handle" aria-label="Drag Model profile defaults per project" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="drag-handle" aria-label="Drag Model profile defaults per project" data-action="Drag todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-profile-defaults">
                         <span class="todo-excerpt">Model profile defaults per project Project recommendation, explicit Session override, no hidden inheritance.</span>
                       </button>
@@ -2528,7 +2536,7 @@
                   </header>
                   <div class="lane-content" data-lane-content="in_progress">
                     <article class="todo-card" data-runtime="needs_you">
-                      <button class="drag-handle" aria-label="Drag Review worktree deletion permission" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="drag-handle" aria-label="Drag Review worktree deletion permission" data-action="Drag todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-worktree-permission">
                         <span class="todo-excerpt">Review worktree deletion permission One bound Session is waiting for permission on a resolved worktree path.</span>
                         <span class="todo-operational attention"><span class="runtime-dot"></span>Needs you</span>
@@ -2536,7 +2544,7 @@
                     </article>
 
                     <article class="todo-card" data-runtime="failed">
-                      <button class="drag-handle" aria-label="Drag Repair failed Automation verification" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="drag-handle" aria-label="Drag Repair failed Automation verification" data-action="Drag todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-failed-verification">
                         <span class="todo-excerpt">Repair failed Automation verification The latest linked run failed with preserved evidence and needs recovery.</span>
                         <span class="todo-operational failed"><span class="runtime-dot"></span>Failed</span>
@@ -2544,7 +2552,7 @@
                     </article>
 
                     <article class="todo-card" data-runtime="running">
-                      <button class="drag-handle" aria-label="Drag Live execution recovery" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="drag-handle" aria-label="Drag Live execution recovery" data-action="Drag todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-live-recovery">
                         <span class="todo-excerpt">Live execution recovery Repair missed runtime events from the next authoritative Session snapshot.</span>
                         <span class="todo-operational running"><span class="runtime-dot"></span>Working</span>
@@ -2552,7 +2560,7 @@
                     </article>
 
                     <article class="todo-card" data-runtime="review">
-                      <button class="drag-handle" aria-label="Drag Unify project work search" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="drag-handle" aria-label="Drag Unify project work search" data-action="Drag todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-work-search">
                         <span class="todo-excerpt">Unify project work search Search Todos, Sessions, and Automations from one project-level surface.</span>
                         <span class="todo-operational review"><span class="runtime-dot"></span>Ready to review</span>
@@ -2567,7 +2575,7 @@
                   </header>
                   <div class="lane-content" data-lane-content="done">
                     <article class="todo-card" data-runtime="">
-                      <button class="drag-handle" aria-label="Drag Preserve Session cwd references" data-action="拖动 Todo" data-icon="grip"></button>
+                      <button class="drag-handle" aria-label="Drag Preserve Session cwd references" data-action="Drag todo" data-icon="grip"></button>
                       <button class="todo-card-content" data-open-todo data-todo-id="todo-cwd-references">
                         <span class="todo-excerpt">Preserve Session cwd references Migration, verification, and linked worktree diagnostics delivered.</span>
                       </button>
@@ -2612,7 +2620,7 @@
             </div>
             <div class="reject-banner" data-reject-banner hidden>
               <div><strong data-reject-title>Rejected</strong><span data-reject-copy>Returned to the idea pool for reconsideration. Restore it when the intent matters again.</span></div>
-              <button class="quiet-button" type="button" data-action="恢复 Todo">Restore</button>
+              <button class="quiet-button" type="button" data-action="Restore todo">Restore</button>
             </div>
             <h1 class="sr-only" id="todo-detail-title" tabindex="-1" data-detail-heading>Todo detail</h1>
           </header>
@@ -2658,7 +2666,7 @@
                       <div class="document-meta"><span>Markdown</span><span>Saved with this Todo</span><span>18m ago</span></div>
                     </div>
                     <div class="document-actions">
-                      <button class="secondary-button" data-action="编辑 Brief / PRD">Edit</button>
+                      <button class="secondary-button" data-action="Edit Brief / PRD">Edit</button>
                     </div>
                   </header>
                   <div class="document-copy" data-detail-prd>
@@ -2686,7 +2694,7 @@
                       <h2 id="references-title">References</h2>
                       <p class="references-help">Files stay in this project. Agent work can read the current set; images may be sent to the selected model provider.</p>
                     </div>
-                    <button class="secondary-button" data-action="选择 Todo Reference 文件"><span data-icon="plus"></span>Add files</button>
+                    <button class="secondary-button" data-action="Select todo reference files"><span data-icon="plus"></span>Add files</button>
                   </header>
                   <div class="reference-list" data-reference-list></div>
                   <p class="work-empty" data-reference-empty hidden>No references yet. Add a file when the work needs source material.</p>
@@ -2699,7 +2707,7 @@
                       <div class="document-meta"><span class="plan-progress" data-plan-progress>2 of 5 steps done</span><span data-plan-path>.archcode/plans/todo-profile-defaults.md</span></div>
                     </div>
                     <div class="document-actions">
-                      <button class="secondary-button" data-action="改进 Plan">Improve</button>
+                      <button class="secondary-button" data-action="Improve plan">Improve</button>
                     </div>
                   </header>
                   <div data-plan-copy></div>
@@ -2712,7 +2720,7 @@
                       <div class="document-meta"><span>Optional</span><span>Independent from lifecycle state</span></div>
                     </div>
                     <div class="document-actions">
-                      <button class="secondary-button" data-action="生成 Plan">Generate Plan</button>
+                      <button class="secondary-button" data-action="Generate plan">Generate Plan</button>
                     </div>
                   </header>
                   <div class="plan-empty">Use a Discussion when this work needs shaping. Simple work can still run immediately without creating a Plan.</div>
@@ -2738,15 +2746,15 @@
                     <h3>Discuss &amp; Plan</h3>
                     <div class="work-actions">
                       <button class="secondary-button" data-discuss-todo>Continue Discussion</button>
-                      <button class="quiet-button" data-new-discussion data-action="创建新的 Todo Discussion">New Discussion</button>
+                      <button class="quiet-button" data-new-discussion data-action="Create new todo discussion">New Discussion</button>
                     </div>
                   </div>
                   <div class="work-action-group" data-execution-group>
                     <h3>Execution</h3>
                     <div class="work-actions">
                       <button class="primary-button" data-detail-primary>Continue Work</button>
-                      <button class="secondary-button" data-new-work-session data-action="创建新的 Work Session">New Work Session</button>
-                      <button class="quiet-button" data-action="基于 Todo 创建 Automation">Create Automation</button>
+                      <button class="secondary-button" data-new-work-session data-action="Create new work session">New Work Session</button>
+                      <button class="quiet-button" data-action="Create automation from todo">Create Automation</button>
                     </div>
                   </div>
                   <div class="work-action-group" data-complete-group hidden>
@@ -2796,9 +2804,9 @@
                   <h2>Lifecycle</h2>
                   <p class="work-panel-intro">Lifecycle describes the work item. Execution status comes from linked Sessions and Automation runs.</p>
                   <div class="lifecycle-actions">
-                    <button class="secondary-button" data-action="移动 Todo 状态">Move status</button>
-                    <button class="quiet-button" data-action="拒绝 Todo">Reject</button>
-                    <button class="quiet-button" data-action="归档 Todo">Archive</button>
+                    <button class="secondary-button" data-action="Move todo status">Move status</button>
+                    <button class="quiet-button" data-action="Reject todo">Reject</button>
+                    <button class="quiet-button" data-action="Archive todo">Archive</button>
                   </div>
                   <p class="lifecycle-note">No Plan state, Goal state, or execution phase is added to the Todo.</p>
                 </section>
@@ -3378,7 +3386,7 @@ Session storage remains project-root owned while every managed worktree executio
         const excerpt = contentExcerpt(sample.content);
         const runtime = sampleRuntime(sample);
         return `<article class="todo-card" data-runtime="${runtime}">
-          <button class="drag-handle" aria-label="Drag ${escapeHtml(excerpt)}" data-action="拖动 Todo" data-icon="grip"></button>
+          <button class="drag-handle" aria-label="Drag ${escapeHtml(excerpt)}" data-action="Drag todo" data-icon="grip"></button>
           <button class="todo-card-content" data-open-todo data-todo-id="${escapeHtml(sample.id)}">
             <span class="todo-excerpt">${escapeHtml(excerpt)}</span>
             ${operationalMarkup(sample)}
@@ -3461,13 +3469,13 @@ Session storage remains project-root owned while every managed worktree executio
         if (discuss) {
           event.preventDefault();
           event.stopPropagation();
-          showToast("Discuss · 原型演示");
+          showToast("Discuss · prototype demo");
           return;
         }
         if (plan) {
           event.preventDefault();
           event.stopPropagation();
-          showToast("Plan · 原型演示");
+          showToast("Plan · prototype demo");
         }
       });
 
@@ -3690,7 +3698,7 @@ Session storage remains project-root owned while every managed worktree executio
           markTodoDone();
           return;
         }
-        showToast(`Move to ${segment.dataset.statusMove} · 原型演示`);
+        showToast(`Move to ${segment.dataset.statusMove} · prototype demo`);
       });
 
       function syncDetailChrome() {

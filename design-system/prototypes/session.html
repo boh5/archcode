@@ -2,16 +2,24 @@
 <html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("archcode-prototype-theme");
+          if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="ArchCode Session 页面状态原型，默认聚焦完成态，并通过独立场景覆盖运行、HITL 与诊断组件"
+      content="ArchCode Session page state prototype; defaults to completed focus and covers running, HITL, and diagnostic scenes"
     />
     <title>ArchCode — Session Prototype</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=prototype-polish-3" />
+    <link rel="stylesheet" href="./styles.css?v=prototype-polish-16" />
     <style>
       :root {
         --inspector-width: 312px;
@@ -36,7 +44,12 @@
 
       .session-page .project-rail { grid-area: rail; }
       .session-page .project-toolbar { grid-area: toolbar; }
-      .session-page .work-canvas { grid-area: canvas; min-height: 0; }
+      .session-page .work-canvas {
+        grid-area: canvas;
+        min-height: 0;
+        /* Allow composer popovers (model menu) to paint over conversation. */
+        overflow: visible;
+      }
 
       .inspector-collapsed .context-inspector {
         display: none;
@@ -57,6 +70,8 @@
         flex-direction: column;
         min-height: 0;
         flex: 1 1 auto;
+        /* Keep overflow visible so the model menu is not clipped by the canvas. */
+        overflow: visible;
         background: var(--bg-base);
       }
 
@@ -559,6 +574,7 @@
       }
 
       .conversation {
+        position: relative;
         min-height: 0;
         flex: 1;
         overflow: auto;
@@ -568,7 +584,7 @@
       .conversation-inner {
         width: min(100%, 900px);
         margin: 0 auto;
-        padding: 32px 24px 46px;
+        padding: 32px 24px 28px;
       }
 
       .direct-session-empty {
@@ -1076,21 +1092,63 @@
         font-weight: 600;
       }
 
+      /* One dock unit: HITL → Queue → Composer.
+         Priority stack can scroll; Composer stays pinned at the bottom and
+         never lives inside a clipping ancestor — model menus open above it. */
       .composer-dock {
-        flex: 0 0 auto;
-        max-height: min(360px, 49dvh);
-        padding: 10px 26px 16px;
-        overflow: auto;
-        border-top: 0;
-        background: linear-gradient(to bottom, transparent, var(--bg-base) 18px);
-        scrollbar-color: var(--border-default) transparent;
+        position: relative;
+        z-index: 40;
+        display: flex;
+        flex: 0 1 auto;
+        flex-direction: column;
+        min-height: 0;
+        max-height: min(48dvh, 520px);
+        padding: 0;
+        overflow: visible;
+        border-top: 1px solid var(--border-default);
+        background: var(--bg-base);
       }
 
       .dock-inner {
-        display: grid;
-        gap: 8px;
+        display: flex;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 10px;
         width: min(100%, 900px);
+        min-height: 0;
+        max-height: 100%;
         margin: 0 auto;
+        padding: 12px 26px 14px;
+        overflow: visible;
+      }
+
+      /* Only HITL + Queue scroll. Composer is a sibling so popovers escape. */
+      .dock-priority {
+        display: flex;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+        min-width: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-color: var(--border-default) transparent;
+      }
+
+      .hitl-preview-control,
+      .hitl-shell,
+      .queue-list {
+        flex: 0 0 auto;
+        min-width: 0;
+      }
+
+      .composer-collapsed,
+      .composer {
+        flex: 0 0 auto;
+        min-width: 0;
+        position: relative;
+        z-index: 2;
       }
 
       .hitl-preview-control {
@@ -1425,21 +1483,41 @@
 
       .queue-list {
         display: grid;
-        gap: 8px;
-        padding: 12px;
-        border-top: 1px solid var(--border-subtle);
-        background: var(--bg-muted);
+        gap: 6px;
+        padding: 0;
+        background: transparent;
+        pointer-events: auto;
+      }
+
+      .queue-list > * {
+        pointer-events: auto;
+      }
+
+      body[data-prototype-state="hitl"] .queue-list {
+        padding-top: 0;
+        background: transparent;
       }
 
       .queue-row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 8px;
-        padding: 12px 14px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 36px;
+        padding: 0 10px 0 12px;
         border: 1px solid var(--border-subtle);
         border-radius: 8px;
-        background: var(--bg-surface);
+        background: var(--bg-elevated);
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+        transition:
+          border-color var(--motion-hover) var(--ease-smooth),
+          box-shadow var(--motion-hover) var(--ease-smooth),
+          background var(--motion-hover) var(--ease-smooth);
+      }
+
+      .queue-row:hover {
+        border-color: var(--border-default);
+        background: color-mix(in srgb, var(--bg-elevated) 92%, var(--bg-hover));
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
       }
 
       body[data-prototype-state="hitl"] .queue-row:nth-child(n + 2) {
@@ -1449,60 +1527,92 @@
       .queue-status {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        margin-bottom: 6px;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
         color: var(--text-tertiary);
-        font-size: 10px;
-        font-weight: 680;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
+      }
+
+      .queue-status svg {
+        width: 14px;
+        height: 14px;
       }
 
       .queue-status.steering {
         color: var(--signal-foreground);
       }
 
+      .queue-status.steering .state-dot {
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal-foreground) 18%, transparent);
+      }
+
       .queue-copy {
-        margin-bottom: 8px;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
         color: var(--text-primary);
         font-size: 13px;
         font-weight: 500;
-        line-height: 1.5;
+        line-height: 1.35;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .queue-model {
-        margin-bottom: 10px;
-        color: var(--text-tertiary);
-        font-family: var(--font-stack-mono);
-        font-size: 11px;
+        display: none;
       }
 
       .queue-actions {
         display: flex;
-        gap: 6px;
-        padding-top: 8px;
-        border-top: 1px solid var(--border-subtle);
+        flex-shrink: 0;
+        align-items: center;
+        gap: 2px;
+        margin-left: 4px;
       }
 
       .queue-actions button {
-        min-height: 28px;
-        padding: 0 10px;
-        border: 1px solid var(--border-default);
+        display: inline-grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        border: 0;
         border-radius: 6px;
         background: transparent;
-        color: var(--text-secondary);
-        font-size: 11px;
-        font-weight: 600;
+        color: var(--text-tertiary);
         transition:
           background var(--motion-hover) var(--ease-smooth),
-          border-color var(--motion-hover) var(--ease-smooth),
           color var(--motion-hover) var(--ease-smooth);
       }
 
+      .queue-actions button svg {
+        width: 14px;
+        height: 14px;
+      }
+
       .queue-actions button:hover {
-        border-color: var(--border-strong);
         background: var(--bg-hover);
         color: var(--text-primary);
+      }
+
+      .queue-actions button:active {
+        background: var(--bg-active, var(--bg-hover));
+      }
+
+      /* Steer = inject into live turn (corner-down-right) */
+      .queue-actions button[data-icon="corner-down-right"] {
+        color: var(--brand);
+      }
+
+      .queue-actions button[data-icon="corner-down-right"]:hover {
+        background: color-mix(in srgb, var(--brand) 12%, var(--bg-hover));
+        color: var(--brand);
+      }
+
+      .queue-actions button[data-icon="trash"]:hover {
+        background: color-mix(in srgb, var(--error) 10%, var(--bg-hover));
+        color: var(--error);
       }
 
       .composer-collapsed {
@@ -1512,13 +1622,14 @@
         min-height: 40px;
         padding: 3px 5px;
         border: 1px solid var(--border-subtle);
-        border-radius: 4px;
+        border-radius: 8px;
         background: var(--bg-elevated);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
       }
 
       .composer-collapsed[hidden],
       .composer[hidden] {
-        display: none;
+        display: none !important;
       }
 
       .composer-expand-trigger {
@@ -1530,7 +1641,7 @@
         justify-content: space-between;
         gap: 12px;
         padding: 0 8px;
-        border-radius: 4px;
+        border-radius: 6px;
         color: var(--text-tertiary);
         font-size: 12px;
         text-align: left;
@@ -1547,8 +1658,8 @@
         border-radius: 12px;
         background: var(--bg-elevated);
         box-shadow:
-          0 1px 2px rgba(0, 0, 0, 0.04),
-          0 0 0 1px rgba(0, 0, 0, 0.02);
+          0 4px 16px rgba(0, 0, 0, 0.08),
+          0 0 0 1px rgba(255, 255, 255, 0.03) inset;
         transition:
           border-color var(--motion-hover) var(--ease-smooth),
           box-shadow var(--motion-hover) var(--ease-smooth);
@@ -1557,15 +1668,18 @@
       .composer:focus-within {
         border-color: var(--brand);
         box-shadow:
-          0 0 0 3px rgba(99, 102, 241, 0.12),
-          0 2px 8px rgba(99, 102, 241, 0.12);
+          0 0 0 3px rgba(99, 102, 241, 0.15),
+          0 12px 40px rgba(99, 102, 241, 0.2),
+          0 4px 12px rgba(0, 0, 0, 0.15),
+          0 0 0 1px rgba(99, 102, 241, 0.1) inset;
       }
 
       .composer-attachments {
-        display: grid;
-        gap: 4px;
-        max-height: 160px;
-        margin: 12px 12px 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-height: 80px;
+        margin: 10px 12px 0;
         overflow: auto;
         padding: 0;
         list-style: none;
@@ -1578,60 +1692,71 @@
       .composer-attachment {
         display: flex;
         min-width: 0;
+        max-width: 200px;
         align-items: center;
-        gap: 8px;
-        padding: 6px 8px;
+        gap: 6px;
+        padding: 5px 6px 5px 8px;
         border: 1px solid var(--border-subtle);
-        border-radius: 4px;
+        border-radius: 6px;
         background: var(--bg-base);
+        transition: border-color var(--motion-hover) var(--ease-smooth);
+      }
+
+      .composer-attachment:hover {
+        border-color: var(--border-default);
+      }
+
+      .composer-attachment > [data-icon] {
+        flex-shrink: 0;
+        color: var(--text-tertiary);
+      }
+
+      .composer-attachment > [data-icon] svg {
+        width: 12px;
+        height: 12px;
       }
 
       .composer-attachment strong {
-        display: block;
+        min-width: 0;
+        flex: 1;
         overflow: hidden;
         color: var(--text-primary);
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: 560;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
-      .composer-attachment small {
-        display: block;
-        color: var(--text-tertiary);
-        font-size: 11px;
-      }
-
-      .composer-attachment-meta {
-        min-width: 0;
-        flex: 1;
-      }
-
-      .composer-attachment-actions {
-        display: flex;
+      .composer-attachment-remove {
+        display: inline-grid;
         flex-shrink: 0;
-        align-items: center;
-        gap: 2px;
-      }
-
-      .composer-attachment-actions button {
-        min-height: 24px;
-        padding: 0 6px;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
         border-radius: 3px;
         color: var(--text-tertiary);
-        font-size: 11px;
+        transition:
+          background var(--motion-hover) var(--ease-smooth),
+          color var(--motion-hover) var(--ease-smooth);
       }
 
-      .composer-attachment-actions button:hover {
+      .composer-attachment-remove:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
+      }
+
+      .composer-attachment-remove [data-icon] svg,
+      .composer-attachment-remove svg {
+        width: 11px;
+        height: 11px;
       }
 
       .composer-placeholder {
         display: block;
         width: 100%;
         min-height: 56px;
-        max-height: 200px;
+        max-height: 160px;
         padding: 14px 16px 8px;
         overflow: auto;
         resize: none;
@@ -1719,7 +1844,6 @@
 
       .composer-state[hidden],
       .composer-hide[hidden],
-      .composer-queue-button[hidden],
       .composer-hint[hidden] {
         display: none;
       }
@@ -1737,101 +1861,124 @@
         color: var(--text-primary);
       }
 
+      /* Single quiet Model · Effort control */
       .composer-model-picker {
         position: relative;
+        z-index: 5;
         display: flex;
         min-width: 0;
+        max-width: min(240px, 42vw);
         align-items: center;
-        gap: 2px;
       }
 
-      .composer-model-trigger,
-      .composer-variant-trigger {
+      .composer-model-trigger {
         display: inline-flex;
-        max-width: 190px;
         min-width: 0;
-        height: 32px;
+        max-width: 100%;
+        height: 30px;
         align-items: center;
-        gap: 5px;
-        padding: 0 9px;
-        border: 1px solid var(--border-subtle);
-        border-radius: 6px;
-        background: var(--bg-elevated);
+        gap: 6px;
+        padding: 0 8px 0 10px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
         color: var(--text-secondary);
         font-size: 12px;
-        font-weight: 600;
+        font-weight: 520;
         text-align: left;
         transition:
           background var(--motion-hover) var(--ease-smooth),
-          border-color var(--motion-hover) var(--ease-smooth),
           color var(--motion-hover) var(--ease-smooth);
       }
 
       .composer-model-trigger:hover,
-      .composer-variant-trigger:hover {
-        border-color: var(--border-default);
+      .composer-model-trigger[aria-expanded="true"] {
         background: var(--bg-hover);
         color: var(--text-primary);
       }
 
-      .composer-variant-trigger {
-        max-width: 100px;
-        color: var(--text-tertiary);
-        font-weight: 600;
+      .composer-model-trigger:focus-visible {
+        outline: none;
+        box-shadow: var(--focus, 0 0 0 2px color-mix(in srgb, var(--brand) 45%, transparent));
       }
 
-      .composer-model-trigger:hover,
-      .composer-variant-trigger:hover,
-      .composer-model-trigger[aria-expanded="true"],
-      .composer-variant-trigger[aria-expanded="true"] {
-        background: var(--bg-hover);
-        color: var(--text-primary);
-      }
-
-      .composer-model-trigger span,
-      .composer-variant-trigger span {
+      .composer-model-summary {
+        display: inline-flex;
+        min-width: 0;
+        align-items: baseline;
+        gap: 5px;
         overflow: hidden;
+      }
+
+      .composer-model-summary [data-composer-model-label] {
+        overflow: hidden;
+        color: var(--text-secondary);
+        font-weight: 560;
+        letter-spacing: -0.01em;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
-      .composer-model-trigger [data-icon],
-      .composer-variant-trigger [data-icon] {
+      .composer-model-trigger:hover .composer-model-summary [data-composer-model-label],
+      .composer-model-trigger[aria-expanded="true"] .composer-model-summary [data-composer-model-label] {
+        color: var(--text-primary);
+      }
+
+      .composer-model-sep {
+        flex-shrink: 0;
+        color: var(--text-muted, var(--text-tertiary));
+        font-weight: 500;
+        opacity: 0.7;
+      }
+
+      .composer-model-summary [data-composer-variant-label] {
+        flex-shrink: 0;
+        color: var(--text-tertiary);
+        font-size: 11.5px;
+        font-weight: 520;
+        letter-spacing: 0.01em;
+      }
+
+      .composer-model-trigger > [data-icon],
+      .composer-model-trigger > [data-icon] svg {
         flex-shrink: 0;
         width: 11px;
         height: 11px;
         color: var(--text-muted, var(--text-tertiary));
-        transition: transform var(--motion-hover) var(--ease-standard);
+        transition: transform 160ms var(--ease-standard, ease);
       }
 
-      .composer-model-trigger[aria-expanded="true"] [data-icon],
-      .composer-variant-trigger[aria-expanded="true"] [data-icon] {
+      .composer-model-trigger[aria-expanded="true"] > [data-icon] {
         transform: rotate(180deg);
+        color: var(--text-secondary);
       }
 
-      .composer-model-menu,
-      .composer-variant-menu {
+      .composer-model-menu {
         position: absolute;
         right: 0;
-        bottom: calc(100% + 6px);
-        z-index: 30;
+        bottom: calc(100% + 8px);
+        z-index: 50;
         display: grid;
-        gap: 2px;
-        width: min(288px, calc(100vw - 24px));
-        max-height: min(70vh, 320px);
-        overflow: auto;
-        padding: 4px;
+        gap: 0;
+        width: min(308px, calc(100vw - 28px));
+        padding: 6px;
         border: 1px solid var(--border-default);
-        border-radius: 8px;
+        border-radius: 12px;
         background: var(--bg-overlay, var(--bg-elevated));
-        box-shadow: var(--elevation-md, 0 12px 28px color-mix(in srgb, black 28%, transparent));
+        box-shadow:
+          0 18px 40px rgba(0, 0, 0, 0.28),
+          0 6px 16px rgba(0, 0, 0, 0.14),
+          0 0 0 1px color-mix(in srgb, white 4%, transparent) inset;
         animation: menu-in 150ms var(--ease-smooth);
+        transform-origin: bottom right;
+        /* Escape any remaining local stacking without portal. */
+        pointer-events: auto;
       }
 
       @keyframes menu-in {
         from {
           opacity: 0;
-          transform: translateY(4px) scale(0.98);
+          transform: translateY(5px) scale(0.98);
         }
         to {
           opacity: 1;
@@ -1839,54 +1986,158 @@
         }
       }
 
-      .composer-variant-menu {
-        width: 152px;
-      }
-
-      .composer-model-menu[hidden],
-      .composer-variant-menu[hidden] {
+      .composer-model-menu[hidden] {
         display: none;
       }
 
-      .composer-model-menu button,
-      .composer-variant-menu button {
-        display: flex;
-        min-height: 36px;
-        width: 100%;
+      .composer-menu-section {
+        display: grid;
+        gap: 2px;
+        padding: 2px;
+      }
+
+      .composer-menu-label {
+        padding: 6px 10px 4px;
+        color: var(--text-tertiary);
+        font-size: 10px;
+        font-weight: 650;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .composer-menu-divider {
+        height: 1px;
+        margin: 5px 6px;
+        background: var(--border-subtle);
+      }
+
+      .composer-model-menu .composer-model-option {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 16px;
         align-items: center;
-        gap: 8px;
-        padding: 0 10px;
-        border-radius: 5px;
+        gap: 10px;
+        width: 100%;
+        min-height: 34px;
+        padding: 6px 10px;
+        border-radius: 8px;
+        background: transparent;
         color: var(--text-secondary);
-        font-size: 13px;
-        font-weight: 500;
         text-align: left;
         transition:
           background var(--motion-hover) var(--ease-smooth),
           color var(--motion-hover) var(--ease-smooth);
       }
 
-      .composer-model-menu button:hover,
-      .composer-variant-menu button:hover,
-      .composer-model-menu button[aria-pressed="true"],
-      .composer-variant-menu button[aria-pressed="true"] {
+      .composer-model-menu .composer-model-option:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .composer-model-menu .composer-model-option[aria-pressed="true"] {
+        background: color-mix(in srgb, var(--brand) 10%, var(--bg-hover));
+        color: var(--text-primary);
+      }
+
+      .composer-option-copy {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .composer-option-copy strong {
+        min-width: 0;
+        overflow: hidden;
+        font-size: 13px;
+        font-weight: 560;
+        letter-spacing: -0.01em;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .composer-model-option[aria-pressed="true"] .composer-option-copy strong {
         font-weight: 600;
+        color: var(--text-primary);
       }
 
-      .composer-model-menu .composer-model-reset {
+      .composer-model-default-badge {
+        flex-shrink: 0;
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--bg-base) 70%, var(--border-subtle));
+        box-shadow: inset 0 0 0 1px var(--border-subtle);
         color: var(--text-tertiary);
-        font-size: 12px;
-      }
-
-      .composer-model-menu .composer-model-divider {
-        height: 1px;
-        margin: 4px;
-        background: var(--border-subtle);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        line-height: 1.4;
       }
 
       .composer-model-check {
-        margin-left: auto;
+        display: grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
         color: var(--brand);
+      }
+
+      .composer-model-check svg {
+        width: 14px;
+        height: 14px;
+      }
+
+      .composer-model-option[aria-pressed="false"] .composer-model-check {
+        visibility: hidden;
+      }
+
+      .composer-effort-section {
+        padding: 4px 2px 2px;
+      }
+
+      .composer-effort-section > .composer-menu-label {
+        padding: 2px 10px 8px;
+      }
+
+      .composer-effort-seg {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 3px;
+        padding: 3px;
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--bg-base) 88%, var(--border-subtle));
+        box-shadow: inset 0 0 0 1px var(--border-subtle);
+      }
+
+      .composer-effort-seg button {
+        display: inline-flex;
+        min-height: 30px;
+        align-items: center;
+        justify-content: center;
+        padding: 0 8px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--text-tertiary);
+        font-size: 12px;
+        font-weight: 560;
+        letter-spacing: -0.01em;
+        transition:
+          background var(--motion-hover) var(--ease-smooth),
+          color var(--motion-hover) var(--ease-smooth),
+          box-shadow var(--motion-hover) var(--ease-smooth);
+      }
+
+      .composer-effort-seg button:hover {
+        color: var(--text-primary);
+      }
+
+      .composer-effort-seg button[aria-checked="true"] {
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+        box-shadow:
+          0 1px 2px rgba(0, 0, 0, 0.12),
+          0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent);
+        font-weight: 620;
       }
 
       .composer-hint {
@@ -1898,45 +2149,59 @@
       .composer-action {
         display: grid;
         place-items: center;
-        width: 36px;
-        height: 36px;
-        border-radius: 6px;
-        background: var(--text-primary);
-        color: var(--bg-base);
+        width: 32px;
+        height: 32px;
+        flex-shrink: 0;
+        border-radius: 999px;
+        background: var(--brand);
+        color: #fff;
         transition:
           background var(--motion-hover) var(--ease-smooth),
-          transform var(--motion-hover) var(--ease-smooth);
+          color var(--motion-hover) var(--ease-smooth),
+          transform var(--motion-hover) var(--ease-smooth),
+          box-shadow var(--motion-hover) var(--ease-smooth);
       }
 
-      .composer-action:hover {
-        background: var(--brand);
-        color: var(--brand-ink, var(--bg-overlay, white));
+      .composer-action:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--brand) 86%, black);
         transform: translateY(-1px);
+        box-shadow: 0 2px 8px color-mix(in srgb, var(--brand) 35%, transparent);
       }
 
-      .composer-action:active {
+      .composer-action:active:not(:disabled) {
         transform: translateY(0) scale(0.96);
       }
 
-      .composer-action.stop:hover {
+      /* Running → Stop: quiet neutral, danger only on hover */
+      .composer-action.stop {
+        background: var(--bg-active, var(--bg-hover));
+        color: var(--text-secondary);
+        box-shadow: inset 0 0 0 1px var(--border-default);
+      }
+
+      .composer-action.stop:hover:not(:disabled) {
         background: var(--error);
-        color: white;
+        color: #fff;
+        box-shadow: 0 2px 8px color-mix(in srgb, var(--error) 35%, transparent);
       }
 
       .composer-action:disabled {
-        background: var(--bg-active);
-        color: var(--text-muted, var(--text-tertiary));
+        background: var(--bg-active, var(--bg-hover));
+        color: var(--text-tertiary);
         cursor: not-allowed;
+        opacity: 0.55;
+        box-shadow: none;
+        transform: none;
       }
 
-      .composer-action [data-icon] {
+      .composer-action svg {
         width: 14px;
         height: 14px;
       }
 
-      .composer-action.stop [data-icon] {
-        width: 11px;
-        height: 11px;
+      .composer-action.stop svg {
+        width: 12px;
+        height: 12px;
       }
 
       .composer-file-input {
@@ -1967,51 +2232,10 @@
         right: 8px;
       }
 
-      .inspector-summary {
-        display: flex;
-        flex: 0 0 auto;
-        align-items: center;
-        gap: 8px;
-        min-height: 36px;
-        padding: 8px 12px 0;
-        color: var(--text-tertiary);
-        font-size: 11.5px;
-        font-weight: 560;
-        letter-spacing: -0.01em;
-      }
-
-      .inspector-summary-status {
-        color: var(--text-secondary);
-        font-weight: 650;
-      }
-
-      .inspector-summary-status.attention,
-      .inspector-summary-status.needs-you { color: var(--warning); }
-      .inspector-summary-status.running { color: var(--signal-foreground); }
-      .inspector-summary-status.done,
-      .inspector-summary-status.completed { color: var(--success); }
-      .inspector-summary-status.failed { color: var(--error); }
-
-      .inspector-summary-sep {
-        width: 3px;
-        height: 3px;
-        border-radius: 50%;
-        background: var(--border-default);
-        flex: 0 0 auto;
-      }
-
-      .inspector-summary-meta {
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
       .inspector-tabs {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
         flex: 0 0 40px;
-        margin-top: 4px;
         padding: 0 4px;
         border-bottom: 1px solid var(--border-subtle);
       }
@@ -2436,7 +2660,6 @@
           display: inline-grid;
         }
 
-        .context-inspector .inspector-summary,
         .context-inspector .inspector-tabs {
           padding-right: 44px;
         }
@@ -2516,16 +2739,16 @@
         }
 
         .composer-dock {
-          max-height: 46dvh;
-          padding: 8px 10px 9px;
+          max-height: min(52dvh, 460px);
+          padding: 0;
+        }
+
+        .dock-inner {
+          padding: 10px 12px 12px;
         }
 
         .hitl-actions {
           flex-wrap: wrap;
-        }
-
-        .queue-row {
-          grid-template-columns: 54px minmax(0, 1fr) auto;
         }
 
         .queue-model {
@@ -2537,15 +2760,12 @@
         }
 
         .composer-model-picker {
-          max-width: 148px;
+          max-width: 168px;
         }
 
-        .composer-model-trigger {
-          max-width: 108px;
-        }
-
-        .composer-variant-trigger {
-          max-width: 72px;
+        .composer-model-summary [data-composer-variant-label],
+        .composer-model-sep {
+          display: none;
         }
 
         .composer-hint {
@@ -2554,12 +2774,8 @@
       }
 
       @media (max-width: 520px) {
-        .composer-model-trigger {
-          max-width: 88px;
-        }
-
-        .composer-variant-trigger {
-          display: none;
+        .composer-model-picker {
+          max-width: 120px;
         }
 
         .composer-state span:not(.state-dot) {
@@ -2593,23 +2809,23 @@
         }
       }
     </style>
-    <script src="./app.js?v=prototype-polish-3" defer></script>
+    <script src="./app.js?v=prototype-polish-16" defer></script>
   </head>
   <body class="session-page todo-first-shell">
-    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+    <a class="skip-link" href="#work-canvas">Skip to work canvas</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
         <a class="brand-mark" href="./dashboard.html" aria-label="Open Home"><img src="./logo.svg" alt="" width="20" height="20" /></a>
-        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
-        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
-        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
-        <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
+        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos" aria-current="page">ar</a>
+        <button type="button" class="rail-project" aria-label="Open archcode-readme-demo-workspace" data-action="Open archcode-readme-demo-workspace Todos">ar</button>
+        <button type="button" class="rail-project" aria-label="Open specra-test-projects" data-action="Open specra-test-projects Todos">sp</button>
+        <button type="button" class="rail-icon" aria-label="Open project" title="Open project" data-action="Open project" data-icon="plus"></button>
         <div class="rail-spacer"></div>
-        <div class="rail-separator"></div>
-        <button class="rail-icon rail-search" aria-label="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
-        <button class="rail-icon" aria-label="Open 3 requests needing attention" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
-        <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
-        <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
+        <div class="rail-separator" aria-hidden="true"></div>
+        <button type="button" class="rail-icon rail-search" aria-label="Search all work" title="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
+        <button type="button" class="rail-icon" aria-label="Open 3 requests needing attention" title="Needs you" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
+        <button type="button" class="rail-icon" aria-label="Settings" title="Settings" data-action="Open settings" data-icon="settings"></button>
+        <button type="button" class="rail-icon" aria-label="Toggle theme" title="Toggle theme" data-theme-toggle data-icon="sun"></button>
       </nav>
 
       <header class="project-toolbar">
@@ -2802,7 +3018,7 @@
                       <div class="delegation-header">
                         <span class="delegation-kicker">↳ delegate</span>
                         <span class="delegation-copy"><strong>Review Profile precedence</strong><span>Analyst · deep · Completed · 31s</span></span>
-                        <button class="delegation-action" data-action="打开子 Session">Open child session</button>
+                        <button class="delegation-action" data-action="Open child session">Open child session</button>
                       </div>
                     </article>
 
@@ -2842,7 +3058,7 @@
                         <span><em>protected</em>6 refs</span>
                       </div>
                       <p class="compaction-summary">Preserved the current and last two rounds; delegated work and tool artifacts remain recoverable.</p>
-                      <button class="compaction-action" data-action="查看压缩前消息范围">Show original range ↓</button>
+                      <button class="compaction-action" data-action="Show original message range">Show original range ↓</button>
                     </article>
 
                     <div class="timeline-module">
@@ -2863,15 +3079,16 @@
 
           <section class="composer-dock" aria-label="Session composer and pending requests">
             <div class="dock-inner">
-              <div class="hitl-preview-control" aria-label="Prototype-only HITL preview">
-                <span>Prototype preview · HITL state</span>
-                <div role="tablist" aria-label="Representative HITL states">
-                  <button role="tab" aria-selected="true" data-hitl-tab="permission">Permission</button>
-                  <button role="tab" aria-selected="false" data-hitl-tab="question">Ask user</button>
+              <div class="dock-priority">
+                <div class="hitl-preview-control" aria-label="Prototype-only HITL preview">
+                  <span>Prototype preview · HITL state</span>
+                  <div role="tablist" aria-label="Representative HITL states">
+                    <button role="tab" aria-selected="true" data-hitl-tab="permission">Permission</button>
+                    <button role="tab" aria-selected="false" data-hitl-tab="question">Ask user</button>
+                  </div>
                 </div>
-              </div>
 
-              <section class="hitl-shell" aria-label="Request needing attention" data-session-hitl-shell>
+                <section class="hitl-shell" aria-label="Request needing attention" data-session-hitl-shell>
                 <div class="hitl-state-panel" role="tabpanel" data-hitl-panel="permission">
                   <div class="hitl-panel">
                     <h2 data-hitl-title>Run focused Profile verification</h2>
@@ -2889,15 +3106,15 @@
                       <div class="hitl-request-nav" aria-label="Pending request navigation">
                         <span class="hitl-index">1/2</span>
                         <button class="hitl-nav-button previous" aria-label="Previous request" disabled><span data-icon="chevron"></span></button>
-                        <button class="hitl-nav-button" aria-label="Next request" data-action="查看下一个待处理请求"><span data-icon="chevron"></span></button>
+                        <button class="hitl-nav-button" aria-label="Next request" data-action="View next pending request"><span data-icon="chevron"></span></button>
                       </div>
-                      <button class="hitl-action text" data-action="添加权限说明">Add note</button>
-                      <button class="hitl-action text cancel" data-action="取消权限请求">Cancel request</button>
+                      <button class="hitl-action text" data-action="Add permission note">Add note</button>
+                      <button class="hitl-action text cancel" data-action="Cancel permission request">Cancel request</button>
                     </div>
                     <div class="hitl-action-group">
-                      <button class="hitl-action" data-action="拒绝权限">Deny</button>
-                      <button class="hitl-action" data-action="始终允许此命令">Always allow</button>
-                      <button class="hitl-action primary" data-action="允许一次">Allow once</button>
+                      <button class="hitl-action" data-action="Deny permission">Deny</button>
+                      <button class="hitl-action" data-action="Always allow this command">Always allow</button>
+                      <button class="hitl-action primary" data-action="Allow once">Allow once</button>
                     </div>
                   </footer>
                 </div>
@@ -2929,86 +3146,129 @@
                   </div>
                   <footer class="hitl-actions">
                     <div class="hitl-action-group">
-                      <button class="hitl-action text" data-action="添加回答说明">Add note</button>
-                      <button class="hitl-action text cancel" data-action="取消问题">Cancel request</button>
+                      <button class="hitl-action text" data-action="Add answer note">Add note</button>
+                      <button class="hitl-action text cancel" data-action="Cancel question">Cancel request</button>
                     </div>
-                    <button class="hitl-action primary" disabled data-question-submit data-action="提交回答">Submit answer</button>
+                    <button class="hitl-action primary" disabled data-question-submit data-action="Submit answer">Submit answer</button>
                   </footer>
                 </div>
               </section>
 
               <section class="queue-list" aria-label="Queued instructions" data-session-queue>
                 <div class="queue-row">
-                  <span class="queue-status">Queued</span>
+                  <span class="queue-status" data-icon="clock" title="Queued"></span>
                   <p class="queue-copy">After verification, summarize Profile precedence and remaining risk.</p>
-                  <span class="queue-model">GPT-5.6 Luna · deep</span>
-                  <div class="queue-actions"><button data-action="立即引导此消息">Steer</button><button data-action="编辑队列消息">Edit</button><button data-action="删除队列消息">Delete</button></div>
+                  <div class="queue-actions">
+                    <button aria-label="Steer" title="Steer into current turn" data-action="Steer this message" data-icon="corner-down-right"></button>
+                    <button aria-label="Edit" title="Edit" data-action="Edit queued message" data-icon="edit"></button>
+                    <button aria-label="Delete" title="Delete" data-action="Delete queued message" data-icon="trash"></button>
+                  </div>
                 </div>
                 <div class="queue-row">
-                  <span class="queue-status steering"><span class="state-dot"></span>Steering</span>
+                  <span class="queue-status steering" title="Steering"><span class="state-dot"></span></span>
                   <p class="queue-copy">Also verify the recommendation is visible before Start Work.</p>
-                  <span class="queue-model">GPT-5.6 Luna · deep</span>
-                  <div class="queue-actions"><button data-action="编辑引导消息">Edit</button><button data-action="删除引导消息">Delete</button></div>
+                  <div class="queue-actions">
+                    <button aria-label="Edit" title="Edit" data-action="Edit steering message" data-icon="edit"></button>
+                    <button aria-label="Delete" title="Delete" data-action="Delete steering message" data-icon="trash"></button>
+                  </div>
                 </div>
               </section>
+              </div>
 
-              <div class="composer-collapsed" aria-label="Queue another instruction" data-session-collapsed-composer hidden>
+              <div class="composer-collapsed" aria-label="Queue another instruction" data-session-collapsed-composer>
                 <button class="composer-expand-trigger" aria-expanded="false" data-hitl-composer-expand>
                   <span>Queue another instruction…</span>
                   <span class="composer-state attention" data-composer-state><span class="state-dot"></span><span data-composer-state-text>Needs you</span></span>
                 </button>
-                <button class="composer-action stop" aria-label="Stop session" data-action="停止执行" data-session-collapsed-stop data-icon="square" hidden></button>
+                <button class="composer-action stop" aria-label="Stop session" data-action="Stop execution" data-session-collapsed-stop data-icon="square" hidden></button>
               </div>
 
-              <div class="composer" aria-label="Send a message" data-session-composer>
+              <div class="composer" aria-label="Send a message" data-session-composer hidden>
                 <input class="composer-file-input" type="file" multiple data-composer-file-input aria-hidden="true" tabindex="-1" />
                 <ul class="composer-attachments" aria-label="Message attachments" data-composer-attachments hidden>
                   <li class="composer-attachment">
-                    <div class="composer-attachment-meta">
-                      <strong>profile-defaults.diff</strong>
-                      <small>18 KB · ready</small>
-                    </div>
-                    <div class="composer-attachment-actions">
-                      <button type="button" aria-label="Move profile-defaults.diff earlier" data-action="上移附件" disabled>↑</button>
-                      <button type="button" aria-label="Move profile-defaults.diff later" data-action="下移附件">↓</button>
-                      <button type="button" aria-label="Remove profile-defaults.diff" data-action="移除附件" data-icon="close"></button>
-                    </div>
+                    <span data-icon="file"></span>
+                    <strong>profile-defaults.diff</strong>
+                    <button type="button" class="composer-attachment-remove" aria-label="Remove profile-defaults.diff" data-action="Remove attachment" data-icon="close"></button>
+                  </li>
+                  <li class="composer-attachment">
+                    <span data-icon="file"></span>
+                    <strong>session-contract.ts</strong>
+                    <button type="button" class="composer-attachment-remove" aria-label="Remove session-contract.ts" data-action="Remove attachment" data-icon="close"></button>
+                  </li>
+                  <li class="composer-attachment">
+                    <span data-icon="file"></span>
+                    <strong>project-profile.test.ts</strong>
+                    <button type="button" class="composer-attachment-remove" aria-label="Remove project-profile.test.ts" data-action="Remove attachment" data-icon="close"></button>
                   </li>
                 </ul>
                 <textarea class="composer-placeholder" rows="1" data-composer-placeholder aria-label="Message" placeholder="Send a message…"></textarea>
                 <div class="composer-toolbar">
                   <div class="composer-left">
-                    <button class="composer-attach" type="button" aria-label="Attach file" title="Attach file" data-action="添加附件" data-composer-attach data-icon="file-plus"></button>
+                    <button class="composer-attach" type="button" aria-label="Attach file" title="Attach file" data-action="Add attachment" data-composer-attach data-icon="file-plus"></button>
                     <span class="composer-state attention" data-composer-state><span class="state-dot"></span><span data-composer-state-text>Needs you</span></span>
                     <button class="composer-hide" type="button" data-hitl-composer-collapse hidden>Hide</button>
                   </div>
                   <div class="composer-right">
                     <div class="composer-model-picker" data-composer-model-picker>
-                      <button class="composer-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="composer-model-menu" data-composer-model-trigger title="GPT-5.6 Luna">
-                        <span data-composer-model-label>GPT-5.6 Luna</span>
+                      <button
+                        class="composer-model-trigger"
+                        type="button"
+                        aria-haspopup="dialog"
+                        aria-expanded="false"
+                        aria-controls="composer-model-menu"
+                        data-composer-model-trigger
+                        title="GPT-5.6 Luna · deep"
+                      >
+                        <span class="composer-model-summary">
+                          <span data-composer-model-label>GPT-5.6 Luna</span>
+                          <span class="composer-model-sep" aria-hidden="true">·</span>
+                          <span data-composer-variant-label>deep</span>
+                        </span>
                         <span data-icon="chevron"></span>
                       </button>
-                      <button class="composer-variant-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="composer-variant-menu" data-composer-variant-trigger title="deep">
-                        <span data-composer-variant-label>deep</span>
-                        <span data-icon="chevron"></span>
-                      </button>
-                      <div class="composer-model-menu" id="composer-model-menu" role="dialog" aria-label="Choose model" data-composer-model-menu hidden>
-                        <button type="button" class="composer-model-reset" data-action="使用 Principal 默认模型" data-model-option="principal">Use Principal default</button>
-                        <div class="composer-model-divider" aria-hidden="true"></div>
-                        <button type="button" aria-pressed="true" data-action="选择 GPT-5.6 Luna" data-model-option="GPT-5.6 Luna">GPT-5.6 Luna<span class="composer-model-check" data-icon="check"></span></button>
-                        <button type="button" aria-pressed="false" data-action="选择 Claude Opus 4.6" data-model-option="Claude Opus 4.6">Claude Opus 4.6</button>
-                        <button type="button" aria-pressed="false" data-action="选择 Claude Sonnet 4.6" data-model-option="Claude Sonnet 4.6">Claude Sonnet 4.6</button>
-                        <button type="button" aria-pressed="false" data-action="选择 GPT-5.4 Codex" data-model-option="GPT-5.4 Codex">GPT-5.4 Codex</button>
-                      </div>
-                      <div class="composer-variant-menu" id="composer-variant-menu" role="dialog" aria-label="Choose variant" data-composer-variant-menu hidden>
-                        <button type="button" aria-pressed="false" data-action="选择 Default 变体" data-variant-option="Default">Default</button>
-                        <button type="button" aria-pressed="true" data-action="选择 deep 变体" data-variant-option="deep">deep<span class="composer-model-check" data-icon="check"></span></button>
-                        <button type="button" aria-pressed="false" data-action="选择 fast 变体" data-variant-option="fast">fast</button>
+                      <div class="composer-model-menu" id="composer-model-menu" role="dialog" aria-label="Model and effort" data-composer-model-menu hidden>
+                        <div class="composer-menu-section" role="group" aria-label="Model">
+                          <span class="composer-menu-label">Model</span>
+                          <button type="button" class="composer-model-option" aria-pressed="true" data-action="Select GPT-5.6 Luna" data-model-option="GPT-5.6 Luna" data-model-default="true">
+                            <span class="composer-option-copy">
+                              <strong>GPT-5.6 Luna</strong>
+                              <span class="composer-model-default-badge">Default</span>
+                            </span>
+                            <span class="composer-model-check" data-icon="check"></span>
+                          </button>
+                          <button type="button" class="composer-model-option" aria-pressed="false" data-action="Select Claude Opus 4.6" data-model-option="Claude Opus 4.6">
+                            <span class="composer-option-copy">
+                              <strong>Claude Opus 4.6</strong>
+                            </span>
+                            <span class="composer-model-check" data-icon="check"></span>
+                          </button>
+                          <button type="button" class="composer-model-option" aria-pressed="false" data-action="Select Claude Sonnet 4.6" data-model-option="Claude Sonnet 4.6">
+                            <span class="composer-option-copy">
+                              <strong>Claude Sonnet 4.6</strong>
+                            </span>
+                            <span class="composer-model-check" data-icon="check"></span>
+                          </button>
+                          <button type="button" class="composer-model-option" aria-pressed="false" data-action="Select GPT-5.4 Codex" data-model-option="GPT-5.4 Codex">
+                            <span class="composer-option-copy">
+                              <strong>GPT-5.4 Codex</strong>
+                            </span>
+                            <span class="composer-model-check" data-icon="check"></span>
+                          </button>
+                        </div>
+                        <div class="composer-menu-divider" aria-hidden="true"></div>
+                        <div class="composer-effort-section">
+                          <span class="composer-menu-label">Effort</span>
+                          <div class="composer-effort-seg" role="radiogroup" aria-label="Effort">
+                            <button type="button" role="radio" aria-checked="false" data-action="Select fast effort" data-variant-option="fast">fast</button>
+                            <button type="button" role="radio" aria-checked="false" data-action="Select default effort" data-variant-option="Default">Default</button>
+                            <button type="button" role="radio" aria-checked="true" data-action="Select deep effort" data-variant-option="deep">deep</button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <span class="composer-hint" data-composer-hint>Shift+Enter for newline</span>
-                    <button class="composer-action" type="button" aria-label="Queue message" title="Queue message" data-action="排队消息" data-composer-queue-button data-icon="arrow-up" hidden></button>
-                    <button class="composer-action" type="button" aria-label="Send message" title="Send message" data-action="发送消息" data-session-terminal-action data-icon="arrow-up"></button>
+                    <button class="composer-action" type="button" aria-label="Send message" title="Send message" data-action="Send message" data-session-terminal-action data-icon="arrow-up"></button>
                   </div>
                 </div>
               </div>
@@ -3021,11 +3281,6 @@
         <div class="resize-handle inspector-resize" role="separator" tabindex="0" aria-label="Resize context inspector" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="460" aria-valuenow="312" data-resize-inspector></div>
         <div class="inspector-shell">
           <button class="icon-button mobile-close inspector-close" aria-label="Close context inspector" data-close-overlay data-icon="close"></button>
-          <div class="inspector-summary" aria-label="Session inspector summary" data-inspector-summary>
-            <span class="inspector-summary-status attention" data-inspector-summary-status>Permission</span>
-            <span class="inspector-summary-sep" aria-hidden="true"></span>
-            <span class="inspector-summary-meta" data-inspector-summary-meta>4 agents · 3 files</span>
-          </div>
           <div class="inspector-tabs" role="tablist" aria-label="Session context sections">
             <button role="tab" aria-selected="true" data-inspector-tab="agents">Agents <span class="inspector-tab-count" data-agents-count>4</span></button>
             <button role="tab" aria-selected="false" data-inspector-tab="changes">Changes <span class="inspector-tab-count" data-changes-count>3</span></button>
@@ -3063,11 +3318,11 @@
               <span class="diffstat" data-changes-summary-stat><span class="plus">+31</span> <span class="minus">−9</span></span>
             </div>
             <div class="inspector-list" data-inspector-changes>
-              <button type="button" class="change-row" data-action="在画布打开 project-session-profile.test.ts 的 diff"><span class="change-kind">M</span><span class="change-path">project-session-profile.test.ts</span><span class="diffstat"><span class="plus">+18</span> <span class="minus">−6</span></span></button>
-              <button type="button" class="change-row" data-action="在画布打开 projects/registry.ts 的 diff"><span class="change-kind">M</span><span class="change-path">projects/registry.ts</span><span class="diffstat"><span class="plus">+9</span> <span class="minus">−2</span></span></button>
-              <button type="button" class="change-row" data-action="在画布打开 routes/sessions.ts 的 diff"><span class="change-kind">M</span><span class="change-path">routes/sessions.ts</span><span class="diffstat"><span class="plus">+4</span> <span class="minus">−1</span></span></button>
+              <button type="button" class="change-row" data-action="Open project-session-profile.test.ts diff on canvas"><span class="change-kind">M</span><span class="change-path">project-session-profile.test.ts</span><span class="diffstat"><span class="plus">+18</span> <span class="minus">−6</span></span></button>
+              <button type="button" class="change-row" data-action="Open projects/registry.ts diff on canvas"><span class="change-kind">M</span><span class="change-path">projects/registry.ts</span><span class="diffstat"><span class="plus">+9</span> <span class="minus">−2</span></span></button>
+              <button type="button" class="change-row" data-action="Open routes/sessions.ts diff on canvas"><span class="change-kind">M</span><span class="change-path">routes/sessions.ts</span><span class="diffstat"><span class="plus">+4</span> <span class="minus">−1</span></span></button>
             </div>
-            <button type="button" class="inspector-action" data-action="在画布打开完整 diff">Open full diff</button>
+            <button type="button" class="inspector-action" data-action="Open full diff on canvas">Open full diff</button>
           </section>
 
           <section class="inspector-panel" role="tabpanel" data-inspector-panel="context" hidden>
@@ -3132,19 +3387,46 @@
       const composerStateTexts = document.querySelectorAll("[data-composer-state-text]");
       const terminalAction = document.querySelector("[data-session-terminal-action]");
       const collapsedStop = document.querySelector("[data-session-collapsed-stop]");
-      const queueButton = document.querySelector("[data-composer-queue-button]");
       const composerHint = document.querySelector("[data-composer-hint]");
       const composerAttachments = document.querySelector("[data-composer-attachments]");
       const composerAttach = document.querySelector("[data-composer-attach]");
       const composerFileInput = document.querySelector("[data-composer-file-input]");
       const modelTrigger = document.querySelector("[data-composer-model-trigger]");
-      const variantTrigger = document.querySelector("[data-composer-variant-trigger]");
       const modelMenu = document.querySelector("[data-composer-model-menu]");
-      const variantMenu = document.querySelector("[data-composer-variant-menu]");
       const modelLabel = document.querySelector("[data-composer-model-label]");
       const variantLabel = document.querySelector("[data-composer-variant-label]");
       const modelOptions = document.querySelectorAll("[data-model-option]");
       const variantOptions = document.querySelectorAll("[data-variant-option]");
+
+      // Effort/variant labels are free-form config keys (except missing → "Default").
+      function formatEffortLabel(value) {
+        const raw = String(value || "Default").trim();
+        if (!raw || raw.toLowerCase() === "default") return "Default";
+        return raw;
+      }
+
+      function normalizeEffortValue(value) {
+        const raw = String(value || "Default").trim();
+        if (!raw || raw.toLowerCase() === "default") return "Default";
+        return raw;
+      }
+
+      function syncModelTriggerTitle(model, effort) {
+        const modelName = model || modelLabel?.textContent || "GPT-5.6 Luna";
+        const effortName = formatEffortLabel(effort || variantLabel?.textContent || "deep");
+        if (modelTrigger) modelTrigger.title = `${modelName} · ${effortName}`;
+      }
+
+      function setEffortSelection(value) {
+        const normalized = normalizeEffortValue(value);
+        const label = formatEffortLabel(normalized);
+        if (variantLabel) variantLabel.textContent = label;
+        variantOptions.forEach((option) => {
+          const optionValue = normalizeEffortValue(option.dataset.variantOption);
+          option.setAttribute("aria-checked", String(optionValue === normalized));
+        });
+        syncModelTriggerTitle(modelLabel?.textContent, label);
+      }
       const leadObjective = document.querySelector("[data-lead-objective]");
       const leadState = document.querySelector("[data-lead-state]");
       const leadStateText = document.querySelector("[data-lead-state-text]");
@@ -3153,14 +3435,12 @@
       const contextExecution = document.querySelector("[data-context-execution]");
       const contextCwd = document.querySelector("[data-context-cwd]");
       const inspectorChanges = document.querySelector("[data-inspector-changes]");
-      const inspectorSummaryStatus = document.querySelector("[data-inspector-summary-status]");
-      const inspectorSummaryMeta = document.querySelector("[data-inspector-summary-meta]");
       const agentsCountEl = document.querySelector("[data-agents-count]");
       const changesCountEl = document.querySelector("[data-changes-count]");
       const changesSummary = document.querySelector("[data-changes-summary]");
       const changesSummaryCount = document.querySelector("[data-changes-summary-count]");
       const changesSummaryStat = document.querySelector("[data-changes-summary-stat]");
-      const changesFullDiff = document.querySelector('[data-action="在画布打开完整 diff"]');
+      const changesFullDiff = document.querySelector('[data-action="Open full diff on canvas"]');
 
       const changeDiffHints = {
         "project-session-profile.test.ts": { plus: 18, minus: 6 },
@@ -3200,7 +3480,7 @@
           const stat = changeDiffFor(path);
           plusTotal += stat.plus;
           minusTotal += stat.minus;
-          return `<button type="button" class="change-row" data-action="在画布打开 ${escapeSessionHtml(path)} 的 diff"><span class="change-kind">M</span><span class="change-path" title="${escapeSessionHtml(path)}">${escapeSessionHtml(path)}</span><span class="diffstat"><span class="plus">+${stat.plus}</span> <span class="minus">−${stat.minus}</span></span></button>`;
+          return `<button type="button" class="change-row" data-action="Open ${escapeSessionHtml(path)} diff on canvas"><span class="change-kind">M</span><span class="change-path" title="${escapeSessionHtml(path)}">${escapeSessionHtml(path)}</span><span class="diffstat"><span class="plus">+${stat.plus}</span> <span class="minus">−${stat.minus}</span></span></button>`;
         });
         if (inspectorChanges) inspectorChanges.innerHTML = rows.join("");
         if (changesSummaryCount) changesSummaryCount.textContent = String(list.length);
@@ -3209,19 +3489,9 @@
         }
       }
 
-      function syncInspectorSummary(sample, leadTone) {
+      function syncInspectorCounts() {
         const visibleAgents = 1 + document.querySelectorAll("[data-profile-agent]:not([hidden])").length;
-        const changeCount = Array.isArray(sample.changes) ? sample.changes.length : 0;
         if (agentsCountEl) agentsCountEl.textContent = String(visibleAgents);
-        if (inspectorSummaryStatus) {
-          inspectorSummaryStatus.textContent = presentInspectorSummaryStatus(sample, leadTone);
-          inspectorSummaryStatus.className = `inspector-summary-status ${leadTone}`;
-        }
-        if (inspectorSummaryMeta) {
-          const agentLabel = visibleAgents === 1 ? "1 agent" : `${visibleAgents} agents`;
-          const fileLabel = changeCount === 1 ? "1 file" : `${changeCount} files`;
-          inspectorSummaryMeta.textContent = `${agentLabel} · ${fileLabel}`;
-        }
       }
       const hitlTitle = document.querySelector("[data-hitl-title]");
       const hitlSummary = document.querySelector("[data-hitl-summary]");
@@ -3597,17 +3867,6 @@
         return sample.status || "Stopped";
       }
 
-      function presentInspectorSummaryStatus(sample, leadTone) {
-        if (leadTone === "failed" || sample.statusTone === "failed" || sample.status === "Failed") return "Failed";
-        if (leadTone === "needs-you" || leadTone === "attention" || sample.needsHitl || sample.status === "Needs you") {
-          return presentGateMechanism(sample);
-        }
-        if (leadTone === "running") return "Running";
-        if (leadTone === "completed" || leadTone === "done") return "Done";
-        if (leadTone === "idle") return "Idle";
-        return sample.status || "Session";
-      }
-
       function syncWorkToggle({ toggle, labelNode, liveNode, label, running = false, needsYou = false }) {
         if (labelNode) {
           labelNode.textContent = label;
@@ -3638,25 +3897,29 @@
 
       function closeComposerMenus() {
         if (modelMenu) modelMenu.hidden = true;
-        if (variantMenu) variantMenu.hidden = true;
         if (modelTrigger) modelTrigger.setAttribute("aria-expanded", "false");
-        if (variantTrigger) variantTrigger.setAttribute("aria-expanded", "false");
       }
 
       function setSelectedMenuOption(options, selectedValue) {
         const render = window.archcodePrototypeIcon;
         options.forEach((option) => {
-          const value = option.dataset.modelOption || option.dataset.variantOption;
+          if (option.dataset.variantOption != null) return;
+          const value = option.dataset.modelOption;
+          if (!value) return;
           const selected = value === selectedValue;
           option.setAttribute("aria-pressed", String(selected));
-          const existing = option.querySelector(".composer-model-check");
-          if (selected && !existing && typeof render === "function") {
-            const mark = document.createElement("span");
-            mark.className = "composer-model-check";
-            mark.innerHTML = render("check");
-            option.appendChild(mark);
-          } else if (!selected && existing) {
-            existing.remove();
+          let mark = option.querySelector(".composer-model-check");
+          if (selected) {
+            if (!mark) {
+              mark = document.createElement("span");
+              mark.className = "composer-model-check";
+              option.appendChild(mark);
+            }
+            if (typeof render === "function") mark.innerHTML = render("check");
+            mark.hidden = false;
+          } else if (mark) {
+            mark.hidden = true;
+            mark.innerHTML = "";
           }
         });
       }
@@ -3667,7 +3930,16 @@
         composer.hidden = !expanded;
         composerExpand?.setAttribute("aria-expanded", String(expanded));
         if (!expanded) closeComposerMenus();
-        if (expanded && focus) requestAnimationFrame(() => composerPlaceholder?.focus());
+        if (expanded) {
+          // Priority stack scrolls; composer stays pinned. Don't cover HITL/queue.
+          requestAnimationFrame(() => {
+            const priority = document.querySelector(".dock-priority");
+            if (priority instanceof HTMLElement) {
+              priority.scrollTop = priority.scrollHeight;
+            }
+            if (focus) composerPlaceholder?.focus();
+          });
+        }
       }
 
       function syncComposerChrome(sample) {
@@ -3686,7 +3958,10 @@
             sample.composerState === "Needs you" ||
             sample.needsHitl ||
             sample.statusTone === "attention");
-        const queueing = running || attention;
+        // One primary button only:
+        // - Running → Stop
+        // - Otherwise → Send (or Queue when HITL / suspended)
+        const canQueue = !running && (attention || sample.needsHitl);
         const composerPrompt = sample.empty
           ? "What should the Agent do?"
           : idle
@@ -3695,12 +3970,16 @@
               ? "Session unavailable"
               : failed
                 ? "Send a recovery follow-up"
-                : "Queue a message";
+                : canQueue
+                  ? "Queue a message"
+                  : running
+                    ? "Agent is working"
+                    : "Send a message";
 
         composer?.setAttribute("aria-label", composerPrompt);
         collapsedComposer?.setAttribute("aria-label", composerPrompt);
         if (composerPlaceholder) {
-          composerPlaceholder.placeholder = `${composerPrompt}${unavailable ? "" : "…"}`;
+          composerPlaceholder.placeholder = `${composerPrompt}${unavailable || running ? "" : "…"}`;
           composerPlaceholder.setAttribute("aria-label", "Message");
           composerPlaceholder.disabled = unavailable;
         }
@@ -3737,49 +4016,48 @@
         if (composerAttach) composerAttach.disabled = unavailable;
         if (composerHint) {
           composerHint.hidden = false;
-          composerHint.textContent = queueing ? "Enter to queue" : "Shift+Enter for newline";
+          composerHint.textContent = canQueue
+            ? "Enter to queue"
+            : running
+              ? "Enter queues while running"
+              : "Shift+Enter for newline";
         }
 
-        if (queueButton) {
-          queueButton.hidden = !queueing || unavailable;
-          queueButton.disabled = unavailable;
-          setComposerIcon(queueButton, "arrow-up");
-          queueButton.setAttribute("aria-label", "Queue message");
-          queueButton.title = "Queue message";
-          queueButton.dataset.action = "排队消息";
-        }
-
+        // Single terminal button: Send ↔ Stop (never two buttons side by side)
         if (terminalAction) {
           terminalAction.disabled = unavailable;
-          if (queueing) {
+          if (running) {
             terminalAction.className = "composer-action stop";
             setComposerIcon(terminalAction, "square");
             terminalAction.setAttribute("aria-label", unavailable ? "Session unavailable" : "Stop session");
             terminalAction.title = unavailable ? "Stopping" : "Stop";
-            terminalAction.dataset.action = "停止执行";
+            terminalAction.dataset.action = "Stop execution";
           } else {
             terminalAction.className = "composer-action";
             setComposerIcon(terminalAction, "arrow-up");
-            terminalAction.setAttribute("aria-label", sample.needsHitl ? "Queue message" : "Send message");
-            terminalAction.title = sample.needsHitl ? "Queue message" : "Send message";
-            terminalAction.dataset.action = sample.empty ? "发送首条指令" : sample.needsHitl ? "排队消息" : "发送后续指令";
+            const label = canQueue ? "Queue message" : "Send message";
+            terminalAction.setAttribute("aria-label", label);
+            terminalAction.title = label;
+            terminalAction.dataset.action = sample.empty
+              ? "Send first instruction"
+              : canQueue
+                ? "Queue message"
+                : "Send follow-up";
           }
         }
 
+        // Collapsed HITL bar: only show Stop when actually running
         if (collapsedStop) {
-          collapsedStop.hidden = !queueing;
+          collapsedStop.hidden = !running;
           collapsedStop.disabled = unavailable;
           setComposerIcon(collapsedStop, "square");
           collapsedStop.setAttribute("aria-label", unavailable ? "Session unavailable" : "Stop session");
-          collapsedStop.dataset.action = "停止执行";
+          collapsedStop.dataset.action = "Stop execution";
         }
 
         if (modelLabel) modelLabel.textContent = sample.nextModel || "GPT-5.6 Luna";
-        if (variantLabel) variantLabel.textContent = sample.nextVariant || "deep";
-        if (modelTrigger) modelTrigger.title = sample.nextModel || "GPT-5.6 Luna";
-        if (variantTrigger) variantTrigger.title = sample.nextVariant || "deep";
+        setEffortSelection(sample.nextVariant || "deep");
         setSelectedMenuOption(modelOptions, sample.nextModel || "GPT-5.6 Luna");
-        setSelectedMenuOption(variantOptions, sample.nextVariant || "deep");
         closeComposerMenus();
         setHitlComposerExpanded(!sample.needsHitl);
       }
@@ -4002,7 +4280,7 @@
           node.hidden = !(sample.preserveRepresentative || supportingAgents.has(node.dataset.profileAgent));
         });
         renderInspectorChanges(sample.changes || []);
-        syncInspectorSummary(sample, leadTone);
+        syncInspectorCounts();
 
         const projectLink = document.querySelector("[data-session-project-link]");
         if (projectLink) {
@@ -4044,7 +4322,7 @@
       });
 
       document.addEventListener("click", (event) => {
-        if (!modelMenu?.hidden || !variantMenu?.hidden) {
+        if (!modelMenu?.hidden) {
           const picker = document.querySelector("[data-composer-model-picker]");
           if (picker && !picker.contains(event.target)) closeComposerMenus();
         }
@@ -4065,24 +4343,43 @@
       composerFileInput?.addEventListener("change", () => {
         if (!composerAttachments || !composerFileInput.files?.length) return;
         const files = Array.from(composerFileInput.files);
+        const render = window.archcodePrototypeIcon;
         composerAttachments.hidden = false;
         files.forEach((file) => {
           const item = document.createElement("li");
           item.className = "composer-attachment";
-          const size = file.size >= 1024 * 1024
-            ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-            : `${Math.max(1, Math.round(file.size / 1024))} KB`;
-          item.innerHTML = `<div class="composer-attachment-meta"><strong></strong><small></small></div><div class="composer-attachment-actions"><button type="button" data-action="移除附件">Remove</button></div>`;
-          item.querySelector("strong").textContent = file.name;
-          item.querySelector("small").textContent = `${size} · ready`;
-          item.querySelector("button")?.addEventListener("click", () => {
+          const icon = document.createElement("span");
+          icon.dataset.icon = "file";
+          if (typeof render === "function") icon.innerHTML = render("file");
+          const name = document.createElement("strong");
+          name.textContent = file.name;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "composer-attachment-remove";
+          remove.setAttribute("aria-label", `Remove ${file.name}`);
+          remove.dataset.action = "Remove attachment";
+          remove.dataset.icon = "close";
+          if (typeof render === "function") remove.innerHTML = render("close");
+          remove.addEventListener("click", (event) => {
+            event.stopPropagation();
             item.remove();
             if (!composerAttachments.children.length) composerAttachments.hidden = true;
           });
+          item.append(icon, name, remove);
           composerAttachments.appendChild(item);
         });
         composerFileInput.value = "";
         window.showToast?.(`Attached ${files.length === 1 ? files[0].name : `${files.length} files`}`);
+      });
+
+      // Demo chips: remove only (no reorder). Static remove buttons also toast via data-action.
+      composerAttachments?.querySelectorAll(".composer-attachment-remove").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const item = button.closest(".composer-attachment");
+          item?.remove();
+          if (composerAttachments && !composerAttachments.children.length) composerAttachments.hidden = true;
+        });
       });
       modelTrigger?.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -4093,46 +4390,25 @@
           modelTrigger.setAttribute("aria-expanded", "true");
         }
       });
-      variantTrigger?.addEventListener("click", (event) => {
-        event.stopPropagation();
-        const open = variantMenu?.hidden !== false;
-        closeComposerMenus();
-        if (open && variantMenu) {
-          variantMenu.hidden = false;
-          variantTrigger.setAttribute("aria-expanded", "true");
-        }
-      });
       modelOptions.forEach((option) => {
-        option.addEventListener("click", () => {
+        option.addEventListener("click", (event) => {
+          event.stopPropagation();
           const value = option.dataset.modelOption;
           if (!value) return;
-          if (value === "principal") {
-            if (modelLabel) modelLabel.textContent = "GPT-5.6 Luna";
-            if (variantLabel) variantLabel.textContent = "Default";
-            if (modelTrigger) modelTrigger.title = "GPT-5.6 Luna";
-            if (variantTrigger) variantTrigger.title = "Default";
-            setSelectedMenuOption(modelOptions, "GPT-5.6 Luna");
-            setSelectedMenuOption(variantOptions, "Default");
-            window.showToast?.("Applies to the next execution");
-            closeComposerMenus();
-            return;
-          }
           if (modelLabel) modelLabel.textContent = value;
-          if (modelTrigger) modelTrigger.title = value;
           setSelectedMenuOption(modelOptions, value);
+          syncModelTriggerTitle(value, variantLabel?.textContent);
           window.showToast?.("Applies to the next execution");
-          closeComposerMenus();
+          // Keep menu open so user can also set Effort in one pass
         });
       });
       variantOptions.forEach((option) => {
-        option.addEventListener("click", () => {
+        option.addEventListener("click", (event) => {
+          event.stopPropagation();
           const value = option.dataset.variantOption;
           if (!value) return;
-          if (variantLabel) variantLabel.textContent = value;
-          if (variantTrigger) variantTrigger.title = value;
-          setSelectedMenuOption(variantOptions, value);
+          setEffortSelection(value);
           window.showToast?.("Applies to the next execution");
-          closeComposerMenus();
         });
       });
       window.addEventListener("keydown", (event) => {

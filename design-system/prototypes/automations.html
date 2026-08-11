@@ -2,13 +2,21 @@
 <html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("archcode-prototype-theme");
+          if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="ArchCode Automation management prototype" />
     <title>ArchCode — Automations Prototype</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=prototype-polish-2" />
+    <link rel="stylesheet" href="./styles.css?v=prototype-polish-16" />
     <style>
       [hidden] { display: none !important; }
 
@@ -733,23 +741,23 @@
         .detail-fact { grid-template-columns: 72px minmax(0, 1fr); }
       }
     </style>
-    <script src="./app.js?v=prototype-polish-2" defer></script>
+    <script src="./app.js?v=prototype-polish-16" defer></script>
   </head>
   <body class="automation-page todo-first-shell">
-    <a class="skip-link" href="#work-canvas">跳到工作区</a>
+    <a class="skip-link" href="#work-canvas">Skip to work canvas</a>
     <div class="app-shell">
       <nav class="project-rail" aria-label="Projects">
         <a class="brand-mark" href="./dashboard.html" aria-label="Open Home"><img src="./logo.svg" alt="" width="20" height="20" /></a>
-        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos">ar</a>
-        <button class="rail-project" aria-label="Open archcode-readme-demo-workspace">ar</button>
-        <button class="rail-project" aria-label="Open specra-test-projects">sp</button>
-        <button class="rail-icon" aria-label="Open project" data-action="打开项目" data-icon="plus"></button>
+        <a class="rail-project active" href="./todos.html" aria-label="Open archcode Todos" aria-current="page">ar</a>
+        <button type="button" class="rail-project" aria-label="Open archcode-readme-demo-workspace" data-action="Open archcode-readme-demo-workspace Todos">ar</button>
+        <button type="button" class="rail-project" aria-label="Open specra-test-projects" data-action="Open specra-test-projects Todos">sp</button>
+        <button type="button" class="rail-icon" aria-label="Open project" title="Open project" data-action="Open project" data-icon="plus"></button>
         <div class="rail-spacer"></div>
-        <div class="rail-separator"></div>
-        <button class="rail-icon rail-search" aria-label="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
-        <button class="rail-icon" aria-label="Open 3 requests needing attention" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
-        <button class="rail-icon" aria-label="Settings" data-action="打开设置" data-icon="settings"></button>
-        <button class="rail-icon" data-theme-toggle data-icon="sun"></button>
+        <div class="rail-separator" aria-hidden="true"></div>
+        <button type="button" class="rail-icon rail-search" aria-label="Search all work" title="Search all work" aria-keyshortcuts="Meta+K Control+K" data-open-global-search data-icon="search"></button>
+        <button type="button" class="rail-icon" aria-label="Open 3 requests needing attention" title="Needs you" data-open-attention><span data-icon="bell"></span><span class="rail-attention-count">3</span></button>
+        <button type="button" class="rail-icon" aria-label="Settings" title="Settings" data-action="Open settings" data-icon="settings"></button>
+        <button type="button" class="rail-icon" aria-label="Toggle theme" title="Toggle theme" data-theme-toggle data-icon="sun"></button>
       </nav>
 
       <main class="work-canvas" id="work-canvas" aria-label="Work canvas" tabindex="-1">

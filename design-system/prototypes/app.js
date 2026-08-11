@@ -8,8 +8,13 @@ const icons = {
   "circle-check": "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-12 0 2 2 4-4",
   "circle-dot": "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-6 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
   "circle-play": "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-11-4 6 4-6 4Z",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3 3",
   close: "M6 6l12 12M18 6 6 18",
+  // Lucide corner-down-right — standard “inject / reply into flow” glyph for Steer
+  "corner-down-right": "M15 10l5 5-5 5M4 4v7a4 4 0 0 0 4 4h12",
   dashboard: "M4 4h6v6H4zm10 0h6v9h-6zM4 14h6v6H4zm10 3h6v3h-6z",
+  edit: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z",
+  file: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6",
   "file-plus": "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M12 18v-6M9 15h6",
   list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
   filter: "M4 6h16M7 12h10M10 18h4",
@@ -31,7 +36,9 @@ const icons = {
   sparkles: "m12 3-1.1 3.1L8 7.2l2.9 1.1L12 11l1.1-2.7L16 7.2l-2.9-1.1L12 3Zm6 9-.7 2-1.8.7 1.8.7.7 2 .7-2 1.8-.7-1.8-.7-.7-2ZM6 13l-1 2.6-2.5 1L5 17.5 6 20l1-2.5 2.5-.9-2.5-1L6 13Z",
   telescope: "m10 6 8-3 2 4-8 3M10 6l2 4M8 12l-4 9M12 12l4 9",
   todo: "M8 6h12M8 12h12M8 18h12M3.5 6h.01M3.5 12h.01M3.5 18h.01",
+  trash: "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6",
   workflow: "M3 5h6v6H3zM15 13h6v6h-6zM9 8h3a3 3 0 0 1 3 3v2",
+  zap: "M13 2 3 14h8l-1 8 10-12h-8l1-8Z",
 };
 
 const baseWorkSearchItems = [
@@ -187,7 +194,7 @@ document.querySelector("[data-theme-toggle]")?.addEventListener("click", () => {
 
 function showToast(message) {
   if (!toast) return;
-  toast.textContent = `${message} · 原型演示`;
+  toast.textContent = `${message} · prototype demo`;
   toast.classList.add("visible");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 2200);
@@ -288,7 +295,7 @@ function readPrototypeSessions() {
   }
 }
 
-window.readArchcodePrototypeSessions = readPrototypeSessions;
+window.readPrototypeSessions = readPrototypeSessions;
 
 /** Shared static Sessions catalog for list pages + Home Needs-you slice. */
 const archcodePrototypeStaticSessions = [
