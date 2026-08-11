@@ -394,7 +394,8 @@ Narrow-screen rules:
   `send_message` opens the exact target Session and invocation deep link without
   changing that Session's source. Every Session row and detail header identifies
   its source as `Todo`, `Automation`, or `Direct`.
-- Todo quick capture presents two explicit outcomes in one surface:
+- Todo capture stays out of the persistent inventory canvas. One `New Todo`
+  trigger opens a transient capture surface with two explicit outcomes:
   - `Save` captures one Idea without starting Agent work;
   - `Run now` creates the minimal Todo, moves it into active work, creates its
     bound Lead Session, and opens that Session. Discussion and Plan are optional,
@@ -618,10 +619,14 @@ Execution is a mandatory product entity, not an optional visual section.
   status, `N tools · tokens`); inspector is structure/precise bindings. If a fact
   appears in both, header stays one number or short badge; inspector holds the
   full path, ratio, or objective.
-- Todo detail is an independent project route because it owns durable Markdown,
-  Plan, linked Sessions and Automations, and lifecycle actions. The Todo Board
-  never duplicates this surface in a drawer.
-- Overlays use a scrim and a visible close action.
+- Todo detail remains an independent project route because it owns durable
+  Markdown, Plan, References, linked Sessions and Automations, lifecycle actions,
+  and direct deep links. An inventory may open a lightweight, non-editing preview
+  drawer first, but that preview never duplicates Markdown editing, Reference or
+  Plan management, or lifecycle mutation. It exposes one explicit route into the
+  complete detail surface.
+- Overlays use a scrim and a visible close action, never resize the underlying
+  inventory canvas, and restore focus to their trigger when dismissed.
 - Detailed Agents / Changes / Context presentation lives in
   [`pages/session.md`](pages/session.md).
 
@@ -629,7 +634,7 @@ Execution is a mandatory product entity, not an optional visual section.
 
 - Todo owns its current References; a bound Session uses them live without
   copying them into Session history. Keep management on Todo detail only—never
-  add Board/Quick Capture controls, counts, or a separate attachment surface.
+  add inventory/New Todo controls, counts, or a separate attachment surface.
 - References remain a flat workbench region. File state and recovery stay inline;
   safe image/PDF bytes may open, while active or unknown content downloads.
 - A Todo-bound Session may append the static `Using live Todo references` note to
@@ -737,6 +742,9 @@ Motion explains state changes; it is not decoration.
 - [ ] Confirm shared done/completed status-orbit uses the same circle-check glyph
       as Todos Done.
 - [ ] Confirm project rail uses Quiet two-letter monograms for projects.
+- [ ] Confirm Todo preview preserves the inventory layout and state, does not
+      mutate durable Todo content or lifecycle, and keeps the full detail route
+      directly reachable.
 - [ ] Confirm keyboard focus and accessible expansion state.
 - [ ] Confirm `prefers-reduced-motion`.
 - [ ] Confirm browser console is clean.

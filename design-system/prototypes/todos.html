@@ -61,7 +61,7 @@
         background: var(--bg-base);
       }
 
-      /* Click-outside layer: dims scan surface and closes the drawer. */
+      /* Click-outside layer: preserves scan context while still closing the drawer. */
       .todo-peek-scrim {
         position: absolute;
         inset: 0;
@@ -70,7 +70,7 @@
         padding: 0;
         margin: 0;
         background:
-          linear-gradient(90deg, rgb(0 0 0 / 22%) 0%, rgb(0 0 0 / 34%) 100%);
+          linear-gradient(90deg, rgb(0 0 0 / 8%) 0%, rgb(0 0 0 / 14%) 100%);
         opacity: 0;
         pointer-events: none;
         cursor: pointer;
@@ -79,7 +79,7 @@
 
       html[data-theme="light"] .todo-peek-scrim {
         background:
-          linear-gradient(90deg, rgb(15 23 42 / 10%) 0%, rgb(15 23 42 / 18%) 100%);
+          linear-gradient(90deg, rgb(15 23 42 / 3%) 0%, rgb(15 23 42 / 8%) 100%);
       }
 
       .todos-route.has-peek .todo-peek-scrim {
@@ -116,10 +116,9 @@
         border-radius: 0;
         background:
           linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 55%, var(--bg-surface)) 0%, var(--bg-surface) 120px);
-        backdrop-filter: blur(8px);
         box-shadow:
           -1px 0 0 color-mix(in srgb, var(--border-subtle) 70%, transparent),
-          -24px 0 64px rgb(0 0 0 / 28%);
+          -16px 0 42px rgb(0 0 0 / 18%);
         transform: translateX(0);
         animation: todo-peek-in 200ms var(--ease-standard);
       }
@@ -127,7 +126,7 @@
       html[data-theme="light"] .todo-detail-pane.is-peek {
         box-shadow:
           -1px 0 0 color-mix(in srgb, var(--border-subtle) 80%, transparent),
-          -18px 0 48px rgb(15 23 42 / 12%);
+          -14px 0 36px rgb(15 23 42 / 9%);
       }
 
       .todo-detail-pane.is-full {
@@ -313,7 +312,7 @@
       }
 
       .todo-create-dialog {
-        width: min(640px, calc(100vw - 32px));
+        width: min(560px, calc(100vw - 32px));
         max-height: min(680px, calc(100dvh - 32px));
         margin: auto;
         padding: 0;
@@ -362,8 +361,8 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        min-height: 56px;
-        padding: 0 12px 0 20px;
+        min-height: 52px;
+        padding: 0 10px 0 18px;
         border-bottom: 1px solid var(--border-subtle);
         flex: 0 0 auto;
       }
@@ -376,7 +375,7 @@
 
       .todo-create-body {
         min-height: 0;
-        padding: 20px;
+        padding: 18px;
         overflow-y: auto;
       }
 
@@ -390,8 +389,8 @@
 
       .todo-create-body textarea {
         width: 100%;
-        min-height: 142px;
-        max-height: 320px;
+        min-height: 126px;
+        max-height: 280px;
         padding: 12px 14px;
         resize: vertical;
         border: 1px solid var(--control-border);
@@ -419,7 +418,7 @@
         align-items: center;
         justify-content: flex-end;
         gap: 10px;
-        padding: 14px 20px;
+        padding: 12px 18px;
         border-top: 1px solid var(--border-subtle);
         background: var(--bg-surface);
         flex: 0 0 auto;
@@ -1202,6 +1201,10 @@
         gap: 8px;
       }
 
+      .peek-footer-secondary:has(.quiet-button[hidden]) {
+        grid-template-columns: 1fr;
+      }
+
       .peek-footer .quiet-button {
         width: 100%;
         min-height: 34px;
@@ -1255,6 +1258,20 @@
       .status-segment:hover {
         color: var(--text-secondary);
         background: color-mix(in srgb, var(--bg-hover) 70%, transparent);
+      }
+
+      .todo-detail-pane.is-peek .status-segment:disabled {
+        cursor: default;
+      }
+
+      .todo-detail-pane.is-peek .status-segment:disabled:not(.is-current) {
+        background: transparent;
+        color: var(--text-tertiary);
+        opacity: 0.62;
+      }
+
+      .todo-detail-pane.is-peek .status-segment:disabled:hover {
+        background: transparent;
       }
 
       .status-segment svg {
@@ -1615,6 +1632,7 @@
         gap: 22px;
         width: 100%;
         max-width: 980px;
+        margin-inline: auto;
       }
 
       .list-group {
@@ -1860,11 +1878,33 @@
         margin-top: 0;
       }
 
-      .plan-empty {
-        padding: 8px 0 28px;
+      .detail-starters {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 16px 0;
+      }
+
+      .detail-starters-copy h2 {
+        color: var(--text-primary);
+        font-size: 12.5px;
+        font-weight: 650;
+      }
+
+      .detail-starters-copy p {
+        margin-top: 3px;
         color: var(--text-tertiary);
-        font-size: 14px;
-        line-height: 1.6;
+        font-size: 11.5px;
+        line-height: 1.45;
+      }
+
+      .detail-starter-actions {
+        display: flex;
+        flex: 0 0 auto;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
       }
 
       .references-surface {
@@ -2352,12 +2392,26 @@
           padding: 14px;
         }
 
+        .detail-starters {
+          align-items: flex-start;
+          flex-direction: column;
+          padding: 16px;
+        }
+
+        .detail-starter-actions {
+          width: 100%;
+          justify-content: flex-start;
+        }
+
+        .detail-starter-actions button {
+          min-height: 44px;
+        }
+
         .document-actions {
           margin-top: 12px;
         }
 
-        .document-copy,
-        .plan-empty {
+        .document-copy {
           padding: 18px 16px 22px;
           font-size: 14px;
         }
@@ -2457,7 +2511,7 @@
                 <button aria-pressed="false" data-todo-view="rejected">Rejected</button>
                 <button aria-pressed="false" data-todo-view="archived">Archived</button>
               </div>
-              <button class="primary-button new-todo-button" type="button" data-open-new-todo><span data-icon="plus"></span>New Todo</button>
+              <button class="primary-button new-todo-button" type="button" data-open-new-todo aria-keyshortcuts="C" title="New Todo (C)"><span data-icon="plus"></span>New Todo</button>
             </div>
           </header>
 
@@ -2611,7 +2665,7 @@
               </button>
               <span class="peek-kicker"><span class="peek-kicker-dot" aria-hidden="true"></span>Preview</span>
               <div class="detail-id-block"><span class="detail-updated" data-detail-updated>Updated 18m ago</span></div>
-              <button class="secondary-button detail-open-full" type="button" data-open-full-todo>Open full Todo</button>
+              <button class="secondary-button detail-open-full" type="button" data-open-full-todo>Open details</button>
             </div>
             <div class="detail-hero">
               <div class="status-band" role="group" aria-label="Todo lifecycle" data-status-band>
@@ -2650,12 +2704,12 @@
                   <p class="peek-section-label">Linked work</p>
                   <div class="peek-links" data-peek-links></div>
                 </div>
-                <p class="peek-footnote">Preview only. Brief, Plan, and References live on the full Todo page.</p>
+                <p class="peek-footnote">PRD, Plan, references, and linked history stay available on demand.</p>
               </div>
               <div class="peek-footer">
                 <button class="primary-button" type="button" data-peek-primary>Continue Work</button>
                 <div class="peek-footer-secondary">
-                  <button class="secondary-button" type="button" data-open-full-todo>Open full Todo</button>
+                  <button class="secondary-button" type="button" data-open-full-todo>Open details</button>
                   <button class="quiet-button" type="button" data-peek-discuss>New Discussion</button>
                 </div>
               </div>
@@ -2693,7 +2747,18 @@
                   </div>
                 </section>
 
-                <section class="references-surface" aria-labelledby="references-title">
+                <section class="detail-starters" data-detail-starters hidden aria-labelledby="detail-starters-title">
+                  <div class="detail-starters-copy">
+                    <h2 id="detail-starters-title">Add context when it helps</h2>
+                    <p>Keep a simple Todo simple. Add files or shape a Plan only when the work needs more structure.</p>
+                  </div>
+                  <div class="detail-starter-actions">
+                    <button class="secondary-button" type="button" data-starter-reference data-action="Select todo reference files"><span data-icon="plus"></span>Add files</button>
+                    <button class="secondary-button" type="button" data-starter-plan data-action="Generate plan">Generate Plan</button>
+                  </div>
+                </section>
+
+                <section class="references-surface" data-references-section aria-labelledby="references-title">
                   <header class="references-header">
                     <div>
                       <h2 id="references-title">References</h2>
@@ -2716,19 +2781,6 @@
                     </div>
                   </header>
                   <div data-plan-copy></div>
-                </section>
-
-                <section class="document-surface" aria-labelledby="plan-empty-title" data-plan-empty hidden>
-                  <header class="document-header">
-                    <div>
-                      <h2 id="plan-empty-title">Plan</h2>
-                      <div class="document-meta"><span>Optional</span><span>Independent from lifecycle state</span></div>
-                    </div>
-                    <div class="document-actions">
-                      <button class="secondary-button" data-action="Generate plan">Generate Plan</button>
-                    </div>
-                  </header>
-                  <div class="plan-empty">Use a Discussion when this work needs shaping. Simple work can still run immediately without creating a Plan.</div>
                 </section>
 
                 <section class="document-surface" aria-labelledby="result-title" data-result-present hidden>
@@ -3079,7 +3131,6 @@ Session storage remains project-root owned while every managed worktree executio
       const newWorkSession = document.querySelector("[data-new-work-session]");
       const detailAttention = document.querySelector("[data-detail-attention]");
       const planPresent = document.querySelector("[data-plan-present]");
-      const planEmpty = document.querySelector("[data-plan-empty]");
       const planPath = document.querySelector("[data-plan-path]");
       const planProgress = document.querySelector("[data-plan-progress]");
       const planCopy = document.querySelector("[data-plan-copy]");
@@ -3087,8 +3138,13 @@ Session storage remains project-root owned while every managed worktree executio
       const resultCopy = document.querySelector("[data-result-copy]");
       const resultHeading = document.querySelector("[data-result-heading]");
       const resultMeta = document.querySelector("[data-result-meta]");
+      const detailStarters = document.querySelector("[data-detail-starters]");
+      const starterReference = document.querySelector("[data-starter-reference]");
+      const starterPlan = document.querySelector("[data-starter-plan]");
+      const referencesSection = document.querySelector("[data-references-section]");
       const referenceList = document.querySelector("[data-reference-list]");
       const referenceEmpty = document.querySelector("[data-reference-empty]");
+      const sessionsSection = document.querySelector("[data-sessions-section]");
       const workEmpty = document.querySelector("[data-work-empty]");
       const workDiscussion = document.querySelector("[data-work-discussion]");
       const workSession = document.querySelector("[data-work-session]");
@@ -3487,7 +3543,10 @@ Session storage remains project-root owned while every managed worktree executio
       todoFilterInput?.addEventListener("input", applyTodoFilter);
 
       function plainExcerpt(content, max = 180) {
-        const text = (content || "")
+        const lines = (content || "").split(/\r?\n/);
+        const firstContentLine = lines.findIndex((line) => line.trim().length > 0);
+        if (firstContentLine >= 0 && /^#{1,6}\s+/.test(lines[firstContentLine].trim())) lines.splice(firstContentLine, 1);
+        const text = lines.join("\n")
           .replace(/^#+\s+/gm, "")
           .replace(/^[-*+]\s+/gm, "")
           .replace(/^\d+[.)]\s+/gm, "")
@@ -3614,6 +3673,10 @@ Session storage remains project-root owned while every managed worktree executio
         newWorkSession.hidden = !hasWorkSession;
         detailAttention.hidden = !sample.attention;
         const references = sample.references || [];
+        const hasPlan = Boolean(sample.hasPlan);
+        const hasLinkedSessions = Boolean(sample.discussion || sample.session || sample.attention);
+        const hasAutomation = Boolean(sample.automation);
+        if (referencesSection) referencesSection.hidden = references.length === 0;
         referenceList.hidden = references.length === 0;
         referenceEmpty.hidden = references.length > 0;
         referenceList.innerHTML = references.map((reference) => `<div class="reference-row">
@@ -3622,8 +3685,10 @@ Session storage remains project-root owned while every managed worktree executio
           <span class="reference-actions"><button class="quiet-button" data-reference-action="${escapeHtml(reference.action)} ${escapeHtml(reference.name)}">${escapeHtml(reference.action)}</button><button class="quiet-button" data-reference-action="Remove ${escapeHtml(reference.name)}">Remove</button></span>
         </div>`).join("");
         referenceList.querySelectorAll("[data-reference-action]").forEach((button) => button.addEventListener("click", () => showToast(button.dataset.referenceAction)));
-        planPresent.hidden = !sample.hasPlan;
-        planEmpty.hidden = sample.hasPlan;
+        planPresent.hidden = !hasPlan;
+        if (detailStarters) detailStarters.hidden = references.length > 0 && hasPlan;
+        if (starterReference) starterReference.hidden = references.length > 0;
+        if (starterPlan) starterPlan.hidden = hasPlan;
         planPath.textContent = `.archcode/plans/${sample.id}.md`;
         const steps = (sample.planSteps || defaultPlanSteps).map((step) => ({ ...step }));
         planCopy.innerHTML = planStepsMarkup(steps) + `<div class="plan-notes">${sample.planNotes || "<h3>Verification</h3><p>Run package typechecks, focused interaction tests, and the production Web build.</p>"}</div>`;
@@ -3635,6 +3700,7 @@ Session storage remains project-root owned while every managed worktree executio
           ? "<span>Verified in linked Session</span><span>Accepted by user</span>"
           : "<span>Completed in linked Session</span><span>Waiting for review</span>";
         workEmpty.hidden = workMode !== "none";
+        if (sessionsSection) sessionsSection.hidden = !hasLinkedSessions;
         workDiscussion.hidden = !sample.discussion;
         workSession.hidden = !sample.session;
         if (sample.discussion) {
@@ -3662,9 +3728,9 @@ Session storage remains project-root owned while every managed worktree executio
             sample.session.state === "Failed" ? " failed" : ""
           }`;
         }
-        if (automationsSection) automationsSection.hidden = false;
-        if (workAutomation) workAutomation.hidden = !sample.automation;
-        if (automationEmpty) automationEmpty.hidden = Boolean(sample.automation);
+        if (automationsSection) automationsSection.hidden = !hasAutomation;
+        if (workAutomation) workAutomation.hidden = !hasAutomation;
+        if (automationEmpty) automationEmpty.hidden = true;
         renderPeek(sample);
         return true;
       }
@@ -3698,7 +3764,7 @@ Session storage remains project-root owned while every managed worktree executio
 
       statusBand?.addEventListener("click", (event) => {
         const segment = event.target.closest("[data-status-move]");
-        if (!segment || !currentTodo || segment.classList.contains("is-current")) return;
+        if (!segment || !currentTodo || detailMode === "peek" || segment.classList.contains("is-current")) return;
         if (segment.dataset.statusMove === "Done") {
           markTodoDone();
           return;
@@ -3715,6 +3781,9 @@ Session storage remains project-root owned while every managed worktree executio
         boardRoute?.classList.toggle("is-board", activeTodoView === "active" && activeLayout === "board");
         detailRoute?.classList.toggle("is-peek", isPeek);
         detailRoute?.classList.toggle("is-full", isFull);
+        statusBand?.querySelectorAll("[data-status-move]").forEach((segment) => {
+          segment.disabled = isPeek;
+        });
         if (peekScrim) peekScrim.hidden = !isPeek;
       }
 
