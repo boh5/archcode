@@ -23,6 +23,7 @@ import type {
   SessionSummary,
   ProjectSessionInventoryItem,
   ProjectTodoRunNowResponse,
+  ProjectTodoStartDiscussionResponse,
   Automation,
   AutomationAction,
   AutomationTrigger,
@@ -614,6 +615,27 @@ export function useRunProjectTodoNow() {
         method: "POST",
         body: { clientRequestId, content },
       }),
+    onSettled: async (_data, _error, variables) => {
+      await invalidateProjectTodoSession(queryClient, variables.slug);
+    },
+  });
+}
+
+export function useStartProjectTodoDiscussion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      slug,
+      clientRequestId,
+      content,
+    }: {
+      slug: string;
+      clientRequestId: string;
+      content: string;
+    }) => apiFetch<ProjectTodoStartDiscussionResponse>(`${todoUrl(slug)}/start-discussion`, {
+      method: "POST",
+      body: { clientRequestId, content },
+    }),
     onSettled: async (_data, _error, variables) => {
       await invalidateProjectTodoSession(queryClient, variables.slug);
     },

@@ -57,7 +57,6 @@ mock.module("../../api/queries", () => ({ useProjects: () => ({ data: [project] 
 mock.module("./ProjectActionMenu", () => ({ ProjectActionDropdown: "ProjectActionDropdown" }));
 mock.module("./EditProjectDialog", () => ({ EditProjectDialog: "EditProjectDialog" }));
 mock.module("./CloseProjectDialog", () => ({ CloseProjectDialog: "CloseProjectDialog" }));
-mock.module("lucide-react", () => ({ MoreHorizontal: "MoreHorizontal" }));
 
 const { ProjectToolbar } = await import("./ProjectToolbar");
 
@@ -70,7 +69,9 @@ describe("ProjectToolbar", () => {
 
   test("shows project identity and the stable project navigation order", () => {
     const tree = ProjectToolbar();
-    const heading = findAll(tree, (element) => element.type === "h1")[0];
+    const menu = findAll(tree, (element) => element.type === "ProjectActionDropdown")[0];
+    const trigger = menu?.props?.trigger as ElementLike;
+    const heading = findAll(trigger, (element) => element.type === "h1")[0];
     const links = findAll(tree, (element) => element.type === "NavLink");
     const navigation = findAll(tree, (element) => element.type === "nav")[0];
 
@@ -82,13 +83,25 @@ describe("ProjectToolbar", () => {
       "/projects/archcode/sessions",
     ]);
     expect(navigation?.props?.className).toContain("[@media(pointer:coarse)]:h-11");
+    expect(navigation?.props?.className).toContain("h-10");
+    expect((tree as ElementLike).props?.className).toContain("min-h-12");
+    expect((tree as ElementLike).props?.className).not.toContain("h-[88px]");
+    expect(links.every((link) => String(link.props?.className).includes("min-h-11"))).toBe(true);
   });
 
-  test("keeps project actions in the toolbar", () => {
+  test("keeps the Session detail toolbar at the prototype's fixed mobile height", () => {
+    routeParams = { slug: "archcode", sessionId: "session-1" };
+    const tree = ProjectToolbar();
+    expect((tree as ElementLike).props?.className).toContain("h-[88px]");
+  });
+
+  test("uses the project identity itself as the project-actions trigger", () => {
     const tree = ProjectToolbar();
     const menu = findAll(tree, (element) => element.type === "ProjectActionDropdown")[0];
     expect(menu?.props?.project).toBe(project);
-    expect((menu?.props?.trigger as ElementLike).props?.["aria-label"]).toBe("Project actions");
+    const trigger = menu?.props?.trigger as ElementLike;
+    expect(trigger.props?.["aria-label"]).toBe("Project actions for ArchCode");
+    expect(textContent(trigger)).toContain("ArchCode/workspace/archcode");
   });
 
   test("leaves the page h1 to Todo, Session, and Automation detail headers", () => {
@@ -99,9 +112,11 @@ describe("ProjectToolbar", () => {
     ]) {
       routeParams = { slug: "archcode", ...detailParams };
       const tree = ProjectToolbar();
+      const menu = findAll(tree, (element) => element.type === "ProjectActionDropdown")[0];
+      const trigger = menu?.props?.trigger as ElementLike;
 
-      expect(findAll(tree, (element) => element.type === "h1")).toEqual([]);
-      expect(findAll(tree, (element) => element.type === "p").some((element) => textContent(element) === "ArchCode")).toBe(true);
+      expect(findAll(trigger, (element) => element.type === "h1")).toEqual([]);
+      expect(findAll(trigger, (element) => element.type === "p").some((element) => textContent(element) === "ArchCode")).toBe(true);
     }
   });
 });

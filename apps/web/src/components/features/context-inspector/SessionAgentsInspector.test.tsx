@@ -14,6 +14,7 @@ import {
 } from "../../../store/session-store";
 import { sessionAuthoritativeSnapshot } from "../../../test-support/session-authoritative-snapshot";
 import { SessionAgentsInspector } from "./SessionAgentsInspector";
+import { flattenInspectorAgents } from "./session-inspector-projection";
 
 const originals = new Map<string, PropertyDescriptor | undefined>();
 
@@ -157,7 +158,7 @@ describe("SessionAgentsInspector", () => {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={["/projects/demo/sessions/root"]}>
           <Routes>
-            <Route path="/projects/:slug/sessions/:sessionId" element={<SessionAgentsInspector />} />
+            <Route path="/projects/:slug/sessions/:sessionId" element={<SessionAgentsInspector projection={{ items: flattenInspectorAgents(tree.root), isLoading: false, error: null }} />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,
@@ -176,7 +177,7 @@ describe("SessionAgentsInspector", () => {
     expect(rows[1]?.querySelector('[data-agent-role-icon="build"]')).not.toBeNull();
     expect(rows[2]?.querySelector('[data-agent-role-icon="explore"]')).not.toBeNull();
     expect(rows[1]?.querySelector('[data-agent-status="Completed"]')).not.toBeNull();
-    expect(rows[2]?.querySelector('[data-agent-status="Needs you"]')).not.toBeNull();
+    expect(rows[2]?.querySelector('[data-agent-status="Paused"]')).not.toBeNull();
 
     await act(async () => root.unmount());
     queryClient.clear();

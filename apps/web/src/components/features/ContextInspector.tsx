@@ -2,37 +2,52 @@ import type { ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { InspectorKind } from "../../lib/workbench-layout";
 import { SessionInspector, type SessionInspectorTab } from "./context-inspector/SessionInspector";
+import { useSessionInspectorProjection, type SessionInspectorProjection } from "./context-inspector/session-inspector-projection";
+
+type InspectorCount = number | "loading" | "unavailable";
 
 interface InspectorTab<T extends string> {
   id: T;
   label: string;
+  count?: InspectorCount;
 }
 
-const SESSION_TABS = [
-  { id: "agents", label: "Agents" },
-  { id: "changes", label: "Changes" },
-  { id: "context", label: "Context" },
-] satisfies [InspectorTab<SessionInspectorTab>, ...InspectorTab<SessionInspectorTab>[]];
+export function sessionInspectorTabs(projection: SessionInspectorProjection): [InspectorTab<SessionInspectorTab>, ...InspectorTab<SessionInspectorTab>[]] {
+  const count = (value: { isLoading: boolean; error: unknown }, length: number): InspectorCount => (
+    value.isLoading ? "loading" : value.error ? "unavailable" : length
+  );
+  return [
+    { id: "agents", label: "Agents", count: count(projection.agents, projection.agents.items.length) },
+    { id: "changes", label: "Changes", count: count(projection.changes, projection.changes.files?.length ?? 0) },
+    { id: "context", label: "Context" },
+  ];
+}
 
 export function ContextInspector({
   kind,
   id = "context-inspector",
+  reserveCloseSpace = false,
 }: {
   kind: InspectorKind;
   id?: string;
+  reserveCloseSpace?: boolean;
 }) {
-  return <InspectorShell key="session" id={id} kind={kind} tabs={SESSION_TABS} renderPanel={(activeTab) => <SessionInspector activeTab={activeTab} />} />;
+  const projection = useSessionInspectorProjection();
+  const tabs = sessionInspectorTabs(projection);
+  return <InspectorShell key="session" id={id} kind={kind} tabs={tabs} reserveCloseSpace={reserveCloseSpace} renderPanel={(activeTab) => <SessionInspector activeTab={activeTab} projection={projection} />} />;
 }
 
-function InspectorShell<T extends string>({
+export function InspectorShell<T extends string>({
   kind,
   id,
   tabs,
+  reserveCloseSpace = false,
   renderPanel,
 }: {
   kind: InspectorKind;
   id: string;
   tabs: readonly [InspectorTab<T>, ...InspectorTab<T>[]];
+  reserveCloseSpace?: boolean;
   renderPanel: (activeTab: T) => ReactNode;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -52,13 +67,7 @@ function InspectorShell<T extends string>({
 
   return (
     <aside id={id} className="flex h-full min-w-0 flex-col bg-bg-surface" aria-label="Context inspector">
-      <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border-default px-4 max-[760px]:pl-12">
-        <div className="min-w-0 flex-1">
-          <div className="text-[14px] font-semibold leading-5 text-text-primary">Context inspector</div>
-          <div className="text-[12px] leading-4 capitalize text-text-tertiary">{kind}</div>
-        </div>
-      </header>
-      <div className="flex shrink-0 border-b border-border-subtle px-2" role="tablist" aria-label={`${kind} context sections`}>
+      <div className={`grid h-10 shrink-0 grid-cols-3 border-b border-border-subtle pl-1 ${reserveCloseSpace ? "pr-11" : "pr-1"}`} role="tablist" aria-label={`${kind} context sections`}>
         {tabs.map((tab, index) => (
           <button
             key={tab.id}
@@ -68,7 +77,7 @@ function InspectorShell<T extends string>({
             aria-selected={activeTab === tab.id}
             aria-controls={`${id}-panel`}
             tabIndex={activeTab === tab.id ? 0 : -1}
-            className={`min-w-0 flex-1 border-b-2 px-1 py-2.5 text-[12px] font-medium transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${activeTab === tab.id ? "border-brand text-text-primary" : "border-transparent text-text-tertiary hover:text-text-secondary"}`}
+            className={`relative inline-flex min-w-0 items-center justify-center gap-[5px] px-1.5 text-[12px] font-semibold transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${activeTab === tab.id ? "text-text-primary after:absolute after:-bottom-px after:left-1.5 after:right-1.5 after:h-0.5 after:bg-brand" : "text-text-tertiary hover:text-text-secondary"}`}
             onClick={() => setActiveTab(tab.id)}
             onKeyDown={(event) => {
               if (event.key === "ArrowRight") { event.preventDefault(); selectTab(index + 1); }
@@ -77,7 +86,16 @@ function InspectorShell<T extends string>({
               if (event.key === "End") { event.preventDefault(); selectTab(tabs.length - 1); }
             }}
           >
-            {tab.label}
+            <span>{tab.label}</span>
+            {tab.count !== undefined ? (
+              <span
+                className={`min-w-4 rounded-full bg-bg-muted px-[5px] font-mono text-[11px] font-[650] leading-4 tabular-nums text-text-tertiary ${activeTab === tab.id ? "bg-[color:color-mix(in_srgb,var(--brand)_14%,var(--bg-muted))] text-text-secondary" : ""}`}
+                data-testid={`inspector-count-${tab.id}`}
+                aria-label={`${tab.label} count ${tab.count === "loading" ? "loading" : tab.count === "unavailable" ? "unavailable" : tab.count}`}
+              >
+                {tab.count === "loading" ? "…" : tab.count === "unavailable" ? "—" : tab.count}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
@@ -85,7 +103,7 @@ function InspectorShell<T extends string>({
         id={`${id}-panel`}
         role="tabpanel"
         aria-labelledby={`${id}-tab-${activeTab}`}
-        className="min-h-0 flex-1 overflow-y-auto p-3"
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-2"
       >
         {renderPanel(activeTab)}
       </div>

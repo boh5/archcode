@@ -36,6 +36,11 @@ export interface ProjectTodoRunNowResponse {
   readonly session: RootSessionSummary;
 }
 
+export interface ProjectTodoStartDiscussionResponse {
+  readonly todo: ProjectTodo;
+  readonly session: RootSessionSummary;
+}
+
 export interface WorkbenchProjectRef {
   readonly slug: string;
   readonly name: string;

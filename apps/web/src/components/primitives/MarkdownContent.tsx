@@ -10,7 +10,7 @@ import "streamdown/styles.css";
 import "./MarkdownContent.css";
 import { MarkdownTable } from "./MarkdownTable";
 
-type MarkdownContentVariant = "standard" | "compact" | "response";
+type MarkdownContentVariant = "standard" | "compact" | "document" | "response";
 
 interface MarkdownContentProps {
   children: string;
@@ -48,6 +48,7 @@ const MARKDOWN_COMPONENTS = {
 const MARKDOWN_CLASS_NAME: Record<MarkdownContentVariant, string> = {
   standard: "markdown-content space-y-0",
   compact: "markdown-content markdown-content--compact space-y-0",
+  document: "markdown-content markdown-content--document space-y-0",
   response: "markdown-content markdown-content--response space-y-0",
 };
 

@@ -177,7 +177,8 @@ describe("ToolCard output viewer", () => {
     await renderExpandedCard();
 
     const summary = requiredButton(":scope > div > button");
-    expect(summary.className).toContain("max-w-[696px]");
+    expect(summary.className).toContain("w-full");
+    expect(summary.className).not.toContain("max-w-");
     const detailSurface = container.querySelector<HTMLElement>("[data-tool-detail-surface]");
     expect(detailSurface).not.toBeNull();
     expect(detailSurface?.className).toContain("w-full");

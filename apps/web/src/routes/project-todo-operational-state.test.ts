@@ -110,7 +110,7 @@ describe("Todo operational state", () => {
   test("uses the latest work result for attention or review", () => {
     expect(deriveProjectTodoOperationalState(facts({
       sessions: [workSession("failed", 10, "timed_out")],
-    }))).toEqual({ label: "Needs attention", detail: "Timed out", kind: "warning" });
+    }))).toEqual({ label: "Failed", detail: "Timed out", kind: "failed" });
     expect(deriveProjectTodoOperationalState(facts({
       sessions: [workSession("completed", 20, "completed"), workSession("failed", 10, "failed")],
     }))).toEqual({ label: "Ready to review", kind: "completed" });
@@ -158,6 +158,6 @@ describe("Todo operational state", () => {
     };
     expect(deriveProjectTodoOperationalState(facts({
       automations: [automation(invocation, "2026-08-04T02:00:00.000Z")],
-    }))).toEqual({ label: "Needs attention", detail: "Automation missed", kind: "warning" });
+    }))).toEqual({ label: "Failed", detail: "Automation missed", kind: "failed" });
   });
 });

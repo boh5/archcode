@@ -9,6 +9,7 @@ export type {
   ProjectSessionInventoryItem,
   ProjectAutomationInventoryItem,
   ProjectTodoRunNowResponse,
+  ProjectTodoStartDiscussionResponse,
   SessionTreeResponse,
   SessionTreeNode,
   SessionTreeDiagnostic,
@@ -47,6 +48,7 @@ export type {
   ProjectTodoCreateInput,
   ProjectTodoUpdateInput,
   CreateProjectTodoSessionInput,
+  ProjectTodoStartDiscussionInput,
 } from "@archcode/protocol";
 
 import type {

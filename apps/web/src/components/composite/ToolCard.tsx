@@ -94,7 +94,7 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
   const summaryLaneClass = grouped
     ? WORK_ACTIVITY_NESTED_LANE_CLASS
     : WORK_ACTIVITY_CHILD_LANE_CLASS;
-  const summaryClass = `tool-card-summary-control grid min-h-9 select-none grid-cols-[12px_minmax(0,160px)_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-transparent py-1 pl-0 pr-1.5 text-left max-[560px]:grid-cols-[12px_minmax(0,112px)_minmax(0,1fr)_auto] ${summaryBorderClass} ${summaryLaneClass}`;
+  const summaryClass = `tool-card-summary-control grid min-h-9 select-none grid-cols-[14px_minmax(98px,160px)_minmax(0,1fr)_auto] items-center gap-[9px] rounded-[5px] bg-transparent px-[9px] py-[7px] text-left max-[560px]:grid-cols-[14px_minmax(90px,112px)_minmax(0,1fr)_auto] [@media(pointer:coarse)]:min-h-11 ${summaryBorderClass} ${summaryLaneClass}`;
   const summaryContent = (
     <>
       {hasDetails
@@ -107,7 +107,7 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
         {part.toolName}
       </span>
       <span
-        className={`min-w-0 truncate text-[13px] font-medium ${isShell ? "font-mono text-text-secondary" : "text-text-primary"}`}
+        className={`min-w-0 truncate text-[12.5px] font-medium text-text-secondary ${isShell ? "font-mono" : ""}`}
         title={summaryPrimary}
       >
         {summaryPrimary}
@@ -122,7 +122,7 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
           </span>
         )}
         {(part.state !== "completed" || isUnknownResult) && (
-          <span className={`text-[10px] font-semibold ${statusClass}`}>{statusLabel}</span>
+          <span className={`text-[11px] font-semibold ${statusClass}`}>{statusLabel}</span>
         )}
       </span>
     </>
@@ -135,7 +135,7 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
           type="button"
           aria-expanded={expanded}
           aria-controls={detailsId}
-          className={`${summaryClass} cursor-pointer transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand`}
+          className={`${summaryClass} cursor-pointer transition-[background-color,transform] duration-[var(--motion-hover)] hover:translate-x-0.5 hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand`}
           onClick={() => setExpanded((value) => {
             const next = !value;
             if (!next) manuallyCollapsed.current = true;

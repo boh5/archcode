@@ -63,6 +63,14 @@ describe("MarkdownContent", () => {
     expect(html).toContain("markdown-content markdown-content--compact space-y-0");
   });
 
+  test("uses the prototype document rhythm for durable Todo Markdown", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent variant="document">{"# Durable document"}</MarkdownContent>,
+    );
+
+    expect(html).toContain("markdown-content markdown-content--document space-y-0");
+  });
+
   test("uses a quiet response variant for final Agent output", () => {
     const html = renderToStaticMarkup(
       <MarkdownContent variant="response">{"Final response"}</MarkdownContent>,
@@ -105,7 +113,10 @@ describe("MarkdownContent", () => {
     expect(componentCss).not.toContain(".markdown-content--response > p:first-child");
     expect(componentCss).toContain("    p,");
     expect(componentCss).toContain("    blockquote");
-    expect(componentCss).toContain("> :not(:first-child)");
+    expect(componentCss).toContain(
+      ".markdown-content.markdown-content--document\n  > :where(:not(:first-child))",
+    );
+    expect(componentCss).toContain("margin-block: 22px 7px");
     expect(componentCss).toContain('[data-streamdown="code-block"]');
     expect(componentCss).toContain('[data-streamdown="code-block-body"]');
     expect(componentCss).toContain("--markdown-code-gutter");

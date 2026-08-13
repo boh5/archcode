@@ -38,14 +38,27 @@ away.
 - Let conversation structure, Work, tools, code, tables, Diffs, and the Composer
   use the available Session canvas with safe horizontal gutters.
 - Constrain only long Agent prose to a 65–72ch reading measure. User messages
-  may reach 660px and align right.
+  may reach 640px and align right.
 - Let the conversation and Composer Dock share the Session canvas vertically;
   the dock must not overlay conversation content.
+- Reserve the vertical scrollbar gutter on the scrolling edge only. The
+  Composer compensates by half that gutter so its centered column remains
+  stable without shifting the transcript away from the prototype alignment.
+- The Session conversation uses the prototype's normal 15px scrollbar gutter,
+  rather than inheriting the workbench-wide thin scrollbar.
 - Preserve desktop resize, collapse, persisted-width, and focus-mode behavior
   for the Context Inspector.
+- At `>1180px`, the Project Toolbar spans above both the Session canvas and the
+  Inspector. The Inspector begins 52px from the viewport top; its 8px resize
+  target straddles the boundary without subtracting width from the canvas.
 - At `≤1180px`, Context Inspector becomes a right overlay.
+- At `761–1180px`, that overlay begins below the Project Toolbar and 64px
+  Session header at exactly 116px from the viewport top and includes its own
+  top-right Close control.
 - At `≤760px`, the project toolbar wraps to keep all three project tabs
-  reachable; the 48px project rail remains visible.
+  reachable and applies this page's explicit 88px override; the 48px project
+  rail remains visible and the Inspector drawer begins below that toolbar. The
+  modal scrim still covers the full viewport while the drawer is open.
 
 ## Content Order
 
@@ -63,6 +76,9 @@ header and conversation. Do not move Execution into the inspector.
 ## Session Header
 
 - First line: Session title plus current state.
+- The title is static text, not a related-Session picker. Cross-Session
+  navigation remains in the canonical Sessions inventory; do not add a second
+  header navigation mechanism from prototype-only sample relationships.
 - Second line:
   `working directory · {Tool count} tools · {Token usage} tokens · source`.
 - Tool count and Token usage are retained because they provide useful activity
@@ -128,7 +144,7 @@ running:    user message → expanded Work
 
 ### Work summary row
 
-- Use a compact 32px visual row on precise pointers and a minimum 44px row on
+- Use a compact 36px visual row on precise pointers and a minimum 44px row on
   coarse pointers.
 - Put the chevron first. Running Work adds one small live pulse before
   `Working`; completed Work needs no repeated success icon.
@@ -139,6 +155,8 @@ running:    user message → expanded Work
 - Use a transparent surface with only a neutral hover field. Do not wrap Work in
   a raised card, add a large colored badge, repeat the user prompt, or show a
   second metadata row.
+- Work summaries and nested activity use the full Session thread width; do not
+  reintroduce a narrower activity-lane cap inside the conversation column.
 - The chevron rotates 160ms. Do not animate disclosure height.
 
 ### Scroll and disclosure behavior
@@ -183,8 +201,9 @@ running:    user message → expanded Work
   success glyph on this settled group row.
 - The chevron sits at the left edge. Tool names use readable 12–13px monospace
   text rather than tiny metadata.
-- Tool Run and expandable singleton rows remain compact with precise pointers
-  and use a minimum 44px target with coarse pointers.
+- Reasoning, Tool Run, expandable singleton, and flat Tool child rows use the
+  same 36px precise-pointer rhythm as Work, with a minimum 44px target on
+  coarse pointers.
 - Tool Run expansion reveals one flat ordered call list. Reasoning and ordinary
   Agent commentary remain independent timeline modules outside the group.
 - Each successful ordinary child row shows
@@ -206,6 +225,9 @@ running:    user message → expanded Work
   the terminal output plus exit code, duration, and concise result.
 - `delegate`, `ask_user`, Recovery, and Compaction retain their dedicated
   presentation.
+- Delegation, Recovery, and Compaction use one nested record shell: 6px radius,
+  default border, 10px horizontal header/content padding, and no raised outer
+  shadow. Delegation alone may tint that border with brand to show child work.
 
 ## Context Inspector
 
@@ -222,7 +244,9 @@ on the project rail.
   count, or file count as a chrome line — those already live on the Session
   header/Composer, Agents/Changes tab badges, and Context property rows.
 - Tab bar may carry counts (`Agents 4`, `Changes 3`). Active tab uses a brand
-  underline, not a filled pill block.
+  underline inset 6px from each edge, not a filled pill block. Counts use a
+  quiet 16px-high rounded field; the active count receives a restrained brand
+  tint.
 - Type floor ≥11px; primary labels ~12–12.5px; meta ~11–11.5px. No sub-11px
   operational text in the inspector.
 
@@ -257,8 +281,9 @@ on the project rail.
 - Property list (label left / value right), not a stack of bordered cells.
 - Priority rows first: **Goal**, **Execution** (binding such as
   `Suspended · Permission`, `Running`, `Completed`).
-- Supporting rows: Model/Profile, Tokens (`used / limit` without vanity charts),
-  Working directory.
+- Supporting rows: Model/Profile, Tokens (`used / limit` when the model limit is
+  authoritatively exposed; otherwise used tokens only, never a fabricated
+  denominator), Working directory.
 - Goal full prose control remains in Composer; Context only mirrors the binding.
 
 ### Density and anti-patterns
@@ -274,6 +299,19 @@ on the project rail.
 
 - Composer is always a compact bottom dock with no Composer-level
   expand/collapse state.
+- Its desktop input is 15px / 1.45 line-height and grows only to 160px. At
+  `≤760px`, use the approved 16px exception to prevent iOS input-focus zoom;
+  the current prototype and product must both retain that exception.
+- Match the current prototype's horizontal rhythm: the conversation content
+  boundary is 852px, while the dock input/priority column is 848px inside a
+  900px outer dock measure. Desktop dock padding is 12px top, 26px horizontal,
+  and 14px bottom; narrow dock padding is 10px top and 12px on other sides.
+  Desktop may reserve the transcript scrollbar gutter for alignment; at
+  `<=760px` that gutter is zero so the Composer uses the full narrow canvas.
+- The dock uses the base workspace surface and caps at
+  `min(48dvh, 520px)` on desktop or `min(52dvh, 460px)` at `≤760px`. Only the
+  priority stack (`HITL → Goal → Queue`) scrolls inside that cap; the input is a
+  non-scrolling sibling so its menu can escape above the card.
 - Pending HITL is rendered first and receives the strongest semantic field in
   the dock. Its question or permission and response actions must be immediately
   visible; Goal and Queue never sit above it.
@@ -291,6 +329,10 @@ on the project rail.
 - **Next model picker** (prototype `composer-model-picker`):
   - Trigger shows `Model display name · effort` (effort omitted only when the
     catalog model has no variants).
+  - Trigger is 30px high with `10px / 8px` horizontal padding, a 999px radius,
+    12px/520 type, a 6px outer gap, and a 5px `Model · effort` inner gap. The
+    menu is 308px wide, uses 6px padding and a 12px radius, and opens 8px above
+    the trigger.
   - Menu lists **model display names only** — no marketing descriptions
     (“Balanced default…”, etc.). Models are user-added configuration.
   - The project/principal default model, if known, carries a small **Default**
@@ -301,13 +343,19 @@ on the project rail.
   - Effort section label is **Effort** (not Thinking). Options are free-form
     variant keys from model config (e.g. `fast`, `deep`) plus **Default** when
     no variant is selected. No effort description hints.
+  - Selecting a Model, Effort, or explicit-override reset keeps the menu open;
+    outside activation or Escape closes it. Pointer opening leaves focus on the
+    trigger. Keyboard opening with Enter, Space, ArrowDown, or ArrowUp focuses
+    the currently selected model; Arrow/Home/End navigation then moves across
+    enabled menu options. Escape closes and restores focus to the trigger.
 - **Draft attachments** are chips: file glyph + truncated name + one remove (×)
   control. Size/ready secondary text is optional and may stay hidden at this
   density. No up/down reorder controls — attach order is enough.
 - Agent identity and the current Send/Queue/Stop actions remain in the quiet
   input surface below those priority cues.
 - A running Session may queue ordinary messages while Stop remains a separate,
-  unmistakable action.
+  unmistakable action. Queue retains the primary filled treatment; Stop uses a
+  quiet neutral fill and reveals destructive red only on hover.
 - On very narrow layouts, hide secondary model/effort metadata before removing
   Agent identity or the primary Queue/Send/Stop controls.
 

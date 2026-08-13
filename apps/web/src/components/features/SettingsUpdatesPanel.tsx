@@ -11,7 +11,7 @@ import {
 import { queryKeys } from "../../api/queries";
 
 const secondaryButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
-const primaryButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
+const primaryButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 
 export function SettingsUpdatesPanel({ authorizationToken }: { authorizationToken?: string } = {}) {
   const queryClient = useQueryClient();

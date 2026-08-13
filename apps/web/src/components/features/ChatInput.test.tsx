@@ -73,6 +73,7 @@ const setLocalSendingMessageStatus = mock((_clientRequestId: string, _status: st
 const getCompleteProjectSkillInventory = mock(async (_slug: string, _sessionId?: string) => []);
 let activity: SessionFamilyActivity | undefined;
 let pendingHitlCount = 0;
+let terminalFailed = false;
 let hitlReady = false;
 let stopPending = false;
 let modelRuntimeFetching = false;
@@ -161,6 +162,7 @@ function renderChatInput() {
     activity,
     hitlReady,
     hasPendingHitl: pendingHitlCount > 0,
+    terminalFailed,
   });
 }
 
@@ -186,6 +188,7 @@ describe("ChatInput runtime controls", () => {
   beforeEach(() => {
     activity = undefined;
     pendingHitlCount = 0;
+    terminalFailed = false;
     hitlReady = false;
     stopPending = false;
     modelRuntimeFetching = false;
@@ -398,7 +401,7 @@ describe("ChatInput runtime controls", () => {
     expect(removeLabels).toEqual(["Remove a.txt", "Remove b.txt"]);
   });
 
-  test("adds clipboard images and prevents the browser paste fallback", () => {
+  test("renders clipboard images as ordinary file chips and prevents the browser paste fallback", () => {
     activity = "idle";
     hitlReady = true;
     let tree = renderChatInput();
@@ -413,11 +416,12 @@ describe("ChatInput runtime controls", () => {
     tree = rerenderChatInput();
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(findAll(tree, (element) => element.type === "img")).toHaveLength(1);
+    expect(findAll(tree, (element) => element.type === "img")).toHaveLength(0);
+    expect(textContent(tree)).toContain("clipboard.png");
     expect(findAll(tree, (element) => element.props?.["aria-label"] === "Remove clipboard.png")).toHaveLength(1);
   });
 
-  test("reorders and removes draft attachments before upload", () => {
+  test("preserves attach order and exposes no reorder controls", () => {
     activity = "idle";
     hitlReady = true;
     let tree = renderChatInput();
@@ -428,14 +432,35 @@ describe("ChatInput runtime controls", () => {
     ]);
     tree = rerenderChatInput();
 
-    (findAll(tree, (element) => element.props?.["aria-label"] === "Move c.txt earlier")[0]?.props?.onClick as () => void)();
-    tree = rerenderChatInput();
+    expect(findAll(tree, (element) => String(element.props?.["aria-label"] ?? "").startsWith("Move "))).toHaveLength(0);
     (findAll(tree, (element) => element.props?.["aria-label"] === "Remove a.txt")[0]?.props?.onClick as () => void)();
     tree = rerenderChatInput();
 
     const removeLabels = findAll(tree, (element) => String(element.props?.["aria-label"] ?? "").startsWith("Remove "))
       .map((element) => element.props?.["aria-label"]);
-    expect(removeLabels).toEqual(["Remove c.txt", "Remove b.txt"]);
+    expect(removeLabels).toEqual(["Remove b.txt", "Remove c.txt"]);
+  });
+
+  test("shows upload progress without a fake cancellation control", async () => {
+    activity = "idle";
+    hitlReady = true;
+    let finish: ((value: { id: string; name: string; mediaType: string; sizeBytes: number; kind: "file" }) => void) | undefined;
+    uploadHandler = async (input) => new Promise((resolve) => {
+      finish = resolve;
+    });
+    let tree = renderChatInput();
+    selectFiles(tree, [new File(["body"], "uploading.txt")]);
+    tree = rerenderChatInput();
+
+    const send = (findAll(tree, (element) => element.props?.title === "Send message")[0]?.props?.onClick as () => Promise<void>)();
+    tree = rerenderChatInput();
+
+    expect(textContent(tree)).toContain("Uploading…");
+    expect(findAll(tree, (element) => element.props?.["aria-label"] === "Remove uploading.txt")).toHaveLength(0);
+    expect(findAll(tree, (element) => String(element.props?.["aria-label"] ?? "").startsWith("Move "))).toHaveLength(0);
+
+    finish?.({ id: "uploaded", name: "uploading.txt", mediaType: "text/plain", sizeBytes: 4, kind: "file" });
+    await send;
   });
 
   test("uploads sequentially in draft order, then posts the ordered ids once", async () => {
@@ -639,6 +664,10 @@ describe("ChatInput runtime controls", () => {
     expect(stop).toBeDefined();
     expect(queue).toBeDefined();
     expect(queue?.props?.disabled).toBe(true);
+    expect(queue?.props?.className).toContain("bg-brand");
+    expect(queue?.props?.className).toContain("text-brand-ink");
+    expect(stop?.props?.className).toContain("bg-bg-active");
+    expect(stop?.props?.className).toContain("hover:bg-error");
     expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
     expect(stop?.props?.disabled).not.toBe(true);
     (stop?.props?.onClick as () => void)();
@@ -743,32 +772,16 @@ describe("ChatInput runtime controls", () => {
     expect(stopSessionMutate).not.toHaveBeenCalled();
   });
 
-  test("pending HITL collapses ordinary Queue composition until requested", () => {
+  test("pending HITL keeps the bottom composer visible and queue-ready", () => {
     activity = "idle";
     hitlReady = true;
-    let tree = renderChatInput();
-    let textarea = findAll(tree, (element) => element.type === "textarea")[0];
-    expect(textarea?.props?.disabled).toBe(false);
-
     pendingHitlCount = 1;
-    hookCursor = 0;
-    tree = renderChatInput();
-    textarea = findAll(tree, (element) => element.type === "textarea")[0];
-    const trigger = findAll(tree, (element) => element.props?.["data-testid"] === "hitl-queue-composer-trigger")[0];
-    expect(textarea).toBeUndefined();
-    expect(trigger).toBeDefined();
-    expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-card")[0]?.props?.["data-density"]).toBe("collapsed");
-    expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
-    expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(0);
-
-    (trigger?.props?.onClick as () => void)();
-    hookCursor = 0;
-    tree = renderChatInput();
-    textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    const tree = renderChatInput();
+    const textarea = findAll(tree, (element) => element.type === "textarea")[0];
     expect(textarea?.props?.disabled).toBe(false);
     expect(textarea?.props?.placeholder).toBe("Queue a message…");
+    expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
     expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(1);
-    expect(findAll(tree, (element) => element.props?.["aria-label"] === "Collapse queued-message composer")).toHaveLength(1);
   });
 
   test("a suspended family with HITL keeps Stop and presents Needs you", () => {
@@ -777,8 +790,9 @@ describe("ChatInput runtime controls", () => {
     pendingHitlCount = 1;
     const tree = renderChatInput();
 
+    expect(findAll(tree, (element) => element.type === "textarea")[0]).toBeDefined();
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(1);
-    expect(findAll(tree, (element) => textContent(element) === "Needs you")).toHaveLength(1);
+    expect(textContent(tree)).toContain("Needs you");
     expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
   });
 
@@ -792,6 +806,15 @@ describe("ChatInput runtime controls", () => {
     expect(textarea?.props?.disabled).toBe(true);
     expect(textarea?.props?.placeholder).toBe("Syncing pending requests…");
     expect(findAll(tree, (element) => element.props?.title === "Send message")[0]?.props?.disabled).toBe(true);
+  });
+
+  test("terminal failed work keeps error state in the always-visible Composer", () => {
+    activity = "idle";
+    hitlReady = true;
+    terminalFailed = true;
+    const tree = renderChatInput();
+    expect(textContent(tree)).toContain("Failed");
+    expect(findAll(tree, (element) => element.type === "textarea")[0]).toBeDefined();
   });
 
   test("submits slash commands as ordinary Session messages", () => {

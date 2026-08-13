@@ -207,6 +207,10 @@ No network font dependency is required.
 --font-stack-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 ```
 
+The global UI baseline matches the current prototypes: 15px type at 1.55
+line-height (`23.25px`), `-0.006em` letter spacing, optimized legibility, and
+tabular numerals. Components with a named role below may override that baseline.
+
 Type scale:
 
 | Role | Size | Weight | Notes |
@@ -218,7 +222,7 @@ Type scale:
 | User message | 15px | 400–500 | User intent |
 | Final response | 15px | 400–600 | Agent outcome and supporting detail |
 | Project / Session title | 20px | 600 | Active work or page identity |
-| Global Home title | 26px | 700 | Cross-project operational identity |
+| Global Home title | 26px | 680 | Cross-project operational identity |
 
 Rules:
 
@@ -287,14 +291,25 @@ Session detail: 52px project rail | flexible Session canvas | 312px inspector
 - Context Inspector is resizable from 280–460px.
 - User-adjusted Inspector width persists across visits. Collapse and focus mode
   never discard the last expanded width.
-- Every project page begins with one 48px project toolbar containing the
+- Every project page begins with one 52px desktop project toolbar containing the
   project identity, the `Todos / Automations / Sessions` navigation, and project
-  actions. Do not duplicate this hierarchy in a persistent project sidebar.
+  actions. At `<=760px`, inventory and Todo/Automation detail pages use the
+  prototype's content-driven 81px two-row toolbar: a 40px identity row plus a
+  40px navigation row whose links retain 44px targets. Session detail explicitly
+  overrides this to 88px. Do not duplicate this hierarchy in a persistent
+  project sidebar.
+- A rail destination has exactly one current-state surface. The Home mark and
+  project marks must not retain their neutral hover/default background when
+  selected; the brand field is the sole active background.
+- On Session detail, the desktop Project Toolbar spans the Session canvas and
+  Inspector column. The sibling Inspector begins below the 52px toolbar, and
+  its resize hit target overlays the column boundary instead of consuming
+  canvas width.
 - Workbench headers use a 64px minimum height and expand when their two-line
   content needs more room.
 - Conversation structure follows the flexible work canvas with safe horizontal
   gutters; prose inside Agent responses uses a 65–72ch reading measure and user
-  messages remain capped at 660px.
+  messages remain capped at 640px.
 - Global Home content max: 1180px.
 - Todos content max: 1500px.
 - Main regions scroll independently only where the product structure requires it.
@@ -304,8 +319,8 @@ Responsive behavior:
 | Breakpoint | Behavior |
 |---|---|
 | `>1180px` | Project rail + canvas; Session detail also shows the resizable Inspector |
-| `761–1180px` | 52px rail + canvas; Session Inspector becomes a right overlay below the Session header |
-| `≤760px` | 48px rail + canvas; project toolbar wraps to two rows when needed and the Session Inspector becomes an overlay |
+| `761–1180px` | 52px rail + canvas; Session Inspector becomes a right overlay 116px from the viewport top, below the 52px Project Toolbar and 64px Session header |
+| `≤760px` | 48px rail + canvas; inventory toolbar is 81px, while Session detail keeps its 88px override and opens the Inspector below it |
 | `<700px` | Todo Board becomes one column |
 
 Narrow-screen rules:
@@ -330,12 +345,14 @@ Narrow-screen rules:
 - Active project uses the same indigo selection language as other navigation:
   a quiet brand field, brand-colored mark, and narrow indigo edge. Lime remains
   exclusive to genuinely running/live work and never doubles as selection.
-- Keep the active project and the most recently opened projects directly on the
-  rail. At five or more registered projects, show up to five project marks plus
-  one explicit `More projects` control. It opens a searchable project picker
-  with project name, workspace path, current-project state, and project-level
-  Needs-you count. Registry recency determines ordering; the active project must
-  remain directly reachable even if it falls outside that recent slice.
+- Project marks keep their registration order. Switching projects updates only
+  active state and must never move, replace, or reorder desktop rail entries. At
+  five or more registered projects, show the first five fixed project marks plus
+  one explicit `More projects` control. It opens the complete project set in the
+  same fixed order with project name, workspace path, current-project state, and
+  project-level Needs-you count. If the current project is outside the five
+  direct marks, its `Current` state remains visible in the picker; do not inject
+  it into the rail and displace another project.
 - `More projects` is a scalable navigation escape hatch, not Add Project and not
   global work search. Keep the existing plus control for registering/opening a
   project, and keep `Command/Ctrl+K` reserved for `Search all work`.
@@ -368,7 +385,7 @@ Narrow-screen rules:
   urgency grouping within a project. Do not duplicate the global-search icon
   in the project toolbar.
 - Todo, Automation, and Session filters share one visual/interaction contract:
-  36px high on precise pointers, at least 44px on coarse pointers, a search
+  38px high on precise pointers, at least 44px on coarse pointers, a search
   icon, visible focus ring, the same border/radius/type, and a helpful
   no-results state. Implement each page's filter locally; do not pre-build a
   generic `EntityFilter` component. Page-specific source or view controls may
@@ -395,8 +412,10 @@ Narrow-screen rules:
   changing that Session's source. Every Session row and detail header identifies
   its source as `Todo`, `Automation`, or `Direct`.
 - Todo capture stays out of the persistent inventory canvas. One `New Todo`
-  trigger opens a transient capture surface with two explicit outcomes:
+  trigger opens a transient capture surface with three explicit outcomes:
   - `Save` captures one Idea without starting Agent work;
+  - `Start discussion` captures one Idea, creates its bound Discussion Session,
+    and opens that Session while the Todo remains in Ideas;
   - `Run now` creates the minimal Todo, moves it into active work, creates its
     bound Lead Session, and opens that Session. Discussion and Plan are optional,
     not gates for simple work.
@@ -444,8 +463,8 @@ Todo operational line, inventory cue) — not decorative copy.
 
 | State | Token / field | Visual |
 |---|---|---|
-| Running / live | `--signal` / `--signal-foreground` / `--running-field` | Lime orbit or live pulse + accessible state; running orbits use green glow (`0 0 12px rgba(101, 163, 13, 0.25)`) |
-| Needs you / HITL attention | `--warning` / `--attention-field` | Amber icon/orbit + `Needs you` (or mechanism tag where density rules allow); attention orbits use amber glow (`0 0 12px rgba(251, 146, 60, 0.3)`) |
+| Running / live | `--signal` / `--signal-foreground` / `--running-field` | Lime orbit or live pulse + accessible state; use only the quiet surface separation ring from the current prototype, never a decorative outer glow |
+| Needs you / HITL attention | `--warning` / `--attention-field` | Amber icon/orbit + `Needs you` (or mechanism tag where density rules allow); use only the quiet inset/surface rings from the current prototype, never a decorative outer glow |
 | Done / completed | `--success` / `--success-field` | Shared **circle-check** SVG (same path as Todos Done `data-icon="circle-check"`) or completed text — never a freehand CSS border-hack check |
 | Failed / error | `--error` / `--error-field` | Red icon/orbit + `Failed` or recovery wording |
 | Ready to review | brand-tinted quiet marker (not lime) | Review-ready inventory cue with brand color glow on focus |
@@ -466,8 +485,10 @@ pulse, status-orbit spin while running, and terminal cursor may loop.
 ### Buttons
 
 - Primary: shared `.primary-button` (or product equivalent) — indigo fill,
-  4px radius, 32px default height, disabled state uses muted fill without a second
-  “fake primary” style. Inventory CTAs such as `New Session` and `New Automation`
+  4px radius, 32px default height, 13px horizontal padding, 6px content gap,
+  12px / 600 text with `-0.01em` tracking, and a 1px brand border. Disabled state
+  uses muted fill without a second “fake primary” style. Inventory CTAs such as
+  `New Session` and `New Automation`
   use this primitive; do not invent page-local primary button classes. Primary
   buttons use brand-tinted shadows (`0 1px 3px rgba(99, 102, 241, 0.3)`) with
   subtle inset highlights (`inset 0 1px 0 rgba(255, 255, 255, 0.1)`) and a 1px
@@ -594,7 +615,8 @@ Execution is a mandatory product entity, not an optional visual section.
 - **Attachments** already on the draft are compact chips: file glyph + name + one
   remove control. No reorder up/down affordances — order is attach order.
 - A running Session keeps ordinary queue composition available and exposes Stop
-  clearly.
+  clearly as a separate control. Queue retains the primary filled treatment;
+  Stop stays neutral until destructive hover.
 - The dock consumes layout space and never floats over Work or conversation
   content.
 
@@ -626,7 +648,11 @@ Execution is a mandatory product entity, not an optional visual section.
   Plan management, or lifecycle mutation. It exposes one explicit route into the
   complete detail surface.
 - Overlays use a scrim and a visible close action, never resize the underlying
-  inventory canvas, and restore focus to their trigger when dismissed.
+  inventory canvas, keep keyboard focus inside a modal while it is open, and
+  restore focus to their trigger when dismissed. While a modal submission is
+  pending, expose `aria-busy` plus a polite live status, disable duplicate
+  actions and user dismissal, and move focus to the exact retry action or inline
+  error when the request fails.
 - Detailed Agents / Changes / Context presentation lives in
   [`pages/session.md`](pages/session.md).
 

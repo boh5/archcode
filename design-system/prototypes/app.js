@@ -28,6 +28,7 @@ const icons = {
   panel: "M4 4h16v16H4zM15 4v16",
   plus: "M12 5v14M5 12h14",
   search: "m20 20-4.3-4.3M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z",
+  save: "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 21v-8H7v8M7 3v5h8",
   scan: "M3 3v5M3 3h5M21 3h-5M21 3v5M3 21v-5M3 21h5M21 21h-5M21 21v-5M8 15l3-3 2 2 4-5",
   settings:
     "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM19 13.5l2 1-2 3-2-1.1a8 8 0 0 1-2 1.2L14.8 20h-3.6l-.2-2.4a8 8 0 0 1-2-1.2L7 17.5l-2-3 2-1a8 8 0 0 1 0-3L5 9.5l2-3 2 1.1a8 8 0 0 1 2-1.2l.2-2.4h3.6l.2 2.4a8 8 0 0 1 2 1.2L19 6.5l2 3-2 1a8 8 0 0 1 0 3Z",
@@ -394,14 +395,6 @@ function escapePrototypeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 }
 
-try {
-  const storedTodos = JSON.parse(localStorage.getItem("archcode-prototype-created-todos") || "[]");
-  const todoToolbarCount = document.querySelector('.project-toolbar-nav a[href="./todos.html"] .toolbar-count');
-  if (todoToolbarCount && Array.isArray(storedTodos)) todoToolbarCount.textContent = String(6 + storedTodos.length);
-} catch {
-  // Keep the static prototype count when local demo state is unreadable.
-}
-
 function readPrototypeTodos() {
   try {
     const value = JSON.parse(localStorage.getItem("archcode-prototype-created-todos") || "[]");
@@ -458,9 +451,9 @@ const globalProjectSearchItems = [
     workKey: "project-archcode-readme-demo",
     type: "Project",
     tone: "",
-    state: "Recent",
+    state: "Project",
     title: "archcode-readme-demo-workspace",
-    meta: "Recently opened project",
+    meta: "Registered project",
     demoAction: "Open archcode-readme-demo-workspace",
   },
   {
@@ -468,9 +461,9 @@ const globalProjectSearchItems = [
     workKey: "project-specra-test",
     type: "Project",
     tone: "",
-    state: "Recent",
+    state: "Project",
     title: "specra-test-projects",
-    meta: "Recently opened project",
+    meta: "Registered project",
     demoAction: "Open specra-test-projects",
   },
 ];

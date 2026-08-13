@@ -50,6 +50,25 @@ export interface ProjectTodoRunNowInput {
   readonly content: string;
 }
 
+/**
+ * Captures one new Todo and starts its first Discussion as one idempotent
+ * domain command. The client keeps the request id stable while `content` is
+ * unchanged so a lost response can replay the exact retained entities.
+ */
+export interface ProjectTodoStartDiscussionInput {
+  readonly clientRequestId: string;
+  readonly content: string;
+}
+
+/** Durable wire shape persisted with Todo state for restart-safe replay. */
+export interface ProjectTodoStartDiscussionReceipt {
+  readonly clientRequestId: string;
+  readonly requestHash: string;
+  readonly todoId: string;
+  readonly sessionId: string;
+  readonly status: "preparing" | "recovery_required" | "accepted";
+}
+
 export interface ProjectTodoPlan {
   readonly path: string;
   readonly markdown: string;

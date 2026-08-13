@@ -13,9 +13,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="ArchCode project Sessions prototype" />
     <title>ArchCode — Sessions Prototype</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css?v=prototype-polish-17" />
     <style>
       [hidden] { display: none !important; }
@@ -65,9 +62,9 @@
         font-weight: 650;
         text-align: left;
         transition:
-          border-color var(--motion-hover) ease,
-          background var(--motion-hover) ease,
-          box-shadow var(--motion-hover) ease;
+          border-color var(--motion-hover) var(--ease-standard),
+          background var(--motion-hover) var(--ease-standard),
+          box-shadow var(--motion-hover) var(--ease-standard);
       }
 
       .sessions-source-trigger:hover {
@@ -213,17 +210,15 @@
         border-bottom: 1px solid var(--border-subtle);
         color: var(--text-secondary);
         transition:
-          background var(--motion-hover) var(--ease-smooth),
-          color var(--motion-hover) var(--ease-smooth),
-          box-shadow var(--motion-hover) var(--ease-smooth),
-          transform var(--motion-hover) var(--ease-smooth);
+          background var(--motion-hover) var(--ease-enter),
+          color var(--motion-hover) var(--ease-enter),
+          transform var(--motion-hover) var(--ease-enter);
       }
 
       .session-row:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-hover);
+        transform: translateY(-0.5px);
       }
 
       .session-row:active {
@@ -479,7 +474,7 @@
         const selectedSource = sourceTrigger.dataset.value;
         const matches = sessionItems().filter((item) => {
           const matchesSource = selectedSource === "all" || item.source.toLowerCase() === selectedSource;
-          const haystack = `${item.title} ${item.source} ${item.parent} ${item.agent}`.toLowerCase();
+          const haystack = `${item.title} ${item.sessionId} ${item.source} ${item.parent} ${item.agent}`.toLowerCase();
           return matchesSource && (!query || haystack.includes(query));
         });
 
@@ -488,7 +483,7 @@
           if (!items.length) return "";
           return `<section class="session-group" aria-labelledby="sessions-${group.toLowerCase().replaceAll(" ", "-")}">
             <header class="session-group-header"><h2 id="sessions-${group.toLowerCase().replaceAll(" ", "-")}">${group}</h2><span>${items.length}</span></header>
-            <div class="session-rows">${items.map((item) => `<a class="session-row" href="${escapeSessionsHtml(item.href)}" aria-label="${escapeSessionsHtml(`${item.title}, ${item.source}, ${item.state}`)}">
+            <div class="session-rows">${items.map((item) => `<a class="session-row" href="${escapeSessionsHtml(item.href)}" aria-label="${escapeSessionsHtml(`${item.title}, ${item.sessionId}, ${item.source}, ${sourceContext(item)}, ${item.state}`)}">
               <span class="session-orbit ${escapeSessionsHtml(item.tone)}"></span>
               <span class="session-row-copy"><strong>${escapeSessionsHtml(item.title)}</strong><small><span class="session-source-label">${escapeSessionsHtml(item.source)}</span>${escapeSessionsHtml(sourceContext(item))}</small></span>
               <span class="session-row-state ${escapeSessionsHtml(item.tone)}">${escapeSessionsHtml(item.state)}</span>
@@ -525,6 +520,12 @@
 
       sourceTrigger.addEventListener("click", () => setSourceMenuOpen(sourceMenu.hidden));
       sourceTrigger.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !sourceMenu.hidden) {
+          event.preventDefault();
+          setSourceMenuOpen(false);
+          sourceTrigger.focus();
+          return;
+        }
         if (!["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) return;
         event.preventDefault();
         setSourceMenuOpen(true, { focusSelected: true });
@@ -556,7 +557,7 @@
       document.querySelector("[data-new-session]").addEventListener("click", () => {
         const sessionId = `sess-direct-${Date.now()}`;
         const title = "Untitled Session";
-        const href = `./session.html?session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(title)}&compose=1`;
+        const href = `./session.html?session=${encodeURIComponent(sessionId)}&title=${encodeURIComponent(title)}`;
         const records = window.readArchcodePrototypeSessions?.() || [];
         records.unshift({ group: "Recent", tone: "", state: "Idle", source: "Direct", title, sessionId, parent: "Lead", agent: "Lead", href });
         localStorage.setItem("archcode-prototype-sessions", JSON.stringify(records.slice(0, 12)));

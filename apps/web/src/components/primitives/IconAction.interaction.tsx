@@ -79,7 +79,7 @@ describe("IconAction", () => {
     await act(async () => root.render(<IconAction label="Edit goal" onClick={onClick}><Pencil size={14} /></IconAction>));
     const button = container.querySelector("button") as HTMLButtonElement;
     expect(button.getAttribute("aria-label")).toBe("Edit goal");
-    expect(button.className).toContain("h-7 w-7");
+    expect(button.className).toContain("h-8 w-8");
 
     button.click();
     expect(onClick).toHaveBeenCalledTimes(1);

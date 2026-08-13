@@ -7,13 +7,15 @@ async function source(path: string): Promise<string> {
 }
 
 describe("compact icon control contract", () => {
-  test("Todo progress and Toast dismiss actions use the shared 28px accessible control", async () => {
+  test("Todo progress and Toast dismiss actions use the shared 32px accessible control", async () => {
     const todo = await source("components/features/TodoProgressButton.tsx");
     const toast = await source("components/composite/Toast.tsx");
 
     expect(todo).toContain('<IconAction label="Close todo progress"');
     expect(toast).toContain('<IconAction');
     expect(toast).toContain('label="Dismiss"');
+    const iconAction = await source("components/primitives/IconAction.tsx");
+    expect(iconAction).toContain("h-8 w-8");
     expect(todo).toContain("rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md");
   });
 
@@ -27,12 +29,13 @@ describe("compact icon control contract", () => {
     expect(session).toContain('className="h-8 rounded-sm border border-border-default bg-bg-elevated px-3 text-[12px] font-medium leading-4');
   });
 
-  test("Model Picker keeps the shared Popover surface with two quiet ghost triggers", async () => {
+  test("Model Picker keeps the shared Popover surface behind one quiet trigger", async () => {
     const picker = await source("components/features/ModelPicker.tsx");
-    expect(picker).toContain("rounded-lg border border-border-default bg-bg-overlay");
-    expect(picker).toContain('className="relative flex min-w-0 items-center gap-0.5"');
+    expect(picker).toContain("rounded-[12px] border border-border-default bg-bg-overlay p-1.5");
+    expect(picker).toContain('className="relative z-[5] flex min-w-0 max-w-[min(240px,42vw)] items-center"');
+    expect(picker.match(/data-testid="model-picker-trigger"/g)).toHaveLength(1);
+    expect(picker).toContain('aria-label="Choose model and effort"');
     expect(picker).toContain("transition-[background-color,color]");
-    expect(picker).not.toContain("rounded-sm border border-border-subtle bg-bg-base p-0.5");
   });
 
   test("Composer owns overlay Menu styling and keeps Send/Stop on the control grammar", async () => {
@@ -45,23 +48,23 @@ describe("compact icon control contract", () => {
   test("task-critical header metadata uses the tertiary foreground", async () => {
     const header = await source("components/features/ChatHeader.tsx");
 
-    expect(header).toContain("text-[12px] text-text-tertiary");
+    expect(header).toContain("text-[12px] leading-[1.3] text-text-tertiary");
   });
 
   test("Compression uses the nested Execution surface without fake card hover", async () => {
     const compression = await source("components/composite/CompressionBlock.tsx");
-    expect(compression).toContain('overflow-hidden rounded-md border border-border-subtle bg-bg-elevated');
-    expect(compression).toContain('bg-transparent px-3 py-2 text-left');
+    expect(compression).toContain('overflow-hidden rounded-[6px] border border-border-default bg-bg-elevated');
+    expect(compression).toContain('bg-transparent px-2.5 py-2 text-left');
     expect(compression).toContain('active: "Active"');
   });
 
   test("Work stays flat while Delegation retains its nested surface", async () => {
     const workstream = await source("components/composite/ExecutionWorkstream.tsx");
     const delegation = await source("components/composite/DelegationCard.tsx");
-    expect(workstream).toContain("work-summary-control group relative flex min-h-8");
+    expect(workstream).toContain("work-summary-control group flex min-h-9");
     expect(workstream).toContain('data-testid={`work-divider-${segment.id}`}');
     expect(workstream).not.toContain("work-summary-control relative flex min-h-8");
-    expect(delegation).toContain("rounded-md border border-border-subtle bg-bg-elevated");
+    expect(delegation).toContain("rounded-[6px] border border-[color:color-mix(in_srgb,var(--brand)_34%,var(--border-default))] bg-bg-elevated");
     expect(delegation).toContain("border-b border-border-subtle bg-transparent");
   });
 
@@ -72,19 +75,23 @@ describe("compact icon control contract", () => {
     const markdown = await source("components/primitives/MarkdownContent.css");
 
     expect(rail).toContain("export function SessionThreadColumn");
-    expect(rail).toContain("mx-auto w-full max-w-[800px] min-w-0");
-    expect(rail).toContain('WORK_ACTIVITY_LANE_CLASS = "w-full max-w-[720px] min-w-0"');
-    expect(rail).toContain('WORK_ACTIVITY_CHILD_LANE_CLASS = "w-full max-w-[696px] min-w-0"');
-    expect(rail).toContain('WORK_ACTIVITY_NESTED_LANE_CLASS = "w-full max-w-[676px] min-w-0"');
+    expect(rail).toContain("mx-auto w-full max-w-[852px] min-w-0");
+    expect(rail).toContain('WORK_ACTIVITY_LANE_CLASS = "w-full min-w-0"');
+    expect(rail).toContain('WORK_ACTIVITY_CHILD_LANE_CLASS = "w-full min-w-0"');
+    expect(rail).toContain('WORK_ACTIVITY_NESTED_LANE_CLASS = "w-full min-w-0"');
     expect(workstream).toContain('data-testid="execution-thread-column"');
     expect(composer).toContain('data-testid="composer-thread-column"');
+    expect(composer).toContain('className="flex min-h-0 max-h-full flex-col gap-2.5 !max-w-[848px]"');
+    expect(composer).toContain('data-testid="composer-priority-stack"');
+    expect(composer).toContain("max-h-[min(48dvh,520px)]");
+    expect(composer).toContain("!max-w-[900px] !px-3");
+    expect(composer).toContain("min-[761px]:!px-[26px]");
     expect(workstream).not.toContain("CONVERSATION_TURN_LANE_CLASS");
-    expect(workstream).toContain("absolute -left-4 top-1/2");
-    expect(workstream).toContain('scrollbarGutter: "stable both-edges"');
+    expect(workstream).not.toContain("absolute -left-4 top-1/2");
+    expect(workstream).toContain('scrollbarGutter: "stable"');
     expect(workstream).toContain('const SESSION_SCROLLBAR_GUTTER_PROPERTY = "--session-scrollbar-gutter"');
-    expect(composer).not.toContain("overflow-x-hidden");
-    expect(composer).not.toContain("scrollbarGutter");
-    expect(composer).toContain('paddingInline: "var(--session-scrollbar-gutter, 0px)"');
+    expect(composer).toContain("overflow-x-hidden overflow-y-auto overscroll-contain");
+    expect(composer).toContain("px-0 min-[761px]:px-[var(--session-scrollbar-gutter,0px)]");
     expect(markdown).toContain("max-width: 72ch;");
     expect(markdown).not.toContain("margin-inline: auto;");
   });
@@ -95,28 +102,26 @@ describe("compact icon control contract", () => {
     const projectBar = await source("components/features/ProjectBar.tsx");
     expect(bell).toContain("rounded-md border border-border-strong bg-bg-overlay p-3 shadow-lg");
     expect(bell).toContain("rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md");
+    expect(bell).toContain("hover:bg-rail-hover");
+    expect(bell).not.toContain("hover:bg-rail-ink/8");
     expect(iconAction).toContain('role="tooltip"');
     expect(iconAction).toContain("rounded-lg border border-border-default bg-bg-overlay");
-    expect(projectBar.match(/role="tooltip"/g)?.length).toBe(2);
+    expect(projectBar.match(/role="tooltip"/g)?.length).toBe(3);
     expect(projectBar.match(/rounded-lg border border-border-default bg-bg-overlay/g)?.length).toBe(2);
   });
 
-  test("the tablet Inspector overlay starts below project and Session headers", async () => {
-    const rootLayout = await source("routes/root-layout.tsx");
-    expect(rootLayout).toContain("max-[1180px]:top-28");
-    expect(rootLayout).not.toContain("max-[1180px]:top-12");
-  });
-
-  test("Project Todo and Goal editors use control radius and 32px actions", async () => {
+  test("Project Todo capture, detail, and Goal editors use the current compact controls", async () => {
     const todos = await source("routes/project-todos.tsx");
     const todoDetail = await source("routes/project-todo-detail.tsx");
     const goal = await source("components/features/SessionGoalSummaryRow.tsx");
-    expect(todos).toContain('aria-label="New Todo content"');
-    expect(todos).toContain("max-[620px]:basis-[calc(100%-24px)]");
-    expect(todos).toContain("max-[620px]:basis-full max-[620px]:grid max-[620px]:grid-cols-2");
-    expect(todos.match(/max-\[620px\]:h-11/g)).toHaveLength(2);
+    expect(todos).toContain('role="dialog" aria-modal="true" aria-labelledby="new-todo-title"');
+    expect(todos).toContain("w-[min(560px,calc(100vw-32px))]");
+    expect(todos).toContain('htmlFor="new-todo-content"');
+    expect(todos).toContain('id="new-todo-content"');
+    expect(todos).toContain(">Save</button>");
+    expect(todos).toContain('"Run now"');
     expect(todoDetail).toContain('aria-label="Todo content"');
-    expect(todoDetail).toContain("min-h-8 items-center gap-1.5 rounded-sm border");
+    expect(todoDetail).toContain("min-h-8 cursor-pointer items-center justify-center gap-1.5");
     expect(goal).toContain("h-8 rounded-sm border px-3 text-[12px]");
   });
 });

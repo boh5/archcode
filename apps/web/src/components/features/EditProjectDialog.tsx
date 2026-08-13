@@ -103,7 +103,7 @@ export function EditProjectDialog({
             </button>
             <button
               type="submit"
-              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!isChanged || updateName.isPending}
             >
               {updateName.isPending ? "Saving…" : "Save"}

@@ -30,6 +30,14 @@ export function RootLayout() {
   );
 }
 
+export type InspectorPlacement = "mobile" | "overlay" | "sibling";
+
+export function inspectorPlacementForWidth(viewportWidth: number): InspectorPlacement {
+  if (viewportWidth <= 760) return "mobile";
+  if (viewportWidth <= 1180) return "overlay";
+  return "sibling";
+}
+
 function WorkbenchShell() {
   const location = useLocation();
   const { openAddProjectModal } = useAddProjectModal();
@@ -37,6 +45,7 @@ function WorkbenchShell() {
   const { theme, toggleTheme } = useTheme();
   const [searchOpen, setSearchOpen] = useState(false);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
+  const workCanvasRef = useRef<HTMLElement>(null);
   const layout = useWorkbenchLayout();
   const { hitlNoticeIdentities } = useGlobalSSE();
   const hitlViews = useStore(hitlStore, (state) => state.views);
@@ -44,6 +53,7 @@ function WorkbenchShell() {
   const panelSizes = useWorkbenchPanelSizes();
   const viewportWidth = useViewportWidth();
   const inspectorKind = getInspectorKind(location.pathname);
+  const inspectorPlacement = inspectorPlacementForWidth(viewportWidth);
   const showInspector = inspectorKind !== null && !layout.inspectorCollapsed;
   const inspectorGeometry = resolveInspectorGeometry(
     panelSizes.inspectorWidth,
@@ -68,7 +78,17 @@ function WorkbenchShell() {
 
   return (
     <div className="relative flex h-screen min-w-0 overflow-hidden bg-bg-base text-text-primary">
-      <div className="relative z-[55] w-12 shrink-0 border-r border-border-default bg-rail min-[761px]:z-40 min-[761px]:w-[52px]">
+      <a
+        href="#work-canvas"
+        className="skip-link"
+        onClick={(event) => {
+          event.preventDefault();
+          workCanvasRef.current?.focus();
+        }}
+      >
+        Skip to main content
+      </a>
+      <div className="relative z-[55] w-12 shrink-0 border-r border-rail-border bg-rail min-[761px]:z-40 min-[761px]:w-[52px]">
         <ProjectBar
           mobile={layout.isMobile}
           onAddProject={openAddProjectModal}
@@ -81,7 +101,7 @@ function WorkbenchShell() {
       </div>
       <WorkSearchDialog open={searchOpen} onOpenChange={setSearchOpen} returnFocusRef={searchTriggerRef} />
 
-      <main className="relative flex min-w-0 flex-1 flex-col" aria-label="Work canvas">
+      <main id="work-canvas" ref={workCanvasRef} tabIndex={-1} className="relative flex min-w-0 flex-1 flex-col focus:outline-none" aria-label="Work canvas">
         <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <Outlet />
         </div>
@@ -108,46 +128,63 @@ function WorkbenchShell() {
       )}
 
       {showInspector && inspectorKind && !layout.isMobile && (
-        <>
-          <div className="hidden min-[1181px]:block">
-            <ResizeHandle
-              label="Resize context inspector"
-              controls="context-inspector"
-              value={panelSizes.inspectorWidth}
-              min={INSPECTOR_MIN_WIDTH}
-              max={INSPECTOR_MAX_WIDTH}
-              direction={-1}
-              onChange={panelSizes.setInspectorWidth}
-            />
-          </div>
-          <div
-            className="z-30 hidden shrink-0 bg-bg-surface min-[761px]:block min-[1181px]:h-full max-[1180px]:absolute max-[1180px]:bottom-0 max-[1180px]:right-0 max-[1180px]:top-28 max-[1180px]:shadow-lg"
-            style={{ width: inspectorGeometry.value }}
-          >
-            <div className="absolute inset-y-0 left-0 z-40 hidden min-[761px]:block min-[1181px]:hidden">
+        <div
+          data-inspector-placement={inspectorPlacement}
+          className={inspectorPlacement === "sibling"
+            ? "relative z-30 flex h-full shrink-0 flex-col bg-bg-surface"
+            : "absolute bottom-0 right-0 top-[116px] z-30 shrink-0 border-l border-border-default bg-bg-surface shadow-lg"
+          }
+          style={{ width: inspectorGeometry.value }}
+        >
+          {inspectorPlacement === "sibling" ? (
+            <div className="h-[52px] shrink-0 border-b border-border-default bg-bg-surface" aria-hidden="true" />
+          ) : null}
+          <div className={`relative min-h-0 flex-1 ${inspectorPlacement === "sibling" ? "border-l border-border-default" : ""}`}>
+            <div className="absolute inset-y-0 -left-1 z-40">
               <ResizeHandle
-                label="Resize context inspector overlay"
+                label={inspectorPlacement === "sibling"
+                  ? "Resize context inspector"
+                  : "Resize context inspector overlay"}
                 controls="context-inspector"
-                value={inspectorGeometry.value}
-                min={inspectorGeometry.min}
-                max={inspectorGeometry.max}
+                value={inspectorPlacement === "sibling"
+                  ? panelSizes.inspectorWidth
+                  : inspectorGeometry.value}
+                min={inspectorPlacement === "sibling"
+                  ? INSPECTOR_MIN_WIDTH
+                  : inspectorGeometry.min}
+                max={inspectorPlacement === "sibling"
+                  ? INSPECTOR_MAX_WIDTH
+                  : inspectorGeometry.max}
                 direction={-1}
-                onChange={setRenderedInspectorWidth}
+                onChange={inspectorPlacement === "sibling"
+                  ? panelSizes.setInspectorWidth
+                  : setRenderedInspectorWidth}
               />
             </div>
-            <ContextInspector key={inspectorKind} kind={inspectorKind} />
+            {inspectorPlacement === "overlay" ? (
+              <button
+                type="button"
+                aria-label="Close context inspector"
+                className="absolute right-2 top-2 z-50 grid h-[34px] w-[34px] place-items-center rounded-sm text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]"
+                onClick={layout.toggleInspectorSurface}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            ) : null}
+            <ContextInspector key={inspectorKind} kind={inspectorKind} reserveCloseSpace={inspectorPlacement === "overlay"} />
           </div>
-        </>
+        </div>
       )}
 
       {layout.isMobile && (
         <Drawer
           open={layout.mobileInspectorOpen && inspectorKind !== null}
           label="Context inspector"
+          width={inspectorGeometry.value}
           returnFocusRef={layout.mobileInspectorReturnFocusRef}
           onClose={() => layout.setMobileInspectorOpen(false)}
         >
-          {inspectorKind && <ContextInspector key={inspectorKind} id="mobile-context-inspector" kind={inspectorKind} />}
+          {inspectorKind && <ContextInspector key={inspectorKind} id="mobile-context-inspector" kind={inspectorKind} reserveCloseSpace />}
         </Drawer>
       )}
     </div>
@@ -157,12 +194,14 @@ function WorkbenchShell() {
 function Drawer({
   open,
   label,
+  width,
   returnFocusRef,
   onClose,
   children,
 }: {
   open: boolean;
   label: string;
+  width: number;
   returnFocusRef?: RefObject<HTMLElement | null>;
   onClose: () => void;
   children: React.ReactNode;
@@ -173,7 +212,8 @@ function Drawer({
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 min-[761px]:hidden" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
-          className="fixed inset-y-0 right-0 z-50 w-[min(92vw,360px)] bg-bg-surface shadow-lg outline-none min-[761px]:hidden"
+          className="fixed bottom-0 right-0 top-[88px] z-50 max-w-[calc(100vw-48px)] border-l border-border-default bg-bg-surface shadow-lg outline-none min-[761px]:hidden"
+          style={{ width }}
           onCloseAutoFocus={returnFocusRef ? (event) => {
             event.preventDefault();
             returnFocusRef.current?.focus();
@@ -184,7 +224,7 @@ function Drawer({
             <button
               type="button"
               aria-label={`Close ${label}`}
-              className="absolute left-2 top-2 z-50 flex h-8 w-8 items-center justify-center rounded-sm border border-border-default bg-bg-elevated text-text-secondary hover:text-text-primary [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+              className="absolute right-2 top-2 z-50 grid h-[34px] w-[34px] place-items-center rounded-sm text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
             >
               <X size={16} />
             </button>

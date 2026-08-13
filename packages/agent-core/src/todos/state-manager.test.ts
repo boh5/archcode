@@ -40,9 +40,14 @@ describe("ProjectTodoStateManager", () => {
     expect(await new ProjectTodoStateManager(TMP_ROOT).listTodos()).toEqual([todo]);
 
     const path = projectRuntimePath(TMP_ROOT, "todos", "state.json");
-    const raw = await Bun.file(path).json() as { todos: unknown[]; runNowReceipts: unknown[] };
+    const raw = await Bun.file(path).json() as {
+      todos: unknown[];
+      runNowReceipts: unknown[];
+      startDiscussionReceipts: unknown[];
+    };
     expect(raw.todos).toEqual([todo]);
     expect(raw.runNowReceipts).toEqual([]);
+    expect(raw.startDiscussionReceipts).toEqual([]);
   });
 
   test("allows free status movement while enforcing rejection and revision invariants", async () => {
@@ -190,14 +195,14 @@ describe("ProjectTodoStateManager", () => {
     });
 
     expect(todo.status).toBe("in_progress");
-    expect(receipt).toMatchObject({ status: "preparing" });
-    expect(receipt.sessionId).toBeUndefined();
+    expect(receipt).toMatchObject({ status: "preparing", sessionId: expect.any(String) });
     expect(await manager.listTodos()).toEqual([]);
-    const sessionId = crypto.randomUUID();
-    await manager.attachRunNowSession(clientRequestId, sessionId);
-    expect(await manager.completeRunNow(clientRequestId)).toMatchObject({ status: "accepted", sessionId });
+    expect(await manager.completeRunNow(clientRequestId)).toMatchObject({
+      status: "accepted",
+      sessionId: receipt.sessionId,
+    });
     expect(await new ProjectTodoStateManager(TMP_ROOT).readRunNowReceipt(clientRequestId))
-      .toMatchObject({ status: "accepted", sessionId });
+      .toMatchObject({ status: "accepted", sessionId: receipt.sessionId });
     expect(await manager.listTodos()).toEqual([todo]);
 
     const compensationId = crypto.randomUUID();
@@ -208,6 +213,43 @@ describe("ProjectTodoStateManager", () => {
     });
     await manager.deletePendingRunNow(compensationId, compensated.id);
     expect((await manager.listTodos()).map((item) => item.id)).toEqual([todo.id]);
+  });
+
+  test("persists start-discussion identity and replays the exact Todo and Session reservation", async () => {
+    const manager = new ProjectTodoStateManager(TMP_ROOT);
+    const clientRequestId = crypto.randomUUID();
+    const { todo, receipt } = await manager.beginStartDiscussion({
+      content: "Discuss this",
+      clientRequestId,
+      requestHash: "c".repeat(64),
+    });
+
+    expect(todo).toMatchObject({ status: "idea", revision: 1 });
+    expect(receipt).toMatchObject({
+      clientRequestId,
+      todoId: todo.id,
+      sessionId: expect.any(String),
+      status: "preparing",
+    });
+    expect(await manager.listTodos()).toEqual([]);
+
+    const restarted = new ProjectTodoStateManager(TMP_ROOT);
+    expect(await restarted.readStartDiscussionReceipt(clientRequestId)).toEqual(receipt);
+    expect(await restarted.readStartDiscussionTodo(clientRequestId)).toEqual(todo);
+    expect(await restarted.completeStartDiscussion(clientRequestId)).toMatchObject({
+      status: "accepted",
+      sessionId: receipt.sessionId,
+    });
+    expect(await restarted.listTodos()).toEqual([todo]);
+
+    const compensationId = crypto.randomUUID();
+    const { todo: compensated } = await restarted.beginStartDiscussion({
+      content: "Compensate discussion",
+      clientRequestId: compensationId,
+      requestHash: "d".repeat(64),
+    });
+    await restarted.deletePendingStartDiscussion(compensationId, compensated.id);
+    expect((await restarted.listTodos()).map((item) => item.id)).toEqual([todo.id]);
   });
 
   test("owns ordered attachment references behind revision-safe narrow mutations", async () => {

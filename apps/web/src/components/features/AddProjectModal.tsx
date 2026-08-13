@@ -192,7 +192,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           <button
             type="button"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            className="flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
             aria-label="Close"
           >
             <X size={14} aria-hidden="true" />
@@ -346,7 +346,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
             <button
               type="button"
               onClick={handleSubmit}
-              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!selectedPath || isPending}
             >
               {isPending ? "Adding…" : "Add Project"}

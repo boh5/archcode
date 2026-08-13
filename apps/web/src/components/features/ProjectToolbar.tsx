@@ -1,5 +1,4 @@
 import { useCallback, useState } from "react";
-import { MoreHorizontal } from "lucide-react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { useProjects } from "../../api/queries";
 import type { Project } from "../../api/types";
@@ -26,6 +25,7 @@ export function ProjectToolbar() {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [closingProject, setClosingProject] = useState<Project | null>(null);
   const ProjectName = automationId === undefined && sessionId === undefined && todoId === undefined ? "h1" : "p";
+  const mobileHeight = sessionId === undefined ? "min-h-12" : "h-[88px]";
 
   const handleProjectClosed = useCallback((closedProject: Project) => {
     const remaining = projects?.filter((candidate) => candidate.slug !== closedProject.slug) ?? [];
@@ -33,23 +33,37 @@ export function ProjectToolbar() {
   }, [navigate, projects]);
 
   return (
-    <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 border-b border-border-default bg-bg-surface px-2 min-[761px]:h-12 min-[761px]:flex-nowrap min-[761px]:px-3">
-      <div className="flex min-w-0 flex-1 items-center gap-2 py-1.5 min-[761px]:max-w-[min(36vw,360px)] min-[761px]:py-0">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm bg-bg-muted text-[11px] font-semibold text-text-secondary" aria-hidden="true">
-          {slug.slice(0, 2).toLowerCase()}
-        </span>
-        <div className="min-w-0">
-          <ProjectName className="truncate text-[14px] font-semibold leading-4 text-text-primary">{project?.name ?? slug}</ProjectName>
-          {project && <p className="mt-0.5 hidden truncate font-mono text-[10px] leading-3 text-text-tertiary min-[520px]:block">{project.workspaceRoot}</p>}
-        </div>
-      </div>
+    <header className={`flex ${mobileHeight} shrink-0 flex-wrap items-center gap-x-3 border-b border-border-default bg-bg-surface px-2 min-[761px]:h-[52px] min-[761px]:flex-nowrap min-[761px]:gap-x-3.5 min-[761px]:px-4`}>
+      {project ? <ProjectActionDropdown
+        project={project}
+        onEdit={setEditingProject}
+        onClose={setClosingProject}
+        trigger={(
+          <button
+            type="button"
+            aria-label={`Project actions for ${project.name}`}
+            className="flex min-w-0 flex-1 cursor-context-menu items-center gap-2.5 rounded-sm py-1.5 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover/55 focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[761px]:max-w-[min(36vw,360px)] min-[761px]:py-1 min-[761px]:pl-0.5 min-[761px]:pr-1.5"
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm bg-bg-muted text-[11px] font-bold tracking-[-0.02em] text-text-secondary shadow-[inset_0_0_0_1px_var(--border-subtle)]" aria-hidden="true">
+              {slug.slice(0, 2).toLowerCase()}
+            </span>
+            <span className="min-w-0">
+              <ProjectName className="block truncate text-[14px] font-[680] leading-4 tracking-[-0.02em] text-text-primary">{project.name}</ProjectName>
+              <span className="mt-[3px] hidden truncate font-mono text-[10px] leading-3 text-text-tertiary min-[761px]:block">{project.workspaceRoot}</span>
+            </span>
+          </button>
+        )}
+      /> : <div className="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 min-[761px]:max-w-[min(36vw,360px)] min-[761px]:py-1">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm bg-bg-muted text-[11px] font-bold tracking-[-0.02em] text-text-secondary shadow-[inset_0_0_0_1px_var(--border-subtle)]" aria-hidden="true">{slug.slice(0, 2).toLowerCase()}</span>
+        <ProjectName className="truncate text-[14px] font-semibold leading-4 tracking-[-0.02em] text-text-primary">{slug}</ProjectName>
+      </div>}
 
-      <nav className="order-3 flex h-10 w-full items-stretch [@media(pointer:coarse)]:h-11 min-[761px]:order-none min-[761px]:h-full min-[761px]:w-auto" aria-label="Project pages">
+      <nav className="order-3 flex h-10 w-full items-stretch gap-0.5 [@media(pointer:coarse)]:h-11 min-[761px]:order-none min-[761px]:h-full min-[761px]:w-auto" aria-label="Project pages">
         {PROJECT_PAGES.map((page) => (
           <NavLink
             key={page.segment}
             to={`/projects/${slug}/${page.segment}`}
-            className={({ isActive }) => `relative flex min-w-0 flex-1 items-center justify-center px-3 text-[12px] font-semibold transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand min-[761px]:flex-none ${
+            className={({ isActive }) => `relative flex min-h-11 min-w-0 flex-1 items-center justify-center px-3 text-[12px] font-semibold transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand min-[761px]:min-h-0 min-[761px]:flex-none ${
               isActive ? "text-brand after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-brand" : "text-text-tertiary hover:bg-bg-hover hover:text-text-primary"
             }`}
           >
@@ -57,23 +71,6 @@ export function ProjectToolbar() {
           </NavLink>
         ))}
       </nav>
-
-      <div className="ml-auto flex items-center">
-        {project && <ProjectActionDropdown
-          project={project}
-          onEdit={setEditingProject}
-          onClose={setClosingProject}
-          trigger={(
-            <button
-              type="button"
-              aria-label="Project actions"
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
-            >
-              <MoreHorizontal size={16} aria-hidden="true" />
-            </button>
-          )}
-        />}
-      </div>
 
       {editingProject && <EditProjectDialog open project={editingProject} onClose={() => setEditingProject(null)} />}
       {closingProject && (

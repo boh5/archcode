@@ -39,7 +39,7 @@ import { normalizeSkillUseArgs, validateSkillActivation } from "./commands/skill
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import { projectSessionCompression } from "./store/session-read-projection";
 import { resolveSessionProfile } from "./agents/session-profile";
-import { NotRootSessionError } from "./store/errors";
+import { NotRootSessionError, SessionFileNotFoundError } from "./store/errors";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
   AgentDescriptor,
@@ -764,12 +764,16 @@ export async function createRuntime(
         }),
         sessions: {
           createRootSession: async (input) => {
-            const session = await sessionStoreManager.createSessionFile(input.workspaceRoot, {
-              agentName: input.agentName,
-              title: input.title,
-              cwd: input.workspaceRoot,
-              source: input.source,
-            });
+            const session = await sessionStoreManager.ensureSessionFile(
+              input.workspaceRoot,
+              input.sessionId,
+              {
+                agentName: input.agentName,
+                title: input.title,
+                cwd: input.workspaceRoot,
+                source: input.source,
+              },
+            );
             return { sessionId: session.sessionId };
           },
           acceptMessage: async (input) => {
@@ -789,8 +793,13 @@ export async function createRuntime(
             });
           },
           readRootSession: async (input) => {
-            const file = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
-            return projectRootSessionSummary(file);
+            try {
+              const file = await sessionStoreManager.getSessionFile(input.workspaceRoot, input.sessionId);
+              return projectRootSessionSummary(file);
+            } catch (error) {
+              if (error instanceof SessionFileNotFoundError) return undefined;
+              throw error;
+            }
           },
           hasDurableMessage: async (input) => await sessionInputService.hasDurableMessage(input),
           deleteSession: async (input) => {

@@ -112,12 +112,17 @@ describe("ChatHeader", () => {
     const status = container.querySelector(
       '[data-testid="session-execution-status"]',
     );
+    const header = container.querySelector("header");
+    expect(header?.className).toContain("min-[761px]:px-[26px]");
+    expect(header?.className).toContain("min-[761px]:py-3");
     expect(status?.textContent).toContain("Needs you");
     expect(status?.getAttribute("data-product-status")).toBe("needs_you");
+    expect(status?.className).toContain("h-6");
+    expect(status?.className).toContain("rounded-[6px]");
     const source = container.querySelector('[data-testid="session-source"]');
-    expect(source?.className).not.toContain("max-[760px]:hidden");
+    expect(source?.className).toContain("[@media(max-width:760px)]:hidden");
     expect(source?.querySelector("a")?.getAttribute("href")).toBe("/projects/demo/todos/todo-1");
-    expect(container.querySelector('[data-testid="session-source-annotation"]')?.className).toContain("max-[760px]:hidden");
+    expect(container.querySelector('[data-testid="session-source-annotation"]')?.className).not.toContain("hidden");
     const inspectorButton = container.querySelector('header button[aria-label="Expand context inspector"]');
     expect(inspectorButton).not.toBeNull();
     expect(inspectorButton?.className).not.toContain("max-[760px]:hidden");

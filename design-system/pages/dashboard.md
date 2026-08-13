@@ -57,6 +57,10 @@ Do not add greetings, marketing copy, metrics, charts, or a global Todo board.
   real Home decision section and row state (brand-tinted review cue), not a
   synonym for Done. Review rows say what result is awaiting review. Upcoming
   rows identify the Automation schedule.
+- A row's trailing column contains exactly one signal: `Needs you` / `Failed`,
+  live relative time, `Ready to review`, or the human-readable next schedule.
+  Do not append an additional relative timestamp beside that primary signal,
+  and never expose an ISO timestamp as visible schedule copy.
 - Current-project rows use exact Todo, Automation, or Session deep links. Other
   project rows may remain explicit prototype actions rather than fake deep links.
 - Prefer a few decision-worthy rows over exhaustive recent activity. Home must

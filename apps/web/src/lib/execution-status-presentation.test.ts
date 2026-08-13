@@ -4,7 +4,9 @@ import type {
   SessionExecutionRecord,
 } from "@archcode/protocol";
 import {
+  childExecutionVisualKind,
   executionVisualKind,
+  presentChildExecutionStatus,
   presentExecutionStatus,
 } from "./execution-status-presentation";
 
@@ -95,6 +97,12 @@ describe("execution status presentation", () => {
       productStatus: "completed",
     });
     expect(executionVisualKind(record("failed"))).toBe("failed");
+    expect(presentExecutionStatus(record("failed"))).toEqual({ productStatus: "failed", label: "Failed" });
+    expect(presentExecutionStatus(record("timed_out"))).toEqual({ productStatus: "failed", label: "Failed", detail: "Timed out" });
+    expect(presentExecutionStatus(record("max_steps"))).toEqual({ productStatus: "failed", label: "Failed", detail: "Max steps" });
     expect(executionVisualKind(record("cancelled"))).toBe("stopped");
+    expect(presentChildExecutionStatus("failed")).toEqual({ productStatus: "failed", label: "Failed" });
+    expect(presentChildExecutionStatus("timed_out")).toEqual({ productStatus: "failed", label: "Failed", detail: "Timed out" });
+    expect(childExecutionVisualKind("failed")).toBe("failed");
   });
 });

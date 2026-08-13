@@ -13,9 +13,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="ArchCode Automation management prototype" />
     <title>ArchCode — Automations Prototype</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css?v=prototype-polish-17" />
     <style>
       [hidden] { display: none !important; }
@@ -65,37 +62,6 @@
         padding: 22px 24px 48px;
       }
 
-      .automation-summary {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 1px;
-        margin-bottom: 22px;
-        overflow: hidden;
-        border: 1px solid var(--border-default);
-        border-radius: 7px;
-        background: var(--border-default);
-      }
-
-      .automation-summary div {
-        padding: 11px 12px;
-        background: var(--bg-surface);
-      }
-
-      .automation-summary strong,
-      .automation-summary span { display: block; }
-
-      .automation-summary strong {
-        font-size: 17px;
-        font-variant-numeric: tabular-nums;
-      }
-
-      .automation-summary span {
-        margin-top: 3px;
-        color: var(--text-tertiary);
-        font-size: 9px;
-        text-transform: uppercase;
-      }
-
       .automation-group + .automation-group {
         margin-top: 24px;
       }
@@ -130,25 +96,24 @@
         align-items: start;
         gap: 10px;
         width: 100%;
-        min-height: 74px;
-        padding: 15px 12px;
+        min-height: 56px;
+        padding: 10px 12px;
+        border-left: 2px solid transparent;
         border-bottom: 1px solid var(--border-subtle);
         background: transparent;
         color: var(--text-secondary);
         text-align: left;
         transition:
-          background var(--motion-hover) var(--ease-smooth),
-          color var(--motion-hover) var(--ease-smooth),
-          transform var(--motion-hover) var(--ease-smooth),
-          box-shadow var(--motion-hover) var(--ease-smooth);
+          background var(--motion-hover) var(--ease-enter),
+          color var(--motion-hover) var(--ease-enter),
+          transform var(--motion-hover) var(--ease-enter),
+          border-color var(--motion-hover) var(--ease-enter);
       }
 
-      .automation-row:hover,
-      .automation-row[aria-selected="true"] {
+      .automation-row:hover {
         background: var(--bg-hover);
         color: var(--text-primary);
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-hover);
+        transform: translateY(-0.5px);
       }
 
       .automation-row:active {
@@ -156,7 +121,9 @@
       }
 
       .automation-row[aria-selected="true"] {
-        box-shadow: inset 2px 0 0 var(--brand), var(--shadow-hover);
+        border-left-color: var(--brand);
+        background: var(--selection-field);
+        color: var(--text-primary);
       }
 
       /* automation-orbit tones come from shared styles.css */
@@ -325,6 +292,16 @@
       .linked-todo span { font-size: 11px; font-weight: 640; }
       .linked-todo small { margin-top: 3px; color: var(--text-tertiary); font-size: 9px; }
 
+      .automation-source-link {
+        display: inline-flex;
+        margin-top: 10px;
+        color: var(--brand);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .automation-source-link:hover { text-decoration: underline; }
+
       .run-list { margin-top: 10px; border-top: 1px solid var(--border-subtle); }
 
       .run-row {
@@ -374,7 +351,7 @@
         color: var(--text-primary);
         box-shadow: var(--elevation-lg);
         overflow: hidden;
-        animation: modal-in 200ms var(--ease-smooth);
+        animation: modal-in 200ms var(--ease-enter);
       }
 
       @keyframes modal-in {
@@ -399,6 +376,7 @@
       }
 
       .automation-editor-form {
+        position: relative;
         display: flex;
         flex-direction: column;
         max-height: calc(100vh - 32px);
@@ -492,6 +470,42 @@
         line-height: 1.45;
       }
 
+      .definition-controls {
+        margin-top: 12px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 4px;
+        background: var(--bg-base);
+      }
+
+      .definition-control {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 58px;
+        padding: 10px 12px;
+      }
+
+      .definition-control + .definition-control { border-top: 1px solid var(--border-subtle); }
+      .definition-control strong,
+      .definition-control small { display: block; }
+      .definition-control strong { color: var(--text-secondary); font-size: 12px; font-weight: 500; }
+      .definition-control small { margin-top: 4px; color: var(--text-tertiary); font-size: 11px; }
+      .definition-control button { flex: 0 0 auto; }
+
+      .definition-delete {
+        display: inline-flex;
+        align-items: center;
+        min-height: 32px;
+        padding: 0 12px;
+        border: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
+        border-radius: 4px;
+        background: var(--error-field);
+        color: var(--error);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
       .field-block {
         display: grid;
         gap: 6px;
@@ -563,19 +577,16 @@
         background: var(--bg-surface);
         color: var(--text-secondary);
         cursor: pointer;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
         transition:
-          border-color var(--motion-hover) var(--ease-smooth),
-          background var(--motion-hover) var(--ease-smooth),
-          box-shadow var(--motion-hover) var(--ease-smooth),
-          transform var(--motion-hover) var(--ease-smooth);
+          border-color var(--motion-hover) var(--ease-enter),
+          background var(--motion-hover) var(--ease-enter),
+          transform var(--motion-hover) var(--ease-enter);
       }
 
       .choice-card:hover {
         border-color: var(--border-default);
         background: var(--bg-hover);
         transform: translateY(-1px);
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
       }
 
       .choice-card:active {
@@ -677,11 +688,79 @@
         cursor: not-allowed;
       }
 
+      .automation-editor-confirmation {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        background: color-mix(in srgb, var(--bg-overlay) 92%, transparent);
+        overflow-y: auto;
+      }
+
+      .automation-editor-confirmation[hidden] { display: none; }
+
+      .automation-delete-panel {
+        width: min(480px, 100%);
+        padding: 0;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--bg-overlay);
+        color: var(--text-primary);
+        box-shadow: var(--elevation-lg);
+        overflow: hidden;
+      }
+
+      .delete-dialog-top {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .delete-dialog-mark {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        margin-top: 2px;
+        border: 1px solid color-mix(in srgb, var(--error) 25%, transparent);
+        border-radius: 6px;
+        background: var(--error-field);
+        color: var(--error);
+        flex: 0 0 auto;
+      }
+
+      .delete-dialog-top h2 { font-size: 16px; font-weight: 600; line-height: 24px; }
+      .delete-dialog-top p { margin-top: 2px; color: var(--text-tertiary); font-size: 12px; line-height: 20px; }
+      .delete-dialog-body { display: grid; gap: 16px; padding: 16px 20px; }
+      .delete-dialog-selected { padding: 12px 14px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); }
+      .delete-dialog-selected span,
+      .delete-dialog-consequences > p { color: var(--text-tertiary); font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; }
+      .delete-dialog-selected span { display: block; line-height: 15.5px; }
+      .delete-dialog-selected strong { display: block; margin-top: 4px; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 20.15px; text-overflow: ellipsis; white-space: nowrap; }
+      .delete-dialog-consequences > p { font-size: 11px; letter-spacing: 0.08em; }
+      .delete-dialog-consequences ul { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+      .delete-dialog-consequences li { display: flex; gap: 8px; color: var(--text-secondary); font-size: 12px; line-height: 20px; }
+      .delete-dialog-consequences li::before { width: 4px; height: 4px; margin-top: 8px; border-radius: 50%; background: var(--error); content: ""; flex: 0 0 auto; }
+      .delete-dialog-note { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warning) 25%, transparent); border-radius: 6px; background: var(--warning-field); color: var(--text-secondary); font-size: 12px; line-height: 20px; }
+      .delete-dialog-note > span:first-child { color: var(--warning); flex: 0 0 auto; }
+      .delete-dialog-note strong { color: var(--text-primary); font-weight: 500; }
+      .delete-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border-subtle); }
+      .delete-dialog-actions button { min-height: 32px; padding: 0 16px; border: 0; border-radius: 4px; font-size: 12px; font-weight: 500; }
+      .delete-dialog-actions [data-delete-cancel] { background: var(--bg-active); color: var(--text-primary); }
+      .delete-dialog-actions [data-delete-confirm] { background: var(--error); color: var(--bg-overlay); }
+
       @media (max-width: 760px) {
         .automation-editor-body {
-          grid-template-columns: minmax(0, 1fr);
+          display: block;
           overflow: auto;
         }
+
+        .automation-editor-pane { overflow: visible; }
 
         .automation-editor-pane + .automation-editor-pane {
           border-left: 0;
@@ -730,7 +809,6 @@
 
         .automation-header .primary-button { min-height: 44px; padding-right: 10px; padding-left: 10px; }
         .automation-list-inner { padding: 18px 12px 36px; }
-        .automation-summary div { padding: 10px 8px; }
         .automation-row { min-height: 74px; padding-right: 6px; padding-left: 6px; }
         .automation-detail { padding: 22px 12px 48px; }
         .detail-title-row { display: block; }
@@ -802,9 +880,9 @@
                         <span class="automation-row-state failed">Failed</span>
                       </button>
                       <button class="automation-row" aria-selected="false" data-automation-row="aut-disabled">
-                        <span class="automation-orbit attention"></span>
+                        <span class="automation-orbit failed"></span>
                         <span><strong>Legacy dependency update</strong><small>Monthly · definition disabled · last run missed</small></span>
-                        <span class="automation-row-state attention">Needs you</span>
+                        <span class="automation-row-state failed">Missed</span>
                       </button>
                     </div>
                   </section>
@@ -813,12 +891,12 @@
                     <header class="automation-group-header"><h2 id="scheduled-title">Scheduled</h2><span>2</span></header>
                     <div class="automation-rows">
                       <button class="automation-row" aria-selected="true" data-automation-row="aut-regression">
-                        <span class="automation-orbit running"></span>
+                        <span class="automation-orbit scheduled"></span>
                         <span><strong>Regression check</strong><small>Weekdays at 09:00 · linked to Model profile defaults per project</small></span>
                         <span class="automation-row-state running">Tomorrow 09:00</span>
                       </button>
                       <button class="automation-row" aria-selected="false" data-automation-row="aut-release-report">
-                        <span class="automation-orbit running"></span>
+                        <span class="automation-orbit scheduled"></span>
                         <span><strong>Release report</strong><small>Friday at 18:00 · summarizes merged work and verification</small></span>
                         <span class="automation-row-state">Fri 18:00</span>
                       </button>
@@ -870,6 +948,8 @@
                       <div class="detail-fact"><span>Next run</span><strong data-detail-next>Tomorrow, 09:00</strong></div>
                       <div class="detail-fact"><span>Action</span><strong data-detail-action>New Session · Project</strong></div>
                       <div class="detail-fact"><span>Location</span><strong data-detail-location>Project checkout</strong></div>
+                      <div class="detail-fact"><span>Binding</span><strong>Lead + principal</strong></div>
+                      <div class="detail-fact"><span>Stable ID</span><strong data-detail-stable-id>aut-regression</strong></div>
                     </div>
                   </section>
 
@@ -878,11 +958,12 @@
                     <p class="detail-section-copy" data-detail-instructions>Read the linked Todo and its Plan, run the focused package checks, and create a durable Session containing the exact result and any failure evidence. Do not change the Todo lifecycle automatically.</p>
                   </section>
 
-                  <section class="detail-section" data-linked-todo-section>
-                    <h3>Linked Todo</h3>
+                  <section class="detail-section" data-provenance-section>
+                    <h3 data-provenance-title>Linked Todo</h3>
                     <a class="linked-todo" href="./todos.html#todo=todo-profile-defaults" data-linked-todo-link>
                       <span><span data-linked-todo>Model profile defaults per project</span><small>Ready · PRD and Plan available</small></span><span>Open →</span>
                     </a>
+                    <a class="automation-source-link" href="./session.html?session=sess-aut-regression-source" data-automation-source>Session · Model profile defaults planning</a>
                   </section>
 
                   <section class="detail-section">
@@ -1010,7 +1091,7 @@
                       <small>Create an isolated checkout</small>
                     </label>
                   </div>
-                  <p class="field-hint" style="margin-top:8px">Every run starts a root Lead Session with the principal profile.</p>
+                  <p class="field-hint" style="margin-top:8px">Binding: Lead + principal. Every run starts a root Session with the principal profile.</p>
                 </fieldset>
               </div>
 
@@ -1027,12 +1108,51 @@
               <textarea id="automation-message" name="message" rows="7" placeholder="Describe the work to perform. You can use /skill use … just like in a normal Session." required></textarea>
               <p class="field-hint">This is sent through the normal Session command, permission, and HITL flow.</p>
             </label>
+
+            <section class="automation-editor-section" data-definition-controls hidden>
+              <h3>Definition controls</h3>
+              <p>Pause dispatch without changing the definition, or permanently delete it.</p>
+              <div class="definition-controls">
+                <div class="definition-control">
+                  <span><strong>Dispatch status</strong><small data-definition-status>Active and eligible to run</small></span>
+                  <button class="secondary-button" type="button" data-toggle-definition>Pause</button>
+                </div>
+                <div class="definition-control">
+                  <span><strong>Delete Automation</strong><small>Removes the definition; existing Sessions remain durable.</small></span>
+                  <button class="definition-delete" type="button" data-delete-definition>Delete</button>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
 
         <div class="automation-editor-actions">
           <button class="secondary-button" type="button" data-cancel-automation>Cancel</button>
           <button class="primary-button" type="submit" data-editor-submit>Create Automation</button>
+        </div>
+
+        <div class="automation-editor-confirmation" data-delete-confirmation role="alertdialog" aria-modal="true" aria-labelledby="automation-delete-title" aria-describedby="automation-delete-description" hidden>
+          <section class="automation-delete-panel">
+            <div class="delete-dialog-top">
+              <span class="delete-dialog-mark" data-icon="trash" aria-hidden="true"></span>
+              <div>
+                <h2 id="automation-delete-title">Delete Automation?</h2>
+                <p id="automation-delete-description">This action cannot be undone.</p>
+              </div>
+            </div>
+            <div class="delete-dialog-body">
+              <div class="delete-dialog-selected"><span>Selected</span><strong data-delete-subject></strong></div>
+              <div class="delete-dialog-consequences">
+                <p>This will permanently remove</p>
+                <ul><li>The schedule and its configuration</li><li>Pending runs and the complete invocation history</li></ul>
+              </div>
+              <div class="delete-dialog-note"><svg aria-hidden="true" fill="none" height="15" viewBox="0 0 24 24" width="15"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3ZM12 9v4M12 17h.01" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" /></svg><p>Sessions already created or updated by this Automation will remain unchanged. Schedule: <strong data-delete-schedule></strong></p></div>
+            </div>
+            <div class="delete-dialog-actions">
+              <button type="button" data-delete-cancel>Cancel</button>
+              <button type="button" data-delete-confirm>Delete Automation</button>
+            </div>
+          </section>
         </div>
       </form>
     </dialog>
@@ -1080,6 +1200,7 @@
           sessionId: "",
           instructions: "Read the linked Todo and its Plan, run the focused package checks, and create a durable Session containing the exact result and any failure evidence. Do not change the Todo lifecycle automatically.",
           linkedTodo: { id: "todo-profile-defaults", title: "Model profile defaults per project", meta: "Ready · PRD and Plan available" },
+          sourceSession: { id: "sess-aut-regression-source", title: "Model profile defaults planning" },
           runs: [
             { sessionId: "sess-aut-regression-20260801", label: "Verification passed", time: "Yesterday 09:04", status: "Done", tone: "done" },
             { sessionId: "sess-aut-regression-20260731", label: "Verification passed", time: "Mon 09:03", status: "Done", tone: "done" },
@@ -1184,6 +1305,7 @@
 
       const automationList = document.querySelector(".automation-list-pane");
       const scheduledRows = document.querySelector("#scheduled-title")?.closest(".automation-group")?.querySelector(".automation-rows");
+      const pausedRows = document.querySelector("#paused-title")?.closest(".automation-group")?.querySelector(".automation-rows");
       const detailTitle = document.querySelector("[data-detail-title]");
       const detailStatus = document.querySelector("[data-detail-status]");
       const detailUpdated = document.querySelector("[data-detail-updated]");
@@ -1192,13 +1314,12 @@
       const detailAction = document.querySelector("[data-detail-action]");
       const detailLocation = document.querySelector("[data-detail-location]");
       const detailInstructions = document.querySelector("[data-detail-instructions]");
-      const linkedTodoSection = document.querySelector("[data-linked-todo-section]");
+      const provenanceSection = document.querySelector("[data-provenance-section]");
+      const provenanceTitle = document.querySelector("[data-provenance-title]");
       const linkedTodo = document.querySelector("[data-linked-todo]");
       const linkedTodoLink = document.querySelector("[data-linked-todo-link]");
+      const automationSource = document.querySelector("[data-automation-source]");
       const runList = document.querySelector("[data-run-list]");
-      const totalCount = document.querySelector("[data-automation-total]");
-      const scheduledCount = document.querySelector("[data-automation-scheduled]");
-      const toolbarCount = document.querySelector(".project-toolbar-nav a.active .toolbar-count");
       const automationSearch = document.querySelector("[data-automation-search]");
       const automationFilterEmpty = document.querySelector("[data-automation-filter-empty]");
       const automationFilterEmptyTitle = document.querySelector("[data-automation-filter-empty-title]");
@@ -1206,8 +1327,31 @@
       const automationEditorForm = document.querySelector("[data-automation-editor-form]");
       const automationEditorTitle = document.querySelector("[data-automation-editor-title]");
       const editorSubmit = document.querySelector("[data-editor-submit]");
+      const definitionControls = document.querySelector("[data-definition-controls]");
+      const definitionStatus = document.querySelector("[data-definition-status]");
+      const toggleDefinition = document.querySelector("[data-toggle-definition]");
+      const deleteDefinition = document.querySelector("[data-delete-definition]");
+      const deleteConfirmation = document.querySelector("[data-delete-confirmation]");
+      const deleteSubject = document.querySelector("[data-delete-subject]");
+      const deleteSchedule = document.querySelector("[data-delete-schedule]");
+      const deleteCancel = document.querySelector("[data-delete-cancel]");
+      const deleteConfirm = document.querySelector("[data-delete-confirm]");
+      let pendingDeleteAutomationId = null;
       let currentAutomationId = "aut-regression";
       let editingAutomationId = null;
+
+      function setDeleteConfirmation(open, { restoreFocus = true } = {}) {
+        if (!deleteConfirmation) return;
+        deleteConfirmation.hidden = !open;
+        [...automationEditorForm.children].forEach((child) => {
+          if (child !== deleteConfirmation) child.inert = open;
+        });
+        if (open) {
+          requestAnimationFrame(() => deleteCancel?.focus());
+        } else if (restoreFocus) {
+          requestAnimationFrame(() => deleteDefinition?.focus());
+        }
+      }
 
       function defaultTimezone() {
         try {
@@ -1359,16 +1503,16 @@
       }
 
       function rowStateMarkup(sample) {
-        const attention = sample.status === "Needs you" || sample.status === "Needs attention";
-        const failed = sample.tone === "failed" || sample.latestInvocation === "failed" || sample.status === "Failed";
+        const attention = sample.status === "Needs you";
+        const failed = sample.tone === "failed" || sample.latestInvocation === "failed" || sample.latestInvocation === "missed" || sample.status === "Failed";
         const paused = sample.status === "Paused" || sample.status === "Inactive";
         const stateClass = failed ? " failed" : attention ? " attention" : paused ? "" : sample.next && sample.next !== sample.status ? " running" : "";
-        const stateLabel = failed && sample.status !== "Failed" ? (sample.status === "Needs you" || sample.status === "Needs attention" ? "Failed" : sample.status) : attention || paused ? (sample.status === "Needs attention" ? "Needs you" : sample.status) : (sample.next || sample.status);
+        const stateLabel = sample.latestInvocation === "missed" ? "Missed" : failed && sample.status !== "Failed" ? "Failed" : attention || paused ? sample.status : (sample.next || sample.status);
         return `<span class="automation-row-state${stateClass}">${escapeAutomationHtml(stateLabel)}</span>`;
       }
 
       function rowMarkup(sample) {
-        const orbitClass = sample.tone === "failed"
+        const orbitClass = sample.tone === "failed" || sample.latestInvocation === "missed"
           ? "failed"
           : sample.tone === "attention"
             ? "attention"
@@ -1376,22 +1520,12 @@
               ? "paused"
               : sample.tone === "done"
                 ? "done"
-                : "running";
+                : "scheduled";
         return `<button class="automation-row" aria-selected="false" data-automation-row="${escapeAutomationHtml(sample.id)}">
           <span class="automation-orbit ${orbitClass}"></span>
           <span><strong>${escapeAutomationHtml(sample.name)}</strong><small>${escapeAutomationHtml(sample.trigger)} · no runs yet</small></span>
           ${rowStateMarkup(sample)}
         </button>`;
-      }
-
-      function refreshCounts() {
-        const total = String(Object.keys(automationSamples).length);
-        const scheduled = String(Object.values(automationSamples).filter((sample) => sample.status === "Scheduled").length);
-        if (totalCount) totalCount.textContent = total;
-        if (toolbarCount) toolbarCount.textContent = total;
-        if (scheduledCount) scheduledCount.textContent = scheduled;
-        const scheduledHeaderCount = document.querySelector("#scheduled-title")?.nextElementSibling;
-        if (scheduledHeaderCount) scheduledHeaderCount.textContent = scheduled;
       }
 
       function applyAutomationFilter() {
@@ -1431,19 +1565,31 @@
         currentAutomationId = id;
         document.querySelectorAll("[data-automation-row]").forEach((row) => row.setAttribute("aria-selected", String(row.dataset.automationRow === id)));
         detailTitle.textContent = sample.name;
-        detailStatus.textContent = sample.status;
-        detailStatus.className = `detail-status${sample.tone ? ` ${sample.tone}` : ""}`;
+        const terminalStatus = sample.latestInvocation === "missed" ? "Missed" : sample.latestInvocation === "failed" ? "Failed" : null;
+        detailStatus.textContent = terminalStatus || sample.status;
+        detailStatus.className = `detail-status${terminalStatus ? " failed" : sample.tone ? ` ${sample.tone}` : ""}`;
         if (detailUpdated) detailUpdated.textContent = sample.updated || "Updated recently";
         detailTrigger.textContent = sample.trigger;
         detailNext.textContent = sample.next;
         if (detailAction) detailAction.textContent = actionLabel(sample);
         if (detailLocation) detailLocation.textContent = locationLabel(sample);
         detailInstructions.textContent = sample.instructions;
-        linkedTodoSection.hidden = !sample.linkedTodo;
+        provenanceSection.hidden = false;
+        provenanceTitle.textContent = sample.linkedTodo ? "Linked Todo" : "Created from";
+        linkedTodoLink.hidden = !sample.linkedTodo;
         if (sample.linkedTodo) {
           linkedTodo.textContent = sample.linkedTodo.title;
           linkedTodo.nextElementSibling.textContent = sample.linkedTodo.meta;
           linkedTodoLink.href = `./todos.html#todo=${encodeURIComponent(sample.linkedTodo.id)}`;
+        }
+        if (sample.sourceSession) {
+          automationSource.hidden = false;
+          automationSource.textContent = `Session · ${sample.sourceSession.title}`;
+          automationSource.href = `./session.html?session=${encodeURIComponent(sample.sourceSession.id)}`;
+        } else {
+          automationSource.hidden = false;
+          automationSource.textContent = "Created directly in Automations.";
+          automationSource.removeAttribute("href");
         }
         renderRuns(sample);
         if (updateHistory) history.pushState({ automationDetail: true, automation: id }, "", automationHref(id));
@@ -1455,9 +1601,23 @@
 
       function openEditor(id = null) {
         editingAutomationId = id;
+        pendingDeleteAutomationId = null;
+        if (deleteConfirm) {
+          deleteConfirm.disabled = false;
+          deleteConfirm.textContent = "Delete Automation";
+        }
+        if (deleteCancel) deleteCancel.disabled = false;
+        setDeleteConfirmation(false, { restoreFocus: false });
         const sample = id ? automationSamples[id] : null;
         automationEditorTitle.textContent = sample ? "Edit Automation" : "New Automation";
         if (editorSubmit) editorSubmit.textContent = sample ? "Save changes" : "Create Automation";
+        if (definitionControls) definitionControls.hidden = !sample;
+        if (sample && definitionStatus && toggleDefinition) {
+          const paused = sample.status === "Paused";
+          definitionStatus.textContent = paused ? "Paused until resumed" : sample.status === "Inactive" ? "Disabled" : "Active and eligible to run";
+          toggleDefinition.textContent = paused ? "Resume" : "Pause";
+          toggleDefinition.disabled = sample.status === "Inactive";
+        }
 
         automationEditorForm.elements.name.value = sample?.name || "";
         automationEditorForm.elements.message.value = sample?.instructions || "";
@@ -1484,11 +1644,76 @@
 
       document.querySelector("[data-new-automation]")?.addEventListener("click", () => openEditor());
       document.querySelector("[data-edit-automation]")?.addEventListener("click", () => openEditor(currentAutomationId));
+      toggleDefinition?.addEventListener("click", () => {
+        const sample = editingAutomationId ? automationSamples[editingAutomationId] : null;
+        if (!sample) return;
+        const paused = sample.status === "Paused";
+        sample.status = paused ? "Scheduled" : "Paused";
+        sample.tone = paused ? "" : "paused";
+        sample.next = paused ? "Upcoming" : "Paused";
+        const row = document.querySelector(`[data-automation-row="${CSS.escape(sample.id)}"]`);
+        if (row) {
+          row.querySelector(".automation-orbit").className = `automation-orbit ${paused ? "scheduled" : "paused"}`;
+          row.querySelector(".automation-row-state").outerHTML = rowStateMarkup(sample);
+          (paused ? scheduledRows : pausedRows)?.append(row);
+        }
+        automationEditor.close();
+        selectAutomation(sample.id, { updateHistory: false });
+        applyAutomationFilter();
+        notify(paused ? "Automation resumed" : "Automation paused");
+      });
+      deleteDefinition?.addEventListener("click", () => {
+        const sample = editingAutomationId ? automationSamples[editingAutomationId] : null;
+        if (!sample) return;
+        pendingDeleteAutomationId = sample.id;
+        deleteSubject.textContent = sample.name;
+        deleteSchedule.textContent = sample.trigger;
+        setDeleteConfirmation(true);
+      });
+      deleteCancel?.addEventListener("click", () => {
+        pendingDeleteAutomationId = null;
+        setDeleteConfirmation(false);
+      });
+      deleteConfirm?.addEventListener("click", () => {
+        const id = pendingDeleteAutomationId;
+        const sample = id ? automationSamples[id] : null;
+        if (!sample) return;
+        deleteConfirm.disabled = true;
+        deleteCancel.disabled = true;
+        deleteConfirm.textContent = "Deleting…";
+        Promise.resolve().then(() => {
+          document.querySelector(`[data-automation-row="${CSS.escape(id)}"]`)?.remove();
+          delete automationSamples[id];
+          pendingDeleteAutomationId = null;
+          deleteConfirm.disabled = false;
+          deleteCancel.disabled = false;
+          deleteConfirm.textContent = "Delete Automation";
+          setDeleteConfirmation(false, { restoreFocus: false });
+          automationEditor.close();
+          const next = document.querySelector("[data-automation-row]");
+          if (next) selectAutomation(next.dataset.automationRow, { updateHistory: false, openDetail: false });
+          applyAutomationFilter();
+          notify("Automation deleted");
+        });
+      });
+      deleteConfirmation?.addEventListener("click", (event) => {
+        if (event.target === deleteConfirmation && !deleteConfirm.disabled) {
+          pendingDeleteAutomationId = null;
+          setDeleteConfirmation(false);
+        }
+      });
       document.querySelectorAll("[data-cancel-automation]").forEach((button) => {
         button.addEventListener("click", () => automationEditor.close());
       });
       automationEditor.addEventListener("click", (event) => {
-        if (event.target === automationEditor) automationEditor.close();
+        if (event.target === automationEditor && deleteConfirmation?.hidden !== false) automationEditor.close();
+      });
+      automationEditor.addEventListener("cancel", (event) => {
+        if (deleteConfirmation?.hidden !== false) return;
+        event.preventDefault();
+        if (deleteConfirm.disabled) return;
+        pendingDeleteAutomationId = null;
+        setDeleteConfirmation(false);
       });
       automationEditorForm.addEventListener("change", () => {
         syncEditorPanels();
@@ -1522,7 +1747,7 @@
           sample.intervalUnit = values.intervalUnit;
           sample.cron = values.cron;
           sample.timezone = values.timezone;
-          sample.next = sample.status === "Paused" || sample.status === "Inactive" || sample.status === "Needs you" || sample.status === "Needs attention"
+          sample.next = sample.status === "Paused" || sample.status === "Inactive" || sample.status === "Needs you"
             ? sample.next
             : next;
           sample.actionKind = actionKind;
@@ -1536,14 +1761,16 @@
             row.querySelector("small").textContent = `${trigger} · ${sample.runs.length ? `${sample.runs.length} recent run${sample.runs.length === 1 ? "" : "s"}` : "no runs yet"}`;
             const state = row.querySelector(".automation-row-state");
             if (state) {
-              const attention = sample.status === "Needs you" || sample.status === "Needs attention";
-              const failed = sample.tone === "failed" || sample.latestInvocation === "failed" || sample.status === "Failed";
+              const attention = sample.status === "Needs you";
+              const failed = sample.tone === "failed" || sample.latestInvocation === "failed" || sample.latestInvocation === "missed" || sample.status === "Failed";
               const paused = sample.status === "Paused" || sample.status === "Inactive";
               state.className = `automation-row-state${failed ? " failed" : attention ? " attention" : paused ? "" : sample.next && sample.next !== sample.status ? " running" : ""}`;
-              state.textContent = failed && sample.status !== "Failed"
-                ? (attention ? "Failed" : sample.status)
+              state.textContent = sample.latestInvocation === "missed"
+                ? "Missed"
+                : failed && sample.status !== "Failed"
+                  ? (attention ? "Failed" : sample.status)
                 : attention || paused
-                  ? (sample.status === "Needs attention" ? "Needs you" : sample.status)
+                  ? sample.status
                   : (sample.next || sample.status);
             }
           }
@@ -1575,7 +1802,6 @@
             runs: [],
           };
           scheduledRows.insertAdjacentHTML("beforeend", rowMarkup(automationSamples[id]));
-          refreshCounts();
           selectAutomation(id);
           applyAutomationFilter();
           notify(`Created “${name}”`);
@@ -1617,7 +1843,6 @@
         }
       });
 
-      refreshCounts();
       applyAutomationFilter();
       const requestedAutomation = new URLSearchParams(location.search).get("automation");
       if (!requestedAutomation || !selectAutomation(requestedAutomation, { updateHistory: false, openDetail: true })) {

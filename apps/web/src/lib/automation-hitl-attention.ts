@@ -1,5 +1,11 @@
-import type { Automation, AutomationInvocation } from "@archcode/protocol";
+import type { Automation, ProjectSessionInventoryItem } from "@archcode/protocol";
 import type { ScopedHitlView } from "../store/hitl-store";
+
+export interface AutomationSessionLink {
+  readonly invocationId: string;
+  readonly sessionId: string;
+  readonly latestExecution: ProjectSessionInventoryItem["latestExecution"];
+}
 
 export type AutomationHitlAttention =
   | {
@@ -23,7 +29,7 @@ export type AutomationHitlAttention =
  */
 export function deriveAutomationHitlAttention(
   automation: Automation,
-  invocations: readonly AutomationInvocation[],
+  sessionLinks: readonly AutomationSessionLink[],
   entries: readonly ScopedHitlView[],
 ): AutomationHitlAttention {
   if (automation.action.kind === "send_message") {
@@ -45,18 +51,41 @@ export function deriveAutomationHitlAttention(
     entries: readonly ScopedHitlView[];
   }> = [];
 
-  for (const invocation of invocations) {
-    if (!invocation.sessionId || seenSessions.has(invocation.sessionId)) continue;
+  for (const link of sessionLinks) {
+    if (seenSessions.has(link.sessionId)) continue;
     const linked = entries.filter((entry) => (
       entry.projectSlug === automation.projectSlug
-      && entry.rootSessionId === invocation.sessionId
+      && entry.rootSessionId === link.sessionId
     ));
     if (linked.length === 0) continue;
-    seenSessions.add(invocation.sessionId);
-    sessions.push({ invocationId: invocation.id, sessionId: invocation.sessionId, entries: linked });
+    seenSessions.add(link.sessionId);
+    sessions.push({ invocationId: link.invocationId, sessionId: link.sessionId, entries: linked });
   }
 
   return { kind: "start_session", sessions };
+}
+
+/**
+ * Builds the exact Automation -> root Session relationship from the one
+ * project-level Session inventory. This keeps Automation list presentation
+ * free of per-row Invocation or Session requests.
+ */
+export function indexAutomationSessionLinks(
+  items: readonly ProjectSessionInventoryItem[],
+): ReadonlyMap<string, readonly AutomationSessionLink[]> {
+  const mutable = new Map<string, AutomationSessionLink[]>();
+  for (const item of items) {
+    const source = item.session.source;
+    if (source.kind !== "automation") continue;
+    const links = mutable.get(source.automationId) ?? [];
+    links.push({
+      invocationId: source.invocationId,
+      sessionId: item.session.sessionId,
+      latestExecution: item.latestExecution,
+    });
+    mutable.set(source.automationId, links);
+  }
+  return mutable;
 }
 
 export function automationHitlSessionCount(attention: AutomationHitlAttention): number {

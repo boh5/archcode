@@ -384,7 +384,8 @@ describe("ToolRunCard", () => {
 
     expect(buttons).toHaveLength(1);
     expect(buttons[0]?.props?.["aria-expanded"]).toBe(true);
-    expect(buttons[0]?.props?.className).toContain("max-w-[696px]");
+    expect(buttons[0]?.props?.className).toContain("w-full");
+    expect(buttons[0]?.props?.className).not.toContain("max-w-");
     const list = findByTestId(element, "tool-run-list");
     const listText = textContent(list);
     expect(listText.indexOf("a.ts")).toBeLessThan(listText.indexOf("b.ts"));

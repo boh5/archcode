@@ -43,9 +43,9 @@ export function HitlBell({
         aria-label="Open work that needs you"
         aria-expanded={open}
         aria-controls="hitl-bell-panel"
-        className={`relative flex h-8 w-8 items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${variant === "rail"
-          ? "text-rail-muted hover:bg-rail-ink/8 hover:text-rail-ink"
-          : "text-text-tertiary hover:bg-bg-hover hover:text-text-primary"
+        className={`relative flex items-center justify-center rounded-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${variant === "rail"
+          ? "h-[34px] w-[34px] text-rail-muted hover:bg-rail-hover hover:text-rail-ink"
+          : "h-8 w-8 text-text-tertiary hover:bg-bg-hover hover:text-text-primary"
         }`}
         onClick={() => {
           if (open) close();
@@ -53,7 +53,7 @@ export function HitlBell({
         }}
       >
         <Bell size={16} aria-hidden="true" />
-        {entries.length > 0 && <span className="absolute -right-1 -top-1 grid min-h-4 min-w-4 place-items-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-[14px] text-bg-base" aria-label={`${entries.length} items need you`}>{entries.length > 99 ? "99+" : entries.length}</span>}
+        {entries.length > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-[15px] min-w-[15px] place-items-center rounded-full border-2 border-rail bg-warning px-1 text-[9px] font-bold leading-[11px] text-white dark:text-bg-base" aria-label={`${entries.length} items need you`}>{entries.length > 99 ? "99+" : entries.length}</span>}
       </button>
       {open && <>
         {mobile && <button type="button" aria-label="Close work that needs you" className="fixed inset-0 z-40 bg-black/60" onClick={close} />}
@@ -66,7 +66,7 @@ export function HitlBell({
             : "absolute bottom-10 left-10 z-50 w-[min(360px,calc(100vw-1rem))] rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md"
           }
         >
-          <div className="mb-1 flex justify-end"><button type="button" aria-label="Close work that needs you" className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={close}><X size={14} /></button></div>
+          <div className="mb-1 flex justify-end"><button type="button" aria-label="Close work that needs you" className="flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={close}><X size={14} /></button></div>
           <HitlAttentionList
             entries={entries}
             maxItems={10}

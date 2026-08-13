@@ -1073,11 +1073,11 @@ describe("SessionRoute focused view store behavior", () => {
       expect(surface?.classList.contains("border-t")).toBe(true);
       expect(surface?.classList.contains("px-5")).toBe(false);
       expect(rail?.className).toContain("w-full");
-      expect(rail?.className).not.toContain("max-w-[");
-      expect(rail?.className).toContain("px-4");
-      expect(rail?.className).toContain("sm:px-5");
+      expect(rail?.className).toContain("!max-w-[900px]");
+      expect(rail?.className).toContain("!px-3");
+      expect(rail?.className).toContain("min-[761px]:!px-[26px]");
       expect(threadColumn?.className).toContain("mx-auto");
-      expect(threadColumn?.className).toContain("max-w-[800px]");
+      expect(threadColumn?.className).toContain("!max-w-[848px]");
       expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
       expect(container.textContent).toContain("Continue?");
       expect(container.textContent).not.toContain("Need input");

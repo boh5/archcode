@@ -9,6 +9,7 @@ import type {
   ProjectTodo,
   ProjectTodoCreateInput,
   ProjectTodoRunNowInput,
+  ProjectTodoStartDiscussionInput,
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import type { AgentRuntime } from "@archcode/agent-core";
@@ -192,6 +193,35 @@ describe("Project Todo routes", () => {
     expect(fixture.runNow).toHaveBeenCalledWith(input);
   });
 
+  test("starts a captured Discussion through the single backend-owned command", async () => {
+    const todo = makeTodo();
+    const fixture = createFixture(todo);
+    const input: ProjectTodoStartDiscussionInput = {
+      clientRequestId: crypto.randomUUID(),
+      content: "Discuss now\n\nShape it.",
+    };
+
+    const response = await fixture.app.request(
+      `/api/projects/${fixture.project.slug}/todos/start-discussion`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      todo,
+      session: {
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        agentName: "discussion",
+        source: { kind: "todo", todoId: todo.id, entry: "discussion" },
+      },
+    });
+    expect(fixture.startDiscussion).toHaveBeenCalledWith(input);
+  });
+
   test("strictly validates flat mutation and Session request bodies", async () => {
     const fixture = createFixture(makeTodo());
     const base = `/api/projects/${fixture.project.slug}/todos`;
@@ -226,13 +256,24 @@ describe("Project Todo routes", () => {
       headers,
       body: JSON.stringify({ clientRequestId: crypto.randomUUID(), content: "Start", origin: "forged" }),
     });
+    const invalidStartDiscussion = await fixture.app.request(`${base}/start-discussion`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        clientRequestId: crypto.randomUUID(),
+        content: "Discuss",
+        expectedRevision: 1,
+      }),
+    });
 
     expect(emptyMutation.status).toBe(400);
     expect(mixedArchive.status).toBe(400);
     expect(invalidEntry.status).toBe(400);
     expect(invalidPlanIntent.status).toBe(400);
     expect(invalidRunNow.status).toBe(400);
+    expect(invalidStartDiscussion.status).toBe(400);
     expect(fixture.runNow).not.toHaveBeenCalled();
+    expect(fixture.startDiscussion).not.toHaveBeenCalled();
   });
 
   test("maps Run now key conflicts and recovery-required failures", async () => {
@@ -263,6 +304,50 @@ describe("Project Todo routes", () => {
     expect(recovery.status).toBe(500);
     expect(await recovery.json()).toMatchObject({
       error: { code: "INTERNAL_ERROR", details: { scopeCode: "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED", todoId: fixture.todo.id } },
+    });
+  });
+
+  test("maps Start discussion key conflicts and recovery-required failures with exact ids", async () => {
+    const fixture = createFixture(makeTodo());
+    const path = `/api/projects/${fixture.project.slug}/todos/start-discussion`;
+    const clientRequestId = crypto.randomUUID();
+    const request = {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientRequestId, content: "Discuss" }),
+    };
+    fixture.startDiscussion.mockRejectedValueOnce(Object.assign(new Error("different input"), {
+      code: "PROJECT_TODO_START_DISCUSSION_CONFLICT",
+      clientRequestId,
+    }));
+    const conflict = await fixture.app.request(path, request);
+    fixture.startDiscussion.mockRejectedValueOnce(Object.assign(new Error("manual recovery"), {
+      code: "PROJECT_TODO_START_DISCUSSION_RECOVERY_REQUIRED",
+      todoId: fixture.todo.id,
+      sessionId: "11111111-1111-4111-8111-111111111111",
+    }));
+    const recovery = await fixture.app.request(path, request);
+
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({
+      error: {
+        code: "BAD_REQUEST",
+        details: {
+          scopeCode: "PROJECT_TODO_START_DISCUSSION_CONFLICT",
+          clientRequestId,
+        },
+      },
+    });
+    expect(recovery.status).toBe(500);
+    expect(await recovery.json()).toMatchObject({
+      error: {
+        code: "INTERNAL_ERROR",
+        details: {
+          scopeCode: "PROJECT_TODO_START_DISCUSSION_RECOVERY_REQUIRED",
+          todoId: fixture.todo.id,
+          sessionId: "11111111-1111-4111-8111-111111111111",
+        },
+      },
     });
   });
 
@@ -404,6 +489,22 @@ function createFixture(todo: ProjectTodo) {
         modelSelection: { revision: 0 },
         title: "Capture an idea",
         source: { kind: "todo" as const, todoId: todo.id, entry: "work" as const },
+        createdAt: todo.createdAt,
+        updatedAt: todo.updatedAt,
+      },
+    })),
+    startDiscussion: mock(async (_input: ProjectTodoStartDiscussionInput) => ({
+      todo,
+      session: {
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        cwd: workspaceRoot,
+        rootSessionId: "11111111-1111-4111-8111-111111111111",
+        agentName: "discussion" as const,
+        profile: "principal" as const,
+        activeSkillNames: [],
+        modelSelection: { revision: 0 },
+        title: "Discussion: Capture an idea",
+        source: { kind: "todo" as const, todoId: todo.id, entry: "discussion" as const },
         createdAt: todo.createdAt,
         updatedAt: todo.updatedAt,
       },

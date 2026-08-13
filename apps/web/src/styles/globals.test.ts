@@ -62,7 +62,7 @@ const locked = {
     text: ["#171917", "#424742", "#626a62", "#747c74"],
     semantic: ["#6157d5", "#2f7752", "#8a5e13", "#b14840", "#626a62"],
     signal: ["#758b22", "#eef3d8", "#506015", "#151b00"],
-    rail: ["#eceeea", "#171917", "#626a62"],
+    rail: ["#eceeea", "#171917", "#626a62", "#e1e3df", "#d7dbd4", "#cdd1ca"],
   },
   dark: {
     selector: '[data-theme="dark"]',
@@ -72,7 +72,7 @@ const locked = {
     text: ["#f3f5f0", "#c9cec6", "#9ca49a", "#868f84"],
     semantic: ["#a49bff", "#82c49a", "#deb96e", "#f08b82", "#9ca49a"],
     signal: ["#c1dd64", "#29331b", "#d9ec8c", "#202807"],
-    rail: ["#0c0e0c", "#f2f4ef", "#858c83"],
+    rail: ["#0c0e0c", "#f2f4ef", "#858c83", "#1c201c", "#232723", "#363c36"],
   },
 } as const;
 
@@ -83,7 +83,7 @@ const groups = {
   text: ["text-primary", "text-secondary", "text-tertiary", "text-muted"],
   semantic: ["brand", "success", "warning", "error", "neutral"],
   signal: ["signal", "signal-field", "signal-foreground", "signal-ink"],
-  rail: ["rail", "rail-ink", "rail-muted"],
+  rail: ["rail", "rail-ink", "rail-muted", "rail-hover", "rail-active", "rail-border"],
 } as const;
 
 describe("workbench visual tokens", () => {
@@ -126,6 +126,12 @@ describe("workbench visual tokens", () => {
           contrast(rgb(variable(source, foregroundName)), rgb(variable(source, fieldName))),
         ).toBeGreaterThanOrEqual(4.5);
       }
+    }
+  });
+
+  test("exposes every semantic field token to Tailwind utilities", () => {
+    for (const name of ["brand", "success", "warning", "error", "neutral"]) {
+      expect(css).toContain(`--color-${name}-field: var(--${name}-field);`);
     }
   });
 
@@ -173,6 +179,17 @@ describe("workbench visual tokens", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
     expect(css).toContain("animation: status-attention var(--motion-attention) var(--ease-standard) 2");
     expect(css).toContain("animation: status-complete var(--motion-complete) var(--ease-standard) 1");
+    expect(css).toContain(".primary-action-button {");
+    expect(css).toContain("0 1px 3px rgb(97 87 213 / 30%)");
+    expect(css).toContain(".workbench-row-lift:hover {");
+    expect(css).toContain("translateY(-0.5px)");
+    expect(css).toContain(".todo-card-selected {");
+    expect(css).toContain(".todo-detail-scroll {");
+    expect(css).toContain("scrollbar-width: auto");
+    expect(css).toContain(".todo-detail-scroll::-webkit-scrollbar {");
+    expect(css).toContain("width: 15px");
+    expect(css).toContain(".conversation-scroller {");
+    expect(css).toContain(".conversation-scroller::-webkit-scrollbar {");
   });
 
   test("resolves animated primitives to zero-duration computed styles under the reduced-motion declarations", () => {

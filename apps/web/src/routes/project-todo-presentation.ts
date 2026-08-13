@@ -37,9 +37,15 @@ export interface ProjectTodoLanePresentation {
 export type ProjectTodoAttentionLabel = "Inspection" | "Permission" | "Question";
 
 export interface ProjectTodoOperationalState {
-  readonly label: "Needs you" | "Working" | "Needs attention" | "Ready to review" | "Scheduled" | "Idle";
+  readonly label: "Needs you" | "Failed" | "Working" | "Ready to review" | "Scheduled" | "Idle";
   readonly detail?: string;
   readonly kind: VisualStatusKind;
+}
+
+export interface ProjectTodoLinkedSessionPresentation {
+  readonly context: string;
+  readonly kind: VisualStatusKind;
+  readonly label: string;
 }
 
 export interface ProjectTodoOperationalFacts {
@@ -62,13 +68,54 @@ const CARD_PRESENTATIONS: Readonly<Record<ProjectTodoCardPresentation["label"], 
 };
 
 export const PROJECT_TODO_LANE_PRESENTATIONS: Readonly<Record<ProjectTodoLane, ProjectTodoLanePresentation>> = {
-  idea: { title: "Ideas", hint: "Capture first, shape later", emptyTitle: "No ideas yet", emptyHint: "Capture an idea above.", Icon: Lightbulb, tone: "brand" },
-  ready: { title: "Ready", hint: "Clear enough to hand off", emptyTitle: "Nothing ready", emptyHint: "Move an idea here when it is ready.", Icon: CircleDot, tone: "neutral" },
-  in_progress: { title: "In Progress", hint: "Work underway", emptyTitle: "No work in progress", emptyHint: "Start work or drag a Todo here.", Icon: CirclePlay, tone: "signal" },
-  done: { title: "Done", hint: "Explicitly completed", emptyTitle: "Nothing completed", emptyHint: "Completed Todos stay visible here.", Icon: CircleCheck, tone: "success" },
+  idea: { title: "Ideas", hint: "Captured, not committed", emptyTitle: "No ideas yet", emptyHint: "Capture an idea above.", Icon: Lightbulb, tone: "brand" },
+  ready: { title: "Ready", hint: "Clear enough to start", emptyTitle: "Nothing ready", emptyHint: "Move an idea here when it is ready.", Icon: CircleDot, tone: "neutral" },
+  in_progress: { title: "In Progress", hint: "Execution is attached here", emptyTitle: "No work in progress", emptyHint: "Start work or drag a Todo here.", Icon: CirclePlay, tone: "signal" },
+  done: { title: "Done", hint: "Explicitly accepted", emptyTitle: "Nothing completed", emptyHint: "Completed Todos stay visible here.", Icon: CircleCheck, tone: "success" },
 };
 
-/** Keep embedded Todo documents below the route-level h1 without touching code fences. */
+const PROJECT_TODO_DISPLAY_LEAD_MAX_LENGTH = 80;
+const PROJECT_TODO_PREVIEW_EXCERPT_MAX_LENGTH = 180;
+
+/** Display-only lead used by the current prototype; it never creates a Todo title field. */
+export function projectTodoDisplayLead(content: string): string {
+  const lines = content.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const heading = lines.find((line) => /^#{1,6}\s+/u.test(line));
+  const source = heading !== undefined
+    ? heading.replace(/^#{1,6}\s+/u, "")
+    : lines.map(normalizeTodoDisplayLine).filter(Boolean).join(" ");
+  return truncateTodoDisplayText(source.replace(/\s+/gu, " ").trim(), PROJECT_TODO_DISPLAY_LEAD_MAX_LENGTH);
+}
+
+/** Bounded plain-text body shown beneath the display lead in Todo Preview. */
+export function projectTodoPreviewExcerpt(content: string): string {
+  const lines = content.split(/\r?\n/u);
+  const firstContentLine = lines.findIndex((line) => line.trim().length > 0);
+  if (firstContentLine >= 0 && /^#{1,6}\s+/u.test(lines[firstContentLine]!.trim())) lines.splice(firstContentLine, 1);
+  const plain = lines.join("\n")
+    .replace(/^#+\s+/gmu, "")
+    .replace(/^[-*+]\s+/gmu, "")
+    .replace(/^\d+[.)]\s+/gmu, "")
+    .replace(/[#>*_`]/gu, "")
+    .replace(/\n+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return truncateTodoDisplayText(plain, PROJECT_TODO_PREVIEW_EXCERPT_MAX_LENGTH);
+}
+
+function normalizeTodoDisplayLine(line: string): string {
+  return line
+    .replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/u, "")
+    .replace(/^\[[ xX]\]\s*/u, "");
+}
+
+function truncateTodoDisplayText(text: string, maxLength: number): string {
+  const characters = Array.from(text);
+  if (characters.length <= maxLength) return text;
+  return `${characters.slice(0, maxLength - 1).join("").trimEnd()}…`;
+}
+
+/** Keep embedded Todo documents below the route h1 and their owning h2 section. */
 export function demoteEmbeddedMarkdownHeadings(markdown: string): string {
   let fence: { readonly kind: "`" | "~"; readonly length: number } | undefined;
   return markdown.split(/\r?\n/u).map((line) => {
@@ -92,8 +139,41 @@ export function demoteEmbeddedMarkdownHeadings(markdown: string): string {
       }
       return line;
     }
-    return line.replace(/^(\s{0,3})(#{1,5})(\s+)/u, "$1#$2$3");
+    return line.replace(
+      /^(\s{0,3})(#{1,6})(\s+)/u,
+      (_match, indentation: string, markers: string, spacing: string) => (
+        `${indentation}${"#".repeat(Math.min(6, markers.length + 2))}${spacing}`
+      ),
+    );
   }).join("\n");
+}
+
+/** Project Todo detail projection for one durable linked Session row. */
+export function presentProjectTodoLinkedSession(
+  item: ProjectSessionInventoryItem,
+): ProjectTodoLinkedSessionPresentation {
+  const { session, latestExecution } = item;
+  const agent = session.agentName.length > 0
+    ? `${session.agentName[0]!.toUpperCase()}${session.agentName.slice(1)}`
+    : "Lead";
+  const context = session.source.kind === "todo"
+    ? session.source.entry === "discussion"
+      ? `${agent} · shapes intent and the current Plan`
+      : session.source.entry === "automation"
+        ? `${agent} · prepares an Automation from this Todo`
+        : `${agent} · execution attached to this Todo`
+    : session.source.kind === "automation"
+      ? `${agent} · recurring execution attached to this Todo`
+      : `${agent} · direct project execution`;
+
+  if (latestExecution === null) return { context, kind: "idle", label: "Idle" };
+  if (latestExecution.status === "running") return { context, kind: "running", label: "Running" };
+  if (latestExecution.status === "completed") return { context, kind: "completed", label: "Done" };
+  if (latestExecution.status === "suspended") return { context, kind: "needs_you", label: "Needs you" };
+  if (["failed", "timed_out", "max_steps"].includes(latestExecution.status)) {
+    return { context, kind: "failed", label: "Failed" };
+  }
+  return { context, kind: "stopped", label: "Stopped" };
 }
 
 /** Pure display mapping; Todo status is the only lifecycle source of truth. */
@@ -172,13 +252,13 @@ export function deriveProjectTodoOperationalState(
     const detail = status === undefined || status === "running" || status === "completed"
       ? undefined
       : executionAttentionDetail(status);
-    if (detail !== undefined) return { label: "Needs attention", detail, kind: "warning" };
+    if (detail !== undefined) return { label: "Failed", detail, kind: "failed" };
     if (status === "completed") return { label: "Ready to review", kind: "completed" };
   } else if (latestInvocation?.status === "failed" || latestInvocation?.status === "missed") {
     return {
-      label: "Needs attention",
+      label: "Failed",
       detail: latestInvocation.status === "missed" ? "Automation missed" : "Automation failed",
-      kind: "warning",
+      kind: "failed",
     };
   }
 

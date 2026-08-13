@@ -13,9 +13,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="ArchCode cross-project Home page prototype" />
     <title>ArchCode — Home Prototype</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css?v=prototype-polish-17" />
     <style>
       .home-page .app-shell {
@@ -34,16 +31,12 @@
       }
 
       .home-content {
-        width: min(100%, 920px);
+        width: min(100%, 1180px);
         margin: 0 auto;
         padding: 32px clamp(22px, 4vw, 40px) 64px;
       }
 
       .home-header {
-        display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 20px;
         margin-bottom: 22px;
         padding-bottom: 16px;
         border-bottom: 1px solid var(--border-subtle);
@@ -73,79 +66,17 @@
         line-height: 1.5;
       }
 
-      .home-header-meta {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        gap: 8px;
-        color: var(--text-tertiary);
-        font-size: 11.5px;
-        font-weight: 560;
-      }
-
-      .home-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        min-height: 26px;
-        padding: 0 9px;
-        border: 1px solid var(--border-subtle);
-        border-radius: 999px;
-        background: var(--bg-surface);
-        color: var(--text-secondary);
-        font-variant-numeric: tabular-nums;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.05),
-          0 1px 1px rgba(0, 0, 0, 0.05);
-        transition: all var(--motion-hover) var(--ease-smooth);
-      }
-
-      .home-chip strong {
-        color: var(--text-primary);
-        font-weight: 700;
-      }
-
-      .home-chip.attention {
-        border-color: color-mix(in srgb, var(--warning) 28%, var(--border-subtle));
-        color: var(--warning);
-        box-shadow:
-          inset 0 1px 0 rgba(251, 146, 60, 0.1),
-          0 1px 2px rgba(251, 146, 60, 0.15);
-      }
-
-      .home-chip.running {
-        border-color: color-mix(in srgb, var(--signal) 28%, var(--border-subtle));
-        color: var(--signal-foreground);
-        box-shadow:
-          inset 0 1px 0 rgba(101, 163, 13, 0.08),
-          0 1px 2px rgba(101, 163, 13, 0.12);
-      }
-
       .home-layout {
         display: grid;
-        gap: 14px;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 20px;
         align-items: start;
       }
 
       .home-section {
         min-width: 0;
-        overflow: hidden;
-        border: 1px solid var(--border-subtle);
-        border-radius: var(--shape-card);
-        background: var(--bg-surface);
-        box-shadow: var(--shadow-base);
-      }
-
-      .home-section.attention {
-        border-color: color-mix(in srgb, var(--warning) 22%, var(--border-default));
-      }
-
-      .home-section.running {
-        border-color: color-mix(in srgb, var(--signal) 18%, var(--border-default));
-      }
-
-      .home-section.review {
-        border-color: color-mix(in srgb, var(--brand) 16%, var(--border-default));
+        border-top: 1px solid var(--border-default);
+        border-bottom: 1px solid var(--border-default);
       }
 
       .home-section-header {
@@ -156,10 +87,6 @@
         min-height: 42px;
         padding: 0 14px;
         border-bottom: 1px solid var(--border-subtle);
-      }
-
-      .home-section.attention .home-section-header {
-        border-bottom-color: color-mix(in srgb, var(--warning) 14%, var(--border-subtle));
       }
 
       .home-section-header [data-icon],
@@ -178,21 +105,11 @@
       }
 
       .home-section-count {
-        min-width: 22px;
-        padding: 2px 7px;
-        border: 1px solid var(--border-default);
-        border-radius: 999px;
-        background: var(--bg-elevated);
-        color: var(--text-secondary);
+        color: var(--text-tertiary);
         font-size: 11px;
         font-weight: 700;
         text-align: center;
         font-variant-numeric: tabular-nums;
-      }
-
-      .home-section.attention .home-section-count {
-        border-color: color-mix(in srgb, var(--warning) 24%, transparent);
-        color: var(--warning);
       }
 
       .home-list {
@@ -214,8 +131,8 @@
         text-decoration: none;
         cursor: pointer;
         transition:
-          background var(--motion-hover) var(--ease-smooth),
-          transform var(--motion-hover) var(--ease-smooth);
+          background var(--motion-hover) var(--ease-enter),
+          transform var(--motion-hover) var(--ease-enter);
       }
 
       .home-row:last-child {
@@ -224,8 +141,7 @@
 
       .home-row:hover {
         background: var(--bg-hover);
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-hover);
+        transform: translateY(-0.5px);
       }
 
       .home-row:active {
@@ -277,44 +193,11 @@
       }
 
       .home-todo-cue {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        margin-top: 4px;
-        padding: 12px 14px;
-        border: 1px solid var(--border-subtle);
-        border-radius: var(--shape-card);
-        background: var(--bg-surface);
-        color: var(--text-secondary);
-        text-decoration: none;
-      }
-
-      .home-todo-cue:hover {
-        border-color: var(--border-default);
-        background: var(--bg-hover);
-      }
-
-      .home-todo-cue strong {
-        display: block;
-        color: var(--text-primary);
-        font-size: 13px;
-        font-weight: 650;
-      }
-
-      .home-todo-cue span span {
-        display: block;
-        margin-top: 3px;
-        font-size: 12px;
+        margin: 0;
         color: var(--text-tertiary);
-      }
-
-      .home-todo-cue em {
-        color: var(--brand);
-        font-style: normal;
-        font-size: 12px;
-        font-weight: 650;
-        white-space: nowrap;
+        font-size: 11px;
+        line-height: 1.45;
+        grid-column: 1 / -1;
       }
 
       @media (max-width: 760px) {
@@ -322,15 +205,7 @@
           padding: 24px 16px 48px;
         }
 
-        .home-header {
-          flex-direction: column;
-          align-items: flex-start;
-          margin-bottom: 18px;
-        }
-
-        .home-header-meta {
-          justify-content: flex-start;
-        }
+        .home-header { margin-bottom: 18px; }
 
         .home-row {
           grid-template-columns: 14px minmax(0, 1fr);
@@ -347,10 +222,10 @@
           justify-self: start;
         }
 
-        .home-todo-cue {
-          flex-direction: column;
-          align-items: flex-start;
-        }
+      }
+
+      @media (min-width: 920px) {
+        .home-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
 
       @media (pointer: coarse) {
@@ -393,12 +268,6 @@
                 <p class="home-eyebrow">Home</p>
                 <h1>Across all projects</h1>
                 <p>What needs you, what is running, what is ready to review, and what is coming next.</p>
-              </div>
-              <div class="home-header-meta" aria-label="Live work summary">
-                <span class="home-chip attention"><strong>3</strong> need you</span>
-                <span class="home-chip running"><strong>2</strong> running</span>
-                <span class="home-chip"><strong>1</strong> ready to review</span>
-                <span class="home-chip"><strong>2</strong> upcoming</span>
               </div>
             </header>
 
@@ -476,13 +345,7 @@
                 </div>
               </section>
 
-              <a class="home-todo-cue" href="./todos.html">
-                <span>
-                  <strong>Work lives in Todos</strong>
-                  <span>Home only surfaces decisions and live execution. Capture, plan, and accept work in the project Todo surface.</span>
-                </span>
-                <em>Open Todos →</em>
-              </a>
+              <p class="home-todo-cue">Work lives in each project’s Todos. Open a project to capture, shape, run, and accept work.</p>
             </div>
           </div>
         </div>
