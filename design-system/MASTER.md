@@ -64,6 +64,9 @@ Core visual principles:
 - indigo for selection and intentional actions;
 - lime only for live/running signals;
 - thin rules and small surface shifts before cards or shadows;
+- controlled optical depth: single-hue brand gradients may reinforce a primary
+  action, while translucency and blur are reserved for fixed chrome or overlays
+  with content actually passing beneath them;
 - mostly 4–8px radii;
 - user intent, final Agent response, and current work form the dominant reading
   sequence;
@@ -130,21 +133,21 @@ scheme in prototypes.
 
 | Token | Value | Role |
 |---|---|---|
-| `--bg-base` | `#101210` | Graphite workspace background |
-| `--bg-surface` | `#151815` | Navigation, headers, large work surfaces |
-| `--bg-elevated` | `#1c201c` | Inputs, ToolCards, controls |
-| `--bg-overlay` | `#1c201c` | Drawers, dialogs, and popovers |
-| `--bg-muted` | `#232723` | Secondary fields |
+| `--bg-base` | `#0a0c0b` | Deep graphite workspace background |
+| `--bg-surface` | `#131713` | Navigation, headers, large work surfaces |
+| `--bg-elevated` | `#1a1f1b` | Inputs, ToolCards, controls |
+| `--bg-overlay` | `#1d221e` | Drawers, dialogs, and popovers |
+| `--bg-muted` | `#232823` | Secondary fields |
 | `--bg-hover` | `#292e29` | Hover state |
 | `--bg-active` | `#303630` | Pressed neutral state |
-| `--border-subtle` | `#262b26` | Internal separators |
-| `--border-default` | `#363c36` | Default boundary |
+| `--border-subtle` | `#2a302b` | Internal separators |
+| `--border-default` | `#3f4740` | Default boundary |
 | `--border-strong` | `#596159` | Structural boundary |
 | `--control-border` | `var(--border-default)` | Form-control boundary |
-| `--text-primary` | `#f3f5f0` | Primary text |
-| `--text-secondary` | `#c9cec6` | Body text |
-| `--text-tertiary` | `#9ca49a` | Secondary metadata |
-| `--text-muted` | `#868f84` | De-emphasized metadata |
+| `--text-primary` | `#f5f7f2` | Primary text |
+| `--text-secondary` | `#d0d5cc` | Body text |
+| `--text-tertiary` | `#a2ab9f` | Secondary metadata |
+| `--text-muted` | `#8a9487` | De-emphasized metadata |
 | `--brand` | `#a49bff` | Selection and primary action |
 | `--brand-hover` | `#b9b2ff` | Primary action hover |
 | `--brand-field` | `#2b2845` | Explicit brand-tinted field |
@@ -164,7 +167,7 @@ scheme in prototypes.
 | `--selection-field` | `#26243a` | Quiet selected row |
 | `--running-field` | `#22291b` | Quiet running row |
 | `--attention-field` | `#2c271e` | Quiet attention band |
-| `--rail` | `#0c0e0c` | Project rail |
+| `--rail` | `#060706` | Project rail |
 | `--rail-ink` | `#f2f4ef` | Active rail content |
 | `--rail-muted` | `#858c83` | Inactive rail content |
 | `--rail-hover` | `#1c201c` | Rail hover field |
@@ -203,15 +206,22 @@ surfaces. They are not a second color system.
   status glyphs, short labels, or inset rules.
 - Selection, running, and attention use separate low-chroma neutral fields so
   their large surfaces do not become colored blocks.
-- Never introduce purple/pink gradients or an orange imitation of another
-  developer tool.
+- A primary action may use a narrow, single-hue indigo gradient built only from
+  brand tones. Do not use purple-to-pink, rainbow, animated, or large-surface
+  gradients as generic AI decoration, and do not imitate another developer tool
+  with orange/brown styling.
 
 ## Typography
 
-No network font dependency is required.
+Inter is the primary UI face and is loaded from the online Google Fonts CSS API;
+do not commit or ship a local font binary in the prototype. The import requests
+only weights 400–700 with `display=swap`. The complete system stack is mandatory
+so the workbench remains usable when the font provider is blocked, slow, or
+offline, and layouts must not depend on Inter loading successfully.
 
 ```css
---font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap");
+--font-stack-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
 --font-stack-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 ```
 
@@ -272,8 +282,30 @@ Elevation:
   `0 22px 56px rgb(0 0 0 / 52%)` in dark mode.
 - Subtle hover micro-interactions use 0.5–1px `translateY` transforms on interactive
   rows and cards for perceived responsiveness without raised shadows.
-- Primary buttons use brand-tinted shadows with inset highlights to reinforce depth
-  and intentionality.
+- Primary buttons use a single-hue indigo gradient, brand-tinted shadow, and one
+  inset highlight to reinforce depth and intentionality.
+
+### Optical Depth and Functional Glass
+
+Depth is allowed when it explains stacking or action priority. It is not a
+page-wide style applied to every surface.
+
+- Fixed shell headers may use a 90–94% semantic surface with approximately
+  14px backdrop blur and very light saturation because scrolling content can
+  pass beneath them. Always keep a solid semantic-surface fallback.
+- Modal backdrops may use a 4px blur with a 55–60% dark scrim to separate the
+  active decision from its context. Drawers, popovers, menus, dialogs, Todo
+  Preview, and the floating Composer may use their existing elevation token.
+- Primary, Composer Send/Queue, and primary HITL controls may use the shared
+  single-hue indigo gradient. Neutral secondary controls remain flat.
+- A neutral gradient is allowed inside an existing user-message or overlay
+  surface when both stops remain within the same semantic surface family.
+- Ordinary Todo cards, inventory rows, Work disclosures, Tool rows, status
+  fields, and Inspector rows stay flat. They may use a subtle inset top edge,
+  border change, or semantic field, but never an outer glow or floating shadow.
+- Do not add full-canvas ambient blobs, grain/noise overlays, permanent luminous
+  rails, or a glowing state line across the page. These compete with operational
+  signals and make the interface look like a generic AI showcase.
 
 Layer scale:
 
@@ -510,7 +542,8 @@ pulse, status-orbit spin while running, and terminal cursor may loop.
   uses muted fill without a second “fake primary” style. Inventory CTAs such as
   `New Session` and `New Automation`
   use this primitive; do not invent page-local primary button classes. Primary
-  buttons use brand-tinted shadows (`0 1px 3px rgba(99, 102, 241, 0.3)`) with
+  buttons may use the shared single-hue indigo gradient plus brand-tinted shadows
+  (`0 1px 3px rgba(99, 102, 241, 0.3)`) with
   subtle inset highlights (`inset 0 1px 0 rgba(255, 255, 255, 0.1)`) and a 1px
   upward hover transform to reinforce intentionality.
 - Secondary: elevated neutral surface, 1px border, 4px radius.
@@ -757,8 +790,9 @@ Motion explains state changes; it is not decoration.
 
 ## Forbidden Patterns
 
-- purple/pink AI gradients;
-- glassmorphism, blur as decoration, or translucent glass cards;
+- purple-to-pink, rainbow, animated, or full-surface AI gradients;
+- glassmorphism as a page-wide motif, blur without real content overlap, or
+  translucent ordinary cards;
 - Bento grids used as a generic AI-product signifier;
 - card-inside-card compositions;
 - all surfaces with large rounded corners;
@@ -768,6 +802,8 @@ Motion explains state changes; it is not decoration.
 - monochrome terminal styling across the whole product;
 - hidden Execution, inspector, Todo states, or lifecycle actions;
 - decorative motion, parallax, animated gradients, floating shapes;
+- ambient noise/grain overlays, decorative glows, or persistent breathing light
+  bands across the work canvas;
 - marketing-page hero, testimonials, or conversion CTA patterns inside the app;
 - cold corporate severity or sterile enterprise gray.
 
@@ -806,4 +842,6 @@ Motion explains state changes; it is not decoration.
       directly reachable.
 - [ ] Confirm keyboard focus and accessible expansion state.
 - [ ] Confirm `prefers-reduced-motion`.
+- [ ] Confirm the online Inter request uses `display=swap`, the system fallback
+      renders without layout failure, and no local font binary is shipped.
 - [ ] Confirm browser console is clean.
