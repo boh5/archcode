@@ -1,21 +1,22 @@
-# Sessions Page Overrides
+# Runs Page Overrides
 
-> Read [`../MASTER.md`](../MASTER.md) first. Sessions is the project execution
-> inventory and direct-work entry. It does not replace the Session detail
+> Read [`../MASTER.md`](../MASTER.md) first. Runs is the Todo-first presentation
+> of the project Session inventory and direct-work entry. It does not replace the Session detail
 > workbench defined in [`session.md`](session.md).
 
 ## Purpose
 
-Sessions lets users recover every durable root execution, understand what needs
+Runs lets users recover every durable root Session, understand what needs
 attention, and start work directly without manufacturing a Todo first.
 
 ## Structure
 
-- Keep the project rail and project toolbar; `Sessions` is the active project
-  tab.
-- Do not repeat a visible `Sessions` page title below the toolbar.
-- Use one compact command row: local Session filter, one source filter, and the
-  single primary `New Session` action.
+- Keep the project rail and Todo navigator; `Runs` is the active secondary
+  destination.
+- Use one compact command row: local Session filter, one source filter, and a
+  quiet `New Session` action. `New Todo` remains the navigator's single primary
+  creation action; direct Session creation remains fully available without
+  competing with the Todo-first hierarchy.
 - The list is centered at a maximum width of 1080px and grouped as **`Needs you`**,
   **`Running`**, then **`Recent`**. Group titles match the product lexicon in
   Master; do not title the first group `Needs attention`.
@@ -26,7 +27,7 @@ attention, and start work directly without manufacturing a Todo first.
   count, and 8px bottom inset.
 - Use flat rows and thin separators. Do not add summary cards, charts, runtime
   metrics, or a second dashboard above the list.
-- `New Session` uses the shared primary button primitive.
+- `New Session` uses the shared quiet button primitive.
 
 ## Session Rows
 
@@ -49,7 +50,7 @@ attention, and start work directly without manufacturing a Todo first.
   still sort under the Needs you *decision group* but must not look like amber
   HITL.
 - **`Running`** uses the live orbit plus elapsed time; completed Recent rows use
-  the shared **circle-check** done orbit (same glyph as Todos Done) or explicit
+  the shared **check** done orbit (same glyph language as Todos Done) or explicit
   completed text — not a CSS border-hack check.
 - Running rows show elapsed time alone in the trailing column; Needs-you and
   failure rows show their decision state alone. Recent rows append relative time
@@ -65,20 +66,16 @@ attention, and start work directly without manufacturing a Todo first.
 - Treat search and source as one left-aligned filter cluster with an 8px gap;
   keep `New Session` independently anchored to the far right. Never distribute
   the three controls as equal islands across the command row.
-- The source filter is one compact, workbench-styled single-select menu:
+- The source filter is one compact, workbench-styled native single-select:
   `All sources`, `Todo`, `Automation`, `Direct`. It uses the shared control border, filter
-  icon, explicit chevron, and focus ring instead of the browser-default chrome.
-  Match the current prototype values: 142px × 36px trigger, 220px popover with
-  6px padding, 44px minimum option rows, and the shared 8px popover radius and
-  elevation. A pointer click opens without moving focus into an option; Arrow
-  Up/Down opens and focuses the selected option. Escape closes from either the
-  trigger or an option and leaves focus on the trigger. Do not add another
+  icon, explicit chevron, and focus ring while retaining platform option
+  behavior. Do not build a second custom popover for this prototype. Do not add another
   state filter because the decision groups already expose state.
 - A no-results state suggests another Session title or stable ID and keeps the
   source filter visible as the explicit way to narrow by origin.
 - Project-rail `Search all work` is the only navigational search. The visible
   field only filters the Sessions inventory; do not duplicate search in the
-  project toolbar.
+  compact canvas header.
 
 ## New Session
 
@@ -96,10 +93,10 @@ attention, and start work directly without manufacturing a Todo first.
 
 ## Responsive Behavior
 
-- At `≤760px`, the project toolbar becomes two rows: project identity/actions
-  first and all three project tabs second.
-- Search takes the full first row of the command surface; source filter and New
-  Session remain 44px touch targets beneath it. Match the current prototype's
+- At `≤980px`, the project rail remains visible and the Todo navigator becomes
+  its existing drawer. Do not recreate the removed project Tab row.
+- At `≤720px`, search takes the full first row of the command surface; source
+  filter and New Session remain 44px touch targets beneath it. Match the current prototype's
   10px top, 12px bottom, and 12px horizontal command-surface padding.
 - Row metadata may wrap to two lines. Hide elapsed time before hiding source,
   title, or the action-required state.

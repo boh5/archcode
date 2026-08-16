@@ -1,4 +1,4 @@
-# Automations Page Overrides
+# Schedules Page Overrides
 
 > Read [`../MASTER.md`](../MASTER.md) first. Automations defines recurring or
 > repeatable project work. Each `start_session` invocation opens its own durable
@@ -8,18 +8,25 @@
 
 ## Purpose
 
-Automations lets users define repeated work once, inspect whether it needs
-attention, and recover the exact Session associated with every run.
+Schedules lets users define repeated Automation work once, inspect whether it needs
+attention, and recover the exact Session associated with every dispatched run.
+Missed or pre-dispatch failures remain Automation events and may not yet own a
+Session.
 
 ## Structure
 
-- Keep the project rail and project toolbar; `Automations` is the active project
-  tab. Do not repeat an `Automations` page title below the toolbar.
-- Use one page-local command row with `Filter Automations` on the left and the
-  single primary `New Automation` action on the right.
-- At `≤760px`, match the current prototype's compact single row exactly: use
-  14px vertical / 12px horizontal header padding, keep both controls 44px high,
-  and reduce `New Automation` horizontal padding to 10px.
+- Keep the project rail and Todo navigator; `Schedules` is the active secondary
+  destination.
+- Use one page-local command row with `Filter Automations` on the left and an
+  `All / Active / Paused` status control plus quiet `New Automation` on the
+  right. `New Todo` remains the navigator's single primary creation action;
+  Automation creation stays fully available. Status buttons expose
+  `aria-pressed` and never act as navigation Tabs.
+- At `721–760px`, keep the filter on the left while stacking the status control
+  and `New Automation` in the right action group. At `≤720px`, stack the filter,
+  status control, and creation action into full-width rows. Keep the interactive
+  controls at least 44px high and reduce `New Automation` horizontal padding to
+  10px.
 - On wide screens, use a list/detail split: the left side selects one Automation
   and the right side shows its definition, schedule, linked Todo, and recent
   invocation Sessions. When the unselected inventory first opens at `≥841px`
@@ -60,7 +67,7 @@ attention, and recover the exact Session associated with every run.
   signal. Do not append a second definition/Invocation label, raw Automation
   ID, or redundant `Start Session` / `Send message` copy to the row. Terminal failures show
   **`Failed`** with error tone; human gates show **`Needs you`** with attention
-  tone. Completed/successful recent cues use the shared circle-check done orbit
+  tone. Completed/successful recent cues use the shared check done orbit
   when an orbit is shown. `dispatched` is not `Completed`; the final execution
   result is read from the linked Session. Use a flat row with separators, not a
   summary card.
@@ -75,8 +82,8 @@ attention, and recover the exact Session associated with every run.
   Todo canonical content, and visible run state. Show a
   helpful no-results state in place of the list without hiding the filter or
   New Automation action.
-- `New Automation` / primary detail actions use the shared primary button
-  primitive where a single dominant CTA is required.
+- `New Automation` uses the shared quiet button primitive on this secondary
+  surface. The selected detail's `Run now` remains the single primary action.
 
 ## Selected Detail
 
@@ -87,7 +94,7 @@ attention, and recover the exact Session associated with every run.
   remains the canonical stored definition state. Format a real `nextFireAt` as
   compact human time (`Today`, `Tomorrow`, or weekday plus time) instead of a
   browser-native full date string.
-- The detail title row contains exactly secondary `Edit` and primary `Run now`.
+- The detail footer contains exactly secondary `Edit` and primary `Run now`.
   `Run now` dispatches one new Invocation without changing the Automation
   definition; `start_session` creates its Automation-source Session and
   `send_message` targets its existing Session. Definition lifecycle controls do
@@ -96,6 +103,9 @@ attention, and recover the exact Session associated with every run.
 - Every dispatched recent-run row opens its exact Session URL. A missed or
   pre-dispatch failed Invocation has no Session link. Never reuse one generic
   Session URL for multiple invocations.
+- Automation and Invocation identities are UUIDs. Recent-run rows use truthful
+  time/state copy and exact UUID-backed links; do not invent `Run #18`-style
+  sequential identities.
 - A linked Todo opens its stable Todo detail URL. Absence of a linked Todo is
   valid and does not make the Automation incomplete.
 
@@ -107,13 +117,17 @@ attention, and recover the exact Session associated with every run.
   principal` binding; `send_message` keeps the target Session's existing
   identity.
 - Match the current prototype editor geometry: 840px maximum width with 18px
-  viewport gutters, 12px radius, 18px horizontal padding, 34px text fields,
+  viewport gutters, 12px radius, 18px horizontal padding, 36px text fields,
   icon-free choice labels and Definition controls, and a two-column body only
   above 760px. At `≤760px`, every 2- or 3-choice grid and structured input pair
   stacks into one column and the complete form uses one continuous scroll area;
   do not create independent Schedule and Action scroll panes.
 - Keep advanced schedule detail progressively disclosed. Do not turn creation
   into a multi-step wizard or require a Todo.
+- Fixed intervals use the canonical minimum of 30 seconds. When the unit is
+  seconds, the amount control clamps to `30`; minutes and hours retain a minimum
+  of `1`. The prototype and production validator must reject any effective
+  interval below `30_000ms` rather than showing a successful save.
 - Editing an existing Automation appends one `Definition controls` section.
   It shows the current dispatch status, `Pause` or `Resume`, and `Delete` with
   a controlled confirmation layer inside the same editor. Opening deletion
@@ -125,6 +139,10 @@ attention, and recover the exact Session associated with every run.
 - The dialog may demonstrate creation with prototype feedback; that feedback and
   any simplified input are reference-only. Production uses the canonical
   once/interval/cron structure and does not parse natural-language schedules.
+- The effective prototype keeps one representative row in every decision group
+  and includes an exact failed-Invocation Session link. These fixtures validate
+  the same group precedence and status language; they do not introduce a second
+  Automation state model.
 
 ## Automations-Specific Avoidances
 
@@ -137,5 +155,7 @@ attention, and recover the exact Session associated with every run.
 - painting `Failed` invocations with amber attention styling;
 - deriving `Completed` from a `dispatched` Invocation instead of showing the
   real Invocation state and linked Session result;
-- sharing one Session identity across multiple runs;
+- sharing one Session identity across multiple `start_session` Invocations;
+  `send_message` intentionally reuses its exact target Session and preserves
+  that Session's original source;
 - requiring every Automation to originate from a Todo.

@@ -22,19 +22,20 @@ away.
   Tool, Delegation, Recovery, Compaction, Permission, Ask User,
   Queue/Steering, a visible final response, and Agent/Changes/Context inspector
   states.
-- The Permission and Ask User tabs in the prototype are a state-preview control
-  for reviewing both current HITL presentations. The product continues to show
-  only the active request family at one time.
+- Representative Permission and Ask User samples expose both current HITL
+  presentations for review. They are separate Session fixtures, not product tabs;
+  one live Session shows only its active request family.
 - Do not replace this representative sample with whichever live Session happens
   to contain the least content.
 
 ## Layout
 
-- Use the complete workbench shell:
-  `project rail → project toolbar → Session canvas → context inspector`.
-- `Sessions` remains the active project tab for Todo-bound, Automation-bound,
-  and Direct Session details. Preserve origin through breadcrumb and source
-  metadata rather than changing the active top-level tab.
+- A Todo-bound Session uses the complete Todo-first workbench shell:
+  `project rail → Todo navigation → compact Todo shell → conditional Session
+  context → Session canvas → context inspector`.
+- A Direct Session, or an Automation Session whose source has no Todo, uses one
+  compact Session shell entered from `Runs` or `Schedules`. Never fabricate
+  Todo identity, Todo/Work navigation, Brief, Plan, or references for these sources.
 - Let conversation structure, Work, tools, code, tables, Diffs, and the Composer
   use the available Session canvas with safe horizontal gutters.
 - Constrain only long Agent prose to a 65–72ch reading measure. User messages
@@ -46,24 +47,23 @@ away.
   stable without shifting the transcript away from the prototype alignment.
 - The Session conversation uses the prototype's normal 15px scrollbar gutter,
   rather than inheriting the workbench-wide thin scrollbar.
-- Preserve desktop resize, collapse, persisted-width, and focus-mode behavior
-  for the Context Inspector.
-- At `>1180px`, the Project Toolbar spans above both the Session canvas and the
-  Inspector. The Inspector begins 52px from the viewport top; its 8px resize
-  target straddles the boundary without subtracting width from the canvas.
-- At `≤1180px`, Context Inspector becomes a right overlay.
-- At `761–1180px`, that overlay begins below the Project Toolbar and 64px
-  Session header at exactly 116px from the viewport top and includes its own
-  top-right Close control.
-- At `≤760px`, the project toolbar wraps to keep all three project tabs
-  reachable and applies this page's explicit 88px override; the 48px project
-  rail remains visible and the Inspector drawer begins below that toolbar. The
-  modal scrim still covers the full viewport while the drawer is open.
+- Preserve desktop resize, collapse, and persisted-width behavior for the
+  Context Inspector. Do not add a separate focus-mode control.
+- At `>1260px`, Context Inspector remains the desktop grid column and does not
+  consume Session canvas width when collapsed.
+- At `≤1260px`, Context Inspector becomes a right overlay. For Todo-bound work it
+  begins below the two compact shell bands: 108px normally, 115px when the
+  touch-sized Session context row applies, and 145px when the Todo shell wraps at
+  `≤560px`. For Direct/non-Todo Automation work it begins below the single 58px
+  Session shell. Its scrim uses the same top inset and never covers shell context.
+- At `≤980px`, Todo navigation becomes a left drawer while the 48px project rail
+  remains visible. This responsive change must not add another header row.
 
 ## Content Order
 
-1. Session header with title/state, working directory, Tool count, Token usage,
-   Todo/source context, Todo action, and Inspector action.
+1. Source-appropriate compact shell: Todo shell plus conditional Session context
+   for Todo-bound work, or one compact Session shell for Direct/non-Todo
+   Automation work.
 2. User message.
 3. The relevant Execution rendered as a Work disclosure.
 4. The final Agent response, when one exists, outside the Work disclosure.
@@ -75,12 +75,12 @@ header and conversation. Do not move Execution into the inspector.
 
 ## Session Header
 
-- First line: Session title plus current state.
+- The compact Session context owns the Session title plus current state.
 - The title is static text, not a related-Session picker. Cross-Session
   navigation remains in the canonical Sessions inventory; do not add a second
   header navigation mechanism from prototype-only sample relationships.
-- Second line:
-  `working directory · {Tool count} tools · {Token usage} tokens · source`.
+- Its metadata line is:
+  `Session kind · working directory · {Tool count} tools · {Token usage} tokens · source`.
 - Tool count and Token usage are retained because they provide useful activity
   and consumption orientation at a glance.
 - Do not show Execution number, model/variant, or message count in the header.
@@ -90,10 +90,119 @@ header and conversation. Do not move Execution into the inspector.
   pair visible beneath the title.
 - Todo/source context stays in this second line rather than consuming a separate
   row above the conversation.
-- For a Session bound to a Todo (including a Todo-origin Automation Session),
-  append the quiet static note `Using live Todo references` beside the existing
-  source link. Do not query, subscribe to, or display a reference count; do not
-  add a banner, card, tab, or navigation entry.
+- Source copy is explicit and compact: `Todo · Work`, `Todo · Discussion`,
+  `Todo · Automation setup`, `Automation`, or `Direct`. Do not query,
+  subscribe to, or display a Todo reference count; do not add a banner, card,
+  Tab, or navigation entry.
+- Direct and non-Todo Automation Sessions use the same Session title/state and
+  metrics contract, but replace Todo reference context with their truthful
+  `Direct` or `Automation` source and omit the Todo shell entirely.
+
+## Todo and Work Hierarchy
+
+- The selected Todo owns one persistent compact shell header. It combines the
+  content-derived Todo display lead, lifecycle state, and the `Todo / Work`
+  local navigation in one horizontal band on desktop. The display lead follows
+  the canonical derivation in `pages/todos.md` and never becomes a persisted
+  title field. Do not render those elements as separate full-width headers. The
+  Work-list filter and type controls remain inside the Work-list content toolbar
+  rather than entering this shell header.
+- Do not show a shortened Todo UUID as a permanent header eyebrow or sidebar
+  footer. The route and object data preserve the full UUID; expose a deliberate
+  copy/detail affordance only where identity is actually needed.
+- A concrete Session adds one conditional compact context header below the Todo
+  shell. It owns `All work`, the Session title/type/checkout, Session state, and
+  the Session-scoped Inspector toggle. Todo detail and the Work list do not
+  reserve this second row. Never stack a separate Todo header, local-navigation
+  row, and Session header as three full-width bands.
+- A Session without a Todo does not use this two-level hierarchy. It opens from
+  `Runs` or `Schedules` in a single compact Session shell, with its truthful
+  Direct or Automation source and no Todo-only surfaces.
+- The Todo-first shell has exactly two local destinations in this order:
+  **Todo** and **Work**. `Todo` is the canonical detail surface for the selected
+  Todo; `Work` first opens the linked root-Session list. Selecting a Work row
+  drills into that Session without changing the active Work destination.
+- Do not add peer `Changes` or `Runs` tabs. Changes belongs to the selected
+  Session family's current checkout and stays in its Inspector. Durable
+  `SessionExecutionRun` records remain Execution internals and must not be
+  renamed into Todo-level attempts.
+- Work list rows distinguish Discussion, Work Session, and Automation Session;
+  show state, useful recency, and branch/worktree only when authoritative. The
+  list supports real New Discussion, New Work Session, and Create Automation
+  actions. It is a scalable list/detail route, never a single dropdown.
+- Work detail exposes one compact `All work` back action and preserves Work-list
+  filter/scroll state. Direct Work-detail links fall back to the Work list when
+  Back has no in-shell parent.
+- A Todo deep link opens this same shell with `Todo` selected. Do not keep a
+  second visually equivalent Todo detail page or add an `Open Todo` action that
+  loops back to the object the user is already viewing.
+- The prototype route keeps object identity and visible surface explicit:
+  `view=todo` opens Todo detail, `view=work` opens the linked-work list, and
+  `view=detail` opens one concrete Session while Work remains selected. The
+  `sample` fixture only chooses representative content and never decides the
+  surface by itself. Runs inventory rows, Automation invocation rows,
+  notifications, search results, and New Session therefore link explicitly to
+  `view=detail`; Todo rows link explicitly to `view=todo`.
+- The Todo surface keeps its real lifecycle control band above the canonical
+  document. Moving among Idea, Ready, In Progress, and Done mutates the Todo;
+  Reject and Archive/Restore remain available without being mistaken for
+  Session Execution status.
+- Lifecycle buttons use the same icon and tone map as Todos Board lane headers:
+  neutral `spark`, brand `play`, live `activity`, and success `check`. Board cards
+  do not repeat those icons.
+- The canonical document is ordered as
+  **Brief / PRD → References → Plan → Result when trusted final output exists**.
+  This preserves `Intent → inputs → implementation guidance → accepted/review
+  outcome` without nested tabs, accordions, cards, or a second copy of Todo data.
+- `Brief / PRD` renders the complete canonical Todo `content` and exposes the
+  existing `Edit → Save / Cancel` flow. The content's first Markdown heading may
+  visually lead the document but must not become a second persisted title.
+  Do not label rendered content `Markdown`; keep only useful freshness metadata
+  such as the relative update time. Stable IDs belong to object identity, not a
+  repeated metadata row.
+- Todo IDs are UUIDs. A compact display may mechanically shorten the UUID, but
+  must not invent sequential identities such as `Todo #142`. Any path, API
+  value, deep link, or tooltip that claims precision uses the real full ID.
+- `References` owns the existing canonical management contract: Add files,
+  upload progress and failure recovery, `Open` for safe image/PDF bytes,
+  `Download` for other content, and `Remove`. Use flat rows with the 36px type
+  marker, filename, size, and media type. The concise live-use explanation is:
+  `Current references are available to Agent work on the next model or tool
+  call.` Already-started model and tool calls do not change.
+- A prototype fixture without backing bytes renders `Open` / `Download`
+  disabled and identifies itself as reference-only. A file attached during the
+  prototype session uses its real local object URL for Open or Download. Never
+  show a success toast for an action that did not open or download bytes.
+- `Plan` is exactly the ordinary `.archcode/plans/<Todo UUID>.md` file. The API
+  returns only `path`, `markdown`, and `updatedAt`; never add Plan ID, status,
+  owner, approval, completion, version, or progress state.
+- Plan presentation follows the current product renderer: demote every Markdown
+  heading two levels below the owning page/section, preserve fenced code, and
+  render the resulting Markdown document including lists, tables, links, and
+  code blocks. A representative prototype may show the builtin Plan structure,
+  but it must not imply that `Approach / Verification` is a fixed schema.
+- Preserve the real Plan state matrix:
+  - absent (`plan: null`): no full document region; show one compact optional
+    context starter with `Generate Plan`;
+  - opening the coordination flow: the action alone becomes `Opening…` with a
+    spinner and blocks only duplicate Plan actions;
+  - present with content: show `Plan`, the exact path, rendered Markdown, and
+    `Improve`;
+  - present but empty: show `Plan file exists but is empty. Continue the
+    Discussion to fill it in.`;
+  - loading: show `Loading Plan…`;
+  - read failure: show `Could not load Plan: …` with a retry path.
+- `Generate Plan` and `Improve` reuse the existing Todo Plan coordination:
+  resume an idle Discussion when possible, otherwise create a new Plan
+  Discussion and open its real Work. Do not invent a persistent `Generating`
+  Plan state or write the Plan directly from the button.
+- Keep one continuous document surface with horizontal section rules. Optional
+  starters and errors remain compact rows; do not turn absent content into a
+  large empty card.
+- `Result` appears only when the latest eligible completed Work Session exposes
+  trusted final output. Before Done it is `Result for review`; after explicit
+  acceptance it is `Accepted outcome`. Tool-only completion without trusted
+  final output does not create an empty Result section.
 
 ## Conversation Hierarchy
 
@@ -115,8 +224,11 @@ completed:  user message → collapsed Work → visible final response
 running:    user message → expanded Work
 ```
 
-- `Work` is the visual disclosure for one authoritative Execution. It does not
-  merge multiple Executions or infer ownership from visual proximity.
+- `Work` is the visual disclosure for one Web-projected Work Segment inside one
+  authoritative Execution. Each canonical UserMessage starts a new Segment;
+  adjacent steering or queued inputs therefore remain independently foldable
+  without inventing a second Execution. A Segment never merges Executions or
+  infers ownership from visual proximity.
 - A completed Work summary reads `Worked for {duration}`. A running summary
   reads `Working for {duration}` (prototype) or `Working · {duration}` and may
   append `— {current activity}`.
@@ -128,8 +240,12 @@ running:    user message → expanded Work
   binding metadata in the visible Work row.
 - Preserve the Execution identity in product data even though it is visually
   omitted.
-- Running Work is expanded by default. Historical completed Work is collapsed
-  by default.
+- Only the latest Segment of a running Execution may read `Working` and
+  auto-expand. Earlier completed Segments in that same Execution read `Worked`
+  and remain collapsed by default.
+- When the latest Segment receives its final Agent response, it becomes
+  completed and auto-collapses under the existing near-bottom/manual-override
+  rules. The final response stays visible below the fold.
 - When a followed live Execution completes, collapse Work only if the user is
   still near the bottom and has not manually changed that disclosure.
 - The final Agent response is ordinary editorial text below Work. It is never
@@ -139,6 +255,10 @@ running:    user message → expanded Work
   terminal state and recovery path in Work.
 - Earlier Agent commentary, reasoning, Tools, delegated work, recovery, and
   compression remain inside Work.
+- Do not prefix Work commentary or final responses with an Agent avatar, Agent
+  name, Profile chip, or timestamp. Agent identity stays in the Session shell
+  and Context Inspector; a child Session may identify its owner once in the
+  child-Session heading, not before every message.
 - If the final model message contains reasoning followed by text, keep the
   reasoning inside Work and render only the final text outside.
 
@@ -236,10 +356,15 @@ Approve/Reject, Goal editing, or Queue management here — those stay in the
 Composer dock and main canvas. Do not move the dark-mode switch here; it remains
 on the project rail.
 
+The Inspector exists only in Work detail (including its full-diff child view).
+Todo content and the Work list have no selected Session and therefore no
+Session Inspector. Hiding it at those levels also removes its reserved desktop
+column rather than leaving an empty rail.
+
 ### Shell
 
-- Default width **312px** (resize 280–460px); collapse and focus mode preserve the
-  last expanded width.
+- Default width **312px** (resize 280–460px); collapse preserves the last
+  expanded width.
 - **No summary strip** above the tab bar. Do not restate Session status, agent
   count, or file count as a chrome line — those already live on the Session
   header/Composer, Agents/Changes tab badges, and Context property rows.
@@ -264,11 +389,19 @@ on the project rail.
   product `Needs you`. Use **`Failed`**, **`Running`**, or **`Completed`** for
   non-gate states.
 - Activating a node selects it in the tree. When the product supports it, also
-  focus or scroll the main transcript to that agent’s turns; do not open a second
-  chat surface.
+  switches the main canvas to that child Agent's durable Session. Child views
+  are inspect-only in this root workbench: keep one quiet ownership cue above
+  the child transcript, while the Composer, Queue, HITL, and Stop/Send control
+  remain bound to the root Lead Session. Do not open a second chat surface or
+  imply that the root Composer now sends to the selected child.
 
 ### Changes
 
+- Label the scope as **Current checkout** or **Working tree**, not “changes made
+  by this Session.” The current API projects the selected root Session's cwd;
+  multiple root Sessions under one Todo may point at different worktrees, while
+  Sessions sharing one cwd may show the same current Diff. Never aggregate those
+  into a Todo-level Diff without a future durable ChangeSet/merge-base contract.
 - Summary line first: `N files` plus aggregate `+additions −deletions` when known.
 - Flat navigable file rows: kind (M/A/D) · mono path · optional per-file diffstat.
   No bordered mini-cards per file.
@@ -304,14 +437,26 @@ on the project rail.
   the current prototype and product must both retain that exception.
 - Match the current prototype's horizontal rhythm: the conversation content
   boundary is 852px, while the dock input/priority column is 848px inside a
-  900px outer dock measure. Desktop dock padding is 12px top, 26px horizontal,
-  and 14px bottom; narrow dock padding is 10px top and 12px on other sides.
+  900px outer dock measure. Desktop dock padding is 14px top, 26px horizontal,
+  and 16px bottom; narrow dock padding is 10px top and 12px on other sides.
   Desktop may reserve the transcript scrollbar gutter for alignment; at
   `<=760px` that gutter is zero so the Composer uses the full narrow canvas.
-- The dock uses the base workspace surface and caps at
+- The dock reserves layout height but keeps its full-width region visually
+  transparent: no top divider, footer fill, blur, or glass. Only the centered
+  priority stack and input surface are visible. This creates a floating
+  presentation without overlaying or hiding the conversation.
+- The dock caps at
   `min(48dvh, 520px)` on desktop or `min(52dvh, 460px)` at `≤760px`. Only the
   priority stack (`HITL → Goal → Queue`) scrolls inside that cap; the input is a
   non-scrolling sibling so its menu can escape above the card.
+- A pending multi-option Question may expand the desktop dock to
+  `min(78dvh, 640px)` when required to keep its vertical option list, custom
+  answer, Queue row, attachments, and terminal action simultaneously visible.
+  This is a decision-state exception, not the normal Session dock height.
+- A pending Permission may expand to `min(64dvh, 560px)` when operation details
+  or an optional note is open. This keeps the decision, Queue tray, attachments,
+  and terminal action visible together before introducing priority-stack
+  scrolling.
 - Pending HITL is rendered first and receives the strongest semantic field in
   the dock. Its question or permission and response actions must be immediately
   visible; Goal and Queue never sit above it.
@@ -324,8 +469,14 @@ on the project rail.
 - Goal is one compact textual summary showing status and objective with an entry
   to its controls. Never add a Goal progress bar.
 - Queued messages remain visible as compact rows with their content and
-  management actions. Never collapse the queue to only a count or `View`
-  control.
+  management actions. They form a quiet tray inset 8px from the input surface,
+  retain their status icon and Steer/Edit/Delete icon actions, and never
+  collapse to only a count or `View` control.
+- Permission and Question use one decision-sheet language above Queue: a compact
+  amber mechanism icon/label, neutral solid surface, collapsible detail where
+  applicable, and a clear action footer. Do not use a thick amber left rail.
+  Question options remain vertical; selection uses border, radio mark, and a
+  quiet brand field instead of an inset left color bar.
 - **Next model picker** (prototype `composer-model-picker`):
   - Trigger shows `Model display name · effort` (effort omitted only when the
     catalog model has no variants).
@@ -351,11 +502,21 @@ on the project rail.
 - **Draft attachments** are chips: file glyph + truncated name + one remove (×)
   control. Size/ready secondary text is optional and may stay hidden at this
   density. No up/down reorder controls — attach order is enough.
-- Agent identity and the current Send/Queue/Stop actions remain in the quiet
+- Agent identity and one mutually exclusive terminal action remain in the quiet
   input surface below those priority cues.
-- A running Session may queue ordinary messages while Stop remains a separate,
-  unmistakable action. Queue retains the primary filled treatment; Stop uses a
-  quiet neutral fill and reveals destructive red only on hover.
+- The input surface uses the compact Composer elevation and a stable 1px border.
+  Focus adds only a restrained outer brand ring and must not introduce a left
+  stripe, change border width, or shift layout. Queue and decision sheets use
+  weaker separation so the Composer remains the visual anchor.
+- The terminal action is one mutually exclusive control. While a Session family
+  is active or user-gated, an empty valid draft shows **Stop**; as soon as the
+  draft contains sendable text or attachments, the same control becomes the
+  **Queue message** arrow. An idle/Ready Session shows the **Send message** arrow
+  only when the draft is sendable. Never render Queue/Send and Stop side by
+  side. Stop uses a quiet neutral fill and reveals destructive red only on
+  hover.
+- Queued messages remain visible and manageable above the input. This terminal
+  action rule does not turn Queue into a second action button.
 - On very narrow layouts, hide secondary model/effort metadata before removing
   Agent identity or the primary Queue/Send/Stop controls.
 

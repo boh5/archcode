@@ -1,6 +1,7 @@
-# Settings Page Overrides
+# Settings Surface Overrides
 
-This file defines Settings-only behavior. All visual language, semantic tokens,
+This file defines Settings-only behavior across its dialog and recovery
+presentations. All visual language, semantic tokens,
 motion, typography, and accessibility rules continue to come from
 [`../MASTER.md`](../MASTER.md).
 
@@ -19,6 +20,65 @@ Models, Profiles, Security, Runtime Data, MCP, Skills, Memory, GitHub, and About
 Updates reachable. About & Updates retains its existing panel, behavior, and
 copy and never suggests that updating preserves, repairs, or makes Runtime data
 compatible.
+
+Every visible Settings navigation item is an operable section selector. A
+prototype must project the selected heading, the section's real control family,
+and representative state transitions; never leave visible sidebar items inert,
+reduce an editable section to decorative status rows, or keep Models content
+under another selected section.
+
+## Ready Runtime Dialog
+
+- Settings is a global modal surface, not a route. The rail trigger opens one
+  bounded `960 × 600px` desktop dialog on `Models`; Escape, the close button,
+  and backdrop dismissal return focus to that trigger.
+- Keep one compact 172px navigation rail and one independently scrolling
+  content column. The navigation order is Models, Profiles, Security, Runtime
+  Data, MCP, Skills, Memory, GitHub, and About & Updates.
+- Models exposes Provider ID/name/package/options, preserved-secret handling,
+  Model identity/limits/modalities, `Default options JSON`, `Variants JSON`, and
+  add/remove actions. `Variants JSON` is a free-form object whose keys are
+  Variant names and whose values are Model-call option objects; never replace it
+  with fixed `fast` / `deep` chips or a hard-coded Variant catalog.
+- Profiles exposes the required principal/deep/fast bindings. Each Profile has
+  a Model selector, a Variant selector containing `Default` plus only the keys
+  defined by that selected Model, and an independent `Overrides JSON` layer.
+  Changing Model clears the Profile Variant. A removed Variant remains visible
+  as attention, may still be saved, and resolves through the Model default until
+  the reference is repaired; it is not a whole-Config validation failure.
+- Models, Profiles, MCP, Memory configuration, and GitHub share one global
+  dirty-state footer. It distinguishes `All changes saved`, `Unsaved changes`,
+  invalid input, reloading, and saving; Reload restores the latest server
+  snapshot. Save reports model/Profile live apply, MCP apply failure separately,
+  Runtime-unavailable persistence, and restart-required sections accurately.
+- Security owns its password request lifecycle independently. It shows current,
+  new, and confirmation fields as applicable, enforces the 10-character / 1024
+  UTF-8-byte contract, and supports enable, change, and remove actions. Changing
+  or removing the password states that existing browser sessions are signed
+  out. The shared Config footer does not pretend to submit password fields.
+- Runtime Data is an independent inspection and recovery workflow. Project
+  selection enables the destructive action; Retry Runtime is secondary; Delete
+  opens the exact irreversible confirmation described below. It never uses the
+  Config Save footer.
+- MCP keeps definition fields, enabled state, live status, Test draft,
+  Reconnect, discovered tools, and add/remove actions together. Reconnect is
+  available only for an enabled, saved definition; draft and live outcomes are
+  never collapsed into one success message.
+- Skills is project-scoped and read-only. It exposes winning, shadowed, invalid,
+  source-tier, Prompt-included, and Prompt-omitted facts without enable/disable
+  controls or implied permission changes.
+- Memory combines global `Use Memory` / `Auto learning` configuration with
+  independent project Personal Memory and knowledge-topic editors. Explicit
+  Memory saves, revision conflicts, reload, clear, and topic delete remain
+  separate from the Config footer and use confirmation where destructive.
+- GitHub exposes enabled state, token environment-variable name, default owner,
+  and default repository. About & Updates exposes installed build, management
+  state, channel, integrity, Check, Install, and Restart phases; Updates is
+  independent and never uses the Config footer.
+- A visual prototype may simulate server responses locally, but every visible
+  action must update its projected state, validation, confirmation, or feedback.
+  Do not show inert controls or success toasts that leave the represented state
+  unchanged.
 
 ## Config Recovery
 
@@ -111,11 +171,12 @@ polite live region; destructive and request errors use an alert.
 
 ## Layout And Accessibility
 
-- Desktop uses the existing 208px Settings navigation and scrolling content
-  column. The full-page recovery workspace is centered within the available
-  viewport but uses the full height required for safe action placement.
-- At narrow widths the navigation becomes the existing compact grid above the
-  content. Project identity, Runtime paths, MCP tool identities, Skill names,
+- Desktop uses a bounded 960 × 600px dialog, the current prototype's compact
+  172px Settings navigation, and one scrolling content column. The full-page
+  recovery workspace is centered within the available viewport but uses the
+  full height required for safe action placement.
+- At `≤640px` the navigation becomes the existing three-column compact grid
+  above the content. Project identity, Runtime paths, MCP tool identities, Skill names,
   diagnostics, and confirmation content wrap; the document never scrolls
   horizontally.
 - Keep the action footer in normal flex layout with wrapping. It must remain
