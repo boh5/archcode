@@ -1,15 +1,17 @@
 # Signal Workbench Design System
 
 > Target UI specification synchronized with the current effective prototypes on
-> 2026-08-16. Until product implementation catches up, current product code
-> remains authoritative for existing runtime behavior and state mechanics.
-> Prototypes under `design-system/prototypes/` lead visual and copy decisions for
-> surfaces they cover; page files record those decisions for implementation.
+> 2026-08-16. This Master and its page overrides are the normative authority for
+> approved target structure, visual language, copy, and interaction. Current
+> product code remains authoritative only for existing runtime facts, domain
+> state, persistence, and behavior that this specification does not intentionally
+> change. Prototypes under `design-system/prototypes/` are supporting rendered
+> fixtures and never override this Master, a page override, or product facts.
 >
 > When designing or implementing a page, read this file first and then read
 > `pages/[page-name].md`. A page file overrides this Master only where it says
-> so. The current product UI is authoritative. When a current prototype exists,
-> use it as a supporting rendered reference:
+> so. When a current prototype exists, use it as a supporting rendered reference:
+> [`index.html`](prototypes/index.html),
 > [`todos.html`](prototypes/todos.html),
 > [`automations.html`](prototypes/automations.html),
 > [`sessions.html`](prototypes/sessions.html), or
@@ -74,9 +76,10 @@ Core visual principles:
 
 ## Color System
 
-Use the semantic tokens defined in `apps/web/src/styles/globals.css`. Do not
-place raw colors in page-specific components or introduce a second token naming
-scheme in prototypes.
+The semantic values below are the target token authority. Production token
+definitions are a later migration target, not a competing source of truth. Do
+not place raw colors in page-specific components or introduce a second token
+naming scheme in prototypes.
 
 ### Light Theme
 
@@ -233,14 +236,16 @@ Type scale:
 
 | Role | Size | Weight | Notes |
 |---|---:|---:|---|
+| Micro metadata | 9–10.5px | 650–800 | Uppercase kickers, compact counts, status labels, and tertiary timestamps only |
 | Dense metadata | 11–12px | 500–700 | Counts, elapsed time, compact state |
 | Compact label | 12px | 600–700 | Buttons, row labels, section labels |
 | Operational title | 13–14px | 600–680 | Navigation, tool targets, rows |
 | Commentary | 13–14px | 400–500 | Process explanation inside Work |
 | User message | 15px | 400–500 | User intent |
 | Final response | 15px | 400–600 | Agent outcome and supporting detail |
-| Project / Session title | 20px | 600 | Active work or page identity |
-| Inventory title | 16–22px | 620–680 | Current project work surface |
+| Compact Session context | 12.5–14px | 650–680 | Session identity inside the selected Todo shell |
+| Page / selected Todo title | 17.5–20px | 680–700 | Active work or page identity |
+| Document / inventory lead | 16–22px | 620–680 | Current project work surface |
 
 Rules:
 
@@ -252,6 +257,13 @@ Rules:
 - Small text is metadata only. The Session Composer uses 16px input text on
   narrow screens; compact operational inputs follow their page specification.
 
+The supporting prototypes expose the same type and icon rhythm through direct
+aliases: `--type-micro / --type-meta / --type-label / --type-row /
+--type-body / --type-editorial` are `10 / 11 / 12 / 13 / 14 / 15px`, and
+`--icon-xs / --icon-sm / --icon-md / --icon-lg` are `12 / 14 / 16 / 20px`.
+These aliases standardize density; they do not authorize body copy below the
+named role for that component.
+
 ## Spacing, Radius, and Elevation
 
 Use a 2/4px-derived dense scale:
@@ -262,11 +274,16 @@ Radius tokens:
 
 | Token | Value | Usage |
 |---|---:|---|
-| `--shape-control` | 4px | Buttons, inputs, tight metadata fields |
+| `--shape-compact` | 4px | Tight filters and segmented-button interiors |
+| `--shape-control` | 6px | Buttons, inputs, icon controls |
 | `--shape-card` | 6px | Tool children, rows, and compact cards |
-| `--shape-popover` | 8px | Menus, lane surfaces, and user messages |
+| `--shape-popover` | 8px | Menus and compact overlay children |
+| `--shape-message` | 10px | User messages, notification popovers, selected detail panels |
 | `--shape-dialog` | 12px | Composer and dialogs |
 | circle / full | — | Status orbits, pulses, compact counters only |
+
+The prototype aliases map directly as `--radius-xs / --radius-sm /
+--radius-md / --radius-lg = 4 / 6 / 8 / 12px`.
 
 Do not make every surface a rounded card. Structural groups should prefer
 dividers, background changes, and inset rules.
@@ -274,9 +291,9 @@ dividers, background changes, and inset rules.
 Elevation:
 
 - Ordinary rows and cards have no drop shadow.
-- `--elevation-sm` is the compact Composer/input shadow:
-  `0 10px 30px rgb(26 31 25 / 9%)` in light mode and
-  `0 14px 34px rgb(0 0 0 / 32%)` in dark mode.
+- `--elevation-sm` is the compact Composer/input shadow used by the current
+  prototype: `0 16px 38px rgb(23 28 22 / 15%)` in light mode and
+  `0 16px 42px rgb(0 0 0 / 30%)` in dark mode, plus the shared inset top edge.
 - Inspectors, drawers, and off-canvas navigation use
   `0 22px 56px rgb(25 28 22 / 18%)` in light mode and
   `0 22px 56px rgb(0 0 0 / 52%)` in dark mode.
@@ -290,9 +307,14 @@ Elevation:
 Depth is allowed when it explains stacking or action priority. It is not a
 page-wide style applied to every surface.
 
-- Fixed shell headers may use a 90–94% semantic surface with approximately
+- Fixed shell headers may use a 90–95% semantic surface with approximately
   14px backdrop blur and very light saturation because scrolling content can
   pass beneath them. Always keep a solid semantic-surface fallback.
+- The shell hierarchy may be reinforced without adding chrome: the Todo
+  navigator uses a slightly distinct semantic surface plus one right inset
+  edge; the work canvas may use one neutral same-family wash that fades into
+  base by approximately 220px; the compact object header may use one restrained
+  boundary shadow. These are structural separators, not ambient effects.
 - Modal backdrops may use a 4px blur with a 55–60% dark scrim to separate the
   active decision from its context. Drawers, popovers, menus, dialogs, Todo
   Preview, and the floating Composer may use their existing elevation token.
@@ -312,12 +334,18 @@ Layer scale:
 | Layer | z-index | Usage |
 |---|---:|---|
 | Base | 0 | Canvas, rails, ordinary content |
-| Composer dock | 4 | Session controls and input |
-| Inspector | 30 | Responsive context inspector |
-| Desktop navigation / resize | 40 | Project rail and resize affordances |
-| Mobile overlay | 50 | Mobile navigation and Inspector drawers |
-| Mobile project rail | 55 | Stable rail above mobile overlays |
-| Toast | 60 | Attention and action feedback |
+| Compact shell header | 25 | Object identity above scrolling content |
+| Navigation scrim / Composer dock | 40 | Temporary navigation scrim and Session input stack |
+| Todo Preview | 44–45 | Inventory scrim and preview drawer |
+| Todo navigation | 50 | Persistent desktop navigator or mobile drawer |
+| Inspector overlay | 60–65 | Responsive scrim and right drawer |
+| Project rail | 70 | Stable global rail above page overlays |
+| Notification popover | 95 | Rail-triggered decision popover |
+| Toast | 100 | Attention and action feedback |
+
+Native dialogs use the browser top layer rather than competing with this
+numeric scale. Component-local stacking values remain local to their stacking
+context.
 
 ## Workbench Layout
 
@@ -395,8 +423,10 @@ Narrow-screen rules:
   it into the rail and displace another project.
 - `More projects` is a scalable navigation escape hatch, not Add Project and not
   global work search. Keep the existing plus control for registering/opening a
-  project. Prototype pages do not register global keyboard shortcuts; search is
-  opened only through its visible project-rail control.
+  project. ArchCode does not register application-wide keyboard shortcuts;
+  search is opened only through its visible project-rail control. Local control
+  keyboard behavior required for editing, menus, dialogs, and accessibility is
+  preserved and must never capture an unrelated system shortcut.
 - The project rail is theme-adaptive: warm neutral in light mode and graphite
   in dark mode. Its brand mark, hover fields, selected project, separators, and
   icon contrast use the matching `--rail-*` tokens; never leave a permanently
@@ -413,12 +443,19 @@ Narrow-screen rules:
   pending Session. Do not add `View all`, `See all`, or another aggregate footer
   unless a real aggregate route and surface exist. Browser-notification
   permission may remain a local action; it must not masquerade as navigation.
-- The brand mark returns to the current project's `All todos` surface. There is
-  no separate Dashboard or global Home route in this design.
+- The brand mark returns to the current project's `All todos` surface. `/` is a
+  routing/entry shell, not a Dashboard or aggregate Home: when a current or last
+  project exists it resolves directly to that project's `All todos`; with no
+  registered project it shows only the project-registration empty state defined
+  in [`pages/root.md`](pages/root.md). It never hosts work summaries, metrics, or
+  a cross-project activity feed.
 - Opening a project enters `All todos` by default. Todo lifecycle groups remain
   the primary project navigation; `Runs` and `Schedules` are secondary
   operational destinations. Do not add a Project Dashboard or restore peer
   `Todos / Automations / Sessions` tabs that compete with Todo identity.
+- `Runs` and `Schedules` are presentation labels only. The canonical product
+  entities remain `Session` and `Automation`; their API names, stored source
+  identities, and `/sessions` / `/automations` route families are not renamed.
 - The persistent sidebar owns project identity. The work canvas uses the current
   Todo, Automation, or Session title as its visible heading and does not repeat a
   generic inventory title merely to label the route.
@@ -450,7 +487,7 @@ Narrow-screen rules:
   full state explanation in the accessible name and tooltip.
 - Organize Sessions by decision value: `Needs you`, `Running`, then `Recent`.
 - The Runs page is the full project Session inventory and the only
-  visible place for the primary `New Session` action. Creating one opens a
+  visible place for the `New Session` creation action. Creating one opens a
   direct root Lead Session without first creating a Todo.
 - `Direct` describes how a Session was started, not the size or complexity of
   its work. Do not describe Direct Sessions as `No Todo`, `Quick`, or small
@@ -474,6 +511,13 @@ Narrow-screen rules:
   Session without a Todo opens from `Schedules`, using one compact Session shell
   and never fabricating Todo identity or Todo-only content. Source metadata still
   identifies every Session as `Todo`, `Automation`, or `Direct`.
+- Every concrete Session has one canonical project URL:
+  `/projects/:slug/sessions/:sessionId`. A Todo-bound Session renders that URL
+  inside its source-aware Todo shell with `Work` selected; it does not acquire a
+  second nested Todo/Work URL. Todo detail remains
+  `/projects/:slug/todos/:todoId`. Runs, Schedules, Needs-you rows, search results,
+  Automation invocations, and linked Work rows all deep-link to the exact
+  canonical Session URL.
 - Mark the currently open Session with `aria-current="page"` and move that
   attribute whenever the user changes Sessions.
 - The theme switch stays at the bottom of the project rail.
@@ -537,16 +581,18 @@ pulse, status-orbit spin while running, and terminal cursor may loop.
 ### Buttons
 
 - Primary: shared `.primary-button` (or product equivalent) — indigo fill,
-  4px radius, 32px default height, 13px horizontal padding, 6px content gap,
-  12px / 600 text with `-0.01em` tracking, and a 1px brand border. Disabled state
-  uses muted fill without a second “fake primary” style. Inventory CTAs such as
-  `New Session` and `New Automation`
-  use this primitive; do not invent page-local primary button classes. Primary
+  6px radius, 34px default height, 11px horizontal padding, 7px content gap,
+  and 11.5px / 650 text. Disabled state uses muted fill without a second “fake
+  primary” style. `New todo` is the persistent project-level creation primary;
+  selected-detail actions such as `Run now` may be the one local primary.
+  Secondary inventory creation actions such as `New Session` and
+  `New Automation` use the shared quiet button primitive and never compete with
+  `New todo`. Do not invent page-local primary button classes. Primary
   buttons may use the shared single-hue indigo gradient plus brand-tinted shadows
   (`0 1px 3px rgba(99, 102, 241, 0.3)`) with
   subtle inset highlights (`inset 0 1px 0 rgba(255, 255, 255, 0.1)`) and a 1px
   upward hover transform to reinforce intentionality.
-- Secondary: elevated neutral surface, 1px border, 4px radius.
+- Secondary: elevated neutral surface, 1px border, 6px radius.
 - Icon button: 32–40px visible control; expand the hit area to 44px on coarse
   pointers.
 - Hover micro-interactions use 0.5–1px `translateY(-1px)` transforms on buttons
@@ -691,9 +737,11 @@ Execution is a mandatory product entity, not an optional visual section.
 - **Role split:** main canvas owns narrative work (transcript, Work, HITL
   decision UI, Composer). The inspector owns machine state — agent structure,
   file artifacts, and session bindings — not a second chat or primary CTA strip.
-- **Quiet IDE density:** list rows and property rows, not card stacks; type floor
-  **≥11px** (primary ~12–12.5px, meta ~11–11.5px). Prefer hover fields and a 2px
-  brand inset edge for selection over large brand washes.
+- **Quiet IDE density:** list rows and property rows, not card stacks; the
+  inspector allows **10.5px only for tertiary uppercase summary keys**, keeps
+  primary labels at ~11–12px and operational metadata at ~11–11.5px, and uses
+  no sub-10.5px text. Prefer hover fields and a 2px brand inset edge for
+  selection over large brand washes.
 - **Header vs inspector anti-duplication:** header is glance (title, product
   status, `N tools · tokens`); inspector is structure/precise bindings. If a fact
   appears in both, header stays one number or short badge; inspector holds the
@@ -763,16 +811,20 @@ Motion explains state changes; it is not decoration.
 
 | Token | Duration | Usage |
 |---|---:|---|
-| `--motion-hover` | 140ms | Hover and surface response |
-| `--motion-icon` | 160ms | Chevron and icon state |
-| `--motion-overlay` | 220ms | Drawer and overlay entry/exit |
-| `--motion-complete` | 180ms | One-shot completion feedback |
+| `--motion-instant` | 120ms | Press and short visibility response |
+| `--motion-fast` | 140ms | Hover, surface response, Queue-row entry |
+| `--motion-standard` | 180ms | One-shot state change and overlay exit |
+| `--motion-deliberate` | 220ms | Drawer entry and spatial landing feedback |
 | `--motion-attention` | 700ms | Bounded attention feedback |
 | `--motion-activity` | 1.8s | Running activity only |
 
 - Do not add route-transition choreography or GSAP.
 - Do not animate layout width/height for disclosure; switch content and rotate
   the chevron.
+- Todo Preview, Work disclosure, Queue/HITL entry, drag landing, and Composer
+  terminal-action changes may use the current 140–220ms opacity/transform
+  transitions because each one explains a user-triggered state change. They
+  must not add layout movement or become ambient looping motion.
 - Respect `prefers-reduced-motion` by reducing all animation and transition
   durations to effectively zero.
 
@@ -817,6 +869,12 @@ Motion explains state changes; it is not decoration.
 - [ ] Confirm no document-level horizontal overflow.
 - [ ] Confirm the brand mark returns to `All todos` and no project page
       reintroduces a Dashboard or persistent Sessions/Automations sidebar.
+- [ ] Confirm `/` resolves to current/last-project `All todos`, or to the
+      project-registration empty state when no project exists; it never renders
+      a Dashboard or aggregate Home.
+- [ ] Confirm `Runs` / `Schedules` remain presentation labels while every
+      concrete Work, notification, search result, and Invocation opens the exact
+      canonical `/projects/:slug/sessions/:sessionId` URL.
 - [ ] Confirm the Composer Dock, headers, and drawers do not hide content.
 - [ ] Confirm pending HITL is the first Composer decision surface and Goal uses
       no progress bar.
@@ -834,6 +892,10 @@ Motion explains state changes; it is not decoration.
       hosted HITL primary actions.
 - [ ] Confirm composer model menu shows bare model names + Default badge, Effort
       (not Thinking) without marketing blurbs, and attachments are remove-only chips.
+- [ ] Confirm Session Composer plain Enter performs its current Send or Queue
+      action, Shift+Enter inserts a newline, IME composition is never submitted,
+      modified Enter remains available to the platform, and no application-wide
+      shortcut intercepts unrelated input.
 - [ ] Confirm shared done/completed status-orbit uses the same check glyph
       language as Todos Done.
 - [ ] Confirm project rail uses Quiet two-letter monograms for projects.

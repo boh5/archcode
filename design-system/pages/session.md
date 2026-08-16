@@ -77,7 +77,8 @@ header and conversation. Do not move Execution into the inspector.
 
 - The compact Session context owns the Session title plus current state.
 - The title is static text, not a related-Session picker. Cross-Session
-  navigation remains in the canonical Sessions inventory; do not add a second
+  navigation remains in the `Runs` presentation of the canonical Session
+  inventory; do not add a second
   header navigation mechanism from prototype-only sample relationships.
 - Its metadata line is:
   `Session kind · working directory · {Tool count} tools · {Token usage} tokens · source`.
@@ -136,13 +137,19 @@ header and conversation. Do not move Execution into the inspector.
 - A Todo deep link opens this same shell with `Todo` selected. Do not keep a
   second visually equivalent Todo detail page or add an `Open Todo` action that
   loops back to the object the user is already viewing.
-- The prototype route keeps object identity and visible surface explicit:
-  `view=todo` opens Todo detail, `view=work` opens the linked-work list, and
-  `view=detail` opens one concrete Session while Work remains selected. The
-  `sample` fixture only chooses representative content and never decides the
-  surface by itself. Runs inventory rows, Automation invocation rows,
-  notifications, search results, and New Session therefore link explicitly to
-  `view=detail`; Todo rows link explicitly to `view=todo`.
+- The production route contract keeps one canonical identity for every concrete
+  Session: `/projects/:slug/sessions/:sessionId`. A Todo-bound Session uses its
+  immutable source to render the selected Todo shell and keep Work active; it is
+  not duplicated under `/todos/:todoId/work/:sessionId`. The Todo object remains
+  canonical at `/projects/:slug/todos/:todoId`.
+- The supporting prototype keeps visible surfaces explicit with local fixture
+  parameters: `view=todo` opens Todo detail, `view=work` opens the linked-work
+  list, and `view=detail` simulates one concrete canonical Session while Work
+  remains selected. `sample` chooses representative content only and must never
+  be copied as a production identity or route contract.
+- Runs inventory rows, Automation Invocation rows, Needs-you rows, search
+  results, New Session, and linked Work rows open the exact canonical Session
+  URL. Todo inventory rows open the exact canonical Todo URL.
 - The Todo surface keeps its real lifecycle control band above the canonical
   document. Moving among Idea, Ready, In Progress, and Done mutates the Todo;
   Reject and Archive/Restore remain available without being mistaken for
@@ -208,6 +215,10 @@ header and conversation. Do not move Execution into the inspector.
 
 - User messages align right on one flat muted surface without becoming oversized
   chat bubbles.
+- The current prototype gives that single user-intent surface a stable 1px
+  quiet structural border, 10px radius, one inset top edge, and a neutral
+  same-family surface gradient. It has no avatar, colored outline, or floating
+  outer shadow.
 - Agent responses use the full-width structural surface; code, tables, Mermaid,
   and other technical blocks may use the available canvas.
 - Agent responses are editorial text, not bubbles. Avoid avatars, role headers,
@@ -275,9 +286,17 @@ running:    user message → expanded Work
 - Use a transparent surface with only a neutral hover field. Do not wrap Work in
   a raised card, add a large colored badge, repeat the user prompt, or show a
   second metadata row.
+- Completed Work keeps the neutral 1px body spine and divider. Running/live Work
+  may strengthen the body spine to 2px and mix a restrained live tone into that
+  spine and the remaining summary divider; paused Work uses the same treatment
+  with attention tone. The visible label/pulse still carries the meaning, so
+  the line is never the only state signal.
 - Work summaries and nested activity use the full Session thread width; do not
   reintroduce a narrower activity-lane cap inside the conversation column.
 - The chevron rotates 160ms. Do not animate disclosure height.
+- Opening Work may use the prototype's 180ms opacity plus 4px vertical reveal,
+  and the summary may use one matching settle response when its state changes.
+  Both are one-shot, preserve layout, and disappear under reduced motion.
 
 ### Scroll and disclosure behavior
 
@@ -372,8 +391,9 @@ column rather than leaving an empty rail.
   underline inset 6px from each edge, not a filled pill block. Counts use a
   quiet 16px-high rounded field; the active count receives a restrained brand
   tint.
-- Type floor ≥11px; primary labels ~12–12.5px; meta ~11–11.5px. No sub-11px
-  operational text in the inspector.
+- Type floor is 10.5px for tertiary uppercase summary keys only; primary labels
+  remain ~11–12.5px and operational metadata ~11–11.5px. No sub-10.5px text is
+  permitted in the inspector.
 
 ### Agents
 
@@ -480,7 +500,7 @@ column rather than leaving an empty rail.
 - **Next model picker** (prototype `composer-model-picker`):
   - Trigger shows `Model display name · effort` (effort omitted only when the
     catalog model has no variants).
-  - Trigger is 30px high with `10px / 8px` horizontal padding, a 999px radius,
+  - Trigger is 32px high with `10px / 9px` horizontal padding, a 999px radius,
     12px/520 type, a 6px outer gap, and a 5px `Model · effort` inner gap. The
     menu is 308px wide, uses 6px padding and a 12px radius, and opens 8px above
     the trigger.
@@ -505,6 +525,9 @@ column rather than leaving an empty rail.
 - Agent identity and one mutually exclusive terminal action remain in the quiet
   input surface below those priority cues.
 - The input surface uses the compact Composer elevation and a stable 1px border.
+  Its resting border mixes only a small amount of brand into the structural
+  line, and its neutral same-family vertical surface gradient resolves to the
+  elevated surface by 78px. Use the Master Composer shadow and 12px radius.
   Focus adds only a restrained outer brand ring and must not introduce a left
   stripe, change border width, or shift layout. Queue and decision sheets use
   weaker separation so the Composer remains the visual anchor.
@@ -517,6 +540,17 @@ column rather than leaving an empty rail.
   hover.
 - Queued messages remain visible and manageable above the input. This terminal
   action rule does not turn Queue into a second action button.
+- Keyboard submission is local to this Composer: plain `Enter` with a sendable
+  draft activates the same mutually exclusive terminal action (`Send` when
+  idle, `Queue` while active or user-gated). `Shift+Enter` inserts a newline;
+  modified Enter combinations remain available to the platform; IME composition
+  (`isComposing` or key code 229) never submits. Plain Enter on an empty draft
+  does nothing and must never trigger Stop. Do not register a document-level or
+  application-wide Enter handler for this behavior.
+- When the terminal action changes among Stop, Queue, and Send, it may use one
+  180ms opacity/scale settle response. New Queue rows may enter over 140ms and a
+  newly visible HITL decision sheet over 180ms. These transitions never add a
+  second action, change bounds, or survive reduced motion.
 - On very narrow layouts, hide secondary model/effort metadata before removing
   Agent identity or the primary Queue/Send/Stop controls.
 

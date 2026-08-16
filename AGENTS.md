@@ -94,9 +94,11 @@ Follow this order for every UI task:
    product implementation as applicable.
 
 Resolve conflicts as follows: a page override modifies `MASTER.md` only for
-that page; the current product is authoritative for existing behavior and state
-mechanics; an HTML prototype never overrides `MASTER.md`, a page override, or
-current product behavior.
+that page; the current product is authoritative for existing runtime facts,
+domain state, persistence, and behavior that an approved design decision does
+not intentionally change; `MASTER.md` and page overrides are authoritative for
+approved target structure, visuals, copy, and interaction; an HTML prototype
+never overrides either specification or product facts.
 
 Create or update an HTML prototype only for a new complex module, a major
 layout change, or an uncertain visual direction. Routine UI fixes and small
@@ -111,11 +113,15 @@ that page's HTML instead of creating page-specific `.css` or `.js` files.
 
 The current references are:
 
-- Global Home: `design-system/prototypes/dashboard.html`
+- Root no-project entry: `design-system/prototypes/index.html`
 - Todos: `design-system/prototypes/todos.html`
 - Automations: `design-system/prototypes/automations.html`
 - Sessions: `design-system/prototypes/sessions.html`
 - Session detail: `design-system/prototypes/session.html`
+
+There is no Dashboard prototype. The root entry is only the zero-project
+registration state; with a current/last project, `/` resolves to that project's
+All todos surface as specified by `design-system/pages/root.md`.
 
 When browser QA needs an HTTP origin, serve the prototype root without first
 changing into that directory:
@@ -307,7 +313,11 @@ Every descriptor declares an explicit `outputPolicy`. Registry is the sole Raw-t
 - `profiles.principal`, `profiles.deep`, and `profiles.fast` are all required, and unknown configuration keys fail strict validation.
 - Profile-default merge order is shallow: model `options` → selected `variants[variant]` → Profile `options`. A user-facing root Session override resolves independently and never inherits principal Profile options.
 - `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
-- Unknown model ids, unknown variant names, and missing Profile config all fail fast with actionable errors.
+- Missing required Profile config and unknown model ids are invalid. A Profile
+  may retain a removed Variant name for repair: Settings presents it as
+  attention and the runtime resolves that Profile through the selected Model's
+  default options until repaired. An explicit invalid Session override falls
+  back to its selected Profile; it never passes the unknown Variant downstream.
 - LLM execution is centralized in `packages/agent-core/src/llm/`. Non-LLM runtime code must not import `streamText` or `generateText` directly from `"ai"`; use `runLlmStream`, `runLlmText`, or `runLlmObject` instead.
 - `maxRetries` is not a configuration field. Managed calls force AI SDK `maxRetries: 0` so ArchCode owns retry/recovery, including HTTP 200 stream-body EOF/truncated-SSE failures that AI SDK retries cannot recover.
 - Retry constants are internal v1 implementation details. There is no global recovery retry config yet. Existing auto-compact behavior is preserved; emergency context-overflow compact automation is follow-up/out-of-scope.
@@ -467,7 +477,7 @@ Project: `.archcode/runtime/memory/`, User: `~/.archcode/memory/` (user-global, 
 
 ## Project Todos
 
-Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. Global `/` is Home; `/projects/:slug` redirects to the Project's `/projects/:slug/todos` board. Project pages share one `Todos / Automations / Sessions` toolbar, while Sessions remain independently creatable and recoverable execution workbenches. `ProjectTodoStateManager` owns strict Todo persistence, flat state updates (`idea`, `ready`, `in_progress`, `done`, `rejected`), archive state, revision checks, the canonical array order, ordered current `attachmentIds`, and narrow durable Run-now receipts. `ProjectTodoService` is the only Todo application boundary: it exposes list/create/flat-update, attachment operations, the composed `Run now` command, and root Session creation for `discussion`, `work`, and `automation`. A Todo never stores reverse Session, Plan, or Automation links.
+Project Todos are project-owned intent, separate from Session-local `todo_write` execution checklists. The current production implementation still routes global `/` to Home and renders a `Todos / Automations / Sessions` project toolbar; this is implementation inventory, not the approved target UI contract in `design-system/MASTER.md` and `design-system/pages/root.md`. `/projects/:slug` redirects to `/projects/:slug/todos`, and Sessions remain independently creatable and recoverable execution workbenches. `ProjectTodoStateManager` owns strict Todo persistence, flat state updates (`idea`, `ready`, `in_progress`, `done`, `rejected`), archive state, revision checks, the canonical array order, ordered current `attachmentIds`, and narrow durable Run-now receipts. `ProjectTodoService` is the only Todo application boundary: it exposes list/create/flat-update, attachment operations, the composed `Run now` command, and root Session creation for `discussion`, `work`, and `automation`. A Todo never stores reverse Session, Plan, or Automation links.
 
 A Todo can have any number of root Sessions with immutable `{ kind: "todo", todoId, entry }` source. Each root family resolves the Todo's current attachment set at model and tool boundaries; references are never copied into Session messages or storage. `discussion` roots activate `shape-todo`, may update only their source Todo, and may delegate only Explore/Librarian. **Generate / Improve Plan** reuses the latest Discussion only when it is idle, then invokes `plan-work` for the unique `.archcode/plans/<todo-id>.md`. If no Discussion exists, the latest one is busy or suspended, it was deleted, or an idle reuse loses the acceptance race, the action creates a new Discussion whose first accepted message is the Plan request; it never races a generic Discussion start with a second command. Plan existence is not persisted; the Todo Plan endpoint only performs a fixed-path, bounded Markdown read. `work` and `automation` roots may start only from Ready or In Progress. At work creation only, `ProjectTodoService` checks that Plan path: an existing file starts with `execute-plan`, while no file preserves ordinary implementation behavior. Starting from Ready moves the Todo to In Progress, while starting from In Progress leaves it there. A Todo-created Automation stores immutable `{ kind: "todo", todoId, sessionId }` origin; every `start_session` Invocation persists `{ kind: "automation", automationId, invocationId, todoId }`. Direct-origin Invocations persist `todoId: null`. Todo moves never create, stop, rebind, or delete Sessions or Automations.
 

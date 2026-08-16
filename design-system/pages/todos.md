@@ -66,18 +66,20 @@ They are project-owned lifecycle entities, not Session-local checklists.
   work canvas.
 - The inventory filter uses the prototype's 4px control radius at every
   breakpoint; it does not inherit the 6px card radius.
-- Match the current prototype workspace padding: 16px top, 20px horizontal,
-  40px bottom on desktop; 14px top, 12px horizontal, 32px bottom at `≤760px`.
-  Active groups use a 22px vertical gap. Group headers are 36px high with 10px
-  item gaps, 12px/700 uppercase titles, 12px hints, and 11px tabular counts.
+- Match the current prototype workspace padding: 28px top, 20px horizontal,
+  64px bottom on desktop; 18px top, 12px horizontal, 64px bottom at `≤760px`.
+  Active groups use a 26px vertical gap. Group headers have a 29px minimum
+  height, `0 7px 8px` padding, 11px/750 uppercase titles, and 10.5px tabular
+  counts.
 - Each row shows the prototype's display-only lead: the first Markdown heading
   when present, otherwise the first normalized content, capped at 80
   characters. This never adds a persisted Todo title. Quiet relative update
   metadata remains `Updated {relative time}`. Only In Progress rows may add the
   same derived operational line as Board cards.
-- List rows use an `18px / minmax(0,1fr) / auto` grid, 12px gaps, 10px/12px
-  padding, a 56px minimum height, and one bottom rule. Excerpts are 14px/500 at
-  1.35 line-height; metadata is 11px with an 8px gap. Focus/selection uses the
+- List rows begin with a 30px state-orbit column, then flexible copy and the
+  trailing affordance. They use 12px gaps, `10px 8px` padding, a 66px minimum
+  height, and one bottom rule. Excerpts are 13.5px/620 at 1.35 line-height;
+  metadata is 11.5px at 1.35 line-height with 4px top spacing. Focus/selection uses the
   prototype's hover field plus a 2px inset brand rule without changing bounds.
 - Use flat rows separated by rules. Do not turn every row into a floating card,
   repeat its lifecycle label, or show linked-work counts.
@@ -115,10 +117,17 @@ Lane rules:
 - Lane headers own one lifecycle icon, the lifecycle label, one bottom rule, and
   a quiet tabular count. `Idea` is neutral, `Ready` uses brand, `In progress`
   uses live lime, and `Done` uses success green. The Done lane uses the shared
-  outline `check` glyph. Do not repeat these lifecycle icons inside every card.
-- Lane contents use 14px top padding and an 11px card gap. Todo cards are the
+  outline `check` glyph. Carry that same semantic tone into the current
+  prototype's 2px top rule, a very low-chroma lane wash that fades by 190px,
+  and a 9% header-only horizontal field. This is lifecycle orientation, not a
+  filled lane container; keep the rest of the column open. Do not repeat these
+  lifecycle icons inside every card.
+- Lane contents use 10px top spacing, 8px horizontal insets, and a 10px card
+  gap. Todo cards are the
   Board's only persistent card layer. Use a subtle border, surface background,
-  6px radius, 56px minimum height, and no elevation.
+  6px radius, 56px visual minimum height, and no outer elevation. A quiet inset
+  top edge and a lifecycle-mixed hover border are allowed; they must not make
+  the cards appear to float.
 - Cards use the prototype hover response: border/background emphasis and a
   `translateY(-0.5px)` lift; pressed cards return to the baseline at 0.995
   scale without shifting surrounding layout.
@@ -149,8 +158,9 @@ Lane rules:
   an older failure, while an Automation dispatch alone is never completion. The
   Board prototype demonstrates Needs you, Failed, Working, and Ready to review
   operational lines.
-- Card content uses 10px vertical, 14px right, and zero left padding. Its compact
-  title is 12px/580 at 1.45 line-height. The operational line
+- Card link content uses 10px padding on all sides beside the dedicated drag
+  activator. Its compact
+  title is 12.5px/580 at 1.48 line-height. The operational line
   uses a 6px status dot plus visible 11.5px/520 text and an optional short detail
   after a separator; the running dot alone may pulse. Keep it inside the existing
   card boundary without a badge stack, nested card, action, lifecycle control,
@@ -161,14 +171,19 @@ Lane rules:
   dragged card rectangle. A successful move updates Board counts and the List
   projection together. Dragging is not the only lifecycle path: the canonical
   Todo detail lifecycle control remains available.
+- During drag, only the active card may lift and receive temporary elevation;
+  the target lane uses one temporary brand field. A successful drop gets one
+  220ms border/translate landing response, then returns to the ordinary flat
+  card state. Reduced motion removes that response.
 
 ## Rejected Surface
 
 - Use a centered flat list at a maximum width of 980px.
-- Keep the same 12px uppercase section heading and rule as the Active List.
-  Rows use an `18px / minmax(0,1fr) / auto` grid, 12px gaps, 10px/12px
-  padding, and a 56px minimum height. The display lead is 13px/500 at 20px
-  line-height and clamps to two lines; the state line is 11px with 4px top
+- Keep the same compact uppercase group heading and rule as the Active List.
+  Rows use the same 30px-orbit / flexible-copy / trailing-action structure,
+  12px gaps, `10px 8px` padding, and 66px minimum height as Active. The display
+  lead is 13.5px/620 at 1.35 line-height and clamps to two lines; the state line
+  is 11.5px at 1.35 line-height with 4px top
   spacing. Recovery controls are 32px high for precise pointers and 44px for
   coarse pointers.
 - Every row preserves the compact content excerpt and rejection reason.
@@ -285,9 +300,12 @@ the canonical mutation; Session Execution state remains independent. At
 
 Use one selected-Todo shell with two stable local destinations: **Todo** first,
 then **Work** with its linked-Session count. These are route-level destinations,
-not content filters: Todo detail, Work list, and Work detail all retain direct
-links and Back-stack state. Work detail is a child of Work, so opening a row
-never changes the active destination back to another tab.
+not content filters. Todo detail and the Work list retain direct links and
+Back-stack state inside the Todo shell. A concrete Work row opens that Session's
+single canonical `/projects/:slug/sessions/:sessionId` URL; immutable Todo source
+reconstructs the same shell with Work selected. Do not create a second nested
+Session identity under the Todo route, and never jump back to Todo merely because
+the concrete Session URL belongs to the Session route family.
 
 The Todo destination is one continuous readable document work surface owning
 `Brief / PRD`, `References`, `Plan`, and any `Result`. Work actions and linked

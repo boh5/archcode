@@ -672,6 +672,11 @@
       const todoId = card.dataset.todoId;
       const content = prototypeTodoById(todoId)?.content || displayLead;
       lane.appendChild(card);
+      card.classList.remove('landing');
+      requestAnimationFrame(() => {
+        card.classList.add('landing');
+        window.setTimeout(() => card.classList.remove('landing'), 220);
+      });
       const cardLink = card.querySelector('.todo-card-link');
       if (cardLink instanceof HTMLAnchorElement) cardLink.href = todoDetailUrl(content, laneKey, todoId);
       updatePrototypeTodoLane(todoId, laneKey);
@@ -772,11 +777,29 @@
     new ResizeObserver(syncTodoPreviewInset).observe(document.querySelector('.page-todos .inventory-command'));
     window.addEventListener('resize', syncTodoPreviewInset);
     syncTodoPreviewInset();
+    let previewCloseTimer;
     function closeTodoPreview() {
-      if (preview) preview.hidden = true;
-      if (previewScrim) previewScrim.hidden = true;
-      previewOrigin?.focus();
+      if (!preview || preview.hidden) return;
+      window.clearTimeout(previewCloseTimer);
+      preview.classList.remove('preview-opening');
+      preview.classList.add('preview-closing');
+      preview.inert = true;
+      if (previewScrim) {
+        previewScrim.classList.add('preview-closing');
+        previewScrim.disabled = true;
+      }
+      const origin = previewOrigin;
       previewOrigin = undefined;
+      origin?.focus();
+      previewCloseTimer = window.setTimeout(() => {
+        preview.hidden = true;
+        preview.classList.remove('preview-closing');
+        if (previewScrim) {
+          previewScrim.hidden = true;
+          previewScrim.classList.remove('preview-closing');
+          previewScrim.disabled = false;
+        }
+      }, 180);
     }
     function openTodoPreview(item) {
       const link = item.matches('a') ? item : item.querySelector('a');
@@ -836,8 +859,19 @@
         previewDiscussion.hidden = !showDiscussion;
         previewDiscussion.dataset.previewDiscussionHref = `./session.html?view=detail&sample=discussion-new${todoQuery}&lane=${lane}`;
       }
-      if (preview) preview.hidden = false;
-      if (previewScrim) previewScrim.hidden = false;
+      window.clearTimeout(previewCloseTimer);
+      if (preview) {
+        preview.hidden = false;
+        preview.inert = false;
+        preview.classList.remove('preview-closing', 'preview-opening');
+        requestAnimationFrame(() => preview.classList.add('preview-opening'));
+      }
+      if (previewScrim) {
+        previewScrim.hidden = false;
+        previewScrim.disabled = false;
+        previewScrim.classList.remove('preview-closing', 'preview-opening');
+        requestAnimationFrame(() => previewScrim.classList.add('preview-opening'));
+      }
       renderIcons(preview);
       requestAnimationFrame(() => document.querySelector('#todo-preview-heading')?.focus());
     }
@@ -969,9 +1003,14 @@
 
   const projectDialog = document.querySelector('[data-project-dialog]');
   const settingsDialog = document.querySelector('[data-settings-dialog]');
-  document.querySelector('[data-open-project]')?.addEventListener('click', () => {
+  let projectDialogOrigin;
+  document.querySelectorAll('[data-open-project]').forEach((button) => button.addEventListener('click', () => {
+    projectDialogOrigin = button;
     projectDialog?.showModal();
     requestAnimationFrame(() => document.querySelector('[data-project-path]')?.focus());
+  }));
+  projectDialog?.addEventListener('close', () => {
+    projectDialogOrigin?.focus();
   });
   document.querySelectorAll('[data-project-dialog-close]').forEach((button) => button.addEventListener('click', () => projectDialog?.close()));
   projectDialog?.addEventListener('click', (event) => { if (event.target === projectDialog) projectDialog.close(); });
@@ -979,6 +1018,10 @@
     const path = document.querySelector('[data-project-path]')?.value.trim();
     if (!path) return document.querySelector('[data-project-path]')?.focus();
     projectDialog?.close();
+    if (document.body.classList.contains('page-project-empty')) {
+      location.href = './todos.html';
+      return;
+    }
     showToast('Project registration previewed.');
   });
   const settingsPanel = settingsDialog?.querySelector('[data-settings-panel]');
@@ -2510,7 +2553,19 @@
       const body = bodyId ? document.getElementById(bodyId) : null;
       const open = button.getAttribute('aria-expanded') !== 'true';
       button.setAttribute('aria-expanded', String(open));
-      if (body) body.hidden = !open;
+      const segment = button.closest('.work-segment');
+      if (body) {
+        body.hidden = !open;
+        body.classList.remove('work-body-reveal');
+        if (open) requestAnimationFrame(() => body.classList.add('work-body-reveal'));
+      }
+      if (segment) {
+        segment.classList.remove('work-state-changing');
+        requestAnimationFrame(() => {
+          segment.classList.add('work-state-changing');
+          window.setTimeout(() => segment.classList.remove('work-state-changing'), 180);
+        });
+      }
     });
   }
   document.querySelectorAll('[data-work-disclosure]').forEach(bindWorkDisclosure);
@@ -2526,6 +2581,7 @@
     const ready = Boolean(sessionSamples[sampleName]?.idle);
     const hasDraft = composerHasSendableDraft();
     const mode = ready ? 'send' : hasDraft ? 'queue' : 'stop';
+    const previousMode = terminalAction.dataset.actionMode;
     terminalAction.dataset.actionMode = mode;
     terminalAction.classList.toggle('stop', mode === 'stop');
     terminalAction.disabled = ready && !hasDraft;
@@ -2537,6 +2593,13 @@
       delete iconNode.dataset.iconReady;
       iconNode.innerHTML = '';
       renderIcons(terminalAction);
+    }
+    if (previousMode && previousMode !== mode) {
+      terminalAction.classList.remove('mode-changing');
+      requestAnimationFrame(() => {
+        terminalAction.classList.add('mode-changing');
+        window.setTimeout(() => terminalAction.classList.remove('mode-changing'), 180);
+      });
     }
   }
 
@@ -3274,6 +3337,17 @@
     if (!slashMenu) return;
     const ready = Boolean(sessionSamples[document.body.dataset.sessionSample]?.idle);
     slashMenu.hidden = !(ready && composerInput.value.trimStart().startsWith('/'));
+  });
+  composerInput?.addEventListener('keydown', (event) => {
+    const plainEnter = event.key === 'Enter'
+      && !event.shiftKey
+      && !event.altKey
+      && !event.ctrlKey
+      && !event.metaKey;
+    if (!plainEnter || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    if (!composerHasSendableDraft()) return;
+    terminalAction?.click();
   });
   const newTodoOutcome = {
     save: 'Todo saved to Ideas.',

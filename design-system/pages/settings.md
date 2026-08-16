@@ -175,6 +175,11 @@ polite live region; destructive and request errors use an alert.
   172px Settings navigation, and one scrolling content column. The full-page
   recovery workspace is centered within the available viewport but uses the
   full height required for safe action placement.
+- Match the current dense type hierarchy: navigation/control labels and editor
+  identities are 11.5px, while tertiary helper copy, section metadata, and
+  status explanations may use 10.5px. Editable values and primary content keep
+  their component-appropriate larger size; do not use the micro role for user
+  input or long-form diagnostic prose.
 - At `≤640px` the navigation becomes the existing three-column compact grid
   above the content. Project identity, Runtime paths, MCP tool identities, Skill names,
   diagnostics, and confirmation content wrap; the document never scrolls

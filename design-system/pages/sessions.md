@@ -20,11 +20,11 @@ attention, and start work directly without manufacturing a Todo first.
 - The list is centered at a maximum width of 1080px and grouped as **`Needs you`**,
   **`Running`**, then **`Recent`**. Group titles match the product lexicon in
   Master; do not title the first group `Needs attention`.
-- Match the current prototype list geometry: 24px desktop inner padding (56px
-  bottom), 18px/12px/40px at `≤760px`; each group has 2px top, 8px horizontal,
-  and 10px bottom padding, with 28px only between adjacent non-empty groups.
-  Group headers are 28px high with an uppercase 11px/720 label, 10px tabular
-  count, and 8px bottom inset.
+- Match the current prototype list geometry: 24px desktop horizontal gutters,
+  28px top and 64px bottom; at `≤760px` use 12px horizontal gutters, 18px top,
+  and 64px bottom. Adjacent non-empty groups use 26px separation. Group headers
+  have a 29px minimum height with `0 7px 8px` padding, an uppercase 11px/750
+  label, and a 10.5px tabular count.
 - Use flat rows and thin separators. Do not add summary cards, charts, runtime
   metrics, or a second dashboard above the list.
 - `New Session` uses the shared quiet button primitive.
@@ -33,11 +33,14 @@ attention, and start work directly without manufacturing a Todo first.
 
 - Row order is shared status orbit, Session title and source context, then action
   state or elapsed time.
-- Desktop rows use a `14px / minmax(0,1fr) / auto` grid, 11px gaps, 12px
-  padding, a 60px minimum height, and one bottom separator. Titles are
-  13.5px/620; source context is 11.5px with a 9px/700 uppercase source label.
-  At `≤520px`, the trailing state moves below the source context and rows use a
-  74px minimum height.
+- Desktop rows begin with a 30px status-orbit column, use 12px gaps, `10px 8px`
+  padding, a 66px minimum height, and one bottom separator. The remaining
+  columns hold the flexible copy, optional state/time, and trailing chevron.
+  Titles are 13.5px/620 at 1.35 line-height; source context is 11.5px at 1.35
+  line-height with 4px top spacing and a compact uppercase source label.
+  At `≤720px`, rows use a 72px minimum height and a 27px status column; secondary
+  time/owner/chevron metadata hides while the explicit action-required state
+  remains in the trailing column.
 - Rows use subtle hover micro-interactions (0.5px `translateY` lift) with
   background color change for perceived responsiveness without raised shadows.
 - Every row identifies one source: `Todo`, `Automation`, or `Direct`.
