@@ -14,25 +14,23 @@ describe("orchestration workbench surface", () => {
   test("renders the Agent tree with named role identity and one quiet role mark", async () => {
     const inspector = await source("components/features/context-inspector/SessionAgentsInspector.tsx");
 
-    expect(inspector).toContain("agent.depth * 14");
+    expect(inspector).toContain("agent.depth * 12");
     expect(inspector).toContain("agent.profile");
     expect(inspector).toContain("displayName");
-    expect(inspector).not.toContain("AGENT_ROLE_ICON");
     expect(inspector).toContain("data-agent-role-icon");
     expect(inspector).toContain("data-agent-status");
-    expect(inspector).toContain("grid-cols-[22px_minmax(0,1fr)_auto]");
-    expect(inspector).toContain("h-[22px] w-[22px]");
+    expect(inspector).toContain("grid-cols-[25px_minmax(0,1fr)_auto]");
+    expect(inspector).toContain("h-[25px] w-[25px]");
     expect(inspector).toContain("buildAgentFocusSearch");
-    expect(inspector).not.toContain("Skills:");
   });
 
   test("keeps Changes and Context as compact flat inspector rows", async () => {
     const changes = await source("components/features/context-inspector/SessionChangesInspector.tsx");
     const context = await source("components/features/context-inspector/SessionContextDetails.tsx");
 
-    expect(changes).toContain("min-h-8");
+    expect(changes).toContain("min-h-10");
     expect(changes).toContain("[@media(pointer:coarse)]:min-h-11");
-    expect(changes).toContain("grid-cols-[14px_minmax(0,1fr)_auto]");
+    expect(changes).toContain("grid-cols-[16px_minmax(0,1fr)_auto]");
     expect(context).toContain('data-testid="context-property-list"');
     expect(context).toContain('["Goal"');
     expect(context).toContain('["Execution"');

@@ -228,21 +228,21 @@ describe("ComposerQueueList", () => {
       .toBe("Model changed: test:removed → test:model");
     const invalidation = container.querySelector('[data-testid="pending-model-invalidation-queued-row"]');
     const localModel = container.querySelector('[data-testid="local-requested-model-sending-client"]');
-    expect(invalidation?.className).not.toContain("max-[560px]:hidden");
-    expect(invalidation?.className).toContain("max-[560px]:max-w-16");
-    expect(localModel?.className).not.toContain("max-[560px]:hidden");
-    expect(localModel?.className).toContain("max-[560px]:max-w-16");
+    expect(invalidation?.className).toContain("[@media(max-width:560px)]:max-w-16");
+    expect(localModel?.className).toContain("sr-only");
 
     const queuedRow = container.querySelector('[data-testid="composer-queue-queued-row"]');
     expect(queuedRow?.getAttribute("data-client-request-id")).toBe("queued-client");
+    expect(queuedRow?.className).toContain("min-h-10");
+    expect(queuedRow?.className).toContain("rounded-[10px]");
     expect(queuedRow?.className).toContain("ring-brand");
     expect(document.activeElement).toBe(queuedRow);
-    expect(queuedRow?.textContent).toContain("Steer");
-    expect(queuedRow?.textContent).toContain("Edit");
-    expect(queuedRow?.textContent).toContain("Delete");
+    expect(queuedRow?.querySelector('button[aria-label="Steer queued message"]')).not.toBeNull();
+    expect(queuedRow?.querySelector('button[aria-label="Edit queued message"]')).not.toBeNull();
+    expect(queuedRow?.querySelector('button[aria-label="Delete queued message"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="composer-queue-steering-row"]')?.querySelector("button")).toBeNull();
 
-    const edit = [...container.querySelectorAll("button")].find((button) => button.textContent === "Edit");
+    const edit = container.querySelector('button[aria-label="Edit queued message"]');
     if (!(edit instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Edit button");
     await act(async () => {
       edit.click();
@@ -258,8 +258,8 @@ describe("ComposerQueueList", () => {
       await Promise.resolve();
     });
 
-    const steer = [...container.querySelectorAll("button")].find((button) => button.textContent === "Steer");
-    const remove = [...container.querySelectorAll("button")].find((button) => button.textContent === "Delete");
+    const steer = container.querySelector('button[aria-label="Steer queued message"]');
+    const remove = container.querySelector('button[aria-label="Delete queued message"]');
     const retry = container.querySelector('button[aria-label="Retry sending message"]');
     if (!(steer instanceof dom.window.HTMLButtonElement) || !(remove instanceof dom.window.HTMLButtonElement) || !(retry instanceof dom.window.HTMLButtonElement)) {
       throw new Error("Missing direct queue actions");

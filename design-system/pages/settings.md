@@ -185,7 +185,7 @@ polite live region; destructive and request errors use an alert.
   diagnostics, and confirmation content wrap; the document never scrolls
   horizontally.
 - Keep the action footer in normal flex layout with wrapping. It must remain
-  reachable at 390, 760, 1024, and 1440px and must not cover content.
+  reachable at 390, 640, 1024, and 1440px and must not cover content.
 - Use semantic headings, lists, labels, native checkboxes and buttons. The
   selected state is announced by the checkbox; disabled healthy projects expose
   a textual explanation.

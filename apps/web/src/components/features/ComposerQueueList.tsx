@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { CornerDownRight, LoaderCircle, Pencil, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 import type {
   ExecutionModelBindingSummary,
   ModelRuntimeCatalog,
@@ -45,7 +45,7 @@ export function ComposerQueueList({ slug, sessionId, focusClientRequestId }: { s
   return (
     <section
       aria-label="Queued messages"
-      className="min-w-0 shrink-0 border-b border-border-subtle"
+      className="mx-2 grid min-w-0 shrink-0 gap-1.5 bg-transparent"
       data-testid="composer-queue-list"
     >
       {entries.map((entry) => entry.kind === "durable" ? (
@@ -138,39 +138,39 @@ function DurableQueueRow({
   return (
     <div
       ref={rowRef}
-      className={`grid min-h-9 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-border-subtle px-1 py-1.5 last:border-b-0 max-[560px]:gap-1 ${focused ? "ring-2 ring-inset ring-brand" : ""}`}
+      className={`flex min-h-10 min-w-0 items-center gap-[9px] rounded-[10px] border border-[color:color-mix(in_srgb,var(--border-strong)_72%,var(--border-subtle))] bg-[color:color-mix(in_srgb,var(--bg-elevated)_94%,var(--bg-surface))] py-[3px] pl-[9px] pr-2 transition-[background-color,border-color] duration-[var(--motion-fast)] hover:border-border-strong hover:bg-[color:color-mix(in_srgb,var(--bg-elevated)_88%,var(--bg-hover))] [@media(max-width:560px)]:gap-2 [@media(max-width:560px)]:pl-2.5 ${focused ? "ring-2 ring-inset ring-brand" : ""}`}
       data-client-request-id={message.clientRequestId}
       data-queue-state={message.state}
       data-testid={`composer-queue-${message.id}`}
       tabIndex={focused ? -1 : undefined}
+      title={`Requested model: ${selectionLabel(message.requestedModelSelection.selection)}`}
     >
       {message.state === "steering" ? (
-        <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-info" data-queue-visual="steering">
-          <ActivityArc label="Steering" size={12} /> Steering
+        <span className="inline-grid size-6 shrink-0 place-items-center rounded-full bg-bg-active text-info" data-queue-visual="steering">
+          <ActivityArc label="Steering" size={13} />
         </span>
       ) : (
-        <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-neutral" data-queue-visual="queued">
-          <StatusGlyph kind="pending" label="Queued" size={12} /> Queued
+        <span className="inline-grid size-6 shrink-0 place-items-center rounded-full bg-bg-active text-text-tertiary" data-queue-visual="queued">
+          <StatusGlyph kind="pending" label="Queued" size={13} />
         </span>
       )}
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[12px] leading-5 text-text-secondary">
-        {message.content && <span className="min-w-0 truncate" title={message.content}>{message.content}</span>}
-        {message.attachments.map((attachment) => <AttachmentChip key={attachment.id} attachment={attachment} />)}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-hidden text-[12.5px] font-medium leading-[1.35] text-text-secondary">
+        {message.content && <span className="min-w-0 flex-1 truncate" title={message.content}>{message.content}</span>}
+        {message.attachments.map((attachment) => <AttachmentChip key={attachment.id} attachment={attachment} className="shrink-0" />)}
       </div>
-      <span
-        className={`max-w-[240px] truncate text-[11px] text-text-tertiary max-[560px]:max-w-16 ${invalidationLabel ? "text-warning" : ""}`}
-        data-testid={invalidationLabel ? `pending-model-invalidation-${message.id}` : `pending-requested-model-${message.id}`}
-        title={invalidationLabel ?? selectionLabel(message.requestedModelSelection.selection)}
-      >
-        {invalidationLabel ?? selectionLabel(message.requestedModelSelection.selection)}
-      </span>
-      <div className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap text-[11px] text-text-tertiary max-[560px]:gap-1">
+      {invalidationLabel ? <span
+        className="max-w-[220px] truncate text-[10.5px] font-medium text-warning [@media(max-width:560px)]:max-w-16"
+        data-testid={`pending-model-invalidation-${message.id}`}
+        title={invalidationLabel}
+      >{invalidationLabel}</span> : <span className="sr-only" data-testid={`pending-requested-model-${message.id}`}>{selectionLabel(message.requestedModelSelection.selection)}</span>}
+      <div className="ml-1 flex shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-text-tertiary">
         {mutationError && <span className="max-w-32 truncate text-error" role="alert" title={mutationError}>{mutationError}</span>}
         {message.state === "queued" && (
           <>
             {canSteer && (
               <button
-                className="text-brand hover:underline disabled:opacity-40"
+                aria-label="Steer queued message"
+                className="inline-grid h-7 w-7 place-items-center rounded-full text-brand transition-colors duration-[var(--motion-fast)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
                 disabled={busy}
                 onClick={() => steerMessage.mutate({
                   slug,
@@ -179,19 +179,22 @@ function DurableQueueRow({
                   expectedRevision: message.revision,
                   expectedExecutionId: steerTargetExecutionId,
                 })}
+                title="Steer into root Session turn"
                 type="button"
               >
-                Steer
+                <CornerDownRight size={14} aria-hidden="true" />
               </button>
             )}
-            <button className="hover:text-text-primary disabled:opacity-40" disabled={busy} onClick={openEditor} type="button">Edit</button>
+            <button aria-label="Edit queued message" className="inline-grid h-7 w-7 place-items-center rounded-full transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" disabled={busy} onClick={openEditor} title="Edit" type="button"><Pencil size={14} aria-hidden="true" /></button>
             <button
-              className="text-error hover:underline disabled:opacity-40"
+              aria-label="Delete queued message"
+              className="inline-grid h-7 w-7 place-items-center rounded-full transition-colors duration-[var(--motion-fast)] hover:bg-error-muted hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error disabled:opacity-40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
               disabled={busy}
               onClick={() => deleteMessage.mutate({ slug, sessionId, messageId: message.id, expectedRevision: message.revision })}
+              title="Delete"
               type="button"
             >
-              Delete
+              <Trash2 size={14} aria-hidden="true" />
             </button>
           </>
         )}
@@ -274,30 +277,31 @@ function LocalQueueRow({ message, slug, sessionId }: { message: LocalSendingMess
 
   return (
     <div
-      className="grid min-h-9 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-border-subtle px-1 py-1.5 last:border-b-0 max-[560px]:gap-1"
+      className="flex min-h-10 min-w-0 items-center gap-[9px] rounded-[10px] border border-[color:color-mix(in_srgb,var(--border-strong)_72%,var(--border-subtle))] bg-[color:color-mix(in_srgb,var(--bg-elevated)_94%,var(--bg-surface))] py-[3px] pl-[9px] pr-2 transition-[background-color,border-color] duration-[var(--motion-fast)] hover:border-border-strong hover:bg-[color:color-mix(in_srgb,var(--bg-elevated)_88%,var(--bg-hover))] [@media(max-width:560px)]:gap-2 [@media(max-width:560px)]:pl-2.5"
       data-queue-state={message.status}
       data-testid={`composer-local-message-${message.clientRequestId}`}
+      title={`Requested model: ${selectionLabel(message.requestedModelSelection.selection)}`}
     >
       {retryable ? (
-        <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-warning" data-queue-visual="retryable">
-          <TriangleAlert aria-hidden="true" size={12} /> Retryable
+        <span className="inline-grid size-6 shrink-0 place-items-center rounded-full bg-warning-muted text-warning" data-queue-visual="retryable" role="img" aria-label="Retryable">
+          <TriangleAlert aria-hidden="true" size={13} />
         </span>
       ) : (
-        <span className="inline-flex items-center gap-1 text-[11px] font-semibold leading-4 text-info" data-queue-visual="sending">
-          <LoaderCircle aria-hidden="true" className="animate-activity" size={12} /> Sending
+        <span className="inline-grid size-6 shrink-0 place-items-center rounded-full bg-bg-active text-info" data-queue-visual="sending" role="img" aria-label="Sending">
+          <LoaderCircle aria-hidden="true" className="animate-activity" size={13} />
         </span>
       )}
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-text-secondary">
-        {message.content && <span className="min-w-0 truncate" title={message.content}>{message.content}</span>}
-        {message.attachments.map((attachment) => <AttachmentChip key={attachment.id} attachment={attachment} />)}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-hidden text-[12.5px] font-medium leading-[1.35] text-text-secondary">
+        {message.content && <span className="min-w-0 flex-1 truncate" title={message.content}>{message.content}</span>}
+        {message.attachments.map((attachment) => <AttachmentChip key={attachment.id} attachment={attachment} className="shrink-0" />)}
       </div>
-      <span className="max-w-[240px] truncate text-[11px] text-text-tertiary max-[560px]:max-w-16" data-testid={`local-requested-model-${message.clientRequestId}`} title={selectionLabel(message.requestedModelSelection.selection)}>
+      <span className="sr-only" data-testid={`local-requested-model-${message.clientRequestId}`}>
         {selectionLabel(message.requestedModelSelection.selection)}
       </span>
-      <div className="flex shrink-0 items-center justify-end gap-2 whitespace-nowrap text-[11px] text-text-tertiary max-[560px]:gap-1">
-        <span className="max-[560px]:hidden">{retryable ? "Send status unknown" : "Sending…"}</span>
+      <div className="ml-1 flex shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-text-tertiary">
+        <span className="sr-only">{retryable ? "Send status unknown" : "Sending…"}</span>
         {retryable && (
-          <button className="text-brand hover:underline" onClick={retryMessage} type="button" aria-label="Retry sending message">Retry</button>
+          <button className="inline-grid h-7 w-7 place-items-center rounded-full text-brand transition-colors duration-[var(--motion-fast)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={retryMessage} type="button" aria-label="Retry sending message" title="Retry"><RefreshCw size={14} aria-hidden="true" /></button>
         )}
       </div>
     </div>
@@ -349,7 +353,7 @@ function DialogButton({
 }) {
   return (
     <button
-      className={`h-8 rounded-sm border px-3 text-[12px] font-medium leading-4 transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 ${primary
+      className={`h-8 rounded-sm border px-3 text-[12px] font-medium leading-4 transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 ${primary
         ? "border-brand bg-brand text-brand-ink"
         : "border-border-default bg-bg-base text-text-secondary hover:text-text-primary"
       }`}

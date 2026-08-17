@@ -52,7 +52,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         <button
           type="button"
           onClick={this.handleReload}
-          className="mt-2 h-8 cursor-pointer rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="mt-2 h-8 cursor-pointer rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         >
           Reload
         </button>

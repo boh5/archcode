@@ -21,7 +21,7 @@ describe("status primitives", () => {
     expect(full).toContain('data-percent="100"');
     expect(full).toContain("text-success");
     expect(full).toContain('stroke-dashoffset="0"');
-    expect(full).toContain("var(--motion-overlay)");
+    expect(full).toContain("var(--motion-deliberate)");
   });
 
   test("StatusGlyph keeps static states static and allows explicit one-shot transitions", () => {

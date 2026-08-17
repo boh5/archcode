@@ -31,7 +31,7 @@ function hitl(rootSessionId: string, ownerSessionId = rootSessionId, hitlId = ro
     createdAt: "2026-07-20T00:00:00.000Z",
     updatedAt: "2026-07-20T00:00:00.000Z",
   };
-  return { projectSlug: "demo", rootSessionId, ownerSessionId, view };
+  return { projectSlug: "demo", rootSessionId, ownerSessionId, ownerAgentName: "build", ownerSessionTitle: "Worker", view };
 }
 
 function link(invocationId: string, sessionId: string): AutomationSessionLink {

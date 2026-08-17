@@ -54,7 +54,7 @@ export function ToolRunItemRow({
   return (
     <div
       aria-label={label}
-      className={`grid min-h-9 grid-cols-[minmax(98px,160px)_minmax(0,1fr)_auto] items-center gap-[9px] rounded-[5px] border-t border-border-subtle px-[9px] py-[7px] first:border-t-0 max-[560px]:grid-cols-[minmax(90px,112px)_minmax(0,1fr)_auto] [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_NESTED_LANE_CLASS}`}
+      className={`grid min-h-9 grid-cols-[minmax(98px,160px)_minmax(0,1fr)_auto] items-center gap-[9px] rounded-[5px] border-t border-border-subtle px-[9px] py-[7px] first:border-t-0 [@media(max-width:560px)]:grid-cols-[minmax(90px,112px)_minmax(0,1fr)_auto] [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_NESTED_LANE_CLASS}`}
       data-testid="tool-run-child"
       role="listitem"
       title={label}

@@ -148,7 +148,7 @@ function SegmentMarker({
       onMouseLeave={onTooltipLeave}
     >
       <span
-        className={`h-0.5 rounded-full transition-[width,background-color] duration-[var(--motion-hover)] group-hover:w-5 group-focus-visible:w-5 ${current ? "w-4 bg-text-secondary" : "w-2 bg-border-strong"}`}
+        className={`h-0.5 rounded-full transition-[width,background-color] duration-[var(--motion-fast)] group-hover:w-5 group-focus-visible:w-5 ${current ? "w-4 bg-text-secondary" : "w-2 bg-border-strong"}`}
         aria-hidden="true"
       />
     </button>

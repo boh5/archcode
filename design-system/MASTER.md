@@ -1,16 +1,17 @@
 # Signal Workbench Design System
 
 > Target UI specification synchronized with the current effective prototypes on
-> 2026-08-16. This Master and its page overrides are the normative authority for
-> approved target structure, visual language, copy, and interaction. Current
-> product code remains authoritative only for existing runtime facts, domain
-> state, persistence, and behavior that this specification does not intentionally
-> change. Prototypes under `design-system/prototypes/` are supporting rendered
-> fixtures and never override this Master, a page override, or product facts.
+> 2026-08-17. This Master and its page overrides define the approved product and
+> interaction contract. Current product code remains authoritative for existing
+> runtime facts, domain state, persistence, and behavior that this specification
+> does not intentionally change. For a page with a current effective prototype,
+> the prototype's actual browser render is the visual delivery and acceptance
+> authority. Files, tokens, DOM, or prose alone are never proof of visual parity.
 >
 > When designing or implementing a page, read this file first and then read
 > `pages/[page-name].md`. A page file overrides this Master only where it says
-> so. When a current prototype exists, use it as a supporting rendered reference:
+> so. When a current prototype exists, open it and the product in a real browser
+> and judge the delivered visual result directly:
 > [`index.html`](prototypes/index.html),
 > [`todos.html`](prototypes/todos.html),
 > [`automations.html`](prototypes/automations.html),
@@ -216,42 +217,48 @@ surfaces. They are not a second color system.
 
 ## Typography
 
-Inter is the primary UI face and is loaded from the online Google Fonts CSS API;
-do not commit or ship a local font binary in the prototype. The import requests
-only weights 400–700 with `display=swap`. The complete system stack is mandatory
-so the workbench remains usable when the font provider is blocked, slow, or
-offline, and layouts must not depend on Inter loading successfully.
+ArchCode uses the operating system's native UI face. Product and prototype do
+not bundle or download a general-purpose UI font. This gives Latin and CJK text
+the platform's best-integrated glyphs, hinting, and fallback behavior without a
+font-loading phase. Do not add runtime Google Fonts, a hosted font CDN, an
+OpenAI-specific face, or a bundled CJK family.
 
 ```css
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap");
---font-stack-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
---font-stack-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+--font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+--font-stack-mono: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 ```
 
 The global UI baseline matches the current prototypes: 14px type at 1.5
-line-height (`21px`), `-0.006em` letter spacing, optimized legibility, and
-tabular numerals. Components with a named role below may override that baseline.
+line-height (`21px`), natural letter spacing, and optimized legibility.
+Todo content, conversation, and other sustained-reading surfaces use 15px at
+24px. Tabular figures are opt-in for time, counts, token usage, diff statistics,
+and other numeric data rather than enabled globally. Components with a named
+role below may override that baseline.
 
 Type scale:
 
 | Role | Size | Weight | Notes |
 |---|---:|---:|---|
-| Micro metadata | 9–10.5px | 650–800 | Uppercase kickers, compact counts, status labels, and tertiary timestamps only |
-| Dense metadata | 11–12px | 500–700 | Counts, elapsed time, compact state |
-| Compact label | 12px | 600–700 | Buttons, row labels, section labels |
-| Operational title | 13–14px | 600–680 | Navigation, tool targets, rows |
+| Micro metadata | 9–10.5px | 600–700 | Uppercase kickers, compact counts, status labels, and tertiary timestamps only |
+| Dense metadata | 11–12px | 500–600 | Counts, elapsed time, compact state |
+| Compact label | 12px | 500–600 | Buttons, row labels, section labels |
+| Operational title | 13–14px | 600 | Navigation, tool targets, rows |
 | Commentary | 13–14px | 400–500 | Process explanation inside Work |
 | User message | 15px | 400–500 | User intent |
 | Final response | 15px | 400–600 | Agent outcome and supporting detail |
-| Compact Session context | 12.5–14px | 650–680 | Session identity inside the selected Todo shell |
-| Page / selected Todo title | 17.5–20px | 680–700 | Active work or page identity |
-| Document / inventory lead | 16–22px | 620–680 | Current project work surface |
+| Compact Session context | 12.5–14px | 600 | Session identity inside the selected Todo shell |
+| Page / selected Todo title | 17.5–20px | 600–700 | Active work or page identity |
+| Document / inventory lead | 16–22px | 600 | Current project work surface |
 
 Rules:
 
-- Conversation text uses 1.62–1.68 line-height. Long prose blocks use a
+- Conversation and Todo-content text use 15px / 24px. Long prose blocks use a
   65–72ch reading measure; Work, tools, code, tables, Diffs, and message
   structure use the available Session canvas.
+- Ordinary body text keeps natural tracking. Only display headings may use a
+  restrained negative tracking value where their role explicitly calls for it.
+- Use the standard 400 / 500 / 600 / 700 weight steps. Do not depend on
+  font-specific intermediate weights for hierarchy.
 - Inline and operational code uses monospace.
 - Numeric timers and counters use tabular figures.
 - Small text is metadata only. The Session Composer uses 16px input text on
@@ -582,7 +589,7 @@ pulse, status-orbit spin while running, and terminal cursor may loop.
 
 - Primary: shared `.primary-button` (or product equivalent) — indigo fill,
   6px radius, 34px default height, 11px horizontal padding, 7px content gap,
-  and 11.5px / 650 text. Disabled state uses muted fill without a second “fake
+  and 11.5px / 600 text. Disabled state uses muted fill without a second “fake
   primary” style. `New todo` is the persistent project-level creation primary;
   selected-detail actions such as `Run now` may be the one local primary.
   Secondary inventory creation actions such as `New Session` and
@@ -904,6 +911,7 @@ Motion explains state changes; it is not decoration.
       directly reachable.
 - [ ] Confirm keyboard focus and accessible expansion state.
 - [ ] Confirm `prefers-reduced-motion`.
-- [ ] Confirm the online Inter request uses `display=swap`, the system fallback
-      renders without layout failure, and no local font binary is shipped.
+- [ ] Confirm product and prototype resolve the shared system-native sans and
+      monospace stacks, make no external or bundled UI-font request, keep CJK
+      fallback legible, and render without clipping or layout failure.
 - [ ] Confirm browser console is clean.

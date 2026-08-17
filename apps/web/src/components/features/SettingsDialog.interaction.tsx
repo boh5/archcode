@@ -144,13 +144,13 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).toContain("Principal, deep, and fast model bindings");
 
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} section="models" /></DialogRoot>));
-    expect(container.textContent).toContain("Providers and their model profiles");
+    expect(container.textContent).toContain("Providers and models");
   });
 
   test("navigates all server settings sections", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     const sections: Array<[string, string]> = [
-      ["Models", "Providers and their model profiles"],
+      ["Models", "Providers and models"],
       ["Profiles", "Principal, deep, and fast model bindings"],
       ["MCP", "MCP servers"],
       ["Skills", "Open a project to inspect its Skills"],
@@ -977,7 +977,7 @@ describe("SettingsDialog interactions", () => {
     expect(container.querySelector('[data-settings-section="runtime-data"]')).not.toBeNull();
 
     click("Models");
-    await waitForText("Providers and their model profiles");
+    await waitForText("Providers and models");
     const destinations: Array<[string, string]> = [
       ["Profiles", "Principal, deep, and fast model bindings"],
       ["Security", "Manage the one password"],

@@ -69,7 +69,7 @@ export interface ProjectTodoPlan {
 /** Complete persisted Session file returned by the Session detail endpoint. */
 export type Session = ProtocolSession & Pick<SessionProjection, "compression">;
 
-/** Visible Session-owned Goal projection returned by Session and Home APIs. */
+/** Visible Session-owned Goal projection returned by Session APIs. */
 export type SessionGoalView = SessionGoal;
 
 export type SessionWithGoal = Session & { goal?: SessionGoalView };

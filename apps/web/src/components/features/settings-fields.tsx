@@ -35,7 +35,7 @@ export function TextInput({
       readOnly={readOnly}
       onChange={(event) => onChange(event.target.value)}
       onBlur={onBlur}
-      className="h-8 w-full min-w-0 rounded-sm border border-border-control bg-bg-base px-3 text-[12px] leading-4 text-text-primary outline-none transition-colors duration-[var(--motion-hover)] placeholder:text-text-muted hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle read-only:cursor-default read-only:border-border-subtle read-only:bg-bg-elevated read-only:text-text-tertiary"
+      className="h-8 w-full min-w-0 rounded-sm border border-border-control bg-bg-base px-3 text-[12px] leading-4 text-text-primary outline-none transition-colors duration-[var(--motion-fast)] placeholder:text-text-muted hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle read-only:cursor-default read-only:border-border-subtle read-only:bg-bg-elevated read-only:text-text-tertiary"
     />
   );
 }
@@ -147,7 +147,7 @@ export function JsonObjectField({
         onBlur={() => {
           if (!invalid) setText(committedText.current);
         }}
-        className="min-h-28 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-3 font-mono text-[12px] leading-[18px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] placeholder:text-text-muted hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle"
+        className="min-h-28 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-3 font-mono text-[12px] leading-[18px] text-text-primary outline-none transition-colors duration-[var(--motion-fast)] placeholder:text-text-muted hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle"
       />
     </Field>
   );
@@ -174,7 +174,7 @@ export function SecretField({
           placeholder={configured ? "Configured" : "Not configured"}
           onChange={(next) => onChange(next ? { action: "replace", value: next } : { action: "delete" })}
         />
-        <button type="button" onClick={() => onChange({ action: "delete" })} className="h-8 shrink-0 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
+        <button type="button" onClick={() => onChange({ action: "delete" })} className="h-8 shrink-0 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">
           Clear
         </button>
       </div>
@@ -219,7 +219,7 @@ export function SecretRecordEditor({
               const draft = { ...(value ?? {}) };
               draft[key] = { action: "delete" };
               onChange(draft);
-            }} className="self-end rounded-sm px-2 py-2 text-[12px] text-error transition-colors duration-[var(--motion-hover)] hover:bg-error-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">Remove</button>
+            }} className="self-end rounded-sm px-2 py-2 text-[12px] text-error transition-colors duration-[var(--motion-fast)] hover:bg-error-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">Remove</button>
           </div>
         ))}
         <button type="button" onClick={() => {
@@ -227,7 +227,7 @@ export function SecretRecordEditor({
           let index = 2;
           while (value?.[key]) key = `header-${index++}`;
           onChange({ ...(value ?? {}), [key]: { action: "replace", value: "" } });
-        }} className="rounded-sm px-2 py-2 text-left text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">Add value</button>
+        }} className="rounded-sm px-2 py-2 text-left text-[12px] font-medium text-brand transition-colors duration-[var(--motion-fast)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">Add value</button>
       </div>
     </fieldset>
   );

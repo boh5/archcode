@@ -55,17 +55,19 @@ describe("PrimaryActionButton", () => {
     dom.window.close();
   });
 
-  test("is the shared creation control for Todo, Automation, and Session inventories", async () => {
-    const [todos, automations, sessions] = await Promise.all([
-      Bun.file(new URL("../../routes/project-todos.tsx", import.meta.url)).text(),
+  test("keeps New Todo primary while Runs and Schedules creation stay quiet", async () => {
+    const [navigator, automations, sessions] = await Promise.all([
+      Bun.file(new URL("../features/ProjectTodoNavigator.tsx", import.meta.url)).text(),
       Bun.file(new URL("../../routes/automations.tsx", import.meta.url)).text(),
       Bun.file(new URL("../../routes/project-sessions.tsx", import.meta.url)).text(),
     ]);
-    expect(todos).toContain('import { PrimaryActionButton } from "../components/primitives/PrimaryActionButton"');
-    expect(todos).toContain('<PrimaryActionButton ref={newTodoTriggerRef} className="min-[761px]:h-9"');
-    expect(automations).toContain('import { PrimaryActionButton } from "../components/primitives/PrimaryActionButton"');
-    expect(automations).toContain('<PrimaryActionButton className="px-2.5 min-[761px]:px-[13px]" onClick={() => setCreating(true)}>');
-    expect(sessions).toContain('import { PrimaryActionButton } from "../components/primitives/PrimaryActionButton"');
-    expect(sessions).toContain("<PrimaryActionButton");
+    expect(navigator).toContain('import { PrimaryActionButton } from "../primitives/PrimaryActionButton"');
+    expect(navigator).toContain("<PrimaryActionButton");
+    expect(automations).toContain("border-border-default bg-bg-surface");
+    expect(automations).toContain("min-[761px]:h-[34px]");
+    expect(automations).toContain('<Plus size={14} aria-hidden="true" /> New Automation');
+    expect(sessions).toContain("border-border-default bg-bg-surface");
+    expect(sessions).toContain("min-[641px]:h-[34px]");
+    expect(sessions).toContain('<Plus size={14} aria-hidden="true" /> New Session');
   });
 });

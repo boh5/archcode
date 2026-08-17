@@ -99,7 +99,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
   return (
     <div className="mx-1.5 my-0.5 shrink-0 overflow-hidden rounded-[6px] border border-border-default bg-bg-elevated">
       <div className="flex w-full select-none items-center gap-2 border-b border-border-subtle bg-transparent px-2.5 py-2 text-left">
-        <ChevronRight size={12} className={`text-text-muted transition-transform duration-[var(--motion-hover)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
+        <ChevronRight size={12} className={`text-text-muted transition-transform duration-[var(--motion-fast)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
         <Layers size={12} className="shrink-0 text-text-secondary" />
         <span className="font-mono text-[12px] text-text-primary font-semibold">{part.blockRef}</span>
         <span className={`rounded-sm px-[7px] py-1 text-[10px] font-semibold ${STRATEGY_CLASS[part.strategy]}`}>
@@ -136,7 +136,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
       <div className="px-2.5 pb-[9px]">
         <button
           type="button"
-          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           onClick={handleToggleOriginalRange}
         >
           {expanded ? "Hide original range ↑" : "Show original range ↓"}
@@ -157,7 +157,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
               <span className="flex-1">{expansion.message}</span>
               <button
                 type="button"
-                className="flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                className="flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 onClick={handleRetry}
               >
                 <RotateCw size={11} />

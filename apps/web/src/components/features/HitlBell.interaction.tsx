@@ -10,8 +10,6 @@ import { HitlBell } from "./HitlBell";
 let dom: JSDOM;
 let root: Root;
 let container: HTMLDivElement;
-let notificationPermission: NotificationPermission;
-let notificationRequests: number;
 const originals = new Map<string, PropertyDescriptor | undefined>();
 
 beforeEach(() => {
@@ -33,16 +31,6 @@ beforeEach(() => {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
     Object.defineProperty(globalThis, name, { configurable: true, value });
   }
-  notificationPermission = "default";
-  notificationRequests = 0;
-  originals.set("Notification", Object.getOwnPropertyDescriptor(globalThis, "Notification"));
-  Object.defineProperty(globalThis, "Notification", {
-    configurable: true,
-    value: {
-      get permission() { return notificationPermission; },
-      requestPermission: async () => { notificationRequests += 1; return notificationPermission; },
-    },
-  });
   hitlStore.getState().reset();
   container = document.createElement("div");
   document.body.append(container);
@@ -64,6 +52,10 @@ async function render() {
   await act(async () => root.render(<MemoryRouter><HitlBell mobile /></MemoryRouter>));
 }
 
+async function renderDesktop() {
+  await act(async () => root.render(<MemoryRouter><HitlBell variant="rail" /></MemoryRouter>));
+}
+
 function addRequest(hitlId: string, title: string) {
   const view: HitlView = {
     hitlId,
@@ -81,6 +73,8 @@ function addRequest(hitlId: string, title: string) {
     hitlId,
     ownerSessionId: "root-session",
     rootSessionId: "root-session",
+    ownerAgentName: "lead",
+    ownerSessionTitle: "Root Session",
     view,
     createdAt: 1,
     payload: { type: "hitl.request" },
@@ -98,6 +92,36 @@ async function click(element: HTMLElement) {
 }
 
 describe("HitlBell interactions", () => {
+  test("desktop popover uses the current header and row geometry and focuses Close", async () => {
+    addRequest("one", "Choose a deployment target");
+    await renderDesktop();
+
+    await click(bell());
+    const dialog = container.querySelector("section[role='dialog']") as HTMLElement;
+    expect(dialog.className).toContain("bottom-14");
+    expect(dialog.className).toContain("left-[62px]");
+    expect(dialog.textContent).toContain("Needs youWork that needs you");
+    const row = dialog.querySelector("a[data-testid='hitl-attention-open']") as HTMLAnchorElement;
+    expect(row.className).toContain("min-h-[58px]");
+    expect(row.className).toContain("grid-cols-[28px_minmax(0,1fr)_14px]");
+    const closeButton = dialog.querySelector("button[aria-label='Close work that needs you']") as HTMLButtonElement;
+    expect(document.activeElement).toBe(closeButton);
+  });
+
+  test("desktop popover stays open for internal clicks and closes on an outside click", async () => {
+    addRequest("one", "Choose a deployment target");
+    await renderDesktop();
+
+    await click(bell());
+    const dialog = container.querySelector("section[role='dialog']") as HTMLElement;
+    await click(dialog);
+    expect(container.querySelector("section[role='dialog']")).toBe(dialog);
+
+    await click(container);
+    expect(container.querySelector("section[role='dialog']")).toBeNull();
+    expect(document.activeElement).toBe(bell());
+  });
+
   test("mobile sheet restores focus to Bell after focus moves inside then Escape", async () => {
     addRequest("one", "Choose a deployment target");
     addRequest("two", "Confirm the migration window");
@@ -127,14 +151,11 @@ describe("HitlBell interactions", () => {
     expect(document.activeElement).toBe(bell());
   });
 
-  test("all mobile dismissal controls restore focus and the alert footer follows permission state", async () => {
+  test("all mobile dismissal controls restore focus to the bell", async () => {
     addRequest("one", "Need an answer");
     await render();
 
     await click(bell());
-    expect(container.textContent).toContain("Enable desktop alerts");
-    await click(container.querySelector("button[class*='text-text-secondary']") as HTMLButtonElement);
-    expect(notificationRequests).toBe(1);
     await click(container.querySelector("section button[aria-label='Close work that needs you']") as HTMLButtonElement);
     expect(document.activeElement).toBe(bell());
 
@@ -144,9 +165,7 @@ describe("HitlBell interactions", () => {
     expect(container.querySelector("section[role='dialog']")).toBeNull();
     expect(document.activeElement).toBe(bell());
 
-    notificationPermission = "denied";
     await click(bell());
-    expect(container.textContent).not.toContain("Enable desktop alerts");
     await click(bell());
     expect(container.querySelector("section[role='dialog']")).toBeNull();
     expect(document.activeElement).toBe(bell());

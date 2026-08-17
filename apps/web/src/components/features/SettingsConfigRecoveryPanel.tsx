@@ -18,9 +18,9 @@ import {
   DialogTitle,
 } from "../ui/Dialog";
 
-const primaryButton = "inline-flex min-h-8 items-center justify-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11";
-const dangerButton = "inline-flex min-h-8 items-center justify-center gap-2 rounded-sm bg-error px-3 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11";
-const secondaryButton = "inline-flex min-h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11";
+const primaryButton = "inline-flex min-h-8 items-center justify-center gap-2 rounded-sm bg-brand px-3 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11";
+const dangerButton = "inline-flex min-h-8 items-center justify-center gap-2 rounded-sm bg-error px-3 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-fast)] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11";
+const secondaryButton = "inline-flex min-h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11";
 
 export function SettingsConfigRecoveryPanel({
   grant,

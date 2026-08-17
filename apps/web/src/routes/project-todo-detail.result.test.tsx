@@ -140,7 +140,7 @@ async function renderRoute(): Promise<void> {
       </MemoryRouter>
     </QueryClientProvider>,
   ));
-  await waitFor(() => document.querySelector('[aria-labelledby="todo-brief-heading"]') !== null);
+  await waitFor(() => document.querySelector('[aria-labelledby="todo-content-heading"]') !== null);
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

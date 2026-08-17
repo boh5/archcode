@@ -66,13 +66,13 @@ const locked = {
   },
   dark: {
     selector: '[data-theme="dark"]',
-    surface: ["#101210", "#151815", "#1c201c", "#1c201c"],
+    surface: ["#0a0c0b", "#131713", "#1a1f1b", "#1d221e"],
     interaction: ["#292e29", "#303630"],
-    border: ["#262b26", "#363c36", "#596159"],
-    text: ["#f3f5f0", "#c9cec6", "#9ca49a", "#868f84"],
+    border: ["#2a302b", "#3f4740", "#596159"],
+    text: ["#f5f7f2", "#d0d5cc", "#a2ab9f", "#8a9487"],
     semantic: ["#a49bff", "#82c49a", "#deb96e", "#f08b82", "#9ca49a"],
     signal: ["#c1dd64", "#29331b", "#d9ec8c", "#202807"],
-    rail: ["#0c0e0c", "#f2f4ef", "#858c83", "#1c201c", "#232723", "#363c36"],
+    rail: ["#060706", "#f2f4ef", "#858c83", "#1c201c", "#232723", "#363c36"],
   },
 } as const;
 
@@ -154,12 +154,12 @@ describe("workbench visual tokens", () => {
   });
 
   test("defines the complete motion and semantic token contract", () => {
-    expect(css).toContain("--motion-hover: 140ms");
-    expect(css).toContain("--motion-icon: 160ms");
-    expect(css).toContain("--motion-overlay: 220ms");
+    expect(css).toContain("--motion-instant: 120ms");
+    expect(css).toContain("--motion-fast: 140ms");
+    expect(css).toContain("--motion-deliberate: 220ms");
     expect(css).toContain("--motion-activity: 1800ms");
     expect(css).toContain("--motion-attention: 700ms");
-    expect(css).toContain("--motion-complete: 180ms");
+    expect(css).toContain("--motion-standard: 180ms");
     expect(css).toContain("--color-border-control: var(--control-border)");
     expect(css).toContain("--color-signal: var(--signal)");
     expect(css).toContain("--color-signal-foreground: var(--signal-foreground)");
@@ -173,12 +173,14 @@ describe("workbench visual tokens", () => {
     expect(css).toContain("--color-primary: var(--brand)");
     expect(css).toContain("--color-primary-foreground: var(--brand-ink)");
     expect(css).toContain('@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));');
-    expect(css).toContain('font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI"');
-    expect(css).toContain('font-stack-mono: "SFMono-Regular"');
-    expect(css).toContain("overlay-exit var(--motion-overlay) var(--ease-exit)");
+    expect(css).toContain('font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif');
+    expect(css).toContain('font-stack-mono: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace');
+    expect(css).toContain("font-size: 14px");
+    expect(css).toContain("letter-spacing: normal");
+    expect(css).toContain("overlay-exit var(--motion-deliberate) var(--ease-exit)");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
     expect(css).toContain("animation: status-attention var(--motion-attention) var(--ease-standard) 2");
-    expect(css).toContain("animation: status-complete var(--motion-complete) var(--ease-standard) 1");
+    expect(css).toContain("animation: status-complete var(--motion-standard) var(--ease-standard) 1");
     expect(css).toContain(".primary-action-button {");
     expect(css).toContain("0 1px 3px rgb(97 87 213 / 30%)");
     expect(css).toContain(".workbench-row-lift:hover {");

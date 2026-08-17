@@ -1,9 +1,6 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import {
-  Bot,
-} from "lucide-react";
 import { sessionQueryOptions, useAgents } from "../../../api/queries";
 import type { SessionFamilyActivity, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import { resolveAgentDisplayName } from "../../../lib/agent-constants";
@@ -57,6 +54,18 @@ export function buildInspectorChildStatusMap(
   return statusByChildSessionId;
 }
 
+function agentRoleMark(displayName: string): string {
+  return displayName.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 2).toLocaleUpperCase() || "AG";
+}
+
+function agentRoleTone(agentType: string | null): string {
+  if (agentType === "lead" || agentType === "discussion") return "bg-brand-muted text-brand";
+  if (agentType === "analyst") return "bg-info-muted text-info";
+  if (agentType === "build") return "bg-success-muted text-success";
+  if (agentType === "explore") return "bg-warning-muted text-warning";
+  return "bg-bg-muted text-text-secondary";
+}
+
 export function SessionAgentsInspector({ projection }: { projection: SessionInspectorProjection["agents"] }) {
   const { slug = "", sessionId = "" } = useParams<{ slug: string; sessionId: string }>();
   const [searchParams] = useSearchParams();
@@ -90,7 +99,9 @@ export function SessionAgentsInspector({ projection }: { projection: SessionInsp
   if (projection.error) return <InspectorNotice tone="error">Failed to load agents</InspectorNotice>;
   if (sessionAgents.length === 0) return <InspectorNotice>No agent sessions</InspectorNotice>;
   return (
-    <nav className="space-y-0.5" data-testid="context-agent-tree" aria-label="Agents">
+    <section>
+      <span className="block text-[10.5px] font-bold uppercase leading-[21px] tracking-[0.09em] text-text-tertiary">Agent tree</span>
+      <nav data-testid="context-agent-tree" aria-label="Agents">
       {sessionAgents.map((agent) => {
         const displayName = resolveAgentDisplayName(agent.type, agentDescriptors);
         const status = resolveInspectorAgentStatus(
@@ -104,49 +115,50 @@ export function SessionAgentsInspector({ projection }: { projection: SessionInsp
             key={agent.sessionId}
             type="button"
             aria-current={focused === agent.sessionId ? "true" : undefined}
-            className={`relative grid min-h-11 w-full grid-cols-[22px_minmax(0,1fr)_auto] items-start gap-x-2 rounded-[6px] py-2 pr-2 text-left transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:[box-shadow:inset_0_0_0_2px_var(--brand)] ${focused === agent.sessionId ? "bg-bg-hover after:absolute after:bottom-2 after:left-0 after:top-2 after:w-0.5 after:rounded-sm after:bg-brand" : "hover:bg-bg-hover"}`}
-            style={{ paddingLeft: 8 + (agent.depth * 14) }}
+            className={`relative grid min-h-[42px] w-full grid-cols-[25px_minmax(0,1fr)_auto] items-center gap-2 rounded-[6px] border px-1.5 py-[5px] text-left transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:[box-shadow:inset_0_0_0_2px_var(--brand)] ${focused === agent.sessionId ? "border-border-default bg-bg-muted [box-shadow:inset_2px_0_0_var(--brand)]" : "border-transparent hover:bg-bg-hover"}`}
+            style={{ marginLeft: agent.depth * 12, width: `calc(100% - ${agent.depth * 12}px)` }}
             onClick={() => navigate({ search: buildAgentFocusSearch(searchParams, sessionId, agent.sessionId) })}
           >
             {agent.depth > 0 && (
               <span
                 aria-hidden="true"
                 className="pointer-events-none absolute bottom-0 top-0 w-px bg-border-subtle"
-                style={{ left: 18 + ((agent.depth - 1) * 14) }}
+                style={{ left: -1 }}
               />
             )}
             <span
-              className={`mt-px grid h-[22px] w-[22px] place-items-center rounded-[5px] border bg-bg-base ${focused === agent.sessionId ? "border-brand/25 text-brand" : "border-border-subtle text-text-tertiary"}`}
+              className={`grid h-[25px] w-[25px] place-items-center rounded-[7px] font-mono text-[9.5px] font-bold leading-none ${agentRoleTone(agent.type)}`}
               data-agent-role-icon={agent.type}
               title={`${displayName} agent`}
             >
-              <Bot aria-hidden="true" size={12} strokeWidth={1.75} />
+              {agentRoleMark(displayName)}
             </span>
             <span className="min-w-0">
-              <span className="flex min-w-0 items-baseline gap-2">
-                <span className="truncate text-[12.5px] font-[650] leading-4 tracking-[-0.015em] text-text-primary">
+              <span className="flex min-w-0 items-baseline gap-1">
+                <span className="truncate text-[11px] font-semibold leading-[1.5] text-text-primary">
                   {displayName}
                 </span>
-                <span className="shrink-0 font-mono text-[11px] leading-4 text-text-tertiary">{agent.profile}</span>
+                <span className="shrink-0 font-mono text-[11px] leading-[1.5] text-text-tertiary">{agent.profile}</span>
               </span>
-              <span className="mt-0.5 block truncate text-[11.5px] leading-[1.35] text-text-secondary" title={agent.name}>
+              <span className="mt-0.5 block truncate text-[11px] leading-[1.5] text-text-tertiary" title={agent.name}>
                 {agent.name}
               </span>
             </span>
             <span
-              className={`mt-0.5 inline-flex max-w-[92px] items-start gap-1 whitespace-nowrap text-[11px] font-semibold ${STATUS_TONE_CLASS[statusTone]}`}
+              className={`inline-flex max-w-[92px] items-start gap-1 whitespace-nowrap text-[10.5px] font-semibold ${STATUS_TONE_CLASS[statusTone]}`}
               data-agent-status={status.label}
               title={status.detail ? `${status.label} · ${status.detail}` : status.label}
             >
-              <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
+              <StatusGlyph kind={status.kind} tone={status.tone} size={13} />
               <span className="min-w-0">
                 <span className="block">{status.label}</span>
-                {status.detail && <span className="block truncate text-[11px] font-normal text-text-tertiary">{status.detail}</span>}
+                {status.detail && <span className="block truncate text-[10.5px] font-normal text-text-tertiary">{status.detail}</span>}
               </span>
             </span>
           </button>
         );
       })}
-    </nav>
+      </nav>
+    </section>
   );
 }

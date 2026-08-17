@@ -269,12 +269,12 @@ export function TodoReferences({ slug, todo, compactWhenEmpty = false, starterAc
         onDrop={onDrop}
       >
         <div className="min-w-0">
-          <h2 id="todo-context-starter-heading" className="text-[12.5px] font-[650] text-text-primary">Add context when it helps</h2>
-          <p id="todo-context-starter-help" className="mt-[3px] text-[11.5px] leading-[1.45] text-text-tertiary">Keep a simple Todo simple. Add files or shape a Plan only when the work needs more structure.</p>
+          <h2 id="todo-context-starter-heading" className="text-[12.5px] font-semibold text-text-primary">Add context when it helps</h2>
+          <p id="todo-context-starter-help" className="mt-[3px] text-[11.5px] leading-[1.45] text-text-tertiary">Keep a simple Todo simple. Add supporting files such as PRDs, designs, logs, or images—or shape a Plan—only when they help.</p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[761px]:w-full max-[761px]:justify-start">
           <input ref={inputRef} type="file" multiple className="sr-only" aria-label="Choose files to add as Todo references" onChange={onInputChange} />
-          <button type="button" onClick={() => inputRef.current?.click()} aria-describedby="todo-context-starter-help" className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-sm border border-border-default bg-bg-elevated px-[13px] text-[12px] font-semibold tracking-[-0.01em] text-text-secondary transition-[background-color,border-color,color] duration-[var(--motion-hover)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] max-[761px]:min-h-11 [@media(pointer:coarse)]:min-h-11"><Plus size={16} aria-hidden="true" />Add files</button>
+          <button type="button" onClick={() => inputRef.current?.click()} aria-describedby="todo-context-starter-help" className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-sm border border-border-default bg-bg-elevated px-[13px] text-[12px] font-semibold tracking-[-0.01em] text-text-secondary transition-[background-color,border-color,color] duration-[var(--motion-fast)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] max-[761px]:min-h-11 [@media(pointer:coarse)]:min-h-11"><Plus size={16} aria-hidden="true" />Add files</button>
           {starterAction}
         </div>
       </section>
@@ -292,9 +292,9 @@ export function TodoReferences({ slug, todo, compactWhenEmpty = false, starterAc
     >
       <div className="flex items-start justify-between gap-4 max-[761px]:block">
         <div className="min-w-0">
-          <h2 id="todo-references-heading" className="text-[14px] font-[680] text-text-primary">References</h2>
+          <h2 id="todo-references-heading" className="text-[14px] font-semibold text-text-primary">References</h2>
           <p id="todo-references-help" className="mt-[5px] max-w-[620px] text-[11px] leading-[1.5] text-text-tertiary">
-            Files stay in this project. Agent work can read the current set; images may be sent to the selected model provider.
+            Supporting files such as PRDs, designs, logs, and images stay in this project. Agent work can read the current set; images may be sent to the selected model provider.
           </p>
         </div>
         <div className="shrink-0">
@@ -310,7 +310,7 @@ export function TodoReferences({ slug, todo, compactWhenEmpty = false, starterAc
             type="button"
             onClick={() => inputRef.current?.click()}
             aria-describedby="todo-references-help"
-            className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-sm border border-border-default bg-bg-elevated px-[13px] text-[12px] font-semibold tracking-[-0.01em] text-text-secondary transition-[background-color,border-color,color] duration-[var(--motion-hover)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] max-[761px]:mt-3 max-[761px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+            className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-sm border border-border-default bg-bg-elevated px-[13px] text-[12px] font-semibold tracking-[-0.01em] text-text-secondary transition-[background-color,border-color,color] duration-[var(--motion-fast)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] max-[761px]:mt-3 max-[761px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
           >
             <Plus size={16} aria-hidden="true" />
             Add files
@@ -390,7 +390,7 @@ function TodoReferenceRow({
     <li className="grid min-h-[55px] min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-border-subtle max-[761px]:grid-cols-[36px_minmax(0,1fr)]">
       <span className="grid h-9 w-9 place-items-center border border-border-subtle bg-bg-base font-mono text-[9px] font-bold text-text-tertiary" aria-hidden="true">{referenceTypeLabel(descriptor.name)}</span>
       <div className="min-w-0">
-        <div className="truncate text-[12px] font-[630] text-text-primary" title={descriptor.name}>
+        <div className="truncate text-[12px] font-semibold text-text-primary" title={descriptor.name}>
           {descriptor.name}
         </div>
         <div className="mt-[3px] flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
@@ -440,7 +440,7 @@ function PendingReferenceRow({
     <li className="grid min-h-[55px] min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-border-subtle max-[761px]:grid-cols-[36px_minmax(0,1fr)]">
       <span className="grid h-9 w-9 place-items-center border border-border-subtle bg-bg-base font-mono text-[9px] font-bold text-text-tertiary" aria-hidden="true">{referenceTypeLabel(item.file.name)}</span>
       <div className="min-w-0">
-        <div className="truncate text-[12px] font-[630] text-text-primary" title={item.file.name}>{item.file.name}</div>
+        <div className="truncate text-[12px] font-semibold text-text-primary" title={item.file.name}>{item.file.name}</div>
         <div className="mt-[3px] flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
           <span>{formatAttachmentSize(item.file.size)}</span>
           <span aria-hidden="true">·</span>

@@ -5,8 +5,8 @@ import type { ScopedHitlView } from "../../store/hitl-store";
 import type { HitlDisplayPayload, HitlQuestionDisplayItem, HitlResponse, HitlSource } from "../../api/types";
 import { IconAction } from "../primitives/IconAction";
 
-const PRIMARY_ACTION_CLASS = "h-8 rounded-sm bg-text-primary px-3 text-[12px] font-medium leading-4 text-bg-base transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover hover:text-brand-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
-const SECONDARY_ACTION_CLASS = "h-8 rounded-sm border border-border-default bg-transparent px-3 text-[12px] font-medium leading-4 text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
+const PRIMARY_ACTION_CLASS = "h-8 rounded-sm bg-text-primary px-3 text-[12px] font-medium leading-4 text-bg-base transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover hover:text-brand-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
+const SECONDARY_ACTION_CLASS = "h-8 rounded-sm border border-border-default bg-transparent px-3 text-[12px] font-medium leading-4 text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 
 function questions(payload: HitlDisplayPayload): HitlQuestionDisplayItem[] {
   return payload.questions?.length ? payload.questions : [{ question: payload.summary ?? payload.title, header: "Q1", custom: true }];

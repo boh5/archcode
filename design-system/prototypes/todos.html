@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Todos · ArchCode</title><link rel="stylesheet" href="./styles.css?v=signal-polish-2">
+  <title>Todos · ArchCode</title><link rel="stylesheet" href="./styles.css?v=todo-only-7">
 </head>
 <body class="page-todos">
   <div class="app-shell">
@@ -16,8 +16,8 @@
           <a class="nav-row view-row active" href="./todos.html"><span data-icon="list"></span><span>All todos</span><b>12</b></a>
         </section>
         <section class="nav-section"><div class="nav-section-title"><span>Needs you</span><b>2</b></div>
-          <a class="nav-row attention-row" href="./session.html?view=todo&amp;sample=permission"><span class="nav-status attention"></span><span>Choose the recovery policy for interrupted runs</span><b>?</b></a>
-          <a class="nav-row" href="./session.html?view=todo&amp;sample=question"><span class="nav-status review"></span><span>Review the Todo → Run handoff contract</span></a>
+          <a class="nav-row attention-row" href="./session.html?view=work&amp;sample=running"><span class="nav-status attention"></span><span>Choose the recovery policy for interrupted runs</span><b>3</b></a>
+          <a class="nav-row" href="./session.html?view=work&amp;sample=question"><span class="nav-status review"></span><span>Review the Todo → Run handoff contract</span><b>1</b></a>
         </section>
         <section class="nav-section"><div class="nav-section-title"><span>In progress</span><b>4</b></div>
           <a class="nav-row" href="./session.html?view=todo&amp;sample=running"><span class="nav-status live"></span><span>Model profile defaults per project</span></a>
@@ -84,7 +84,7 @@
     </main>
   </div>
 
-  <dialog class="modal new-todo-dialog" data-new-todo-dialog aria-labelledby="new-todo-title" aria-describedby="new-todo-help"><form class="modal-card"><div class="modal-head"><h2 id="new-todo-title">New Todo</h2><button class="icon-button" type="button" data-dialog-close aria-label="Close New Todo"><span data-icon="close"></span></button></div><div class="modal-body"><label for="new-todo-content">Todo content</label><textarea id="new-todo-content" rows="6" placeholder="Describe an idea, bug, feature, or paste a PRD…" aria-describedby="new-todo-help"></textarea><p class="modal-hint" id="new-todo-help">Markdown is supported. Save it for later, shape it in a Discussion, or run it as a Lead Session.</p><p class="modal-error" role="alert" data-new-todo-error hidden>Todo content is required.</p></div><div class="modal-actions"><button class="quiet-button modal-cancel" type="button" data-dialog-close>Cancel</button><button class="secondary-button" type="button" data-new-todo-action="save">Save</button><button class="secondary-button" type="button" data-new-todo-action="discussion">Start discussion</button><button class="primary-button" type="button" data-new-todo-action="run">Run now</button></div></form></dialog>
-  <div class="toast" role="status" aria-live="polite"></div><script src="./app.js?v=signal-polish-2"></script>
+  <dialog class="modal new-todo-dialog" data-new-todo-dialog aria-labelledby="new-todo-title" aria-describedby="new-todo-help"><form class="modal-card"><div class="modal-head"><h2 id="new-todo-title">New Todo</h2><button class="icon-button" type="button" data-dialog-close aria-label="Close New Todo"><span data-icon="close"></span></button></div><div class="modal-body"><label for="new-todo-content">Todo content</label><textarea id="new-todo-content" rows="6" placeholder="Describe an idea, bug, feature, refactor, or other work…" aria-describedby="new-todo-help"></textarea><p class="modal-hint" id="new-todo-help">Markdown is supported. Save it for later, shape it in a Discussion, or run it as a Lead Session.</p><p class="modal-error" role="alert" data-new-todo-error hidden>Todo content is required.</p></div><div class="modal-actions"><button class="quiet-button modal-cancel" type="button" data-dialog-close>Cancel</button><button class="secondary-button" type="button" data-new-todo-action="save">Save</button><button class="secondary-button" type="button" data-new-todo-action="discussion">Start discussion</button><button class="primary-button" type="button" data-new-todo-action="run">Run now</button></div></form></dialog>
+  <div class="toast" role="status" aria-live="polite"></div><script src="./app.js?v=todo-only-7"></script>
 </body>
 </html>

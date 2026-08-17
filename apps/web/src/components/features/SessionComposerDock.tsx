@@ -69,17 +69,20 @@ export function SessionComposerDock({
 
   return (
     <div
-      className="relative z-[4] flex min-h-0 max-h-[min(52dvh,460px)] flex-[0_1_auto] flex-col overflow-visible border-t border-border-default bg-bg-base min-[761px]:max-h-[min(48dvh,520px)]"
+      className={`relative z-[4] flex min-h-0 flex-[0_1_auto] flex-col overflow-visible border-0 bg-transparent ${hasPendingHitl
+        ? "max-h-[min(78dvh,640px)]"
+        : "max-h-[min(52dvh,460px)] min-[761px]:max-h-[min(48dvh,520px)]"
+      }`}
       data-testid="session-composer-dock"
     >
       <div
         className="flex min-h-0 max-h-full flex-1 flex-col px-0 min-[761px]:px-[var(--session-scrollbar-gutter,0px)]"
         data-testid="composer-scrollbar-alignment"
       >
-        <ConversationRail className="mx-auto flex min-h-0 max-h-full flex-1 flex-col !max-w-[900px] !px-3 pb-3 pt-2.5 min-[761px]:!px-[26px] min-[761px]:pb-[14px] min-[761px]:pt-3" data-testid="conversation-composer-rail">
-          <SessionThreadColumn className="flex min-h-0 max-h-full flex-col gap-2.5 !max-w-[848px]" data-testid="composer-thread-column">
+        <ConversationRail className="mx-auto flex min-h-0 max-h-full flex-1 flex-col !max-w-[900px] !px-3 pb-3 pt-2.5 min-[761px]:!px-[26px] min-[761px]:pb-4 min-[761px]:pt-[14px]" data-testid="conversation-composer-rail">
+          <SessionThreadColumn className="flex min-h-0 max-h-full flex-col gap-2 !max-w-[848px]" data-testid="composer-thread-column">
             <div
-              className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5 overflow-x-hidden overflow-y-auto overscroll-contain"
+              className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-contain"
               data-testid="composer-priority-stack"
             >
               {activeHitl && (

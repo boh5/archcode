@@ -1,10 +1,10 @@
 import {
+  Activity,
   Archive,
-  CircleCheck,
-  CircleDot,
-  CirclePlay,
+  Check,
   CircleX,
-  Lightbulb,
+  Play,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import type {
@@ -58,20 +58,37 @@ export interface ProjectTodoOperationalFacts {
   readonly authoritative: boolean;
 }
 
+/** Exact Todo attention: linked root HITL or a Work/Automation Goal gate. */
+export function deriveProjectTodoNeedsUser(
+  todo: ProjectTodo,
+  sessions: readonly ProjectSessionInventoryItem[],
+  attentionBySessionId: ReadonlyMap<string, unknown>,
+): boolean {
+  if (todo.archivedAt !== undefined || todo.status === "rejected") return false;
+  const linkedRoots = sessions.filter(({ session }) => rootSessionSourceTodoId(session.source) === todo.id);
+  if (linkedRoots.some(({ session }) => attentionBySessionId.has(session.sessionId))) return true;
+  return linkedRoots.some(({ session }) => {
+    const workOrAutomation = session.source.kind === "automation"
+      || (session.source.kind === "todo" && (session.source.entry === "work" || session.source.entry === "automation"));
+    return workOrAutomation
+      && (session.goal?.status === "blocked" || session.goal?.status === "budget_limited");
+  });
+}
+
 const CARD_PRESENTATIONS: Readonly<Record<ProjectTodoCardPresentation["label"], ProjectTodoCardPresentation>> = {
-  Idea: { label: "Idea", Icon: Lightbulb, tone: "brand" },
-  Ready: { label: "Ready", Icon: CircleDot, tone: "neutral" },
-  "In Progress": { label: "In Progress", Icon: CirclePlay, tone: "signal" },
-  Done: { label: "Done", Icon: CircleCheck, tone: "success" },
+  Idea: { label: "Idea", Icon: Sparkles, tone: "neutral" },
+  Ready: { label: "Ready", Icon: Play, tone: "brand" },
+  "In Progress": { label: "In Progress", Icon: Activity, tone: "signal" },
+  Done: { label: "Done", Icon: Check, tone: "success" },
   Rejected: { label: "Rejected", Icon: CircleX, tone: "warning" },
   Archived: { label: "Archived", Icon: Archive, tone: "neutral" },
 };
 
 export const PROJECT_TODO_LANE_PRESENTATIONS: Readonly<Record<ProjectTodoLane, ProjectTodoLanePresentation>> = {
-  idea: { title: "Ideas", hint: "Captured, not committed", emptyTitle: "No ideas yet", emptyHint: "Capture an idea above.", Icon: Lightbulb, tone: "brand" },
-  ready: { title: "Ready", hint: "Clear enough to start", emptyTitle: "Nothing ready", emptyHint: "Move an idea here when it is ready.", Icon: CircleDot, tone: "neutral" },
-  in_progress: { title: "In Progress", hint: "Execution is attached here", emptyTitle: "No work in progress", emptyHint: "Start work or drag a Todo here.", Icon: CirclePlay, tone: "signal" },
-  done: { title: "Done", hint: "Explicitly accepted", emptyTitle: "Nothing completed", emptyHint: "Completed Todos stay visible here.", Icon: CircleCheck, tone: "success" },
+  idea: { title: "Ideas", hint: "Captured, not committed", emptyTitle: "No ideas yet", emptyHint: "Capture an idea above.", Icon: Sparkles, tone: "neutral" },
+  ready: { title: "Ready", hint: "Clear enough to start", emptyTitle: "Nothing ready", emptyHint: "Move an idea here when it is ready.", Icon: Play, tone: "brand" },
+  in_progress: { title: "In Progress", hint: "Execution is attached here", emptyTitle: "No work in progress", emptyHint: "Start work or drag a Todo here.", Icon: Activity, tone: "signal" },
+  done: { title: "Done", hint: "Explicitly accepted", emptyTitle: "Nothing completed", emptyHint: "Completed Todos stay visible here.", Icon: Check, tone: "success" },
 };
 
 const PROJECT_TODO_DISPLAY_LEAD_MAX_LENGTH = 80;
@@ -83,7 +100,7 @@ export function projectTodoDisplayLead(content: string): string {
   const heading = lines.find((line) => /^#{1,6}\s+/u.test(line));
   const source = heading !== undefined
     ? heading.replace(/^#{1,6}\s+/u, "")
-    : lines.map(normalizeTodoDisplayLine).filter(Boolean).join(" ");
+    : normalizeTodoDisplayLine(lines[0] ?? "");
   return truncateTodoDisplayText(source.replace(/\s+/gu, " ").trim(), PROJECT_TODO_DISPLAY_LEAD_MAX_LENGTH);
 }
 
@@ -200,6 +217,7 @@ export function deriveProjectTodoOperationalState(
     return undefined;
   }
 
+  const linkedRoots = facts.sessions.filter(({ session }) => rootSessionSourceTodoId(session.source) === facts.todo.id);
   const linkedAutomations = facts.automations.filter(({ automation }) => (
     automation.origin.kind === "todo" && automation.origin.todoId === facts.todo.id
   ));
@@ -215,21 +233,21 @@ export function deriveProjectTodoOperationalState(
     ))
     .sort(compareSessionRecency);
 
-  for (const { session } of workSessions) {
-    const attention = facts.attentionBySessionId.get(session.sessionId);
-    if (attention !== undefined) return { label: "Needs you", detail: attention, kind: "needs_you" };
-  }
-  for (const { session } of workSessions) {
-    if (session.goal?.status === "budget_limited") {
-      return { label: "Needs you", detail: "Budget limit", kind: "needs_you" };
+  if (deriveProjectTodoNeedsUser(facts.todo, facts.sessions, facts.attentionBySessionId)) {
+    for (const { session } of linkedRoots) {
+      const attention = facts.attentionBySessionId.get(session.sessionId);
+      if (attention !== undefined) return { label: "Needs you", detail: attention, kind: "needs_you" };
     }
-    if (session.goal?.status === "blocked") {
-      return { label: "Needs you", detail: "Goal blocked", kind: "needs_you" };
-    }
-  }
-  for (const { session } of workSessions) {
-    if (facts.activityBySessionId.get(session.sessionId) === "waiting_for_human") {
-      return { label: "Needs you", detail: "Waiting for response", kind: "needs_you" };
+    for (const { session } of linkedRoots) {
+      const workOrAutomation = session.source.kind === "automation"
+        || (session.source.kind === "todo" && (session.source.entry === "work" || session.source.entry === "automation"));
+      if (!workOrAutomation) continue;
+      if (session.goal?.status === "budget_limited") {
+        return { label: "Needs you", detail: "Budget limit", kind: "needs_you" };
+      }
+      if (session.goal?.status === "blocked") {
+        return { label: "Needs you", detail: "Goal blocked", kind: "needs_you" };
+      }
     }
   }
   for (const { session } of workSessions) {

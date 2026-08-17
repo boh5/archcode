@@ -43,7 +43,6 @@
     shield: '<path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6Z"/><path d="m9 12 2 2 4-4"/>',
     edit: '<path d="M4 20h4L19 9l-4-4L4 16Z"/><path d="m13 7 4 4"/>',
     trash: '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6"/>',
-    'check-square': '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 12 3 3 7-7"/>',
     refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 9A7 7 0 0 1 18.8 7M17.9 15A7 7 0 0 1 5.2 17"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     square: '<rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" stroke="none"/>',
@@ -51,6 +50,7 @@
     attach: '<path d="m21 11.5-8.8 8.8a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8L15 6.3"/>',
     down: '<path d="m6 9 6 6 6-6"/>',
     'arrow-up': '<path d="m6 11 6-6 6 6M12 5v14"/>',
+    'arrow-left': '<path d="m19 12-14 0M11 18l-6-6 6-6"/>',
     memory: '<path d="M8 3h8v4h3v10h-3v4H8v-4H5V7h3Z"/><path d="M9 9h6M9 13h6"/>',
     sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
   };
@@ -216,7 +216,7 @@
         </dialog>`);
     }
     if (!document.querySelector('[data-project-dialog]')) {
-      document.body.insertAdjacentHTML('beforeend', `<dialog class="modal project-dialog" data-project-dialog aria-labelledby="project-dialog-title"><form class="modal-card" method="dialog"><div class="modal-head"><h2 id="project-dialog-title">Open project</h2><button class="icon-button" type="button" data-project-dialog-close aria-label="Close Open project"><span data-icon="close"></span></button></div><div class="modal-body"><label for="project-path">Workspace path</label><input id="project-path" type="text" value="~/Developer/AI/" data-project-path><p class="modal-hint">Register an existing local workspace. ArchCode will not create or modify the directory.</p></div><div class="modal-actions"><button class="quiet-button" type="button" data-project-dialog-close>Cancel</button><button class="primary-button" type="button" data-project-open>Open project</button></div></form></dialog>`);
+      document.body.insertAdjacentHTML('beforeend', `<dialog class="modal project-dialog" data-project-dialog aria-labelledby="project-dialog-title"><form class="modal-card" method="dialog"><div class="modal-head"><h2 id="project-dialog-title">Add Project</h2><button class="icon-button" type="button" data-project-dialog-close aria-label="Close"><span data-icon="close"></span></button></div><div class="project-dialog-search"><label class="sr-only" for="project-path">Search or type a folder path</label><div class="project-dialog-field"><span data-icon="search"></span><input id="project-path" type="text" placeholder="Search or type a folder path…" autocomplete="off" data-project-path></div></div><div class="project-dialog-actions"><span data-project-dialog-help>Type to search for directories</span><div><button class="quiet-button" type="button" data-project-dialog-close>Cancel</button><button class="primary-button" type="button" data-project-open disabled>Add Project</button></div></div></form></dialog>`);
     }
     if (!document.querySelector('[data-settings-dialog]')) {
       document.body.insertAdjacentHTML('beforeend', `
@@ -265,6 +265,29 @@
   document.documentElement.dataset.theme = storedTheme || 'dark';
   renderIcons();
 
+  const focusableSelector = [
+    'a[href]:not([hidden])',
+    'button:not([hidden]):not(:disabled)',
+    'input:not([hidden]):not(:disabled)',
+    'select:not([hidden]):not(:disabled)',
+    'textarea:not([hidden]):not(:disabled)',
+    '[tabindex]:not([tabindex="-1"]):not([hidden])',
+  ].join(',');
+  function trapTabWithin(container, event) {
+    if (event.key !== 'Tab') return;
+    const items = [...container.querySelectorAll(focusableSelector)].filter((item) => !item.closest('[hidden]') && item.getClientRects().length);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   document.querySelectorAll('[data-theme-toggle]').forEach((button) => {
     button.addEventListener('click', () => {
       const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
@@ -276,11 +299,23 @@
 
   const todoNav = document.querySelector('.todo-nav');
   const navToggles = [...document.querySelectorAll('[data-nav-toggle]')];
+  let todoNavOrigin;
+  let todoNavScrim;
+  if (todoNav) {
+    todoNavScrim = document.createElement('button');
+    todoNavScrim.type = 'button';
+    todoNavScrim.className = 'todo-nav-scrim';
+    todoNavScrim.hidden = true;
+    todoNavScrim.tabIndex = -1;
+    todoNavScrim.setAttribute('aria-label', 'Close Todo navigation');
+    document.body.appendChild(todoNavScrim);
+  }
   function syncTodoNavState() {
     if (!todoNav) return;
     if (!todoNav.id) todoNav.id = 'todo-navigation';
     const drawer = matchMedia('(max-width: 980px)').matches;
     const expanded = !drawer || document.body.classList.contains('nav-open');
+    if (todoNavScrim) todoNavScrim.hidden = !drawer || !expanded;
     todoNav.toggleAttribute('inert', !expanded);
     todoNav.setAttribute('aria-hidden', String(!expanded));
     navToggles.forEach((button) => {
@@ -291,22 +326,21 @@
   function closeTodoNav(restoreFocus = false) {
     document.body.classList.remove('nav-open');
     syncTodoNavState();
-    if (restoreFocus) navToggles.find((button) => !button.hidden)?.focus();
+    if (restoreFocus) todoNavOrigin?.focus();
   }
   window.syncPrototypeNavState = syncTodoNavState;
   navToggles.forEach((button) => {
     button.addEventListener('click', () => {
       if (!matchMedia('(max-width: 980px)').matches) return;
+      todoNavOrigin = button;
       document.body.classList.toggle('nav-open');
       syncTodoNavState();
       if (document.body.classList.contains('nav-open')) requestAnimationFrame(() => todoNav?.querySelector('a,button')?.focus());
     });
   });
-
-  document.addEventListener('click', (event) => {
-    if (document.body.classList.contains('nav-open') && !event.target.closest('.todo-nav') && !event.target.closest('[data-nav-toggle]')) {
-      closeTodoNav(false);
-    }
+  todoNavScrim?.addEventListener('click', () => closeTodoNav(true));
+  todoNav?.addEventListener('keydown', (event) => {
+    if (matchMedia('(max-width: 980px)').matches && document.body.classList.contains('nav-open')) trapTabWithin(todoNav, event);
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && document.body.classList.contains('nav-open')) {
@@ -319,6 +353,17 @@
 
   const inspectorToggles = [...document.querySelectorAll('[data-inspector-toggle]')];
   const inspector = document.querySelector('.context-inspector');
+  let inspectorOrigin;
+  let inspectorScrim;
+  if (inspector) {
+    inspectorScrim = document.createElement('button');
+    inspectorScrim.type = 'button';
+    inspectorScrim.className = 'inspector-scrim';
+    inspectorScrim.hidden = true;
+    inspectorScrim.tabIndex = -1;
+    inspectorScrim.setAttribute('aria-label', 'Close Session inspector');
+    document.body.appendChild(inspectorScrim);
+  }
   const inspectorResize = document.querySelector('[data-inspector-resize]');
   const inspectorWidthKey = 'archcode-prototype-inspector-width';
   const clampInspectorWidth = (width) => Math.min(460, Math.max(280, Math.round(width)));
@@ -331,6 +376,7 @@
     const expanded = overlay
       ? document.body.classList.contains('inspector-open')
       : !document.body.classList.contains('inspector-collapsed');
+    if (inspectorScrim) inspectorScrim.hidden = !overlay || !expanded;
     inspectorToggles.forEach((button) => {
       button.setAttribute('aria-expanded', String(expanded));
       button.classList.toggle('active', expanded);
@@ -341,6 +387,7 @@
   window.syncPrototypeInspectorState = syncInspectorState;
   inspectorToggles.forEach((button) => {
     button.addEventListener('click', () => {
+      inspectorOrigin = button;
       if (matchMedia('(max-width: 1260px)').matches) {
         document.body.classList.toggle('inspector-open');
       } else {
@@ -355,16 +402,20 @@
     if (matchMedia('(max-width: 1260px)').matches) document.body.classList.remove('inspector-open');
     else document.body.classList.add('inspector-collapsed');
     syncInspectorState();
-    if (restoreFocus) inspectorToggles.find((button) => !button.hidden)?.focus();
+    if (restoreFocus) inspectorOrigin?.focus();
   }
   document.querySelectorAll('[data-inspector-close]').forEach((button) => {
     button.addEventListener('click', () => closeInspector());
   });
   inspector?.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    closeInspector();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeInspector();
+      return;
+    }
+    if (matchMedia('(max-width: 1260px)').matches && document.body.classList.contains('inspector-open')) trapTabWithin(inspector, event);
   });
+  inspectorScrim?.addEventListener('click', () => closeInspector(true));
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     const expanded = inspectorToggles.some((button) => button.getAttribute('aria-expanded') === 'true');
@@ -961,7 +1012,8 @@
 
   const workSearchDialog = document.querySelector('[data-work-search-dialog]');
   const workSearchInput = document.querySelector('[data-work-search-input]');
-  const workSearchTrigger = document.querySelector('[data-open-global-search]');
+  const workSearchTriggers = [...document.querySelectorAll('[data-open-global-search]')];
+  let workSearchOrigin;
   const searchIdentityByTitle = new Map([
     ['Recovery policy', '3ae77f76-0a63-42f4-85db-53ec65c02cec'],
     ['Model profile defaults per project', '4e8b1d3a-2f9c-4a67-a1cd-825da20d2e6b'],
@@ -987,36 +1039,44 @@
       empty.hidden = hasQuery && workSearchRows.some((row) => !row.hidden);
     }
   }
-  workSearchTrigger?.addEventListener('click', () => {
+  workSearchTriggers.forEach((trigger) => trigger.addEventListener('click', () => {
+    workSearchOrigin = trigger;
     workSearchDialog?.showModal();
-    workSearchTrigger.setAttribute('aria-expanded', 'true');
+    trigger.setAttribute('aria-expanded', 'true');
     filterWorkSearch();
     requestAnimationFrame(() => workSearchInput?.focus());
-  });
+  }));
   document.querySelector('[data-work-search-close]')?.addEventListener('click', () => workSearchDialog?.close());
   workSearchDialog?.addEventListener('click', (event) => { if (event.target === workSearchDialog) workSearchDialog.close(); });
   workSearchDialog?.addEventListener('close', () => {
-    workSearchTrigger?.setAttribute('aria-expanded', 'false');
-    workSearchTrigger?.focus();
+    workSearchTriggers.forEach((trigger) => trigger.setAttribute('aria-expanded', 'false'));
+    workSearchOrigin?.focus();
   });
   workSearchInput?.addEventListener('input', filterWorkSearch);
 
   const projectDialog = document.querySelector('[data-project-dialog]');
+  const projectPathInput = projectDialog?.querySelector('[data-project-path]');
+  const projectOpenButton = projectDialog?.querySelector('[data-project-open]');
   const settingsDialog = document.querySelector('[data-settings-dialog]');
   let projectDialogOrigin;
   document.querySelectorAll('[data-open-project]').forEach((button) => button.addEventListener('click', () => {
     projectDialogOrigin = button;
+    if (projectPathInput) projectPathInput.value = '';
+    if (projectOpenButton) projectOpenButton.disabled = true;
     projectDialog?.showModal();
-    requestAnimationFrame(() => document.querySelector('[data-project-path]')?.focus());
+    requestAnimationFrame(() => projectPathInput?.focus());
   }));
   projectDialog?.addEventListener('close', () => {
     projectDialogOrigin?.focus();
   });
   document.querySelectorAll('[data-project-dialog-close]').forEach((button) => button.addEventListener('click', () => projectDialog?.close()));
   projectDialog?.addEventListener('click', (event) => { if (event.target === projectDialog) projectDialog.close(); });
-  document.querySelector('[data-project-open]')?.addEventListener('click', () => {
-    const path = document.querySelector('[data-project-path]')?.value.trim();
-    if (!path) return document.querySelector('[data-project-path]')?.focus();
+  projectPathInput?.addEventListener('input', () => {
+    if (projectOpenButton) projectOpenButton.disabled = !projectPathInput.value.trim();
+  });
+  projectOpenButton?.addEventListener('click', () => {
+    const path = projectPathInput?.value.trim();
+    if (!path) return projectPathInput?.focus();
     projectDialog?.close();
     if (document.body.classList.contains('page-project-empty')) {
       location.href = './todos.html';
@@ -1550,15 +1610,15 @@
     settingsConfirmDialog.close();
     renderSettings();
   });
-  const openSettingsButton = document.querySelector('[data-open-settings]');
-  openSettingsButton?.addEventListener('click', () => {
-    settingsOrigin = document.activeElement;
+  const openSettingsButtons = [...document.querySelectorAll('[data-open-settings]')];
+  openSettingsButtons.forEach((button) => button.addEventListener('click', () => {
+    settingsOrigin = button;
     settingsState.section = 'models';
     renderSettings();
     settingsPanel.scrollTop = 0;
     settingsDialog?.showModal();
     requestAnimationFrame(() => settingsPanel?.querySelector('h3')?.focus());
-  });
+  }));
   document.querySelectorAll('[data-settings-dialog-close]').forEach((button) => button.addEventListener('click', () => settingsDialog?.close()));
   settingsDialog?.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || settingsConfirmDialog?.open) return;
@@ -2071,24 +2131,53 @@
   const newTodoDialog = document.querySelector('[data-new-todo-dialog]');
   const newTodoInput = newTodoDialog?.querySelector('#new-todo-content');
   const newTodoError = newTodoDialog?.querySelector('[data-new-todo-error]');
+  const newTodoForm = newTodoDialog?.querySelector('form');
+  let newTodoPending = false;
+  let newTodoPendingStatus;
+  if (newTodoDialog) {
+    newTodoPendingStatus = document.createElement('p');
+    newTodoPendingStatus.className = 'modal-hint';
+    newTodoPendingStatus.dataset.newTodoPending = '';
+    newTodoPendingStatus.setAttribute('role', 'status');
+    newTodoPendingStatus.setAttribute('aria-live', 'polite');
+    newTodoPendingStatus.hidden = true;
+    newTodoDialog.querySelector('.modal-body')?.appendChild(newTodoPendingStatus);
+  }
+  function setNewTodoPending(pending, label = '') {
+    newTodoPending = pending;
+    newTodoForm?.setAttribute('aria-busy', String(pending));
+    newTodoDialog?.querySelectorAll('button').forEach((button) => { button.disabled = pending; });
+    if (newTodoInput) newTodoInput.readOnly = pending;
+    if (newTodoPendingStatus) {
+      newTodoPendingStatus.textContent = label;
+      newTodoPendingStatus.hidden = !pending;
+    }
+  }
   let newTodoTrigger;
   document.querySelectorAll('[data-new-todo]').forEach((button) => {
     button.addEventListener('click', () => {
       if (!newTodoDialog) return;
       newTodoTrigger = button;
       if (newTodoError) newTodoError.hidden = true;
-      document.body.classList.remove('nav-open');
       newTodoDialog.showModal();
       requestAnimationFrame(() => newTodoInput?.focus());
     });
   });
   document.querySelectorAll('[data-dialog-close]').forEach((button) => {
-    button.addEventListener('click', () => button.closest('dialog')?.close());
+    button.addEventListener('click', () => {
+      const dialog = button.closest('dialog');
+      if (dialog === newTodoDialog && newTodoPending) return;
+      dialog?.close();
+    });
   });
   newTodoDialog?.addEventListener('click', (event) => {
-    if (event.target === newTodoDialog) newTodoDialog.close();
+    if (event.target === newTodoDialog && !newTodoPending) newTodoDialog.close();
+  });
+  newTodoDialog?.addEventListener('cancel', (event) => {
+    if (newTodoPending) event.preventDefault();
   });
   newTodoDialog?.addEventListener('close', () => {
+    setNewTodoPending(false);
     if (newTodoInput) newTodoInput.value = '';
     if (newTodoError) newTodoError.hidden = true;
     requestAnimationFrame(() => newTodoTrigger?.focus());
@@ -2216,43 +2305,43 @@
   const todoFixtures = {
     profile: {
       status: 'In progress', tone: 'live', lane: 'in_progress', workCount: 5, plan: 'present',
-      brief: '<h3>Model profile defaults per project</h3><p>Allow a project to specialize model selection without copying the full provider configuration or hiding invalid references.</p><h4>Problem</h4><p>Every project currently inherits all three global profiles. A full configuration copy would drift and make validation ambiguous.</p><h4>Acceptance criteria</h4><ul><li>Override principal, deep, or fast independently.</li><li>Missing keys inherit the matching global profile.</li><li>Unknown models and variants fail before work starts.</li><li>The resolved profile is recorded on each Execution.</li></ul>',
+      contentHtml: '<h3>Model profile defaults per project</h3><p>Allow a project to specialize model selection without copying the full provider configuration or hiding invalid references.</p><h4>Problem</h4><p>Every project currently inherits all three global profiles. A full configuration copy would drift and make validation ambiguous.</p><h4>Acceptance criteria</h4><ul><li>Override principal, deep, or fast independently.</li><li>Missing keys inherit the matching global profile.</li><li>Unknown models and variants fail before work starts.</li><li>The resolved profile is recorded on each Execution.</li></ul>',
       markdown: '# Model profile defaults per project\n\nAllow a project to specialize model selection without copying the full provider configuration or hiding invalid references.\n\n## Problem\n\nEvery project currently inherits all three global profiles. A full configuration copy would drift and make validation ambiguous.\n\n## Acceptance criteria\n\n- Override principal, deep, or fast independently.\n- Missing keys inherit the matching global profile.\n- Unknown models and variants fail before work starts.\n- The resolved profile is recorded on each Execution.',
       references: [['profile-precedence.md', '6.2 KB · text/markdown'], ['config-resolution.png', '184 KB · image/png']],
     },
     recovery: {
       status: 'In progress', tone: 'live', lane: 'in_progress', workCount: 1, plan: 'absent',
-      brief: '<h3>Choose the recovery policy for interrupted runs</h3><p>Verify the stale worktree before moving it to Trash, without touching the project root or active Sessions.</p><h4>Acceptance criteria</h4><ul><li>Run the focused recovery verification first.</li><li>Require an explicit permission for the destructive boundary.</li><li>Preserve the exact recovery location in the final report.</li></ul>',
+      contentHtml: '<h3>Choose the recovery policy for interrupted runs</h3><p>Verify the stale worktree before moving it to Trash, without touching the project root or active Sessions.</p><h4>Acceptance criteria</h4><ul><li>Run the focused recovery verification first.</li><li>Require an explicit permission for the destructive boundary.</li><li>Preserve the exact recovery location in the final report.</li></ul>',
       markdown: '# Choose the recovery policy for interrupted runs\n\nVerify the stale worktree before moving it to Trash, without touching the project root or active Sessions.\n\n## Acceptance criteria\n\n- Run the focused recovery verification first.\n- Require an explicit permission for the destructive boundary.\n- Preserve the exact recovery location in the final report.',
       references: [['recovery-policy.md', '4.8 KB · text/markdown'], ['worktree-inventory.txt', '2.1 KB · text/plain']],
     },
     handoff: {
       status: 'Idea', tone: 'neutral', lane: 'idea', workCount: 1, plan: 'absent',
-      brief: '<h3>Review the Todo → Run handoff contract</h3><p>Preserve the Discussion evidence and record a recommendation without starting implementation from the Discussion itself.</p><h4>Decision boundary</h4><ul><li>Continue shaping if acceptance boundaries remain unclear.</li><li>Recommend Start Work only when a separate Lead Session can begin safely.</li></ul>',
+      contentHtml: '<h3>Review the Todo → Run handoff contract</h3><p>Preserve the Discussion evidence and record a recommendation without starting implementation from the Discussion itself.</p><h4>Decision boundary</h4><ul><li>Continue shaping if acceptance boundaries remain unclear.</li><li>Recommend Start Work only when a separate Lead Session can begin safely.</li></ul>',
       markdown: '# Review the Todo → Run handoff contract\n\nPreserve the Discussion evidence and record a recommendation without starting implementation from the Discussion itself.\n\n## Decision boundary\n\n- Continue shaping if acceptance boundaries remain unclear.\n- Recommend Start Work only when a separate Lead Session can begin safely.',
       references: [['handoff-evidence.md', '3.4 KB · text/markdown']],
     },
     audit: {
       status: 'Ready', tone: 'ready', lane: 'ready', workCount: 1, plan: 'absent', result: 'Permission requests, decisions, and the resumed same-Execution outcome are now recorded together without a fabricated continuation run.',
-      brief: '<h3>Add a durable permission audit trail</h3><p>Retain the request, decision, and resumed Execution relationship without inventing a second continuation run.</p><h4>Acceptance criteria</h4><ul><li>Bind each response to its exact original request.</li><li>Show the resulting terminal state on the same Session.</li></ul>',
+      contentHtml: '<h3>Add a durable permission audit trail</h3><p>Retain the request, decision, and resumed Execution relationship without inventing a second continuation run.</p><h4>Acceptance criteria</h4><ul><li>Bind each response to its exact original request.</li><li>Show the resulting terminal state on the same Session.</li></ul>',
       markdown: '# Add a durable permission audit trail\n\nRetain the request, decision, and resumed Execution relationship without inventing a second continuation run.\n\n## Acceptance criteria\n\n- Bind each response to its exact original request.\n- Show the resulting terminal state on the same Session.',
       references: [['permission-contract.md', '5.1 KB · text/markdown']],
     },
     outputRecovery: {
       status: 'In progress', tone: 'live', lane: 'in_progress', workCount: 1, plan: 'absent',
-      brief: '<h3>Make tool output recovery inspectable</h3><p>Keep large finalized tool output recoverable through bounded, authorized reads without exposing an unbounded escape hatch.</p><h4>Acceptance criteria</h4><ul><li>Preserve redaction before artifact persistence.</li><li>Expose bounded read and search operations.</li><li>Keep the exact Session relationship visible.</li></ul>',
+      contentHtml: '<h3>Make tool output recovery inspectable</h3><p>Keep large finalized tool output recoverable through bounded, authorized reads without exposing an unbounded escape hatch.</p><h4>Acceptance criteria</h4><ul><li>Preserve redaction before artifact persistence.</li><li>Expose bounded read and search operations.</li><li>Keep the exact Session relationship visible.</li></ul>',
       markdown: '# Make tool output recovery inspectable\n\nKeep large finalized tool output recoverable through bounded, authorized reads without exposing an unbounded escape hatch.\n\n## Acceptance criteria\n\n- Preserve redaction before artifact persistence.\n- Expose bounded read and search operations.\n- Keep the exact Session relationship visible.',
       references: [['tool-output-contract.md', '7.4 KB · text/markdown']],
     },
     remoteRecovery: {
       status: 'In progress', tone: 'live', lane: 'in_progress', workCount: 1, plan: 'absent',
-      brief: '<h3>Recover remote projects after cold start</h3><p>Restore registered project runtime context after a remote host restart without treating a listening port as runtime readiness.</p><h4>Acceptance criteria</h4><ul><li>Validate project registry and runtime data.</li><li>Preserve durable Session recovery.</li><li>Report the exact failed prerequisite.</li></ul>',
+      contentHtml: '<h3>Recover remote projects after cold start</h3><p>Restore registered project runtime context after a remote host restart without treating a listening port as runtime readiness.</p><h4>Acceptance criteria</h4><ul><li>Validate project registry and runtime data.</li><li>Preserve durable Session recovery.</li><li>Report the exact failed prerequisite.</li></ul>',
       markdown: '# Recover remote projects after cold start\n\nRestore registered project runtime context after a remote host restart without treating a listening port as runtime readiness.\n\n## Acceptance criteria\n\n- Validate project registry and runtime data.\n- Preserve durable Session recovery.\n- Report the exact failed prerequisite.',
       references: [['cold-start-checklist.md', '4.1 KB · text/markdown']],
     },
     workspaceHealth: {
       status: 'Ready', tone: 'ready', lane: 'ready', workCount: 0, plan: 'absent',
-      brief: '<h3>Expose workspace health before bootstrap</h3><p>Show whether the registered project and its Runtime data are actually ready before offering work actions.</p><h4>Acceptance criteria</h4><ul><li>Separate listener health from Runtime readiness.</li><li>Identify the exact failing prerequisite.</li><li>Keep recovery actions inside their existing authority boundaries.</li></ul>',
+      contentHtml: '<h3>Expose workspace health before bootstrap</h3><p>Show whether the registered project and its Runtime data are actually ready before offering work actions.</p><h4>Acceptance criteria</h4><ul><li>Separate listener health from Runtime readiness.</li><li>Identify the exact failing prerequisite.</li><li>Keep recovery actions inside their existing authority boundaries.</li></ul>',
       markdown: '# Expose workspace health before bootstrap\n\nShow whether the registered project and its Runtime data are actually ready before offering work actions.\n\n## Acceptance criteria\n\n- Separate listener health from Runtime readiness.\n- Identify the exact failing prerequisite.\n- Keep recovery actions inside their existing authority boundaries.',
       references: [],
     },
@@ -2281,7 +2370,7 @@
     question: {
       todo: 'handoff', sourceLabel: 'Todo · Discussion', title: 'Handoff recommendation', eyebrow: 'DISCUSSION', status: 'Needs you', tone: 'attention', composer: 'Needs you', composerTone: 'attention', runStatus: 'Needs you', agentStatus: 'Question', agentTone: 'attention',
       rootRole: 'Discussion', rootMark: 'DI', rootClass: 'discussion', rootProfile: 'principal', rootObjective: 'Shaping Todo and Plan', children: false,
-      queue: 'After I answer, update the handoff brief and preserve the decision.', attachments: ['handoff-evidence.md', 'decision-matrix.md'], checkout: 'Current checkout: project root', cwd: 'project root', agentCount: 1, changeCount: 0, tools: '4 tools', tokens: '12k tokens', contextTokens: '12,000', execution: 'Suspended · Question',
+      queue: 'After I answer, update the Todo content and preserve the decision.', attachments: ['handoff-evidence.md', 'decision-matrix.md'], checkout: 'Current checkout: project root', cwd: 'project root', agentCount: 1, changeCount: 0, tools: '4 tools', tokens: '12k tokens', contextTokens: '12,000', execution: 'Suspended · Question',
     },
     ready: {
       todo: 'audit', sourceLabel: 'Todo · Work', title: 'Audit trail implementation', eyebrow: 'WORK SESSION', status: 'Completed', tone: 'done', composer: 'Ready', composerTone: 'idle', runStatus: 'Completed', agentStatus: 'Completed', agentTone: 'done',
@@ -2300,7 +2389,7 @@
     },
     'initial-discussion': {
       todo: 'profile', sourceLabel: 'Todo · Discussion', title: 'Initial shaping', eyebrow: 'DISCUSSION', status: 'Completed', tone: 'done', composer: 'Ready', composerTone: 'idle', runStatus: 'Completed', agentStatus: 'Completed', agentTone: 'done',
-      rootRole: 'Discussion', rootMark: 'DI', rootClass: 'discussion', rootProfile: 'principal', rootObjective: 'Brief shaping completed', children: false,
+      rootRole: 'Discussion', rootMark: 'DI', rootClass: 'discussion', rootProfile: 'principal', rootObjective: 'Todo shaping completed', children: false,
       queue: '', checkout: 'Current checkout: project root', cwd: 'project root', agentCount: 1, changeCount: 0, tools: '4 tools', tokens: '15k tokens', contextTokens: '15,000', execution: 'Completed', idle: true,
     },
     'automation-review': {
@@ -2365,13 +2454,13 @@
     },
     'direct-completed': {
       todo: null, sourceLabel: 'Direct', backLabel: 'Runs', backHref: './sessions.html', title: 'Preserve approval state after restart', eyebrow: 'DIRECT SESSION', status: 'Completed', tone: 'done', composer: 'Ready', composerTone: 'idle', runStatus: 'Completed', agentStatus: 'Completed', agentTone: 'done',
-      rootRole: 'Lead', rootMark: 'LE', rootClass: 'lead', rootProfile: 'principal', rootObjective: 'Recovery verification completed', children: false,
-      queue: '', checkout: 'Current checkout: project root', cwd: 'project root', agentCount: 1, changeCount: 0, tools: '9 tools', tokens: '17k tokens', contextTokens: '17,000', execution: 'Completed', idle: true,
+      rootRole: 'Lead', rootMark: 'LE', rootClass: 'lead', rootProfile: 'principal', rootObjective: 'Recovery verification completed', children: true,
+      queue: '', checkout: 'Current checkout: project root', cwd: 'project root', agentCount: 3, changeCount: 3, tools: '9 tools', tokens: '17k tokens', contextTokens: '17,000', execution: 'Completed', idle: true,
     },
     'automation-run': {
       todo: null, sourceLabel: 'Automation', backLabel: 'Schedules', backHref: './automations.html', title: 'Dependency health patrol', eyebrow: 'AUTOMATION SESSION', status: 'Completed', tone: 'done', composer: 'Ready', composerTone: 'idle', runStatus: 'Completed', agentStatus: 'Completed', agentTone: 'done',
-      rootRole: 'Lead', rootMark: 'LE', rootClass: 'lead', rootProfile: 'principal', rootObjective: 'Dependency review completed', children: false,
-      queue: '', checkout: 'Managed worktree: dependency-health-patrol', cwd: 'dependency-health-patrol', agentCount: 1, changeCount: 0, tools: '7 tools', tokens: '14k tokens', contextTokens: '14,000', execution: 'Completed', idle: true,
+      rootRole: 'Lead', rootMark: 'LE', rootClass: 'lead', rootProfile: 'principal', rootObjective: 'Dependency review completed', children: true,
+      queue: '', checkout: 'Managed worktree: dependency-health-patrol', cwd: 'dependency-health-patrol', agentCount: 3, changeCount: 3, tools: '7 tools', tokens: '14k tokens', contextTokens: '14,000', execution: 'Completed', idle: true,
     },
     'todo-shell': {
       todo: 'dynamic', shellOnly: true, sourceLabel: 'Todo', title: 'Todo', eyebrow: 'TODO', status: 'Ready', tone: 'neutral', composer: 'Ready', composerTone: 'idle', runStatus: 'Ready', agentStatus: 'Ready', agentTone: 'neutral',
@@ -2449,6 +2538,7 @@
   const sessionFullDiffAction = document.querySelector('[data-open-work-diff]');
   const composerState = document.querySelector('[data-composer-state]');
   const composerStateCopy = document.querySelector('[data-composer-state-copy]');
+  const composerHint = document.querySelector('[data-composer-hint]');
   const queuePrimaryCopy = document.querySelector('[data-queue-primary-copy]');
   const inspectorAgentStatus = document.querySelector('[data-inspector-agent-status]');
   const inspectorRootMark = document.querySelector('[data-inspector-root-mark]');
@@ -2464,8 +2554,8 @@
   const composerInput = document.querySelector('[data-session-composer-input]');
   const terminalAction = document.querySelector('[data-session-terminal-action]');
   const slashMenu = document.querySelector('[data-composer-slash-menu]');
-  const todoDiscussionActions = [...document.querySelectorAll('[data-create-todo-session="discussion-new"], [data-todo-plan-action]')];
-  const todoExecutionActions = [...document.querySelectorAll('[data-create-todo-session="work-new"], [data-create-todo-session="automation-setup"]')];
+  const todoDiscussionActions = [...document.querySelectorAll('[data-create-todo-session="discussion-new"], [data-todo-plan-action], [data-todo-discuss]')];
+  const todoExecutionActions = [...document.querySelectorAll('[data-create-todo-session="work-new"], [data-create-todo-session="automation-setup"], [data-todo-primary-work]')];
   let currentTodoLifecycle = 'idea';
   let lastActiveTodoLane = 'idea';
   let archivedTodoLifecycle;
@@ -2659,7 +2749,7 @@
           lane: dynamicLane,
           workCount: sample.shellOnly ? 0 : 1,
           plan: 'absent',
-          brief: renderPrototypeMarkdown(storedTodo.content),
+          contentHtml: renderPrototypeMarkdown(storedTodo.content),
           markdown: storedTodo.content,
           references: [],
         }
@@ -2669,7 +2759,7 @@
             status: dynamicPresentation[dynamicLane][0],
             tone: dynamicPresentation[dynamicLane][1],
             lane: dynamicLane,
-            brief: renderPrototypeMarkdown(storedTodo.content),
+            contentHtml: renderPrototypeMarkdown(storedTodo.content),
             markdown: storedTodo.content,
           }
       : requestedLane && ['idea', 'ready', 'in_progress', 'done'].includes(requestedLane)
@@ -2713,7 +2803,7 @@
     todoLifecycleButtons.forEach((button) => { button.disabled = false; });
     syncTodoEntryActions(fixture.lane, false);
     if (todoRejectEditor) todoRejectEditor.hidden = true;
-    if (todoContentView) todoContentView.innerHTML = fixture.brief;
+    if (todoContentView) todoContentView.innerHTML = fixture.contentHtml;
     if (todoContentInput) todoContentInput.value = fixture.markdown;
     const requestedPlan = todoRoute.searchParams.get('plan');
     if (requestedPlan && !['present', 'absent', 'empty'].includes(requestedPlan)) {
@@ -2894,7 +2984,8 @@
 
   function selectAgentSession(target, updateHistory = false) {
     const sampleName = document.body.dataset.sessionSample || 'running';
-    const validTarget = sampleName === 'running' && ['analyst', 'build'].includes(target) ? target : 'lead';
+    const sample = sessionSamples[sampleName];
+    const validTarget = sample?.children && ['analyst', 'build'].includes(target) ? target : 'lead';
     document.querySelectorAll('[data-agent-session-target]').forEach((item) => {
       const selected = item.dataset.agentSessionTarget === validTarget;
       item.classList.toggle('selected', selected);
@@ -2916,6 +3007,43 @@
     document.querySelector('.workbench-scroll')?.scrollTo({ top: 0, behavior: updateHistory ? 'smooth' : 'auto' });
   }
 
+  const sourceFixtureVisuals = {
+    'direct-completed': {
+      analystObjective: 'Child of Lead · approval-state analysis',
+      analystResult: 'The restart path preserves the exact approval request and resumes the same logical Execution without creating a compatibility continuation.',
+      buildObjective: 'Child of Lead · recovery verification',
+      diffTitle: '2 files changed',
+      diffScope: 'project root · approval recovery verification',
+      files: ['packages/agent-core/src/hitl/approval-store.ts', 'packages/agent-core/src/hitl/approval-store.test.ts'],
+    },
+    'automation-run': {
+      analystObjective: 'Child of Lead · dependency policy analysis',
+      analystResult: 'The scheduled invocation retained its Automation source and wrote changes only inside the invocation Session checkout.',
+      buildObjective: 'Child of Lead · dependency verification',
+      diffTitle: '3 files changed',
+      diffScope: 'dependency-health-patrol · Automation invocation checkout',
+      files: ['packages/agent-core/src/automations/invocation.ts', 'packages/agent-core/src/automations/service.ts', 'packages/agent-core/src/automations/service.test.ts'],
+    },
+  };
+  function syncSourceFixtureVisuals(sampleName) {
+    const fixture = sourceFixtureVisuals[sampleName];
+    const analystObjective = document.querySelector('[data-agent-session="analyst"] .agent-session-heading small');
+    const analystResult = document.querySelector('[data-agent-session="analyst"] .final-response p');
+    const buildObjective = document.querySelector('[data-agent-session="build"] .agent-session-heading small');
+    const diffHeading = document.querySelector('[data-work-diff-heading]');
+    const diffScope = document.querySelector('.work-diff-head p');
+    const diffFiles = [...document.querySelectorAll('.work-diff-page .file-change header strong')];
+    if (analystObjective) analystObjective.textContent = fixture?.analystObjective || 'Child of Lead · contract analysis';
+    if (analystResult) analystResult.textContent = fixture?.analystResult || 'Use one strict project-owned partial profile map and resolve it before Session admission. Unknown model or variant references must fail bootstrap rather than fall through.';
+    if (buildObjective) buildObjective.textContent = fixture?.buildObjective || 'Child of Lead · implementation';
+    if (diffHeading) diffHeading.textContent = fixture?.diffTitle || '3 files changed';
+    if (diffScope) diffScope.textContent = fixture?.diffScope || 'codex/project-profile-defaults · relative to the current checkout base';
+    diffFiles.forEach((file, index) => {
+      file.closest('.file-change').hidden = Boolean(fixture && index >= fixture.files.length);
+      file.textContent = fixture?.files[index] || ['packages/agent-core/src/config/schema.ts', 'packages/agent-core/src/projects/context-resolver.ts', 'packages/agent-core/src/config/schema.test.ts'][index];
+    });
+  }
+
   function setSessionSample(name, updateHistory = false) {
     const sampleName = normalizeSessionSample(name);
     const sampleBase = sessionSamples[sampleName];
@@ -2933,6 +3061,7 @@
     document.body.dataset.sessionShellOnly = String(Boolean(sample.shellOnly));
     document.body.dataset.sessionBackHref = sample.backHref || '';
     document.body.classList.toggle('source-only-session', !sample.todo);
+    syncSourceFixtureVisuals(sampleName);
     if (todoShellHeader) todoShellHeader.hidden = !sample.todo;
     applyTodoFixture(sample);
     sessionSampleLinks.forEach((link) => link.classList.toggle('active', link.dataset.sessionSample === sampleName));
@@ -2978,6 +3107,7 @@
     if (sessionChangeEmpty) sessionChangeEmpty.hidden = sample.changeCount !== 0;
     if (sessionFullDiffAction) sessionFullDiffAction.hidden = sample.changeCount === 0 || document.body.classList.contains('work-diff-surface');
     if (composerStateCopy) composerStateCopy.textContent = sample.composer;
+    if (composerHint) composerHint.textContent = 'Shift+Enter for newline';
     if (composerState) composerState.className = `composer-state ${sample.composerTone}`;
     if (inspectorAgentStatus) { inspectorAgentStatus.textContent = sample.agentStatus; inspectorAgentStatus.className = `status-label ${sample.agentTone}`; }
     if (inspectorRootMark) {
@@ -3355,7 +3485,8 @@
     run: 'Todo moved to In Progress and Lead Session started.',
   };
   document.querySelectorAll('[data-new-todo-action]').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
+      if (newTodoPending) return;
       if (!newTodoInput?.value.trim()) {
         if (newTodoError) newTodoError.hidden = false;
         newTodoInput?.focus();
@@ -3364,7 +3495,15 @@
       const outcome = button.dataset.newTodoAction;
       const content = newTodoInput.value.trim();
       const lane = outcome === 'run' ? 'in_progress' : 'idea';
+      const pendingCopy = outcome === 'discussion'
+        ? 'Saving Todo and starting Discussion…'
+        : outcome === 'run'
+          ? 'Saving Todo and starting Lead Session…'
+          : 'Saving Todo…';
+      setNewTodoPending(true, pendingCopy);
+      await new Promise((resolve) => window.setTimeout(resolve, 650));
       const todo = savePrototypeTodo(content, lane);
+      setNewTodoPending(false);
       newTodoDialog?.close();
       if (outcome === 'discussion' || outcome === 'run') {
         const sample = outcome === 'discussion' ? 'discussion-new' : 'work-new';

@@ -222,9 +222,9 @@ describe("ChatInput runtime controls", () => {
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
 
     expect(card?.props?.className).toContain("rounded-xl");
+    expect(card?.props?.className).toContain("composer-card");
     expect(card?.props?.className).toContain("overflow-visible");
     expect(card?.props?.className).not.toContain("overflow-hidden");
-    expect(card?.props?.className).toContain("focus-within:border-brand");
     expect(textarea?.props?.className).toContain("border-0");
     expect(textarea?.props?.className).toContain("bg-transparent");
     const toolbar = findAll(tree, (element) => element.props?.["data-testid"] === "composer-toolbar")[0];
@@ -235,9 +235,13 @@ describe("ChatInput runtime controls", () => {
     expect(toolbarChildren[1] && isElement(toolbarChildren[1])
       ? findAll(toolbarChildren[1], (element) => element.props?.["data-testid"] === "composer-model")
       : []).toHaveLength(1);
-    expect(findAll(tree, (element) => element.props?.title === "Attach file")).toHaveLength(1);
+    const attach = findAll(tree, (element) => element.props?.title === "Attach file")[0];
+    expect(attach?.props?.className).toContain("rounded-full");
     expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-file-input")).toHaveLength(1);
-    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(1);
+    const terminal = findAll(tree, (element) => element.props?.["data-testid"] === "composer-terminal-action")[0];
+    expect(terminal?.props?.title).toBe("Send message");
+    expect(terminal?.props?.className).toContain("h-[34px]");
+    expect(terminal?.props?.className).toContain("rounded-full");
     expect(textContent(tree)).not.toContain("Images may be sent to the selected model provider.");
   });
 
@@ -655,44 +659,39 @@ describe("ChatInput runtime controls", () => {
     expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
   });
 
-  test("running family keeps Queue and Stop as independent visible actions", () => {
+  test("running family presents Stop as the single empty-draft terminal action", () => {
     activity = "running";
     const tree = renderChatInput();
-    const stop = findAll(tree, (element) => element.props?.title === "Stop")[0];
-    const queue = findAll(tree, (element) => element.props?.title === "Queue message")[0];
+    const terminal = findAll(tree, (element) => element.props?.["data-testid"] === "composer-terminal-action");
+    const stop = terminal[0];
 
-    expect(stop).toBeDefined();
-    expect(queue).toBeDefined();
-    expect(queue?.props?.disabled).toBe(true);
-    expect(queue?.props?.className).toContain("bg-brand");
-    expect(queue?.props?.className).toContain("text-brand-ink");
+    expect(terminal).toHaveLength(1);
+    expect(stop?.props?.title).toBe("Stop");
     expect(stop?.props?.className).toContain("bg-bg-active");
     expect(stop?.props?.className).toContain("hover:bg-error");
-    expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
     expect(stop?.props?.disabled).not.toBe(true);
     (stop?.props?.onClick as () => void)();
     expect(stopSessionMutate).toHaveBeenCalledWith({ slug: "proj", rootSessionId: "root-1" });
   });
 
-  test("suspended and resuming families queue and stop instead of becoming ready", () => {
+  test("suspended and resuming families keep one Stop terminal action for an empty draft", () => {
     for (const familyActivity of ["waiting_for_human", "resuming"] as const) {
       activity = familyActivity;
       hitlReady = true;
       hookCursor = 0;
       const tree = renderChatInput();
       const textarea = findAll(tree, (element) => element.type === "textarea")[0];
-      const stop = findAll(tree, (element) => element.props?.title === "Stop")[0];
-      const queue = findAll(tree, (element) => element.props?.title === "Queue message")[0];
+      const terminal = findAll(tree, (element) => element.props?.["data-testid"] === "composer-terminal-action");
 
       expect(textarea?.props?.disabled).toBe(false);
       expect(textarea?.props?.placeholder).toBe("Queue a message…");
-      expect(stop?.props?.disabled).not.toBe(true);
-      expect(queue).toBeDefined();
-      expect(findAll(tree, (element) => element.props?.title === "Send message")).toHaveLength(0);
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0]?.props?.title).toBe("Stop");
+      expect(terminal[0]?.props?.disabled).not.toBe(true);
     }
   });
 
-  test("running family queues from Enter or the independent Queue action", () => {
+  test("running family morphs the terminal action to Queue for a sendable draft", () => {
     activity = "running";
     hitlReady = true;
     let tree = renderChatInput();
@@ -700,13 +699,14 @@ describe("ChatInput runtime controls", () => {
 
     expect(textarea?.props?.disabled).toBe(false);
     expect(textarea?.props?.placeholder).toBe("Queue a message…");
-    expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(1);
+    expect(findAll(tree, (element) => element.props?.["data-testid"] === "composer-terminal-action")[0]?.props?.title).toBe("Stop");
 
     (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "Queue while running" } });
     hookCursor = 0;
     tree = renderChatInput();
     textarea = findAll(tree, (element) => element.type === "textarea")[0];
-    const queue = findAll(tree, (element) => element.props?.title === "Queue message")[0];
+    const queue = findAll(tree, (element) => element.props?.["data-testid"] === "composer-terminal-action")[0];
+    expect(queue?.props?.title).toBe("Queue message");
     expect(queue?.props?.disabled).toBe(false);
     (queue?.props?.onClick as () => void)();
 
@@ -780,8 +780,9 @@ describe("ChatInput runtime controls", () => {
     const textarea = findAll(tree, (element) => element.type === "textarea")[0];
     expect(textarea?.props?.disabled).toBe(false);
     expect(textarea?.props?.placeholder).toBe("Queue a message…");
-    expect(findAll(tree, (element) => element.props?.title === "Stop")).toHaveLength(0);
-    expect(findAll(tree, (element) => element.props?.title === "Queue message")).toHaveLength(1);
+    const terminal = findAll(tree, (element) => element.props?.["data-testid"] === "composer-terminal-action");
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]?.props?.title).toBe("Queue message");
   });
 
   test("a suspended family with HITL keeps Stop and presents Needs you", () => {

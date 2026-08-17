@@ -703,7 +703,8 @@ export async function createRuntime(
         return;
       }
       const ownerSessionId = event.view.owner.id;
-      const rootSessionId = (await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId)).rootSessionId;
+      const ownerSession = await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId);
+      const rootSessionId = ownerSession.rootSessionId;
       const payload = event.type === "hitl.created"
         ? { type: "hitl.request" as const }
         : event.type === "hitl.resolved" || event.type === "hitl.cancelled"
@@ -715,6 +716,8 @@ export async function createRuntime(
         hitlId: event.view.hitlId,
         ownerSessionId,
         rootSessionId,
+        ownerAgentName: ownerSession.agentName,
+        ownerSessionTitle: ownerSession.title,
         createdAt: Date.now(),
         payload,
         view: event.view,
@@ -726,8 +729,16 @@ export async function createRuntime(
       views: readonly HitlView[],
     ): Promise<GlobalSSEHitlEntry[]> => await Promise.all(views.map(async (view) => {
       const ownerSessionId = view.owner.id;
-      const rootSessionId = (await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId)).rootSessionId;
-      return { projectSlug, hitlId: view.hitlId, ownerSessionId, rootSessionId, view };
+      const ownerSession = await sessionStoreManager.getSessionFile(workspaceRoot, ownerSessionId);
+      return {
+        projectSlug,
+        hitlId: view.hitlId,
+        ownerSessionId,
+        rootSessionId: ownerSession.rootSessionId,
+        ownerAgentName: ownerSession.agentName,
+        ownerSessionTitle: ownerSession.title,
+        view,
+      };
     }));
     let memoryIdleCoordinator!: MemoryIdleCoordinator;
     const contextResolver = new ProjectContextResolver({

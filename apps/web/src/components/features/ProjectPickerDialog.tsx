@@ -66,7 +66,7 @@ export function ProjectPickerDialog({
             <button
               type="button"
               aria-label="Close project picker"
-              className="absolute right-2 top-2 grid h-8 w-8 cursor-pointer place-items-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+              className="absolute right-2 top-2 grid h-8 w-8 cursor-pointer place-items-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
             >
               <X size={15} aria-hidden="true" />
             </button>
@@ -104,7 +104,7 @@ export function ProjectPickerDialog({
                     type="button"
                     aria-current={isCurrent ? "page" : undefined}
                     aria-label={`${project.name}${isCurrent ? ", current project" : ""}, ${runningCount} running, ${attentionCount} need you`}
-                    className={`grid min-h-[62px] w-full cursor-pointer grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 px-2 py-2 text-left transition-[background-color,transform] duration-[var(--motion-hover)] hover:-translate-y-px hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${isCurrent ? "bg-selection-field" : ""}`}
+                    className={`grid min-h-[62px] w-full cursor-pointer grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 px-2 py-2 text-left transition-[background-color,transform] duration-[var(--motion-fast)] hover:-translate-y-px hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand ${isCurrent ? "bg-selection-field" : ""}`}
                     onClick={() => {
                       onSelect(project.slug);
                       onOpenChange(false);

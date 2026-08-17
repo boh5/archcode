@@ -82,7 +82,7 @@ export function EditProjectDialog({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary transition-colors duration-[var(--motion-hover)] placeholder:text-text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle"
+              className="h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary transition-colors duration-[var(--motion-fast)] placeholder:text-text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle"
               autoFocus
               disabled={updateName.isPending}
             />
@@ -96,14 +96,14 @@ export function EditProjectDialog({
             <button
               type="button"
               onClick={onClose}
-              className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
               disabled={updateName.isPending}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!isChanged || updateName.isPending}
             >
               {updateName.isPending ? "Saving…" : "Save"}

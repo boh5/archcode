@@ -193,7 +193,7 @@ afterEach(() => {
 });
 
 describe("SessionComposerDock", () => {
-  test("keeps HITL first in the capped priority stack above the always-visible Input", async () => {
+  test("gives pending decisions the expanded priority stack above the always-visible Input", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     applySnapshot(store, {
       rootSessionId: "session-1",
@@ -282,6 +282,8 @@ describe("SessionComposerDock", () => {
           hitlId: hitlView.hitlId,
           ownerSessionId: "session-1",
           rootSessionId: "session-1",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 1",
           view: hitlView,
         },
       ],
@@ -333,14 +335,13 @@ describe("SessionComposerDock", () => {
       '[data-testid="session-goal-summary-row"]',
     );
     const card = container.querySelector('[data-testid="composer-card"]');
-    expect(dock?.className).toContain("max-h-[min(52dvh,460px)]");
-    expect(dock?.className).toContain("min-[761px]:max-h-[min(48dvh,520px)]");
+    expect(dock?.className).toContain("max-h-[min(78dvh,640px)]");
     expect(dock?.className).toContain("overflow-visible");
-    expect(dock?.className).toContain("bg-bg-base");
+    expect(dock?.className).toContain("bg-transparent");
+    expect(dock?.className).toContain("border-0");
     expect((dock as HTMLElement | null)?.style.scrollbarGutter).toBe("");
     expect(scrollbarAlignment?.className).toContain("px-0");
     expect(scrollbarAlignment?.className).toContain("min-[761px]:px-[var(--session-scrollbar-gutter,0px)]");
-    expect(dock?.classList.contains("border-t")).toBe(true);
     expect(rail?.className).toContain("w-full");
     expect(rail?.className).toContain("!max-w-[900px]");
     expect(rail?.className).toContain("!px-3");
@@ -348,7 +349,7 @@ describe("SessionComposerDock", () => {
     expect(threadColumn?.className).toContain("max-w-[852px]");
     expect(threadColumn?.className).toContain("!max-w-[848px]");
     expect(threadColumn?.className).toContain("mx-auto");
-    expect(threadColumn?.className).toContain("gap-2.5");
+    expect(threadColumn?.className).toContain("gap-2");
     expect(priority?.className).toContain("overflow-y-auto");
     expect(priority?.className).toContain("overscroll-contain");
     expect(attention).not.toBeNull();
@@ -390,12 +391,11 @@ describe("SessionComposerDock", () => {
     expect(
       container.querySelector('[data-testid="hitl-owner-link"]'),
     ).toBeNull();
-    expect(
-      container.querySelector('button[aria-label="Queue message"]'),
-    ).not.toBeNull();
-    expect(
-      container.querySelector('button[aria-label="Stop session"]'),
-    ).not.toBeNull();
+    const terminalAction = container.querySelectorAll(
+      '[data-testid="composer-terminal-action"]',
+    );
+    expect(terminalAction).toHaveLength(1);
+    expect(terminalAction[0]?.getAttribute("aria-label")).toBe("Stop session");
     expect(container.textContent).toContain("Steer");
     expect(container.querySelector('button[title="Attach file"]')).not.toBeNull();
     expect(
@@ -472,6 +472,11 @@ describe("SessionComposerDock", () => {
     expect(card).not.toBeNull();
     expect(card?.querySelector("textarea")).not.toBeNull();
     expect(card?.textContent).toContain("Failed");
+    const dock = container.querySelector(
+      '[data-testid="session-composer-dock"]',
+    );
+    expect(dock?.className).toContain("max-h-[min(52dvh,460px)]");
+    expect(dock?.className).toContain("min-[761px]:max-h-[min(48dvh,520px)]");
   });
 
   test("steps through multi-question Ask User and submits only from Confirm", async () => {
@@ -538,6 +543,8 @@ describe("SessionComposerDock", () => {
           hitlId: hitlView.hitlId,
           ownerSessionId: "session-2",
           rootSessionId: "session-2",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 2",
           view: hitlView,
         },
       ],
@@ -706,6 +713,8 @@ describe("SessionComposerDock", () => {
           hitlId: first.hitlId,
           ownerSessionId: "session-3",
           rootSessionId: "session-3",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 3",
           view: first,
         },
         {
@@ -713,6 +722,8 @@ describe("SessionComposerDock", () => {
           hitlId: second.hitlId,
           ownerSessionId: "session-3",
           rootSessionId: "session-3",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 3",
           view: second,
         },
       ],

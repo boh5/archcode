@@ -531,6 +531,8 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       });
 
       const pendingQuestion = await pendingQuestionPromise;
+      expect(pendingQuestion.ownerAgentName).toBe("lead");
+      expect(pendingQuestion.ownerSessionTitle).toBe("Goal architecture flow");
       const goalCompleted = nextGoalCompletion(fixture.runtime, root.sessionId);
       await fixture.runtime.respondToHitl({
         slug: fixture.projectSlug,
@@ -718,7 +720,7 @@ function waitForFamilyIdle(
 function nextPendingSessionQuestion(
   runtime: AgentRuntime,
   sessionId: string,
-): Promise<{ hitlId: string }> {
+): Promise<{ hitlId: string; ownerAgentName: string; ownerSessionTitle: string | null }> {
   return new Promise((resolve) => {
     const unsubscribe = runtime.subscribeHitlEvents((event) => {
       if (event.payload.type !== "hitl.request"
@@ -726,7 +728,11 @@ function nextPendingSessionQuestion(
         || event.view.owner.id !== sessionId
         || event.view.source.type !== "ask_user") return;
       unsubscribe();
-      resolve({ hitlId: event.view.hitlId });
+      resolve({
+        hitlId: event.view.hitlId,
+        ownerAgentName: event.ownerAgentName,
+        ownerSessionTitle: event.ownerSessionTitle,
+      });
     });
   });
 }

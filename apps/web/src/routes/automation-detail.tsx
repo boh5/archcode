@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronRight, ListTodo, Pencil, Play } from "lucide-react";
 import { projectTodoContentExcerpt, type SessionFamilyActivity } from "@archcode/protocol";
 import { useAutomation, useAutomationInvocations, useProjectTodos, useSession, useSessionInventory } from "../api/queries";
 import { usePauseAutomation, useResumeAutomation, useRunAutomationNow } from "../api/mutations";
@@ -79,40 +79,38 @@ export function AutomationDetailRoute() {
     linkedTodoContent,
   });
   const filterQuery = searchParams.get("q") ?? "";
-  const automationsHref = `/projects/${slug}/automations${filterQuery ? `?q=${encodeURIComponent(filterQuery)}` : ""}`;
+  const filterStatus = searchParams.get("status");
+  const automationsQuery = new URLSearchParams({
+    ...(filterQuery ? { q: filterQuery } : {}),
+    ...(filterStatus === "active" || filterStatus === "paused" ? { status: filterStatus } : {}),
+  }).toString();
+  const automationsHref = `/projects/${slug}/automations${automationsQuery ? `?${automationsQuery}` : ""}`;
   const detailStatusClass = presentation.tone === "error"
-    ? "bg-error-muted text-error"
+    ? "text-error"
     : presentation.tone === "attention"
-      ? "bg-warning-muted text-warning"
+      ? "text-warning"
       : presentation.tone === "running" || presentation.statusLabel === "Scheduled"
-        ? "bg-signal-field text-signal-foreground"
-        : "bg-bg-muted text-text-tertiary";
+        ? "text-signal-foreground"
+        : "text-text-tertiary";
 
   return (
     <AutomationsRoute detail={(
-      <article className="mx-auto w-full max-w-[820px] px-3 pb-12 pt-[22px] min-[841px]:px-[22px] min-[841px]:pb-16 min-[841px]:pt-6 min-[1041px]:px-8">
-        <Link
-          className="mb-2 inline-flex min-h-[44px] items-center gap-1.5 text-[11px] text-text-secondary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[841px]:hidden"
-          state={{ restoreAutomationId: value.id }}
-          to={automationsHref}
-        >
-          <ArrowLeft aria-hidden="true" size={14} /> Automations
-        </Link>
-        <div className="flex items-center gap-2 text-[9px] font-[680] uppercase text-text-tertiary">
-          <span className={`inline-flex min-h-[22px] items-center rounded-[10px] px-[7px] ${detailStatusClass}`}>{presentation.statusLabel}</span>
-          <span>Updated <RelativeTime timestamp={Date.parse(value.updatedAt)} /></span>
-        </div>
-        <div className="mt-2.5 block gap-[18px] border-b border-border-default pb-5 min-[761px]:flex min-[761px]:items-end min-[761px]:justify-between">
-          <h1 ref={titleRef} tabIndex={-1} className="min-w-0 text-[21px] font-[680] leading-[1.2] tracking-[-0.03em] focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[761px]:text-[26px]">{value.name}</h1>
-          <div className="mt-[14px] flex shrink-0 items-center gap-2 min-[761px]:mt-0">
-            <button type="button" onClick={() => setEditing(true)} className="inline-flex h-[44px] items-center justify-center rounded-sm border border-border-default bg-bg-active px-[13px] text-[12px] font-semibold tracking-[-0.01em] text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[761px]:h-8">Edit</button>
-            <PrimaryActionButton disabled={runNow.isPending} onClick={() => runNow.mutate({ slug, automationId })}>
-              Run now
-            </PrimaryActionButton>
-          </div>
-        </div>
-        <AutomationConfiguration automation={value} presentation={presentation} />
+      <article className="w-full bg-bg-surface">
+        <header className="border-b border-border-default p-4">
+          <Link
+            className="mb-2 inline-flex min-h-[44px] items-center gap-1.5 rounded-sm text-[11px] text-text-secondary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[841px]:hidden"
+            state={{ restoreAutomationId: value.id }}
+            to={automationsHref}
+          >
+            <ArrowLeft aria-hidden="true" size={14} /> Schedules
+          </Link>
+          <span className={`block text-[10.5px] font-bold uppercase leading-[21px] tracking-[0.09em] ${detailStatusClass}`}>
+            {presentation.statusLabel} · Updated <RelativeTime timestamp={Date.parse(value.updatedAt)} />
+          </span>
+          <h1 ref={titleRef} tabIndex={-1} className="mt-1 min-w-0 text-[16px] font-semibold leading-[1.35] tracking-[-0.02em] text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]">{value.name}</h1>
+        </header>
         <AutomationProvenance automation={value} linkedTodoContent={linkedTodoContent} slug={slug} />
+        <AutomationConfiguration automation={value} presentation={presentation} />
         <AutomationAttention problemInvocation={problemInvocation} hitlAttention={hitlAttention} />
         <InvocationHistory
           invocations={invocations.data}
@@ -122,6 +120,14 @@ export function AutomationDetailRoute() {
           slug={slug}
           targetInvocationId={targetInvocationId}
         />
+        <footer className="flex justify-end gap-[7px] border-t border-border-default px-4 py-3">
+          <button type="button" onClick={() => setEditing(true)} className="inline-flex h-[34px] min-h-[34px] items-center justify-center gap-1.5 rounded-sm border border-border-default bg-bg-surface px-3 text-[11px] font-semibold text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(max-width:840px)]:h-11">
+            <Pencil size={13} aria-hidden="true" /> Edit
+          </button>
+          <PrimaryActionButton disabled={runNow.isPending} className="min-[841px]:!h-[34px]" onClick={() => runNow.mutate({ slug, automationId })}>
+            <Play size={13} aria-hidden="true" /> Run now
+          </PrimaryActionButton>
+        </footer>
         <EditAutomationDialog
           automation={value}
           lifecyclePending={pause.isPending || resume.isPending}
@@ -141,52 +147,55 @@ function AutomationProvenance({ automation, linkedTodoContent, slug }: { automat
   const sessionId = automation.origin.kind === "direct" ? "" : automation.origin.sessionId;
   const source = useSession(slug, sessionId);
   if (automation.origin.kind === "direct") {
-    return <DetailSection title="Created from"><p className="mt-2.5 text-[13px] leading-[1.65] text-text-secondary">Created directly in Automations.</p></DetailSection>;
+    return <div className="m-[14px] rounded-[7px] border border-border-default bg-bg-muted px-3 py-2.5"><span className="block text-[10.5px] font-bold uppercase leading-[1.5] tracking-[0.09em] text-text-tertiary">Created from</span><p className="mt-[5px] text-[11px] leading-[1.5] text-text-secondary">Created directly in Schedules.</p></div>;
   }
   return (
-    <DetailSection title={automation.origin.kind === "todo" ? "Linked Todo" : "Created from"}>
+    <>
       {automation.origin.kind === "todo" ? (
-        <Link className="mt-2.5 flex items-center justify-between gap-3 rounded-md border border-border-default px-3 py-[11px] text-text-secondary transition-colors duration-[var(--motion-hover)] hover:border-brand hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]" to={`/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(automation.origin.todoId)}`}>
-          <span className="min-w-0"><strong className="block truncate text-[11px] font-[640]">{linkedTodoContent === undefined ? automation.origin.todoId : projectTodoContentExcerpt(linkedTodoContent)}</strong><small className="mt-[3px] block text-[9px] text-text-tertiary">Todo · stable detail</small></span><span className="shrink-0 text-[11px] font-[640]">Open →</span>
+        <Link className="m-[14px] grid grid-cols-[28px_minmax(0,1fr)_14px] items-center gap-[9px] rounded-lg border border-border-default bg-bg-muted p-2.5 text-text-secondary transition-colors duration-[var(--motion-fast)] hover:border-brand hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]" to={`/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(automation.origin.todoId)}`}>
+          <span aria-hidden="true" className="grid h-[27px] w-[27px] place-items-center rounded-[7px] border border-brand/25 bg-brand-field text-brand"><ListTodo size={12} /></span>
+          <span className="min-w-0"><small className="block text-[10.5px] uppercase tracking-[0.08em] text-text-tertiary">Linked Todo</small><strong className="mt-0.5 block truncate text-[12px] font-semibold">{linkedTodoContent === undefined ? automation.origin.todoId : projectTodoContentExcerpt(linkedTodoContent)}</strong></span>
+          <ChevronRight size={13} className="text-text-tertiary" aria-hidden="true" />
         </Link>
       ) : null}
-      {source.isLoading ? (
-        <p className="mt-2.5 text-[11px] text-text-tertiary">Loading source Session…</p>
-      ) : source.data ? (
-        <Link className="mt-2.5 inline-flex text-[11px] font-semibold text-brand hover:underline" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}`}>
-          Session · {source.data.title || sessionId}
-        </Link>
-      ) : (
-        <p className="mt-2.5 text-[11px] text-text-tertiary">Session {sessionId} · unavailable</p>
-      )}
-    </DetailSection>
+      <div className="m-[14px] rounded-[7px] border border-border-default bg-bg-muted px-3 py-2.5">
+        <span className="block text-[10.5px] font-bold uppercase leading-[1.5] tracking-[0.09em] text-text-tertiary">Created from</span>
+        {source.isLoading ? (
+          <p className="mt-[5px] text-[11px] text-text-tertiary">Loading source Session…</p>
+        ) : source.data ? (
+          <Link className="mt-[5px] inline-flex text-[11px] font-semibold text-brand hover:underline" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}`}>
+            Session · {source.data.title || sessionId}
+          </Link>
+        ) : (
+          <p className="mt-[5px] text-[11px] text-text-tertiary">Session {sessionId} · unavailable</p>
+        )}
+      </div>
+    </>
   );
 }
 
 function AutomationConfiguration({ automation, presentation }: { automation: Automation; presentation: AutomationSurfacePresentation }) {
   return (
     <>
-      <DetailSection title="Schedule & execution">
-        <dl className="mt-3 grid grid-cols-1 gap-x-7 min-[761px]:grid-cols-2">
-          <AutomationFact label="Trigger">{formatAutomationTrigger(automation.trigger)}</AutomationFact>
-          <AutomationFact label="Next run">{presentation.nextRunLabel}</AutomationFact>
-          <AutomationFact label="Action">{presentation.actionLabel}</AutomationFact>
-          <AutomationFact label="Location">{presentation.locationLabel}</AutomationFact>
-          <AutomationFact label="Binding">{presentation.bindingLabel}</AutomationFact>
-          <AutomationFact label="Stable ID">{automation.id}</AutomationFact>
-        </dl>
-      </DetailSection>
-      <DetailSection title="Message"><p className="mt-2.5 whitespace-pre-wrap text-[13px] leading-[1.65] text-text-secondary">{automation.action.message}</p></DetailSection>
+      <dl className="m-0 px-4">
+        <AutomationFact label="Trigger">{formatAutomationTrigger(automation.trigger)}</AutomationFact>
+        <AutomationFact label="Next run">{presentation.nextRunLabel}</AutomationFact>
+        <AutomationFact label="Action">{presentation.actionLabel}</AutomationFact>
+        <AutomationFact label="Location">{presentation.locationLabel}</AutomationFact>
+        <AutomationFact label="Binding">{presentation.bindingLabel}</AutomationFact>
+        <AutomationFact label="Stable ID" mono>{automation.id}</AutomationFact>
+      </dl>
+      <section className="border-y border-border-default p-4"><span className="text-[10.5px] font-bold uppercase tracking-[0.09em] text-text-tertiary">Message</span><p className="mt-[5px] whitespace-pre-wrap text-[11px] leading-[1.55] text-text-secondary">{automation.action.message}</p></section>
     </>
   );
 }
 
 function DetailSection({ children, title }: { children: React.ReactNode; title: string }) {
-  return <section className="border-b border-border-subtle py-5"><h2 className="text-[11px] font-[680] uppercase tracking-[0.06em] text-text-tertiary">{title}</h2>{children}</section>;
+  return <section className="p-4"><h2 className="text-[10.5px] font-bold uppercase tracking-[0.09em] text-text-tertiary">{title}</h2>{children}</section>;
 }
 
-function AutomationFact({ children, label }: { children: React.ReactNode; label: string }) {
-  return <div className="grid min-w-0 grid-cols-[72px_minmax(0,1fr)] items-baseline gap-3 border-t border-border-subtle py-2.5 min-[761px]:grid-cols-[76px_minmax(0,1fr)]"><dt className="text-[9px] uppercase text-text-tertiary">{label}</dt><dd className="truncate font-mono text-[10px] font-[560] text-text-primary">{children}</dd></div>;
+function AutomationFact({ children, label, mono = false }: { children: React.ReactNode; label: string; mono?: boolean }) {
+  return <div className="flex min-h-[34px] min-w-0 items-center justify-between gap-3 border-b border-border-default"><dt className="shrink-0 text-[10.5px] text-text-tertiary">{label}</dt><dd className={`m-0 min-w-0 truncate text-right text-[10.5px] text-text-secondary ${mono ? "font-mono" : ""}`}>{children}</dd></div>;
 }
 
 function AutomationAttention({
@@ -239,11 +248,14 @@ function InvocationHistory({ activityBySessionId, invocations, isLoading, sessio
   targetInvocationId: string | null;
 }) {
   return (
-    <DetailSection title="Recent runs">
-      <p className="mt-2.5 text-[13px] leading-[1.65] text-text-secondary">Invocation state is separate from Session result: <code>dispatched</code> is never <code>Completed</code>.</p>
-      {isLoading ? <p className="mt-2.5 text-[11px] text-text-tertiary">Loading history…</p> : null}
-      {!isLoading && !invocations?.length ? <p className="py-5 text-center text-[11px] text-text-tertiary">No runs yet. Run now will create the first durable Session.</p> : null}
-      {invocations?.length ? <div className="mt-2.5 border-t border-border-subtle">{invocations.map((item) => (
+    <section className="p-4">
+      <header className="mb-2 flex items-end justify-between gap-3">
+        <div><span className="text-[10.5px] font-bold uppercase tracking-[0.09em] text-text-tertiary">Recent runs</span><h2 className="mt-0.5 text-[13px] font-semibold text-text-primary">History</h2></div>
+        <Link className="text-[10.5px] font-semibold text-brand hover:underline focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]" to={`/projects/${encodeURIComponent(slug)}/sessions`}>All runs</Link>
+      </header>
+      {isLoading ? <p className="py-4 text-[11px] text-text-tertiary">Loading history…</p> : null}
+      {!isLoading && !invocations?.length ? <p className="py-5 text-center text-[11px] text-text-tertiary">No runs yet. The first dispatched Invocation will appear here.</p> : null}
+      {invocations?.length ? <div>{invocations.map((item) => (
         <InvocationRow
           activity={item.sessionId ? activityBySessionId.get(item.sessionId) : undefined}
           item={item}
@@ -253,7 +265,7 @@ function InvocationHistory({ activityBySessionId, invocations, isLoading, sessio
           targeted={item.id === targetInvocationId}
         />
       ))}</div> : null}
-    </DetailSection>
+    </section>
   );
 }
 
@@ -293,6 +305,7 @@ function InvocationRow({ activity, item, linkedSession, slug, targeted }: {
         : executionStatus === "suspended"
           ? "Suspended"
           : automationInvocationStatusLabel(item.status);
+  const due = new Date(item.dueAt);
 
   useEffect(() => {
     if (!targeted) return;
@@ -303,13 +316,13 @@ function InvocationRow({ activity, item, linkedSession, slug, targeted }: {
   return (
     <div
       ref={rowRef}
-      className={`grid min-h-[43px] grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-[9px] border-b border-border-subtle text-[10px] text-text-secondary outline-none ${targeted ? "bg-brand-subtle shadow-[inset_2px_0_0_var(--brand)]" : ""}`}
+      className={`grid min-h-[47px] grid-cols-[27px_minmax(0,1fr)_auto] items-center gap-2 border-b border-border-default text-text-secondary outline-none ${targeted ? "bg-brand-subtle shadow-[inset_2px_0_0_var(--brand)]" : ""}`}
       data-invocation-id={item.id}
       tabIndex={targeted ? -1 : undefined}
     >
-      <StatusGlyph kind={visualKind} size={10} />
-      {item.sessionId ? <Link className="truncate hover:text-text-primary" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(item.sessionId)}?invocation=${encodeURIComponent(item.id)}`}>{runLabel} · Open Session</Link> : <span className="truncate">{automationInvocationStatusLabel(item.status)}{item.error ? ` · ${item.error}` : ""}</span>}
-      <time className="text-[9px] text-text-tertiary">{new Date(item.dueAt).toLocaleString()}</time>
+      <span aria-hidden="true" className="grid h-[27px] w-[27px] place-items-center rounded-[7px] border border-border-subtle bg-bg-muted"><StatusGlyph kind={visualKind} size={12} /></span>
+      {item.sessionId ? <Link className="min-w-0 hover:text-text-primary" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(item.sessionId)}?invocation=${encodeURIComponent(item.id)}`}><strong className="block truncate text-[12px] font-semibold">{due.toLocaleString()}</strong><small className="block truncate text-[10.5px] text-text-tertiary">{runLabel} · Open Session</small></Link> : <span className="min-w-0"><strong className="block truncate text-[12px] font-semibold">{due.toLocaleString()}</strong><small className="block truncate text-[10.5px] text-text-tertiary">{automationInvocationStatusLabel(item.status)}{item.error ? ` · ${item.error}` : ""}</small></span>}
+      <time className="font-mono text-[10.5px] text-text-tertiary" dateTime={item.dueAt}>{due.toLocaleDateString(undefined, { weekday: "short" })}</time>
     </div>
   );
 }

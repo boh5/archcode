@@ -5,7 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ProjectTodo, SessionSummary } from "../api/types";
-import { createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, pointerFirstCollisionDetection, projectTodoRunNowRecovery, ProjectTodosRoute, todoFlatListEmptyMessage } from "./project-todos";
+import { projectTodoRunNowRecovery } from "../components/features/ProjectTodoCaptureDialog";
+import { createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, pointerFirstCollisionDetection, ProjectTodosRoute, todoFlatListEmptyMessage } from "./project-todos";
 import { continueWorkUpdateInput, coordinateTodoPlanWork, planWorkCommand, TODO_PLAN_ACTION_LABEL } from "./project-todo-detail";
 import { ApiError } from "../api/client";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
@@ -149,7 +150,7 @@ describe("Project Todos board", () => {
     expect(continueWorkUpdateInput(todos[3]!)).toBeUndefined();
   });
 
-  test("renders four lanes and an accessible drag handle", async () => {
+  test("renders four compact lanes with an accessible drag handle", async () => {
     await render("/projects/demo/todos?layout=board");
     expect(document.querySelector('[data-testid="todo-lane-idea"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="todo-lane-ready"]')).not.toBeNull();
@@ -157,26 +158,29 @@ describe("Project Todos board", () => {
     expect(document.querySelector('[data-testid="todo-lane-done"]')).not.toBeNull();
     const handle = document.querySelector('[aria-label="Drag Ready"]') as HTMLButtonElement;
     expect(handle).not.toBeNull();
-    expect(handle.className).toContain("min-h-14");
-    expect(handle.className).toContain("w-9");
+    expect(handle.className).toContain("min-h-full");
+    expect(handle.className).toContain("w-7");
+    expect(handle.className).toContain("border-r");
+    expect(handle.className).toContain("[@media(pointer:coarse)]:min-h-11");
     expect(handle.className).toContain("[@media(pointer:coarse)]:w-11");
     expect(handle.className).toContain("cursor-grab");
     const card = document.querySelector('[data-testid="todo-ready"]') as HTMLElement;
-    expect(card.className).toContain("grid-cols-[36px_minmax(0,1fr)]");
+    expect(card.className).toContain("grid-cols-[28px_minmax(0,1fr)]");
     expect(card.className).toContain("[@media(pointer:coarse)]:grid-cols-[44px_minmax(0,1fr)]");
-    expect(card.className).toContain("border-border-subtle");
-    expect(card.className).toContain("bg-bg-surface");
+    expect(card.className).toContain("mx-2");
+    expect(card.className).toContain("mt-2.5");
+    expect(card.className).toContain("rounded-[6px]");
+    expect(card.className).toContain("bg-bg-elevated");
     const open = document.querySelector('[data-testid="todo-open-ready"]');
     expect(open?.className).toContain("cursor-pointer");
+    expect(open?.className).toContain("p-2.5");
     expect(open?.querySelector("span")?.className).toContain("line-clamp-2");
-    expect(open?.querySelector("span")?.className).toContain("text-[14px]");
-    expect(open?.querySelector("span")?.className).not.toContain("block");
+    expect(open?.querySelector("span")?.className).toContain("text-[12.5px]");
     const viewButtons = document.querySelector('[aria-label="Todo surfaces"]')?.querySelectorAll("button") ?? [];
     expect(viewButtons).toHaveLength(3);
     expect(Array.from(viewButtons, (button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
     for (const button of viewButtons) {
       expect(button.className).toContain("h-[30px]");
-      expect(button.className).not.toContain("[@media(pointer:coarse)]:h-11");
     }
   });
 

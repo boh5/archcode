@@ -131,6 +131,8 @@ export function ChatInput({
     && !hasAttachmentError
     && !attachmentUploadInProgress
     && !(hasAttachments && isSlashInput(value));
+  const terminalIsStop = isQueueing && !canSubmit;
+  const terminalIsQueue = !terminalIsStop && (isQueueing || hasPendingHitl);
   const status = composerStatus(activity, hitlReady, hasPendingHitl, terminalFailed);
   const skillUseInput = /^\/skill\s+use(?:\s+(.*))?$/i.exec(value);
   const selectingSkill = skillUseInput !== null;
@@ -509,7 +511,7 @@ export function ChatInput({
               aria-selected={index === slashActiveIndex}
               disabled={unavailable}
               key={skill ? `${skill.source}:${skill.name}:${index}` : command!.name}
-              className={`flex min-w-0 w-full flex-wrap items-start gap-x-2 gap-y-1 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
+              className={`flex min-w-0 w-full flex-wrap items-start gap-x-2 gap-y-1 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-fast)] [@media(pointer:coarse)]:min-h-11 ${
                 index === slashActiveIndex ? "bg-bg-hover" : "hover:bg-bg-hover"
               } disabled:cursor-not-allowed disabled:opacity-50`}
               onClick={() => skill ? selectSkill(skill) : selectSlashCommand(command!)}
@@ -532,7 +534,7 @@ export function ChatInput({
       )}
 
       <div
-        className="overflow-visible rounded-xl border border-border-control bg-bg-elevated shadow-sm transition-[border-color,box-shadow] duration-[var(--motion-hover)] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand"
+        className="composer-card overflow-visible rounded-xl border transition-[border-color,box-shadow] duration-[var(--motion-fast)]"
         data-testid="composer-card"
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleDrop}
@@ -583,12 +585,12 @@ export function ChatInput({
                     : "Send a message…"
           }
           rows={1}
-          className="block min-h-[56px] max-h-[160px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-2 pt-3.5 font-sans text-[16px] leading-[1.45] tracking-normal text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary min-[761px]:text-[15px]"
+          className="block min-h-14 max-h-[160px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-[7px] pt-[13px] font-sans text-[16px] leading-[1.45] tracking-normal text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary min-[761px]:text-[15px]"
         />
 
         {attachmentNotice && <p className="mx-3 mt-1 text-[11px] leading-4 text-warning" role="alert">{attachmentNotice}</p>}
 
-        <div className="flex min-h-[38px] items-center justify-between gap-3 px-3 pb-2" data-testid="composer-toolbar">
+        <div className="flex min-h-10 items-center justify-between gap-3 px-2.5 pb-[9px]" data-testid="composer-toolbar">
           <div className="flex shrink-0 items-center gap-2 text-[11px] text-text-tertiary" data-testid="composer-left-controls">
             <input
               ref={fileInputRef}
@@ -600,7 +602,7 @@ export function ChatInput({
             />
             <button
               type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!canCompose || attachmentUploadInProgress}
               onClick={() => fileInputRef.current?.click()}
               title="Attach file"
@@ -624,37 +626,24 @@ export function ChatInput({
                 disabled={patchModelSelection.isPending}
               /> : <span className="block max-w-[180px] truncate">Loading model…</span>}
             </div>
-            <span className="mr-1 text-[11px] text-text-tertiary max-[720px]:hidden">
+            <span className="whitespace-nowrap text-[9.5px] leading-[1.5] text-text-tertiary [@media(max-width:720px)]:hidden">
               {isQueueing ? "Enter to queue" : "Shift+Enter for newline"}
             </span>
-            {isQueueing && (
-              <button
-                type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-sm border border-brand bg-brand text-brand-ink shadow-[0_1px_3px_rgb(99_102_241/30%),inset_0_1px_0_rgb(255_255_255/10%)] transition-[background-color,border-color,box-shadow,transform] duration-[var(--motion-hover)] hover:-translate-y-px hover:border-brand-hover hover:bg-brand-hover hover:shadow-[0_2px_8px_color-mix(in_srgb,var(--brand)_35%,transparent),inset_0_1px_0_rgb(255_255_255/14%)] active:translate-y-0 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:border-bg-active disabled:bg-bg-active disabled:text-text-muted disabled:shadow-none"
-                disabled={!canSubmit}
-                onClick={sendMessage}
-                title="Queue message"
-                aria-label="Queue message"
-              >
-                {postMessage.isPending
-                  ? <Loader2 size={14} className="animate-activity" />
-                  : <ArrowUp size={16} strokeWidth={2} />}
-              </button>
-            )}
             <button
               type="button"
-              className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors [transition-property:background-color,border-color,box-shadow,transform] duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted ${isQueueing
+              className={`flex h-[34px] w-[34px] items-center justify-center rounded-full transition-colors [transition-property:background-color,border-color,box-shadow,transform] duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-[0.38] ${terminalIsStop
                 ? "bg-bg-active text-text-secondary shadow-[inset_0_0_0_1px_var(--border-default)] hover:bg-error hover:text-bg-overlay hover:shadow-none"
-                : "border border-brand bg-brand text-brand-ink shadow-[0_1px_3px_rgb(99_102_241/30%),inset_0_1px_0_rgb(255_255_255/10%)] hover:-translate-y-px hover:border-brand-hover hover:bg-brand-hover hover:shadow-[0_2px_8px_color-mix(in_srgb,var(--brand)_35%,transparent),inset_0_1px_0_rgb(255_255_255/14%)] active:translate-y-0 active:scale-[0.96] disabled:border-bg-active disabled:shadow-none"
+                : "composer-terminal-primary border border-brand text-brand-ink hover:-translate-y-px hover:border-brand-hover active:translate-y-0 active:scale-[0.96]"
               }`}
-              disabled={isQueueing ? stopSession.isPending : isStopping || !canSubmit}
-              onClick={isQueueing
+              disabled={terminalIsStop ? isPending : isStopping || !canSubmit}
+              onClick={terminalIsStop
                 ? () => stopSession.mutate({ slug, rootSessionId: sessionId })
                 : sendMessage}
-              title={isQueueing ? "Stop" : isStopping ? "Stopping" : hasPendingHitl ? "Queue message" : "Send message"}
-              aria-label={isQueueing ? "Stop session" : isStopping ? "Session stopping" : hasPendingHitl ? "Queue message" : "Send message"}
+              title={terminalIsStop ? "Stop" : isStopping ? "Stopping" : terminalIsQueue ? "Queue message" : "Send message"}
+              aria-label={terminalIsStop ? "Stop session" : isStopping ? "Session stopping" : terminalIsQueue ? "Queue message" : "Send message"}
+              data-testid="composer-terminal-action"
             >
-              {isQueueing
+              {terminalIsStop
                 ? stopSession.isPending
                   ? <Loader2 size={14} className="animate-activity" />
                   : <Square size={11} fill="currentColor" />

@@ -20,23 +20,28 @@ export function SessionChangesInspector({ projection }: { projection: SessionIns
     return "M";
   };
   return (
-    <div data-testid="context-changed-files">
-      <div className="flex min-h-7 items-center justify-between gap-2.5 px-1.5 pb-2 pt-1 text-[11.5px] font-[560] text-text-tertiary">
-        <span><strong className="font-[650] tabular-nums text-text-secondary">{files.length}</strong> files</span>
-        {hasAggregateDiffstat && <span><span className="text-success">+{additions}</span> <span className="text-error">−{deletions}</span></span>}
-      </div>
-      <div className="space-y-px">
+    <section data-testid="context-changed-files">
+      <span className="block text-[10.5px] font-bold uppercase leading-[21px] tracking-[0.09em] text-text-tertiary">Current checkout</span>
+      <p className="mb-3 mt-1 text-[10.5px] leading-[1.45] text-text-tertiary">Working tree for this root Session family. It is not an aggregate Todo diff.</p>
+      <dl className={`mb-3 mt-2.5 grid overflow-hidden rounded-[6px] border border-border-default ${hasAggregateDiffstat ? "grid-cols-3" : "grid-cols-1"}`}>
+        <div className="border-border-default bg-bg-muted p-2 [&:not(:last-child)]:border-r"><dt className="text-[10.5px] uppercase tracking-[0.07em] text-text-tertiary">Files</dt><dd className="mt-1 font-mono text-[11px] font-semibold leading-none text-text-secondary">{files.length}</dd></div>
+        {hasAggregateDiffstat ? <>
+          <div className="border-r border-border-default bg-bg-muted p-2"><dt className="text-[10.5px] uppercase tracking-[0.07em] text-text-tertiary">Additions</dt><dd className="mt-1 font-mono text-[11px] font-semibold leading-none text-success">+{additions}</dd></div>
+          <div className="bg-bg-muted p-2"><dt className="text-[10.5px] uppercase tracking-[0.07em] text-text-tertiary">Deletions</dt><dd className="mt-1 font-mono text-[11px] font-semibold leading-none text-error">−{deletions}</dd></div>
+        </> : null}
+      </dl>
+      <div>
         {files.map((file) => (
           <button
             key={file.path}
             type="button"
-            className="grid min-h-8 w-full grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-2 rounded-[5px] px-1.5 py-1.5 text-left text-[12px] text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:inset_0_0_0_2px_var(--brand)] [@media(pointer:coarse)]:min-h-11"
+            className="grid min-h-10 w-full grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 border-b border-border-subtle text-left text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:inset_0_0_0_2px_var(--brand)] [@media(pointer:coarse)]:min-h-11"
             onClick={() => navigate({ search: buildDiffSearch(searchParams, file.path) })}
           >
-            <span className={`w-3.5 shrink-0 text-center font-mono text-[11px] font-bold ${file.status === "created" ? "text-success" : file.status === "deleted" ? "text-error" : "text-warning"}`} aria-hidden="true">{kind(file.status)}</span>
-            <span className="min-w-0 truncate font-mono text-[11.5px]">{file.path}</span>
+            <span className={`w-4 shrink-0 text-center font-mono text-[10.5px] font-bold ${file.status === "created" ? "text-success" : file.status === "deleted" ? "text-error" : "text-warning"}`} aria-hidden="true">{kind(file.status)}</span>
+            <span className="min-w-0"><span className="block truncate font-mono text-[11.5px] font-semibold leading-[1.3] text-text-primary">{file.path}</span><span className="mt-0.5 block text-[11px] leading-[1.2] text-text-tertiary">{file.status === "created" ? "Added" : file.status === "deleted" ? "Deleted" : "Modified"}</span></span>
             {(file.additions !== undefined || file.deletions !== undefined) && (
-              <span className="shrink-0 font-mono text-[11px] tabular-nums">
+              <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-tertiary">
                 <span className="text-success">+{file.additions ?? 0}</span>{" "}
                 <span className="text-error">−{file.deletions ?? 0}</span>
               </span>
@@ -46,11 +51,11 @@ export function SessionChangesInspector({ projection }: { projection: SessionIns
       </div>
       <button
         type="button"
-        className="mt-2.5 min-h-[34px] w-full rounded-[6px] border border-border-default px-3 text-[12px] font-semibold text-text-secondary transition-colors duration-[var(--motion-hover)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:min-h-11"
+        className="mt-3 min-h-[34px] w-full border-t border-border-default text-left text-[10.5px] font-semibold text-brand transition-colors duration-[var(--motion-fast)] hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:min-h-11"
         onClick={() => navigate({ search: buildDiffSearch(searchParams) })}
       >
-        Open full diff in canvas
+        Open full diff
       </button>
-    </div>
+    </section>
   );
 }

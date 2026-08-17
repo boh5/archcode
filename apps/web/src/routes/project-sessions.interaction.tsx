@@ -234,7 +234,7 @@ afterEach(async () => {
 });
 
 describe("ProjectSessionsRoute direct creation", () => {
-  test("uses the prototype Session source menu instead of browser select chrome", async () => {
+  test("renders the prototype-native Session source selector and updates its canonical value", async () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
@@ -250,40 +250,21 @@ describe("ProjectSessionsRoute direct creation", () => {
     });
     await waitFor(() => document.querySelector('[data-testid="session-source-picker"]') !== null);
 
-    const picker = document.querySelector('[data-testid="session-source-picker"]');
-    const trigger = picker?.querySelector("button");
-    if (!(trigger instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Session source trigger");
-    expect(picker?.querySelector("select")).toBeNull();
+    const select = document.querySelector('[data-testid="session-source-picker"] select');
+    if (!(select instanceof dom.window.HTMLSelectElement)) throw new Error("Missing native Session source selector");
+    expect(select.getAttribute("aria-label")).toBe("Session source");
+    expect([...select.options].map((option) => [option.value, option.textContent])).toEqual([
+      ["all", "All sources"],
+      ["todo", "Todo"],
+      ["automation", "Automation"],
+      ["direct", "Direct"],
+    ]);
 
-    trigger.focus();
-    await act(async () => trigger.click());
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement === trigger).toBe(true);
-    expect(picker?.querySelectorAll('[role="menuitemradio"]')).toHaveLength(4);
-
-    await act(async () => trigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement === trigger).toBe(true);
-
-    await act(async () => trigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-    await waitFor(() => document.activeElement?.getAttribute("role") === "menuitemradio");
-    expect(document.activeElement?.getAttribute("aria-checked")).toBe("true");
-
-    await act(async () => document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "End", bubbles: true })));
-    expect(document.activeElement?.getAttribute("data-source-value")).toBe("direct");
-    await act(async () => document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    expect(document.activeElement === trigger).toBe(true);
-
-    for (const key of ["Enter", " "]) {
-      await act(async () => trigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true })));
-      await waitFor(() => document.activeElement?.getAttribute("role") === "menuitemradio");
-      expect(trigger.getAttribute("aria-expanded")).toBe("true");
-      expect(document.activeElement?.getAttribute("aria-checked")).toBe("true");
-      await act(async () => document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-      expect(trigger.getAttribute("aria-expanded")).toBe("false");
-      expect(document.activeElement === trigger).toBe(true);
-    }
+    await act(async () => {
+      select.value = "direct";
+      select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    });
+    await waitFor(() => select.value === "direct");
   });
 
   test("creates one direct root, navigates exactly, and focuses the ready composer", async () => {

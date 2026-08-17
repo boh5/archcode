@@ -829,7 +829,6 @@ describe("handleSSEEvent", () => {
     ).toEqual([
       queryKeys.session("my-project", "session-1"),
       queryKeys.sessions("my-project"),
-      queryKeys.home,
     ]);
   });
 
@@ -961,11 +960,10 @@ describe("handleSSEEvent", () => {
       queryKeys.sessions("proj"),
       queryKeys.tree("proj", "root-session"),
       queryKeys.projectTodos("proj"),
-      queryKeys.home,
     ]);
   });
 
-  test("stores the scoped hitl.event view and invalidates Home", () => {
+  test("stores the scoped hitl.event view", () => {
     const event = hitlRealtimeEvent({
       projectSlug: "proj",
       hitlId: "hitl-1",
@@ -977,9 +975,10 @@ describe("handleSSEEvent", () => {
       projectSlug: "proj",
       ownerSessionId: event.ownerSessionId,
       rootSessionId: event.rootSessionId,
+      ownerAgentName: event.ownerAgentName,
+      ownerSessionTitle: event.ownerSessionTitle,
       view: event.view,
     });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.home });
   });
 
   test("atomically applies the authoritative hitl.snapshot and marks projects initialized", () => {
@@ -1005,6 +1004,8 @@ describe("handleSSEEvent", () => {
       projectSlug: "proj",
       ownerSessionId: fresh.ownerSessionId,
       rootSessionId: fresh.rootSessionId,
+      ownerAgentName: fresh.ownerAgentName,
+      ownerSessionTitle: fresh.ownerSessionTitle,
       view: fresh.view,
     });
     expect(hitlStore.getState().isProjectInitialized("proj")).toBe(true);
@@ -1024,9 +1025,7 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "my-project", "sessions", "session-1"],
     });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.home,
-    });
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
   });
 
   test("refreshes MCP status snapshot on reset event", () => {
@@ -1068,9 +1067,6 @@ describe("handleSSEEvent", () => {
     );
 
     expect(mockOnShutdown).not.toHaveBeenCalled();
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.home,
-    });
     expect(mockFindWebSessionStore).not.toHaveBeenCalled();
     expect(mockRequestReconnect).toHaveBeenCalledTimes(1);
     expect(mockRefreshSessionSnapshots).toHaveBeenCalledTimes(1);
@@ -1189,9 +1185,7 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: queryKeys.sessions("proj"),
     });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: queryKeys.home,
-    });
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(2);
 
     const idle: GlobalSSESessionRuntimeChangedEvent = {
       ...running,
@@ -1365,6 +1359,8 @@ describe("HITL live notification gate", () => {
       projectSlug: "proj",
       ownerSessionId: live.ownerSessionId,
       rootSessionId: live.rootSessionId,
+      ownerAgentName: live.ownerAgentName,
+      ownerSessionTitle: live.ownerSessionTitle,
       view: live.view,
     });
     expect(gate.observeRealtimeEvent(live)).toBeNull();
@@ -1501,6 +1497,8 @@ function hitlSnapshotEntry(event: GlobalSSEHitlRealtimeEvent) {
     hitlId: event.hitlId,
     ownerSessionId: event.ownerSessionId,
     rootSessionId: event.rootSessionId,
+    ownerAgentName: event.ownerAgentName,
+    ownerSessionTitle: event.ownerSessionTitle,
     view: event.view,
   };
 }
@@ -1527,6 +1525,8 @@ function hitlRealtimeEvent(input: {
     hitlId: input.hitlId,
     ownerSessionId: view.owner.id,
     rootSessionId: "root-session",
+    ownerAgentName: "build",
+    ownerSessionTitle: "Worker Session",
     createdAt: 1700000000000,
     payload: { type: "hitl.request" },
     view,
@@ -1541,6 +1541,8 @@ function scopedHitlView(
     projectSlug: "proj",
     ownerSessionId,
     rootSessionId: "root-session",
+    ownerAgentName: "build",
+    ownerSessionTitle: "Worker Session",
     view: {
       hitlId,
       owner: { type: "session", id: ownerSessionId },

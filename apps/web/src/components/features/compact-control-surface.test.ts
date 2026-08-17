@@ -42,7 +42,7 @@ describe("compact icon control contract", () => {
     const chat = await source("components/features/ChatInput.tsx");
     expect(chat).toContain("rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md");
     expect(chat).toContain("text-[12px] leading-4 text-text-tertiary");
-    expect(chat).toContain("h-8 w-8 items-center justify-center rounded-sm transition-colors");
+    expect(chat).toContain("h-[34px] w-[34px] items-center justify-center rounded-full transition-colors");
   });
 
   test("task-critical header metadata uses the tertiary foreground", async () => {
@@ -81,8 +81,9 @@ describe("compact icon control contract", () => {
     expect(rail).toContain('WORK_ACTIVITY_NESTED_LANE_CLASS = "w-full min-w-0"');
     expect(workstream).toContain('data-testid="execution-thread-column"');
     expect(composer).toContain('data-testid="composer-thread-column"');
-    expect(composer).toContain('className="flex min-h-0 max-h-full flex-col gap-2.5 !max-w-[848px]"');
+    expect(composer).toContain('className="flex min-h-0 max-h-full flex-col gap-2 !max-w-[848px]"');
     expect(composer).toContain('data-testid="composer-priority-stack"');
+    expect(composer).toContain("max-h-[min(78dvh,640px)]");
     expect(composer).toContain("max-h-[min(48dvh,520px)]");
     expect(composer).toContain("!max-w-[900px] !px-3");
     expect(composer).toContain("min-[761px]:!px-[26px]");
@@ -100,10 +101,10 @@ describe("compact icon control contract", () => {
     const bell = await source("components/features/HitlBell.tsx");
     const iconAction = await source("components/primitives/IconAction.tsx");
     const projectBar = await source("components/features/ProjectBar.tsx");
-    expect(bell).toContain("rounded-md border border-border-strong bg-bg-overlay p-3 shadow-lg");
-    expect(bell).toContain("rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md");
+    expect(bell).toContain("fixed bottom-14 left-[62px]");
+    expect(bell).toContain("rounded-[10px] border border-border-strong bg-bg-overlay shadow-lg");
+    expect(bell).toContain("min-h-[58px]");
     expect(bell).toContain("hover:bg-rail-hover");
-    expect(bell).not.toContain("hover:bg-rail-ink/8");
     expect(iconAction).toContain('role="tooltip"');
     expect(iconAction).toContain("rounded-lg border border-border-default bg-bg-overlay");
     expect(projectBar.match(/role="tooltip"/g)?.length).toBe(3);
@@ -111,15 +112,15 @@ describe("compact icon control contract", () => {
   });
 
   test("Project Todo capture, detail, and Goal editors use the current compact controls", async () => {
-    const todos = await source("routes/project-todos.tsx");
+    const capture = await source("components/features/ProjectTodoCaptureDialog.tsx");
     const todoDetail = await source("routes/project-todo-detail.tsx");
     const goal = await source("components/features/SessionGoalSummaryRow.tsx");
-    expect(todos).toContain('role="dialog" aria-modal="true" aria-labelledby="new-todo-title"');
-    expect(todos).toContain("w-[min(560px,calc(100vw-32px))]");
-    expect(todos).toContain('htmlFor="new-todo-content"');
-    expect(todos).toContain('id="new-todo-content"');
-    expect(todos).toContain(">Save</button>");
-    expect(todos).toContain('"Run now"');
+    expect(capture).toContain("<DialogPrimitive.Content");
+    expect(capture).toContain("h-fit max-h-[min(680px,calc(100dvh-32px))] w-[min(560px,calc(100vw-32px))]");
+    expect(capture).toContain('htmlFor="new-todo-content"');
+    expect(capture).toContain('id="new-todo-content"');
+    expect(capture).toContain('failureAction === "save" ? "Retry save" : "Save"');
+    expect(capture).toContain('failureAction === "run" ? "Retry run" : "Run now"');
     expect(todoDetail).toContain('aria-label="Todo content"');
     expect(todoDetail).toContain("min-h-8 cursor-pointer items-center justify-center gap-1.5");
     expect(goal).toContain("h-8 rounded-sm border px-3 text-[12px]");

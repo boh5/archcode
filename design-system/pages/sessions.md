@@ -21,9 +21,9 @@ attention, and start work directly without manufacturing a Todo first.
   **`Running`**, then **`Recent`**. Group titles match the product lexicon in
   Master; do not title the first group `Needs attention`.
 - Match the current prototype list geometry: 24px desktop horizontal gutters,
-  28px top and 64px bottom; at `≤760px` use 12px horizontal gutters, 18px top,
+  28px top and 64px bottom; at `≤720px` use 12px horizontal gutters, 18px top,
   and 64px bottom. Adjacent non-empty groups use 26px separation. Group headers
-  have a 29px minimum height with `0 7px 8px` padding, an uppercase 11px/750
+  have a 29px minimum height with `0 7px 8px` padding, an uppercase 11px/700
   label, and a 10.5px tabular count.
 - Use flat rows and thin separators. Do not add summary cards, charts, runtime
   metrics, or a second dashboard above the list.
@@ -36,7 +36,7 @@ attention, and start work directly without manufacturing a Todo first.
 - Desktop rows begin with a 30px status-orbit column, use 12px gaps, `10px 8px`
   padding, a 66px minimum height, and one bottom separator. The remaining
   columns hold the flexible copy, optional state/time, and trailing chevron.
-  Titles are 13.5px/620 at 1.35 line-height; source context is 11.5px at 1.35
+  Titles are 13.5px/600 at 1.35 line-height; source context is 11.5px at 1.35
   line-height with 4px top spacing and a compact uppercase source label.
   At `≤720px`, rows use a 72px minimum height and a 27px status column; secondary
   time/owner/chevron metadata hides while the explicit action-required state
@@ -86,8 +86,8 @@ attention, and start work directly without manufacturing a Todo first.
   opens the Session detail with the composer focused.
 - Direct creation expresses `start executing now`; it does not imply that the
   work is quick, small, or unsuitable for a longer investigation. Use a Todo
-  when the user wants a durable brief, PRD, Plan, or acceptance trail around
-  one or more executions.
+  when the user wants durable Todo content, references, a Plan, or an acceptance
+  trail around one or more executions. A PRD is an optional Todo reference.
 - Do not ask the user to choose between Todo and Session in a modal; choosing
   the Sessions surface already communicates direct-work intent.
 - Do not create a Todo automatically. A later `Create Todo from Session` action

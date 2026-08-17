@@ -35,7 +35,7 @@ away.
   context → Session canvas → context inspector`.
 - A Direct Session, or an Automation Session whose source has no Todo, uses one
   compact Session shell entered from `Runs` or `Schedules`. Never fabricate
-  Todo identity, Todo/Work navigation, Brief, Plan, or references for these sources.
+  Todo identity, Todo/Work navigation, Todo content, Plan, or references for these sources.
 - Let conversation structure, Work, tools, code, tables, Diffs, and the Composer
   use the available Session canvas with safe horizontal gutters.
 - Constrain only long Agent prose to a 65–72ch reading measure. User messages
@@ -158,10 +158,10 @@ header and conversation. Do not move Execution into the inspector.
   neutral `spark`, brand `play`, live `activity`, and success `check`. Board cards
   do not repeat those icons.
 - The canonical document is ordered as
-  **Brief / PRD → References → Plan → Result when trusted final output exists**.
+  **Todo content → References → Plan → Result when trusted final output exists**.
   This preserves `Intent → inputs → implementation guidance → accepted/review
   outcome` without nested tabs, accordions, cards, or a second copy of Todo data.
-- `Brief / PRD` renders the complete canonical Todo `content` and exposes the
+- `Todo content` renders the complete canonical Todo `content` and exposes the
   existing `Edit → Save / Cancel` flow. The content's first Markdown heading may
   visually lead the document but must not become a second persisted title.
   Do not label rendered content `Markdown`; keep only useful freshness metadata
@@ -173,9 +173,12 @@ header and conversation. Do not move Execution into the inspector.
 - `References` owns the existing canonical management contract: Add files,
   upload progress and failure recovery, `Open` for safe image/PDF bytes,
   `Download` for other content, and `Remove`. Use flat rows with the 36px type
-  marker, filename, size, and media type. The concise live-use explanation is:
-  `Current references are available to Agent work on the next model or tool
-  call.` Already-started model and tool calls do not change.
+  marker, filename, size, and media type. PRDs, design documents, logs, images,
+  PDFs, and other supporting files belong here; none of them changes or
+  specializes the Todo content model. The concise live-use explanation is:
+  `Supporting files such as PRDs, designs, logs, and images stay in this project.
+  Agent work can read the current set; images may be sent to the selected model
+  provider.` Already-started model and tool calls do not change.
 - A prototype fixture without backing bytes renders `Open` / `Download`
   disabled and identifies itself as reference-only. A file attached during the
   prototype session uses its real local object URL for Open or Download. Never
@@ -427,7 +430,11 @@ column rather than leaving an empty rail.
   No bordered mini-cards per file.
 - Empty state: one muted line such as `No file changes yet.`
 - Optional footer action: **Open full diff** into the Session canvas. Row click
-  opens that path’s diff in canvas when the product supports it.
+  opens that path’s diff in canvas when the product supports it. Full diff keeps
+  the complete current-checkout file set and aggregate count; a row deep link
+  only expands, focuses, and scrolls to that file rather than filtering the Diff.
+- Full diff uses a centered 900px maximum content measure with at least 16px of
+  physical inline gutter on each side, inside a stable two-edge scrollbar gutter.
 
 ### Context
 
@@ -469,14 +476,12 @@ column rather than leaving an empty rail.
   `min(48dvh, 520px)` on desktop or `min(52dvh, 460px)` at `≤760px`. Only the
   priority stack (`HITL → Goal → Queue`) scrolls inside that cap; the input is a
   non-scrolling sibling so its menu can escape above the card.
-- A pending multi-option Question may expand the desktop dock to
-  `min(78dvh, 640px)` when required to keep its vertical option list, custom
-  answer, Queue row, attachments, and terminal action simultaneously visible.
-  This is a decision-state exception, not the normal Session dock height.
-- A pending Permission may expand to `min(64dvh, 560px)` when operation details
-  or an optional note is open. This keeps the decision, Queue tray, attachments,
-  and terminal action visible together before introducing priority-stack
-  scrolling.
+- Any pending HITL decision — Question or Permission — expands the dock cap to
+  `min(78dvh, 640px)`. This is one decision-state exception, not separate layout
+  modes for the two request families. Because the value is a maximum, a short
+  decision continues to use only its natural height. The larger cap keeps the
+  decision, Queue tray, attachments, and terminal action visible together before
+  introducing priority-stack scrolling.
 - Pending HITL is rendered first and receives the strongest semantic field in
   the dock. Its question or permission and response actions must be immediately
   visible; Goal and Queue never sit above it.
@@ -501,7 +506,7 @@ column rather than leaving an empty rail.
   - Trigger shows `Model display name · effort` (effort omitted only when the
     catalog model has no variants).
   - Trigger is 32px high with `10px / 9px` horizontal padding, a 999px radius,
-    12px/520 type, a 6px outer gap, and a 5px `Model · effort` inner gap. The
+    12px/500 type, a 6px outer gap, and a 5px `Model · effort` inner gap. The
     menu is 308px wide, uses 6px padding and a 12px radius, and opens 8px above
     the trigger.
   - Menu lists **model display names only** — no marketing descriptions

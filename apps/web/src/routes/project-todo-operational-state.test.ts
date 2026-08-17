@@ -6,7 +6,7 @@ import type {
   RootSessionSummary,
   SessionFamilyActivity,
 } from "@archcode/protocol";
-import { deriveProjectTodoOperationalState, type ProjectTodoOperationalFacts } from "./project-todo-presentation";
+import { deriveProjectTodoNeedsUser, deriveProjectTodoOperationalState, type ProjectTodoOperationalFacts } from "./project-todo-presentation";
 
 const todo: ProjectTodo = {
   id: "todo-1",
@@ -96,6 +96,24 @@ describe("Todo operational state", () => {
       activityBySessionId: activity,
       attentionBySessionId: new Map([["work-1", "Permission"]]),
     }))).toEqual({ label: "Needs you", detail: "Permission", kind: "needs_you" });
+  });
+
+  test("uses exact linked-root HITL and never infers Needs you from family activity", () => {
+    const discussion = workSession("discussion", 20, null, {
+      source: { kind: "todo", todoId: todo.id, entry: "discussion" },
+    });
+    expect(deriveProjectTodoNeedsUser(todo, [discussion], new Map([["discussion", "Question"]]))).toBe(true);
+    expect(deriveProjectTodoOperationalState(facts({
+      sessions: [discussion],
+      attentionBySessionId: new Map([["discussion", "Question"]]),
+    }))).toEqual({ label: "Needs you", detail: "Question", kind: "needs_you" });
+
+    const waiting = workSession("waiting", 30, null);
+    expect(deriveProjectTodoNeedsUser(todo, [waiting], new Map())).toBe(false);
+    expect(deriveProjectTodoOperationalState(facts({
+      sessions: [waiting],
+      activityBySessionId: new Map([["waiting", "waiting_for_human"]]),
+    }))).toEqual({ label: "Working", detail: "Waiting for response", kind: "running" });
   });
 
   test("shows current work instead of an older terminal failure", () => {

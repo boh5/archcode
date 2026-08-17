@@ -68,7 +68,7 @@ export function ChatHeader({
     <header className="flex min-h-16 shrink-0 items-center gap-2.5 border-b border-border-default bg-bg-surface px-3 py-2.5 min-[761px]:gap-4 min-[761px]:px-[26px] min-[761px]:py-3">
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <h1 className="min-w-0 truncate text-[17px] font-[650] leading-[1.2] tracking-[-0.03em] text-text-primary min-[761px]:text-[20px]">
+          <h1 className="min-w-0 truncate text-[17px] font-semibold leading-[1.2] tracking-[-0.03em] text-text-primary min-[761px]:text-[20px]">
             {title ?? "Untitled"}
           </h1>
           {executionStatus && (
@@ -81,7 +81,7 @@ export function ChatHeader({
                   ? `${executionStatus.label} · ${executionStatus.detail}`
                   : executionStatus.label
               }
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[6px] border border-l-2 pl-2 pr-[9px] text-[11px] font-[650] tracking-[-0.01em] ${execution?.status === "running" ? "border-signal/30 border-l-signal bg-signal-field text-signal-foreground" : `border-border-default border-l-border-strong ${executionKind ? STATUS_SUBTLE_CLASS[statusVisual(executionKind).tone] : ""} ${executionKind ? STATUS_TONE_CLASS[statusVisual(executionKind).tone] : ""}`}`}
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[6px] border border-l-2 pl-2 pr-[9px] text-[11px] font-semibold tracking-[-0.01em] ${execution?.status === "running" ? "border-signal/30 border-l-signal bg-signal-field text-signal-foreground" : `border-border-default border-l-border-strong ${executionKind ? STATUS_SUBTLE_CLASS[statusVisual(executionKind).tone] : ""} ${executionKind ? STATUS_TONE_CLASS[statusVisual(executionKind).tone] : ""}`}`}
             >
               {executionKind && <StatusGlyph kind={executionKind} size={13} />}
               {executionStatus.label}
@@ -112,7 +112,7 @@ export function ChatHeader({
               ·
             </span>
           )}
-          <span className="shrink-0 font-[560] tabular-nums text-text-secondary" data-testid="session-stats">
+          <span className="shrink-0 font-medium tabular-nums text-text-secondary" data-testid="session-stats">
             {stats.tools.calls.toLocaleString()} tools ·{" "}
             {stats.usage.totalTokens.toLocaleString()} tokens
           </span>

@@ -185,7 +185,7 @@ export function ToolOutputViewer({ projectSlug, sessionId, outputRef }: ToolOutp
         <button
           type="submit"
           disabled={!query.trim() || searchState.status === "loading"}
-          className="inline-flex h-8 items-center gap-1 rounded-sm bg-bg-active px-3 text-[12px] text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40"
+          className="inline-flex h-8 items-center gap-1 rounded-sm bg-bg-active px-3 text-[12px] text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40"
         >
           <Search size={11} /> Search
         </button>

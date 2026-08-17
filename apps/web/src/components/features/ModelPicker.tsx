@@ -237,18 +237,18 @@ export function ModelPicker({
           });
           setQuery("");
         }}
-        className={`inline-flex h-[30px] max-w-[112px] min-w-0 cursor-pointer items-center gap-1.5 rounded-[999px] px-2 pl-2.5 text-left text-[12px] font-[520] tracking-normal transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] disabled:cursor-not-allowed disabled:opacity-50 min-[421px]:max-w-[142px] min-[521px]:max-w-full ${open ? "bg-bg-hover text-text-primary" : "text-text-secondary"}`}
+        className={`inline-flex h-8 max-w-[112px] min-w-0 cursor-pointer items-center gap-1.5 rounded-[999px] px-[9px] pl-2.5 text-left text-[12px] font-medium tracking-normal transition-[background-color,color] duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] disabled:cursor-not-allowed disabled:opacity-50 min-[421px]:max-w-[142px] min-[521px]:max-w-full ${open ? "bg-bg-hover text-text-primary" : "text-text-secondary"}`}
         data-testid="model-picker-trigger"
         title={activeDiffers ? `Next: ${triggerLabel}` : triggerLabel}
       >
         <span className="inline-flex min-w-0 items-baseline gap-[5px] overflow-hidden">
-          <span className={`truncate font-[560] tracking-[-0.01em] ${open ? "text-text-primary" : "text-text-secondary"}`}>{nextModelLabel}</span>
-          {hasEffort ? <><span className="shrink-0 font-medium text-text-muted opacity-70" aria-hidden="true">·</span><span className="shrink-0 text-[11.5px] font-[520] tracking-[0.01em] text-text-tertiary">{nextVariantLabel}</span></> : null}
+          <span className={`truncate font-medium tracking-[-0.01em] ${open ? "text-text-primary" : "text-text-secondary"}`}>{nextModelLabel}</span>
+          {hasEffort ? <><span className="shrink-0 font-medium text-text-muted opacity-70" aria-hidden="true">·</span><span className="shrink-0 text-[11.5px] font-medium tracking-[0.01em] text-text-tertiary">{nextVariantLabel}</span></> : null}
         </span>
         <ChevronDown
           size={11}
           strokeWidth={1.75}
-          className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] motion-reduce:transition-none ${open ? "rotate-180 text-text-secondary" : ""}`}
+          className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-fast)] motion-reduce:transition-none ${open ? "rotate-180 text-text-secondary" : ""}`}
           aria-hidden="true"
         />
       </button>
@@ -260,7 +260,7 @@ export function ModelPicker({
           role="dialog"
           aria-label="Choose model and effort"
           onKeyDown={(event) => movePickerFocus(event, popoverRef.current)}
-          className="absolute bottom-[calc(100%+8px)] right-0 z-50 flex max-h-[min(70vh,440px)] w-[min(308px,calc(100vw-28px))] flex-col overflow-hidden rounded-[12px] border border-border-default bg-bg-overlay p-1.5 text-[15px] leading-[1.55] tracking-[-0.006em] animate-overlay-enter motion-reduce:animate-none min-[761px]:left-auto [@media(max-width:520px)]:fixed [@media(max-width:520px)]:bottom-[72px] [@media(max-width:520px)]:left-auto [@media(max-width:520px)]:right-3 [@media(max-width:520px)]:w-[min(308px,calc(100vw-72px))]"
+          className="absolute bottom-[calc(100%+8px)] right-0 z-50 flex max-h-[min(70vh,440px)] w-[min(308px,calc(100vw-28px))] flex-col overflow-hidden rounded-[12px] border border-border-default bg-bg-overlay p-1.5 text-[15px] leading-[1.55] tracking-normal animate-overlay-enter motion-reduce:animate-none min-[761px]:left-auto [@media(max-width:520px)]:fixed [@media(max-width:520px)]:bottom-[72px] [@media(max-width:520px)]:left-auto [@media(max-width:520px)]:right-3 [@media(max-width:520px)]:w-[min(308px,calc(100vw-72px))]"
           style={{ boxShadow: "0 18px 40px rgb(0 0 0 / 28%), 0 6px 16px rgb(0 0 0 / 14%), inset 0 0 0 1px rgb(255 255 255 / 4%)" }}
           data-testid="model-picker-popover"
         >
@@ -283,8 +283,8 @@ export function ModelPicker({
           )}
 
           <div className="min-h-0 overflow-y-auto overscroll-contain">
-            <section className="grid gap-0.5 p-0.5" aria-label="Model">
-              <div className="px-2.5 pb-1 pt-1.5 text-[10px] font-[650] uppercase tracking-[0.06em] text-text-tertiary">Model</div>
+            <section className="grid gap-[3px]" aria-label="Model">
+              <div className="px-2 pb-[3px] pt-1.5 text-[9.5px] font-bold uppercase leading-[1.5] tracking-[0.08em] text-text-tertiary">Model</div>
             {visibleModels.map(({ model, providerDisplayName }) => {
               const selected = next.resolved.selection.model === model.qualifiedId;
               const isDefault = principalProfile?.model === model.qualifiedId;
@@ -296,12 +296,12 @@ export function ModelPicker({
                   aria-pressed={selected}
                   disabled={disabled}
                   onClick={() => selectModel(model)}
-                  className="grid min-h-[34px] w-full cursor-pointer grid-cols-[minmax(0,1fr)_16px] items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-text-secondary outline-none transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus:bg-bg-hover focus:text-text-primary [@media(pointer:coarse)]:min-h-11"
+                  className="grid min-h-[38px] w-full cursor-pointer grid-cols-[minmax(0,1fr)_16px] items-center gap-2.5 rounded-[6px] px-2 py-1.5 text-left text-text-secondary outline-none transition-[background-color,color] duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus:bg-bg-hover focus:text-text-primary [@media(pointer:coarse)]:min-h-11"
                   style={selected ? { background: "color-mix(in srgb, var(--brand) 10%, var(--bg-hover))" } : undefined}
                   data-model={model.qualifiedId}
                   title={`${model.displayName} — ${providerDisplayName}`}
                 >
-                  <span className="flex min-w-0 items-center gap-2"><strong className={`min-w-0 truncate text-[13px] tracking-[-0.01em] ${selected ? "font-semibold text-text-primary" : "font-[560]"}`}>{model.displayName}</strong>{isDefault && <span className="shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold leading-[1.4] tracking-[0.02em] text-text-tertiary shadow-[inset_0_0_0_1px_var(--border-subtle)]" style={{ background: "color-mix(in srgb, var(--bg-base) 70%, var(--border-subtle))" }}>Default</span>}</span>
+                  <span className="min-w-0"><strong className={`block min-w-0 truncate text-[11.5px] leading-[1.5] ${selected ? "font-semibold text-text-primary" : "font-medium"}`}>{model.displayName}</strong>{isDefault && <small className="block text-[9.5px] leading-[1.5] text-text-tertiary">Default</small>}</span>
                   <span className="grid h-4 w-4 place-items-center">{selected ? <Check size={14} strokeWidth={2} className="text-brand" aria-label="Selected" /> : null}</span>
                 </button>
               );
@@ -313,11 +313,11 @@ export function ModelPicker({
 
             {normalizedQuery.length === 0 && currentModel && hasEffort && (
               <>
-                <div className="mx-1.5 my-[5px] h-px bg-border-subtle" aria-hidden="true" />
-                <section className="px-0.5 pb-0.5 pt-1" aria-label="Effort">
-                <span className="px-2.5 pb-2 pt-0.5 text-[10px] font-[650] uppercase tracking-[0.06em] text-text-tertiary">Effort</span>
+                <div className="my-1.5 h-px bg-border-subtle" aria-hidden="true" />
+                <section className="grid gap-[3px]" aria-label="Effort">
+                <span className="block px-2 pb-[3px] pt-1.5 text-[9.5px] font-bold uppercase leading-[1.5] tracking-[0.08em] text-text-tertiary">Effort</span>
                 <div
-                  className="grid gap-[3px] rounded-[9px] p-[3px] shadow-[inset_0_0_0_1px_var(--border-subtle)]"
+                  className="grid gap-0.5 rounded-[7px] bg-bg-muted p-[3px]"
                   role="radiogroup"
                   aria-label="Effort"
                   style={{
@@ -336,7 +336,7 @@ export function ModelPicker({
                       aria-checked={selected}
                       disabled={disabled}
                       onClick={() => selectVariant(variant)}
-                      className={`inline-flex min-h-[30px] cursor-pointer items-center justify-center rounded-[7px] px-2 text-[12px] tracking-[-0.01em] outline-none transition-[background-color,color,box-shadow] duration-[var(--motion-hover)] focus-visible:[box-shadow:var(--focus)] disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${selected ? "bg-bg-elevated font-[620] text-text-primary shadow-[0_1px_2px_rgb(0_0_0/12%),0_0_0_1px_color-mix(in_srgb,var(--border-default)_70%,transparent)]" : "font-[560] text-text-tertiary hover:text-text-primary"}`}
+                      className={`inline-flex min-h-7 cursor-pointer items-center justify-center rounded-[5px] px-2 text-[10px] outline-none transition-[background-color,color,box-shadow] duration-[var(--motion-fast)] focus-visible:[box-shadow:var(--focus)] disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:min-h-11 ${selected ? "bg-bg-elevated font-semibold text-text-primary shadow-[inset_0_0_0_1px_var(--border-default)]" : "font-medium text-text-tertiary hover:text-text-primary"}`}
                       data-variant={variant ?? ""}
                     >
                       <span className="truncate">{variant ?? "Default"}</span>
@@ -356,7 +356,7 @@ export function ModelPicker({
                   data-picker-option
                   disabled={disabled}
                   onClick={() => select({ mode: "profile_default", selection: principalProfile })}
-                  className="mx-0.5 flex min-h-8 w-[calc(100%-4px)] cursor-pointer items-center rounded-lg px-2.5 py-1.5 text-left text-[11px] text-text-tertiary outline-none transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus:bg-bg-hover focus:text-text-primary [@media(pointer:coarse)]:min-h-11"
+                  className="mx-0.5 flex min-h-8 w-[calc(100%-4px)] cursor-pointer items-center rounded-lg px-2.5 py-1.5 text-left text-[11px] text-text-tertiary outline-none transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus:bg-bg-hover focus:text-text-primary [@media(pointer:coarse)]:min-h-11"
                   data-testid="model-picker-principal-profile"
                 >
                   Reset explicit override

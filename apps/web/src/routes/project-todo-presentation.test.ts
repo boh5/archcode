@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Activity, Check, Play, Sparkles } from "lucide-react";
 import type { ProjectSessionInventoryItem } from "../api/types";
 import {
   PROJECT_TODO_LANE_PRESENTATIONS,
@@ -17,11 +18,15 @@ describe("Project Todo presentation", () => {
 
   test("keeps four explicit board lanes in product order", () => {
     expect(Object.keys(PROJECT_TODO_LANE_PRESENTATIONS)).toEqual(["idea", "ready", "in_progress", "done"]);
+    expect(PROJECT_TODO_LANE_PRESENTATIONS.idea).toMatchObject({ Icon: Sparkles, tone: "neutral" });
+    expect(PROJECT_TODO_LANE_PRESENTATIONS.ready).toMatchObject({ Icon: Play, tone: "brand" });
+    expect(PROJECT_TODO_LANE_PRESENTATIONS.in_progress).toMatchObject({ Icon: Activity, tone: "signal" });
+    expect(PROJECT_TODO_LANE_PRESENTATIONS.done).toMatchObject({ Icon: Check, tone: "success" });
   });
 
   test("derives the prototype display lead without creating a Todo title", () => {
     expect(projectTodoDisplayLead("Intro\n\n# Visible lead\n\nBody stays canonical")).toBe("Visible lead");
-    expect(projectTodoDisplayLead("- [x] First line\nMore detail")).toBe("First line More detail");
+    expect(projectTodoDisplayLead("- [x] First line\nMore detail")).toBe("First line");
     expect(Array.from(projectTodoDisplayLead("界".repeat(90)))).toHaveLength(80);
   });
 

@@ -80,7 +80,15 @@ function hitlSnapshot(
   return {
     type: "hitl.snapshot",
     projectSlugs,
-    entries: views.map((view) => ({ projectSlug: "proj", hitlId: view.hitlId, ownerSessionId: view.owner.id, rootSessionId: "root-1", view })),
+    entries: views.map((view) => ({
+      projectSlug: "proj",
+      hitlId: view.hitlId,
+      ownerSessionId: view.owner.id,
+      rootSessionId: "root-1",
+      ownerAgentName: "build",
+      ownerSessionTitle: "Worker Session",
+      view,
+    })),
     createdAt: 0,
   };
 }

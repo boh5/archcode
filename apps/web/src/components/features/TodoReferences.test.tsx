@@ -15,7 +15,7 @@ let serverAttachmentIds: string[];
 
 const todo: ProjectTodo = {
   id: "todo-1",
-  content: "Attach the brief",
+  content: "Attach supporting materials",
   status: "ready",
   attachmentIds: [],
   revision: 1,
@@ -109,6 +109,7 @@ describe("Todo References", () => {
     const remove = document.querySelector('[aria-label="Remove brief.pdf"]');
     expect(remove?.textContent).toBe("Remove");
     expect(remove?.className).toContain("[@media(pointer:coarse)]:min-h-11");
+    expect(document.getElementById("todo-references-help")?.textContent).toContain("PRDs, designs, logs, and images");
   });
 
   test("uploads selected files serially with the revision returned by the previous mutation", async () => {

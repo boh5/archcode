@@ -126,10 +126,9 @@ describe("ModelPicker", () => {
     expect(triggers.length).toBe(1);
     expect(triggers[0]?.getAttribute("aria-label")).toContain("Claude Sonnet · deep");
     expect(triggers[0]?.className).toContain("rounded-[999px]");
-    expect(container.querySelector('[data-testid="variant-picker-trigger"]')).toBeNull();
   });
 
-  test("renders display-name model rows, a Default badge, and one Effort section", () => {
+  test("renders display-name model rows, a Default annotation, and one Effort section", () => {
     renderPicker();
     openPicker();
     const popover = container.querySelector('[data-testid="model-picker-popover"]');

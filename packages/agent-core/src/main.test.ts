@@ -2080,7 +2080,7 @@ describe("createRuntime", () => {
     });
     await runtime.projectRegistry.add({ workspaceRoot, name: "Todo attachment retention" });
     const todos = (await runtime.contextResolver.resolve(workspaceRoot)).todos;
-    let todo = await todos.createTodo({ content: "Retain the PRD" });
+    let todo = await todos.createTodo({ content: "Retain the attached PRD" });
     const attachmentId = crypto.randomUUID();
     const bytes = new TextEncoder().encode("durable Todo reference");
     const uploaded = await todos.uploadAttachment({

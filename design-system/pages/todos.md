@@ -16,6 +16,12 @@ They are project-owned lifecycle entities, not Session-local checklists.
 - Keep the project rail and persistent Todo navigator; there is no project
   toolbar or `Todos / Automations / Sessions` Tab row. `All todos` is selected
   in the navigator.
+- Keep every persistent navigator lifecycle group Todo-only. `Needs you` has one
+  row per Todo, never one row per Worker, Session, HITL request, or Goal gate.
+  Its group count is the number of affected Todos; each row's trailing count is
+  the exact number of unresolved requests plus blocked/budget-limited Work or
+  Automation Goals for that Todo. Activating that row opens the Todo's canonical
+  Work destination, where the individual actions are expanded.
 - The compact canvas header shows `All todos` and the total count. The command
   row below owns `Filter todos`, the `List / Board` layout toggle, and the
   `Active / Rejected / Archived` surface switcher. `New todo` remains the single
@@ -24,7 +30,7 @@ They are project-owned lifecycle entities, not Session-local checklists.
 - Keep that command header as a stable two-column grid on desktop. The lead group
   contains the filter, capped at 420px, plus the compact icon-only layout toggle;
   the action group contains the three equal surface choices. At
-  `≤760px`, stack the two groups into full-width rows. Match the current
+  `≤720px`, stack the two groups into full-width rows. Match the current
   prototype values exactly: the filter is 38px high on precise pointers, the two
   icon-only layout controls are 32px square, and the surface switcher remains
   38px high with 30px inner buttons. At `≤720px`, filter and layout controls
@@ -47,7 +53,7 @@ They are project-owned lifecycle entities, not Session-local checklists.
 - Project-rail `Search all work` is the only navigational search. The visible
   Todo field is only an in-place filter for the selected Todo view; do not add
   another search icon to the compact canvas header.
-- `Filter Todos` matches stable ID, canonical content/PRD text, and visible
+- `Filter Todos` matches stable ID, canonical Todo content, and visible
   runtime metadata without changing lifecycle state or opening the detail page.
 - Filtering Active updates the visible List groups and Board lanes from the same
   match set. Board keeps all four lanes visible and both layouts update their
@@ -67,9 +73,9 @@ They are project-owned lifecycle entities, not Session-local checklists.
 - The inventory filter uses the prototype's 4px control radius at every
   breakpoint; it does not inherit the 6px card radius.
 - Match the current prototype workspace padding: 28px top, 20px horizontal,
-  64px bottom on desktop; 18px top, 12px horizontal, 64px bottom at `≤760px`.
+  64px bottom on desktop; 18px top, 12px horizontal, 64px bottom at `≤720px`.
   Active groups use a 26px vertical gap. Group headers have a 29px minimum
-  height, `0 7px 8px` padding, 11px/750 uppercase titles, and 10.5px tabular
+  height, `0 7px 8px` padding, 11px/700 uppercase titles, and 10.5px tabular
   counts.
 - Each row shows the prototype's display-only lead: the first Markdown heading
   when present, otherwise the first normalized content, capped at 80
@@ -78,7 +84,7 @@ They are project-owned lifecycle entities, not Session-local checklists.
   same derived operational line as Board cards.
 - List rows begin with a 30px state-orbit column, then flexible copy and the
   trailing affordance. They use 12px gaps, `10px 8px` padding, a 66px minimum
-  height, and one bottom rule. Excerpts are 13.5px/620 at 1.35 line-height;
+  height, and one bottom rule. Excerpts are 13.5px/600 at 1.35 line-height;
   metadata is 11.5px at 1.35 line-height with 4px top spacing. Focus/selection uses the
   prototype's hover field plus a 2px inset brand rule without changing bounds.
 - Use flat rows separated by rules. Do not turn every row into a floating card,
@@ -160,8 +166,8 @@ Lane rules:
   operational lines.
 - Card link content uses 10px padding on all sides beside the dedicated drag
   activator. Its compact
-  title is 12.5px/580 at 1.48 line-height. The operational line
-  uses a 6px status dot plus visible 11.5px/520 text and an optional short detail
+  title is 12.5px/500 at 1.48 line-height. The operational line
+  uses a 6px status dot plus visible 11.5px/500 text and an optional short detail
   after a separator; the running dot alone may pulse. Keep it inside the existing
   card boundary without a badge stack, nested card, action, lifecycle control,
   or full-width internal divider.
@@ -182,7 +188,7 @@ Lane rules:
 - Keep the same compact uppercase group heading and rule as the Active List.
   Rows use the same 30px-orbit / flexible-copy / trailing-action structure,
   12px gaps, `10px 8px` padding, and 66px minimum height as Active. The display
-  lead is 13.5px/620 at 1.35 line-height and clamps to two lines; the state line
+  lead is 13.5px/600 at 1.35 line-height and clamps to two lines; the state line
   is 11.5px at 1.35 line-height with 4px top
   spacing. Recovery controls are 32px high for precise pointers and 44px for
   coarse pointers.
@@ -209,7 +215,7 @@ Lane rules:
   Markdown textarea, helper copy, and three explicit outcomes:
   `Save / Start discussion / Run now`.
   Center it against the viewport, including the project rail, over a 58% black
-  backdrop. Desktop geometry is a 560px maximum width, 12px radius, 52px
+  backdrop. Desktop geometry is a 500px maximum width, 12px radius, 52px
   header, 18px body inset, 126px default textarea, and `12px 18px` footer.
   Entry uses the prototype's 200ms scale/fade and reduced motion removes it.
 - `Save` creates one Idea and starts no Agent work. Its confirmation says the
@@ -307,13 +313,29 @@ reconstructs the same shell with Work selected. Do not create a second nested
 Session identity under the Todo route, and never jump back to Todo merely because
 the concrete Session URL belongs to the Session route family.
 
+When the Todo needs user action, the Work destination begins with one
+authoritative `Needs you` section above its local work filter. It renders every
+pending HITL request and every blocked/budget-limited Work or Automation Goal
+as a separate row; never collapse multiple child Workers into a single primary
+request. A row names the exact owning Agent and Session, shows the mechanism
+(`Inspection / Permission / Question / Goal`), and deep-links to the canonical
+root Session with `hitl` and child `focus` when applicable. Resolution remains
+owned by that Session's existing HITL surface; the Todo Work page does not copy
+permission/question controls or create another mutation owner. Until Session
+inventory and the global HITL snapshot are both authoritative, do not show a
+partial count or partial action list. The global rail Bell remains action-first
+and continues to open the exact Session directly; this Todo-level drill-down is
+only the project navigator's Todo-preserving path.
+
 The Todo destination is one continuous readable document work surface owning
-`Brief / PRD`, `References`, `Plan`, and any `Result`. Work actions and linked
-Session history move to the Work destination instead of forming a permanent
-right rail beside Todo content. Separate document regions with typography and
-horizontal rules rather than rounded cards. At `≤760px`, apply the 12px
+`Todo content`, `References`, `Plan`, and any `Result`. The lifecycle-appropriate
+primary `Start Work / Continue Work` action remains directly reachable from the
+Todo document; linked-Session history and additional work creation move to the
+Work destination instead of forming a permanent right rail beside Todo content.
+Separate document regions with typography and horizontal rules rather than
+rounded cards. At `≤720px`, apply the 12px
 horizontal document gutter and 24px region gap. Page, lifecycle, starter, and
-work actions are 44px high at that breakpoint. The Brief header's quiet `Edit`
+work actions are 44px high at that breakpoint. The Todo content header's quiet `Edit`
 control remains the one 32px detail-action exception. Compact inline Reference
 row actions remain 30px on precise pointers and expand to 44px on coarse/touch
 pointers. Do not introduce nested Todo-content tabs, collapsible document
@@ -321,8 +343,15 @@ groups, or a second Todo summary model.
 
 Use progressive disclosure without hiding capability:
 
-- `Brief / PRD` and `Lifecycle` remain available for every Todo. State-aware
-  Work actions remain available on the adjacent Work destination.
+- `Todo content` and `Lifecycle` remain available for every Todo. Ready and In
+  Progress Todos expose the document's one primary `Start Work` action, or
+  `Continue Work` when a bound Work Session already exists. Starting Work uses
+  the canonical Todo-to-Session mutation; continuing opens the latest bound Work
+  Session and advances Ready to In Progress before navigation. Idea, Done,
+  Rejected, and Archived do not expose an execution primary. Until linked Work
+  inventory is authoritative, keep the primary visible but disabled as `Loading
+  work…`; a failed inventory reads `Work unavailable`. Never treat unknown Work
+  as absent and create a potentially duplicate Session.
 - `References` remains a stable flat region because `Add files` is a canonical
   management action; its list may be empty without inventing placeholder cards.
 - `Plan` has three visible prototype states: present Markdown with `Improve`,
@@ -336,10 +365,10 @@ Use progressive disclosure without hiding capability:
 Keep `Edit` with the canonical content. Editing uses one Markdown textarea and
 one Save/Cancel pair. Do not render a content-derived Todo title in the route
 header as independent persistent data. Render the complete canonical Markdown,
-including its first line, in `Brief / PRD`. A one-line
+including its first line, in `Todo content`. A one-line
 capture therefore remains visible as the complete document rather than
-producing an empty-detail state. Demote rendered Brief and Plan headings two
-levels beneath the route `h1` and their owning section `h2` (`#` renders as
+producing an empty-detail state. Demote headings rendered from Todo content and
+Plan two levels beneath the route `h1` and their owning section `h2` (`#` renders as
 `h3`, `##` as `h4`, and deeper headings retain their hierarchy capped at `h6`);
 fenced code content is never rewritten. Actions stay with the surface they
 change:
@@ -349,8 +378,16 @@ change:
   `.archcode/plans/<Todo ID>.md`; its body is ordinary
   rendered Markdown. Do not derive progress counts, interactive checkboxes, or
   persistent step state from Markdown list items;
-- `New discussion`, `Create automation`, and `New work session` live in the Work
-  list header. They never occupy permanent Todo-document chrome;
+- A quiet **`Discuss`** action remains visible beside `Edit` in the Todo
+  destination's `Todo content` header for every non-Archived Todo. It creates and
+  opens a new bound Discussion directly; users never need to discover the Work
+  destination before they can shape the Todo.
+- `Start Work / Continue Work` is the one local primary beside those Todo content
+  actions for Ready and In Progress Todos. It does not create a second workflow:
+  `Start Work` reuses the existing Todo `entry: work` command, while `Continue
+  Work` opens the most recently updated bound Work Session.
+- `New discussion`, `Create automation`, and `New work session` remain in the
+  Work list header for explicit linked-work creation and management;
 - the four lifecycle buttons are the only normal status-movement controls.
   A labeled `More` menu in that same row owns `Reject Todo…` and `Archive Todo`;
   no second lifecycle or completion surface is added;
@@ -404,7 +441,7 @@ Route behavior:
 
 ### References
 
-- Todo detail places one flat `References` region between `Brief / PRD` and
+- Todo detail places one flat `References` region between `Todo content` and
   `Plan`. The region keeps `Add files` reachable even when its list is empty.
   References are never a Board card, preview control, tab, separate attachment
   page, or count badge on project surfaces.
@@ -412,6 +449,10 @@ Route behavior:
   accepts drag-and-drop. The button remains the keyboard/touch alternative and
   all uploads activate serially using the latest Todo revision from the prior
   mutation response.
+- PRDs, design documents, logs, images, PDFs, and any other supported
+  files belong in `References`. They are attachments to the Todo, not a special
+  Todo content type and not a reason to rename or reinterpret the canonical
+  `content` field.
 - Rows preserve server order and show the prototype's fixed 36px square file
   type marker (`PDF`, `PNG`, `TXT`, or the uppercase filename extension), file
   name, size, and an inline `Uploading…`, `Retry`, or error state. Do not load

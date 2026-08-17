@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ProjectTodo, SessionSummary } from "../api/types";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
 
@@ -31,10 +31,7 @@ let requests: Array<{ method: string; path: string; body?: unknown }>;
 let sessionDetailResponse: () => Response | Promise<Response>;
 let messageResponse: () => Response | Promise<Response>;
 let createSessionResponse: () => Response | Promise<Response>;
-let startDiscussionResponse: () => Response | Promise<Response>;
-let createTodoResponse: () => Response | Promise<Response>;
 let planResponse: () => Response | Promise<Response>;
-let runNowResponse: () => Response | Promise<Response>;
 let sessionInventoryResponse: () => Response | Promise<Response>;
 let automationInventoryResponse: () => Response | Promise<Response>;
 
@@ -105,11 +102,8 @@ beforeEach(() => {
     },
   });
   messageResponse = () => Response.json({ clientRequestId: "plan-command", status: "command" });
-  createTodoResponse = () => Response.json({ todo: todo("saved", "Saved idea", "idea") });
   createSessionResponse = () => Response.json({ todo: todos[2], sessionId: "discussion-new" });
-  startDiscussionResponse = () => Response.json({ todo: todo("saved", "Shape this first", "idea"), session: { sessionId: "discussion-new" } });
   planResponse = () => Response.json({ plan: null });
-  runNowResponse = () => Response.json({ todo: todos[2], session: { sessionId: "work-new" } });
   sessionInventoryResponse = () => Response.json({ sessions: sessionSummaries.map((session) => ({ session, latestExecution: null })) });
   automationInventoryResponse = () => Response.json({ automations: [] });
   fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -129,10 +123,7 @@ beforeEach(() => {
       return Response.json({ todo: todos[2] });
     }
     if (method === "POST" && path.endsWith("/messages")) return messageResponse();
-    if (method === "POST" && path.endsWith("/todos/start-discussion")) return startDiscussionResponse();
     if (method === "POST" && path.endsWith("/sessions")) return createSessionResponse();
-    if (method === "POST" && path.endsWith("/todos/run-now")) return runNowResponse();
-    if (method === "POST" && path.endsWith("/todos")) return createTodoResponse();
     if (method === "GET" && path.endsWith("/attachments")) return Response.json({ todoRevision: 3, attachments: [] });
     if (method === "GET" && path.endsWith("/plan")) return planResponse();
     if (path.endsWith("/todos")) return Response.json({ todos });
@@ -152,14 +143,9 @@ afterEach(async () => {
   dom.window.close();
 });
 
-function TestSlugSwitcher() {
-  const navigate = useNavigate();
-  return <button type="button" data-testid="switch-project" onClick={() => navigate("/projects/other/todos")}>Switch project</button>;
-}
-
-async function render(initialEntry = "/projects/demo/todos", withSlugSwitcher = false): Promise<void> {
+async function render(initialEntry = "/projects/demo/todos"): Promise<void> {
   await act(async () => {
-    root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={[initialEntry]}><Routes><Route path="/projects/:slug/todos" element={<>{withSlugSwitcher ? <TestSlugSwitcher /> : null}<ProjectTodosRoute /></>} /><Route path="/projects/:slug/todos/:todoId" element={<ProjectTodoDetailRoute />} /><Route path="/projects/:slug/sessions/:sessionId" element={<div data-testid="session-page" />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>);
+    root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={[initialEntry]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /><Route path="/projects/:slug/todos/:todoId" element={<ProjectTodoDetailRoute />} /><Route path="/projects/:slug/sessions/:sessionId" element={<div data-testid="session-page" />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>);
   });
   await settle();
 }
@@ -178,7 +164,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 async function renderSelectedTodo(): Promise<void> {
   await render("/projects/demo/todos/ready");
-  await waitFor(() => document.querySelector('[aria-labelledby="todo-brief-heading"]') !== null);
+  await waitFor(() => document.querySelector('[aria-labelledby="todo-content-heading"]') !== null);
   await waitFor(() => document.body.textContent?.includes("Loading Plan…") === false);
 }
 
@@ -214,27 +200,6 @@ function addWorkSummary(sessionId = "work-latest", todoId = "ready"): void {
   });
 }
 
-function addAutomationInvocationSummary(sessionId = "automation-invocation"): void {
-  sessionSummaries.push({
-    sessionId,
-    rootSessionId: sessionId,
-    cwd: "/tmp",
-    agentName: "lead",
-    profile: "principal",
-    activeSkillNames: ["orchestrate-work"],
-    modelSelection: { revision: 0 },
-    title: "Automated check",
-    source: {
-      kind: "automation",
-      automationId: "automation-1",
-      invocationId: "invocation-1",
-      todoId: "ready",
-    },
-    createdAt: 2,
-    updatedAt: 5,
-  });
-}
-
 function findPlanButton(): HTMLButtonElement {
   const button = Array.from(document.querySelectorAll("button")).find((candidate) =>
     candidate.textContent?.includes("Generate Plan") || candidate.textContent?.includes("Improve"),
@@ -243,20 +208,6 @@ function findPlanButton(): HTMLButtonElement {
     throw new Error("Plan action button was not rendered");
   }
   return button;
-}
-
-function findActionGroup(label: string): HTMLElement {
-  const group = [...document.querySelectorAll('[role="group"]')].find((candidate) =>
-    candidate.getAttribute("aria-label") === label
-  );
-  if (!(group instanceof dom.window.HTMLElement)) {
-    throw new Error(`Action group "${label}" was not rendered`);
-  }
-  return group;
-}
-
-function actionGroupButtonLabels(label: string): string[] {
-  return [...findActionGroup(label).querySelectorAll("button")].map((button) => button.textContent?.trim() ?? "");
 }
 
 function previewButtonLabels(): string[] {
@@ -275,35 +226,9 @@ async function closePreview(): Promise<void> {
   await waitFor(() => document.querySelector('[data-testid="todo-preview"]') === null);
 }
 
-function findPanel(title: string): HTMLElement {
-  const heading = [...document.querySelectorAll("h2")].find((candidate) => candidate.textContent === title);
-  const panel = heading?.closest("section");
-  if (!(panel instanceof dom.window.HTMLElement)) throw new Error(`Panel "${title}" was not rendered`);
-  return panel;
-}
-
 async function click(button: HTMLButtonElement): Promise<void> {
   await act(async () => {
     button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-  });
-  await settle();
-}
-
-async function changeValue(target: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  const previous = target.value;
-  const prototype = target instanceof dom.window.HTMLInputElement
-    ? dom.window.HTMLInputElement.prototype
-    : dom.window.HTMLTextAreaElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-  await act(async () => {
-    setter?.call(target, value);
-    (target as unknown as { _valueTracker?: { setValue(value: string): void } })._valueTracker?.setValue(previous);
-    const propsKey = Object.keys(target).find((key) => key.startsWith("__reactProps$"));
-    const props = propsKey
-      ? (target as unknown as Record<string, { onChange?: (event: { target: typeof target }) => void }>)[propsKey]
-      : undefined;
-    if (props?.onChange) props.onChange({ target });
-    else target.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
   });
   await settle();
 }
@@ -476,157 +401,9 @@ describe("Project Todos Plan interactions", () => {
     );
   });
 
-  test("groups detail-page actions by intent without changing lifecycle availability", async () => {
-    addDiscussionSummary();
+  test("creates one atomic Plan Discussion when none exists", async () => {
     await renderSelectedTodo();
-
-    const content = document.querySelector('[aria-labelledby="todo-brief-heading"]');
-    const groups = [...findPanel("Work").querySelectorAll('[role="group"]')];
-
-    expect([...content!.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual(["Edit"]);
-    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
-      "Discuss & Plan",
-      "Execution",
-    ]);
-    expect(actionGroupButtonLabels("Discuss & Plan")).toEqual([
-      "Continue Discussion",
-      "New Discussion",
-    ]);
-    expect(actionGroupButtonLabels("Execution")).toEqual([
-      "Start Work",
-      "Create Automation",
-    ]);
-    expect([...findPanel("Lifecycle").querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual([
-      "Reject",
-      "Archive",
-    ]);
-  });
-
-  test("renders prototype detail metadata and moves lifecycle from the clickable header band", async () => {
-    todos[2] = { ...todos[2]!, updatedAt: Date.now() };
-    await renderSelectedTodo();
-
-    const meta = document.querySelector('[data-testid="todo-detail-meta"]');
-    const lifecycle = findActionGroup("Todo lifecycle");
-    const buttons = [...lifecycle.querySelectorAll("button")];
-    expect(meta?.textContent).toBe("Updated now·ready");
-    expect(buttons.map((button) => button.textContent?.trim())).toEqual(["Ideas", "Ready", "In Progress", "Done"]);
-    expect(buttons.map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "true", "false", "false"]);
-
-    await click(buttons[0] as HTMLButtonElement);
-    expect(patches).toEqual([{ expectedRevision: 3, status: "idea" }]);
-    await waitFor(() => lifecycle.querySelector('[aria-pressed="true"]')?.textContent?.trim() === "Ideas");
-  });
-
-  test("keeps linked inventories in loading state until their requests settle", async () => {
-    let resolveSessions: ((response: Response) => void) | undefined;
-    let resolveAutomations: ((response: Response) => void) | undefined;
-    sessionInventoryResponse = () => new Promise<Response>((resolve) => { resolveSessions = resolve; });
-    automationInventoryResponse = () => new Promise<Response>((resolve) => { resolveAutomations = resolve; });
-
-    await renderSelectedTodo();
-
-    expect(findPanel("Sessions").textContent).toContain("Loading sessions…");
-    expect(findPanel("Sessions").textContent).not.toContain("No sessions yet.");
-    expect(findPanel("Automations").textContent).toContain("Loading automations…");
-    expect(findPanel("Automations").textContent).not.toContain("No automations yet.");
-    expect(findPanel("Work").querySelector('[role="group"]')).toBeNull();
-    expect(findPlanButton().disabled).toBe(true);
-
-    await act(async () => {
-      resolveSessions?.(Response.json({ sessions: [] }));
-      resolveAutomations?.(Response.json({ automations: [] }));
-    });
-    await waitFor(() => [...document.querySelectorAll("h2")].every((heading) => heading.textContent !== "Sessions"));
-    await waitFor(() => [...document.querySelectorAll("h2")].every((heading) => heading.textContent !== "Automations"));
-    expect(findPlanButton().disabled).toBe(false);
-  });
-
-  test("labels a Todo-origin Automation Session as an invocation", async () => {
-    addAutomationInvocationSummary();
-    await renderSelectedTodo();
-
-    expect(findPanel("Sessions").textContent).toContain("Automated checkLead · recurring execution attached to this Todo");
-    expect(findPanel("Sessions").textContent).not.toContain("Automated checkWork");
-  });
-
-  test("reports linked inventory failures without offering duplicate work actions", async () => {
-    sessionInventoryResponse = () => Response.json({ error: { code: "UNAVAILABLE", message: "Session inventory unavailable" } }, { status: 503 });
-    automationInventoryResponse = () => Response.json({ error: { code: "UNAVAILABLE", message: "Automation inventory unavailable" } }, { status: 503 });
-
-    await renderSelectedTodo();
-    await waitFor(() => findPanel("Sessions").textContent?.includes("Session inventory unavailable") === true);
-    await waitFor(() => findPanel("Automations").textContent?.includes("Automation inventory unavailable") === true);
-
-    expect(findPanel("Sessions").textContent).not.toContain("No sessions yet.");
-    expect(findPanel("Automations").textContent).not.toContain("No automations yet.");
-    expect(findPanel("Work").textContent).toContain("Linked work is unavailable");
-    expect(findPanel("Work").querySelector('[role="group"]')).toBeNull();
-    expect(findPlanButton().disabled).toBe(true);
-  });
-
-  test("makes existing work the primary continuation and does not create a Session", async () => {
-    addWorkSummary();
-    await renderSelectedTodo();
-
-    expect(actionGroupButtonLabels("Execution")).toEqual([
-      "Continue Work",
-      "New Work Session",
-      "Create Automation",
-    ]);
-
-    const continueButton = findActionGroup("Execution").querySelector("button");
-    expect(continueButton?.textContent).toContain("Continue Work");
-    await click(continueButton as HTMLButtonElement);
-
-    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
-    expect(patches).toEqual([{ expectedRevision: 3, status: "in_progress" }]);
-    expect(requests.filter((request) =>
-      request.method === "POST" && request.path.endsWith("/todos/ready/sessions"),
-    )).toHaveLength(0);
-  });
-
-  test("names and creates an additional Work Session explicitly", async () => {
-    addWorkSummary();
-    createSessionResponse = () => Response.json({ todo: todos[2], sessionId: "work-new" });
-    await renderSelectedTodo();
-
-    const newSessionButton = [...findActionGroup("Execution").querySelectorAll("button")].find((button) =>
-      button.textContent?.includes("New Work Session"),
-    );
-    expect(newSessionButton).toBeDefined();
-    await click(newSessionButton as HTMLButtonElement);
-
-    const creates = requests.filter((request) =>
-      request.method === "POST" && request.path.endsWith("/todos/ready/sessions"),
-    );
-    expect(creates).toHaveLength(1);
-    expect(creates[0]?.body).toEqual({ expectedRevision: 3, entry: "work" });
-    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
-  });
-
-  test("renders responsive detail controls and creates one atomic Plan Discussion when none exists", async () => {
-    await renderSelectedTodo();
-
-    const brief = document.querySelector('[aria-labelledby="todo-brief-heading"]');
-    const back = document.querySelector('[aria-label="Back to Todos list"]');
-    const lifecycle = findActionGroup("Todo lifecycle");
     const planButton = findPlanButton();
-    const aside = document.querySelector('aside[aria-label="Todo work and lifecycle"]');
-    const layout = aside?.parentElement;
-    const starter = document.querySelector('[data-testid="todo-context-starter"]');
-    expect(brief).not.toBeNull();
-    expect(back?.className).toContain("focus-visible:[box-shadow:var(--focus)]");
-    expect(back?.className).toContain("[@media(pointer:coarse)]:min-h-11");
-    expect([...lifecycle.querySelectorAll("button")].every((button) => button.className.includes("max-[761px]:min-h-11"))).toBe(true);
-    expect(layout?.className).toContain("min-[1041px]:grid-cols-[minmax(0,1fr)_280px]");
-    expect(layout?.className).toContain("max-[761px]:gap-6");
-    expect(aside?.className).toContain("pt-6");
-    expect(aside?.className).toContain("max-[761px]:pt-5");
-    expect(starter?.className).toContain("max-[761px]:flex-col");
-    expect(starter?.className).toContain("max-[761px]:px-4");
-    expect(planButton.className).toContain("max-[761px]:min-h-11");
-    expect(planButton.className).toContain("[@media(pointer:coarse)]:min-h-11");
     expect(planButton.disabled).toBe(false);
 
     await click(planButton);
@@ -798,9 +575,9 @@ describe("Project Todos preview actions", () => {
     await render();
 
     const cases = [
-      ["idea", ["New Discussion", "Open details"]],
-      ["ready", ["Start Work", "Open details", "New Discussion"]],
-      ["progress", ["Start Work", "Open details", "New Discussion"]],
+      ["idea", ["Start discussion", "Open details"]],
+      ["ready", ["Start Work", "Open details", "Discussion"]],
+      ["progress", ["Start Work", "Open details", "Discussion"]],
       ["done", ["Open details"]],
     ] as const;
 
@@ -836,46 +613,6 @@ describe("Project Todos preview actions", () => {
 });
 
 describe("Project Todos transient and keyboard contracts", () => {
-  for (const [name, initialEntry] of [["List", "/projects/demo/todos"], ["Board", "/projects/demo/todos?layout=board"]] as const) {
-    test(`moves j/k through the ${name} visual lane projection instead of API order`, async () => {
-      todos = [
-        todo("ready", "Ready first in API", "ready"),
-        todo("done", "Done second in API", "done"),
-        todo("idea", "Idea third in API", "idea"),
-        todo("progress", "Progress fourth in API", "in_progress"),
-      ];
-      await render(initialEntry);
-
-      const expected = ["idea", "ready", "progress", "done"];
-      for (const todoId of expected) {
-        await key(document.body, "j");
-        expect((document.activeElement as HTMLElement | null)?.getAttribute("data-testid")).toBe(`todo-open-${todoId}`);
-      }
-      await key(document.body, "k");
-      expect((document.activeElement as HTMLElement | null)?.getAttribute("data-testid")).toBe("todo-open-progress");
-    });
-  }
-
-  test("keeps preview modal while j/k synchronizes content and Enter opens detail", async () => {
-    todos = [todo("ready", "Ready API first", "ready"), todo("idea", "Idea visual first", "idea")];
-    await render();
-    const origin = document.querySelector('[data-testid="todo-open-idea"]') as HTMLButtonElement;
-    await click(origin);
-    await waitFor(() => document.activeElement?.id === "todo-preview-heading");
-    expect(document.activeElement?.textContent).toBe("Todo detail");
-
-    await key(document.activeElement as HTMLElement, "j");
-    const preview = document.querySelector('[data-testid="todo-preview"]') as HTMLElement;
-    expect(preview.textContent).toContain("Ready API first");
-    expect(preview.contains(document.activeElement)).toBe(true);
-    expect((document.activeElement as HTMLElement).getAttribute("data-testid")).not.toBe("todo-open-ready");
-
-    await key(document.activeElement as HTMLElement, "Enter");
-    await waitFor(() => document.querySelector('[aria-labelledby="todo-brief-heading"]') !== null);
-    expect(document.querySelector('[data-testid="todo-preview"]')).toBeNull();
-    expect(document.querySelector('[aria-labelledby="todo-brief-heading"]')?.textContent).toContain("Ready API first");
-  });
-
   test("contains preview focus, cycles Tab in both directions, and restores the exact origin", async () => {
     await render();
     const origin = document.querySelector('[data-testid="todo-open-idea"]') as HTMLButtonElement;
@@ -890,145 +627,9 @@ describe("Project Todos transient and keyboard contracts", () => {
     await key(document.activeElement as HTMLElement, "Tab");
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Close preview");
 
-    await key(document.activeElement as HTMLElement, "j");
-    expect((document.querySelector('[data-testid="todo-preview"]') as HTMLElement).contains(document.activeElement)).toBe(true);
     await key(document.activeElement as HTMLElement, "Escape");
     await waitFor(() => document.querySelector('[data-testid="todo-preview"]') === null);
     await waitFor(() => document.activeElement === origin);
-  });
-
-  test("C replaces preview with one capture modal and restores capture focus to New Todo", async () => {
-    await render();
-    await openPreview("idea");
-    await waitFor(() => document.activeElement?.id === "todo-preview-heading");
-
-    await key(document.activeElement as HTMLElement, "c");
-    expect(document.querySelector('[data-testid="todo-preview"]')).toBeNull();
-    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
-    expect(document.activeElement).toBe(document.querySelector("#new-todo-content"));
-
-    await key(document.activeElement as HTMLElement, "Escape");
-    await waitFor(() => document.querySelector('[role="dialog"]') === null);
-    expect(document.activeElement?.textContent).toContain("New Todo");
-  });
-
-  test("creates one Idea and its bound Discussion, then opens the Discussion Session", async () => {
-    await render();
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Todo")) as HTMLButtonElement);
-    await changeValue(document.querySelector("#new-todo-content") as HTMLTextAreaElement, "Shape this first");
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent === "Start discussion") as HTMLButtonElement);
-
-    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
-    const todoCreates = requests.filter((request) => request.method === "POST" && request.path === "/api/projects/demo/todos");
-    const discussionCreates = requests.filter((request) => request.method === "POST" && request.path === "/api/projects/demo/todos/start-discussion");
-    expect(todoCreates).toHaveLength(0);
-    expect(discussionCreates).toHaveLength(1);
-    expect(discussionCreates[0]?.body).toEqual({ clientRequestId: expect.any(String), content: "Shape this first" });
-    expect(requests.filter((request) => request.method === "POST" && request.path.endsWith("/sessions"))).toHaveLength(0);
-  });
-
-  test("retries an ordinary Discussion failure with the same request identity", async () => {
-    let attempts = 0;
-    startDiscussionResponse = () => {
-      attempts += 1;
-      if (attempts === 1) {
-        return Response.json({ error: { code: "INTERNAL_ERROR", message: "discussion failed" } }, { status: 500 });
-      }
-      return Response.json({ todo: todo("saved", "Shape this first", "idea"), session: { sessionId: "discussion-new" } });
-    };
-    await render();
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Todo")) as HTMLButtonElement);
-    await changeValue(document.querySelector("#new-todo-content") as HTMLTextAreaElement, "Shape this first");
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent === "Start discussion") as HTMLButtonElement);
-
-    await waitFor(() => [...document.querySelectorAll("button")].some((button) => button.textContent === "Retry discussion"));
-    const alert = document.querySelector('[role="alert"]') as HTMLElement;
-    expect(alert.textContent).toContain("discussion failed");
-    expect(document.activeElement?.textContent).toBe("Retry discussion");
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent === "Retry discussion") as HTMLButtonElement);
-
-    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
-    expect(requests.filter((request) => request.method === "POST" && request.path === "/api/projects/demo/todos")).toHaveLength(0);
-    const discussionCreates = requests.filter((request) => request.method === "POST" && request.path === "/api/projects/demo/todos/start-discussion");
-    expect(discussionCreates).toHaveLength(2);
-    expect(discussionCreates[0]?.body).toEqual(discussionCreates[1]?.body);
-    expect(requests.filter((request) => request.method === "POST" && request.path.endsWith("/sessions"))).toHaveLength(0);
-  });
-
-  test("surfaces exact retained Discussion links and blocks the unchanged recovery operation", async () => {
-    startDiscussionResponse = () => Response.json({ error: { code: "INTERNAL_ERROR", message: "Discussion start requires inspection", details: { scopeCode: "PROJECT_TODO_START_DISCUSSION_RECOVERY_REQUIRED", todoId: "retained-todo", sessionId: "retained-session" } } }, { status: 500 });
-    await render();
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Todo")) as HTMLButtonElement);
-    await changeValue(document.querySelector("#new-todo-content") as HTMLTextAreaElement, "Shape this first");
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent === "Start discussion") as HTMLButtonElement);
-
-    await waitFor(() => document.querySelector('a[href="/projects/demo/todos/retained-todo"]') !== null);
-    expect(document.querySelector('a[href="/projects/demo/sessions/retained-session"]')).not.toBeNull();
-    expect(document.activeElement).toBe(document.querySelector('[role="alert"]'));
-    expect([...document.querySelectorAll("button")].find((button) => button.textContent === "Start discussion")?.hasAttribute("disabled")).toBe(true);
-    expect(requests.filter((request) => request.method === "POST" && request.path === "/api/projects/demo/todos/start-discussion")).toHaveLength(1);
-  });
-
-  test("does not navigate a completed Discussion operation after the current project changes", async () => {
-    let resolveDiscussion: ((response: Response) => void) | undefined;
-    startDiscussionResponse = () => new Promise<Response>((resolve) => { resolveDiscussion = resolve; });
-    await render("/projects/demo/todos", true);
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Todo")) as HTMLButtonElement);
-    await changeValue(document.querySelector("#new-todo-content") as HTMLTextAreaElement, "Stay in the current project");
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent === "Start discussion") as HTMLButtonElement);
-    await click(document.querySelector('[data-testid="switch-project"]') as HTMLButtonElement);
-
-    await act(async () => resolveDiscussion?.(Response.json({ todo: todo("saved", "Stay in the current project", "idea"), session: { sessionId: "stale-session" } })));
-    await settle();
-    expect(document.querySelector('[data-testid="session-page"]')).toBeNull();
-    expect(document.querySelector('[data-testid="switch-project"]')).not.toBeNull();
-  });
-
-  test("blocks every user dismissal while pending but successful Save still closes internally", async () => {
-    let resolveCreate: ((response: Response) => void) | undefined;
-    createTodoResponse = () => new Promise<Response>((resolve) => { resolveCreate = resolve; });
-    await render();
-    const newTodo = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Todo")) as HTMLButtonElement;
-    await click(newTodo);
-    await changeValue(document.querySelector("#new-todo-content") as HTMLTextAreaElement, "Pending idea");
-    const save = [...document.querySelectorAll("button")].find((button) => button.textContent === "Save") as HTMLButtonElement;
-    await click(save);
-    await waitFor(() => save.disabled);
-    const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
-    expect(dialog.getAttribute("aria-busy")).toBe("true");
-    expect(document.querySelector("#new-todo-status")?.textContent).toContain("Saving Todo…");
-
-    await key(document.body, "Escape");
-    const scrim = document.querySelector('[data-testid="new-todo-scrim"]') as HTMLElement;
-    await act(async () => scrim.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true })));
-    await click(document.querySelector('[aria-label="Close New Todo"]') as HTMLButtonElement);
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent === "Cancel") as HTMLButtonElement);
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-
-    await act(async () => resolveCreate?.(Response.json({ todo: todo("saved", "Pending idea", "idea") })));
-    await waitFor(() => document.querySelector('[role="dialog"]') === null);
-    await waitFor(() => document.activeElement === newTodo);
-  });
-
-  test("focuses the inline Save error after an unsuccessful capture", async () => {
-    createTodoResponse = () => Response.json({ error: { code: "INTERNAL_ERROR", message: "save failed" } }, { status: 500 });
-    await render();
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Todo")) as HTMLButtonElement);
-    await changeValue(document.querySelector("#new-todo-content") as HTMLTextAreaElement, "Keep the failed draft");
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent === "Save") as HTMLButtonElement);
-
-    await waitFor(() => document.querySelector('[role="alert"]')?.textContent?.includes("save failed") === true);
-    expect(document.activeElement).toBe(document.querySelector('[role="alert"]'));
-    expect((document.querySelector("#new-todo-content") as HTMLTextAreaElement).value).toBe("Keep the failed draft");
-    expect(document.querySelector('[role="dialog"]')?.getAttribute("aria-busy")).toBe("false");
-  });
-
-  test("Enter opens the focused Todo detail without requiring preview", async () => {
-    await render();
-    await key(document.body, "j");
-    await key(document.activeElement as HTMLElement, "Enter");
-    await waitFor(() => document.querySelector('[aria-labelledby="todo-brief-heading"]') !== null);
-    expect(document.querySelector('[aria-labelledby="todo-brief-heading"]')?.textContent).toContain("Idea");
   });
 
   for (const width of [720, 721] as const) {
@@ -1037,11 +638,11 @@ describe("Project Todos transient and keyboard contracts", () => {
       await render();
       await click(document.querySelector('[data-testid="todo-open-idea"]') as HTMLButtonElement);
       if (width === 720) {
-        await waitFor(() => document.querySelector('[aria-labelledby="todo-brief-heading"]') !== null);
+        await waitFor(() => document.querySelector('[aria-labelledby="todo-content-heading"]') !== null);
         expect(document.querySelector('[data-testid="todo-preview"]')).toBeNull();
       } else {
         await waitFor(() => document.querySelector('[data-testid="todo-preview"]') !== null);
-        expect(document.querySelector('[aria-labelledby="todo-brief-heading"]')).toBeNull();
+        expect(document.querySelector('[aria-labelledby="todo-content-heading"]')).toBeNull();
       }
     });
   }
@@ -1055,78 +656,10 @@ describe("Project Todos transient and keyboard contracts", () => {
       todos.push(item);
       await render(`/projects/demo/todos?surface=${surface}`);
       await click(document.querySelector(`[data-testid="todo-${surface}"]`) as HTMLButtonElement);
-      await waitFor(() => document.querySelector('[aria-labelledby="todo-brief-heading"]') !== null);
+      await waitFor(() => document.querySelector('[aria-labelledby="todo-content-heading"]') !== null);
       expect(document.querySelector('[data-testid="todo-preview"]')).toBeNull();
-      expect(document.querySelector('[aria-labelledby="todo-brief-heading"]')?.textContent).toContain(surface === "rejected" ? "Rejected item" : "Archived item");
+      expect(document.querySelector('[aria-labelledby="todo-content-heading"]')?.textContent).toContain(surface === "rejected" ? "Rejected item" : "Archived item");
+      expect(Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === (surface === "rejected" ? "Restore to Idea" : "Restore"))).toBe(true);
     });
   }
-});
-
-describe("Project Todos Run now recovery", () => {
-  test("shows retained entity links and blocks repeating the unchanged indeterminate request", async () => {
-    runNowResponse = () => Response.json({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "Run now needs manual recovery",
-        details: {
-          scopeCode: "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED",
-          todoId: "todo-retained",
-          sessionId: "session-retained",
-        },
-      },
-    }, { status: 500 });
-    await render();
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Todo")) as HTMLButtonElement);
-    const content = document.querySelector("#new-todo-content") as HTMLTextAreaElement;
-    await changeValue(content, "Risky request");
-    const runNowButton = [...document.querySelectorAll("button")].find((button) => button.textContent === "Run now") as HTMLButtonElement;
-
-    await click(runNowButton);
-    await waitFor(() => document.querySelector('[role="alert"]')?.textContent?.includes("Do not retry") === true);
-
-    const alert = document.querySelector('[role="alert"]')!;
-    expect(alert.querySelector('a[href="/projects/demo/todos/todo-retained"]')).not.toBeNull();
-    expect(alert.querySelector('a[href="/projects/demo/sessions/session-retained"]')).not.toBeNull();
-    expect(runNowButton.disabled).toBe(true);
-
-    await changeValue(content, "Different request");
-    expect(runNowButton.disabled).toBe(false);
-    expect(document.querySelector('[role="alert"]')).toBeNull();
-  });
-
-  test("shows only the retained Todo and unblocks both actions only after editing", async () => {
-    runNowResponse = () => Response.json({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "Run now needs manual recovery",
-        details: {
-          scopeCode: "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED",
-          todoId: "todo-retained-only",
-        },
-      },
-    }, { status: 500 });
-    await render();
-    await click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Todo")) as HTMLButtonElement);
-    const content = document.querySelector("#new-todo-content") as HTMLTextAreaElement;
-    await changeValue(content, "Todo-only recovery request");
-    const saveButton = [...document.querySelectorAll("button")].find((button) => button.textContent === "Save") as HTMLButtonElement;
-    const runNowButton = [...document.querySelectorAll("button")].find((button) => button.textContent === "Run now") as HTMLButtonElement;
-
-    await click(runNowButton);
-    await waitFor(() => document.querySelector('[role="alert"]')?.textContent?.includes("Do not retry") === true);
-
-    const alert = document.querySelector('[role="alert"]')!;
-    const links = [...alert.querySelectorAll("a")];
-    expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "/projects/demo/todos/todo-retained-only",
-    ]);
-    expect(alert.querySelector('a[href*="/sessions/"]')).toBeNull();
-    expect(saveButton.disabled).toBe(true);
-    expect(runNowButton.disabled).toBe(true);
-
-    await changeValue(content, "Edited Todo-only recovery request");
-    expect(saveButton.disabled).toBe(false);
-    expect(runNowButton.disabled).toBe(false);
-    expect(document.querySelector('[role="alert"]')).toBeNull();
-  });
 });

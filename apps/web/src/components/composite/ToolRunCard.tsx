@@ -93,7 +93,7 @@ export function ToolRunCard({
     <div className="w-full min-w-0 shrink-0" data-testid="tool-run-card">
       <button
         type="button"
-        className={`tool-run-summary-control grid min-h-9 cursor-pointer select-none grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-[7px] rounded border-0 bg-transparent px-2 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
+        className={`tool-run-summary-control grid min-h-9 cursor-pointer select-none grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-[7px] rounded border-0 bg-transparent px-2 text-left transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
         onClick={() => setExpanded((value) => {
           const next = !value;
           if (!next) manuallyCollapsed.current = true;
@@ -105,7 +105,7 @@ export function ToolRunCard({
       >
         <ChevronRight
           size={10}
-          className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`}
+          className={`text-text-muted transition-transform duration-[var(--motion-fast)] ${expanded ? "rotate-90" : ""}`}
           aria-hidden="true"
         />
         {running ? (
@@ -121,7 +121,7 @@ export function ToolRunCard({
               aria-hidden="true"
             />
             <span
-              className="min-w-0 max-w-[180px] truncate font-mono text-[13px] font-semibold text-text-secondary max-[560px]:max-w-[112px]"
+              className="min-w-0 max-w-[180px] truncate font-mono text-[13px] font-semibold text-text-secondary [@media(max-width:560px)]:max-w-[112px]"
               title={representative.toolName}
             >
               {representative.toolName}

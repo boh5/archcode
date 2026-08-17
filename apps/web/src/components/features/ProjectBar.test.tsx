@@ -65,7 +65,6 @@ const project: Project = {
 };
 let projectData: Project[] = [project];
 let activeSlug: string | undefined = "demo-project";
-let pathname = "/projects/demo-project/todos";
 
 const navigate = mock((_path: string) => {});
 const onAddProject = mock(() => {});
@@ -79,7 +78,6 @@ const useState = mock(<T,>(initial: T): [T, (value: T | ((previous: T) => T)) =>
 ]);
 const useCallback = mock(<T extends (...args: never[]) => unknown>(callback: T) => callback);
 const useNavigate = mock(() => navigate);
-const useLocation = mock(() => ({ pathname }));
 const useParams = mock(() => ({ slug: activeSlug }));
 const useProjects = mock(() => ({ data: projectData }));
 const toggleTheme = mock(() => {});
@@ -104,7 +102,6 @@ mock.module("react/jsx-dev-runtime", () => ({
 
 mock.module("react-router-dom", () => ({
   useNavigate,
-  useLocation,
   useParams,
 }));
 
@@ -181,8 +178,8 @@ const projectBarModule = await import("./ProjectBar");
 ({ ProjectBar } = projectBarModule);
 const { buildProjectMarks, orderProjectNavigation, selectRailProjects } = projectBarModule;
 
-function render(mobile = false): unknown {
-  return ProjectBar({ mobile, onAddProject, onSettings, theme: "dark", toggleTheme });
+function render(compactProjectInventory = false): unknown {
+  return ProjectBar({ compactProjectInventory, onAddProject, onSettings, theme: "dark", toggleTheme });
 }
 
 function projectNode(tree: unknown) {
@@ -196,8 +193,7 @@ describe("ProjectBar", () => {
     runtimeFamilies = {};
     projectData = [project];
     activeSlug = "demo-project";
-    pathname = "/projects/demo-project/todos";
-    for (const fn of [navigate, onAddProject, onSettings, setState, useState, useCallback, useNavigate, useLocation, useParams, useProjects, toggleTheme]) {
+    for (const fn of [navigate, onAddProject, onSettings, setState, useState, useCallback, useNavigate, useParams, useProjects, toggleTheme]) {
       fn.mockClear();
     }
   });
@@ -239,17 +235,44 @@ describe("ProjectBar", () => {
     expect(navigate).toHaveBeenCalledWith("/projects/demo-project/todos");
   });
 
-  test("Home current state has one non-competing brand surface", () => {
-    pathname = "/";
-    activeSlug = undefined;
-    const home = findAll(
+  test("brand opens the current project's All todos and is static without a valid project", () => {
+    const brand = findAll(
       render(),
-      (element) => element.type === "button" && element.props?.["aria-label"] === "Open Home",
+      (element) => element.type === "button" && element.props?.["aria-label"] === "Open Demo Project All todos",
     )[0];
-    const className = String(home?.props?.className);
-    expect(className).toContain("bg-brand-subtle");
-    expect(className).toContain("text-brand");
-    expect(className).not.toContain("bg-rail-hover text-rail-ink");
+    expect(brand).toBeDefined();
+    (brand?.props?.onClick as () => void)();
+    expect(navigate).toHaveBeenCalledWith("/projects/demo-project/todos");
+
+    activeSlug = undefined;
+    projectData = [];
+    const staticBrand = findAll(
+      render(),
+      (element) => element.type === "span" && element.props?.["aria-label"] === "ArchCode",
+    )[0];
+    expect(staticBrand).toBeDefined();
+    expect(staticBrand?.props?.onClick).toBeUndefined();
+  });
+
+  test("keeps Search visible without advertising a document shortcut", () => {
+    const search = findAll(
+      render(),
+      (element) => element.type === "button" && element.props?.["aria-label"] === "Search all work",
+    )[0];
+    expect(search?.props?.title).toBe("Search all work");
+    expect(search?.props?.["aria-keyshortcuts"]).toBeUndefined();
+  });
+
+  test("shows only project-independent rail controls when no project is registered", () => {
+    activeSlug = undefined;
+    projectData = [];
+    const tree = render();
+
+    expect(findAll(tree, (element) => element.type === "button" && element.props?.["aria-label"] === "Search all work")).toHaveLength(0);
+    expect(findAll(tree, (element) => typeName(element) === "HitlBell")).toHaveLength(0);
+    expect(findAll(tree, (element) => element.type === "button" && element.props?.["aria-label"] === "Open project")).toHaveLength(1);
+    expect(findAll(tree, (element) => element.type === "button" && element.props?.["aria-label"] === "Settings")).toHaveLength(1);
+    expect(findAll(render(true), (element) => element.type === "button" && element.props?.["aria-label"] === "More projects")).toHaveLength(0);
   });
 
   test("add project affordance is a native button", () => {
@@ -284,7 +307,7 @@ describe("ProjectBar", () => {
     ];
 
     const tree = render();
-    const projectButton = findAll(tree, (element) => element.type === "button" && String(element.props?.["aria-label"]).startsWith("Open Demo Project"))[0];
+    const projectButton = findAll(tree, (element) => element.type === "button" && String(element.props?.["aria-label"]).startsWith("Open Demo Project, current project"))[0];
     const badges = findAll(tree, (element) => element.props?.["aria-hidden"] === "true" && textContent(element) === "2");
     expect(projectButton?.props?.["aria-label"]).toContain("2 need you");
     expect(badges).toHaveLength(1);
@@ -327,13 +350,13 @@ describe("ProjectBar", () => {
     expect(selectRailProjects(projects.slice(0, 4), "project-3", false)).toEqual(projects.slice(0, 4));
   });
 
-  test("mobile shows only the active project while Home shows no direct marks", () => {
+  test("compact inventory shows only the active project while root entry shows no direct marks", () => {
     const projects = [project, { ...project, slug: "other", workspaceRoot: "/workspace/other" }];
     expect(selectRailProjects(projects, "other", true).map((item) => item.slug)).toEqual(["other"]);
     expect(selectRailProjects(projects, undefined, true)).toEqual([]);
   });
 
-  test("renders the exact desktop and mobile mark/More/Add combinations", () => {
+  test("renders the exact full and compact mark/More/Add combinations", () => {
     projectData = Array.from({ length: 6 }, (_, index) => ({
       ...project,
       slug: `project-${index}`,
@@ -355,16 +378,15 @@ describe("ProjectBar", () => {
     expect((picker?.props?.projects as Project[])).toHaveLength(6);
     expect(picker?.props?.runningCounts).toEqual({ "project-5": 2 });
 
-    const mobile = render(true);
-    expect(findAll(mobile, (element) => typeName(element) === "ProjectActionContextMenu")).toHaveLength(1);
-    expect(findAll(mobile, (element) => element.props?.["aria-label"] === "More projects")).toHaveLength(1);
+    const compact = render(true);
+    expect(findAll(compact, (element) => typeName(element) === "ProjectActionContextMenu")).toHaveLength(1);
+    expect(findAll(compact, (element) => element.props?.["aria-label"] === "More projects")).toHaveLength(1);
 
     activeSlug = undefined;
-    pathname = "/";
-    const mobileHome = render(true);
-    expect(findAll(mobileHome, (element) => typeName(element) === "ProjectActionContextMenu")).toHaveLength(0);
-    expect(findAll(mobileHome, (element) => element.props?.["aria-label"] === "More projects")).toHaveLength(1);
-    expect(findAll(mobileHome, (element) => element.props?.["aria-label"] === "Open project")).toHaveLength(1);
+    const compactWithoutActiveProject = render(true);
+    expect(findAll(compactWithoutActiveProject, (element) => typeName(element) === "ProjectActionContextMenu")).toHaveLength(0);
+    expect(findAll(compactWithoutActiveProject, (element) => element.props?.["aria-label"] === "More projects")).toHaveLength(1);
+    expect(findAll(compactWithoutActiveProject, (element) => element.props?.["aria-label"] === "Open project")).toHaveLength(1);
   });
 
   test("settings affordance opens the settings modal", () => {

@@ -3,8 +3,8 @@ import { MAX_AUTH_PASSWORD_BYTES, MIN_AUTH_PASSWORD_LENGTH, type AuthStatus } fr
 import { changePassword, getAuthStatus } from "../../api/auth";
 import { Field, TextInput } from "./settings-fields";
 
-const primaryButton = "inline-flex h-8 items-center justify-center rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
-const dangerButton = "inline-flex h-8 items-center justify-center rounded-sm border border-error/30 bg-error-muted px-4 text-[12px] font-medium text-error transition-colors duration-[var(--motion-hover)] hover:bg-error-field focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
+const primaryButton = "inline-flex h-8 items-center justify-center rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
+const dangerButton = "inline-flex h-8 items-center justify-center rounded-sm border border-error/30 bg-error-muted px-4 text-[12px] font-medium text-error transition-colors duration-[var(--motion-fast)] hover:bg-error-field focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 
 export function SettingsSecurityPanel({
   onConfigChanged,

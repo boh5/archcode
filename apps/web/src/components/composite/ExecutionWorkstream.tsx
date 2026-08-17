@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   type TouchEvent as ReactTouchEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
@@ -233,7 +234,7 @@ export function MsgUser({
               data-user-message-row=""
             >
               <div
-                className="min-w-0 max-w-[640px] whitespace-pre-wrap break-words rounded-[10px] border-0 bg-[color-mix(in_srgb,var(--bg-muted)_84%,var(--bg-base))] px-[17px] py-[15px] text-[15px] leading-[1.62] text-text-primary"
+                className="min-w-0 max-w-[640px] whitespace-pre-wrap break-words rounded-[10px] border-0 bg-[color-mix(in_srgb,var(--bg-muted)_84%,var(--bg-base))] px-[17px] py-[15px] text-[15px] leading-6 text-text-primary"
                 data-user-message-surface=""
               >
                 {part.text}
@@ -611,7 +612,7 @@ function WorkDisclosure({
       <button
         ref={buttonRef}
         type="button"
-        className={`work-summary-control group flex min-h-9 cursor-pointer items-center gap-[7px] rounded px-2 text-left text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_LANE_CLASS}`}
+        className={`work-summary-control group flex min-h-9 cursor-pointer items-center gap-[7px] rounded px-2 text-left text-text-tertiary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_LANE_CLASS}`}
         onClick={(event) => onToggle(event.currentTarget)}
         aria-expanded={expanded}
         aria-controls={`work-body-${segment.id}`}
@@ -620,7 +621,7 @@ function WorkDisclosure({
       >
         <ChevronDown
           size={13}
-          className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "" : "-rotate-90"}`}
+          className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-fast)] ${expanded ? "" : "-rotate-90"}`}
           aria-hidden="true"
         />
         {active && (
@@ -641,7 +642,7 @@ function WorkDisclosure({
           </span>
         )}
         <span
-          className="h-px min-w-6 flex-1 bg-border-subtle transition-colors duration-[var(--motion-hover)] group-hover:bg-border-default"
+          className="h-px min-w-6 flex-1 bg-border-subtle transition-colors duration-[var(--motion-fast)] group-hover:bg-border-default"
           data-testid={`work-divider-${segment.id}`}
           aria-hidden="true"
         />
@@ -833,6 +834,7 @@ export interface ExecutionWorkstreamProps {
   agents: readonly AgentDescriptor[];
   onInspectModelAudit?: (messageId: string) => void;
   focusClientRequestId?: string | null;
+  threadHeader?: ReactNode;
 }
 
 export function ExecutionWorkstream({
@@ -843,6 +845,7 @@ export function ExecutionWorkstream({
   agents,
   onInspectModelAudit,
   focusClientRequestId,
+  threadHeader,
 }: ExecutionWorkstreamProps) {
   const messages = useSessionStore(sessionId, (state) => state.messages, slug);
   const executions = useSessionStore(
@@ -1679,11 +1682,16 @@ export function ExecutionWorkstream({
         tabIndex={0}
       >
         <ConversationRail
-          className="conversation-surface flex min-h-full py-9 max-[639px]:py-6"
+          className="conversation-surface flex min-h-full flex-col pb-9 pt-[26px] max-[639px]:pb-6 max-[639px]:pt-[18px]"
           data-testid="execution-workstream-rail"
         >
+          {threadHeader === undefined ? null : (
+            <div className="mx-auto w-full max-w-[852px] min-w-0">
+              {threadHeader}
+            </div>
+          )}
           <SessionThreadColumn
-            className={`flex min-h-full flex-1 flex-col ${isEmpty ? "items-center justify-center" : "gap-6"}`}
+            className={`flex min-h-full flex-1 flex-col ${threadHeader === undefined ? "" : "mt-[14px]"} ${isEmpty ? "items-center justify-center" : "gap-6"}`}
             data-testid="execution-thread-column"
           >
             {isEmpty ? (

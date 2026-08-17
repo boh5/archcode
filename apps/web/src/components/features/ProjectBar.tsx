@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useCallback } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Ellipsis, Moon, Plus, Search, Settings, Sun } from "lucide-react";
 import { useProjects } from "../../api/queries";
 import type { Theme } from "../../hooks/use-theme";
@@ -13,7 +13,7 @@ import type { Project } from "../../api/types";
 import { ProjectPickerDialog } from "./ProjectPickerDialog";
 
 interface ProjectBarProps {
-  mobile?: boolean;
+  compactProjectInventory?: boolean;
   onAddProject?: () => void;
   onSettings?: () => void;
   onSearch?: () => void;
@@ -74,18 +74,17 @@ export function orderProjectNavigation(projects: readonly Project[]): readonly P
   ));
 }
 
-export function selectRailProjects(projects: readonly Project[], activeSlug: string | undefined, mobile: boolean): readonly Project[] {
+export function selectRailProjects(projects: readonly Project[], activeSlug: string | undefined, compactProjectInventory: boolean): readonly Project[] {
   const orderedProjects = orderProjectNavigation(projects);
-  if (mobile) {
+  if (compactProjectInventory) {
     const active = activeSlug === undefined ? undefined : orderedProjects.find((project) => project.slug === activeSlug);
     return active ? [active] : [];
   }
   return orderedProjects.slice(0, 5);
 }
 
-export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch, searchTriggerRef, showBell = true, theme, toggleTheme }: ProjectBarProps) {
+export function ProjectBar({ compactProjectInventory = false, onAddProject, onSettings, onSearch, searchTriggerRef, showBell = true, theme, toggleTheme }: ProjectBarProps) {
   const navigate = useNavigate();
-  const location = useLocation();
   const { slug: activeSlug } = useParams<{ slug: string }>();
   const { data: projects } = useProjects();
   const attentionVisibleHitl = useAttentionVisibleScopedHitl();
@@ -97,8 +96,9 @@ export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch,
   const moreProjectsTriggerRef = useRef<HTMLButtonElement>(null);
 
   const allProjects = useMemo(() => orderProjectNavigation(projects ?? []), [projects]);
+  const currentProject = allProjects.find((project) => project.slug === activeSlug);
   const marks = useMemo(() => buildProjectMarks(allProjects), [allProjects]);
-  const visibleProjects = selectRailProjects(allProjects, activeSlug, mobile);
+  const visibleProjects = selectRailProjects(allProjects, activeSlug, compactProjectInventory);
   const attentionCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const entry of attentionVisibleHitl) counts[entry.projectSlug] = (counts[entry.projectSlug] ?? 0) + 1;
@@ -143,19 +143,27 @@ export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch,
 
   return (
     <nav
-      className="flex h-full flex-col items-center gap-1 overflow-visible py-2.5 text-rail-muted"
+      className="flex h-full flex-col items-center gap-2 overflow-visible py-2 text-rail-muted"
       aria-label="Projects"
       data-testid="project-bar"
     >
-      <button
-        type="button"
-        aria-label="Open Home"
-        aria-current={location.pathname === "/" ? "page" : undefined}
-        className={`mb-1.5 flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-sm transition-colors duration-[var(--motion-hover)] hover:bg-rail-active focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${location.pathname === "/" ? "bg-brand-subtle text-brand shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--brand)_24%,var(--rail-border))]" : "bg-rail-hover text-rail-ink shadow-[inset_0_0_0_1px_var(--rail-border)]"}`}
-        onClick={() => navigate("/")}
-      >
-        <img src="/logo.svg" alt="ArchCode" width={20} height={20} />
-      </button>
+      {currentProject === undefined ? (
+        <span
+          aria-label="ArchCode"
+          className="mb-0.5 flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[9px] bg-rail-hover text-rail-ink shadow-[inset_0_0_0_1px_var(--rail-border)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+        >
+          <img src="/logo.svg" alt="" width={20} height={20} />
+        </span>
+      ) : (
+        <button
+          type="button"
+          aria-label={`Open ${currentProject.name} All todos`}
+          className="mb-0.5 flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] bg-rail-hover text-rail-ink shadow-[inset_0_0_0_1px_var(--rail-border)] transition-colors duration-[var(--motion-fast)] hover:bg-rail-active focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+          onClick={() => navigate(`/projects/${currentProject.slug}/todos`)}
+        >
+          <img src="/logo.svg" alt="" width={20} height={20} />
+        </button>
+      )}
 
       {visibleProjects.map((project) => {
         const isActive = project.slug === activeSlug;
@@ -173,7 +181,7 @@ export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch,
               aria-label={`Open ${project.name}${isActive ? ", current project" : ""}${attentionCount > 0 ? `, ${attentionCount} need you` : ""}${runningCount > 0 ? `, ${runningCount} running` : ""}`}
               aria-current={isActive ? "page" : undefined}
               aria-describedby={`project-tooltip-${project.slug}`}
-              className={`group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-sm text-[12px] font-[650] leading-[1.55] lowercase tracking-[-0.02em] transition-[background-color,color,box-shadow] duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${
+              className={`group relative flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] text-[12px] font-semibold leading-[1.55] lowercase tracking-[-0.02em] transition-[background-color,color,box-shadow] duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(max-width:720px)]:h-9 [@media(max-width:720px)]:w-9 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${
                 isActive
                   ? "bg-brand-subtle text-brand shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--brand)_24%,var(--rail-border))]"
                   : "text-text-secondary hover:bg-rail-hover hover:text-rail-ink dark:text-rail-muted"
@@ -189,7 +197,7 @@ export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch,
               <span
                 id={`project-tooltip-${project.slug}`}
                 role="tooltip"
-                className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-hover)] group-hover:opacity-100 group-focus-visible:opacity-100"
+                className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100"
               >
                 {project.name}
               </span>
@@ -198,7 +206,7 @@ export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch,
         );
       })}
 
-      {(mobile || allProjects.length >= 5) && (
+      {((compactProjectInventory && allProjects.length > 0) || allProjects.length >= 5) && (
         <button
           ref={moreProjectsTriggerRef}
           type="button"
@@ -206,44 +214,45 @@ export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch,
           aria-haspopup="dialog"
           aria-expanded={pickerOpen}
           aria-controls="project-picker-dialog"
-          className={`group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color,box-shadow] duration-[var(--motion-hover)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${pickerOpen ? "bg-brand-subtle text-brand shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--brand)_24%,var(--rail-border))]" : ""}`}
+          className={`group relative flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] text-rail-muted transition-[background-color,color,box-shadow] duration-[var(--motion-fast)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(max-width:720px)]:h-9 [@media(max-width:720px)]:w-9 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${pickerOpen ? "bg-brand-subtle text-brand shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--brand)_24%,var(--rail-border))]" : ""}`}
           onClick={() => setPickerOpen(true)}
         >
           <Ellipsis size={16} aria-hidden="true" />
-          <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-md border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-hover)] group-hover:opacity-100 group-focus-visible:opacity-100">More projects</span>
+          <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-md border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100">More projects</span>
         </button>
       )}
 
       <button
         type="button"
         aria-label="Open project"
-        className="group relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+        className={`group relative flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] transition-[background-color,color] duration-[var(--motion-fast)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(max-width:720px)]:h-9 [@media(max-width:720px)]:w-9 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${allProjects.length === 0 ? "bg-brand-field text-brand" : "text-rail-muted"}`}
         onClick={handleAddProject}
       >
         <Plus size={16} aria-hidden="true" />
-        <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-hover)] group-hover:opacity-100 group-focus-visible:opacity-100">
+        <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100">
           Open project
         </span>
       </button>
 
       <div className="flex-1" />
 
-      <div className="mt-1 flex flex-col items-center gap-1 before:mb-1 before:block before:h-px before:w-8 before:bg-rail-border">
+      <>
+        {allProjects.length > 0 ? (
+          <button
+            ref={searchTriggerRef}
+            type="button"
+            className="flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-[9px] text-rail-muted transition-[background-color,color] duration-[var(--motion-fast)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(max-width:720px)]:h-9 [@media(max-width:720px)]:w-9 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+            title="Search all work"
+            aria-label="Search all work"
+            onClick={onSearch}
+          >
+            <Search size={15} aria-hidden="true" />
+          </button>
+        ) : null}
+        {showBell && allProjects.length > 0 ? <HitlBell mobile={compactProjectInventory} variant="rail" /> : null}
         <button
-          ref={searchTriggerRef}
           type="button"
-          className="mb-0.5 flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
-          title="Search all work (⌘K)"
-          aria-label="Search all work"
-          aria-keyshortcuts="Meta+K Control+K"
-          onClick={onSearch}
-        >
-          <Search size={15} aria-hidden="true" />
-        </button>
-        {showBell && <HitlBell mobile={mobile} variant="rail" />}
-        <button
-          type="button"
-          className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+          className="flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-[9px] text-rail-muted transition-[background-color,color] duration-[var(--motion-fast)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(max-width:720px)]:h-9 [@media(max-width:720px)]:w-9 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
           title="Settings"
           aria-label="Settings"
           onClick={handleSettingsClick}
@@ -252,14 +261,14 @@ export function ProjectBar({ mobile = false, onAddProject, onSettings, onSearch,
         </button>
         <button
           type="button"
-          className="flex h-[34px] w-[34px] cursor-pointer items-center justify-center rounded-sm text-rail-muted transition-[background-color,color] duration-[var(--motion-hover)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
+          className="flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-[9px] text-rail-muted transition-[background-color,color] duration-[var(--motion-fast)] hover:bg-rail-hover hover:text-rail-ink focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(max-width:720px)]:h-9 [@media(max-width:720px)]:w-9 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
           title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           onClick={toggleTheme}
         >
           {theme === "dark" ? <Sun size={15} aria-hidden="true" /> : <Moon size={15} aria-hidden="true" />}
         </button>
-      </div>
+      </>
 
       <ProjectPickerDialog
         activeSlug={activeSlug}

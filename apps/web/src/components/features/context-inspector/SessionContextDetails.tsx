@@ -137,12 +137,13 @@ export function SessionContextDetails() {
     (automation) => automation.origin.kind !== "direct" && automation.origin.sessionId === focused,
   );
   return (
-    <div>
-      <dl className="px-1 py-0.5" data-testid="context-property-list">
+    <section>
+      <span className="block text-[10.5px] font-bold uppercase leading-[21px] tracking-[0.09em] text-text-tertiary">Session bindings</span>
+      <dl data-testid="context-property-list">
         {contextRows.map(([label, value, priority]) => (
-          <div key={label} className="grid min-h-0 grid-cols-[minmax(84px,34%)_minmax(0,1fr)] items-start gap-3 border-b border-border-subtle px-1 py-[9px] last:border-b-0">
-            <dt className="text-[11.5px] font-[560] leading-[1.4] text-text-tertiary">{label}</dt>
-            <dd className={`break-words text-right text-[12px] leading-[1.4] text-text-secondary ${priority ? "font-[650] text-text-primary" : "font-[560]"}`}>{value}</dd>
+          <div key={label} className="grid min-h-10 grid-cols-[minmax(76px,34%)_minmax(0,1fr)] items-start gap-3 border-b border-border-subtle px-1 py-[9px] last:border-b-0">
+            <dt className="text-[11px] font-medium leading-[1.4] text-text-tertiary">{label}</dt>
+            <dd className={`break-words text-right text-[11.5px] leading-[1.4] text-text-secondary ${priority ? "font-semibold text-text-primary" : "font-medium"}`}>{value}</dd>
           </div>
         ))}
       </dl>
@@ -224,7 +225,7 @@ export function SessionContextDetails() {
           </InspectorSection>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 

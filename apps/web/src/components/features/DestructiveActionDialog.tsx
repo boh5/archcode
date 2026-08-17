@@ -132,7 +132,7 @@ export function DestructiveActionDialog({
           <button
             type="button"
             onClick={closeIfIdle}
-            className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+            className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
             disabled={pending}
           >
             Cancel
@@ -140,7 +140,7 @@ export function DestructiveActionDialog({
           <button
             type="button"
             onClick={onConfirm}
-            className="h-8 rounded-sm bg-error px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-error/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error disabled:cursor-not-allowed disabled:opacity-40"
+            className="h-8 rounded-sm bg-error px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-fast)] hover:bg-error/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error disabled:cursor-not-allowed disabled:opacity-40"
             disabled={pending || blocked}
           >
             {pending ? pendingLabel : confirmLabel}

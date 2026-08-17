@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ProjectAutomationInventoryItem, ProjectSessionInventoryItem } from "../api/types";
 import { automationInventoryEmptyMessage, classifyAutomationInventory, matchesAutomationInventory } from "./automations";
 import { presentAutomationSurface } from "../lib/automation-surface-presentation";
-import { classifySessionInventory, matchesSessionInventory, presentSessionInventoryStatus, sessionAttentionLabels, sessionInventoryEmptyMessage } from "./project-sessions";
+import { classifySessionInventory, matchesSessionInventory, presentSessionInventoryStatus, sessionInventoryEmptyMessage } from "./project-sessions";
 
 const automation = (id: string, status: "active" | "paused" | "disabled", invocationStatus?: "failed" | "missed" | "dispatched"): ProjectAutomationInventoryItem => ({
   automation: {
@@ -118,7 +118,7 @@ describe("inventory classification", () => {
         sessionId: "automation-session",
         title: "Nightly run",
         agentName: "lead",
-        source: { kind: "automation", automationId: "automation-1", invocationId: "invocation-1", todoId: null },
+        source: { kind: "automation", automationId: "automation-1", invocationId: "invocation-1", todoId: "todo-1" },
       },
       latestExecution: null,
     } as ProjectSessionInventoryItem;
@@ -127,6 +127,7 @@ describe("inventory classification", () => {
 
     expect(matchesSessionInventory(todoSession, "lockfile drift", "all", todoContents, automationNames)).toBe(true);
     expect(matchesSessionInventory(automationSession, "dependency check", "all", todoContents, automationNames)).toBe(true);
+    expect(matchesSessionInventory(automationSession, "lockfile drift", "automation", todoContents, automationNames)).toBe(true);
     expect(matchesSessionInventory(todoSession, "nightly", "automation", todoContents, automationNames)).toBe(false);
     expect(matchesSessionInventory(automationSession, "nightly", "automation", todoContents, automationNames)).toBe(true);
   });
@@ -152,33 +153,15 @@ describe("inventory classification", () => {
     expect(groups.recent).toEqual([]);
   });
 
-  test("classifies an authoritative waiting family as Needs you without relying on a separate HITL snapshot", () => {
+  test("does not classify a coarse waiting family as Needs you without authoritative HITL", () => {
     const item = {
       session: { sessionId: "waiting", updatedAt: 1 },
       latestExecution: { id: "execution-waiting", status: "suspended", startedAt: 1 },
     } as ProjectSessionInventoryItem;
     const groups = classifySessionInventory([item], new Map([["waiting", "waiting_for_human"]]), new Set());
-    expect(groups["needs-you"]).toEqual([item]);
-    expect(presentSessionInventoryStatus(item, "waiting_for_human")).toEqual({ label: "Needs you", kind: "needs_you", detail: "Waiting for response" });
-  });
-
-  test("preserves Permission and Question labels for Session attention", () => {
-    const labels = sessionAttentionLabels([
-      { rootSessionId: "question", view: { source: { type: "ask_user" } } },
-      { rootSessionId: "permission", view: { source: { type: "tool_permission" } } },
-    ]);
-
-    expect([...labels]).toEqual([
-      ["question", "Question"],
-      ["permission", "Permission"],
-    ]);
-  });
-
-  test("gives manual inspection precedence over its original request type", () => {
-    const labels = sessionAttentionLabels([
-      { rootSessionId: "inspection", view: { source: { type: "ask_user" }, requiresInspection: true } },
-    ]);
-    expect(labels.get("inspection")).toBe("Inspection");
+    expect(groups["needs-you"]).toEqual([]);
+    expect(groups.running).toEqual([item]);
+    expect(presentSessionInventoryStatus(item, "waiting_for_human")).toEqual({ label: "Waiting", kind: "pending", detail: "Waiting for dependency" });
   });
 
   test("presents every durable terminal and suspended Session state without calling it Idle", () => {

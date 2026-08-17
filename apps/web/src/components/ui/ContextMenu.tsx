@@ -23,7 +23,7 @@ function ContextMenuItem({
 }: React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Item>) {
   return (
     <ContextMenuPrimitive.Item
-      className={`flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-3 py-2 text-[13px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus:bg-bg-hover data-[highlighted]:bg-bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50 ${className ?? ""}`}
+      className={`flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-3 py-2 text-[13px] text-text-primary outline-none transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus:bg-bg-hover data-[highlighted]:bg-bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50 ${className ?? ""}`}
       {...props}
     />
   );

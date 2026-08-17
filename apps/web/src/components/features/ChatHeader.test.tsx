@@ -122,9 +122,7 @@ describe("ChatHeader", () => {
     const source = container.querySelector('[data-testid="session-source"]');
     expect(source?.className).toContain("[@media(max-width:760px)]:hidden");
     expect(source?.querySelector("a")?.getAttribute("href")).toBe("/projects/demo/todos/todo-1");
-    expect(container.querySelector('[data-testid="session-source-annotation"]')?.className).not.toContain("hidden");
     const inspectorButton = container.querySelector('header button[aria-label="Expand context inspector"]');
     expect(inspectorButton).not.toBeNull();
-    expect(inspectorButton?.className).not.toContain("max-[760px]:hidden");
   });
 });

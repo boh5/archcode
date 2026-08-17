@@ -109,7 +109,10 @@ describe("MarkdownContent", () => {
     expect(componentCss).toContain("max-width: none");
     expect(componentCss).toContain("max-width: 72ch");
     expect(componentCss).toContain("font-size: 15px");
-    expect(componentCss).toContain("line-height: 1.66");
+    expect(componentCss).toContain("line-height: 24px");
+    expect(componentCss).toContain(
+      "padding: 18px 16px 22px;\n    font-size: 15px;",
+    );
     expect(componentCss).not.toContain(".markdown-content--response > p:first-child");
     expect(componentCss).toContain("    p,");
     expect(componentCss).toContain("    blockquote");

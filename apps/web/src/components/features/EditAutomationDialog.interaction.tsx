@@ -105,8 +105,8 @@ function change(element: HTMLInputElement | HTMLTextAreaElement, value: string):
 
 function saveButton(): HTMLButtonElement {
   const button = [...document.querySelectorAll("button")]
-    .find((candidate) => candidate.textContent === "Save changes");
-  if (button === undefined) throw new Error("Missing Save changes button");
+    .find((candidate) => candidate.textContent === "Update Automation");
+  if (button === undefined) throw new Error("Missing Update Automation button");
   return button;
 }
 
@@ -170,7 +170,7 @@ describe("EditAutomationDialog limits", () => {
       await Promise.resolve();
     });
 
-    expect(document.body.textContent).toContain("Binding: Lead + principal");
+    expect(document.body.textContent).toContain("Lead · principal");
     change(field("automation-name"), "Changed draft");
     const cancel = [...document.querySelectorAll("button")]
       .find((candidate) => candidate.textContent === "Cancel");
@@ -234,8 +234,8 @@ describe("EditAutomationDialog limits", () => {
     });
 
     expect(document.body.textContent).toContain("Definition controls");
-    const pause = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Pause");
-    const remove = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Delete");
+    const pause = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Pause Automation");
+    const remove = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Delete Automation");
     if (pause === undefined || remove === undefined) throw new Error("Missing Definition controls");
     act(() => pause.click());
     expect(pauseCount).toBe(1);

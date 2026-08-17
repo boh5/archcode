@@ -26,7 +26,7 @@ describe("visual contract", () => {
   test("keeps RootLayout as the single work-canvas main landmark", async () => {
     const rootLayout = await Bun.file(`${sourceRoot}/routes/root-layout.tsx`).text();
     expect(rootLayout.match(/<main\b/g)).toHaveLength(1);
-    for (const path of ["home.tsx", "project-todos.tsx", "project-todo-detail.tsx", "project-sessions.tsx", "automations.tsx", "automation-detail.tsx"]) {
+    for (const path of ["root-entry.tsx", "project-todos.tsx", "project-todo-detail.tsx", "project-sessions.tsx", "automations.tsx", "automation-detail.tsx"]) {
       const route = await Bun.file(`${sourceRoot}/routes/${path}`).text();
       expect(route).not.toContain("<main");
     }
@@ -40,9 +40,10 @@ describe("visual contract", () => {
     expect(globals).toContain("--text-sm: 14px;");
     expect(globals).toContain("--text-sm--line-height: 21px;");
     expect(globals).toContain("--text-base: 15px;");
-    expect(globals).toContain("--text-base--line-height: 23.25px;");
-    expect(globals).toContain("line-height: 1.55;");
-    expect(globals).toContain("letter-spacing: -0.006em;");
+    expect(globals).toContain("--text-base--line-height: 24px;");
+    expect(globals).toContain("font-size: 14px;");
+    expect(globals).toContain("line-height: 1.5;");
+    expect(globals).toContain("letter-spacing: normal;");
   });
 
   test("keeps project command bars usable on narrow viewports", async () => {
@@ -51,47 +52,64 @@ describe("visual contract", () => {
     const sessions = await Bun.file(`${sourceRoot}/routes/project-sessions.tsx`).text();
     const primaryAction = await Bun.file(`${sourceRoot}/components/primitives/PrimaryActionButton.tsx`).text();
 
+    for (const source of [sessions, automations]) {
+      const routeHeader = classNameForTagContaining(source, "header", ">Operations<");
+      expect(routeHeader).toContain("pl-[66px]");
+      expect(routeHeader).toContain("min-[981px]:px-[18px]");
+    }
+
     const todoSearch = classNameForTagContaining(todos, "label", ">Filter Todos<");
     expect(todoSearch).toContain("h-11");
-    expect(todoSearch).toContain("min-[761px]:h-[38px]");
-    const todoSearchInput = classNameForTagContaining(todos, "input", 'placeholder="Filter Todos…"');
+    expect(todoSearch).toContain("min-[721px]:h-[38px]");
+    expect(todoSearch).toContain("min-[981px]:w-[430px]");
+    expect(todoSearch).toContain("min-[981px]:flex-none");
+    const todoSearchInput = classNameForTagContaining(todos, "input", 'placeholder="Filter todos…"');
     expect(todoSearchInput).toContain("text-[16px]");
-    expect(todoSearchInput).toContain("min-[761px]:text-[12px]");
-    expect(todos).toContain("grid-cols-1");
-    expect(todos).toContain("min-[761px]:grid-cols-[minmax(0,1fr)_auto]");
+    expect(todoSearchInput).toContain("min-[721px]:text-[12px]");
+    expect(todos).toContain("min-[981px]:flex-row");
     const todoSurfaceButton = classNameForTagContaining(todos, "button", "aria-pressed={active}");
-    expect(todoSurfaceButton).toContain("h-[30px]");
+    expect(todoSurfaceButton).toContain("h-[38px]");
+    expect(todoSurfaceButton).toContain("min-[721px]:h-[30px]");
     expect(todoSurfaceButton).toContain("cursor-pointer");
-    expect(todos).toContain("h-9 w-9 min-w-9 cursor-pointer");
-    expect(todos).toContain("min-[761px]:h-7 min-[761px]:w-[30px]");
-    expect(todos).toContain('import { PrimaryActionButton } from "../components/primitives/PrimaryActionButton"');
-    expect(todos).toContain('<PrimaryActionButton ref={newTodoTriggerRef} className="min-[761px]:h-9"');
+    expect(todos).toContain("h-8 w-8 min-w-8 cursor-pointer");
 
     const automationSearch = classNameForTagContaining(automations, "label", ">Filter Automations<");
     expect(automationSearch).toContain("h-11");
     expect(automationSearch).toContain("min-[761px]:h-[38px]");
     const automationSearchInput = classNameForTagContaining(automations, "input", 'placeholder="Filter Automations…"');
     expect(automationSearchInput).toContain("text-[16px]");
-    expect(automationSearchInput).toContain("min-[761px]:text-[12px]");
-    expect(automations).toContain("<PrimaryActionButton");
+    expect(automationSearchInput).toContain("min-[721px]:text-[12px]");
+    const automationCreate = classNameForTagContaining(automations, "button", "onClick={() => setCreating(true)}");
+    expect(automationCreate).toContain("border-border-default");
+    expect(automationCreate).toContain("bg-bg-surface");
+    expect(automationCreate).toContain("min-[761px]:h-[34px]");
+    expect(automations).toContain('<Plus size={14} aria-hidden="true" /> New Automation');
+    expect(automations).toContain("min-[841px]:grid-cols-[minmax(0,1fr)_360px]");
+    expect(automations).toContain("min-[841px]:grid-rows-[max-content_64px]");
+    expect(automations).toContain("min-[841px]:gap-x-[22px]");
+    expect(automations).toContain("min-[841px]:gap-y-0");
+    expect(automations).toContain("min-[841px]:col-span-2 min-[841px]:block min-[841px]:h-16");
 
     const sessionSearch = classNameForTagContaining(sessions, "label", ">Filter Sessions<");
     expect(sessionSearch).toContain("h-11");
-    expect(sessionSearch).toContain("min-[761px]:h-[38px]");
+    expect(sessionSearch).toContain("min-[641px]:h-[38px]");
     const sessionSearchInput = classNameForTagContaining(sessions, "input", 'placeholder="Filter Sessions…"');
     expect(sessionSearchInput).toContain("text-[16px]");
-    expect(sessionSearchInput).toContain("min-[761px]:text-[12px]");
+    expect(sessionSearchInput).toContain("min-[641px]:text-[12px]");
     expect(sessions).toContain('data-testid="session-source-picker"');
-    expect(sessions).toContain('aria-haspopup="menu"');
-    expect(sessions).toContain('role="menuitemradio"');
+    expect(sessions).toContain('<select aria-label="Session source"');
     expect(sessions).toContain("h-11 w-[150px]");
-    expect(sessions).toContain("min-[761px]:h-9 min-[761px]:w-[142px]");
-    expect(sessions).toContain("<PrimaryActionButton");
+    expect(sessions).toContain("min-[641px]:h-[38px] min-[641px]:w-[168px]");
+    expect(sessions).toContain("border-border-default bg-bg-surface");
+    expect(sessions).toContain("min-[641px]:h-[34px]");
+    expect(sessions).toContain('data-session-row-presentation={isRunning ? "featured" : "standard"}');
+    expect(sessions).toContain("my-[5px] rounded-[8px]");
+    expect(sessions).toContain("shadow-[inset_2px_0_0_var(--brand)]");
+    expect(sessions).toContain('<span aria-hidden="true"> · </span>{sourceContext}');
     expect(primaryAction).toContain("primary-action-button");
     expect(primaryAction).toContain("h-11");
     expect(primaryAction).toContain("min-[761px]:h-8");
     expect(primaryAction).toContain("[@media(pointer:coarse)]:h-11");
-    expect(sessions).toContain("<ChevronRight");
   });
 
   test("enforces the current motion and structural-surface safety rules", async () => {

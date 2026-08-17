@@ -13,6 +13,7 @@ import { JSDOM } from "jsdom";
 import { TOOL_DELEGATE, createEmptySessionStats } from "@archcode/protocol";
 import type {
   GlobalSSEHitlRealtimeEvent,
+  RootSessionSource,
   ToolChildSessionLink,
 } from "@archcode/protocol";
 import type { HitlView, ProjectTodo, Session } from "../api/types";
@@ -35,6 +36,7 @@ const memoryPolicy = {
 };
 import { hitlStore } from "../store/hitl-store";
 import {
+  diffQueryOptions,
   focusedSessionQueryOptions,
   projectTodosQueryOptions,
   sessionQueryOptions,
@@ -42,7 +44,9 @@ import {
 import {
   effectiveSessionFocusId,
   hasSessionSnapshotRecoveryOwner,
-  presentRootSessionSource,
+  deriveSessionShellMode,
+  sessionInspectorTopInset,
+  sessionSourceErrorReturn,
   SessionRoute,
 } from "./session";
 import { WorkbenchLayoutProvider, useWorkbenchLayout } from "../context/workbench-layout";
@@ -59,27 +63,62 @@ function applySnapshot(
 }
 
 describe("root Session source presentation", () => {
-  test("maps every source kind and never presents missing source as Direct", () => {
-    expect(presentRootSessionSource({ source: { kind: "direct" }, slug: "demo" })).toMatchObject({
-      label: "Direct",
-      title: "Direct Session",
+  test("derives every shell only from its canonical root source", () => {
+    expect(deriveSessionShellMode({ kind: "direct" }, "demo")).toMatchObject({
+      kind: "source-only",
+      sourceLabel: "Direct",
+      backLabel: "Runs",
     });
-    expect(presentRootSessionSource({
-      source: { kind: "todo", todoId: "todo-1", entry: "work" },
-      slug: "demo",
-      todoLabel: "Implement source contract",
-    })).toMatchObject({ label: "Work Todo", title: "Implement source contract" });
-    expect(presentRootSessionSource({
-      source: { kind: "automation", automationId: "auto-1", invocationId: "run-1", todoId: null },
-      slug: "demo",
-    })).toEqual({
-      label: "Automation",
-      title: "auto-1 · unavailable",
+    expect(deriveSessionShellMode(
+      { kind: "todo", todoId: "todo-1", entry: "work" },
+      "demo",
+    )).toMatchObject({ kind: "todo-bound", todoId: "todo-1", sourceLabel: "Todo · Work" });
+    expect(deriveSessionShellMode(
+      { kind: "automation", automationId: "auto-1", invocationId: "run-1", todoId: null },
+      "demo",
+    )).toEqual({
+      kind: "source-only",
+      sessionKind: "AUTOMATION SESSION",
+      sourceLabel: "Automation",
+      backLabel: "Schedules",
+      backTo: "/projects/demo/automations/auto-1?invocation=run-1",
+    });
+    expect(deriveSessionShellMode(
+      { kind: "automation", automationId: "auto-1", invocationId: "run-1", todoId: "todo-1" },
+      "demo",
+    )).toMatchObject({ kind: "todo-bound", todoId: "todo-1", sourceLabel: "Automation" });
+  });
+
+  test("matches the source-aware Inspector inset contract", () => {
+    const direct = deriveSessionShellMode({ kind: "direct" }, "demo");
+    const todo = deriveSessionShellMode({ kind: "todo", todoId: "todo-1", entry: "work" }, "demo");
+    expect(sessionInspectorTopInset({ mode: direct, viewportWidth: 560 })).toBe(58);
+    expect(sessionInspectorTopInset({ mode: todo, viewportWidth: 560 })).toBe(145);
+    expect(sessionInspectorTopInset({ mode: todo, viewportWidth: 720 })).toBe(115);
+    expect(sessionInspectorTopInset({ mode: todo, viewportWidth: 721 })).toBe(108);
+    expect(sessionInspectorTopInset({ mode: todo, viewportWidth: 980 })).toBe(108);
+    expect(sessionInspectorTopInset({ mode: todo, viewportWidth: 1260 })).toBe(108);
+  });
+
+  test("keeps the exact Automation return identity when its linked Todo is unavailable", () => {
+    expect(sessionSourceErrorReturn({
+      kind: "automation",
+      automationId: "auto-1",
+      invocationId: "run-1",
+      todoId: "missing-todo",
+    }, "demo")).toEqual({
+      label: "Schedules",
       to: "/projects/demo/automations/auto-1?invocation=run-1",
     });
-    expect(presentRootSessionSource({ source: undefined, slug: "demo" })).toEqual({
-      label: "Source",
-      title: "Source unavailable",
+  });
+
+  test("returns a Todo-sourced Session with an unavailable Todo to Runs", () => {
+    expect(sessionSourceErrorReturn({
+      kind: "todo",
+      todoId: "missing-todo",
+      entry: "work",
+    }, "demo")).toEqual({
+      label: "Runs",
       to: "/projects/demo/sessions",
     });
   });
@@ -93,6 +132,10 @@ function createSession(input: {
   messages: NonNullable<Session["messages"]>;
   childSessionLinks?: ToolChildSessionLink[];
   goal?: Session["goal"];
+  source?: RootSessionSource;
+  agentName?: string;
+  profile?: Session["profile"];
+  delegationRequest?: Session["delegationRequest"];
 }): Session {
   return {
     sessionId: input.id,
@@ -100,11 +143,13 @@ function createSession(input: {
     rootSessionId: input.rootSessionId,
     parentSessionId: input.parentSessionId,
     goal: input.goal,
+    source: input.source ?? { kind: "direct" },
     title: input.title,
     createdAt: 1,
     updatedAt: 1,
-    agentName: "lead",
-    profile: "principal",
+    agentName: input.agentName ?? "lead",
+    profile: input.profile ?? "principal",
+    delegationRequest: input.delegationRequest,
     activeSkillNames: [],
     modelSelection: { revision: 0 },
     nextModelSelection: {
@@ -244,6 +289,7 @@ function findElementByText(container: Element, text: string): Element {
 async function renderSessionRoute(
   root: Root,
   queryClient: QueryClient,
+  initialEntry = "/projects/demo/sessions/root-session",
 ): Promise<void> {
   await queryClient.fetchQuery(sessionQueryOptions("demo", "root-session"));
   await act(async () => {
@@ -252,7 +298,7 @@ async function renderSessionRoute(
         <WorkbenchLayoutProvider>
           <QueryClientProvider client={queryClient}>
             <MemoryRouter
-              initialEntries={["/projects/demo/sessions/root-session"]}
+              initialEntries={[initialEntry]}
             >
               <Routes>
                 <Route
@@ -301,8 +347,6 @@ describe("SessionRoute store-level behavior", () => {
       new URL("../components/features/PanelToggleButton.tsx", import.meta.url),
     ).text();
     expect(sessionSource).toContain("<InspectorToggleButton");
-    expect(panelToggleSource).not.toContain("max-[760px]:hidden");
-    expect(panelToggleSource).not.toContain("max-[799px]:hidden");
     expect(panelToggleSource).toContain("[@media(pointer:coarse)]:h-11");
   });
 
@@ -447,6 +491,56 @@ describe("SessionRoute focused view store behavior", () => {
       await act(async () => reactRoot.unmount());
       queryClient.clear();
       dom.window.close();
+    }
+  });
+
+  test("keeps the root composer mounted while full diff replaces the canvas", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    const rootSession = createSession({
+      id: "root-session",
+      rootSessionId: "root-session",
+      title: "Root Session",
+      messages: [],
+    });
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/api/projects") return Response.json({ projects: [] });
+      if (path === "/api/agents") return Response.json({ agents: [] });
+      if (path === "/api/projects/demo/todos") return Response.json({ todos: [] });
+      if (path === "/api/projects/demo/sessions/root-session") return Response.json(rootSession);
+      if (path === "/api/projects/demo/diff") return Response.json({ files: [] });
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await queryClient.fetchQuery({
+        ...diffQueryOptions("demo", "root-session"),
+        staleTime: Infinity,
+      });
+      await renderSessionRoute(
+        reactRoot,
+        queryClient,
+        "/projects/demo/sessions/root-session?view=diff",
+      );
+      expect(container.querySelector('[data-testid="session-diff-canvas"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="session-composer-dock"]')).not.toBeNull();
+      expect(container.querySelector('[data-session-diff-heading]')?.textContent).toBe("0 files changed");
+      expect(container.textContent).toContain("Current checkout");
+      expect(container.textContent).toContain("Uncommitted diff");
+    } finally {
+      await act(async () => reactRoot.unmount());
+      queryClient.clear();
+      dom.window.close();
+      restoreGlobals();
+      mock.restore();
     }
   });
 
@@ -832,6 +926,16 @@ describe("SessionRoute focused view store behavior", () => {
       rootSessionId: "root-session",
       parentSessionId: "root-session",
       title: "Child Session",
+      agentName: "explore",
+      profile: "fast",
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Trace the contract",
+        objective: "Inspect the current Session contract.",
+        skills: [],
+        background: false,
+      },
       messages: [
         {
           id: "child-message",
@@ -891,6 +995,12 @@ describe("SessionRoute focused view store behavior", () => {
         return Response.json(rootSession);
       if (path.endsWith("/sessions/child-session"))
         return Response.json(childSession);
+      if (path === "/api/agents") return Response.json({
+        agents: [
+          { name: "lead", displayName: "Lead" },
+          { name: "explore", displayName: "Explore" },
+        ],
+      });
       return new Response("Not found", { status: 404 });
     });
     Object.defineProperty(globalThis, "fetch", {
@@ -942,10 +1052,11 @@ describe("SessionRoute focused view store behavior", () => {
         getWebSessionStore("root-session", "demo").getState().focusSessionId,
       ).toBe("child-session");
       expect(container.textContent).toContain("Back to Root Session");
-      expect(container.textContent).toContain("Child Session");
-      expect(
-        container.querySelector('button[aria-label^="Todo progress"]'),
-      ).not.toBeNull();
+      expect(container.querySelector("[data-focused-child-heading]")?.textContent).toContain("Explore Session");
+      expect(container.querySelector("[data-focused-child-heading]")?.textContent).toContain("Child of Lead · Trace the contract");
+      expect(container.querySelector("[data-focused-child-heading]")?.textContent).toContain("Read-only · Composer stays with Lead");
+      expect(container.querySelector("[data-focused-child-heading]")?.textContent).toContain("Completed");
+      expect(container.querySelectorAll("[data-session-context-header]")).toHaveLength(1);
       expect(
         container.querySelector('button[aria-controls~="context-inspector"]'),
       ).not.toBeNull();
@@ -1007,6 +1118,8 @@ describe("SessionRoute focused view store behavior", () => {
       hitlId: view.hitlId,
       ownerSessionId: "root-session",
       rootSessionId: "root-session",
+      ownerAgentName: "lead",
+      ownerSessionTitle: "Root Session",
       createdAt: 1,
       payload: { type: "hitl.request" },
       view,
@@ -1070,12 +1183,15 @@ describe("SessionRoute focused view store behavior", () => {
       expect(transcriptSurface?.contains(surface)).toBe(true);
       expect(viewport?.contains(scroller)).toBe(true);
       expect(viewport?.contains(surface)).toBe(false);
-      expect(surface?.classList.contains("border-t")).toBe(true);
+      expect(surface?.classList.contains("border-0")).toBe(true);
+      expect(surface?.classList.contains("bg-transparent")).toBe(true);
       expect(surface?.classList.contains("px-5")).toBe(false);
       expect(rail?.className).toContain("w-full");
       expect(rail?.className).toContain("!max-w-[900px]");
       expect(rail?.className).toContain("!px-3");
       expect(rail?.className).toContain("min-[761px]:!px-[26px]");
+      expect(rail?.className).toContain("min-[761px]:pt-[14px]");
+      expect(rail?.className).toContain("min-[761px]:pb-4");
       expect(threadColumn?.className).toContain("mx-auto");
       expect(threadColumn?.className).toContain("!max-w-[848px]");
       expect(attention?.firstElementChild?.firstElementChild).toBe(decision);
@@ -1095,7 +1211,7 @@ describe("SessionRoute focused view store behavior", () => {
     }
   });
 
-  test("links a root Discussion Session back to its exact Project Todo", async () => {
+  test("renders one Todo shell with Work active and returns to its exact Work list", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -1165,7 +1281,7 @@ describe("SessionRoute focused view store behavior", () => {
                       element={<SessionRoute />}
                     />
                     <Route
-                      path="/projects/:slug/todos/:todoId"
+                      path="/projects/:slug/todos/:todoId/work"
                       element={<LocationProbe />}
                     />
                   </Routes>
@@ -1176,22 +1292,18 @@ describe("SessionRoute focused view store behavior", () => {
         );
       });
 
-      const backlink = container.querySelector(
-        '[data-testid="project-todo-backlink"]',
-      );
-      expect(backlink?.textContent).toBe("Add resilient offline mode");
-      expect(backlink?.getAttribute("href")).toBe(
-        "/projects/demo/todos/todo-offline-mode",
-      );
-      expect(container.textContent).toContain("Discussion Todo");
-      expect(backlink?.closest("header")).not.toBeNull();
+      const shell = container.querySelector('[data-selected-todo-shell]');
+      expect(shell?.querySelector("h1")?.textContent).toBe("Add resilient offline mode");
+      expect(shell?.querySelector('a[aria-current="page"]')?.textContent).toContain("Work");
+      expect(container.textContent).toContain("Todo · Discussion");
+      expect(container.querySelectorAll("[data-selected-todo-shell]")).toHaveLength(1);
 
-      const link = container.querySelector(
-        '[data-testid="project-todo-backlink"]',
+      const back = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("All work"),
       );
-      if (!link) throw new Error("Missing Project Todo backlink");
+      if (!back) throw new Error("Missing All work action");
       await act(async () => {
-        link.dispatchEvent(
+        back.dispatchEvent(
           new dom.window.MouseEvent("click", {
             bubbles: true,
             cancelable: true,
@@ -1201,7 +1313,7 @@ describe("SessionRoute focused view store behavior", () => {
 
       expect(
         container.querySelector('[data-testid="location"]')?.textContent,
-      ).toBe("/projects/demo/todos/todo-offline-mode|PUSH");
+      ).toBe("/projects/demo/todos/todo-offline-mode/work|PUSH");
     } finally {
       await act(async () => reactRoot.unmount());
       queryClient.clear();

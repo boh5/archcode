@@ -38,7 +38,7 @@ Session.
   the detail in the same canvas and exposes a visible back-to-list action. Do
   not introduce a second navigation rail or a modal merely to inspect an
   existing Automation.
-- At `≤760px`, the detail back action and both title actions are 44px tall. A
+- At `≤720px`, the detail back action and both title actions are 44px tall. A
   list selection moves focus to the detail title; the back action restores the
   exact originating row.
 

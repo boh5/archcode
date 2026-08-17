@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Search, X } from "lucide-react";
+import { ChevronRight, Pause, Plus, Repeat2, Search, Square, X } from "lucide-react";
 import type { ProjectAutomationInventoryItem } from "../api/types";
 import { useAutomationInventory, useProjectTodos, useSessionInventory } from "../api/queries";
 import { EditAutomationDialog } from "../components/features/EditAutomationDialog";
-import { PrimaryActionButton } from "../components/primitives/PrimaryActionButton";
+import { StatusGlyph } from "../components/primitives/StatusGlyph";
 import { automationInvocationStatusLabel, automationStatusLabel } from "../lib/automation-status-presentation";
 import { formatAutomationTrigger } from "../lib/automation-trigger-presentation";
 import { deriveAutomationHitlAttention, indexAutomationSessionLinks } from "../lib/automation-hitl-attention";
@@ -17,6 +17,7 @@ import { useAttentionVisibleScopedHitl } from "../store/hitl-store";
 import { useSessionRuntimeFamilies } from "../store/session-runtime-store";
 
 export type AutomationInventoryGroup = AutomationSurfaceGroup;
+type AutomationStatusFilter = "all" | "active" | "paused";
 
 export interface PresentedAutomationInventoryItem {
   readonly item: ProjectAutomationInventoryItem;
@@ -120,11 +121,21 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
     };
   }), [activityBySessionId, inventory.data, scopedHitl, sessionLinksByAutomation, sessionsById, todoContents]);
   const query = searchParams.get("q") ?? "";
+  const statusParam = searchParams.get("status");
+  const statusFilter: AutomationStatusFilter = statusParam === "active" || statusParam === "paused" ? statusParam : "all";
   const filtered = useMemo(() => {
-    return presentedRows.filter(({ item, presentation }) => matchesAutomationInventory(item, query, todoContents, presentation));
-  }, [presentedRows, query, todoContents]);
+    return presentedRows.filter(({ item, presentation }) => {
+      if (statusFilter === "active" && item.automation.status !== "active") return false;
+      if (statusFilter === "paused" && item.automation.status !== "paused") return false;
+      return matchesAutomationInventory(item, query, todoContents, presentation);
+    });
+  }, [presentedRows, query, statusFilter, todoContents]);
   const groups = useMemo(() => classifyAutomationInventory(filtered), [filtered]);
-  const detailSearch = query ? `?q=${encodeURIComponent(query)}` : "";
+  const detailSearch = new URLSearchParams({
+    ...(query ? { q: query } : {}),
+    ...(statusFilter !== "all" ? { status: statusFilter } : {}),
+  }).toString();
+  const detailSearchSuffix = detailSearch ? `?${detailSearch}` : "";
   const firstVisibleAutomation = groups["needs-you"][0] ?? groups.scheduled[0] ?? groups.paused[0] ?? groups.inactive[0];
   const restoreAutomationId = typeof location.state === "object" && location.state !== null && "restoreAutomationId" in location.state
     ? String(location.state.restoreAutomationId)
@@ -139,42 +150,72 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
     const openFirstVisible = () => {
       if (!splitViewport.matches) return;
       navigate(
-        `/projects/${encodeURIComponent(slug)}/automations/${encodeURIComponent(firstVisibleAutomation.item.automation.id)}${detailSearch}`,
+        `/projects/${encodeURIComponent(slug)}/automations/${encodeURIComponent(firstVisibleAutomation.item.automation.id)}${detailSearchSuffix}`,
         { replace: true },
       );
     };
     openFirstVisible();
     splitViewport.addEventListener("change", openFirstVisible);
     return () => splitViewport.removeEventListener("change", openFirstVisible);
-  }, [automationId, detail, detailSearch, firstVisibleAutomation, inventory.isLoading, navigate, slug]);
+  }, [automationId, detail, detailSearchSuffix, firstVisibleAutomation, inventory.isLoading, navigate, slug]);
   const setQuery = (value: string) => {
     const next = new URLSearchParams(searchParams);
     if (value) next.set("q", value); else next.delete("q");
     setSearchParams(next, { replace: true });
   };
+  const setStatus = (value: AutomationStatusFilter) => {
+    const next = new URLSearchParams(searchParams);
+    if (value === "all") next.delete("status"); else next.set("status", value);
+    setSearchParams(next, { replace: true });
+  };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-bg-base" aria-label="Automations workspace">
-      <header className="grid min-h-[58px] shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center justify-between gap-3 border-b border-border-default bg-bg-surface px-3 py-[14px] min-[761px]:px-6 min-[761px]:py-3">
-        <label className="group flex h-11 w-full max-w-[420px] min-w-0 items-center gap-2 rounded-md border border-border-subtle bg-[color-mix(in_srgb,var(--bg-base)_82%,var(--bg-surface))] py-0 pl-3 pr-1 text-text-tertiary shadow-[inset_0_1px_0_rgb(255_255_255/3%)] transition-[border-color,background-color,box-shadow] duration-[var(--motion-hover)] hover:border-border-default hover:bg-bg-elevated focus-within:border-brand focus-within:bg-bg-elevated focus-within:[box-shadow:var(--focus)] min-[761px]:h-[38px]">
-          <Search className="shrink-0 transition-colors duration-[var(--motion-hover)] group-focus-within:text-brand" size={14} aria-hidden="true" />
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-bg-base" aria-label="Schedules workspace">
+      <header className="flex min-h-[58px] shrink-0 items-center gap-2 border-b border-border-default bg-bg-surface py-2.5 pl-[66px] pr-3 min-[981px]:px-[18px]">
+        <div className="min-w-0">
+          <p className="text-[9px] font-semibold uppercase leading-3 tracking-[0.08em] text-text-tertiary">Operations</p>
+          <h1 className="mt-px text-[17px] font-semibold leading-5 tracking-[-0.025em] text-text-primary">Schedules <span className="ml-1 inline-flex min-h-[19px] items-center rounded-full bg-bg-muted px-2 align-middle text-[10px] font-semibold tabular-nums text-text-secondary">{inventory.data?.length ?? 0}</span></h1>
+        </div>
+      </header>
+      <div className="grid shrink-0 grid-cols-1 gap-2 border-b border-border-default bg-bg-base px-3 pb-[14px] pt-[18px] min-[721px]:flex min-[721px]:items-center min-[721px]:justify-between min-[721px]:px-5 min-[721px]:pt-7 min-[761px]:gap-[14px]">
+        <label className="group flex h-11 w-full max-w-none min-w-0 items-center gap-2 rounded-md border border-border-subtle bg-[color-mix(in_srgb,var(--bg-base)_82%,var(--bg-surface))] py-0 pl-3 pr-1 text-text-tertiary shadow-[inset_0_1px_0_rgb(255_255_255/3%)] transition-[border-color,background-color,box-shadow] duration-[var(--motion-fast)] hover:border-border-default hover:bg-bg-elevated focus-within:border-brand focus-within:bg-bg-elevated focus-within:[box-shadow:var(--focus)] min-[721px]:max-w-[430px] min-[721px]:flex-[0_1_430px] min-[761px]:h-[38px]">
+          <Search className="shrink-0 transition-colors duration-[var(--motion-fast)] group-focus-within:text-brand" size={14} aria-hidden="true" />
           <span className="sr-only">Filter Automations</span>
-          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Automations…" autoComplete="off" spellCheck={false} className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-0.5 text-[16px] text-text-primary outline-none placeholder:text-text-tertiary [&::-webkit-search-cancel-button]:appearance-none min-[761px]:text-[12px]" />
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Automations…" autoComplete="off" spellCheck={false} className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-0.5 text-[16px] text-text-primary outline-none placeholder:text-text-tertiary [&::-webkit-search-cancel-button]:appearance-none min-[721px]:text-[12px]" />
           {query ? <button type="button" aria-label="Clear Automation filter" onClick={() => setQuery("")} className="grid h-7 w-7 shrink-0 place-items-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]"><X size={12} aria-hidden="true" /></button> : null}
         </label>
-        <PrimaryActionButton className="px-2.5 min-[761px]:px-[13px]" onClick={() => setCreating(true)}>
-          New Automation
-        </PrimaryActionButton>
-      </header>
-      <div className="block min-h-0 flex-1 overflow-auto min-[841px]:grid min-[841px]:grid-cols-[minmax(360px,0.9fr)_minmax(360px,1.1fr)] min-[841px]:overflow-hidden min-[1041px]:grid-cols-[minmax(430px,0.88fr)_minmax(420px,1.12fr)]">
-        <section className={`min-h-0 min-w-0 overflow-auto bg-bg-base ${detail === undefined ? "col-span-2" : "hidden min-[841px]:block min-[841px]:border-r min-[841px]:border-border-default"}`} aria-label="Automation list">
-          <div className="mx-auto w-full max-w-[760px] px-3 pb-9 pt-[18px] min-[761px]:px-6 min-[761px]:pb-12 min-[761px]:pt-[22px]">
+        <div className="grid grid-cols-1 gap-2 min-[721px]:w-[164px] min-[761px]:flex min-[761px]:w-auto min-[761px]:items-center">
+          <div className="flex h-[52px] items-center gap-0.5 rounded-md border border-border-subtle bg-bg-surface p-[3px] min-[761px]:h-[38px]" role="group" aria-label="Automation status">
+            {(["all", "active", "paused"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={statusFilter === value}
+                onClick={() => setStatus(value)}
+                className={`inline-flex min-h-11 items-center justify-center rounded-sm px-2.5 text-[11.5px] font-semibold leading-[1.5] tracking-normal text-text-secondary transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[761px]:min-h-[30px] ${statusFilter === value ? "bg-bg-active text-text-primary shadow-sm" : "hover:bg-bg-hover hover:text-text-primary"}`}
+              >
+                {value[0].toUpperCase() + value.slice(1)}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-11 min-h-11 items-center justify-center gap-[7px] whitespace-nowrap rounded-md border border-border-default bg-bg-surface px-2.5 text-[11.5px] font-semibold leading-[1.5] tracking-normal text-text-tertiary transition-[background-color,border-color,color] duration-[var(--motion-fast)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[761px]:h-[34px] min-[761px]:min-h-[34px] min-[761px]:px-[11px]"
+            onClick={() => setCreating(true)}
+          >
+            <Plus size={14} aria-hidden="true" /> New Automation
+          </button>
+        </div>
+      </div>
+      <div className="block min-h-0 flex-1 overflow-auto min-[841px]:mx-auto min-[841px]:mt-[22px] min-[841px]:grid min-[841px]:w-[calc(100%_-_40px)] min-[841px]:max-w-[1420px] min-[841px]:grid-cols-[minmax(0,1fr)_360px] min-[841px]:grid-rows-[max-content_64px] min-[841px]:items-start min-[841px]:gap-x-[22px] min-[841px]:gap-y-0">
+        <section className={`min-h-0 min-w-0 overflow-auto bg-bg-base min-[841px]:overflow-visible ${detail === undefined ? "col-span-2" : "hidden min-[841px]:block"}`} aria-label="Automation list">
+          <div className="w-full px-3 pb-9 pt-[18px] min-[721px]:px-5 min-[721px]:pb-12 min-[721px]:pt-[22px] min-[841px]:px-0 min-[841px]:pt-0">
           {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Automations…</p> : null}
           {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Automations</p> : null}
           {!inventory.isLoading && !inventory.error && filtered.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{automationInventoryEmptyMessage(inventory.data?.length ?? 0)}</p> : null}
           {(["needs-you", "scheduled", "paused", "inactive"] as const).map((group) => groups[group].length > 0 ? (
             <AutomationGroup
-              detailSearch={detailSearch}
+              detailSearch={detailSearchSuffix}
               group={group}
               items={groups[group]}
               key={group}
@@ -186,7 +227,8 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
           ) : null)}
           </div>
         </section>
-        {detail !== undefined ? <section className="min-h-0 min-w-0 overflow-visible bg-bg-surface min-[841px]:overflow-auto" aria-label="Selected Automation detail">{detail}</section> : null}
+        {detail !== undefined ? <section className="min-h-0 min-w-0 overflow-visible bg-bg-surface min-[841px]:overflow-hidden min-[841px]:rounded-[10px] min-[841px]:border min-[841px]:border-border-default" aria-label="Selected Automation detail">{detail}</section> : null}
+        <div aria-hidden="true" className="hidden min-[841px]:col-span-2 min-[841px]:block min-[841px]:h-16" />
       </div>
       <EditAutomationDialog open={creating} onClose={() => setCreating(false)} slug={slug} />
     </div>
@@ -204,10 +246,10 @@ function AutomationGroup({ detailSearch, group, items, restoreAutomationId, rest
 }) {
   const label = group === "needs-you" ? "Needs you" : group === "scheduled" ? "Scheduled" : group === "paused" ? "Paused" : "Inactive";
   return (
-    <section className="[&+section]:mt-6" aria-labelledby={`automations-${group}`}>
-      <header className="flex items-baseline justify-between gap-3 px-0.5 pb-2">
+    <section className="[&+section]:mt-[26px]" aria-labelledby={`automations-${group}`}>
+      <header className="flex min-h-[29px] items-baseline justify-between gap-3 px-[7px] pb-2">
         <h2 id={`automations-${group}`} className="text-[11px] font-bold uppercase tracking-[0.06em] text-text-primary">{label}</h2>
-        <span className="text-[10px] text-text-tertiary">{items.length}</span>
+        <span className="text-[10.5px] tabular-nums text-text-tertiary">{items.length}</span>
       </header>
       <div className="border-t border-border-default">
         {items.map(({ item: { automation }, presentation }) => {
@@ -226,14 +268,15 @@ function AutomationGroup({ detailSearch, group, items, restoreAutomationId, rest
               ref={automation.id === restoreAutomationId ? restoreRowRef : undefined}
               state={{ focusAutomationDetail: true }}
               to={`/projects/${slug}/automations/${automation.id}${detailSearch}`}
-              className={`workbench-row-lift grid min-h-[74px] grid-cols-[13px_minmax(0,1fr)_auto] items-start gap-2.5 border-b border-l-2 border-b-border-subtle px-1.5 py-2.5 text-left text-text-secondary transition-[background-color,color,transform,border-color] duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand min-[761px]:min-h-14 min-[761px]:px-3 ${selected ? "border-l-brand bg-selection-field" : "border-l-transparent"}`}
+              className={`workbench-row-lift grid min-h-[72px] grid-cols-[27px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border-subtle px-2 py-2.5 text-left text-text-secondary transition-[background-color,color,transform,box-shadow] duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand min-[721px]:min-h-[66px] min-[721px]:grid-cols-[30px_minmax(0,1fr)_auto_14px] ${selected ? "my-[5px] !px-2.5 rounded-lg border border-brand/25 bg-selection-field shadow-[inset_2px_0_0_var(--brand)]" : ""}`}
             >
-              <AutomationStatusOrbit orbit={presentation.orbit} />
+              <AutomationStatusOrbit group={presentation.group} orbit={presentation.orbit} />
               <span className="min-w-0">
-                <span className="block truncate text-[13px] font-semibold text-text-primary">{automation.name}</span>
-                <span className="mt-[5px] block truncate text-[11px] leading-[1.45] text-text-tertiary">{presentation.context}</span>
+                <span className="block truncate text-[13px] font-semibold leading-[1.35] text-text-primary">{automation.name}</span>
+                <span className="mt-[3px] block truncate text-[10.5px] leading-[1.35] text-text-tertiary">{presentation.context}</span>
               </span>
-              <span className={`shrink-0 whitespace-nowrap text-[10.5px] font-semibold ${signalTone}`}>{presentation.rowSignal}</span>
+              <span className={`inline-flex min-h-[23px] shrink-0 items-center whitespace-nowrap rounded-[5px] border px-2 text-[9.5px] font-semibold ${automationStatusLabelClass(presentation.tone)} ${signalTone}`}>{presentation.rowSignal}</span>
+              <ChevronRight size={13} className="hidden text-text-tertiary min-[721px]:block" aria-hidden="true" />
             </Link>
           );
         })}
@@ -242,13 +285,34 @@ function AutomationGroup({ detailSearch, group, items, restoreAutomationId, rest
   );
 }
 
-function AutomationStatusOrbit({ orbit }: { orbit: AutomationSurfacePresentation["orbit"] }) {
-  const tone = orbit === "failed"
-    ? "border-error bg-error shadow-[inset_0_0_0_2px_var(--bg-base)]"
+function AutomationStatusOrbit({ group, orbit }: {
+  group: AutomationSurfaceGroup;
+  orbit: AutomationSurfacePresentation["orbit"];
+}) {
+  const frame = orbit === "failed"
+    ? "border-[color:color-mix(in_srgb,var(--error)_28%,var(--border-subtle))] bg-error-field"
     : orbit === "attention"
-      ? "border-warning bg-warning shadow-[inset_0_0_0_2px_var(--bg-base)]"
+      ? "border-[color:color-mix(in_srgb,var(--warning)_30%,var(--border-subtle))] bg-[linear-gradient(160deg,var(--warning-field),color-mix(in_srgb,var(--warning-field)_78%,var(--bg-muted)))]"
       : orbit === "running"
-        ? "animate-activity border-signal border-t-transparent bg-transparent"
-        : "border-text-tertiary bg-transparent";
-  return <span aria-hidden="true" className={`mt-[3px] box-border h-[10px] w-[10px] shrink-0 rounded-full border-[1.5px] ${tone}`} />;
+        ? "border-[color:color-mix(in_srgb,var(--signal)_28%,var(--border-subtle))] bg-[linear-gradient(160deg,var(--signal-field),color-mix(in_srgb,var(--signal-field)_78%,var(--bg-muted)))]"
+        : "border-border-subtle bg-[linear-gradient(160deg,color-mix(in_srgb,var(--bg-elevated)_62%,var(--bg-muted)),var(--bg-muted))] text-text-tertiary";
+  const content = orbit === "failed"
+    ? <StatusGlyph kind="failed" size={12} />
+    : orbit === "attention"
+      ? <StatusGlyph kind="needs_you" size={12} />
+      : orbit === "running"
+        ? <StatusGlyph kind="running" size={12} />
+        : group === "inactive"
+          ? <Square size={12} aria-hidden="true" />
+          : orbit === "paused"
+            ? <Pause size={12} aria-hidden="true" />
+            : <Repeat2 size={12} aria-hidden="true" />;
+  return <span aria-hidden="true" className={`grid h-[27px] w-[27px] shrink-0 place-items-center rounded-[7px] border shadow-[inset_0_1px_0_rgb(255_255_255/3%)] ${frame}`}>{content}</span>;
+}
+
+function automationStatusLabelClass(tone: AutomationSurfacePresentation["tone"]): string {
+  if (tone === "error") return "border-[color:color-mix(in_srgb,var(--error)_24%,transparent)] bg-error-field";
+  if (tone === "attention") return "border-[color:color-mix(in_srgb,var(--warning)_24%,transparent)] bg-warning-field";
+  if (tone === "running") return "border-[color:color-mix(in_srgb,var(--signal)_24%,transparent)] bg-signal-field";
+  return "border-transparent bg-bg-elevated";
 }
