@@ -118,6 +118,10 @@ describe("runtime Skill command admission", () => {
     });
     const clientRequestId = crypto.randomUUID();
     const persistedReceiptStates: Array<Array<{ kind: string; status: string }>> = [];
+    let resolvePersistedMessage = () => {};
+    const persistedMessage = new Promise<void>((resolve) => {
+      resolvePersistedMessage = resolve;
+    });
     const originalSave = sessionFileInternals.saveSessionTranscript;
     sessionFileInternals.saveSessionTranscript = async (state, root) => {
       const matching = state.inputRequestReceipts.filter(
@@ -127,6 +131,10 @@ describe("runtime Skill command admission", () => {
         persistedReceiptStates.push(matching.map(({ kind, status }) => ({ kind, status })));
       }
       await originalSave(state, root);
+      if (state.messages.some((message) => message.role === "user"
+        && message.parts.some((part) => part.type === "text" && part.text === "inspect changes"))) {
+        resolvePersistedMessage();
+      }
     };
 
     try {
@@ -154,7 +162,7 @@ describe("runtime Skill command admission", () => {
         ...base,
         text: "/skill use codemap inspect",
       })).rejects.toMatchObject({ reason: "idempotency" });
-      await familyIdle;
+      await Promise.all([familyIdle, persistedMessage]);
 
       const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
       expect(file.inputRequestReceipts).toEqual([
