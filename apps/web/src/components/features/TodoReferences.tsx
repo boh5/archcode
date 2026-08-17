@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Download, File as FileIcon, FileImage, FileText, LoaderCircle, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { LoaderCircle, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { MAX_ATTACHMENT_SIZE_BYTES, MAX_ATTACHMENTS_PER_TODO } from "@archcode/protocol";
 import type { AttachmentDescriptor } from "@archcode/protocol";
 import type { ProjectTodo, ProjectTodoAttachmentListResponse } from "../../api/types";
@@ -47,7 +47,12 @@ function messageFor(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
 }
 
-export function TodoReferences({ slug, todo }: { slug: string; todo: ProjectTodo }) {
+function referenceTypeLabel(name: string): string {
+  const match = name.match(/\.([a-z0-9]{1,4})$/i);
+  return match?.[1]?.toUpperCase() ?? "FILE";
+}
+
+export function TodoReferences({ slug, todo, compactWhenEmpty = false, starterAction }: { slug: string; todo: ProjectTodo; compactWhenEmpty?: boolean; starterAction?: ReactNode }) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const revisionRef = useRef(todo.revision);
@@ -253,20 +258,43 @@ export function TodoReferences({ slug, todo }: { slug: string; todo: ProjectTodo
   const remoteAttachments = attachments.data?.attachments ?? [];
   const loadingList = attachments.isLoading && pendingUploads.length === 0;
 
+  if (compactWhenEmpty && attachments.error === null && remoteAttachments.length === 0 && pendingUploads.length === 0) {
+    return (
+      <section
+        aria-labelledby="todo-context-starter-heading"
+        data-testid="todo-context-starter"
+        className={`flex flex-wrap items-center justify-between gap-[18px] border-t border-border-subtle py-4 transition-colors max-[761px]:flex-col max-[761px]:items-start max-[761px]:px-4 ${isDropActive ? "bg-brand-field" : ""}`}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        <div className="min-w-0">
+          <h2 id="todo-context-starter-heading" className="text-[12.5px] font-semibold text-text-primary">Add context when it helps</h2>
+          <p id="todo-context-starter-help" className="mt-[3px] text-[11.5px] leading-[1.45] text-text-tertiary">Keep a simple Todo simple. Add supporting files such as PRDs, designs, logs, or images—or shape a Plan—only when they help.</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 max-[761px]:w-full max-[761px]:justify-start">
+          <input ref={inputRef} type="file" multiple className="sr-only" aria-label="Choose files to add as Todo references" onChange={onInputChange} />
+          <button type="button" onClick={() => inputRef.current?.click()} aria-describedby="todo-context-starter-help" className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-sm border border-border-default bg-bg-elevated px-[13px] text-[12px] font-semibold tracking-[-0.01em] text-text-secondary transition-[background-color,border-color,color] duration-[var(--motion-fast)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] max-[761px]:min-h-11 [@media(pointer:coarse)]:min-h-11"><Plus size={16} aria-hidden="true" />Add files</button>
+          {starterAction}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section
       aria-labelledby="todo-references-heading"
       data-testid="todo-references"
-      className={`border-y border-border-subtle py-4 transition-colors ${isDropActive ? "bg-brand-field" : ""}`}
+      className={`border-t border-border-subtle px-[22px] pb-5 pt-[18px] transition-colors max-[761px]:p-4 ${isDropActive ? "bg-brand-field" : ""}`}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-4 max-[761px]:block">
         <div className="min-w-0">
-          <h2 id="todo-references-heading" className="text-[13px] font-semibold text-text-primary">References</h2>
-          <p id="todo-references-help" className="mt-1 max-w-[680px] text-[11px] leading-4 text-text-tertiary">
-            Files stay in this project. Agent work can read current references; images may be sent to the selected model provider.
+          <h2 id="todo-references-heading" className="text-[14px] font-semibold text-text-primary">References</h2>
+          <p id="todo-references-help" className="mt-[5px] max-w-[620px] text-[11px] leading-[1.5] text-text-tertiary">
+            Supporting files such as PRDs, designs, logs, and images stay in this project. Agent work can read the current set; images may be sent to the selected model provider.
           </p>
         </div>
         <div className="shrink-0">
@@ -282,9 +310,9 @@ export function TodoReferences({ slug, todo }: { slug: string; todo: ProjectTodo
             type="button"
             onClick={() => inputRef.current?.click()}
             aria-describedby="todo-references-help"
-            className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-brand/40 bg-brand-subtle px-2.5 text-[12px] font-medium text-brand hover:bg-brand/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11"
+            className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-sm border border-border-default bg-bg-elevated px-[13px] text-[12px] font-semibold tracking-[-0.01em] text-text-secondary transition-[background-color,border-color,color] duration-[var(--motion-fast)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] max-[761px]:mt-3 max-[761px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
           >
-            <Plus size={13} aria-hidden="true" />
+            <Plus size={16} aria-hidden="true" />
             Add files
           </button>
         </div>
@@ -301,7 +329,7 @@ export function TodoReferences({ slug, todo }: { slug: string; todo: ProjectTodo
       ) : null}
 
       {remoteAttachments.length > 0 || pendingUploads.length > 0 ? (
-        <ul className="mt-3 divide-y divide-border-subtle border-y border-border-subtle" aria-label="Todo references">
+        <ul className="mt-[13px] border-t border-border-subtle" aria-label="Todo references">
           {remoteAttachments.map((descriptor) => (
             <TodoReferenceRow
               key={descriptor.id}
@@ -359,33 +387,28 @@ function TodoReferenceRow({
   const href = todoAttachmentUrl(slug, todoId, descriptor.id);
 
   return (
-    <li className="flex min-h-14 min-w-0 items-center gap-2 py-2">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-border-subtle bg-bg-surface text-text-tertiary" aria-hidden="true">
-        {descriptor.kind === "image" && openInline ? (
-          <img src={href} alt="" loading="lazy" className="h-full w-full object-cover" />
-        ) : descriptor.kind === "image" ? <FileImage size={16} /> : descriptor.mediaType === "application/pdf" ? <FileText size={16} /> : <FileIcon size={16} />}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[12px] font-medium text-text-primary" title={descriptor.name}>
+    <li className="grid min-h-[55px] min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-border-subtle max-[761px]:grid-cols-[36px_minmax(0,1fr)]">
+      <span className="grid h-9 w-9 place-items-center border border-border-subtle bg-bg-base font-mono text-[9px] font-bold text-text-tertiary" aria-hidden="true">{referenceTypeLabel(descriptor.name)}</span>
+      <div className="min-w-0">
+        <div className="truncate text-[12px] font-semibold text-text-primary" title={descriptor.name}>
           {descriptor.name}
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-text-tertiary">
+        <div className="mt-[3px] flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
           <span>{formatAttachmentSize(descriptor.sizeBytes)}</span>
           <span aria-hidden="true">·</span>
           <span>{removing ? "Removing…" : descriptor.mediaType}</span>
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-0.5 max-[761px]:col-start-2 max-[761px]:justify-start max-[761px]:pb-2.5">
         {removing ? <LoaderCircle className="animate-activity text-text-tertiary" size={14} aria-label="Removing" /> : (
           <a
             href={href}
             target={openInline ? "_blank" : undefined}
             rel={openInline ? "noreferrer" : undefined}
             download={openInline ? undefined : descriptor.name}
-            className="inline-flex min-h-8 items-center gap-1 rounded-sm px-2 text-[11px] font-medium text-brand hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11"
+            className="inline-flex min-h-[30px] items-center rounded-sm px-2.5 text-[12px] font-semibold tracking-[-0.01em] text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:min-h-11"
             aria-label={`${openInline ? "Open" : "Download"} ${descriptor.name}`}
           >
-            {openInline ? <FileText size={12} aria-hidden="true" /> : <Download size={12} aria-hidden="true" />}
             {openInline ? "Open" : "Download"}
           </a>
         )}
@@ -394,10 +417,9 @@ function TodoReferenceRow({
           onClick={() => onRemove(descriptor)}
           disabled={removing}
           aria-label={`Remove ${descriptor.name}`}
-          className="inline-flex min-h-8 items-center justify-center rounded-sm px-2 text-[11px] font-medium text-text-tertiary hover:bg-error-muted hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+          className="inline-flex min-h-[30px] items-center justify-center rounded-sm px-2.5 text-[12px] font-semibold tracking-[-0.01em] text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] disabled:cursor-not-allowed disabled:opacity-40 [@media(pointer:coarse)]:min-h-11"
         >
-          <Trash2 size={13} aria-hidden="true" />
-          <span className="sr-only">Remove</span>
+          Remove
         </button>
       </div>
     </li>
@@ -415,20 +437,18 @@ function PendingReferenceRow({
 }) {
   const busy = item.status === "queued" || item.status === "uploading";
   return (
-    <li className="flex min-h-14 min-w-0 items-center gap-2 py-2">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-border-subtle bg-bg-surface text-text-tertiary" aria-hidden="true">
-        <FileIcon size={16} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[12px] font-medium text-text-primary" title={item.file.name}>{item.file.name}</div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-text-tertiary">
+    <li className="grid min-h-[55px] min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-border-subtle max-[761px]:grid-cols-[36px_minmax(0,1fr)]">
+      <span className="grid h-9 w-9 place-items-center border border-border-subtle bg-bg-base font-mono text-[9px] font-bold text-text-tertiary" aria-hidden="true">{referenceTypeLabel(item.file.name)}</span>
+      <div className="min-w-0">
+        <div className="truncate text-[12px] font-semibold text-text-primary" title={item.file.name}>{item.file.name}</div>
+        <div className="mt-[3px] flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-text-tertiary">
           <span>{formatAttachmentSize(item.file.size)}</span>
           <span aria-hidden="true">·</span>
           <span>{item.status === "queued" ? "Waiting…" : item.status === "uploading" ? "Uploading…" : "Upload failed"}</span>
           {item.error ? <span role="alert" className="text-error">{item.error}</span> : null}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1 max-[761px]:col-start-2 max-[761px]:justify-start max-[761px]:pb-2.5">
         {busy ? <LoaderCircle className="animate-activity text-text-tertiary" size={14} aria-label="Uploading" /> : null}
         {item.status === "error" ? (
           <>

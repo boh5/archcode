@@ -39,8 +39,8 @@ export function DelegationCard({
   };
 
   return (
-    <div className={`my-2 min-h-0 shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated ${WORK_ACTIVITY_CHILD_LANE_CLASS}`} data-tool-name="delegate">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-transparent px-3 py-2">
+    <div className={`mx-1.5 my-0.5 min-h-0 shrink-0 overflow-hidden rounded-[6px] border border-[color:color-mix(in_srgb,var(--brand)_34%,var(--border-default))] bg-bg-elevated ${WORK_ACTIVITY_CHILD_LANE_CLASS}`} data-tool-name="delegate">
+      <div className="flex min-h-12 flex-wrap items-center gap-[9px] border-b border-border-subtle bg-transparent px-2.5 py-2">
         <CornerDownRight size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
         <span className="font-mono text-[12px] font-medium text-text-primary">delegate</span>
         <span
@@ -62,7 +62,7 @@ export function DelegationCard({
         {canNavigate ? (
           <button
             type="button"
-            className="h-8 shrink-0 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand"
+            className="h-8 shrink-0 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-2 focus-visible:outline-brand"
             onClick={handleViewConversation}
           >
             Open child session

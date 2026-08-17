@@ -1647,10 +1647,12 @@ function reconcileRestartProjection(
   let messages = file.messages.map((message) => {
     let messageChanged = false;
     const parts = message.parts.map((part) => {
+      // A closed provider block is complete even when its logical Execution remains open.
       if (
         message.executionId !== undefined
         && nonterminalExecutionIds.has(message.executionId)
         && (part.type === "assistant-output" || part.type === "reasoning")
+        && part.completedAt === undefined
       ) {
         changed = true;
         messageChanged = true;

@@ -8,18 +8,21 @@ import type { DirectoryEntry } from "../../api/types";
 interface AddProjectModalProps {
   open: boolean;
   onClose: () => void;
+  returnFocusTarget?: HTMLElement | null;
 }
 
 function isPathLike(input: string): boolean {
   return input.startsWith("/") || input.startsWith("~") || input.startsWith(".");
 }
 
-export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
+export function AddProjectModal({ open, onClose, returnFocusTarget }: AddProjectModalProps) {
   const navigate = useNavigate();
   const addProject = useAddProject();
   const overlayRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
 
   const [input, setInput] = useState("");
   const [debouncedInput, setDebouncedInput] = useState("");
@@ -33,13 +36,19 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
 
   useEffect(() => {
     if (open) {
+      restoreFocusRef.current = returnFocusTarget
+        ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
       setInput("");
       setDebouncedInput("");
       setSelectedPath(null);
       setActiveIndex(-1);
       requestAnimationFrame(() => inputRef.current?.focus());
+      return;
     }
-  }, [open]);
+    const trigger = restoreFocusRef.current;
+    restoreFocusRef.current = null;
+    if (trigger?.isConnected) requestAnimationFrame(() => trigger.focus());
+  }, [open, returnFocusTarget]);
 
   const pathMode = isPathLike(debouncedInput);
   const directoryList = useDirectoryList(pathMode ? debouncedInput : "", 50);
@@ -82,12 +91,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setActiveIndex((prev) => {
@@ -157,14 +160,28 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     [onClose],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, onClose]);
+  const handleDialogKeyDown = useCallback((event: React.KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => element.getClientRects().length > 0);
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }, [onClose]);
 
   if (!open) return null;
 
@@ -183,16 +200,17 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
       ref={overlayRef}
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 pt-[15vh] animate-overlay-enter"
       onClick={handleOverlayClick}
+      onKeyDownCapture={handleDialogKeyDown}
     >
-      <div className="flex max-h-[60vh] w-[min(560px,92vw)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-overlay shadow-lg">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-project-title" className="flex max-h-[60vh] w-[min(560px,92vw)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-overlay shadow-lg">
         <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4 shrink-0">
-          <h2 className="text-[14px] font-semibold leading-5 text-text-primary">
+          <h2 id="add-project-title" className="text-[14px] font-semibold leading-5 text-text-primary">
             Add Project
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            className="flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
             aria-label="Close"
           >
             <X size={14} aria-hidden="true" />
@@ -215,7 +233,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
               onKeyDown={handleKeyDown}
               placeholder="Search or type a folder path…"
               autoFocus
-              className="h-8 w-full rounded-sm border border-border-control bg-bg-base pl-9 pr-3 text-[13px] text-text-primary transition-colors duration-[var(--motion-hover)] placeholder:text-text-muted hover:border-text-secondary focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle"
+              className="h-8 w-full rounded-sm border border-border-control bg-bg-base pl-9 pr-3 text-[13px] text-text-primary transition-colors duration-[var(--motion-fast)] placeholder:text-text-muted hover:border-text-secondary focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-subtle"
               disabled={isPending}
             />
             {isLoading && (
@@ -233,7 +251,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
                 type="button"
                 data-current-path={currentPath}
                 className={[
-                  "mb-1 flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand",
+                  "mb-1 flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand",
                   selectedPath === currentPath
                     ? "bg-bg-hover text-text-primary ring-1 ring-brand-subtle"
                     : "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
@@ -280,7 +298,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
                         type="button"
                         data-index={index}
                         className={[
-                          "flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand",
+                          "flex w-full items-center gap-3 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand",
                           isActive
                             ? "bg-bg-hover text-text-primary"
                             : "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
@@ -338,7 +356,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
               disabled={isPending}
             >
               Cancel
@@ -346,7 +364,7 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
             <button
               type="button"
               onClick={handleSubmit}
-              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!selectedPath || isPending}
             >
               {isPending ? "Adding…" : "Add Project"}

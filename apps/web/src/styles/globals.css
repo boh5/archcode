@@ -58,6 +58,9 @@
   --rail: #eceeea;
   --rail-ink: #171917;
   --rail-muted: #626a62;
+  --rail-hover: #e1e3df;
+  --rail-active: #d7dbd4;
+  --rail-border: #cdd1ca;
   --terminal-bg: #252620;
   --terminal-text: #d7d6cd;
   --terminal-muted: #aaa99f;
@@ -75,15 +78,15 @@
   --shape-popover: 8px;
   --shape-dialog: 12px;
 
-  --font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
-  --font-stack-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+  --font-stack-mono: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
-  --motion-hover: 140ms;
-  --motion-icon: 160ms;
-  --motion-overlay: 220ms;
+  --motion-instant: 120ms;
+  --motion-fast: 140ms;
+  --motion-standard: 180ms;
+  --motion-deliberate: 220ms;
   --motion-activity: 1800ms;
   --motion-attention: 700ms;
-  --motion-complete: 180ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
@@ -96,23 +99,23 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg-base: #101210;
-  --bg-surface: #151815;
-  --bg-elevated: #1c201c;
-  --bg-overlay: #1c201c;
-  --bg-muted: #232723;
+  --bg-base: #0a0c0b;
+  --bg-surface: #131713;
+  --bg-elevated: #1a1f1b;
+  --bg-overlay: #1d221e;
+  --bg-muted: #232823;
   --bg-hover: #292e29;
   --bg-active: #303630;
 
-  --border-subtle: #262b26;
-  --border-default: #363c36;
+  --border-subtle: #2a302b;
+  --border-default: #3f4740;
   --border-strong: #596159;
   --control-border: var(--border-default);
 
-  --text-primary: #f3f5f0;
-  --text-secondary: #c9cec6;
-  --text-tertiary: #9ca49a;
-  --text-muted: #868f84;
+  --text-primary: #f5f7f2;
+  --text-secondary: #d0d5cc;
+  --text-tertiary: #a2ab9f;
+  --text-muted: #8a9487;
 
   --brand: #a49bff;
   --brand-hover: #b9b2ff;
@@ -144,9 +147,12 @@
   --success-muted-opaque: #203329;
   --error-muted-opaque: #3b2421;
 
-  --rail: #0c0e0c;
+  --rail: #060706;
   --rail-ink: #f2f4ef;
   --rail-muted: #858c83;
+  --rail-hover: #1c201c;
+  --rail-active: #232723;
+  --rail-border: #363c36;
   --terminal-bg: #0f100e;
   --terminal-text: #dad9d1;
   --terminal-muted: #aaa99f;
@@ -158,6 +164,35 @@
   --elevation-sm: 0 14px 34px rgb(0 0 0 / 32%);
   --elevation-md: 0 22px 56px rgb(0 0 0 / 52%);
   --elevation-lg: 0 22px 56px rgb(0 0 0 / 52%);
+}
+
+.composer-card {
+  border-color: color-mix(in srgb, var(--brand) 17%, var(--border-default));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 88%, var(--bg-surface)), var(--bg-elevated) 78px);
+  box-shadow: 0 16px 38px rgb(23 28 22 / 15%), inset 0 1px 0 rgb(255 255 255 / 75%);
+}
+
+.composer-card:focus-within {
+  border-color: color-mix(in srgb, var(--brand) 44%, var(--border-default));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 18%, transparent), 0 16px 38px rgb(23 28 22 / 15%), inset 0 1px 0 rgb(255 255 255 / 75%);
+}
+
+[data-theme="dark"] .composer-card {
+  box-shadow: 0 16px 42px rgb(0 0 0 / 30%), inset 0 1px 0 rgb(255 255 255 / 7%);
+}
+
+[data-theme="dark"] .composer-card:focus-within {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 18%, transparent), 0 16px 42px rgb(0 0 0 / 30%), inset 0 1px 0 rgb(255 255 255 / 7%);
+}
+
+.composer-terminal-primary {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--brand) 28%, var(--brand-hover)), var(--brand-hover));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%), 0 2px 8px color-mix(in srgb, var(--brand) 26%, transparent);
+}
+
+.composer-terminal-primary:hover {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--brand) 46%, var(--brand-hover)), var(--brand-hover));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 4px 12px color-mix(in srgb, var(--brand) 30%, transparent);
 }
 
 @theme inline {
@@ -172,6 +207,9 @@
   --color-rail: var(--rail);
   --color-rail-ink: var(--rail-ink);
   --color-rail-muted: var(--rail-muted);
+  --color-rail-hover: var(--rail-hover);
+  --color-rail-active: var(--rail-active);
+  --color-rail-border: var(--rail-border);
 
   /* Border */
   --color-border-default: var(--border-default);
@@ -199,6 +237,7 @@
   /* Brand */
   --color-brand: var(--brand);
   --color-brand-hover: var(--brand-hover);
+  --color-brand-field: var(--brand-field);
   --color-brand-ink: var(--brand-ink);
   --color-brand-subtle: var(--brand-subtle);
   --color-signal: var(--signal);
@@ -208,16 +247,20 @@
 
   /* Semantic */
   --color-success: var(--success);
+  --color-success-field: var(--success-field);
   --color-success-muted: var(--success-muted);
   --color-success-muted-opaque: var(--success-muted-opaque);
   --color-warning: var(--warning);
+  --color-warning-field: var(--warning-field);
   --color-warning-muted: var(--warning-muted);
   --color-error: var(--error);
+  --color-error-field: var(--error-field);
   --color-error-muted: var(--error-muted);
   --color-error-muted-opaque: var(--error-muted-opaque);
   --color-info: var(--info);
   --color-info-muted: var(--info-muted);
   --color-neutral: var(--neutral);
+  --color-neutral-field: var(--neutral-field);
   --color-neutral-muted: var(--neutral-muted);
   --color-selection-field: var(--selection-field);
   --color-running-field: var(--running-field);
@@ -239,8 +282,8 @@
   --font-mono: var(--font-stack-mono);
 }
 
-/* Override Tailwind's rem defaults: the workbench keeps a 15px UI root while
-   geometry and named type remain fixed to the locked design-system scale. */
+/* Geometry and named type stay fixed to the design-system scale. Ordinary UI
+   inherits the 14px baseline; editorial surfaces opt into the 15px role. */
 @theme {
   --spacing: 4px;
   --text-xs: 12px;
@@ -248,18 +291,29 @@
   --text-sm: 14px;
   --text-sm--line-height: 21px;
   --text-base: 15px;
-  --text-base--line-height: 22px;
+  --text-base--line-height: 24px;
 }
 
 @layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
   html {
-    font-size: 15px;
-    line-height: 22px;
+    font-size: 14px;
+    line-height: 1.5;
+    letter-spacing: normal;
     font-family: var(--font-stack-sans);
     color: var(--text-primary);
     background-color: var(--bg-base);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--bg-base);
   }
 
   /* Scrollbar */
@@ -281,6 +335,22 @@
     background: var(--border-strong);
   }
 
+  .todo-detail-scroll {
+    scrollbar-width: auto;
+  }
+
+  .todo-detail-scroll::-webkit-scrollbar {
+    width: 15px;
+  }
+
+  .conversation-scroller {
+    scrollbar-width: auto;
+  }
+
+  .conversation-scroller::-webkit-scrollbar {
+    width: 15px;
+  }
+
   /* Firefox */
   * {
     scrollbar-width: thin;
@@ -291,10 +361,73 @@
   a {
     touch-action: manipulation;
   }
+
+  @media (pointer: fine) {
+    :where(button:not(:disabled), a[href], summary, [role="button"]:not([aria-disabled="true"])) {
+      cursor: pointer;
+    }
+
+    :where(button:disabled, [role="button"][aria-disabled="true"]) {
+      cursor: not-allowed;
+    }
+
+    :where(button.cursor-context-menu) {
+      cursor: context-menu;
+    }
+  }
+}
+
+.skip-link {
+  position: fixed;
+  left: 8px;
+  top: 8px;
+  z-index: 100;
+  padding: 8px 12px;
+  border: 1px solid var(--brand);
+  border-radius: var(--shape-control);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  box-shadow: var(--focus);
+  transform: translateY(calc(-100% - 16px));
+  transition: transform var(--motion-fast) var(--ease-enter);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline: none;
+}
+
+.primary-action-button {
+  box-shadow: 0 1px 3px rgb(97 87 213 / 30%), inset 0 1px 0 rgb(255 255 255 / 10%);
+}
+
+.primary-action-button:hover:not(:disabled) {
+  box-shadow: 0 3px 8px rgb(97 87 213 / 30%), inset 0 1px 0 rgb(255 255 255 / 18%);
+}
+
+.primary-action-button:active:not(:disabled) {
+  box-shadow: 0 1px 3px rgb(97 87 213 / 24%), inset 0 1px 0 rgb(255 255 255 / 8%);
+}
+
+.primary-action-button:disabled {
+  box-shadow: none;
+}
+
+.workbench-row-lift:hover {
+  transform: translateY(-0.5px);
+}
+
+.todo-card-selected {
+  box-shadow: inset 2px 0 0 var(--brand);
 }
 
 @keyframes activity-rotate {
   to { transform: rotate(360deg); }
+}
+
+@keyframes activity-pulse {
+  0%, 100% { opacity: 0.38; }
+  50% { opacity: 1; }
 }
 
 @keyframes status-attention {
@@ -327,8 +460,48 @@
   to { opacity: 0; transform: translateY(4px); }
 }
 
+@keyframes todo-preview-enter {
+  from { opacity: 0.55; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes todo-preview-scrim-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes todo-dialog-enter {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes todo-dialog-backdrop-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .animate-activity {
   animation: activity-rotate var(--motion-activity) linear infinite;
+}
+
+.animate-activity-pulse {
+  animation: activity-pulse var(--motion-activity) ease-in-out infinite;
+}
+
+.animate-todo-preview-enter {
+  animation: todo-preview-enter 200ms var(--ease-standard);
+}
+
+.animate-todo-preview-scrim {
+  animation: todo-preview-scrim-enter 180ms var(--ease-standard);
+}
+
+.animate-todo-dialog {
+  animation: todo-dialog-enter 200ms var(--ease-enter);
+}
+
+.animate-todo-dialog-backdrop {
+  animation: todo-dialog-backdrop-enter 200ms var(--ease-standard);
 }
 
 .animate-status-attention {
@@ -336,7 +509,7 @@
 }
 
 .animate-status-complete {
-  animation: status-complete var(--motion-complete) var(--ease-standard) 1;
+  animation: status-complete var(--motion-standard) var(--ease-standard) 1;
 }
 
 .animate-streaming {
@@ -344,15 +517,15 @@
 }
 
 .animate-tool-run-swap {
-  animation: tool-run-swap var(--motion-icon) var(--ease-enter) 1;
+  animation: tool-run-swap var(--motion-fast) var(--ease-enter) 1;
 }
 
 .animate-overlay-enter {
-  animation: overlay-enter var(--motion-overlay) var(--ease-enter) 1;
+  animation: overlay-enter var(--motion-deliberate) var(--ease-enter) 1;
 }
 
 .animate-overlay-exit {
-  animation: overlay-exit var(--motion-overlay) var(--ease-exit) 1;
+  animation: overlay-exit var(--motion-deliberate) var(--ease-exit) 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -363,6 +536,11 @@
     transition-duration: 0s !important;
     animation-duration: 0s !important;
     animation-iteration-count: 1 !important;
+  }
+
+  .primary-action-button,
+  .workbench-row-lift {
+    transform: none !important;
   }
 }
 

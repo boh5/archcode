@@ -548,6 +548,7 @@ async function writeValidRuntime(project: ProjectInfo): Promise<void> {
   await writeFile(join(runtimePath, "todos", "state.json"), JSON.stringify({
     todos: [],
     runNowReceipts: [],
+    startDiscussionReceipts: [],
   }));
   await writeFile(join(runtimePath, "automations", "state.json"), JSON.stringify({
     automations: [],

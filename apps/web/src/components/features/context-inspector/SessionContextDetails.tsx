@@ -6,9 +6,10 @@ import {
   InspectorNotice,
   InspectorRows,
   InspectorSection,
-  InspectorValue,
 } from "./InspectorPrimitives";
 import { automationStatusLabel } from "../../../lib/automation-status-presentation";
+import { presentExecutionStatus } from "../../../lib/execution-status-presentation";
+import { useAttentionVisibleScopedHitl } from "../../../store/hitl-store";
 
 export function SessionContextDetails() {
   const { slug = "", sessionId = "" } = useParams<{
@@ -41,6 +42,13 @@ export function SessionContextDetails() {
     (state) => state.executions,
     slug,
   );
+  const liveCurrentExecutionId = useSessionStore(
+    focused,
+    (state) => state.currentExecutionId,
+    slug,
+  );
+  const liveGoal = useSessionStore(focused, (state) => state.goal, slug);
+  const pendingHitl = useAttentionVisibleScopedHitl([slug]);
 
   if (isLoading) return <InspectorNotice>Loading context…</InspectorNotice>;
   if (!session)
@@ -53,6 +61,34 @@ export function SessionContextDetails() {
   const messages = useLiveContext ? liveMessages : session.messages;
   const stats = useLiveContext ? liveStats : session.stats;
   const executions = useLiveContext ? liveExecutions : session.executions;
+  const goal = useLiveContext ? liveGoal : session.goal;
+  const currentExecutionId = useLiveContext
+    ? liveCurrentExecutionId
+    : session.currentExecutionId;
+  const currentExecution = currentExecutionId === undefined
+    ? executions.at(-1)
+    : executions.find((execution) => execution.id === currentExecutionId) ?? executions.at(-1);
+  const gate = pendingHitl.find((entry) => entry.ownerSessionId === focused);
+  const executionValue = currentExecution === undefined
+    ? "Idle"
+    : currentExecution.status === "suspended" && currentExecution.suspension.kind === "hitl"
+      ? `Suspended · ${gate?.view.source.type === "ask_user" ? "Question" : "Permission"}`
+      : (() => {
+          const status = presentExecutionStatus(currentExecution);
+          return status.detail ? `${status.label} · ${status.detail}` : status.label;
+        })();
+  const contextRows: Array<[string, string, boolean?]> = [
+    ["Goal", goal ? `${formatGoalStatus(goal.status)} · ${goal.objective}` : "None · ordinary work", true],
+    ["Execution", executionValue, true],
+    [
+      "Model",
+      nextModelSelection
+        ? `${nextModelSelection.resolved.modelDisplayName}${nextModelSelection.resolved.selection.variant ? ` · ${nextModelSelection.resolved.selection.variant}` : ""}`
+        : "Syncing…",
+    ],
+    ["Tokens", stats.usage.totalTokens.toLocaleString()],
+    ["Working dir", cwd],
+  ];
   const inspectedMessageId = searchParams.get("message");
   const inspectedMessage = inspectedMessageId
     ? messages.find((message) => message.id === inspectedMessageId)
@@ -101,80 +137,67 @@ export function SessionContextDetails() {
     (automation) => automation.origin.kind !== "direct" && automation.origin.sessionId === focused,
   );
   return (
-    <div className="space-y-4">
-      <InspectorSection title="Working directory">
-        <code className="break-all text-[11px] text-text-secondary">{cwd}</code>
-      </InspectorSection>
-      <InspectorSection title="Model">
-        {nextModelSelection ? (
-          <InspectorValue>
-            {nextModelSelection.resolved.modelDisplayName}
-            {nextModelSelection.resolved.selection.variant
-              ? ` · ${nextModelSelection.resolved.selection.variant}`
-              : ""}
-          </InspectorValue>
-        ) : (
-          <InspectorNotice>Syncing model selection…</InspectorNotice>
-        )}
-      </InspectorSection>
+    <section>
+      <span className="block text-[10.5px] font-bold uppercase leading-[21px] tracking-[0.09em] text-text-tertiary">Session bindings</span>
+      <dl data-testid="context-property-list">
+        {contextRows.map(([label, value, priority]) => (
+          <div key={label} className="grid min-h-10 grid-cols-[minmax(76px,34%)_minmax(0,1fr)] items-start gap-3 border-b border-border-subtle px-1 py-[9px] last:border-b-0">
+            <dt className="text-[11px] font-medium leading-[1.4] text-text-tertiary">{label}</dt>
+            <dd className={`break-words text-right text-[11.5px] leading-[1.4] text-text-secondary ${priority ? "font-semibold text-text-primary" : "font-medium"}`}>{value}</dd>
+          </div>
+        ))}
+      </dl>
       {inspectedMessageId && (
-        <InspectedMessageModelAudit
-          messageId={inspectedMessageId}
-          rows={
-            inspectedMessage &&
-            inspectedMessage.executionId &&
-            inspectedExecution
-              ? [
-                  ["Message", inspectedMessage.id],
-                  ["Execution", inspectedMessage.executionId],
-                  ["Origin", inspectedExecution.origin],
-                  ...requestRows,
-                  [
-                    "Run",
-                    inspectedRun
-                      ? String(inspectedRun.ordinal + 1)
-                      : "Not recorded",
-                  ],
-                  [
-                    "Actual",
-                    inspectedRun
-                      ? formatSelection(inspectedRun.binding.selection)
-                      : "Not recorded",
-                  ],
-                  [
-                    "Provider",
-                    inspectedRun?.binding.providerDisplayName ?? "Not recorded",
-                  ],
-                  [
-                    "Model",
-                    inspectedRun?.binding.modelDisplayName ?? "Not recorded",
-                  ],
-                  [
-                    "Resolution",
-                    inspectedRun?.binding.resolution ?? "Not recorded",
-                  ],
-                  [
-                    "Runtime revision",
-                    inspectedRun?.binding.modelRuntimeRevision ??
-                      "Not recorded",
-                  ],
-                ]
-              : undefined
-          }
-        />
+        <div className="mt-4 border-t border-border-subtle pt-4">
+          <InspectedMessageModelAudit
+            messageId={inspectedMessageId}
+            rows={
+              inspectedMessage &&
+              inspectedMessage.executionId &&
+              inspectedExecution
+                ? [
+                    ["Message", inspectedMessage.id],
+                    ["Execution", inspectedMessage.executionId],
+                    ["Origin", inspectedExecution.origin],
+                    ...requestRows,
+                    [
+                      "Run",
+                      inspectedRun
+                        ? String(inspectedRun.ordinal + 1)
+                        : "Not recorded",
+                    ],
+                    [
+                      "Actual",
+                      inspectedRun
+                        ? formatSelection(inspectedRun.binding.selection)
+                        : "Not recorded",
+                    ],
+                    [
+                      "Provider",
+                      inspectedRun?.binding.providerDisplayName ?? "Not recorded",
+                    ],
+                    [
+                      "Model",
+                      inspectedRun?.binding.modelDisplayName ?? "Not recorded",
+                    ],
+                    [
+                      "Resolution",
+                      inspectedRun?.binding.resolution ?? "Not recorded",
+                    ],
+                    [
+                      "Runtime revision",
+                      inspectedRun?.binding.modelRuntimeRevision ??
+                        "Not recorded",
+                    ],
+                  ]
+                : undefined
+            }
+          />
+        </div>
       )}
-      <InspectorSection title="Execution">
-        <InspectorRows
-          rows={[
-            ["Messages", String(stats.messages.total)],
-            ["Tool calls", String(stats.tools.calls)],
-            ["Tokens", stats.usage.totalTokens.toLocaleString()],
-            ["Executions", String(executions.length)],
-          ]}
-        />
-      </InspectorSection>
       {relatedAutomations.length > 0 && (
-        <InspectorSection title="Related work">
+        <div className="mt-4 border-t border-border-subtle pt-4">
+          <InspectorSection title="Related work">
           <div className="space-y-1">
             <div className="px-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
               Created here
@@ -199,10 +222,16 @@ export function SessionContextDetails() {
               </Link>
             ))}
           </div>
-        </InspectorSection>
+          </InspectorSection>
+        </div>
       )}
-    </div>
+    </section>
   );
+}
+
+function formatGoalStatus(status: "active" | "paused" | "blocked" | "budget_limited" | "complete"): string {
+  if (status === "budget_limited") return "Budget limited";
+  return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`;
 }
 
 function InspectedMessageModelAudit({

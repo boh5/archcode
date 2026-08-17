@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { Automation, AutomationInvocation, HitlView } from "@archcode/protocol";
+import type { Automation, HitlView, ProjectSessionInventoryItem } from "@archcode/protocol";
 import type { ScopedHitlView } from "../store/hitl-store";
-import { automationHitlSessionCount, deriveAutomationHitlAttention } from "./automation-hitl-attention";
+import {
+  automationHitlSessionCount,
+  deriveAutomationHitlAttention,
+  indexAutomationSessionLinks,
+  type AutomationSessionLink,
+} from "./automation-hitl-attention";
 
 const base = {
   id: "automation-1",
@@ -26,18 +31,11 @@ function hitl(rootSessionId: string, ownerSessionId = rootSessionId, hitlId = ro
     createdAt: "2026-07-20T00:00:00.000Z",
     updatedAt: "2026-07-20T00:00:00.000Z",
   };
-  return { projectSlug: "demo", rootSessionId, ownerSessionId, view };
+  return { projectSlug: "demo", rootSessionId, ownerSessionId, ownerAgentName: "build", ownerSessionTitle: "Worker", view };
 }
 
-function invocation(id: string, sessionId: string): AutomationInvocation {
-  return {
-    id,
-    automationId: "automation-1",
-    dueAt: "2026-07-20T00:00:00.000Z",
-    status: "dispatched",
-    sessionId,
-    createdAt: "2026-07-20T00:00:00.000Z",
-  };
+function link(invocationId: string, sessionId: string): AutomationSessionLink {
+  return { invocationId, sessionId, latestExecution: null };
 }
 
 describe("Automation linked Session HITL", () => {
@@ -45,7 +43,7 @@ describe("Automation linked Session HITL", () => {
     const automation: Automation = { ...base, action: { kind: "start_session", message: "Check", location: "project" } };
     const attention = deriveAutomationHitlAttention(
       automation,
-      [invocation("i1", "root-1"), invocation("i2", "root-2"), invocation("i3", "root-1")],
+      [link("i1", "root-1"), link("i2", "root-2"), link("i3", "root-1")],
       [hitl("root-1"), hitl("root-1", "child-1", "child-hitl"), hitl("root-2")],
     );
 
@@ -56,7 +54,7 @@ describe("Automation linked Session HITL", () => {
 
   test("describes send_message attention only as target-family state", () => {
     const automation: Automation = { ...base, action: { kind: "send_message", message: "Continue", sessionId: "root-1" } };
-    const attention = deriveAutomationHitlAttention(automation, [invocation("i1", "other")], [hitl("root-1"), hitl("other")]);
+    const attention = deriveAutomationHitlAttention(automation, [link("i1", "other")], [hitl("root-1"), hitl("other")]);
 
     expect(attention.kind).toBe("send_message");
     expect(automationHitlSessionCount(attention)).toBe(1);
@@ -68,9 +66,9 @@ describe("Automation linked Session HITL", () => {
     const attention = deriveAutomationHitlAttention(
       automation,
       [
-        invocation("first-root-1", "root-1"),
-        invocation("repeat-root-1", "root-1"),
-        invocation("root-2", "root-2"),
+        link("first-root-1", "root-1"),
+        link("repeat-root-1", "root-1"),
+        link("root-2", "root-2"),
       ],
       [
         hitl("root-1", "child-of-root-1", "child-request"),
@@ -97,7 +95,7 @@ describe("Automation linked Session HITL", () => {
     const automation: Automation = { ...base, action: { kind: "send_message", message: "Continue", sessionId: "root-1" } };
     const attention = deriveAutomationHitlAttention(
       automation,
-      [invocation("historical", "root-2")],
+      [link("historical", "root-2")],
       [
         hitl("root-1", "root-1", "root-request"),
         hitl("root-1", "child-1", "child-request"),
@@ -109,5 +107,32 @@ describe("Automation linked Session HITL", () => {
     if (attention.kind === "send_message") {
       expect(attention.entries.map((entry) => entry.view.hitlId)).toEqual(["root-request", "child-request"]);
     }
+  });
+
+  test("indexes every start_session root from one project Session inventory", () => {
+    const inventory = [
+      {
+        session: {
+          sessionId: "root-1",
+          source: { kind: "automation", automationId: "automation-1", invocationId: "invocation-1", todoId: null },
+        },
+        latestExecution: { id: "execution-1", status: "running", startedAt: 1 },
+      },
+      {
+        session: {
+          sessionId: "root-2",
+          source: { kind: "automation", automationId: "automation-2", invocationId: "invocation-2", todoId: null },
+        },
+        latestExecution: null,
+      },
+      { session: { sessionId: "direct", source: { kind: "direct" } }, latestExecution: null },
+    ] as ProjectSessionInventoryItem[];
+
+    expect(indexAutomationSessionLinks(inventory).get("automation-1")).toEqual([{
+      invocationId: "invocation-1",
+      sessionId: "root-1",
+      latestExecution: { id: "execution-1", status: "running", startedAt: 1 },
+    }]);
+    expect(indexAutomationSessionLinks(inventory).get("automation-2")?.[0]?.sessionId).toBe("root-2");
   });
 });

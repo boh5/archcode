@@ -14,12 +14,6 @@ mock.module("../components/features/ProjectBar", () => ({
 mock.module("../components/features/WorkSearchDialog", () => ({
   WorkSearchDialog: () => null,
 }));
-mock.module("../components/features/ContextInspector", () => ({
-  ContextInspector: () => <aside data-testid="context-inspector">Inspector</aside>,
-}));
-mock.module("../components/features/ResizeHandle", () => ({
-  ResizeHandle: ({ controls }: { controls: string }) => <div role="separator" aria-controls={controls} />,
-}));
 mock.module("../context/add-project-modal", () => ({ useAddProjectModal: () => ({ openAddProjectModal: () => {} }) }));
 mock.module("../context/settings-modal", () => ({ useSettingsModal: () => ({ openSettingsModal: () => {} }) }));
 mock.module("../context/global-sse", () => ({
@@ -34,11 +28,11 @@ mock.module("../store/hitl-store", () => ({
 
 const { RootLayout } = await import("./root-layout");
 
-function installDom(): JSDOM {
+function installDom(width = 1440): JSDOM {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: "http://localhost/projects/demo/sessions/root",
   });
-  Object.defineProperty(dom.window, "innerWidth", { value: 1440, configurable: true });
+  Object.defineProperty(dom.window, "innerWidth", { value: width, configurable: true });
   Object.defineProperty(dom.window, "matchMedia", {
     value: () => ({
       matches: false,
@@ -83,13 +77,15 @@ describe("RootLayout global shell", () => {
     const router = createMemoryRouter([{
       element: <RootLayout />,
       children: [
-        { path: "/", element: <div data-testid="canvas">Home</div> },
+        { path: "/", element: <div data-testid="canvas">Entry</div> },
         { path: "/projects/:slug/todos", element: <div data-testid="canvas">Todos</div> },
       ],
     }], { initialEntries: ["/"] });
 
     await act(async () => root.render(<RouterProvider router={router} />));
     const projectBar = document.querySelector('[data-testid="project-bar"]');
+    expect(projectBar?.parentElement?.className).toContain("w-12");
+    expect(projectBar?.parentElement?.className).toContain("min-[721px]:w-[52px]");
     await act(async () => { await router.navigate("/projects/demo/todos"); });
 
     expect(document.querySelector('[data-testid="project-bar"]')).toBe(projectBar);
@@ -99,21 +95,22 @@ describe("RootLayout global shell", () => {
     dom.window.close();
   });
 
-  test("shows the inspector only for Session detail routes", async () => {
+  test("moves keyboard focus to the unique work canvas from the skip link", async () => {
     const dom = installDom();
     const root = createRoot(document.getElementById("root")!);
     const router = createMemoryRouter([{
       element: <RootLayout />,
-      children: [
-        { path: "/projects/:slug/todos", element: <div>Todos</div> },
-        { path: "/projects/:slug/sessions/:sessionId", element: <div>Session</div> },
-      ],
-    }], { initialEntries: ["/projects/demo/todos"] });
+      children: [{ path: "/", element: <div>Entry</div> }],
+    }], { initialEntries: ["/"] });
 
     await act(async () => root.render(<RouterProvider router={router} />));
-    expect(document.querySelector('[data-testid="context-inspector"]')).toBeNull();
-    await act(async () => { await router.navigate("/projects/demo/sessions/root"); });
-    expect(document.querySelector('[data-testid="context-inspector"]')).not.toBeNull();
+    const skip = document.querySelector('a[href="#work-canvas"]') as HTMLAnchorElement;
+    const canvas = document.querySelector("main#work-canvas") as HTMLElement;
+    skip.focus();
+    await act(async () => skip.click());
+
+    expect(document.activeElement).toBe(canvas);
+    expect(document.querySelectorAll("main#work-canvas")).toHaveLength(1);
 
     await act(async () => root.unmount());
     dom.window.close();

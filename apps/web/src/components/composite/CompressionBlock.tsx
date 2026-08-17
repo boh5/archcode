@@ -97,26 +97,26 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
   const protectedCount = snapshot?.protectedRefs?.length;
 
   return (
-    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
-      <div className="flex w-full select-none items-center gap-2 border-b border-border-subtle bg-transparent px-3 py-2 text-left">
-        <ChevronRight size={14} className={`text-text-muted transition-transform duration-[var(--motion-hover)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
-        <Layers size={14} className="text-text-secondary shrink-0" />
+    <div className="mx-1.5 my-0.5 shrink-0 overflow-hidden rounded-[6px] border border-border-default bg-bg-elevated">
+      <div className="flex w-full select-none items-center gap-2 border-b border-border-subtle bg-transparent px-2.5 py-2 text-left">
+        <ChevronRight size={12} className={`text-text-muted transition-transform duration-[var(--motion-fast)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
+        <Layers size={12} className="shrink-0 text-text-secondary" />
         <span className="font-mono text-[12px] text-text-primary font-semibold">{part.blockRef}</span>
-        <span className={`px-2 py-1 rounded-sm text-[11px] font-semibold ${STRATEGY_CLASS[part.strategy]}`}>
+        <span className={`rounded-sm px-[7px] py-1 text-[10px] font-semibold ${STRATEGY_CLASS[part.strategy]}`}>
           {STRATEGY_LABEL[part.strategy]}
         </span>
-        <span className="text-[11px] text-text-tertiary">
+        <span className="text-[10px] text-text-tertiary">
           {TRIGGER_LABEL[part.trigger]}
         </span>
-        <span className="ml-auto text-[11px] text-text-tertiary">
+        <span className="ml-auto text-[10px] text-text-tertiary">
           {STATUS_LABEL[part.status]}
         </span>
-        <span className="text-[11px] text-text-tertiary">
+        <span className="text-[10px] text-text-tertiary">
           <RelativeTime timestamp={part.committedAt} />
         </span>
       </div>
 
-      <div className="px-3 py-2 flex flex-wrap gap-2 border-b border-border-subtle">
+      <div className="flex flex-wrap gap-1.5 border-b border-border-subtle px-2.5 py-2">
         <MetaPill label="range" value={`${part.startRef}–${part.endRef}`} />
         {part.childBlockRefs.length > 0 && (
           <MetaPill label="children" value={part.childBlockRefs.join(", ")} />
@@ -129,14 +129,14 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
         )}
       </div>
 
-      <div className="px-3 py-3 text-[13px] text-text-secondary leading-5">
+      <div className="px-2.5 py-2.5 text-[12px] leading-[1.55] text-text-secondary">
         <MarkdownContent variant="compact">{part.summary}</MarkdownContent>
       </div>
 
-      <div className="px-3 pb-2">
+      <div className="px-2.5 pb-[9px]">
         <button
           type="button"
-          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           onClick={handleToggleOriginalRange}
         >
           {expanded ? "Hide original range ↑" : "Show original range ↓"}
@@ -157,7 +157,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
               <span className="flex-1">{expansion.message}</span>
               <button
                 type="button"
-                className="flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                className="flex h-8 cursor-pointer items-center gap-1 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 onClick={handleRetry}
               >
                 <RotateCw size={11} />
@@ -182,7 +182,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
 
 function MetaPill({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-sm bg-bg-active text-[11px] text-text-tertiary font-mono">
+    <span className="inline-flex items-center gap-1 rounded-sm bg-bg-active px-[7px] py-1 font-mono text-[10px] text-text-tertiary">
       <span className="text-text-tertiary">{label}</span>
       <span className="text-text-secondary">{value}</span>
     </span>

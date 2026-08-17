@@ -65,6 +65,7 @@ function installDom(): void {
   Object.defineProperties(dom.window.HTMLElement.prototype, {
     attachEvent: { configurable: true, value: () => {} },
     detachEvent: { configurable: true, value: () => {} },
+    getClientRects: { configurable: true, value: () => ({ length: 1 }) },
   });
   for (const [name, value] of Object.entries({
     window: dom.window,
@@ -148,6 +149,39 @@ afterEach(async () => {
 });
 
 describe("AddProjectModal interactions", () => {
+  test("contains keyboard focus and restores the exact opening control", async () => {
+    const origin = document.createElement("button");
+    origin.textContent = "Open project";
+    document.body.prepend(origin);
+    origin.focus();
+
+    await act(async () => root.render(<AddProjectModal open returnFocusTarget={origin} onClose={() => {}} />));
+    await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+    const input = container.querySelector("input") as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    const close = container.querySelector('button[aria-label="Close"]') as HTMLButtonElement;
+    close.focus();
+
+    await act(async () => {
+      close.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(document.activeElement?.textContent).toBe("Cancel");
+
+    await act(async () => root.render(<AddProjectModal open={false} returnFocusTarget={origin} onClose={() => {}} />));
+    await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+    expect({
+      tag: document.activeElement?.tagName,
+      text: document.activeElement?.textContent,
+      isOrigin: document.activeElement === origin,
+      originConnected: origin.isConnected,
+    }).toEqual({ tag: "BUTTON", text: "Open project", isOrigin: true, originConnected: true });
+  });
+
   test("invalidates edited paths immediately and selects only the resolved input", async () => {
     await act(async () => root.render(<AddProjectModal open onClose={() => {}} />));
 

@@ -1,6 +1,6 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { AgentDescriptor, HomeResponse, ModelRuntimeCatalog, WorkSearchResponse } from "@archcode/protocol";
+import type { AgentDescriptor, ModelRuntimeCatalog, WorkSearchResponse } from "@archcode/protocol";
 import type {
   DiffFile,
   DirectoryListResponse,
@@ -26,7 +26,6 @@ export const queryKeys = {
   modelRuntime: ["config", "model-runtime"] as const,
   update: ["update"] as const,
   projects: ["projects"] as const,
-  home: ["home"] as const,
   workSearch: (query: string) => ["search", query] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
@@ -68,10 +67,6 @@ export function projectsQueryOptions() {
       return response.projects;
     },
   });
-}
-
-export function homeQueryOptions() {
-  return queryOptions({ queryKey: queryKeys.home, queryFn: () => apiFetch<HomeResponse>("/api/home") });
 }
 
 export function workSearchQueryOptions(query: string) {
@@ -147,10 +142,6 @@ export function diffQueryOptions(slug: string, sessionId?: string) {
 
 export function useProjects() {
   return useQuery(projectsQueryOptions());
-}
-
-export function useHome() {
-  return useQuery(homeQueryOptions());
 }
 
 export function useWorkSearch(query: string) {

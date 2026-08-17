@@ -13,8 +13,8 @@ import { Field, TextInput } from "../features/settings-fields";
 
 type GateState = { kind: "loading" } | { kind: "error"; message: string } | { kind: "status"; status: BootstrapStatus };
 
-const primaryButton = "inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-brand px-4 text-[12px] font-semibold text-brand-ink transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
-const secondaryButton = "inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-bg-active px-4 text-[12px] font-semibold text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
+const primaryButton = "inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-brand px-4 text-[12px] font-semibold text-brand-ink transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
+const secondaryButton = "inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-bg-active px-4 text-[12px] font-semibold text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 
 let terminalGrantFromFragment: string | undefined;
 

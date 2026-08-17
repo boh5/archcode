@@ -139,6 +139,8 @@ export function createHitlNotificationGate(): HitlNotificationGate {
         projectSlug: event.projectSlug,
         ownerSessionId: event.ownerSessionId,
         rootSessionId: event.rootSessionId,
+        ownerAgentName: event.ownerAgentName,
+        ownerSessionTitle: event.ownerSessionTitle,
         view: event.view,
       };
       const identity = scopedHitlIdentity(entry);
@@ -475,18 +477,16 @@ export function handleSSEEvent(
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
         deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
-        if (store.getState().rootSessionId === envelope.sessionId) invalidateHomeQuery(deps);
       }
 
       if (envelope.payload.type === "session.goal_changed") {
         // The event itself keeps any open Session projection live. These REST
-        // projections feed the Session rail and Dashboard, so invalidate them
-        // as one atomic user-visible Goal transition.
+        // projections feed the Session rail, so invalidate them as one atomic
+        // user-visible Goal transition.
         deps.invalidateQueries({
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
         deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
-        invalidateHomeQuery(deps);
       }
 
       if (
@@ -516,7 +516,6 @@ export function handleSSEEvent(
     case "reset": {
       const reset = parsed as GlobalSSEResetEvent;
       deps.invalidateQueries({ queryKey: queryKeys.session(reset.slug, reset.sessionId) });
-      invalidateHomeQuery(deps);
       deps.refreshMcpStatus();
       break;
     }
@@ -524,7 +523,6 @@ export function handleSSEEvent(
       invalidateControlPlaneReadiness();
       beginSessionSnapshotRecovery();
       deps.refreshSessionSnapshots();
-      deps.invalidateQueries({ queryKey: queryKeys.home });
       deps.requestReconnect();
       break;
     }
@@ -554,7 +552,6 @@ export function handleSSEEvent(
     case "hitl.event": {
       const hitlEvent = parsed as GlobalSSEHitlRealtimeEvent;
       hitlStore.getState().applyRealtimeEvent(hitlEvent);
-      invalidateHomeQuery(deps);
       const entry = deps.hitlNotificationGate?.observeRealtimeEvent(hitlEvent);
       if (entry) deps.onLiveHitlRequest?.(entry);
       break;
@@ -578,7 +575,6 @@ export function handleSSEEvent(
         queryKey: queryKeys.session(change.projectSlug, change.rootSessionId),
       });
       deps.invalidateQueries({ queryKey: queryKeys.sessions(change.projectSlug) });
-      invalidateHomeQuery(deps);
       break;
     }
     case "update.changed": {
@@ -617,14 +613,12 @@ function applySessionDeltaBatch(
 function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSEResourceChangedEvent): void {
   if (event.resourceType === "automation") {
     invalidateAutomationQueries(deps, event.projectSlug, event.resourceId);
-    invalidateHomeQuery(deps);
     return;
   }
 
   if (event.resourceType === "todo") {
     deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
     deps.invalidateQueries({ queryKey: queryKeys.projectTodoAttachments(event.projectSlug, event.resourceId) });
-    invalidateHomeQuery(deps);
     return;
   }
 
@@ -634,7 +628,6 @@ function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSERe
   deps.invalidateQueries({ queryKey: queryKeys.sessions(event.projectSlug) });
   deps.invalidateQueries({ queryKey: queryKeys.tree(event.projectSlug, event.resourceId) });
   deps.invalidateQueries({ queryKey: queryKeys.projectTodos(event.projectSlug) });
-  invalidateHomeQuery(deps);
 }
 
 function invalidateAutomationQueries(
@@ -645,12 +638,6 @@ function invalidateAutomationQueries(
   deps.invalidateQueries({ queryKey: queryKeys.automation(slug, automationId) });
   deps.invalidateQueries({ queryKey: queryKeys.automationInvocations(slug, automationId) });
   deps.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) });
-}
-
-function invalidateHomeQuery(
-  deps: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
-): void {
-  deps.invalidateQueries({ queryKey: queryKeys.home });
 }
 
 export function GlobalSSEProvider({ children }: { children: ReactNode }) {
@@ -716,10 +703,6 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
       if (deltaBatcherRef.current === batcher) deltaBatcherRef.current = null;
     };
   }, [refreshSessionSnapshots]);
-
-  const refreshHome = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.home });
-  }, [queryClient]);
 
   const handleEvent = useCallback(
     (sseEvent: { event: string; data: string; id?: string }) => {
@@ -788,7 +771,6 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         reconnectStateRef.current.requested = false;
         watchdogRef.current?.connectionOpened();
         refreshSessionSnapshots();
-        refreshHome();
         void queryClient.invalidateQueries({ queryKey: queryKeys.modelRuntime });
         void queryClient.invalidateQueries({ queryKey: queryKeys.update });
         void refreshProjectTodoQueriesAfterSSEOpen(queryClient);
@@ -811,7 +793,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
       abortRef.current = null;
       client.abort();
     };
-  }, [handleEvent, handleError, queryClient, reconnectEpoch, refreshHome, refreshSessionSnapshots]);
+  }, [handleEvent, handleError, queryClient, reconnectEpoch, refreshSessionSnapshots]);
 
   useEffect(() => {
     refreshMcpStatus();

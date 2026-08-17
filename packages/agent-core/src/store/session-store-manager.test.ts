@@ -1331,7 +1331,76 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().nextEventId).toBe(Number(raw.eventCursor) + 1);
   });
 
-  test("load reconciliation discards a completed provider block from an open attempt", async () => {
+  test("load reconciliation preserves completed provider blocks from an open attempt", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(
+      persistedSession(id, {
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "assistant-output",
+                id: "text-1",
+                blockId: "output-1",
+                text: "COMPLETED_LOAD_TEXT_SHOULD_PROJECT",
+                createdAt: 1001,
+                completedAt: 1002,
+              },
+              {
+                type: "reasoning",
+                id: "reasoning-1",
+                blockId: "reasoning-1",
+                text: "completed reasoning",
+                createdAt: 1001,
+                completedAt: 1002,
+              },
+            ],
+            createdAt: 1001,
+            executionId: "run-1",
+            runOrdinal: 0,
+            stepId: "step-1",
+            outputPhase: "commentary",
+          },
+        ],
+        steps: [{
+          id: "step-1",
+          step: 0,
+          executionId: "run-1",
+          runOrdinal: 0,
+          startedAt: 1001,
+        }],
+        executions: [runningExecution("run-1")],
+      }),
+      TMP_DIR,
+    );
+
+    const loaded = await manager.getOrLoad(id, TMP_DIR);
+    const [text, reasoning] = loaded.getState().messages[0]?.parts ?? [];
+    expect(text).toEqual({
+      type: "assistant-output",
+      id: "text-1",
+      blockId: "output-1",
+      text: "COMPLETED_LOAD_TEXT_SHOULD_PROJECT",
+      createdAt: 1001,
+      completedAt: 1002,
+    });
+    expect(reasoning).toEqual({
+      type: "reasoning",
+      id: "reasoning-1",
+      blockId: "reasoning-1",
+      text: "completed reasoning",
+      createdAt: 1001,
+      completedAt: 1002,
+    });
+    expect(JSON.stringify(loaded.getState().toModelMessages())).not.toContain("previous assistant response was interrupted");
+    expect(JSON.stringify(loaded.getState().toModelMessages())).toContain("COMPLETED_LOAD_TEXT_SHOULD_PROJECT");
+    expect(loaded.getState().executions[0]).toMatchObject({ status: "running" });
+  });
+
+  test("load reconciliation discards only unfinished provider blocks from an open attempt", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
     await sessionFileInternals.saveSessionTranscript(
@@ -1347,7 +1416,6 @@ describe("SessionStoreManager", () => {
                 blockId: "output-1",
                 text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
                 createdAt: 1001,
-                completedAt: 1002,
               },
             ],
             createdAt: 1001,
@@ -1374,11 +1442,11 @@ describe("SessionStoreManager", () => {
     expect(text).toMatchObject({
       type: "assistant-output",
       text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
+      completedAt: expect.any(Number),
       meta: { interrupted: true, discardedFromContext: true },
     });
     expect(JSON.stringify(loaded.getState().toModelMessages())).toContain("previous assistant response was interrupted");
     expect(JSON.stringify(loaded.getState().toModelMessages())).not.toContain("PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT");
-    expect(loaded.getState().executions[0]).toMatchObject({ status: "running" });
   });
 
   test("load reconciliation makes an unfinished command outcome indeterminate", async () => {

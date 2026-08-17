@@ -37,12 +37,11 @@ describe("Automation API queries", () => {
   });
 });
 
-test("Automation invalidation refreshes list, Home, detail, and history", async () => {
+test("Automation invalidation refreshes list, detail, and history", async () => {
   const calls: unknown[] = [];
   await invalidateAutomation({ invalidateQueries: async (input) => { calls.push(input.queryKey); } }, "demo", "a1");
   expect(calls).toEqual([
     queryKeys.projectAutomations("demo"),
-    queryKeys.home,
     queryKeys.automation("demo", "a1"),
     queryKeys.automationInvocations("demo", "a1"),
   ]);

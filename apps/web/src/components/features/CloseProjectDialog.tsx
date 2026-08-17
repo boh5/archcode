@@ -83,7 +83,7 @@ export function CloseProjectDialog({
           <button
             type="button"
             onClick={onClose}
-            className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             disabled={deleteProject.isPending}
           >
             Cancel
@@ -91,7 +91,7 @@ export function CloseProjectDialog({
           <button
             type="button"
             onClick={handleConfirm}
-            className="h-8 rounded-sm bg-error px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-error/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+            className="h-8 rounded-sm bg-error px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-fast)] hover:bg-error/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
             disabled={deleteProject.isPending}
           >
             {deleteProject.isPending ? "Closing…" : "Close Project"}

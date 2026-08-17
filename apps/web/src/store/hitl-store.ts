@@ -15,7 +15,43 @@ export interface ScopedHitlView {
   readonly projectSlug: string;
   readonly ownerSessionId: string;
   readonly rootSessionId: string;
+  readonly ownerAgentName: string;
+  readonly ownerSessionTitle: string | null;
   readonly view: HitlView;
+}
+
+export type HitlAttentionLabel = "Inspection" | "Permission" | "Question";
+
+const HITL_ATTENTION_PRIORITY: Readonly<Record<HitlAttentionLabel, number>> = {
+  Question: 0,
+  Permission: 1,
+  Inspection: 2,
+};
+
+/** Collapse each root family to its highest-priority visible human action. */
+export function hitlAttentionLabelsByRootSession(
+  entries: readonly Pick<ScopedHitlView, "rootSessionId" | "view">[],
+): ReadonlyMap<string, HitlAttentionLabel> {
+  const labels = new Map<string, HitlAttentionLabel>();
+  for (const entry of entries) {
+    const label: HitlAttentionLabel = entry.view.requiresInspection === true
+      ? "Inspection"
+      : entry.view.source.type === "tool_permission" ? "Permission" : "Question";
+    const current = labels.get(entry.rootSessionId);
+    if (current === undefined || HITL_ATTENTION_PRIORITY[label] > HITL_ATTENTION_PRIORITY[current]) {
+      labels.set(entry.rootSessionId, label);
+    }
+  }
+  return labels;
+}
+
+/** Count every visible request in a root family without collapsing child owners. */
+export function hitlAttentionCountsByRootSession(
+  entries: readonly Pick<ScopedHitlView, "rootSessionId">[],
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const entry of entries) counts.set(entry.rootSessionId, (counts.get(entry.rootSessionId) ?? 0) + 1);
+  return counts;
 }
 
 interface HitlStoreState {
@@ -37,6 +73,8 @@ function scopedEntryFromRealtime(event: GlobalSSEHitlRealtimeEvent): ScopedHitlV
     projectSlug: event.projectSlug,
     ownerSessionId: event.ownerSessionId,
     rootSessionId: event.rootSessionId,
+    ownerAgentName: event.ownerAgentName,
+    ownerSessionTitle: event.ownerSessionTitle,
     view: event.view,
   };
 }
@@ -46,6 +84,8 @@ function scopedEntryFromSnapshot(entry: GlobalSSEHitlSnapshotEvent["entries"][nu
     projectSlug: entry.projectSlug,
     ownerSessionId: entry.ownerSessionId,
     rootSessionId: entry.rootSessionId,
+    ownerAgentName: entry.ownerAgentName,
+    ownerSessionTitle: entry.ownerSessionTitle,
     view: entry.view,
   };
 }
@@ -118,7 +158,8 @@ export function useHitlProjectInitialized(projectSlug: string): boolean {
 
 /**
  * Stable read-only selector for all attention-visible scoped HITL rows.
- * Consumers use this for Bell, badges, Dashboard, Automation and Session UI.
+ * Consumers use this for the Bell, project badges, Todo navigation, Automation,
+ * and Session UI.
  */
 export function useAttentionVisibleScopedHitl(projectSlugs?: readonly string[]): readonly ScopedHitlView[] {
   const views = useStore(hitlStore, (state) => state.views);

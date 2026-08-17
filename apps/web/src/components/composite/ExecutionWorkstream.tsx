@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   type TouchEvent as ReactTouchEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
@@ -221,7 +222,7 @@ export function MsgUser({
 
   return (
     <div
-      className="flex w-full min-w-0 flex-col gap-2"
+      className="flex w-full min-w-0 flex-col"
       data-message-kind="canonical-user"
     >
       {parts.map((part) => {
@@ -233,7 +234,7 @@ export function MsgUser({
               data-user-message-row=""
             >
               <div
-                className="min-w-0 max-w-[660px] whitespace-pre-wrap break-words rounded-lg rounded-br-sm border border-border-subtle bg-bg-muted px-4 py-3.5 text-[15px] leading-[1.66] text-text-primary"
+                className="min-w-0 max-w-[640px] whitespace-pre-wrap break-words rounded-[10px] border-0 bg-[color-mix(in_srgb,var(--bg-muted)_84%,var(--bg-base))] px-[17px] py-[15px] text-[15px] leading-6 text-text-primary"
                 data-user-message-surface=""
               >
                 {part.text}
@@ -263,7 +264,7 @@ export function MsgUser({
           </div>
         );
       })}
-      <div className="flex flex-wrap items-center justify-end gap-x-2 text-[12px] text-text-tertiary">
+      <div className="mt-1.5 flex flex-wrap items-center justify-end gap-x-2 text-[10px] text-text-tertiary">
         {modelChanged && message.modelAudit && (
           <span
             className="text-warning"
@@ -583,11 +584,11 @@ function WorkDisclosure({
     active
       ? `Working for ${duration}`
       : current && execution.record.status === "suspended"
-        ? `${status.label} · Worked for ${duration}`
+        ? `Paused · Worked for ${duration}`
         : `Worked for ${duration}`;
   const accessibleState =
     active ? "running" : current && execution.record.status === "suspended"
-      ? status.productStatus
+      ? "paused"
       : "closed";
   const accessibleName = [
     "Work segment",
@@ -611,7 +612,7 @@ function WorkDisclosure({
       <button
         ref={buttonRef}
         type="button"
-        className={`work-summary-control group relative flex min-h-8 cursor-pointer items-center gap-2 rounded-md py-1 pl-0 pr-1.5 text-left text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${WORK_ACTIVITY_LANE_CLASS}`}
+        className={`work-summary-control group flex min-h-9 cursor-pointer items-center gap-[7px] rounded px-2 text-left text-text-tertiary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_LANE_CLASS}`}
         onClick={(event) => onToggle(event.currentTarget)}
         aria-expanded={expanded}
         aria-controls={`work-body-${segment.id}`}
@@ -620,18 +621,18 @@ function WorkDisclosure({
       >
         <ChevronDown
           size={13}
-          className={`absolute -left-4 top-1/2 shrink-0 -translate-y-1/2 text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "" : "-rotate-90"}`}
+          className={`shrink-0 text-text-muted transition-transform duration-[var(--motion-fast)] ${expanded ? "" : "-rotate-90"}`}
           aria-hidden="true"
         />
-        <strong className="shrink-0 text-[13px] font-semibold leading-5 text-inherit">
-          <span className="tabular-nums">{primaryLabel}</span>
-        </strong>
         {active && (
           <span
-            className="h-[7px] w-[7px] shrink-0 rounded-full bg-signal"
+            className="h-[7px] w-[7px] shrink-0 rounded-full bg-signal shadow-[0_0_0_3px_color-mix(in_srgb,var(--signal)_18%,transparent)]"
             aria-hidden="true"
           />
         )}
+        <strong className="shrink-0 text-[13px] font-semibold leading-5 text-inherit">
+          <span className="tabular-nums">{primaryLabel}</span>
+        </strong>
         {currentActivity && (
           <span className="min-w-0 truncate text-[12px] leading-4 text-text-tertiary">
             <span aria-hidden="true" className="mr-2 text-border-strong">
@@ -641,7 +642,7 @@ function WorkDisclosure({
           </span>
         )}
         <span
-          className="h-px min-w-6 flex-1 bg-border-subtle transition-colors duration-[var(--motion-hover)] group-hover:bg-border-default"
+          className="h-px min-w-6 flex-1 bg-border-subtle transition-colors duration-[var(--motion-fast)] group-hover:bg-border-default"
           data-testid={`work-divider-${segment.id}`}
           aria-hidden="true"
         />
@@ -649,7 +650,7 @@ function WorkDisclosure({
       {expanded && (
         <div
           id={`work-body-${segment.id}`}
-          className="ml-1 flex w-[calc(100%-4px)] min-w-0 flex-col gap-3 border-l border-border-subtle pb-2 pl-5 pt-2"
+          className="mb-[14px] ml-[14px] mr-2 mt-[5px] flex min-w-0 flex-col gap-2 border-l border-border-default py-[7px] pl-2 min-[761px]:ml-[30px] min-[761px]:pl-[15px]"
           data-testid={`work-body-${execution.id}`}
         >
           {timeline.map((entry) =>
@@ -682,14 +683,14 @@ function WorkDisclosure({
             ),
           )}
           {segment === execution.segments.at(-1) &&
-            status.productStatus === "stopped" &&
-            status.detail && (
+            (status.productStatus === "stopped" || status.productStatus === "failed") &&
+            (status.detail || execution.record.error) && (
               <div
                 className={`rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-[11px] text-text-secondary ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
                 data-testid={`execution-stop-detail-${segment.id}`}
               >
                 <span className="font-medium">
-                  Stop reason · {status.detail}
+                  {status.productStatus === "failed" ? "Failure" : "Stop reason"}{status.detail ? ` · ${status.detail}` : ""}
                 </span>
                 {execution.record.error && (
                   <span className="mt-1 block text-error">
@@ -833,6 +834,7 @@ export interface ExecutionWorkstreamProps {
   agents: readonly AgentDescriptor[];
   onInspectModelAudit?: (messageId: string) => void;
   focusClientRequestId?: string | null;
+  threadHeader?: ReactNode;
 }
 
 export function ExecutionWorkstream({
@@ -843,6 +845,7 @@ export function ExecutionWorkstream({
   agents,
   onInspectModelAudit,
   focusClientRequestId,
+  threadHeader,
 }: ExecutionWorkstreamProps) {
   const messages = useSessionStore(sessionId, (state) => state.messages, slug);
   const executions = useSessionStore(
@@ -1672,18 +1675,23 @@ export function ExecutionWorkstream({
         onTouchStart={handleTouchStart}
         onWheel={handleWheel}
         className="conversation-scroller h-full min-h-0 w-full overflow-y-auto overflow-x-hidden bg-bg-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
-        style={{ overflowAnchor: "none", scrollbarGutter: "stable both-edges" }}
+        style={{ overflowAnchor: "none", scrollbarGutter: "stable" }}
         data-testid="execution-workstream-scroller"
         role="region"
         aria-label="Session conversation"
         tabIndex={0}
       >
         <ConversationRail
-          className="conversation-surface flex min-h-full py-9 max-[639px]:py-6"
+          className="conversation-surface flex min-h-full flex-col pb-9 pt-[26px] max-[639px]:pb-6 max-[639px]:pt-[18px]"
           data-testid="execution-workstream-rail"
         >
+          {threadHeader === undefined ? null : (
+            <div className="mx-auto w-full max-w-[852px] min-w-0">
+              {threadHeader}
+            </div>
+          )}
           <SessionThreadColumn
-            className={`flex min-h-full flex-1 flex-col ${isEmpty ? "items-center justify-center" : "gap-6"}`}
+            className={`flex min-h-full flex-1 flex-col ${threadHeader === undefined ? "" : "mt-[14px]"} ${isEmpty ? "items-center justify-center" : "gap-6"}`}
             data-testid="execution-thread-column"
           >
             {isEmpty ? (

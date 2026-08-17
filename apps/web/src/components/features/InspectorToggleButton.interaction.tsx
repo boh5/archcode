@@ -43,7 +43,6 @@ describe("InspectorToggleButton", () => {
     expect(button.getAttribute("aria-label")).toBe("Collapse context inspector");
     expect(button.getAttribute("data-state")).toBe("expanded");
     expect(button.className).toContain("h-8");
-    expect(button.className).not.toContain("max-[760px]:hidden");
     expect(button.className).toContain("[@media(pointer:coarse)]:h-11");
     expect(button.className).not.toContain("border-border-default");
     expect(button.querySelector(".lucide-panel-right-close")).not.toBeNull();

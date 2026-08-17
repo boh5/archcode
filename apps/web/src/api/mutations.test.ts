@@ -12,14 +12,13 @@ afterEach(() => {
 });
 
 describe("project catalog mutation invalidation", () => {
-  test("refreshes both the Project Rail and global Home projection", async () => {
+  test("refreshes the Project Rail", async () => {
     const invalidateQueries = mock(async () => undefined);
 
     await invalidateProjectCatalog({ invalidateQueries } as never);
 
-    expect(invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.projects });
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.home });
   });
 });
 

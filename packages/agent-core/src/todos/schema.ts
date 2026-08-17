@@ -5,6 +5,8 @@ import {
   type CreateProjectTodoSessionInput,
   type ProjectTodo,
   type ProjectTodoRunNowInput,
+  type ProjectTodoStartDiscussionInput,
+  type ProjectTodoStartDiscussionReceipt,
   type ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import { z } from "zod/v4";
@@ -61,20 +63,30 @@ export const ProjectTodoRunNowReceiptSchema = z.strictObject({
   clientRequestId: z.uuid(),
   requestHash: z.string().length(64),
   todoId: z.uuid(),
-  sessionId: z.uuid().optional(),
+  sessionId: z.uuid(),
   status: z.enum(["preparing", "recovery_required", "accepted"]),
-}).superRefine((receipt, context) => {
-  if (receipt.status === "accepted" && receipt.sessionId === undefined) {
-    context.addIssue({ code: "custom", path: ["sessionId"], message: "Accepted run-now receipt requires a Session id" });
-  }
 });
+
+export const ProjectTodoStartDiscussionReceiptSchema = z.strictObject({
+  clientRequestId: z.uuid(),
+  requestHash: z.string().length(64),
+  todoId: z.uuid(),
+  sessionId: z.uuid(),
+  status: z.enum(["preparing", "recovery_required", "accepted"]),
+}) satisfies z.ZodType<ProjectTodoStartDiscussionReceipt>;
 
 export const ProjectTodoStateFileSchema = z.strictObject({
   todos: z.array(ProjectTodoSchema),
   runNowReceipts: z.array(ProjectTodoRunNowReceiptSchema),
+  startDiscussionReceipts: z.array(ProjectTodoStartDiscussionReceiptSchema),
 }).superRefine((state, context) => {
   addUniqueIssues(state.todos.map((todo) => todo.id), "Todo id", context);
   addUniqueIssues(state.runNowReceipts.map((receipt) => receipt.clientRequestId), "Run-now clientRequestId", context);
+  addUniqueIssues(
+    state.startDiscussionReceipts.map((receipt) => receipt.clientRequestId),
+    "Start-discussion clientRequestId",
+    context,
+  );
 });
 
 export type ProjectTodoStateFile = z.infer<typeof ProjectTodoStateFileSchema>;
@@ -87,6 +99,11 @@ export const ProjectTodoRunNowSchema = z.strictObject({
   clientRequestId: z.uuid(),
   content: ProjectTodoContentSchema,
 }) satisfies z.ZodType<ProjectTodoRunNowInput>;
+
+export const ProjectTodoStartDiscussionSchema = z.strictObject({
+  clientRequestId: z.uuid(),
+  content: ProjectTodoContentSchema,
+}) satisfies z.ZodType<ProjectTodoStartDiscussionInput>;
 
 export const ProjectTodoUpdateSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),

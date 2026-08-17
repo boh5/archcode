@@ -10,23 +10,23 @@ import { PROFILE_NAMES, BUILT_IN_MCP_NAMES, errorAtOrBelow, missingProfileVarian
 
 type JsonValidationChange = (path: string, error?: string) => void;
 
-const secondaryActionClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
-const subtleActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
-const dangerActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-error transition-colors duration-[var(--motion-hover)] hover:bg-error-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
-const selectClass = "h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle";
+const secondaryActionClass = "inline-flex h-8 items-center justify-center gap-2 rounded-sm bg-bg-active px-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
+const subtleActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-fast)] hover:bg-brand-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
+const dangerActionClass = "inline-flex h-7 items-center justify-center gap-2 rounded-sm px-2 text-[12px] font-medium text-error transition-colors duration-[var(--motion-fast)] hover:bg-error-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11";
+const selectClass = "h-8 w-full rounded-sm border border-border-control bg-bg-base px-3 text-[12px] text-text-primary outline-none transition-colors duration-[var(--motion-fast)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle";
 const MODEL_MODALITIES = ["text", "image", "audio", "video"] as const;
 type ModelModality = typeof MODEL_MODALITIES[number];
 
-function PanelHeader({ title, description }: { title: string; description: string }) {
-  return <header className="border-b border-border-subtle pb-4">
-    <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">Server settings</p>
-    <h1 className="text-[16px] font-semibold leading-[22px] text-text-primary">{title}</h1>
-    <p className="mt-1 text-[13px] leading-5 text-text-tertiary">{description}</p>
+function PanelHeader({ kicker = "Server settings", title, description }: { kicker?: string; title: string; description: string }) {
+  return <header className="border-b border-border-subtle pb-[15px]">
+    <p className="text-[10.5px] font-bold leading-[1.5] uppercase tracking-[0.09em] text-text-tertiary">{kicker}</p>
+    <h1 tabIndex={-1} data-settings-content-heading className="mt-1 text-[17px] font-semibold leading-[1.35] text-text-primary outline-none">{title}</h1>
+    <p className="mt-1 max-w-[680px] text-[10.5px] leading-[1.5] text-text-tertiary">{description}</p>
   </header>;
 }
 
 function SettingsToggle({ checked, onChange, label, description }: { checked: boolean; onChange: (checked: boolean) => void; label: string; description: string }) {
-  return <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-border-subtle bg-bg-elevated px-3 py-3 transition-colors duration-[var(--motion-hover)] hover:border-border-default">
+  return <label className="flex cursor-pointer items-start gap-3 rounded-sm border border-border-subtle bg-bg-elevated px-3 py-3 transition-colors duration-[var(--motion-fast)] hover:border-border-default">
     <input type="checkbox" aria-label={label} checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-1 h-4 w-4 accent-brand" />
     <span className="flex flex-col gap-1">
       <span className="text-[13px] font-medium text-text-secondary">{label}</span>
@@ -53,7 +53,7 @@ function ModalityField({
       {MODEL_MODALITIES.map((modality) => {
         const checked = selected.has(modality);
         const onlySelection = checked && selected.size === 1;
-        return <label key={modality} className={`inline-flex h-7 items-center gap-2 rounded-sm border px-2.5 font-mono text-[11px] transition-colors duration-[var(--motion-hover)] ${checked ? "border-brand/50 bg-brand-subtle text-brand" : "border-border-subtle bg-bg-elevated text-text-tertiary hover:border-border-default hover:text-text-secondary"} ${onlySelection ? "cursor-not-allowed" : "cursor-pointer"}`}>
+        return <label key={modality} className={`inline-flex h-7 items-center gap-2 rounded-sm border px-2.5 font-mono text-[11px] transition-colors duration-[var(--motion-fast)] ${checked ? "border-brand/50 bg-brand-subtle text-brand" : "border-border-subtle bg-bg-elevated text-text-tertiary hover:border-border-default hover:text-text-secondary"} ${onlySelection ? "cursor-not-allowed" : "cursor-pointer"}`}>
           <input
             type="checkbox"
             value={modality}
@@ -204,8 +204,8 @@ export function SettingsNavigation({
     ["github", "GitHub"],
     ["updates", "About & Updates"],
   ];
-  return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-1 px-3 py-3 sm:flex sm:flex-col sm:px-3">
-    <p className="col-span-3 px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">Server</p>
+  return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-[3px] p-2 min-[641px]:flex min-[641px]:flex-col min-[641px]:gap-0.5 min-[641px]:p-2.5">
+    <p className="col-span-3 px-[7px] pb-[3px] pt-0.5 text-[9.5px] font-bold uppercase tracking-[0.12em] text-text-tertiary min-[641px]:px-2.5 min-[641px]:pb-1.5 min-[641px]:pt-1.5">Server</p>
     {entries.map(([id, label]) => {
       const disabled = recoveryMode && id !== "config-recovery" && id !== "updates";
       const showsInvalidProfiles = id === "profiles" && invalidProfileCount > 0;
@@ -223,9 +223,9 @@ export function SettingsNavigation({
           : attentionMessage === undefined ? undefined : `${label}, ${attentionMessage}`}
         title={disabled ? "Unavailable until the global configuration is valid" : attentionMessage}
         data-invalid-count={showsInvalidProfiles ? invalidProfileCount : undefined}
-        className={`relative min-w-0 rounded-sm px-3 py-2 text-left text-[12px] font-medium transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:cursor-not-allowed disabled:text-text-muted ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-brand" : disabled ? "" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
+        className={`relative min-h-10 min-w-0 rounded-[5px] px-1.5 text-center text-[11px] font-medium transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:cursor-not-allowed disabled:text-text-muted min-[641px]:min-h-[34px] min-[641px]:px-2.5 min-[641px]:text-left ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-0 before:left-2.5 before:right-2.5 before:h-0.5 before:rounded-full before:bg-brand min-[641px]:font-semibold min-[641px]:before:bottom-2 min-[641px]:before:left-0 min-[641px]:before:right-auto min-[641px]:before:top-2 min-[641px]:before:h-auto min-[641px]:before:w-0.5" : disabled ? "" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
       >
-        <span className="flex items-center justify-between gap-2">
+        <span className="flex items-center justify-center gap-2 min-[641px]:justify-between">
           <span>{label}</span>
           {showsInvalidProfiles && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-error" />}
         </span>
@@ -241,8 +241,8 @@ export function SettingsModelsPanel({ config, adapterCatalog, onChange, errors =
     const id = nextGeneratedId("provider", draft.provider);
     draft.provider[id] = { npm: adapter.npmPackage, name: "New provider", options: {}, models: {} };
   }));
-  return <section data-settings-section="models" className="space-y-5 pb-1">
-    <PanelHeader title="Models" description="Providers and their model profiles are configured together." />
+  return <section data-settings-section="models" className="space-y-[18px] pb-1">
+    <PanelHeader kicker="Models" title="Providers and models" description="Configure provider adapters, credentials, model limits, modalities, and variants." />
     {Object.entries(config.provider).map(([providerId, provider]) => {
       const providerIdLocked = hasPreservedProviderSecrets(provider);
       const adapter = adapterCatalog.find((entry) => entry.npmPackage === provider.npm);
@@ -283,7 +283,7 @@ export function SettingsModelsPanel({ config, adapterCatalog, onChange, errors =
       </div>
     </article>;
     })}
-    <button type="button" disabled={adapterCatalog.length === 0} onClick={addProvider} className="flex w-full items-center justify-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-surface px-3 py-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"><Plus size={14} aria-hidden="true" />Add provider</button>
+    <button type="button" disabled={adapterCatalog.length === 0} onClick={addProvider} className="flex w-full items-center justify-center gap-2 rounded-sm border border-dashed border-border-default bg-bg-surface px-3 py-3 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-fast)] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"><Plus size={14} aria-hidden="true" />Add provider</button>
   </section>;
 }
 
@@ -303,8 +303,8 @@ function ModelEditor({ config, onChange, providerId, modelId, model, errors, onJ
   const update = (apply: (target: ServerModelConfig) => void) => onChange(withDraft(config, (draft) => apply(draft.provider[providerId].models[modelId])));
   const path = `provider.${providerId}.models.${modelId}`;
   return <details className="group rounded-sm border border-border-subtle bg-bg-base open:border-border-default">
-    <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-3 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover [&::-webkit-details-marker]:hidden">
-      <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] group-open:rotate-90" />
+    <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-3 transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover [&::-webkit-details-marker]:hidden">
+      <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-[var(--motion-fast)] group-open:rotate-90" />
       <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-medium text-text-secondary">{modelId}</span>
       <span className="truncate text-[11px] text-text-tertiary">{model.name}</span>
     </summary>
@@ -364,9 +364,9 @@ export function SettingsProfilesPanel({ config, onChange, errors, onJsonValidati
           aria-label={missingVariant === undefined
             ? undefined
             : `${profile}, ${item.model}, variant "${missingVariant.variant}" is missing; using model default`}
-          className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover [&::-webkit-details-marker]:hidden"
+          className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover [&::-webkit-details-marker]:hidden"
         >
-          <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-[var(--motion-icon)] group-open:rotate-90" />
+          <ChevronRight size={13} aria-hidden="true" className="shrink-0 text-text-muted transition-transform duration-[var(--motion-fast)] group-open:rotate-90" />
           {missingVariant && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-error" />}
           <span className="min-w-0 flex-1 font-mono text-[12px] font-medium text-text-secondary">{profile}</span>
           <span className="truncate text-[11px] text-text-tertiary">{item.model}{item.variant ? ` · ${item.variant}` : ""}</span>
@@ -550,7 +550,7 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
         dotClass: "bg-text-muted",
         badgeClass: "border-border-default bg-bg-elevated text-text-tertiary",
       };
-      return <article key={name} className="px-4 py-4 transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover/40">
+      return <article key={name} className="px-4 py-4 transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover/40">
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="break-all font-mono text-sm">{name}</h2>
@@ -631,7 +631,7 @@ function McpEditor({ name, server, config, onChange, errors }: { name: string; s
       <Field label="Transport"><select disabled={nameLocked} title={nameLocked ? "Clear or replace configured secrets before changing transport" : undefined} className={selectClass} value={server.type} onChange={(event) => replaceTransport(event.target.value as "http" | "stdio")}><option value="http">HTTP</option><option value="stdio">STDIO</option></select>{nameLocked && <span className="text-[11px] font-normal text-text-tertiary">Clear or replace configured secrets before changing transport.</span>}</Field>
       {server.type === "http" ? <Field label="HTTP URL" error={errors[`mcp.servers.${name}.url`]}><TextInput value={server.url} onChange={(next) => update((draft) => { if (draft.type === "http") draft.url = next; })} /></Field> : <>
         <Field label="Command" error={errors[`mcp.servers.${name}.command`]}><TextInput value={server.command} onChange={(next) => update((draft) => { if (draft.type === "stdio") draft.command = next; })} /></Field>
-        <Field label="Arguments (one per line)"><textarea rows={3} value={server.args?.join("\n") ?? ""} onChange={(event) => update((draft) => { if (draft.type === "stdio") { const args = event.target.value.split("\n").filter((line) => line.trim() !== ""); draft.args = args.length > 0 ? args : undefined; } })} className="min-h-20 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 font-mono text-[12px] leading-[18px] text-text-primary outline-none transition-colors duration-[var(--motion-hover)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle" /></Field>
+        <Field label="Arguments (one per line)"><textarea rows={3} value={server.args?.join("\n") ?? ""} onChange={(event) => update((draft) => { if (draft.type === "stdio") { const args = event.target.value.split("\n").filter((line) => line.trim() !== ""); draft.args = args.length > 0 ? args : undefined; } })} className="min-h-20 resize-y rounded-sm border border-border-control bg-bg-base px-3 py-2 font-mono text-[12px] leading-[18px] text-text-primary outline-none transition-colors duration-[var(--motion-fast)] hover:border-text-secondary focus:border-brand focus:ring-2 focus:ring-brand-subtle" /></Field>
       </>}
       <Field label="Connect timeout (ms)"><NumberField value={server.connectTimeoutMs} onChange={(next) => update((draft) => { draft.connectTimeoutMs = next; })} /></Field>
       <Field label="Discovery timeout (ms)"><NumberField value={server.discoveryTimeoutMs} onChange={(next) => update((draft) => { draft.discoveryTimeoutMs = next; })} /></Field>

@@ -51,6 +51,68 @@ afterEach(() => {
 });
 
 describe("DiffTab live refresh", () => {
+  test("keeps the aggregate Diff and reveals the file selected from Changes", async () => {
+    const dom = installDom();
+    const scrollIntoView = mock(() => {});
+    Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const diffFetch = controlledDiffFetch(["selected-file"]);
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: diffFetch.fetch });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const root = createRoot(document.getElementById("root")!);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <DiffTab slug="demo" sessionId="root" selectedPath="src/second.ts" />
+        </QueryClientProvider>,
+      );
+    });
+    await diffFetch.requested[0].promise;
+    await act(async () => {
+      diffFetch.responses[0].resolve(Response.json({
+        files: [
+          { path: "src/first.ts", status: "modified", additions: 2, deletions: 1, hunks: [] },
+          { path: "src/second.ts", status: "modified", additions: 3, deletions: 2, hunks: [] },
+          { path: "src/third.ts", status: "created", additions: 5, deletions: 0, hunks: [] },
+        ],
+      }));
+      await client.fetchQuery({ ...diffQueryOptions("demo", "root"), staleTime: Infinity });
+    });
+
+    expect(document.querySelector("[data-session-diff-heading]")?.textContent).toBe("3 files changed");
+    expect(document.body.textContent).toContain("+10");
+    expect(document.body.textContent).toContain("−3");
+    expect(document.querySelectorAll("[data-diff-file]")).toHaveLength(3);
+    const selected = document.querySelector<HTMLButtonElement>('[data-diff-file="src/second.ts"] > button');
+    expect(selected?.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(selected);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <DiffTab slug="demo" sessionId="root" />
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <DiffTab slug="demo" sessionId="root" selectedPath="src/second.ts" />
+        </QueryClientProvider>,
+      );
+    });
+    expect(document.activeElement).toBe(selected);
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+
+    await act(async () => root.unmount());
+    client.clear();
+    dom.window.close();
+  });
+
   test("performs a final refresh when the Session family becomes idle", async () => {
     const dom = installDom();
     const diffFetch = controlledDiffFetch(["revision-1", "revision-2"]);

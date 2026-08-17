@@ -217,7 +217,7 @@ describe("ToolCard strict result consumer", () => {
     const summary = findByProp(element, "data-tool-summary-static", "");
     const toolName = findByProp(summary, "title", "mcp__context7__resolve-library-id");
 
-    expect(summary?.props?.className).toContain("minmax(0,112px)");
+    expect(summary?.props?.className).toContain("minmax(90px,112px)");
     expect(isElement(toolName) && toolName.props?.className).toContain("truncate");
     expect(isElement(toolName) && toolName.props?.title).toBe("mcp__context7__resolve-library-id");
     expect(findByType(element, "button")).toBeUndefined();

@@ -1,6 +1,6 @@
 import { createBrowserRouter, Outlet } from "react-router-dom";
 import { RootLayout } from "./routes/root-layout";
-import { HomeRoute } from "./routes/home";
+import { RootEntryRoute } from "./routes/root-entry";
 import { ProjectLayout, ProjectRoute } from "./routes/project";
 import { ProjectSessionsRoute } from "./routes/project-sessions";
 import { ProjectTodosRoute } from "./routes/project-todos";
@@ -25,7 +25,7 @@ export const router = createBrowserRouter([
       {
         element: <RootLayout />,
         children: [
-          { path: "/", element: <HomeRoute /> },
+          { path: "/", element: <RootEntryRoute /> },
           {
             path: "/projects/:slug",
             element: <ProjectLayout />,
@@ -33,6 +33,7 @@ export const router = createBrowserRouter([
               { index: true, element: <ProjectRoute /> },
               { path: "todos", element: <ProjectTodosRoute /> },
               { path: "todos/:todoId", element: <ProjectTodoDetailRoute /> },
+              { path: "todos/:todoId/work", element: <ProjectTodoDetailRoute /> },
               { path: "automations", element: <AutomationsRoute /> },
               { path: "automations/:automationId", element: <AutomationDetailRoute /> },
               { path: "sessions", element: <ProjectSessionsRoute /> },

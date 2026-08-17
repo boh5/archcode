@@ -17,7 +17,6 @@ const {
 const {
   planWorkCommand,
   ProjectTodoDetailRoute,
-  TODO_PLAN_ACTION_LABEL,
 } = await import("./project-todo-detail");
 bootstrapDom.window.close();
 
@@ -33,15 +32,10 @@ let sessionDetailResponse: () => Response | Promise<Response>;
 let messageResponse: () => Response | Promise<Response>;
 let createSessionResponse: () => Response | Promise<Response>;
 let planResponse: () => Response | Promise<Response>;
-let runNowResponse: () => Response | Promise<Response>;
 let sessionInventoryResponse: () => Response | Promise<Response>;
 let automationInventoryResponse: () => Response | Promise<Response>;
 
-const todos: ProjectTodo[] = [
-  todo("idea", "Idea", "idea"),
-  todo("idea-next", "Next idea", "idea"),
-  todo("ready", "Ready", "ready"),
-];
+let todos: ProjectTodo[];
 
 function todo(id: string, content: string, status: ProjectTodo["status"]): ProjectTodo {
   return { id, content, attachmentIds: [], status, revision: 3, createdAt: 1, updatedAt: 1 };
@@ -69,6 +63,12 @@ function installDomGlobals(target: JSDOM): void {
     getComputedStyle: target.window.getComputedStyle.bind(target.window),
     IS_REACT_ACT_ENVIRONMENT: true,
   });
+  Object.defineProperty(target.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
+  Object.defineProperty(target.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
+  Object.defineProperty(target.window, "matchMedia", {
+    configurable: true,
+    value: (query: string) => ({ matches: query === "(max-width: 720px)" && target.window.innerWidth <= 720, media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false }),
+  });
 }
 
 beforeEach(() => {
@@ -79,6 +79,11 @@ beforeEach(() => {
   Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: clearTimeout });
   Object.defineProperty(dom.window.HTMLElement.prototype, "getBoundingClientRect", { configurable: true, value() { return rectFor(this); } });
   responseMode = "success";
+  todos = [
+    todo("idea", "Idea", "idea"),
+    todo("idea-next", "Next idea", "idea"),
+    todo("ready", "Ready", "ready"),
+  ];
   patches = [];
   requests = [];
   sessionSummaries = [];
@@ -99,7 +104,6 @@ beforeEach(() => {
   messageResponse = () => Response.json({ clientRequestId: "plan-command", status: "command" });
   createSessionResponse = () => Response.json({ todo: todos[2], sessionId: "discussion-new" });
   planResponse = () => Response.json({ plan: null });
-  runNowResponse = () => Response.json({ todo: todos[2], session: { sessionId: "work-new" } });
   sessionInventoryResponse = () => Response.json({ sessions: sessionSummaries.map((session) => ({ session, latestExecution: null })) });
   automationInventoryResponse = () => Response.json({ automations: [] });
   fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -114,11 +118,13 @@ beforeEach(() => {
     }
     if (method === "PATCH" && path.endsWith("/todos/ready")) {
       patches.push(body as Record<string, unknown>);
-      return Response.json({ todo: { ...todos[2], status: "in_progress", revision: 4 } });
+      const requestedStatus = (body as { status?: ProjectTodo["status"] } | undefined)?.status;
+      todos[2] = { ...todos[2]!, status: requestedStatus ?? "in_progress", revision: 4 };
+      return Response.json({ todo: todos[2] });
     }
     if (method === "POST" && path.endsWith("/messages")) return messageResponse();
     if (method === "POST" && path.endsWith("/sessions")) return createSessionResponse();
-    if (method === "POST" && path.endsWith("/todos/run-now")) return runNowResponse();
+    if (method === "GET" && path.endsWith("/attachments")) return Response.json({ todoRevision: 3, attachments: [] });
     if (method === "GET" && path.endsWith("/plan")) return planResponse();
     if (path.endsWith("/todos")) return Response.json({ todos });
     if (path.endsWith("/sessions")) return sessionInventoryResponse();
@@ -158,11 +164,11 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 async function renderSelectedTodo(): Promise<void> {
   await render("/projects/demo/todos/ready");
-  await waitFor(() => document.querySelector('[aria-labelledby="todo-brief-heading"]') !== null);
-  await waitFor(() => document.querySelector('[aria-labelledby="todo-plan-heading"]')?.textContent?.includes("Loading Plan…") === false);
+  await waitFor(() => document.querySelector('[aria-labelledby="todo-content-heading"]') !== null);
+  await waitFor(() => document.body.textContent?.includes("Loading Plan…") === false);
 }
 
-function addDiscussionSummary(sessionId = "discussion-latest"): void {
+function addDiscussionSummary(sessionId = "discussion-latest", todoId = "ready"): void {
   sessionSummaries.push({
     sessionId,
     rootSessionId: sessionId,
@@ -172,13 +178,13 @@ function addDiscussionSummary(sessionId = "discussion-latest"): void {
     activeSkillNames: ["shape-todo"],
     modelSelection: { revision: 0 },
     title: "Plan discussion",
-    source: { kind: "todo", todoId: "ready", entry: "discussion" },
+    source: { kind: "todo", todoId, entry: "discussion" },
     createdAt: 2,
     updatedAt: 3,
   });
 }
 
-function addWorkSummary(sessionId = "work-latest"): void {
+function addWorkSummary(sessionId = "work-latest", todoId = "ready"): void {
   sessionSummaries.push({
     sessionId,
     rootSessionId: sessionId,
@@ -188,36 +194,15 @@ function addWorkSummary(sessionId = "work-latest"): void {
     activeSkillNames: ["orchestrate-work"],
     modelSelection: { revision: 0 },
     title: "Existing work",
-    source: { kind: "todo", todoId: "ready", entry: "work" },
+    source: { kind: "todo", todoId, entry: "work" },
     createdAt: 2,
     updatedAt: 4,
   });
 }
 
-function addAutomationInvocationSummary(sessionId = "automation-invocation"): void {
-  sessionSummaries.push({
-    sessionId,
-    rootSessionId: sessionId,
-    cwd: "/tmp",
-    agentName: "lead",
-    profile: "principal",
-    activeSkillNames: ["orchestrate-work"],
-    modelSelection: { revision: 0 },
-    title: "Automated check",
-    source: {
-      kind: "automation",
-      automationId: "automation-1",
-      invocationId: "invocation-1",
-      todoId: "ready",
-    },
-    createdAt: 2,
-    updatedAt: 5,
-  });
-}
-
 function findPlanButton(): HTMLButtonElement {
   const button = Array.from(document.querySelectorAll("button")).find((candidate) =>
-    candidate.textContent?.includes(TODO_PLAN_ACTION_LABEL),
+    candidate.textContent?.includes("Generate Plan") || candidate.textContent?.includes("Improve"),
   );
   if (!(button instanceof dom.window.HTMLButtonElement)) {
     throw new Error("Plan action button was not rendered");
@@ -225,49 +210,25 @@ function findPlanButton(): HTMLButtonElement {
   return button;
 }
 
-function findActionGroup(label: string): HTMLElement {
-  const group = [...document.querySelectorAll('[role="group"]')].find((candidate) =>
-    candidate.getAttribute("aria-label") === label
-  );
-  if (!(group instanceof dom.window.HTMLElement)) {
-    throw new Error(`Action group "${label}" was not rendered`);
-  }
-  return group;
+function previewButtonLabels(): string[] {
+  const preview = document.querySelector('[data-testid="todo-preview"]');
+  if (!(preview instanceof dom.window.HTMLElement)) throw new Error("Todo preview was not rendered");
+  return [...preview.querySelectorAll("footer button")].map((button) => button.textContent?.trim() ?? "");
 }
 
-function actionGroupButtonLabels(label: string): string[] {
-  return [...findActionGroup(label).querySelectorAll("button")].map((button) => button.textContent?.trim() ?? "");
+async function openPreview(todoId: string): Promise<void> {
+  await click(document.querySelector(`[data-testid="todo-open-${todoId}"]`) as HTMLButtonElement);
+  await waitFor(() => document.querySelector('[data-testid="todo-preview"]') !== null);
 }
 
-function findPanel(title: string): HTMLElement {
-  const heading = [...document.querySelectorAll("h2")].find((candidate) => candidate.textContent === title);
-  const panel = heading?.closest("section");
-  if (!(panel instanceof dom.window.HTMLElement)) throw new Error(`Panel "${title}" was not rendered`);
-  return panel;
+async function closePreview(): Promise<void> {
+  await click(document.querySelector('[aria-label="Close preview"]') as HTMLButtonElement);
+  await waitFor(() => document.querySelector('[data-testid="todo-preview"]') === null);
 }
 
 async function click(button: HTMLButtonElement): Promise<void> {
   await act(async () => {
     button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-  });
-  await settle();
-}
-
-async function changeValue(target: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  const previous = target.value;
-  const prototype = target instanceof dom.window.HTMLInputElement
-    ? dom.window.HTMLInputElement.prototype
-    : dom.window.HTMLTextAreaElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-  await act(async () => {
-    setter?.call(target, value);
-    (target as unknown as { _valueTracker?: { setValue(value: string): void } })._valueTracker?.setValue(previous);
-    const propsKey = Object.keys(target).find((key) => key.startsWith("__reactProps$"));
-    const props = propsKey
-      ? (target as unknown as Record<string, { onChange?: (event: { target: typeof target }) => void }>)[propsKey]
-      : undefined;
-    if (props?.onChange) props.onChange({ target });
-    else target.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
   });
   await settle();
 }
@@ -282,6 +243,8 @@ function rectFor(element: Element): DOMRect {
   if (testId === "todo-idea") return rect(0, 100, 220, 56);
   if (testId === "todo-idea-next") return rect(0, 180, 220, 56);
   if (testId === "todo-ready") return rect(300, 100, 220, 56);
+  if (testId === "todo-progress") return rect(600, 100, 220, 56);
+  if (testId === "todo-done") return rect(900, 100, 220, 56);
   return rect(0, 0, 0, 0);
 }
 
@@ -289,9 +252,13 @@ function rect(x: number, y: number, width: number, height: number): DOMRect {
   return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height, toJSON: () => ({}) } as DOMRect;
 }
 
-async function key(target: HTMLElement, value: string): Promise<void> {
-  await act(async () => target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, code: value === " " ? "Space" : value, bubbles: true })));
+async function key(target: HTMLElement, value: string, options: { shiftKey?: boolean } = {}): Promise<void> {
+  await act(async () => target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, code: value === " " ? "Space" : value, bubbles: true, ...options })));
   await settle();
+}
+
+function setViewport(width: number): void {
+  Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: width });
 }
 
 function laneContains(lane: string, todoId: string): boolean {
@@ -357,7 +324,7 @@ async function touchDrag(handle: HTMLElement, destination: { x: number; y: numbe
 
 describe("Project Todos drag interactions", () => {
   test("keyboard pickup, same-lane move, and drop makes one canonical PATCH only at drop and announces it", async () => {
-    await render();
+    await render("/projects/demo/todos?layout=board");
     const handle = document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement;
     handle.focus();
 
@@ -379,7 +346,7 @@ describe("Project Todos drag interactions", () => {
   });
 
   test("Escape cancels a keyboard drag, restores the canonical board, and announces cancellation", async () => {
-    await render();
+    await render("/projects/demo/todos?layout=board");
     const handle = document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement;
     handle.focus();
 
@@ -394,7 +361,7 @@ describe("Project Todos drag interactions", () => {
   });
 
   test("pointer cross-lane drop uses one PATCH and announces the destination", async () => {
-    await render();
+    await render("/projects/demo/todos?layout=board");
     await pointerDrag(document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement, { x: 500, y: 120 });
     expect(patches).toEqual([{ expectedRevision: 3, status: "ready", beforeTodoId: null }]);
     expect(announcementText()).toContain("Dropped Idea in Ready, position 2 of 2.");
@@ -402,7 +369,7 @@ describe("Project Todos drag interactions", () => {
 
   test("a rejected pointer drop PATCH restores the canonical lane and surfaces the server error", async () => {
     responseMode = "failure";
-    await render();
+    await render("/projects/demo/todos?layout=board");
     await pointerDrag(document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement, { x: 500, y: 120 });
     await settle();
     await settle();
@@ -412,7 +379,7 @@ describe("Project Todos drag interactions", () => {
   });
 
   test("touch cross-lane drop activates the TouchSensor and uses the same canonical PATCH", async () => {
-    await render();
+    await render("/projects/demo/todos?layout=board");
     await touchDrag(document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement, { x: 500, y: 120 });
     expect(patches).toEqual([{ expectedRevision: 3, status: "ready", beforeTodoId: null }]);
   });
@@ -434,133 +401,9 @@ describe("Project Todos Plan interactions", () => {
     );
   });
 
-  test("groups detail-page actions by intent without changing lifecycle availability", async () => {
-    addDiscussionSummary();
+  test("creates one atomic Plan Discussion when none exists", async () => {
     await renderSelectedTodo();
-
-    const content = document.querySelector('[aria-labelledby="todo-brief-heading"]');
-    const groups = [...document.querySelectorAll('[role="group"]')];
-
-    expect([...content!.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual(["Edit"]);
-    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
-      "Discuss & Plan",
-      "Execution",
-    ]);
-    expect(actionGroupButtonLabels("Discuss & Plan")).toEqual([
-      "Continue Discussion",
-      "New Discussion",
-    ]);
-    expect(actionGroupButtonLabels("Execution")).toEqual([
-      "Start Work",
-      "Create Automation",
-    ]);
-    expect([...findPanel("Lifecycle").querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual([
-      "Reject",
-      "Move to Ideas",
-      "Move to In Progress",
-      "Move to Done",
-      "Archive",
-    ]);
-  });
-
-  test("keeps linked inventories in loading state until their requests settle", async () => {
-    let resolveSessions: ((response: Response) => void) | undefined;
-    let resolveAutomations: ((response: Response) => void) | undefined;
-    sessionInventoryResponse = () => new Promise<Response>((resolve) => { resolveSessions = resolve; });
-    automationInventoryResponse = () => new Promise<Response>((resolve) => { resolveAutomations = resolve; });
-
-    await renderSelectedTodo();
-
-    expect(findPanel("Sessions").textContent).toContain("Loading sessions…");
-    expect(findPanel("Sessions").textContent).not.toContain("No sessions yet.");
-    expect(findPanel("Automations").textContent).toContain("Loading automations…");
-    expect(findPanel("Automations").textContent).not.toContain("No automations yet.");
-    expect(findPanel("Work").querySelector('[role="group"]')).toBeNull();
-    expect(findPlanButton().disabled).toBe(true);
-
-    await act(async () => {
-      resolveSessions?.(Response.json({ sessions: [] }));
-      resolveAutomations?.(Response.json({ automations: [] }));
-    });
-    await waitFor(() => findPanel("Sessions").textContent?.includes("No sessions yet.") === true);
-    await waitFor(() => findPanel("Automations").textContent?.includes("No automations yet.") === true);
-    expect(findPlanButton().disabled).toBe(false);
-  });
-
-  test("labels a Todo-origin Automation Session as an invocation", async () => {
-    addAutomationInvocationSummary();
-    await renderSelectedTodo();
-
-    expect(findPanel("Sessions").textContent).toContain("Automated checkAutomation invocation");
-    expect(findPanel("Sessions").textContent).not.toContain("Automated checkWork");
-  });
-
-  test("reports linked inventory failures without offering duplicate work actions", async () => {
-    sessionInventoryResponse = () => Response.json({ error: { code: "UNAVAILABLE", message: "Session inventory unavailable" } }, { status: 503 });
-    automationInventoryResponse = () => Response.json({ error: { code: "UNAVAILABLE", message: "Automation inventory unavailable" } }, { status: 503 });
-
-    await renderSelectedTodo();
-    await waitFor(() => findPanel("Sessions").textContent?.includes("Session inventory unavailable") === true);
-    await waitFor(() => findPanel("Automations").textContent?.includes("Automation inventory unavailable") === true);
-
-    expect(findPanel("Sessions").textContent).not.toContain("No sessions yet.");
-    expect(findPanel("Automations").textContent).not.toContain("No automations yet.");
-    expect(findPanel("Work").textContent).toContain("Linked work is unavailable");
-    expect(findPanel("Work").querySelector('[role="group"]')).toBeNull();
-    expect(findPlanButton().disabled).toBe(true);
-  });
-
-  test("makes existing work the primary continuation and does not create a Session", async () => {
-    addWorkSummary();
-    await renderSelectedTodo();
-
-    expect(actionGroupButtonLabels("Execution")).toEqual([
-      "Continue Work",
-      "New Work Session",
-      "Create Automation",
-    ]);
-
-    const continueButton = findActionGroup("Execution").querySelector("button");
-    expect(continueButton?.textContent).toContain("Continue Work");
-    await click(continueButton as HTMLButtonElement);
-
-    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
-    expect(patches).toEqual([{ expectedRevision: 3, status: "in_progress" }]);
-    expect(requests.filter((request) =>
-      request.method === "POST" && request.path.endsWith("/todos/ready/sessions"),
-    )).toHaveLength(0);
-  });
-
-  test("names and creates an additional Work Session explicitly", async () => {
-    addWorkSummary();
-    createSessionResponse = () => Response.json({ todo: todos[2], sessionId: "work-new" });
-    await renderSelectedTodo();
-
-    const newSessionButton = [...findActionGroup("Execution").querySelectorAll("button")].find((button) =>
-      button.textContent?.includes("New Work Session"),
-    );
-    expect(newSessionButton).toBeDefined();
-    await click(newSessionButton as HTMLButtonElement);
-
-    const creates = requests.filter((request) =>
-      request.method === "POST" && request.path.endsWith("/todos/ready/sessions"),
-    );
-    expect(creates).toHaveLength(1);
-    expect(creates[0]?.body).toEqual({ expectedRevision: 3, entry: "work" });
-    await waitFor(() => document.querySelector('[data-testid="session-page"]') !== null);
-  });
-
-  test("renders responsive detail controls and creates one atomic Plan Discussion when none exists", async () => {
-    await renderSelectedTodo();
-
-    const brief = document.querySelector('[aria-labelledby="todo-brief-heading"]');
-    const back = document.querySelector('[aria-label="Back to Todos"]');
     const planButton = findPlanButton();
-    expect(brief).not.toBeNull();
-    expect(back?.className).toContain("focus-visible:ring-2");
-    expect(back?.className).toContain("[@media(pointer:coarse)]:h-11");
-    expect(back?.className).toContain("[@media(pointer:coarse)]:w-11");
-    expect(planButton.className).toContain("[@media(pointer:coarse)]:min-h-11");
     expect(planButton.disabled).toBe(false);
 
     await click(planButton);
@@ -688,7 +531,7 @@ describe("Project Todos Plan interactions", () => {
       request.method === "POST" && request.path.endsWith("/todos/ready/sessions"),
     )).toHaveLength(0);
     expect(document.querySelector('[data-testid="session-page"]')).toBeNull();
-    const error = findPanel("Plan").querySelector('[role="alert"]');
+    const error = document.querySelector('[role="alert"]');
     expect(error?.textContent).toBe("Project not found");
   });
 
@@ -720,40 +563,103 @@ describe("Project Todos Plan interactions", () => {
     });
     await waitFor(() => planButton.disabled === false);
 
-    expect(planButton.textContent).toContain(TODO_PLAN_ACTION_LABEL);
-    const error = findPanel("Plan").querySelector('[role="alert"]');
+    expect(planButton.textContent).toContain("Generate Plan");
+    const error = document.querySelector('[role="alert"]');
     expect(error?.textContent).toBe("Plan service unavailable");
   });
 });
 
-describe("Project Todos Run now recovery", () => {
-  test("shows retained entity links and blocks repeating the unchanged indeterminate request", async () => {
-    runNowResponse = () => Response.json({
-      error: {
-        code: "INTERNAL_ERROR",
-        message: "Run now needs manual recovery",
-        details: {
-          scopeCode: "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED",
-          todoId: "todo-retained",
-          sessionId: "session-retained",
-        },
-      },
-    }, { status: 500 });
+describe("Project Todos preview actions", () => {
+  test("shows the exact unlinked action matrix for every active lifecycle status", async () => {
+    todos.push(todo("progress", "In Progress", "in_progress"), todo("done", "Done", "done"));
     await render();
-    const content = document.querySelector('[aria-label="New Todo content"]') as HTMLTextAreaElement;
-    await changeValue(content, "Risky request");
-    const runNowButton = [...document.querySelectorAll("button")].find((button) => button.textContent === "Run now") as HTMLButtonElement;
 
-    await click(runNowButton);
-    await waitFor(() => document.querySelector('[role="alert"]')?.textContent?.includes("Do not retry") === true);
+    const cases = [
+      ["idea", ["Start discussion", "Open details"]],
+      ["ready", ["Start Work", "Open details", "Discussion"]],
+      ["progress", ["Start Work", "Open details", "Discussion"]],
+      ["done", ["Open details"]],
+    ] as const;
 
-    const alert = document.querySelector('[role="alert"]')!;
-    expect(alert.querySelector('a[href="/projects/demo/todos/todo-retained"]')).not.toBeNull();
-    expect(alert.querySelector('a[href="/projects/demo/sessions/session-retained"]')).not.toBeNull();
-    expect(runNowButton.disabled).toBe(true);
-
-    await changeValue(content, "Different request");
-    expect(runNowButton.disabled).toBe(false);
-    expect(document.querySelector('[role="alert"]')).toBeNull();
+    for (const [todoId, expected] of cases) {
+      await openPreview(todoId);
+      expect(previewButtonLabels()).toEqual([...expected]);
+      await closePreview();
+    }
   });
+
+  test("replaces creation actions with exact continuation actions when linked work exists", async () => {
+    todos.push(todo("progress", "In Progress", "in_progress"), todo("done", "Done", "done"));
+    addDiscussionSummary("idea-discussion", "idea");
+    addDiscussionSummary("ready-discussion", "ready");
+    addWorkSummary("ready-work", "ready");
+    addDiscussionSummary("progress-discussion", "progress");
+    addWorkSummary("progress-work", "progress");
+    await render();
+
+    const cases = [
+      ["idea", ["Continue Discussion", "Open details"]],
+      ["ready", ["Continue Work", "Open details", "Continue Discussion"]],
+      ["progress", ["Continue Work", "Open details", "Continue Discussion"]],
+      ["done", ["Open details"]],
+    ] as const;
+
+    for (const [todoId, expected] of cases) {
+      await openPreview(todoId);
+      expect(previewButtonLabels()).toEqual([...expected]);
+      await closePreview();
+    }
+  });
+});
+
+describe("Project Todos transient and keyboard contracts", () => {
+  test("contains preview focus, cycles Tab in both directions, and restores the exact origin", async () => {
+    await render();
+    const origin = document.querySelector('[data-testid="todo-open-idea"]') as HTMLButtonElement;
+    await click(origin);
+    await waitFor(() => document.activeElement?.id === "todo-preview-heading");
+
+    await key(document.activeElement as HTMLElement, "Tab");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Close preview");
+
+    await key(document.activeElement as HTMLElement, "Tab", { shiftKey: true });
+    expect(document.activeElement?.textContent).toBe("Open details");
+    await key(document.activeElement as HTMLElement, "Tab");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Close preview");
+
+    await key(document.activeElement as HTMLElement, "Escape");
+    await waitFor(() => document.querySelector('[data-testid="todo-preview"]') === null);
+    await waitFor(() => document.activeElement === origin);
+  });
+
+  for (const width of [720, 721] as const) {
+    test(`${width}px ${width === 720 ? "opens canonical detail directly" : "opens desktop preview"}`, async () => {
+      setViewport(width);
+      await render();
+      await click(document.querySelector('[data-testid="todo-open-idea"]') as HTMLButtonElement);
+      if (width === 720) {
+        await waitFor(() => document.querySelector('[aria-labelledby="todo-content-heading"]') !== null);
+        expect(document.querySelector('[data-testid="todo-preview"]')).toBeNull();
+      } else {
+        await waitFor(() => document.querySelector('[data-testid="todo-preview"]') !== null);
+        expect(document.querySelector('[aria-labelledby="todo-content-heading"]')).toBeNull();
+      }
+    });
+  }
+
+  for (const [surface, width] of [["rejected", 1024], ["rejected", 390], ["archived", 1024], ["archived", 390]] as const) {
+    test(`${surface} at ${width}px always opens canonical detail and never preview`, async () => {
+      setViewport(width);
+      const item = surface === "rejected"
+        ? { ...todo("rejected", "Rejected item", "rejected"), rejectionReason: "Not now" }
+        : { ...todo("archived", "Archived item", "done"), archivedAt: 2 };
+      todos.push(item);
+      await render(`/projects/demo/todos?surface=${surface}`);
+      await click(document.querySelector(`[data-testid="todo-${surface}"]`) as HTMLButtonElement);
+      await waitFor(() => document.querySelector('[aria-labelledby="todo-content-heading"]') !== null);
+      expect(document.querySelector('[data-testid="todo-preview"]')).toBeNull();
+      expect(document.querySelector('[aria-labelledby="todo-content-heading"]')?.textContent).toContain(surface === "rejected" ? "Rejected item" : "Archived item");
+      expect(Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === (surface === "rejected" ? "Restore to Idea" : "Restore"))).toBe(true);
+    });
+  }
 });

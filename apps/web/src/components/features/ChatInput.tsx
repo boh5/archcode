@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, FilePlus, Loader2, Square, X } from "lucide-react";
+import { ArrowUp, File, FilePlus, Loader2, Square, X } from "lucide-react";
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_ATTACHMENT_SIZE_BYTES,
@@ -21,7 +21,6 @@ import { sessionFamilyActivityLabel } from "../../lib/session-family-presentatio
 import { getCompleteProjectSkillInventory, type ProjectSkillPickerItem } from "../../api/skills";
 import type { StatusTone, VisualStatusKind } from "../../lib/status-visuals";
 import { StatusGlyph } from "../primitives/StatusGlyph";
-import { formatAttachmentSize } from "../primitives/AttachmentChip";
 
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
@@ -36,7 +35,6 @@ type DraftAttachment = {
   status: "ready" | "uploading" | "uploaded" | "error";
   descriptor?: AttachmentDescriptor;
   error?: string;
-  previewUrl?: string;
 };
 
 const UPLOAD_LIMIT_GUIDANCE = "Files are limited to 50 MiB. Compress or split it, or place it in the workspace and send its path.";
@@ -51,16 +49,13 @@ function uploadErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Upload failed. Retry from the beginning.";
 }
 
-function releasePreview(attachment: DraftAttachment): void {
-  if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-}
-
 export interface ChatInputProps {
   slug: string;
   sessionId: string;
   activity: SessionFamilyActivity | undefined;
   hitlReady: boolean;
   hasPendingHitl: boolean;
+  terminalFailed?: boolean;
   focusOnReady?: boolean;
 }
 
@@ -68,6 +63,7 @@ function composerStatus(
   activity: SessionFamilyActivity | undefined,
   hitlReady: boolean,
   hasPendingHitl: boolean,
+  terminalFailed: boolean,
 ): { label: string; kind: VisualStatusKind; tone?: StatusTone } {
   if (activity === undefined) return { label: "Connecting", kind: "running", tone: "neutral" };
   if (!hitlReady) return { label: "Syncing", kind: "running", tone: "info" };
@@ -79,6 +75,7 @@ function composerStatus(
   if (activity === "waiting_for_human") {
     return { label: sessionFamilyActivityLabel(activity), kind: "pending" };
   }
+  if (terminalFailed) return { label: "Failed", kind: "failed" };
   return { label: "Ready", kind: "idle" };
 }
 
@@ -88,6 +85,7 @@ export function ChatInput({
   activity,
   hitlReady,
   hasPendingHitl,
+  terminalFailed = false,
   focusOnReady = false,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
@@ -96,7 +94,6 @@ export function ChatInput({
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [skillInventory, setSkillInventory] = useState<ProjectSkillPickerItem[]>([]);
   const [skillInventoryState, setSkillInventoryState] = useState<"idle" | "loading" | "ready" | "failed">("idle");
-  const [hitlComposerExpanded, setHitlComposerExpanded] = useState(false);
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string>();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -134,7 +131,9 @@ export function ChatInput({
     && !hasAttachmentError
     && !attachmentUploadInProgress
     && !(hasAttachments && isSlashInput(value));
-  const status = composerStatus(activity, hitlReady, hasPendingHitl);
+  const terminalIsStop = isQueueing && !canSubmit;
+  const terminalIsQueue = !terminalIsStop && (isQueueing || hasPendingHitl);
+  const status = composerStatus(activity, hitlReady, hasPendingHitl, terminalFailed);
   const skillUseInput = /^\/skill\s+use(?:\s+(.*))?$/i.exec(value);
   const selectingSkill = skillUseInput !== null;
   const skillQuery = skillUseInput?.[1]?.trim().toLowerCase() ?? "";
@@ -187,7 +186,7 @@ export function ChatInput({
     const element = textareaRef.current;
     if (!element) return;
     element.style.height = "auto";
-    element.style.height = `${Math.min(element.scrollHeight, 200)}px`;
+    element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
   }, []);
 
   useEffect(() => {
@@ -197,14 +196,6 @@ export function ChatInput({
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
-
-  useEffect(() => () => {
-    for (const attachment of attachmentsRef.current) releasePreview(attachment);
-  }, []);
-
-  useEffect(() => {
-    if (!hasPendingHitl) setHitlComposerExpanded(false);
-  }, [hasPendingHitl]);
 
   useEffect(() => {
     if (!focusOnReady || !canCompose || focusOnReadyAppliedRef.current) return;
@@ -230,10 +221,6 @@ export function ChatInput({
   }, [showSlashMenu]);
 
   const replaceAttachments = useCallback((next: DraftAttachment[]) => {
-    const retained = new Set(next.map((attachment) => attachment.id));
-    for (const attachment of attachmentsRef.current) {
-      if (!retained.has(attachment.id)) releasePreview(attachment);
-    }
     attachmentsRef.current = next;
     setAttachments(next);
   }, []);
@@ -260,9 +247,6 @@ export function ChatInput({
       id: createClientUuid(),
       file,
       status: "ready" as const,
-      previewUrl: file.type.startsWith("image/") && typeof URL.createObjectURL === "function"
-        ? URL.createObjectURL(file)
-        : undefined,
     }));
     setAttachmentNotice(undefined);
     replaceAttachments([...attachmentsRef.current, ...added]);
@@ -472,15 +456,6 @@ export function ChatInput({
     replaceAttachments(attachmentsRef.current.filter((attachment) => attachment.id !== id));
   }, [replaceAttachments]);
 
-  const moveAttachment = useCallback((id: string, direction: -1 | 1) => {
-    const index = attachmentsRef.current.findIndex((attachment) => attachment.id === id);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= attachmentsRef.current.length) return;
-    const next = [...attachmentsRef.current];
-    [next[index], next[target]] = [next[target], next[index]];
-    replaceAttachments(next);
-  }, [replaceAttachments]);
-
   const handleFileSelection = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     addFiles(Array.from(event.target.files ?? []));
     // Permit retrying the same file after removal or an upload error.
@@ -505,46 +480,6 @@ export function ChatInput({
     event.preventDefault();
     addFiles(images);
   }, [addFiles]);
-
-  if (hasPendingHitl && !hitlComposerExpanded) {
-    return (
-      <div className="relative" data-testid="conversation-composer">
-        <div
-          className="flex min-h-10 min-w-0 items-center gap-2 rounded-sm border border-border-subtle bg-bg-elevated px-1.5"
-          data-density="collapsed"
-          data-testid="composer-card"
-        >
-          <button
-            type="button"
-            className="flex min-h-9 min-w-0 flex-1 items-center justify-between gap-3 rounded-sm px-2 text-left text-[12px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-            data-testid="hitl-queue-composer-trigger"
-            aria-expanded="false"
-            onClick={() => setHitlComposerExpanded(true)}
-          >
-            <span>Queue another instruction…</span>
-            <span className="hidden items-center gap-1.5 whitespace-nowrap text-[11px] text-text-tertiary sm:flex" aria-live="polite">
-              <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
-              {status.label}
-            </span>
-          </button>
-          {isQueueing && (
-            <button
-              type="button"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-text-primary text-bg-base transition-colors duration-[var(--motion-hover)] hover:bg-error hover:text-bg-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted"
-              disabled={stopSession.isPending}
-              onClick={() => stopSession.mutate({ slug, rootSessionId: sessionId })}
-              title="Stop"
-              aria-label="Stop session"
-            >
-              {stopSession.isPending
-                ? <Loader2 size={14} className="animate-activity" />
-                : <Square size={11} fill="currentColor" />}
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="relative" data-testid="conversation-composer">
@@ -576,7 +511,7 @@ export function ChatInput({
               aria-selected={index === slashActiveIndex}
               disabled={unavailable}
               key={skill ? `${skill.source}:${skill.name}:${index}` : command!.name}
-              className={`flex min-w-0 w-full flex-wrap items-start gap-x-2 gap-y-1 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-hover)] [@media(pointer:coarse)]:min-h-11 ${
+              className={`flex min-w-0 w-full flex-wrap items-start gap-x-2 gap-y-1 rounded-sm px-3 py-2 text-left text-[13px] transition-colors duration-[var(--motion-fast)] [@media(pointer:coarse)]:min-h-11 ${
                 index === slashActiveIndex ? "bg-bg-hover" : "hover:bg-bg-hover"
               } disabled:cursor-not-allowed disabled:opacity-50`}
               onClick={() => skill ? selectSkill(skill) : selectSlashCommand(command!)}
@@ -599,31 +534,27 @@ export function ChatInput({
       )}
 
       <div
-        className="overflow-visible rounded-xl border border-border-control bg-bg-elevated shadow-sm transition-[border-color,box-shadow] duration-[var(--motion-hover)] focus-within:border-brand focus-within:ring-2 focus-within:ring-brand"
+        className="composer-card overflow-visible rounded-xl border transition-[border-color,box-shadow] duration-[var(--motion-fast)]"
         data-testid="composer-card"
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleDrop}
       >
         {attachments.length > 0 && (
-          <ul className="mx-3 mt-3 flex max-h-40 flex-col gap-1 overflow-y-auto" aria-label="Message attachments" data-testid="composer-attachments">
-            {attachments.map((attachment, index) => (
-              <li key={attachment.id} className="flex min-w-0 items-center gap-2 rounded-sm border border-border-subtle bg-bg-base px-2 py-1.5">
-                {attachment.previewUrl && (
-                  <img src={attachment.previewUrl} alt="" className="h-8 w-8 shrink-0 rounded-sm object-cover" />
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12px] text-text-primary">{attachment.file.name}</span>
-                  <span className="block text-[11px] text-text-tertiary">{formatAttachmentSize(attachment.file.size)} · {attachment.status}</span>
-                  {attachment.error && <span className="block text-[11px] text-error" role="alert">{attachment.error}</span>}
+          <ul className="mx-3 mt-3 flex max-h-40 flex-wrap gap-1.5 overflow-y-auto" aria-label="Message attachments" data-testid="composer-attachments">
+            {attachments.map((attachment) => (
+              <li key={attachment.id} className={`flex min-h-8 max-w-full items-center gap-1.5 rounded-sm border px-2 py-1 text-[12px] [@media(pointer:coarse)]:min-h-11 ${attachment.status === "error" ? "border-error bg-error-field" : "border-border-subtle bg-bg-base"}`}>
+                <File size={13} className="shrink-0 text-text-tertiary" aria-hidden="true" />
+                <span className="min-w-0 max-w-[220px]">
+                  <span className="block truncate text-text-primary">{attachment.file.name}</span>
+                  {attachment.status === "uploading" && <span className="block text-[11px] text-text-tertiary" role="status">Uploading…</span>}
+                  {attachment.error && <span className="block max-w-[260px] text-[11px] leading-4 text-error" role="alert">{attachment.error}</span>}
                 </span>
-                <div className="flex shrink-0 items-center gap-1">
-                  {attachment.status === "error" && (
-                    <button className="rounded-sm px-1.5 py-1 text-[11px] text-brand hover:bg-bg-hover" disabled={attachmentUploadInProgress} type="button" onClick={() => void uploadAttachment(attachment)}>Retry</button>
-                  )}
-                  <button aria-label={`Move ${attachment.file.name} earlier`} className="rounded-sm px-1 py-1 text-[11px] text-text-tertiary hover:bg-bg-hover disabled:opacity-30" disabled={index === 0 || attachmentUploadInProgress} type="button" onClick={() => moveAttachment(attachment.id, -1)}>↑</button>
-                  <button aria-label={`Move ${attachment.file.name} later`} className="rounded-sm px-1 py-1 text-[11px] text-text-tertiary hover:bg-bg-hover disabled:opacity-30" disabled={index === attachments.length - 1 || attachmentUploadInProgress} type="button" onClick={() => moveAttachment(attachment.id, 1)}>↓</button>
-                  <button aria-label={`Remove ${attachment.file.name}`} className="rounded-sm p-1 text-text-tertiary hover:bg-bg-hover hover:text-error disabled:opacity-30" disabled={attachmentUploadInProgress} type="button" onClick={() => removeAttachment(attachment.id)}><X size={13} /></button>
-                </div>
+                {attachment.status === "error" && (
+                  <button className="min-h-7 rounded-sm px-1.5 text-[11px] font-medium text-brand hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:min-h-11" disabled={attachmentUploadInProgress} type="button" onClick={() => void uploadAttachment(attachment)}>Retry</button>
+                )}
+                {attachment.status !== "uploading" && (
+                  <button aria-label={`Remove ${attachment.file.name}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-30 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" disabled={attachmentUploadInProgress} type="button" onClick={() => removeAttachment(attachment.id)}><X size={13} /></button>
+                )}
               </li>
             ))}
           </ul>
@@ -654,12 +585,12 @@ export function ChatInput({
                     : "Send a message…"
           }
           rows={1}
-          className="block min-h-[56px] max-h-[200px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-2 pt-3.5 font-sans text-[16px] leading-6 text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary sm:text-[15px] sm:leading-6"
+          className="block min-h-14 max-h-[160px] w-full resize-none overflow-y-auto border-0 bg-transparent px-4 pb-[7px] pt-[13px] font-sans text-[16px] leading-[1.45] tracking-normal text-text-primary outline-none placeholder:text-text-tertiary disabled:cursor-not-allowed disabled:text-text-tertiary min-[761px]:text-[15px]"
         />
 
         {attachmentNotice && <p className="mx-3 mt-1 text-[11px] leading-4 text-warning" role="alert">{attachmentNotice}</p>}
 
-        <div className="flex min-h-[38px] items-center justify-between gap-3 px-3 pb-2" data-testid="composer-toolbar">
+        <div className="flex min-h-10 items-center justify-between gap-3 px-2.5 pb-[9px]" data-testid="composer-toolbar">
           <div className="flex shrink-0 items-center gap-2 text-[11px] text-text-tertiary" data-testid="composer-left-controls">
             <input
               ref={fileInputRef}
@@ -671,7 +602,7 @@ export function ChatInput({
             />
             <button
               type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!canCompose || attachmentUploadInProgress}
               onClick={() => fileInputRef.current?.click()}
               title="Attach file"
@@ -679,20 +610,10 @@ export function ChatInput({
             >
               <FilePlus size={16} />
             </button>
-            <span className="flex shrink-0 items-center gap-2 max-[520px]:gap-0" aria-live="polite">
+            <span className="flex shrink-0 items-center gap-0 min-[521px]:gap-2" aria-live="polite">
               <StatusGlyph kind={status.kind} tone={status.tone} size={11} />
-              <span className="max-[520px]:sr-only">{status.label}</span>
+              <span className="sr-only min-[521px]:not-sr-only">{status.label}</span>
             </span>
-            {hasPendingHitl && (
-              <button
-                type="button"
-                className="shrink-0 rounded-sm px-1.5 py-1 text-[11px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                aria-label="Collapse queued-message composer"
-                onClick={() => setHitlComposerExpanded(false)}
-              >
-                Hide
-              </button>
-            )}
           </div>
 
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
@@ -705,37 +626,24 @@ export function ChatInput({
                 disabled={patchModelSelection.isPending}
               /> : <span className="block max-w-[180px] truncate">Loading model…</span>}
             </div>
-            <span className="mr-1 text-[11px] text-text-tertiary max-[720px]:hidden">
+            <span className="whitespace-nowrap text-[9.5px] leading-[1.5] text-text-tertiary [@media(max-width:720px)]:hidden">
               {isQueueing ? "Enter to queue" : "Shift+Enter for newline"}
             </span>
-            {isQueueing && (
-              <button
-                type="button"
-                className="flex h-8 w-8 items-center justify-center rounded-sm bg-text-primary text-bg-base transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover hover:text-bg-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted"
-                disabled={!canSubmit}
-                onClick={sendMessage}
-                title="Queue message"
-                aria-label="Queue message"
-              >
-                {postMessage.isPending
-                  ? <Loader2 size={14} className="animate-activity" />
-                  : <ArrowUp size={16} strokeWidth={2} />}
-              </button>
-            )}
             <button
               type="button"
-              className={`flex h-8 w-8 items-center justify-center rounded-sm transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:bg-bg-active disabled:text-text-muted ${isQueueing
-                ? "bg-text-primary text-bg-base hover:bg-error hover:text-bg-overlay"
-                : "bg-text-primary text-bg-base hover:bg-brand-hover hover:text-bg-overlay"
+              className={`flex h-[34px] w-[34px] items-center justify-center rounded-full transition-colors [transition-property:background-color,border-color,box-shadow,transform] duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-[0.38] ${terminalIsStop
+                ? "bg-bg-active text-text-secondary shadow-[inset_0_0_0_1px_var(--border-default)] hover:bg-error hover:text-bg-overlay hover:shadow-none"
+                : "composer-terminal-primary border border-brand text-brand-ink hover:-translate-y-px hover:border-brand-hover active:translate-y-0 active:scale-[0.96]"
               }`}
-              disabled={isQueueing ? stopSession.isPending : isStopping || !canSubmit}
-              onClick={isQueueing
+              disabled={terminalIsStop ? isPending : isStopping || !canSubmit}
+              onClick={terminalIsStop
                 ? () => stopSession.mutate({ slug, rootSessionId: sessionId })
                 : sendMessage}
-              title={isQueueing ? "Stop" : isStopping ? "Stopping" : hasPendingHitl ? "Queue message" : "Send message"}
-              aria-label={isQueueing ? "Stop session" : isStopping ? "Session stopping" : hasPendingHitl ? "Queue message" : "Send message"}
+              title={terminalIsStop ? "Stop" : isStopping ? "Stopping" : terminalIsQueue ? "Queue message" : "Send message"}
+              aria-label={terminalIsStop ? "Stop session" : isStopping ? "Session stopping" : terminalIsQueue ? "Queue message" : "Send message"}
+              data-testid="composer-terminal-action"
             >
-              {isQueueing
+              {terminalIsStop
                 ? stopSession.isPending
                   ? <Loader2 size={14} className="animate-activity" />
                   : <Square size={11} fill="currentColor" />

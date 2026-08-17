@@ -23,6 +23,7 @@ import type {
   SessionSummary,
   ProjectSessionInventoryItem,
   ProjectTodoRunNowResponse,
+  ProjectTodoStartDiscussionResponse,
   Automation,
   AutomationAction,
   AutomationTrigger,
@@ -37,10 +38,7 @@ import { createClientUuid } from "../lib/client-uuid";
 export async function invalidateProjectCatalog(
   queryClient: Pick<QueryClient, "invalidateQueries">,
 ): Promise<void> {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: queryKeys.projects }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.home }),
-  ]);
+  await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
 }
 
 export function useUpdateProjectName() {
@@ -147,7 +145,6 @@ export function useDeleteSession() {
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.sessions(variables.slug) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.projectTodos(variables.slug) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.home }),
       ]);
     },
   });
@@ -360,7 +357,6 @@ async function invalidateSessionGoalQueries(queryClient: QueryClient, slug: stri
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.session(slug, sessionId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.home }),
   ]);
 }
 
@@ -419,7 +415,6 @@ export function invalidateAutomation(
 ): Promise<void[]> {
   return Promise.all([
     qc.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) }),
-    qc.invalidateQueries({ queryKey: queryKeys.home }),
     ...(automationId === undefined ? [] : [
       qc.invalidateQueries({ queryKey: queryKeys.automation(slug, automationId) }),
       qc.invalidateQueries({ queryKey: queryKeys.automationInvocations(slug, automationId) }),
@@ -587,7 +582,6 @@ async function invalidateProjectTodoSession(
   await Promise.all([
     invalidateProjectTodo(queryClient, slug),
     queryClient.invalidateQueries({ queryKey: queryKeys.sessions(slug) }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.home }),
     queryClient.invalidateQueries({ queryKey: queryKeys.projectAutomations(slug) }),
   ]);
 }
@@ -614,6 +608,27 @@ export function useRunProjectTodoNow() {
         method: "POST",
         body: { clientRequestId, content },
       }),
+    onSettled: async (_data, _error, variables) => {
+      await invalidateProjectTodoSession(queryClient, variables.slug);
+    },
+  });
+}
+
+export function useStartProjectTodoDiscussion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      slug,
+      clientRequestId,
+      content,
+    }: {
+      slug: string;
+      clientRequestId: string;
+      content: string;
+    }) => apiFetch<ProjectTodoStartDiscussionResponse>(`${todoUrl(slug)}/start-discussion`, {
+      method: "POST",
+      body: { clientRequestId, content },
+    }),
     onSettled: async (_data, _error, variables) => {
       await invalidateProjectTodoSession(queryClient, variables.slug);
     },

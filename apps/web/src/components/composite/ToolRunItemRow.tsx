@@ -54,7 +54,7 @@ export function ToolRunItemRow({
   return (
     <div
       aria-label={label}
-      className={`grid min-h-9 grid-cols-[minmax(0,160px)_minmax(0,1fr)_auto] items-center gap-3 border-b border-border-subtle px-2 py-1.5 last:border-b-0 max-[560px]:grid-cols-[minmax(0,112px)_minmax(0,1fr)_auto] ${WORK_ACTIVITY_NESTED_LANE_CLASS}`}
+      className={`grid min-h-9 grid-cols-[minmax(98px,160px)_minmax(0,1fr)_auto] items-center gap-[9px] rounded-[5px] border-t border-border-subtle px-[9px] py-[7px] first:border-t-0 [@media(max-width:560px)]:grid-cols-[minmax(90px,112px)_minmax(0,1fr)_auto] [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_NESTED_LANE_CLASS}`}
       data-testid="tool-run-child"
       role="listitem"
       title={label}
@@ -62,16 +62,16 @@ export function ToolRunItemRow({
       <code className="min-w-0 truncate font-mono text-[12px] font-semibold text-text-tertiary" title={part.toolName}>
         {part.toolName}
       </code>
-      <span className="truncate text-[13px] font-medium text-text-secondary">
+      <span className="truncate text-[12.5px] font-medium text-text-secondary">
         {summary.primary}
       </span>
       {(part.state === "pending" || part.state === "running") && (
-        <span className="text-[10px] font-semibold text-signal-foreground">
+        <span className="text-[11px] font-semibold text-signal-foreground">
           {part.state === "pending" ? "Pending" : "Running"}
         </span>
       )}
       {part.state === "interrupted" && (
-        <span className="text-[10px] font-semibold text-warning">Interrupted</span>
+        <span className="text-[11px] font-semibold text-warning">Interrupted</span>
       )}
     </div>
   );

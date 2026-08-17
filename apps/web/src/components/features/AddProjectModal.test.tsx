@@ -223,9 +223,12 @@ describe("AddProjectModal", () => {
   test("renders one directory input, no project name input, and submits only selected path", () => {
     const tree = renderWithState(["", "", "/workspace/archcode", -1]);
     const inputs = findAll(tree, (element) => element.type === "input");
+    const dialog = findAll(tree, (element) => element.props?.role === "dialog")[0];
 
     expect(inputs).toHaveLength(1);
     expect(inputs[0]?.props?.placeholder).toBe("Search or type a folder path…");
+    expect(dialog?.props?.["aria-modal"]).toBe("true");
+    expect(dialog?.props?.["aria-labelledby"]).toBe("add-project-title");
     expect(textContent(tree)).not.toContain("Name");
 
     const submit = findAll(
@@ -337,17 +340,20 @@ describe("AddProjectModal", () => {
     expect(setActiveIndex).toHaveBeenCalledWith(-1);
   });
 
-  test("input Escape handler closes the dialog", () => {
+  test("dialog Escape handler closes the modal", () => {
     const tree = renderWithState(["", "", null, -1]);
-    const input = findAll(tree, (element) => element.type === "input")[0];
+    const overlay = findAll(tree, (element) => typeof element.props?.onKeyDownCapture === "function")[0];
     const preventDefault = mock(() => {});
+    const stopPropagation = mock(() => {});
 
-    (input?.props?.onKeyDown as (event: { key: string; preventDefault: () => void }) => void)({
+    (overlay?.props?.onKeyDownCapture as (event: { key: string; preventDefault: () => void; stopPropagation: () => void }) => void)({
       key: "Escape",
       preventDefault,
+      stopPropagation,
     });
 
     expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
   });
 });

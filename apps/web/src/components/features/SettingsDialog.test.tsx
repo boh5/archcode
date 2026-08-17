@@ -105,8 +105,9 @@ describe("SettingsDialog", () => {
 
   test("keeps providers and models in one continuous Models surface", () => {
     const tree = SettingsModelsPanel({ config, adapterCatalog, onChange: () => {} });
-    const header = findAll(tree, (element) => element.props?.title === "Models")[0];
-    expect(header?.props?.description).toBe("Providers and their model profiles are configured together.");
+    const header = findAll(tree, (element) => element.props?.title === "Providers and models")[0];
+    expect(header?.props?.kicker).toBe("Models");
+    expect(header?.props?.description).toBe("Configure provider adapters, credentials, model limits, modalities, and variants.");
     expect(textContent(tree)).toContain("local");
     const editor = findAll(tree, (element) => element.props?.providerId === "local" && element.props?.modelId === "demo-model");
     expect(editor).toHaveLength(1);

@@ -639,6 +639,60 @@ describe("createRuntime", () => {
       setLlmAdapterForTest(undefined);
     }
   });
+  test("uses the preallocated Todo Discussion Session identity through the Runtime adapter", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpRuntimeFactory: () => makeFakeMcpRuntime(),
+    });
+    const project = await runtime.projectRegistry.add({
+      workspaceRoot,
+      name: "Idempotent Todo Discussion",
+    });
+    const context = await runtime.contextResolver.resolve(workspaceRoot);
+    const request = {
+      clientRequestId: crypto.randomUUID(),
+      content: "Discuss through the Runtime adapter",
+    };
+
+    installTestLlmAdapter();
+    try {
+      const created = await context.todos.startDiscussion(request);
+      const familyIdle = nextFamilyActivity(
+        runtime,
+        project.slug,
+        created.session.sessionId,
+        "idle",
+      );
+      if (runtime.getSessionFamilyActivity(workspaceRoot, created.session.sessionId) !== "idle") {
+        await familyIdle;
+      }
+      const replay = await context.todos.startDiscussion(request);
+      const stored = await runtime.getSessionFile(workspaceRoot, created.session.sessionId);
+
+      expect(replay.todo.id).toBe(created.todo.id);
+      expect(replay.session.sessionId).toBe(created.session.sessionId);
+      expect(stored).toMatchObject({
+        sessionId: created.session.sessionId,
+        rootSessionId: created.session.sessionId,
+        agentName: "discussion",
+        source: {
+          kind: "todo",
+          todoId: created.todo.id,
+          entry: "discussion",
+        },
+      });
+      expect((await runtime.listSessions(workspaceRoot)).filter(
+        (session) => session.source?.kind === "todo"
+          && session.source.todoId === created.todo.id
+          && session.source.entry === "discussion",
+      )).toHaveLength(1);
+      expect(project.slug).toBe(context.project.slug);
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+    }
+  });
   test("integrates Analyst and Build results through the ordinary Lead delegation path", async () => {
     const workspaceRoot = await makeTempRoot();
     const runtime = await createRuntime({
@@ -2026,7 +2080,7 @@ describe("createRuntime", () => {
     });
     await runtime.projectRegistry.add({ workspaceRoot, name: "Todo attachment retention" });
     const todos = (await runtime.contextResolver.resolve(workspaceRoot)).todos;
-    let todo = await todos.createTodo({ content: "Retain the PRD" });
+    let todo = await todos.createTodo({ content: "Retain the attached PRD" });
     const attachmentId = crypto.randomUUID();
     const bytes = new TextEncoder().encode("durable Todo reference");
     const uploaded = await todos.uploadAttachment({

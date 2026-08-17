@@ -86,3 +86,26 @@ export class ProjectTodoRunNowRecoveryError extends Error {
     this.name = "ProjectTodoRunNowRecoveryError";
   }
 }
+
+export class ProjectTodoStartDiscussionConflictError extends Error {
+  readonly code = "PROJECT_TODO_START_DISCUSSION_CONFLICT";
+
+  constructor(public readonly clientRequestId: string) {
+    super(`Start discussion request ${clientRequestId} was already used with different input`);
+    this.name = "ProjectTodoStartDiscussionConflictError";
+  }
+}
+
+export class ProjectTodoStartDiscussionRecoveryError extends Error {
+  readonly code = "PROJECT_TODO_START_DISCUSSION_RECOVERY_REQUIRED";
+
+  constructor(
+    public readonly todoId: string,
+    public readonly sessionId: string,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "ProjectTodoStartDiscussionRecoveryError";
+  }
+}

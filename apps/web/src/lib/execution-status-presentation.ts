@@ -10,6 +10,7 @@ export type ProductExecutionStatus =
   | "waiting_on_child"
   | "resuming"
   | "completed"
+  | "failed"
   | "stopped";
 
 export interface ExecutionStatusPresentation {
@@ -21,14 +22,11 @@ export interface ExecutionStatusPresentation {
 type ExecutionStatus = SessionExecutionRecord["status"];
 
 const STOP_DETAILS: Record<
-  Exclude<ExecutionStatus, "running" | "suspended" | "completed">,
+  Exclude<ExecutionStatus, "running" | "suspended" | "completed" | "failed" | "timed_out" | "max_steps">,
   string
 > = {
-  max_steps: "Max steps",
-  failed: "Failed",
   aborted: "Aborted",
   cancelled: "Cancelled",
-  timed_out: "Timed out",
   interrupted: "Interrupted",
 };
 
@@ -49,6 +47,12 @@ export function presentExecutionStatus(
   }
   if (record.status === "completed")
     return { productStatus: "completed", label: "Completed" };
+  if (record.status === "failed")
+    return { productStatus: "failed", label: "Failed" };
+  if (record.status === "timed_out")
+    return { productStatus: "failed", label: "Failed", detail: "Timed out" };
+  if (record.status === "max_steps")
+    return { productStatus: "failed", label: "Failed", detail: "Max steps" };
   return {
     productStatus: "stopped",
     label: "Stopped",
@@ -71,11 +75,11 @@ export function presentChildExecutionStatus(
     case "completed":
       return { productStatus: "completed", label: "Completed" };
     case "failed":
-      return { productStatus: "stopped", label: "Stopped", detail: "Failed" };
+      return { productStatus: "failed", label: "Failed" };
     case "timed_out":
       return {
-        productStatus: "stopped",
-        label: "Stopped",
+        productStatus: "failed",
+        label: "Failed",
         detail: "Timed out",
       };
     case "cancelled":
@@ -108,12 +112,10 @@ export function executionVisualKind(
       return "running";
     case "completed":
       return "completed";
+    case "failed":
+      return "failed";
     case "stopped":
-      return record.status === "failed" ||
-        record.status === "timed_out" ||
-        record.status === "max_steps"
-        ? "failed"
-        : "stopped";
+      return "stopped";
   }
 }
 
@@ -124,5 +126,6 @@ export function childExecutionVisualKind(
   if (presentation.productStatus === "needs_you") return "needs_you";
   if (presentation.productStatus === "running") return "running";
   if (presentation.productStatus === "completed") return "completed";
-  return status === "failed" || status === "timed_out" ? "failed" : "stopped";
+  if (presentation.productStatus === "failed") return "failed";
+  return "stopped";
 }

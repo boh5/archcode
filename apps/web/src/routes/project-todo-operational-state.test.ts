@@ -6,7 +6,7 @@ import type {
   RootSessionSummary,
   SessionFamilyActivity,
 } from "@archcode/protocol";
-import { deriveProjectTodoOperationalState, type ProjectTodoOperationalFacts } from "./project-todo-presentation";
+import { deriveProjectTodoNeedsUser, deriveProjectTodoOperationalState, type ProjectTodoOperationalFacts } from "./project-todo-presentation";
 
 const todo: ProjectTodo = {
   id: "todo-1",
@@ -98,6 +98,24 @@ describe("Todo operational state", () => {
     }))).toEqual({ label: "Needs you", detail: "Permission", kind: "needs_you" });
   });
 
+  test("uses exact linked-root HITL and never infers Needs you from family activity", () => {
+    const discussion = workSession("discussion", 20, null, {
+      source: { kind: "todo", todoId: todo.id, entry: "discussion" },
+    });
+    expect(deriveProjectTodoNeedsUser(todo, [discussion], new Map([["discussion", "Question"]]))).toBe(true);
+    expect(deriveProjectTodoOperationalState(facts({
+      sessions: [discussion],
+      attentionBySessionId: new Map([["discussion", "Question"]]),
+    }))).toEqual({ label: "Needs you", detail: "Question", kind: "needs_you" });
+
+    const waiting = workSession("waiting", 30, null);
+    expect(deriveProjectTodoNeedsUser(todo, [waiting], new Map())).toBe(false);
+    expect(deriveProjectTodoOperationalState(facts({
+      sessions: [waiting],
+      activityBySessionId: new Map([["waiting", "waiting_for_human"]]),
+    }))).toEqual({ label: "Working", detail: "Waiting for response", kind: "running" });
+  });
+
   test("shows current work instead of an older terminal failure", () => {
     const failed = workSession("failed", 10, "failed");
     const current = workSession("current", 20, null);
@@ -110,7 +128,7 @@ describe("Todo operational state", () => {
   test("uses the latest work result for attention or review", () => {
     expect(deriveProjectTodoOperationalState(facts({
       sessions: [workSession("failed", 10, "timed_out")],
-    }))).toEqual({ label: "Needs attention", detail: "Timed out", kind: "warning" });
+    }))).toEqual({ label: "Failed", detail: "Timed out", kind: "failed" });
     expect(deriveProjectTodoOperationalState(facts({
       sessions: [workSession("completed", 20, "completed"), workSession("failed", 10, "failed")],
     }))).toEqual({ label: "Ready to review", kind: "completed" });
@@ -158,6 +176,6 @@ describe("Todo operational state", () => {
     };
     expect(deriveProjectTodoOperationalState(facts({
       automations: [automation(invocation, "2026-08-04T02:00:00.000Z")],
-    }))).toEqual({ label: "Needs attention", detail: "Automation missed", kind: "warning" });
+    }))).toEqual({ label: "Failed", detail: "Automation missed", kind: "failed" });
   });
 });

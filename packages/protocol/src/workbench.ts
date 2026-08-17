@@ -36,34 +36,19 @@ export interface ProjectTodoRunNowResponse {
   readonly session: RootSessionSummary;
 }
 
+export interface ProjectTodoStartDiscussionResponse {
+  readonly todo: ProjectTodo;
+  readonly session: RootSessionSummary;
+}
+
 export interface WorkbenchProjectRef {
   readonly slug: string;
   readonly name: string;
 }
 
-/** Page-specific Home row; this is not a persisted work item or shared workflow state. */
-export interface HomeSummaryItem {
-  readonly kind: "hitl" | "todo" | "session" | "automation";
-  readonly project: WorkbenchProjectRef;
-  readonly entityId: string;
-  readonly title: string;
-  readonly status: string;
-  readonly href: string;
-  readonly sortAt: number;
-  readonly context?: string;
-}
-
 export interface WorkbenchProjectReadError {
   readonly project: WorkbenchProjectRef;
   readonly message: string;
-}
-
-export interface HomeResponse {
-  readonly needsYou: readonly HomeSummaryItem[];
-  readonly running: readonly HomeSummaryItem[];
-  readonly readyToReview: readonly HomeSummaryItem[];
-  readonly upcoming: readonly HomeSummaryItem[];
-  readonly projectErrors: readonly WorkbenchProjectReadError[];
 }
 
 export interface WorkSearchResult {

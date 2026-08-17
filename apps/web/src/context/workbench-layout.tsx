@@ -4,18 +4,25 @@ import {
   clampInspectorWidth,
   readWorkbenchPreferences,
 } from "../lib/workbench-layout";
-import { focusElementAfterLayoutChange } from "../lib/focus-control";
 
 export interface WorkbenchLayoutValue {
   inspectorCollapsed: boolean;
-  mobileInspectorOpen: boolean;
-  isMobile: boolean;
   inspectorExpanded: boolean;
-  mobileInspectorReturnFocusRef: RefObject<HTMLElement | null>;
+  inspectorOverlayOpen: boolean;
+  inspectorReturnFocusRef: RefObject<HTMLElement | null>;
+  isProjectInventoryCompact: boolean;
+  isInspectorOverlay: boolean;
+  isNavigatorDrawer: boolean;
+  navigatorDrawerOpen: boolean;
+  navigatorDrawerReturnFocusRef: RefObject<HTMLElement | null>;
+  viewportWidth: number;
+  closeNavigatorDrawer: () => void;
+  closeInspectorOverlay: () => void;
+  openNavigatorDrawer: () => void;
+  setNavigatorDrawerOpen: (open: boolean) => void;
   toggleInspector: () => void;
   toggleInspectorSurface: () => void;
   openInspectorSurface: () => void;
-  setMobileInspectorOpen: (open: boolean) => void;
 }
 
 export interface WorkbenchPanelSizesValue {
@@ -36,38 +43,56 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
       return readWorkbenchPreferences(null);
     }
   });
-  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(() => (
-    typeof window !== "undefined" && typeof window.matchMedia === "function"
-      ? window.matchMedia("(max-width: 760px)").matches
-      : false
+  const [viewportWidth, setViewportWidth] = useState(() => (
+    typeof window === "undefined" ? 1440 : window.innerWidth
   ));
-  const mobileInspectorReturnFocusRef = useRef<HTMLElement | null>(null);
-  const mobileInspectorOpenRef = useRef(mobileInspectorOpen);
-  mobileInspectorOpenRef.current = mobileInspectorOpen;
+  const [navigatorDrawerOpen, setNavigatorDrawerOpenState] = useState(false);
+  const [inspectorOverlayOpen, setInspectorOverlayOpen] = useState(false);
+  const viewportWidthRef = useRef(viewportWidth);
+  const pendingResponsiveFocusSelectorsRef = useRef<readonly string[] | null>(null);
+  const inspectorReturnFocusRef = useRef<HTMLElement | null>(null);
+  const navigatorDrawerReturnFocusRef = useRef<HTMLElement | null>(null);
+  const isProjectInventoryCompact = viewportWidth <= 760;
+  const isNavigatorDrawer = viewportWidth <= 980;
+  const isInspectorOverlay = viewportWidth <= 1260;
 
   useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 760px)");
     const update = () => {
+      const nextWidth = window.innerWidth;
       const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const mobileFocusSelector = query.matches && activeElement
-        ? getMobileBreakpointFocusSelector(activeElement)
-        : null;
-      setIsMobile(query.matches);
-      if (mobileFocusSelector) focusElementAfterLayoutChange(mobileFocusSelector, 2);
-      if (!query.matches) {
-        const focusSelector = mobileInspectorOpenRef.current
-          ? '#context-inspector [role="tab"][tabindex="0"], button[aria-controls~="context-inspector"]'
-          : null;
-        setMobileInspectorOpen(false);
-        if (focusSelector) focusElementAfterLayoutChange(focusSelector, 2);
-      }
+      const focusSelectors = activeElement === null
+        ? null
+        : getResponsiveSurfaceFocusSelector(viewportWidthRef.current, nextWidth, activeElement);
+      viewportWidthRef.current = nextWidth;
+      pendingResponsiveFocusSelectorsRef.current = focusSelectors;
+      setViewportWidth(nextWidth);
     };
     update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, []);
+
+  useEffect(() => {
+    const focusSelectors = pendingResponsiveFocusSelectorsRef.current;
+    if (focusSelectors === null) return;
+    if ((!isInspectorOverlay && inspectorOverlayOpen) || (!isNavigatorDrawer && navigatorDrawerOpen)) return;
+    const target = focusSelectors
+      .map((selector) => document.querySelector<HTMLElement>(selector))
+      .find((candidate) => candidate !== null);
+    if (target === undefined) return;
+    pendingResponsiveFocusSelectorsRef.current = null;
+    target.focus();
+  }, [inspectorOverlayOpen, isInspectorOverlay, isNavigatorDrawer, navigatorDrawerOpen, viewportWidth]);
+
+  useEffect(() => {
+    if (isNavigatorDrawer) return;
+    setNavigatorDrawerOpenState(false);
+  }, [isNavigatorDrawer]);
+
+  useEffect(() => {
+    if (isInspectorOverlay) return;
+    setInspectorOverlayOpen(false);
+  }, [isInspectorOverlay]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -88,53 +113,79 @@ export function WorkbenchLayoutProvider({ children }: { children: ReactNode }) {
     ...current,
     inspectorCollapsed: !current.inspectorCollapsed,
   })), []);
-  const updateMobileInspectorOpen = useCallback((open: boolean) => {
+  const setNavigatorDrawerOpen = useCallback((open: boolean) => {
     if (open && document.activeElement instanceof HTMLElement) {
-      mobileInspectorReturnFocusRef.current = document.activeElement;
+      navigatorDrawerReturnFocusRef.current = document.activeElement;
     }
-    setMobileInspectorOpen(open);
+    setNavigatorDrawerOpenState(open);
   }, []);
+  const openNavigatorDrawer = useCallback(() => setNavigatorDrawerOpen(true), [setNavigatorDrawerOpen]);
+  const closeNavigatorDrawer = useCallback(() => setNavigatorDrawerOpenState(false), []);
+  const closeInspectorOverlay = useCallback(() => setInspectorOverlayOpen(false), []);
   const toggleInspectorSurface = useCallback(() => {
-    if (isMobile) {
-      if (!mobileInspectorOpen && document.activeElement instanceof HTMLElement) {
-        mobileInspectorReturnFocusRef.current = document.activeElement;
-      }
-      setMobileInspectorOpen((open) => !open);
+    if (isInspectorOverlay) {
+      setInspectorOverlayOpen((open) => {
+        if (!open && document.activeElement instanceof HTMLElement) {
+          inspectorReturnFocusRef.current = document.activeElement;
+        }
+        return !open;
+      });
       return;
+    }
+    if (preferences.inspectorCollapsed && document.activeElement instanceof HTMLElement) {
+      inspectorReturnFocusRef.current = document.activeElement;
     }
     toggleInspector();
-  }, [isMobile, mobileInspectorOpen, toggleInspector]);
+  }, [isInspectorOverlay, preferences.inspectorCollapsed, toggleInspector]);
   const openInspectorSurface = useCallback(() => {
-    if (isMobile) {
-      if (document.activeElement instanceof HTMLElement) {
-        mobileInspectorReturnFocusRef.current = document.activeElement;
+    if (isInspectorOverlay) {
+      if (!inspectorOverlayOpen && document.activeElement instanceof HTMLElement) {
+        inspectorReturnFocusRef.current = document.activeElement;
       }
-      setMobileInspectorOpen(true);
+      setInspectorOverlayOpen(true);
       return;
+    }
+    if (preferences.inspectorCollapsed && document.activeElement instanceof HTMLElement) {
+      inspectorReturnFocusRef.current = document.activeElement;
     }
     setPreferences((current) => current.inspectorCollapsed
       ? { ...current, inspectorCollapsed: false }
       : current);
-  }, [isMobile]);
+  }, [inspectorOverlayOpen, isInspectorOverlay, preferences.inspectorCollapsed]);
 
   const layoutValue = useMemo<WorkbenchLayoutValue>(() => ({
     inspectorCollapsed: preferences.inspectorCollapsed,
-    mobileInspectorOpen,
-    isMobile,
-    inspectorExpanded: isMobile ? mobileInspectorOpen : !preferences.inspectorCollapsed,
-    mobileInspectorReturnFocusRef,
+    inspectorExpanded: isInspectorOverlay ? inspectorOverlayOpen : !preferences.inspectorCollapsed,
+    inspectorOverlayOpen,
+    inspectorReturnFocusRef,
+    isProjectInventoryCompact,
+    isInspectorOverlay,
+    isNavigatorDrawer,
+    navigatorDrawerOpen,
+    navigatorDrawerReturnFocusRef,
+    viewportWidth,
+    closeNavigatorDrawer,
+    closeInspectorOverlay,
+    openNavigatorDrawer,
+    setNavigatorDrawerOpen,
     toggleInspector,
     toggleInspectorSurface,
     openInspectorSurface,
-    setMobileInspectorOpen: updateMobileInspectorOpen,
   }), [
-    isMobile,
-    mobileInspectorOpen,
+    closeNavigatorDrawer,
+    closeInspectorOverlay,
+    isProjectInventoryCompact,
+    isInspectorOverlay,
+    isNavigatorDrawer,
+    navigatorDrawerOpen,
+    inspectorOverlayOpen,
+    openNavigatorDrawer,
     preferences.inspectorCollapsed,
+    setNavigatorDrawerOpen,
     openInspectorSurface,
     toggleInspector,
     toggleInspectorSurface,
-    updateMobileInspectorOpen,
+    viewportWidth,
   ]);
 
   const panelSizesValue = useMemo<WorkbenchPanelSizesValue>(() => ({
@@ -167,19 +218,39 @@ export function useWorkbenchLayout(): WorkbenchLayoutValue {
   return value;
 }
 
-export function useCloseMobileInspectorOnNavigation(navigationKey: string): void {
-  const { setMobileInspectorOpen } = useWorkbenchLayout();
+export function useCloseWorkbenchOverlaysOnNavigation(navigationKey: string): void {
+  const { closeInspectorOverlay, closeNavigatorDrawer } = useWorkbenchLayout();
   useEffect(() => {
-    setMobileInspectorOpen(false);
-  }, [navigationKey, setMobileInspectorOpen]);
+    closeNavigatorDrawer();
+    closeInspectorOverlay();
+  }, [closeInspectorOverlay, closeNavigatorDrawer, navigationKey]);
 }
 
-function getMobileBreakpointFocusSelector(activeElement: HTMLElement): string | null {
-  if (
-    activeElement.closest("#context-inspector")
-    || activeElement.matches('button[aria-controls~="context-inspector"], [role="separator"][aria-controls="context-inspector"]')
-  ) {
-    return 'button[aria-controls~="mobile-context-inspector"]';
+function getResponsiveSurfaceFocusSelector(
+  previousWidth: number,
+  nextWidth: number,
+  activeElement: HTMLElement,
+): readonly string[] | null {
+  const navigatorChanged = (previousWidth <= 980) !== (nextWidth <= 980);
+  if (navigatorChanged && activeElement.closest("[data-project-todo-drawer], [data-project-todo-navigator]")) {
+    return nextWidth <= 980
+      ? ['button[aria-controls="project-todo-drawer"]']
+      : [
+          '[data-project-todo-navigator] a[aria-current="page"]',
+          '[data-project-todo-navigator] a[href]',
+        ];
+  }
+
+  const inspectorChanged = (previousWidth <= 1260) !== (nextWidth <= 1260);
+  if (inspectorChanged && activeElement.closest("#context-inspector")) {
+    return nextWidth <= 1260
+      ? ['button[aria-controls~="context-inspector"]']
+      : [
+          '#context-inspector [role="tab"][aria-selected="true"]',
+          '#context-inspector [role="tab"][tabindex="0"]',
+          '#context-inspector [role="tab"]',
+          'button[aria-controls~="context-inspector"]',
+        ];
   }
   return null;
 }

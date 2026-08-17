@@ -27,7 +27,7 @@ describe("ProjectTodoAttachmentService", () => {
       state,
       storage: new ProjectAttachmentStorage(),
     });
-    const created = await state.createTodo({ content: "Read the brief" });
+    const created = await state.createTodo({ content: "Read the attached brief" });
     const attachmentId = crypto.randomUUID();
     const bytes = new TextEncoder().encode("brief");
 

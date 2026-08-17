@@ -5,7 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ProjectTodo, SessionSummary } from "../api/types";
-import { createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, pointerFirstCollisionDetection, projectTodoRunNowRecovery, ProjectTodosRoute, todoFlatListEmptyMessage } from "./project-todos";
+import { projectTodoRunNowRecovery } from "../components/features/ProjectTodoCaptureDialog";
+import { createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, pointerFirstCollisionDetection, ProjectTodosRoute, todoFlatListEmptyMessage } from "./project-todos";
 import { continueWorkUpdateInput, coordinateTodoPlanWork, planWorkCommand, TODO_PLAN_ACTION_LABEL } from "./project-todo-detail";
 import { ApiError } from "../api/client";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
@@ -92,8 +93,8 @@ afterEach(async () => {
   dom.window.close();
 });
 
-async function render(): Promise<void> {
-  await act(async () => root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={["/projects/demo/todos"]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>));
+async function render(initialEntry = "/projects/demo/todos"): Promise<void> {
+  await act(async () => root.render(<QueryClientProvider client={client}><WorkbenchLayoutProvider><MemoryRouter initialEntries={[initialEntry]}><Routes><Route path="/projects/:slug/todos" element={<ProjectTodosRoute />} /></Routes></MemoryRouter></WorkbenchLayoutProvider></QueryClientProvider>));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
@@ -106,6 +107,15 @@ describe("Project Todos board", () => {
     expect(todoFlatListEmptyMessage("rejected", false)).toBe("No rejected Todos yet.");
     expect(todoFlatListEmptyMessage("rejected", true)).toBe("No rejected Todos match this filter.");
     expect(todoFlatListEmptyMessage("archived", true)).toBe("No archived Todos match this filter.");
+  });
+
+  test("renders Rejected as an explicit amber reconsideration state", async () => {
+    await render("/projects/demo/todos?surface=rejected");
+    const rejected = document.querySelector('[data-testid="todo-rejected"]') as HTMLButtonElement;
+    expect(rejected).not.toBeNull();
+    expect(rejected.textContent).toContain("Rejected · Not now");
+    expect(rejected.getAttribute("aria-label")).toContain("Rejected · Not now");
+    expect(rejected.querySelector(".text-warning")).not.toBeNull();
   });
 
   test("keeps a drag order local and computes cross-lane placement without a general board model", () => {
@@ -140,27 +150,37 @@ describe("Project Todos board", () => {
     expect(continueWorkUpdateInput(todos[3]!)).toBeUndefined();
   });
 
-  test("renders four lanes and an accessible drag handle", async () => {
-    await render();
+  test("renders four compact lanes with an accessible drag handle", async () => {
+    await render("/projects/demo/todos?layout=board");
     expect(document.querySelector('[data-testid="todo-lane-idea"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="todo-lane-ready"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="todo-lane-in_progress"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="todo-lane-done"]')).not.toBeNull();
     const handle = document.querySelector('[aria-label="Drag Ready"]') as HTMLButtonElement;
     expect(handle).not.toBeNull();
-    expect(handle.className).toContain("min-h-11");
-    expect(handle.className).toContain("w-11");
+    expect(handle.className).toContain("min-h-full");
+    expect(handle.className).toContain("w-7");
+    expect(handle.className).toContain("border-r");
+    expect(handle.className).toContain("[@media(pointer:coarse)]:min-h-11");
+    expect(handle.className).toContain("[@media(pointer:coarse)]:w-11");
     expect(handle.className).toContain("cursor-grab");
+    const card = document.querySelector('[data-testid="todo-ready"]') as HTMLElement;
+    expect(card.className).toContain("grid-cols-[28px_minmax(0,1fr)]");
+    expect(card.className).toContain("[@media(pointer:coarse)]:grid-cols-[44px_minmax(0,1fr)]");
+    expect(card.className).toContain("mx-2");
+    expect(card.className).toContain("mt-2.5");
+    expect(card.className).toContain("rounded-[6px]");
+    expect(card.className).toContain("bg-bg-elevated");
     const open = document.querySelector('[data-testid="todo-open-ready"]');
     expect(open?.className).toContain("cursor-pointer");
+    expect(open?.className).toContain("p-2.5");
     expect(open?.querySelector("span")?.className).toContain("line-clamp-2");
-    expect(open?.querySelector("span")?.className).not.toContain("block");
-    const viewButtons = document.querySelector('[aria-label="Todo views"]')?.querySelectorAll("button") ?? [];
+    expect(open?.querySelector("span")?.className).toContain("text-[12.5px]");
+    const viewButtons = document.querySelector('[aria-label="Todo surfaces"]')?.querySelectorAll("button") ?? [];
     expect(viewButtons).toHaveLength(3);
     expect(Array.from(viewButtons, (button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
     for (const button of viewButtons) {
-      expect(button.className).toContain("max-[760px]:h-11");
-      expect(button.className).toContain("[@media(pointer:coarse)]:h-11");
+      expect(button.className).toContain("h-[30px]");
     }
   });
 
@@ -191,11 +211,12 @@ describe("Project Todos board", () => {
       createdAt: 1,
     });
 
-    await render();
+    await render("/projects/demo/todos?layout=board");
 
     const state = document.querySelector('[data-testid="todo-operational-progress"]');
     expect(state?.textContent).toBe("Working· Running");
-    expect(document.querySelector('[data-testid="todo-open-progress"]')?.textContent).toBe("ProgressWorking· Running");
+    expect(state?.querySelector("span")?.className).toContain("animate-activity-pulse");
+    expect(document.querySelector('[data-testid="todo-open-progress"]')?.textContent).toContain("ProgressWorking· Running");
     expect(document.querySelector('[data-testid="todo-operational-ready"]')).toBeNull();
   });
 

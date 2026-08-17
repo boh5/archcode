@@ -180,8 +180,8 @@ function DialogButton({
 }) {
   return (
     <button
-      className={`h-8 rounded-sm border px-3 text-[12px] font-medium leading-4 transition-colors duration-[var(--motion-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 ${primary
-        ? "border-brand bg-brand text-bg-overlay"
+      className={`h-8 rounded-sm border px-3 text-[12px] font-medium leading-4 transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50 ${primary
+        ? "border-brand bg-brand text-brand-ink"
         : "border-border-default bg-bg-base text-text-secondary hover:text-text-primary"
       }`}
       disabled={disabled}

@@ -105,7 +105,7 @@ beforeEach(() => installDom());
 afterEach(() => { act(() => root.unmount()); dom.window.close(); });
 
 describe("Settings Memory panel", () => {
-  test("does not fetch project Memory on Home and keeps CRUD unavailable", () => {
+  test("does not fetch project Memory without a project and keeps CRUD unavailable", () => {
     const fetchMock = mock(async () => Response.json(snapshot));
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
     renderPanel();

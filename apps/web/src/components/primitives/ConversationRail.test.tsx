@@ -35,7 +35,7 @@ describe("SessionThreadColumn", () => {
     expect(column.props["data-session-thread-column"]).toBe("");
     expect(className).toContain("mx-auto");
     expect(className).toContain("w-full");
-    expect(className).toContain("max-w-[800px]");
+    expect(className).toContain("max-w-[852px]");
     expect(className).toContain("min-w-0");
   });
 
@@ -46,12 +46,12 @@ describe("SessionThreadColumn", () => {
 });
 
 describe("WORK_ACTIVITY_LANE_CLASS", () => {
-  test("tapers nested activity on the 4px grid so indented rows share one right edge", () => {
+  test("uses the full Session thread width without a second activity cap", () => {
     expect(WORK_ACTIVITY_LANE_CLASS).toContain("w-full");
-    expect(WORK_ACTIVITY_LANE_CLASS).toContain("max-w-[720px]");
     expect(WORK_ACTIVITY_LANE_CLASS).toContain("min-w-0");
+    expect(WORK_ACTIVITY_LANE_CLASS).not.toContain("max-w-");
     expect(WORK_ACTIVITY_LANE_CLASS).not.toContain("mx-auto");
-    expect(WORK_ACTIVITY_CHILD_LANE_CLASS).toContain("max-w-[696px]");
-    expect(WORK_ACTIVITY_NESTED_LANE_CLASS).toContain("max-w-[676px]");
+    expect(WORK_ACTIVITY_CHILD_LANE_CLASS).not.toContain("max-w-");
+    expect(WORK_ACTIVITY_NESTED_LANE_CLASS).not.toContain("max-w-");
   });
 });

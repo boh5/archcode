@@ -134,7 +134,7 @@ function SegmentMarker({
     <button
       ref={buttonRef}
       type="button"
-      className="group flex h-6 w-7 shrink-0 items-center justify-start rounded-sm pl-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+      className="group flex h-8 w-8 shrink-0 items-center justify-start rounded-sm pl-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
       aria-label={label}
       aria-current={current ? "location" : undefined}
       aria-describedby={tooltipVisible ? tooltipId : undefined}
@@ -148,7 +148,7 @@ function SegmentMarker({
       onMouseLeave={onTooltipLeave}
     >
       <span
-        className={`h-0.5 rounded-full transition-[width,background-color] duration-[var(--motion-hover)] group-hover:w-5 group-focus-visible:w-5 ${current ? "w-4 bg-text-secondary" : "w-2 bg-border-strong"}`}
+        className={`h-0.5 rounded-full transition-[width,background-color] duration-[var(--motion-fast)] group-hover:w-5 group-focus-visible:w-5 ${current ? "w-4 bg-text-secondary" : "w-2 bg-border-strong"}`}
         aria-hidden="true"
       />
     </button>

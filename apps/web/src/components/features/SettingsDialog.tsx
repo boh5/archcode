@@ -31,10 +31,10 @@ export function SettingsApplyNotice({ modelsAppliedLive, restartRequiredSections
 }
 
 export function SettingsCloseButton({ onClose }: { onClose: () => void }) {
-  return <button type="button" aria-label="Close settings" onClick={onClose} className="absolute right-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><X size={14} aria-hidden="true" /></button>;
+  return <button type="button" aria-label="Close settings" onClick={onClose} className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-sm text-text-tertiary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"><X size={14} aria-hidden="true" /></button>;
 }
 
-export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runtime = { state: "ready" }, onRefreshRuntime = async () => {}, section: requestedSection = "models", onSectionChange, reloading = false, reloadError, projectSlug }: { snapshot: ServerConfigSnapshot; adapterCatalog: ProviderAdapterCatalog; servers: Record<string, McpServerStatus>; onReload: () => Promise<void>; runtime?: RuntimeStatus; onRefreshRuntime?: () => Promise<void>; section?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; reloading?: boolean; reloadError?: string; projectSlug?: string }) {
+export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runtime = { state: "ready" }, onRefreshRuntime = async () => {}, section: requestedSection = "models", onSectionChange, reloading = false, reloadError, projectSlug, focusInitialHeading = false }: { snapshot: ServerConfigSnapshot; adapterCatalog: ProviderAdapterCatalog; servers: Record<string, McpServerStatus>; onReload: () => Promise<void>; runtime?: RuntimeStatus; onRefreshRuntime?: () => Promise<void>; section?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; reloading?: boolean; reloadError?: string; projectSlug?: string; focusInitialHeading?: boolean }) {
   const [section, setSection] = useState<SettingsSection>(requestedSection);
   const [draft, setDraft] = useState(() => cloneConfig(snapshot.config));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -46,6 +46,11 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
   const [savedWhileRuntimeUnavailable, setSavedWhileRuntimeUnavailable] = useState(false);
   const [jsonResetVersion, setJsonResetVersion] = useState(0);
   const preserveSaveErrorRevision = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!focusInitialHeading) return;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-settings-content-heading]")?.focus());
+  }, [focusInitialHeading]);
 
   useEffect(() => {
     setDraft(cloneConfig(snapshot.config));
@@ -121,15 +126,16 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
   };
 
   return <div data-settings-layout className="flex h-full min-h-0 flex-col">
+    <SettingsShellHeader />
     {section !== "updates" && section !== "runtime-data" && <SettingsApplyNotice modelsAppliedLive={modelsAppliedLive} restartRequiredSections={runtime.state === "ready" ? restartRequiredSections : []} savedWhileRuntimeUnavailable={savedWhileRuntimeUnavailable} />}
-    <div data-settings-workspace className="flex min-h-0 flex-1 flex-col sm:flex-row">
+    <div data-settings-workspace className="flex min-h-0 flex-1 flex-col min-[641px]:flex-row">
       <SettingsSidebar section={section} onSelect={selectSection} invalidProfileCount={invalidProfileCount} />
       {section === "updates"
-        ? <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6"><SettingsUpdatesPanel /></main>
+        ? <main className="min-h-0 min-w-0 flex-1 overflow-y-auto border-r-[10px] border-r-transparent bg-bg-base px-4 py-[17px] min-[641px]:px-6 min-[641px]:pb-[26px] min-[641px]:pt-[22px]"><SettingsUpdatesPanel /></main>
         : section === "runtime-data"
-          ? <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6"><SettingsRuntimeDataPanel runtime={runtime} onRefreshRuntime={onRefreshRuntime} /></main>
+          ? <main className="min-h-0 min-w-0 flex-1 overflow-y-auto border-r-[10px] border-r-transparent bg-bg-base px-4 py-[17px] min-[641px]:px-6 min-[641px]:pb-[26px] min-[641px]:pt-[22px]"><SettingsRuntimeDataPanel runtime={runtime} onRefreshRuntime={onRefreshRuntime} /></main>
         : <fieldset data-settings-controls disabled={saving || reloading} className="contents">
-          <div className="flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6">
+          <div className="flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto border-r-[10px] border-r-transparent bg-bg-base px-4 py-[17px] min-[641px]:px-6 min-[641px]:pb-[26px] min-[641px]:pt-[22px]">
             <div hidden={section !== "models"}><SettingsModelsPanel config={draft} adapterCatalog={adapterCatalog} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
             <div hidden={section !== "profiles"}><SettingsProfilesPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
             {section === "security" && <SettingsSecurityPanel onConfigChanged={onReload} />}
@@ -137,25 +143,25 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
             {section === "skills" && <SettingsSkillsPanel projectSlug={projectSlug} />}
             <div hidden={section !== "memory"}><SettingsMemoryPanel config={draft} onChange={setDraft} errors={errors} projectSlug={projectSlug} active={section === "memory"} /></div>
             <div hidden={section !== "github"}><SettingsGithubPanel config={draft} onChange={setDraft} errors={errors} /></div>
-          </main><footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border-subtle bg-bg-surface px-5 py-3">{saveError || reloadError ? <div role="alert" className="text-[11px] leading-4 text-error">{saveError ?? reloadError}</div> : <span className={`text-[11px] leading-4 ${hasJsonErrors ? "text-error" : dirty ? "text-warning" : "text-text-tertiary"}`}>{hasJsonErrors ? "Fix invalid JSON before saving" : dirty ? "Unsaved changes" : "All changes saved"}</span>}<div className="flex gap-2"><button type="button" onClick={() => { setModelsAppliedLive(false); setSavedWhileRuntimeUnavailable(false); void onReload(); }} className="h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand">{reloading ? "Reloading…" : "Reload"}</button><button type="button" disabled={!dirty || saving || reloading || hasJsonErrors} onClick={() => { void save(); }} className="h-8 rounded-sm bg-brand px-4 text-[12px] font-medium text-bg-overlay transition-colors duration-[var(--motion-hover)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Saving…" : "Save changes"}</button></div></footer></div>
+          </main><footer className="flex min-h-[54px] shrink-0 flex-wrap items-center justify-between gap-[14px] border-t border-border-subtle bg-bg-surface py-[9px] pl-6 pr-[18px] [@media(max-width:640px)]:min-h-[60px] [@media(max-width:640px)]:items-stretch [@media(max-width:640px)]:pt-[7px] [@media(max-width:640px)]:pb-2 [@media(max-width:640px)]:pl-4 [@media(max-width:640px)]:pr-2.5">{saveError || reloadError ? <div role="alert" className="text-[11px] leading-4 text-error">{saveError ?? reloadError}</div> : <span className={`text-[11px] leading-4 ${hasJsonErrors ? "text-error" : dirty ? "text-warning" : "text-text-tertiary"}`}>{hasJsonErrors ? "Fix invalid JSON before saving" : dirty ? "Unsaved changes" : "All changes saved"}</span>}<div className="flex gap-[7px] [@media(max-width:640px)]:ml-auto"><button type="button" onClick={() => { setModelsAppliedLive(false); setSavedWhileRuntimeUnavailable(false); void onReload(); }} className="h-[34px] rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand [@media(max-width:640px)]:h-11">{reloading ? "Reloading…" : "Reload"}</button><button type="button" disabled={!dirty || saving || reloading || hasJsonErrors} onClick={() => { void save(); }} className="h-[34px] rounded-sm bg-brand px-4 text-[12px] font-medium text-brand-ink transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40 [@media(max-width:640px)]:h-11">{saving ? "Saving…" : "Save changes"}</button></div></footer></div>
         </fieldset>}
     </div>
   </div>;
 }
 
 export function SettingsDialog({ open, section = "models", onClose, projectSlug }: { open: boolean; section?: SettingsSection; onClose: () => void; projectSlug?: string }) {
-  return <DialogRoot open={open} onOpenChange={(next) => { if (!next) onClose(); }}><DialogContent size="x-large" className="overflow-hidden p-0"><DialogTitle className="sr-only">Settings</DialogTitle><DialogDescription className="sr-only">Configure ArchCode server settings, Project Skills, Memory, Runtime data, and application updates.</DialogDescription><SettingsCloseButton onClose={onClose} /><SettingsWorkspace active={open} section={section} runtime={{ state: "ready" }} onRefreshRuntime={async () => {}} projectSlug={projectSlug} /></DialogContent></DialogRoot>;
+  return <DialogRoot open={open} onOpenChange={(next) => { if (!next) onClose(); }}><DialogContent size="x-large" onOpenAutoFocus={(event) => event.preventDefault()} className="!border-border-default overflow-hidden p-0 [@media(max-width:640px)]:h-[calc(100dvh-20px)]"><DialogTitle className="sr-only">Settings</DialogTitle><DialogDescription className="sr-only">Configure ArchCode server settings, Project Skills, Memory, Runtime data, and application updates.</DialogDescription><SettingsCloseButton onClose={onClose} /><SettingsWorkspace active={open} section={section} runtime={{ state: "ready" }} onRefreshRuntime={async () => {}} projectSlug={projectSlug} focusInitialHeading /></DialogContent></DialogRoot>;
 }
 
 export function RuntimeRecoverySettings({ runtime, onRefreshRuntime }: { runtime: RuntimeStatus; onRefreshRuntime: () => Promise<void> }) {
-  return <main className="min-h-dvh bg-bg-base p-0 text-text-primary sm:p-4">
-    <section aria-label="Runtime recovery settings" className="mx-auto h-dvh min-h-0 w-full overflow-hidden border-border-strong bg-bg-overlay sm:h-[calc(100dvh-32px)] sm:max-w-[1120px] sm:rounded-md sm:border sm:shadow-lg">
+  return <main className="min-h-dvh bg-bg-base p-0 text-text-primary min-[641px]:p-4">
+    <section aria-label="Runtime recovery settings" className="mx-auto h-dvh min-h-0 w-full overflow-hidden border-border-strong bg-bg-overlay min-[641px]:h-[calc(100dvh-32px)] min-[641px]:max-w-[1120px] min-[641px]:rounded-md min-[641px]:border min-[641px]:shadow-lg">
       <SettingsWorkspace active section="runtime-data" runtime={runtime} onRefreshRuntime={onRefreshRuntime} />
     </section>
   </main>;
 }
 
-function SettingsWorkspace({ active, section, runtime, onRefreshRuntime, projectSlug }: { active: boolean; section: SettingsSection; runtime: RuntimeStatus; onRefreshRuntime: () => Promise<void>; projectSlug?: string }) {
+function SettingsWorkspace({ active, section, runtime, onRefreshRuntime, projectSlug, focusInitialHeading = false }: { active: boolean; section: SettingsSection; runtime: RuntimeStatus; onRefreshRuntime: () => Promise<void>; projectSlug?: string; focusInitialHeading?: boolean }) {
   const servers = useMcpStatusStore((state) => state.servers);
   const [activeSection, setActiveSection] = useState<SettingsSection>(section);
   const [snapshot, setSnapshot] = useState<ServerConfigSnapshot>();
@@ -206,22 +212,26 @@ function SettingsWorkspace({ active, section, runtime, onRefreshRuntime, project
 
   const hasConfigData = snapshot !== undefined && adapterCatalog !== undefined;
   return hasConfigData
-    ? <SettingsBody snapshot={snapshot} adapterCatalog={adapterCatalog} servers={servers} onReload={reload} runtime={runtime} onRefreshRuntime={onRefreshRuntime} section={activeSection} onSectionChange={setActiveSection} reloading={loading} reloadError={error} projectSlug={projectSlug} />
+    ? <SettingsBody snapshot={snapshot} adapterCatalog={adapterCatalog} servers={servers} onReload={reload} runtime={runtime} onRefreshRuntime={onRefreshRuntime} section={activeSection} onSectionChange={setActiveSection} reloading={loading} reloadError={error} projectSlug={projectSlug} focusInitialHeading={focusInitialHeading} />
     : activeSection === "updates" || activeSection === "runtime-data"
       ? <IndependentSettingsWorkspace section={activeSection} onSelect={setActiveSection} runtime={runtime} onRefreshRuntime={onRefreshRuntime} />
       : <SettingsLoadState section={activeSection} onSelect={setActiveSection}>{error
-        ? <><p role="alert" className="text-[13px] leading-5 text-error">{error}</p><button type="button" className="mt-3 h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" onClick={() => { void reload(); }}>Retry</button></>
+        ? <><p role="alert" className="text-[13px] leading-5 text-error">{error}</p><button type="button" className="mt-3 h-8 rounded-sm bg-bg-active px-4 text-[12px] font-medium text-text-primary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand" onClick={() => { void reload(); }}>Retry</button></>
         : "Loading settings…"}</SettingsLoadState>;
 }
 
 export function SettingsSidebar({ section, onSelect, invalidProfileCount = 0, recoveryMode = false }: { section: SettingsSection; onSelect: (section: SettingsSection) => void; invalidProfileCount?: number; recoveryMode?: boolean }) {
-  return <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-bg-surface sm:w-52 sm:border-b-0 sm:border-r"><div className="border-b border-border-subtle px-4 py-4"><h2 className="text-[16px] font-semibold leading-[22px] text-text-primary">Settings</h2><p className="mt-1 text-[11px] leading-4 text-text-tertiary">Server and application</p></div><SettingsNavigation activeSection={section} onSelect={onSelect} invalidProfileCount={invalidProfileCount} recoveryMode={recoveryMode} /></aside>;
+  return <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-bg-elevated min-[641px]:w-[172px] min-[641px]:border-b-0 min-[641px]:border-r"><SettingsNavigation activeSection={section} onSelect={onSelect} invalidProfileCount={invalidProfileCount} recoveryMode={recoveryMode} /></aside>;
+}
+
+function SettingsShellHeader() {
+  return <header className="flex h-[56px] shrink-0 items-center border-b border-border-subtle bg-bg-overlay pl-[18px] pr-14 min-[641px]:h-[58px]"><div className="min-w-0"><h2 className="text-[16px] font-semibold leading-[22px] text-text-primary">Settings</h2><p className="mt-px text-[10px] leading-[15px] text-text-tertiary">Server and application</p></div></header>;
 }
 
 function IndependentSettingsWorkspace({ section, onSelect, runtime, onRefreshRuntime }: { section: SettingsSection; onSelect: (section: SettingsSection) => void; runtime: RuntimeStatus; onRefreshRuntime: () => Promise<void> }) {
-  return <div className="flex h-full min-h-0 flex-col sm:flex-row"><SettingsSidebar section={section} onSelect={onSelect} /><main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg-base px-5 py-5 sm:px-6">{section === "updates" ? <SettingsUpdatesPanel /> : <SettingsRuntimeDataPanel runtime={runtime} onRefreshRuntime={onRefreshRuntime} />}</main></div>;
+  return <div className="flex h-full min-h-0 flex-col"><SettingsShellHeader /><div className="flex min-h-0 flex-1 flex-col min-[641px]:flex-row"><SettingsSidebar section={section} onSelect={onSelect} /><main className="min-h-0 min-w-0 flex-1 overflow-y-auto border-r-[10px] border-r-transparent bg-bg-base px-4 py-[17px] min-[641px]:px-6 min-[641px]:pb-[26px] min-[641px]:pt-[22px]">{section === "updates" ? <SettingsUpdatesPanel /> : <SettingsRuntimeDataPanel runtime={runtime} onRefreshRuntime={onRefreshRuntime} />}</main></div></div>;
 }
 
 function SettingsLoadState({ section, onSelect, children }: { section: SettingsSection; onSelect: (section: SettingsSection) => void; children: ReactNode }) {
-  return <div className="flex h-full min-h-0 flex-col sm:flex-row"><SettingsSidebar section={section} onSelect={onSelect} /><main className="min-h-0 flex-1 overflow-y-auto bg-bg-base p-6 text-sm text-text-tertiary">{children}</main></div>;
+  return <div className="flex h-full min-h-0 flex-col"><SettingsShellHeader /><div className="flex min-h-0 flex-1 flex-col min-[641px]:flex-row"><SettingsSidebar section={section} onSelect={onSelect} /><main className="min-h-0 flex-1 overflow-y-auto border-r-[10px] border-r-transparent bg-bg-base p-6 text-sm text-text-tertiary">{children}</main></div></div>;
 }

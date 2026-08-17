@@ -8,6 +8,8 @@ import {
   ProjectTodoDiscussionAuthorizationError,
   ProjectTodoRunNowConflictError,
   ProjectTodoRunNowRecoveryError,
+  ProjectTodoStartDiscussionConflictError,
+  ProjectTodoStartDiscussionRecoveryError,
   ProjectTodoRevisionConflictError,
   ProjectTodoSessionStateError,
 } from "./errors";
@@ -36,12 +38,18 @@ class FakeSessions implements ProjectTodoSessionCapability {
   failAcceptAfterDurable = 0;
   failDurableRead = 0;
   failDelete = 0;
+  failCreateAfterDurable = 0;
+  failRead = 0;
 
   async createRootSession(input: Parameters<ProjectTodoSessionCapability["createRootSession"]>[0]) {
     if (this.failCreate-- > 0) throw new Error("injected Session creation failure");
-    const sessionId = crypto.randomUUID();
-    this.sessions.set(sessionId, input);
-    return { sessionId };
+    const existing = this.sessions.get(input.sessionId);
+    if (existing !== undefined && !sameSessionInput(existing, input)) {
+      throw new Error("injected Session identity conflict");
+    }
+    this.sessions.set(input.sessionId, input);
+    if (this.failCreateAfterDurable-- > 0) throw new Error("injected post-persistence failure");
+    return { sessionId: input.sessionId };
   }
 
   async acceptMessage(input: Parameters<ProjectTodoSessionCapability["acceptMessage"]>[0]): Promise<void> {
@@ -50,9 +58,12 @@ class FakeSessions implements ProjectTodoSessionCapability {
     if (this.failAcceptAfterDurable-- > 0) throw new Error("injected wake-up failure");
   }
 
-  async readRootSession(input: Parameters<ProjectTodoSessionCapability["readRootSession"]>[0]): Promise<RootSessionSummary> {
+  async readRootSession(
+    input: Parameters<ProjectTodoSessionCapability["readRootSession"]>[0],
+  ): Promise<RootSessionSummary | undefined> {
+    if (this.failRead-- > 0) throw new Error("injected Session read failure");
     const session = this.sessions.get(input.sessionId);
-    if (session === undefined) throw new Error("missing Session");
+    if (session === undefined) return undefined;
     return {
       sessionId: input.sessionId,
       cwd: session.workspaceRoot,
@@ -78,6 +89,13 @@ class FakeSessions implements ProjectTodoSessionCapability {
     this.sessions.delete(input.sessionId);
     this.messages.delete(input.sessionId);
   }
+}
+
+function sameSessionInput(
+  first: Parameters<ProjectTodoSessionCapability["createRootSession"]>[0],
+  second: Parameters<ProjectTodoSessionCapability["createRootSession"]>[0],
+): boolean {
+  return JSON.stringify(first) === JSON.stringify(second);
 }
 
 function fixture() {
@@ -277,6 +295,193 @@ describe("ProjectTodoService", () => {
     expect(await service.listTodos()).toHaveLength(1);
     await expect(service.runNow({ ...request, content: "Different" }))
       .rejects.toBeInstanceOf(ProjectTodoRunNowConflictError);
+  });
+
+  test("starts one captured Discussion across concurrent, sequential, and restarted retries", async () => {
+    const sessions = new FakeSessions();
+    const state = new ProjectTodoStateManager(TMP_ROOT);
+    const service = new ProjectTodoService({
+      workspaceRoot: TMP_ROOT,
+      projectSlug: "project-a",
+      sessions,
+      state,
+    });
+    const request = {
+      clientRequestId: crypto.randomUUID(),
+      content: "Discuss the capture\n\nClarify the boundary.",
+    };
+
+    const [first, concurrent] = await Promise.all([
+      service.startDiscussion(request),
+      service.startDiscussion(request),
+    ]);
+    const sequential = await service.startDiscussion(request);
+    const restarted = new ProjectTodoService({
+      workspaceRoot: TMP_ROOT,
+      projectSlug: "project-a",
+      sessions,
+      state: new ProjectTodoStateManager(TMP_ROOT),
+    });
+    const replay = await restarted.startDiscussion(request);
+
+    expect(concurrent).toEqual(first);
+    expect(sequential).toEqual(first);
+    expect(replay).toEqual(first);
+    expect(first.todo).toMatchObject({ status: "idea", revision: 1 });
+    expect(first.session).toMatchObject({
+      agentName: "discussion",
+      source: { kind: "todo", todoId: first.todo.id, entry: "discussion" },
+    });
+    expect(sessions.sessions.size).toBe(1);
+    expect(sessions.messages.size).toBe(1);
+    expect(await restarted.listTodos()).toEqual([first.todo]);
+    expect(sessions.messages.get(first.session.sessionId)?.clientRequestId).toBe(request.clientRequestId);
+    expect(sessions.messages.get(first.session.sessionId)?.text).toContain(
+      "Discuss and shape the bound Project Todo",
+    );
+    await expect(restarted.startDiscussion({ ...request, content: "Different" }))
+      .rejects.toBeInstanceOf(ProjectTodoStartDiscussionConflictError);
+  });
+
+  test("resumes the exact preallocated Discussion identity after restart at either creation boundary", async () => {
+    for (const sessionAlreadyDurable of [false, true]) {
+      const workspaceRoot = join(
+        TMP_ROOT,
+        sessionAlreadyDurable ? "session-durable" : "session-not-created",
+      );
+      await mkdir(workspaceRoot, { recursive: true });
+      const sessions = new FakeSessions();
+      const request = {
+        clientRequestId: crypto.randomUUID(),
+        content: sessionAlreadyDurable
+          ? "Resume after Session persistence"
+          : "Resume before Session persistence",
+      };
+      const state = new ProjectTodoStateManager(workspaceRoot);
+      const { todo, receipt } = await state.beginStartDiscussion({
+        ...request,
+        requestHash: new Bun.CryptoHasher("sha256")
+          .update(JSON.stringify({ content: request.content }))
+          .digest("hex"),
+      });
+      if (sessionAlreadyDurable) {
+        await sessions.createRootSession({
+          workspaceRoot,
+          sessionId: receipt.sessionId,
+          agentName: "discussion",
+          title: `Discussion: ${request.content}`,
+          source: { kind: "todo", todoId: todo.id, entry: "discussion" },
+        });
+      }
+
+      const restarted = new ProjectTodoService({
+        workspaceRoot,
+        projectSlug: "project-a",
+        sessions,
+        state: new ProjectTodoStateManager(workspaceRoot),
+      });
+      const result = await restarted.startDiscussion(request);
+
+      expect(result.todo.id).toBe(todo.id);
+      expect(result.session.sessionId).toBe(receipt.sessionId);
+      expect(sessions.sessions.size).toBe(1);
+      expect(sessions.messages.size).toBe(1);
+    }
+  });
+
+  test("reuses the preallocated Discussion Session after persistence-response loss", async () => {
+    const { service, sessions } = fixture();
+    sessions.failCreateAfterDurable = 1;
+    const request = {
+      clientRequestId: crypto.randomUUID(),
+      content: "Persisted before response loss",
+    };
+
+    const result = await service.startDiscussion(request);
+
+    expect(sessions.sessions.size).toBe(1);
+    expect(sessions.sessions.has(result.session.sessionId)).toBe(true);
+    expect(sessions.messages.size).toBe(1);
+  });
+
+  test("compensates absent or non-durable Start discussion work and permits exact retry", async () => {
+    const { service, sessions } = fixture();
+    sessions.failCreate = 1;
+    const createRequest = {
+      clientRequestId: crypto.randomUUID(),
+      content: "Discussion create fails",
+    };
+    await expect(service.startDiscussion(createRequest)).rejects.toThrow("Session creation failure");
+    expect(await service.listTodos()).toEqual([]);
+
+    sessions.failAccept = 1;
+    const acceptRequest = {
+      clientRequestId: crypto.randomUUID(),
+      content: "Discussion acceptance fails",
+    };
+    await expect(service.startDiscussion(acceptRequest)).rejects.toThrow("message acceptance failure");
+    expect(await service.listTodos()).toEqual([]);
+    expect(sessions.sessions.size).toBe(0);
+
+    const retried = await service.startDiscussion(acceptRequest);
+    expect(retried.todo.status).toBe("idea");
+    expect(sessions.sessions.size).toBe(1);
+  });
+
+  test("keeps durable Start discussion acceptance when wake-up fails", async () => {
+    const { service, sessions } = fixture();
+    sessions.failAcceptAfterDurable = 1;
+
+    const result = await service.startDiscussion({
+      clientRequestId: crypto.randomUUID(),
+      content: "Discussion accepted before wake-up",
+    });
+
+    expect(result.todo.status).toBe("idea");
+    expect(sessions.sessions.has(result.session.sessionId)).toBe(true);
+    expect(sessions.messages.has(result.session.sessionId)).toBe(true);
+  });
+
+  test("returns exact recovery identifiers for indeterminate Start discussion state", async () => {
+    const { service, sessions } = fixture();
+    sessions.failAccept = 1;
+    sessions.failDurableRead = 1;
+    const request = {
+      clientRequestId: crypto.randomUUID(),
+      content: "Discussion acceptance is indeterminate",
+    };
+
+    const error = await service.startDiscussion(request).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ProjectTodoStartDiscussionRecoveryError);
+    if (!(error instanceof ProjectTodoStartDiscussionRecoveryError)) throw error;
+    expect(error).toMatchObject({ todoId: expect.any(String), sessionId: expect.any(String) });
+    expect(sessions.sessions.size).toBe(1);
+    expect(await service.listTodos()).toHaveLength(1);
+    await expect(service.startDiscussion(request))
+      .rejects.toMatchObject({ todoId: error.todoId, sessionId: error.sessionId });
+    expect(sessions.sessions.size).toBe(1);
+  });
+
+  test("fails Start discussion closed when Session persistence cannot be determined", async () => {
+    const { service, sessions } = fixture();
+    sessions.failCreate = 1;
+    sessions.failRead = 1;
+    const request = {
+      clientRequestId: crypto.randomUUID(),
+      content: "Session state cannot be determined",
+    };
+
+    const error = await service.startDiscussion(request).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ProjectTodoStartDiscussionRecoveryError);
+    if (!(error instanceof ProjectTodoStartDiscussionRecoveryError)) throw error;
+    expect(error).toMatchObject({ todoId: expect.any(String), sessionId: expect.any(String) });
+    expect(await service.listTodos()).toHaveLength(1);
+    await expect(service.startDiscussion(request)).rejects.toMatchObject({
+      todoId: error.todoId,
+      sessionId: error.sessionId,
+    });
   });
 
   test("compensates failed run-now creation and non-durable acceptance", async () => {

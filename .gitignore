@@ -8,6 +8,7 @@ bun.lockb
 .archcode
 .specra
 .playwright-mcp
+.codex/config.toml
 __test_tmp__/
 __test__/
 .turbo/

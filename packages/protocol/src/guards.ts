@@ -506,12 +506,14 @@ export function isStreamEvent(event: unknown): event is StreamEvent | SessionGoa
 export function isGlobalSSEHitlRealtimeEvent(value: unknown): value is GlobalSSEHitlRealtimeEvent {
   const event = record(value);
   if (event === undefined
-    || !exact(event, ["type", "projectSlug", "hitlId", "ownerSessionId", "rootSessionId", "createdAt", "payload", "view"])
+    || !exact(event, ["type", "projectSlug", "hitlId", "ownerSessionId", "rootSessionId", "ownerAgentName", "ownerSessionTitle", "createdAt", "payload", "view"])
     || event.type !== "hitl.event"
     || !isString(event.projectSlug)
     || !isString(event.hitlId)
     || !isString(event.ownerSessionId)
     || !isString(event.rootSessionId)
+    || !isString(event.ownerAgentName)
+    || !(event.ownerSessionTitle === null || isString(event.ownerSessionTitle))
     || !isFiniteNumber(event.createdAt)
     || !isGlobalHitlPayload(event.payload)
     || !isHitlView(event.view)) return false;
@@ -537,11 +539,13 @@ export function isGlobalSSEHitlSnapshotEvent(value: unknown): value is GlobalSSE
 function isGlobalSSEHitlEntry(value: unknown): boolean {
   const entry = record(value);
   if (entry === undefined
-    || !exact(entry, ["projectSlug", "hitlId", "ownerSessionId", "rootSessionId", "view"])
+    || !exact(entry, ["projectSlug", "hitlId", "ownerSessionId", "rootSessionId", "ownerAgentName", "ownerSessionTitle", "view"])
     || !isString(entry.projectSlug)
     || !isString(entry.hitlId)
     || !isString(entry.ownerSessionId)
     || !isString(entry.rootSessionId)
+    || !isString(entry.ownerAgentName)
+    || !(entry.ownerSessionTitle === null || isString(entry.ownerSessionTitle))
     || !isHitlView(entry.view)) return false;
 
   const view = entry.view as UnknownRecord;

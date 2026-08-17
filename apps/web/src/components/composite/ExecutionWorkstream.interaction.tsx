@@ -323,6 +323,21 @@ afterEach(() => {
 });
 
 describe("ExecutionWorkstream", () => {
+  test("matches the prototype user bubble and full-width Work geometry", async () => {
+    await render([message("input", "user", "Inspect", 5)], completed());
+
+    const bubble = container.querySelector<HTMLElement>("[data-user-message-surface]");
+    const summary = container.querySelector<HTMLButtonElement>('[data-testid^="work-summary-"]');
+    expect(bubble?.className).toContain("max-w-[640px]");
+    expect(bubble?.className).toContain("rounded-[10px]");
+    expect(bubble?.className).toContain("border-0");
+    expect(bubble?.className).toContain("px-[17px]");
+    expect(bubble?.className).toContain("py-[15px]");
+    expect(summary?.className).toContain("min-h-9");
+    expect(summary?.className).toContain("w-full");
+    expect(summary?.className).not.toContain("max-w-");
+  });
+
   test("renders commentary and tools in exact Work order with per-attempt token-only Reasoning", async () => {
     await render(
       [
@@ -643,7 +658,9 @@ describe("ExecutionWorkstream", () => {
     expect(container.querySelector(`[data-testid="work-summary-${first}"]`)?.textContent)
       .not.toContain("Needs you");
     expect(container.querySelector(`[data-testid="work-summary-${latest}"]`)?.textContent)
-      .toContain("Needs you");
+      .toContain("Paused · Worked for");
+    expect(container.querySelector(`[data-testid="work-summary-${latest}"]`)?.textContent)
+      .not.toContain("Needs you");
   });
 
   test("moves automatic expansion from the initial implicit Segment to committed input, then folds after final output", async () => {
@@ -684,14 +701,15 @@ describe("ExecutionWorkstream", () => {
       ?.textContent).toContain("Done");
   });
 
-  test("shows each durable suspended reason", async () => {
+  test("keeps durable suspended reasons in diagnostics while the Work row stays Paused", async () => {
     for (const [kind, label] of [
       ["hitl", "Needs you"],
       ["child_dependency", "Waiting on child"],
       ["resume_pending", "Resuming"],
     ] as const) {
       await render([message("input", "user", "Request", 0)], suspended(kind));
-      expect(container.textContent).toContain(label);
+      expect(container.querySelector('[data-testid^="work-summary-"]')?.textContent).toContain("Paused · Worked for");
+      expect(container.querySelector('[data-testid^="work-disclosure-"]')?.getAttribute("title")).toContain(label);
     }
   });
 });

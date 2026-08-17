@@ -307,6 +307,7 @@ describe("DiffFileAccordion", () => {
       isExpanded: true,
       onToggle: () => {},
     });
+    expect(findAll(el, (element) => element.type === "button")[0]?.props?.["aria-expanded"]).toBe(true);
     expect(textContent(el)).toContain("new code");
   });
 
@@ -319,6 +320,7 @@ describe("DiffFileAccordion", () => {
       isExpanded: false,
       onToggle: () => {},
     });
+    expect(findAll(el, (element) => element.type === "button")[0]?.props?.["aria-expanded"]).toBe(false);
     expect(textContent(el)).not.toContain("hidden code");
   });
 });
@@ -359,5 +361,41 @@ describe("DiffView", () => {
     ];
     const el = DiffView({ files });
     expect(textContent(el)).not.toContain("hidden content");
+  });
+
+  test("defaultExpandedPath expands only the requested file", () => {
+    const files = [
+      makeFile({
+        path: "src/first.ts",
+        hunks: [makeHunk({ lines: [makeLine("add", "first visible change")] })],
+      }),
+      makeFile({
+        path: "src/second.ts",
+        hunks: [makeHunk({ lines: [makeLine("add", "second hidden change")] })],
+      }),
+    ];
+
+    const el = DiffView({ files, defaultExpandedPath: "src/first.ts" });
+    expect(textContent(el)).toContain("first visible change");
+    expect(textContent(el)).not.toContain("second hidden change");
+  });
+
+  test("selectedPath keeps every file visible while expanding the requested file", () => {
+    const files = [
+      makeFile({
+        path: "src/first.ts",
+        hunks: [makeHunk({ lines: [makeLine("add", "first hidden change")] })],
+      }),
+      makeFile({
+        path: "src/second.ts",
+        hunks: [makeHunk({ lines: [makeLine("add", "second visible change")] })],
+      }),
+    ];
+
+    const el = DiffView({ files, selectedPath: "src/second.ts" });
+    expect(textContent(el)).toContain("src/first.ts");
+    expect(textContent(el)).toContain("src/second.ts");
+    expect(textContent(el)).not.toContain("first hidden change");
+    expect(textContent(el)).toContain("second visible change");
   });
 });

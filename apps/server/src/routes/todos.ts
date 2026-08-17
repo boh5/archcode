@@ -14,6 +14,8 @@ import type {
   ProjectTodoPlanResponse,
   ProjectTodoRunNowInput,
   ProjectTodoRunNowResponse,
+  ProjectTodoStartDiscussionInput,
+  ProjectTodoStartDiscussionResponse,
   ProjectTodoUpdateInput,
 } from "@archcode/protocol";
 import {
@@ -23,6 +25,7 @@ import {
 import {
   CreateProjectTodoSessionSchema,
   ProjectTodoRunNowSchema,
+  ProjectTodoStartDiscussionSchema,
   type AgentRuntime,
 } from "@archcode/agent-core";
 import { z } from "zod/v4";
@@ -94,6 +97,9 @@ export interface ProjectTodoServiceLike {
     input: CreateProjectTodoSessionInput,
   ): Promise<CreateProjectTodoSessionResponse>;
   runNow(input: ProjectTodoRunNowInput): Promise<ProjectTodoRunNowResponse>;
+  startDiscussion(
+    input: ProjectTodoStartDiscussionInput,
+  ): Promise<ProjectTodoStartDiscussionResponse>;
 }
 
 export function createTodosRoutes(runtime: AgentRuntime): Hono {
@@ -133,6 +139,21 @@ export function createTodosRoutes(runtime: AgentRuntime): Hono {
       const service = await resolveTodos(runtime, project.workspaceRoot);
       try {
         return c.json(await service.runNow(c.req.valid("json")), 201);
+      } catch (error) {
+        throw mapTodoError(error);
+      }
+    },
+  );
+
+  app.post(
+    "/:slug/todos/start-discussion",
+    zValidator("param", ProjectTodoListParamsSchema),
+    zValidator("json", ProjectTodoStartDiscussionSchema),
+    async (c) => {
+      const project = await resolveProject(runtime, c.req.valid("param").slug);
+      const service = await resolveTodos(runtime, project.workspaceRoot);
+      try {
+        return c.json(await service.startDiscussion(c.req.valid("json")), 201);
       } catch (error) {
         throw mapTodoError(error);
       }
@@ -361,7 +382,20 @@ function mapTodoError(error: unknown): Error {
       clientRequestId: "clientRequestId" in error ? error.clientRequestId : undefined,
     });
   }
+  if (hasCode(error, "PROJECT_TODO_START_DISCUSSION_CONFLICT")) {
+    return new ServerError("BAD_REQUEST", error.message, 409, {
+      scopeCode: error.code,
+      clientRequestId: "clientRequestId" in error ? error.clientRequestId : undefined,
+    });
+  }
   if (hasCode(error, "PROJECT_TODO_RUN_NOW_RECOVERY_REQUIRED")) {
+    return new ServerError("INTERNAL_ERROR", error.message, 500, {
+      scopeCode: error.code,
+      todoId: error.todoId,
+      sessionId: "sessionId" in error ? error.sessionId : undefined,
+    });
+  }
+  if (hasCode(error, "PROJECT_TODO_START_DISCUSSION_RECOVERY_REQUIRED")) {
     return new ServerError("INTERNAL_ERROR", error.message, 500, {
       scopeCode: error.code,
       todoId: error.todoId,

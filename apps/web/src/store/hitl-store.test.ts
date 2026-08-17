@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { HitlView } from "@archcode/protocol";
 import { applyHitlMutationResult } from "../api/mutations";
-import { hitlStore, scopedHitlKey, selectAttentionVisibleScopedHitl, selectSessionFamilyHitl } from "./hitl-store";
+import { hitlAttentionCountsByRootSession, hitlAttentionLabelsByRootSession, hitlStore, scopedHitlKey, selectAttentionVisibleScopedHitl, selectSessionFamilyHitl } from "./hitl-store";
 
 describe("HITL store mutation reconciliation", () => {
   beforeEach(() => hitlStore.getState().reset());
@@ -33,6 +33,19 @@ describe("HITL store mutation reconciliation", () => {
 });
 
 describe("scoped HITL projection", () => {
+  test("keeps Inspection above Permission above Question within one root family", () => {
+    const labels = hitlAttentionLabelsByRootSession([
+      { rootSessionId: "root", view: view({ hitlId: "inspection", source: { type: "ask_user", toolCallId: "inspect" }, requiresInspection: true }) },
+      { rootSessionId: "root", view: view({ hitlId: "permission", source: { type: "tool_permission", toolCallId: "permit", toolName: "Bash" } }) },
+      { rootSessionId: "root", view: view({ hitlId: "question", source: { type: "ask_user", toolCallId: "ask" } }) },
+      { rootSessionId: "permission-root", view: view({ source: { type: "ask_user", toolCallId: "ask-2" } }) },
+      { rootSessionId: "permission-root", view: view({ source: { type: "tool_permission", toolCallId: "permit-2", toolName: "Bash" } }) },
+    ]);
+
+    expect(labels.get("root")).toBe("Inspection");
+    expect(labels.get("permission-root")).toBe("Permission");
+  });
+
   test("keeps same HITL ids in different projects distinct and aggregates a root family", () => {
     const root = { ...entry("alpha", view({ hitlId: "same", owner: { type: "session", id: "root" } })), rootSessionId: "root" };
     const child = { ...entry("alpha", view({ hitlId: "child", owner: { type: "session", id: "child" } })), rootSessionId: "root" };
@@ -41,6 +54,7 @@ describe("scoped HITL projection", () => {
     const all = selectAttentionVisibleScopedHitl([root, child, other]);
     expect(all).toHaveLength(3);
     expect(selectSessionFamilyHitl(all, "alpha", "root").map((item) => item.view.hitlId)).toEqual(["child", "same"]);
+    expect(hitlAttentionCountsByRootSession(all)).toEqual(new Map([["root", 2], ["root-1", 1]]));
   });
 
   test("scopes same-id rows by project and owner while excluding resolved non-inspection rows", () => {
@@ -77,7 +91,15 @@ describe("scoped HITL projection", () => {
 });
 
 function entry(projectSlug: string, value: HitlView) {
-  return { projectSlug, hitlId: value.hitlId, ownerSessionId: value.owner.id, rootSessionId: "root-1", view: value };
+  return {
+    projectSlug,
+    hitlId: value.hitlId,
+    ownerSessionId: value.owner.id,
+    rootSessionId: "root-1",
+    ownerAgentName: "build",
+    ownerSessionTitle: "Worker",
+    view: value,
+  };
 }
 
 function event(projectSlug: string, value: HitlView, type: "hitl.request" | "hitl.updated" = "hitl.request") {

@@ -1139,14 +1139,18 @@ export interface GlobalSSEHitlSnapshotEvent {
 
 /**
  * Scoped, presentation-only HITL identity for global consumers.
- * `rootSessionId` is derived from the owning Session at projection time and is
- * deliberately never persisted back into the project HITL Queue.
+ * Root identity plus exact owning Agent/Session presentation metadata are
+ * derived at projection time and deliberately never persisted back into the
+ * project HITL Queue.
  */
 export interface GlobalSSEHitlEntry {
   projectSlug: string;
   hitlId: string;
   ownerSessionId: string;
   rootSessionId: string;
+  /** Presentation-only identity of the exact Session that owns this request. */
+  ownerAgentName: string;
+  ownerSessionTitle: string | null;
   view: HitlView;
 }
 
@@ -1161,6 +1165,9 @@ export interface GlobalSSEHitlRealtimeEvent {
   hitlId: string;
   ownerSessionId: string;
   rootSessionId: string;
+  /** Presentation-only identity of the exact Session that owns this request. */
+  ownerAgentName: string;
+  ownerSessionTitle: string | null;
   createdAt: number;
   payload: GlobalSSEHitlEventPayload;
   view: HitlView;

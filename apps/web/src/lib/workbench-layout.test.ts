@@ -6,7 +6,6 @@ import {
   getInspectorKind,
   getWorkbenchSurfaceNavigationKey,
   readWorkbenchPreferences,
-  resolveInspectorGeometry,
 } from "./workbench-layout";
 
 describe("workbench layout", () => {
@@ -18,12 +17,6 @@ describe("workbench layout", () => {
     expect(clampInspectorWidth(120)).toBe(280);
     expect(clampInspectorWidth(420)).toBe(420);
     expect(clampInspectorWidth(900)).toBe(460);
-  });
-
-  test("keeps medium inspector resize semantics aligned with the available canvas", () => {
-    expect(resolveInspectorGeometry(460, 320)).toEqual({ value: 320, min: 280, max: 320 });
-    expect(resolveInspectorGeometry(280, 240)).toEqual({ value: 240, min: 240, max: 240 });
-    expect(resolveInspectorGeometry(330, 800)).toEqual({ value: 330, min: 280, max: 460 });
   });
 
   test("only object detail routes expose a context inspector", () => {

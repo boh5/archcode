@@ -94,11 +94,11 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
   const summaryLaneClass = grouped
     ? WORK_ACTIVITY_NESTED_LANE_CLASS
     : WORK_ACTIVITY_CHILD_LANE_CLASS;
-  const summaryClass = `tool-card-summary-control grid min-h-9 select-none grid-cols-[12px_minmax(0,160px)_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-transparent py-1 pl-0 pr-1.5 text-left max-[560px]:grid-cols-[12px_minmax(0,112px)_minmax(0,1fr)_auto] ${summaryBorderClass} ${summaryLaneClass}`;
+  const summaryClass = `tool-card-summary-control grid min-h-9 select-none grid-cols-[14px_minmax(98px,160px)_minmax(0,1fr)_auto] items-center gap-[9px] rounded-[5px] bg-transparent px-[9px] py-[7px] text-left [@media(max-width:560px)]:grid-cols-[14px_minmax(90px,112px)_minmax(0,1fr)_auto] [@media(pointer:coarse)]:min-h-11 ${summaryBorderClass} ${summaryLaneClass}`;
   const summaryContent = (
     <>
       {hasDetails
-        ? <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-icon)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
+        ? <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-fast)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
         : <span aria-hidden="true" />}
       <span
         className={`min-w-0 truncate font-mono text-[12px] font-semibold ${isUnknownResult ? "text-warning" : "text-text-tertiary"}`}
@@ -107,14 +107,14 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
         {part.toolName}
       </span>
       <span
-        className={`min-w-0 truncate text-[13px] font-medium ${isShell ? "font-mono text-text-secondary" : "text-text-primary"}`}
+        className={`min-w-0 truncate text-[12.5px] font-medium text-text-secondary ${isShell ? "font-mono" : ""}`}
         title={summaryPrimary}
       >
         {summaryPrimary}
       </span>
       <span className="flex shrink-0 items-center gap-2">
         {diffSummary && (
-          <span className="whitespace-nowrap font-mono text-[11px] tabular-nums text-text-tertiary max-[560px]:hidden">
+          <span className="whitespace-nowrap font-mono text-[11px] tabular-nums text-text-tertiary [@media(max-width:560px)]:hidden">
             {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
             {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
               ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
@@ -122,7 +122,7 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
           </span>
         )}
         {(part.state !== "completed" || isUnknownResult) && (
-          <span className={`text-[10px] font-semibold ${statusClass}`}>{statusLabel}</span>
+          <span className={`text-[11px] font-semibold ${statusClass}`}>{statusLabel}</span>
         )}
       </span>
     </>
@@ -135,7 +135,7 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
           type="button"
           aria-expanded={expanded}
           aria-controls={detailsId}
-          className={`${summaryClass} cursor-pointer transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand`}
+          className={`${summaryClass} cursor-pointer transition-[background-color,transform] duration-[var(--motion-fast)] hover:translate-x-0.5 hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand`}
           onClick={() => setExpanded((value) => {
             const next = !value;
             if (!next) manuallyCollapsed.current = true;
@@ -208,7 +208,7 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
               <button
                 type="button"
                 data-testid="tool-output-open"
-                className="h-8 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                className="h-8 rounded-sm bg-brand-subtle px-3 text-[12px] font-medium text-brand transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 onClick={() => setViewerOpen((value) => !value)}
               >
                 {viewerOpen ? "Hide output" : "View output"}

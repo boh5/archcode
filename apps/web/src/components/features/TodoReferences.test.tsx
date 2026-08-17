@@ -15,7 +15,7 @@ let serverAttachmentIds: string[];
 
 const todo: ProjectTodo = {
   id: "todo-1",
-  content: "Attach the brief",
+  content: "Attach supporting materials",
   status: "ready",
   attachmentIds: [],
   revision: 1,
@@ -89,7 +89,7 @@ describe("Todo References", () => {
     expect(canOpenTodoAttachmentInline({ id: "html", name: "a.html", mediaType: "text/html", sizeBytes: 1, kind: "file" })).toBe(false);
   });
 
-  test("keeps the icon-only Remove action at least 44px wide on coarse pointers", async () => {
+  test("keeps the prototype's visible Remove action with a 44px coarse target", async () => {
     Object.defineProperty(globalThis, "fetch", {
       configurable: true,
       value: mock(async () => Response.json({
@@ -106,8 +106,10 @@ describe("Todo References", () => {
     ));
     await settle();
 
-    expect(document.querySelector('[aria-label="Remove brief.pdf"]')?.className)
-      .toContain("[@media(pointer:coarse)]:min-w-11");
+    const remove = document.querySelector('[aria-label="Remove brief.pdf"]');
+    expect(remove?.textContent).toBe("Remove");
+    expect(remove?.className).toContain("[@media(pointer:coarse)]:min-h-11");
+    expect(document.getElementById("todo-references-help")?.textContent).toContain("PRDs, designs, logs, and images");
   });
 
   test("uploads selected files serially with the revision returned by the previous mutation", async () => {

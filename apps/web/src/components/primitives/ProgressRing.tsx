@@ -40,7 +40,7 @@ export function ProgressRing({
           strokeLinecap="round"
           strokeWidth="1.5"
           transform="rotate(-90 7 7)"
-          style={{ transition: "stroke-dashoffset var(--motion-overlay) var(--ease-enter)" }}
+          style={{ transition: "stroke-dashoffset var(--motion-deliberate) var(--ease-enter)" }}
         />
       </svg>
     </span>

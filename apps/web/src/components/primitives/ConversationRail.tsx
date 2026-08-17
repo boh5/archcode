@@ -3,14 +3,10 @@ import type { HTMLAttributes } from "react";
 export type ConversationRailProps = HTMLAttributes<HTMLDivElement>;
 export type SessionThreadColumnProps = HTMLAttributes<HTMLDivElement>;
 
-/**
- * The compact lane used by Work summaries and ordinary activity rows. Rich
- * details remain outside this cap so diffs, terminals, and artifacts can use
- * the full Session thread width when expanded.
- */
-export const WORK_ACTIVITY_LANE_CLASS = "w-full max-w-[720px] min-w-0";
-export const WORK_ACTIVITY_CHILD_LANE_CLASS = "w-full max-w-[696px] min-w-0";
-export const WORK_ACTIVITY_NESTED_LANE_CLASS = "w-full max-w-[676px] min-w-0";
+/** Work and nested activity share the full Session thread width. */
+export const WORK_ACTIVITY_LANE_CLASS = "w-full min-w-0";
+export const WORK_ACTIVITY_CHILD_LANE_CLASS = "w-full min-w-0";
+export const WORK_ACTIVITY_NESTED_LANE_CLASS = "w-full min-w-0";
 
 /**
  * Owns the responsive safe-area gutters shared by the Session transcript and
@@ -33,7 +29,7 @@ export function ConversationRail({ className = "", ...props }: ConversationRailP
 export function SessionThreadColumn({ className = "", ...props }: SessionThreadColumnProps) {
   return (
     <div
-      className={`mx-auto w-full max-w-[800px] min-w-0 ${className}`}
+      className={`mx-auto w-full max-w-[852px] min-w-0 ${className}`}
       data-session-thread-column=""
       {...props}
     />

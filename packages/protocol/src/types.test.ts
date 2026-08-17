@@ -371,6 +371,8 @@ describe("global SSE wire protocol types", () => {
         hitlId: "hitl-1",
         ownerSessionId: "session-1",
         rootSessionId: "root-1",
+        ownerAgentName: "build",
+        ownerSessionTitle: "Worker Session",
         createdAt: 4,
         payload: { type: "hitl.request" },
         view: {} as HitlView,

@@ -38,8 +38,8 @@ export function RecoveryNotice({ part }: RecoveryNoticeProps) {
   const countdown = useCountdown(part.nextRetryAt, part.status === "scheduled");
 
   return (
-    <div className="shrink-0 overflow-hidden rounded-md border border-border-subtle bg-bg-elevated">
-      <div className="flex items-center gap-2 px-3 py-2">
+    <div className="mx-1.5 my-0.5 shrink-0 overflow-hidden rounded-[6px] border border-border-default bg-bg-elevated">
+      <div className="flex items-center gap-2 px-2.5 py-2">
         <span
           className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-sm ${STATUS_SUBTLE_CLASS[visual.tone]}`}
           data-recovery-visual-kind={visual.kind}
@@ -71,7 +71,7 @@ export function RecoveryNotice({ part }: RecoveryNoticeProps) {
         )}
       </div>
       {part.message && (
-        <div className="border-t border-border-subtle px-3 py-2 text-[12px] text-text-secondary">
+        <div className="border-t border-border-subtle px-2.5 py-2 text-[12px] leading-[1.45] text-text-secondary">
           {part.message}
         </div>
       )}

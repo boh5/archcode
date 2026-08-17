@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CircleCheck, CirclePause, CircleStop, CircleX, MessageCircleQuestion } from "lucide-react";
+import { Check, CirclePause, CircleStop, CircleX, MessageCircleQuestion } from "lucide-react";
 import { STATUS_VISUALS, statusVisual, type VisualStatusKind } from "./status-visuals";
 
 const expectedKinds: readonly VisualStatusKind[] = [
@@ -45,7 +45,7 @@ describe("status visuals", () => {
     expect(statusVisual("running").glyph).toBe("activity-arc");
     expect(statusVisual("needs_you").glyph).toBe(MessageCircleQuestion);
     expect(statusVisual("paused").glyph).toBe(CirclePause);
-    expect(statusVisual("completed").glyph).toBe(CircleCheck);
+    expect(statusVisual("completed").glyph).toBe(Check);
     expect(statusVisual("failed").glyph).toBe(CircleX);
     expect(statusVisual("stopped").glyph).toBe(CircleStop);
   });

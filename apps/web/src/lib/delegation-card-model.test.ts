@@ -119,14 +119,14 @@ describe("delegation card view-model", () => {
 
   test("maps terminal child execution states without a second task status", () => {
     const terminalCases = [
-      ["completed", "completed"],
-      ["failed", "failed"],
-      ["timed_out", "failed"],
-      ["cancelled", "stopped"],
-      ["interrupted", "stopped"],
+      ["completed", "completed", "Completed"],
+      ["failed", "failed", "Failed"],
+      ["timed_out", "failed", "Failed"],
+      ["cancelled", "stopped", "Stopped"],
+      ["interrupted", "stopped", "Stopped"],
     ] as const;
 
-    for (const [linkStatus, visualKind] of terminalCases) {
+    for (const [linkStatus, visualKind, statusLabel] of terminalCases) {
       const model = buildDelegationCardViewModel({
         part: makePart({ state: linkStatus === "completed" ? "completed" : "error" }),
         projectSlug: "demo",
@@ -134,9 +134,7 @@ describe("delegation card view-model", () => {
         childSessionLinks: [makeLink({ status: linkStatus })],
       });
       expect(model.visualKind).toBe(visualKind);
-      if (linkStatus !== "completed") {
-        expect(model.executionStatusLabel).toBe("Stopped");
-      }
+      expect(model.executionStatusLabel).toBe(statusLabel);
     }
   });
 

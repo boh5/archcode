@@ -23,18 +23,6 @@ export function clampInspectorWidth(value: number): number {
   return clamp(value, INSPECTOR_MIN_WIDTH, INSPECTOR_MAX_WIDTH);
 }
 
-export interface InspectorGeometry {
-  value: number;
-  min: number;
-  max: number;
-}
-
-export function resolveInspectorGeometry(preferredWidth: number, availableWidth: number): InspectorGeometry {
-  const max = Math.min(INSPECTOR_MAX_WIDTH, Math.max(0, Math.floor(availableWidth)));
-  const min = Math.min(INSPECTOR_MIN_WIDTH, max);
-  return { value: clamp(preferredWidth, min, max), min, max };
-}
-
 export function getInspectorKind(pathname: string): InspectorKind | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length !== 4 || segments[0] !== "projects") return null;

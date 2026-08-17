@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { DiffFile, DiffHunk, DiffLine } from "@archcode/protocol";
 
@@ -118,29 +118,33 @@ export function DiffFileAccordion({
   file,
   isExpanded,
   onToggle,
+  buttonRef,
 }: {
   file: DiffFile;
   isExpanded: boolean;
   onToggle: () => void;
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   const status = file.status ?? "modified";
 
   return (
-    <div className="border-b border-border-subtle">
+    <div className="border-b border-border-subtle" data-diff-file={file.path}>
       <button
+        ref={buttonRef}
         type="button"
-        className="flex w-full cursor-pointer items-center gap-2 bg-bg-elevated px-3 py-2 text-left transition-colors duration-[var(--motion-hover)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+        aria-expanded={isExpanded}
+        className="flex min-h-10 w-full cursor-pointer items-center gap-2 bg-bg-elevated px-[11px] py-0 text-left transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
         onClick={onToggle}
       >
         <span className="shrink-0 text-text-muted" aria-hidden="true">
           {isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
         </span>
         <span
-          className={`shrink-0 rounded-sm px-2 py-px text-[12px] font-semibold leading-4 ${STATUS_STYLES[status] ?? "bg-bg-elevated text-text-tertiary"}`}
+          className={`shrink-0 rounded-sm px-2 py-px text-[10.5px] font-semibold leading-4 ${STATUS_STYLES[status] ?? "bg-bg-elevated text-text-tertiary"}`}
         >
           {STATUS_LABELS[status] ?? "?"}
         </span>
-        <span className="truncate font-mono text-[12px] font-normal leading-[18px] text-text-primary">
+        <span className="truncate font-mono text-[10.5px] font-semibold leading-none text-text-primary">
           {file.path}
         </span>
         {(file.additions !== undefined || file.deletions !== undefined) && (
@@ -169,12 +173,41 @@ export function DiffFileAccordion({
 export interface DiffViewProps {
   files: DiffFile[];
   defaultExpanded?: boolean;
+  defaultExpandedPath?: string;
+  selectedPath?: string;
+  className?: string;
 }
 
-export function DiffView({ files, defaultExpanded = false }: DiffViewProps) {
+export function DiffView({ files, defaultExpanded = false, defaultExpandedPath, selectedPath, className = "" }: DiffViewProps) {
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(
-    () => new Set(defaultExpanded ? files.map((f) => f.path) : []),
+    () => new Set(defaultExpanded
+      ? files.map((file) => file.path)
+      : (selectedPath ?? defaultExpandedPath) === undefined
+        ? []
+        : [selectedPath ?? defaultExpandedPath!]),
   );
+  const selectedButtonRef = useRef<HTMLButtonElement | null>(null);
+  const lastRevealedPathRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (selectedPath === undefined || !files.some((file) => file.path === selectedPath)) return;
+    setExpandedFiles((previous) => previous.has(selectedPath)
+      ? previous
+      : new Set([...previous, selectedPath]));
+  }, [files, selectedPath]);
+
+  useEffect(() => {
+    if (selectedPath === undefined || !files.some((file) => file.path === selectedPath)) {
+      lastRevealedPathRef.current = undefined;
+      return;
+    }
+    if (lastRevealedPathRef.current === selectedPath) return;
+    const button = selectedButtonRef.current;
+    if (button === null) return;
+    lastRevealedPathRef.current = selectedPath;
+    button.focus({ preventScroll: true });
+    button.scrollIntoView?.({ block: "start", behavior: "auto" });
+  }, [files, selectedPath]);
 
   const toggleExpand = (path: string) => {
     setExpandedFiles((prev) => {
@@ -197,13 +230,14 @@ export function DiffView({ files, defaultExpanded = false }: DiffViewProps) {
   }
 
   return (
-    <div className="h-full min-w-0 overflow-y-auto overflow-x-hidden">
+    <div className={`h-full min-w-0 overflow-y-auto overflow-x-hidden ${className}`}>
       {files.map((file) => (
         <DiffFileAccordion
           key={file.path}
           file={file}
           isExpanded={expandedFiles.has(file.path)}
           onToggle={() => toggleExpand(file.path)}
+          buttonRef={file.path === selectedPath ? selectedButtonRef : undefined}
         />
       ))}
     </div>

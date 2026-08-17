@@ -193,7 +193,7 @@ afterEach(() => {
 });
 
 describe("SessionComposerDock", () => {
-  test("keeps HITL first at natural height, then Goal, Queue, and collapsed Input", async () => {
+  test("gives pending decisions the expanded priority stack above the always-visible Input", async () => {
     const store = createWebSessionStore("session-1", "project-1");
     applySnapshot(store, {
       rootSessionId: "session-1",
@@ -282,6 +282,8 @@ describe("SessionComposerDock", () => {
           hitlId: hitlView.hitlId,
           ownerSessionId: "session-1",
           rootSessionId: "session-1",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 1",
           view: hitlView,
         },
       ],
@@ -317,6 +319,9 @@ describe("SessionComposerDock", () => {
     const threadColumn = container.querySelector(
       '[data-testid="composer-thread-column"]',
     );
+    const priority = container.querySelector(
+      '[data-testid="composer-priority-stack"]',
+    );
     const attention = container.querySelector(
       '[data-testid="composer-attention-stack"]',
     );
@@ -330,31 +335,31 @@ describe("SessionComposerDock", () => {
       '[data-testid="session-goal-summary-row"]',
     );
     const card = container.querySelector('[data-testid="composer-card"]');
-    const hitlBody = container.querySelector(
-      '[data-testid="hitl-decision-body"]',
-    );
-    expect(dock?.className).not.toContain("max-h-[");
-    expect(dock?.className).not.toContain("overflow");
+    expect(dock?.className).toContain("max-h-[min(78dvh,640px)]");
+    expect(dock?.className).toContain("overflow-visible");
+    expect(dock?.className).toContain("bg-transparent");
+    expect(dock?.className).toContain("border-0");
     expect((dock as HTMLElement | null)?.style.scrollbarGutter).toBe("");
-    expect(scrollbarAlignment?.style.paddingInline).toBe(
-      "var(--session-scrollbar-gutter, 0px)",
-    );
-    expect(dock?.classList.contains("border-t")).toBe(true);
+    expect(scrollbarAlignment?.className).toContain("px-0");
+    expect(scrollbarAlignment?.className).toContain("min-[761px]:px-[var(--session-scrollbar-gutter,0px)]");
     expect(rail?.className).toContain("w-full");
-    expect(rail?.className).not.toContain("max-w-[");
-    expect(threadColumn?.className).toContain("max-w-[800px]");
+    expect(rail?.className).toContain("!max-w-[900px]");
+    expect(rail?.className).toContain("!px-3");
+    expect(rail?.className).toContain("min-[761px]:!px-[26px]");
+    expect(threadColumn?.className).toContain("max-w-[852px]");
+    expect(threadColumn?.className).toContain("!max-w-[848px]");
     expect(threadColumn?.className).toContain("mx-auto");
+    expect(threadColumn?.className).toContain("gap-2");
+    expect(priority?.className).toContain("overflow-y-auto");
+    expect(priority?.className).toContain("overscroll-contain");
     expect(attention).not.toBeNull();
-    expect(attention?.className).not.toContain("overflow");
-    expect(hitlBody?.className).not.toContain("overflow");
-    expect(queue?.className).toContain("max-h-[160px]");
-    expect(queue?.className).toContain("max-[799px]:max-h-[116px]");
-    expect(queue?.className).toContain("overflow-y-auto");
+    expect(attention?.className).toContain("shrink-0");
+    expect(queue?.className).toContain("shrink-0");
     expect(inputSlot?.className).toContain("shrink-0");
+    expect(inputSlot?.className).toContain("z-[2]");
     expect(goal?.className).toContain("shrink-0");
-    expect(card?.className).toContain("rounded-sm");
-    expect(card?.getAttribute("data-density")).toBe("collapsed");
-    expect(card?.querySelector("textarea")).toBeNull();
+    expect(card?.className).toContain("rounded-xl");
+    expect(card?.querySelector("textarea")).not.toBeNull();
     expect(container.textContent).toContain("Queued request");
     expect(container.textContent).toContain("Retry this exact request");
     expect(container.textContent).toContain("Steering request");
@@ -365,10 +370,16 @@ describe("SessionComposerDock", () => {
     expect(
       ordered.map((element) => element.getAttribute("data-testid")),
     ).toEqual([
+      "composer-priority-stack",
+      "composer-input-slot",
+    ]);
+    const priorityOrder = Array.from(priority?.children ?? []);
+    expect(
+      priorityOrder.map((element) => element.getAttribute("data-testid")),
+    ).toEqual([
       "composer-attention-stack",
       "session-goal-summary-row",
       "composer-queue-list",
-      "composer-input-slot",
     ]);
     expect(
       attention?.querySelector('[data-testid="hitl-decision-card"]'),
@@ -378,47 +389,94 @@ describe("SessionComposerDock", () => {
     ).not.toBeNull();
     expect(container.querySelector("progress, [role=progressbar]")).toBeNull();
     expect(
-      container.querySelector('[data-testid="hitl-queue-composer-trigger"]'),
-    ).not.toBeNull();
-    expect(
       container.querySelector('[data-testid="hitl-owner-link"]'),
     ).toBeNull();
-    expect(
-      container.querySelector('button[aria-label="Queue message"]'),
-    ).toBeNull();
-    expect(
-      container.querySelector('button[aria-label="Stop session"]'),
-    ).not.toBeNull();
+    const terminalAction = container.querySelectorAll(
+      '[data-testid="composer-terminal-action"]',
+    );
+    expect(terminalAction).toHaveLength(1);
+    expect(terminalAction[0]?.getAttribute("aria-label")).toBe("Stop session");
     expect(container.textContent).toContain("Steer");
-    expect(container.querySelector('button[title="Attach file"]')).toBeNull();
+    expect(container.querySelector('button[title="Attach file"]')).not.toBeNull();
     expect(
       container.querySelector('button[aria-label="Retry sending message"]'),
     ).not.toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(0);
 
-    const composerTrigger = container.querySelector(
-      '[data-testid="hitl-queue-composer-trigger"]',
-    );
-    if (!(composerTrigger instanceof dom.window.HTMLButtonElement))
-      throw new Error("Missing queued-message composer trigger");
-    await act(async () => composerTrigger.click());
-    const expandedCard = container.querySelector(
-      '[data-testid="composer-card"]',
-    );
-    expect(expandedCard?.querySelector("textarea")?.className).toContain(
+    expect(card?.querySelector("textarea")?.className).toContain(
       "border-0",
     );
-    expect(
-      container.querySelector('button[aria-label="Queue message"]'),
-    ).not.toBeNull();
-    expect(
-      container.querySelector('button[aria-label="Stop session"]'),
-    ).not.toBeNull();
-    expect(
-      container.querySelector(
-        'button[aria-label="Collapse queued-message composer"]',
-      ),
-    ).not.toBeNull();
+  });
+
+  test("keeps a terminal failure visible in the always-present Composer", async () => {
+    const store = createWebSessionStore("session-failed", "project-1");
+    applySnapshot(store, {
+      rootSessionId: "session-failed",
+      eventCursor: -1,
+      agentName: "lead",
+      ...modelState,
+      pendingMessages: [],
+      executions: [{
+        id: "execution-failed",
+        startedAt: 1,
+        endedAt: 2,
+        durationMs: 1,
+        origin: "user_message",
+        status: "failed",
+        maxSteps: 10,
+        executionSkills: [],
+        memoryPolicy: {
+          policy: { useMemory: true, autoLearning: true },
+          epoch: { bootId: "test-memory-boot", generation: 0 },
+        },
+        runs: [],
+        terminalSettlement: { key: "terminal", goalInstanceId: null },
+      }],
+      executionCount: 1,
+    });
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["project-1"],
+      families: [{
+        projectSlug: "project-1",
+        rootSessionId: "session-failed",
+        activity: "idle",
+      }],
+      createdAt: 1,
+    });
+    hitlStore.getState().applySnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: ["project-1"],
+      entries: [],
+      createdAt: 1,
+    });
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Infinity },
+        mutations: { retry: false },
+      },
+    });
+    client.setQueryData(queryKeys.modelRuntime, modelRuntime);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <SettingsModalProvider>
+            <SessionComposerDock slug="project-1" sessionId="session-failed" />
+          </SettingsModalProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    const card = container.querySelector('[data-testid="composer-card"]');
+    expect(card).not.toBeNull();
+    expect(card?.querySelector("textarea")).not.toBeNull();
+    expect(card?.textContent).toContain("Failed");
+    const dock = container.querySelector(
+      '[data-testid="session-composer-dock"]',
+    );
+    expect(dock?.className).toContain("max-h-[min(52dvh,460px)]");
+    expect(dock?.className).toContain("min-[761px]:max-h-[min(48dvh,520px)]");
   });
 
   test("steps through multi-question Ask User and submits only from Confirm", async () => {
@@ -485,6 +543,8 @@ describe("SessionComposerDock", () => {
           hitlId: hitlView.hitlId,
           ownerSessionId: "session-2",
           rootSessionId: "session-2",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 2",
           view: hitlView,
         },
       ],
@@ -653,6 +713,8 @@ describe("SessionComposerDock", () => {
           hitlId: first.hitlId,
           ownerSessionId: "session-3",
           rootSessionId: "session-3",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 3",
           view: first,
         },
         {
@@ -660,6 +722,8 @@ describe("SessionComposerDock", () => {
           hitlId: second.hitlId,
           ownerSessionId: "session-3",
           rootSessionId: "session-3",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 3",
           view: second,
         },
       ],
