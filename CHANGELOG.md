@@ -7,8 +7,29 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-08-18
+
+### Added
+
+- Keep the HTTP control plane and Settings available when Runtime activation or
+  global Config validation fails, with bounded Runtime-data inspection,
+  selective invalid-item removal, and same-process recovery.
+- Add durable project Memory management with 10-minute idle learning, crash-safe
+  reconciliation, bounded Markdown storage, explicit write support, and
+  Settings controls for preferences, topics, warnings, and runtime policy.
+- Add live MCP and Skill management across Settings and the composer, including
+  HTTP/STDIO lifecycle controls, draft connection tests, saved reconnects,
+  package diagnostics, target-aware discovery, and progressive resource reads.
+
 ### Changed
 
+- Hard-cut the Web UI to the Todo-only workbench: `/` now opens the last
+  project's All todos surface (or the zero-project registration state), while
+  Todo, Work, Runs, Schedules, Session, Search, Needs-you, Diff, Composer, and
+  Inspector flows share one responsive workbench shell.
+- Replace the legacy Memory extraction hooks and thresholds with two independent
+  runtime policies: `useMemory` for recall and `autoLearning` for background
+  learning. Explicit `memory_write` remains immediate.
 - Replace single-file workflow Skills with standard local Skill packages:
   `SKILL.md` plus optional `scripts/`, `references/`, `assets/`, and other
   contained resources. Skill discovery is metadata-only; entry and listed
@@ -19,9 +40,24 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   `disabledBuiltins`, hot apply on Settings save, and status/Test/Reconnect
   controls. User MCP servers are visible to all six Agent identities; the
   built-in visibility matrix remains role-defined.
+- Centralize Agent target, Profile, depth, and Skill authority so fresh and
+  resumed delegation share one admission path and Providers receive portable
+  tool schemas instead of internal validation constraints.
+
+### Fixed
+
+- Prevent strict Providers from rejecting delegation and Skill tool schemas
+  before model execution, while preserving exact runtime authorization and
+  stable typed errors.
+- Preserve completed Session responses across restart and keep recovery
+  follow-up failures distinct from the original Runtime activation failure.
 
 ### Breaking Changes
 
+- Memory configuration is a hard cut. Replace `enabled`, `minMessages`,
+  `minContentLength`, and `cooldownMs` with `useMemory` and `autoLearning`.
+  Obsolete query-loop extraction hooks, tasks, cursors, and compatibility paths
+  are removed.
 - Project and user Skills must use one directory per Skill:
   `<skills-root>/<name>/SKILL.md`. Manually update existing entries to use only `name` and `description`
   (required), with optional `license`, `compatibility`, and string-map
@@ -37,6 +73,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   opt-out uses `disabledBuiltins`; user-server role filters and extra MCP
   approval assumptions are removed. There is no migration, compatibility
   reader, or fallback for the old configuration shape.
+- The legacy global Home/Dashboard and parallel document-rail navigation are
+  removed. Root navigation now resolves to project Todos, and no compatibility
+  UI is retained for the former shell.
 
 ## [0.0.8] - 2026-08-04
 
