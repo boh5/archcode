@@ -1,24 +1,50 @@
 # Workbench concepts
 
-ArchCode organizes AI coding work around Projects, Project Todos, and persistent
-Sessions. Capture and shape an idea as a Todo, start the work in a Session, and
-keep its execution history and human decisions together. You can also start
-with an ordinary Session and adopt the other concepts only when they solve a
-real need.
+ArchCode is an open-source, self-hosted workbench for AI coding. Projects
+contain Todos, Sessions, and Automations. A Todo records project work you want
+done. A Session is where an Agent discusses or carries out that work. An
+Automation starts work once or on a recurring schedule. Use these concepts
+together, or start an ordinary Session directly.
 
 ## Project
 
-A Project registers an existing absolute workspace directory on the machine
-running ArchCode. It keeps that workspace's ideas, active work, history, and
-control surfaces together through Sessions, Todos, Automations, approvals, and
-project-scoped memory.
+A Project is an existing workspace directory registered on the machine running
+ArchCode. Its Todos, Sessions, Automations, approvals, history, and
+project-scoped memory stay together in the workbench.
+
+## Todo
+
+A Project Todo records one piece of work you may want to build, fix,
+investigate, or improve. A new Todo starts as an Idea. You can open a dedicated
+Discussion to clarify it, attach an optional Plan, and move it among Idea,
+Ready, In Progress, and Done. Rejected and Archived remain outside the main
+workflow.
+
+When a Todo needs a Plan, **Generate / Improve Plan** reuses its latest
+Discussion only when that Session is idle and maintains one ordinary Markdown
+file at `.archcode/plans/<todo-id>.md`. If no Discussion exists, the latest one
+is busy or suspended, it was deleted, or an idle reuse loses the acceptance
+race, ArchCode creates a new Discussion with Plan work as its first message.
+The UI never races a generic Discussion execution with a second Plan command.
+A Ready or In Progress Todo can start any number of fresh ordinary Lead work
+Sessions or an Automation setup Session. At that one start boundary, ArchCode
+checks whether the Plan file exists: if it does, the Lead begins with
+`execute-plan`; otherwise it follows the ordinary work path. Starting work from
+Ready moves the Todo to In Progress; opening or continuing an existing Session
+does not change the Todo. Each direct root Session keeps its own immutable Todo
+source, while an Automation keeps its own optional Todo association. The Todo
+itself never stores Session, Plan, or Automation IDs.
+
+**Run now** creates a minimal In Progress Todo and its first bound Lead Session
+in one step. It skips Discussion and Plan without preventing you from adding
+either later. You can also start a Session directly without creating a Todo.
 
 ## Session
 
-A Session is the durable conversation and execution history for one Agent.
-Ordinary user work starts in a root Lead Session. A Todo Discussion starts in a
-root Discussion Session dedicated to shaping that Todo and its optional Plan.
-The Session keeps its model Profile, working directory, messages, tool activity,
+A Session contains one Agent's conversation and execution history. Ordinary
+user work starts in a root Lead Session. A Todo Discussion starts in a root
+Discussion Session dedicated to shaping that Todo and its optional Plan. The
+Session keeps its model Profile, working directory, messages, tool activity,
 approvals, and terminal state.
 
 ## Execution
@@ -44,29 +70,11 @@ Reasoning usage belongs to its individual model attempt, never to a synthetic
 Execution-wide Reasoning item. Segments are independent display and navigation
 projections only: they do not create, persist, or schedule Executions.
 
-## Todo
+## Automation
 
-Project Todos are optional, project-owned entries for anything you may want to
-build, fix, investigate, or improve. A new Todo starts as an Idea. You can open
-a dedicated Discussion to clarify and shape it, then freely organize it among
-Idea, Ready, In Progress, and Done; Rejected and Archived are separate from the
-main board.
-
-When a Todo needs a Plan, **Generate / Improve Plan** reuses its latest
-Discussion only when that Session is idle and maintains one ordinary Markdown
-file at `.archcode/plans/<todo-id>.md`. If no Discussion exists, the latest one
-is busy or suspended, it was deleted, or an idle reuse loses the acceptance
-race, ArchCode creates a new Discussion with Plan work as its first message.
-The UI never races a generic Discussion execution with a second Plan command.
-A Ready or In Progress Todo can start any number of fresh
-ordinary Lead work Sessions or an Automation setup Session. At that one start
-boundary, ArchCode checks whether the Plan file exists: if it does, the Lead
-begins with `execute-plan`; otherwise it follows the ordinary work path.
-Starting work from Ready moves the Todo to In Progress; opening or continuing
-an existing Session does not change the Todo. Each direct root Session keeps
-its own immutable Todo source, while an Automation keeps its own optional Todo
-association. The Todo itself never stores Session, Plan, or Automation IDs. You
-can also start a Session directly without creating a Todo.
+An Automation starts or resumes project work once or on a recurring schedule.
+It creates a root Lead Session or sends a message to an existing Session; it
+does not replace a Session or own the conversation.
 
 ## Goal
 
@@ -77,12 +85,6 @@ or a synchronous child and later resume with the same ID. The Goal finishes
 only after the required review gate.
 
 Ordinary requests do not create Goals automatically.
-
-## Automation
-
-An Automation is a durable schedule that starts ordinary Sessions for a
-project. It is useful for recurring work; it does not replace a Session or own
-the conversation.
 
 ## Agent identities
 
