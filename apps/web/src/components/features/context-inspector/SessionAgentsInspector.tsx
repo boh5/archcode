@@ -1,11 +1,9 @@
 import { useMemo } from "react";
-import { useQueries } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { sessionQueryOptions, useAgents } from "../../../api/queries";
-import type { SessionFamilyActivity, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@archcode/protocol";
+import { useAgents } from "../../../api/queries";
+import type { SessionExecutionRecord, SessionFamilyActivity, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import { resolveAgentDisplayName } from "../../../lib/agent-constants";
 import { useSessionFamilyActivity } from "../../../store/session-runtime-store";
-import { useSessionStore } from "../../../store/session-store";
 import { InspectorNotice } from "./InspectorPrimitives";
 import { buildAgentFocusSearch } from "./session-canvas-navigation";
 import { childExecutionVisualKind, presentChildExecutionStatus } from "../../../lib/execution-status-presentation";
@@ -25,6 +23,7 @@ interface AgentStatusPresentation {
 export function resolveInspectorAgentStatus(
   rootActivity: SessionFamilyActivity | undefined,
   childStatus?: ToolChildSessionLinkStatus,
+  latestExecutionStatus?: SessionExecutionRecord["status"] | null,
   gate?: "Permission" | "Question",
 ): AgentStatusPresentation {
   if (gate !== undefined) return { label: gate, kind: "needs_you" };
@@ -33,25 +32,24 @@ export function resolveInspectorAgentStatus(
     const status = presentChildExecutionStatus(childStatus);
     return { label: status.label, kind: childExecutionVisualKind(childStatus), detail: status.detail };
   }
+  if (latestExecutionStatus !== undefined && latestExecutionStatus !== null) {
+    if (latestExecutionStatus === "running") return { label: "Running", kind: "running" };
+    if (latestExecutionStatus === "suspended") return { label: "Paused", kind: "pending" };
+    if (latestExecutionStatus === "completed") return { label: "Completed", kind: "completed" };
+    if (latestExecutionStatus === "failed") return { label: "Failed", kind: "failed" };
+    if (latestExecutionStatus === "timed_out") return { label: "Failed", kind: "failed", detail: "Timed out" };
+    if (latestExecutionStatus === "max_steps") return { label: "Failed", kind: "failed", detail: "Max steps" };
+    return {
+      label: "Stopped",
+      kind: "stopped",
+      detail: latestExecutionStatus === "aborted"
+        ? "Aborted"
+        : latestExecutionStatus === "cancelled" ? "Cancelled" : "Interrupted",
+    };
+  }
   const visual = sessionFamilyVisual(rootActivity);
   const label = sessionFamilyActivityLabel(rootActivity);
   return { label, ...visual };
-}
-
-export function buildInspectorChildStatusMap(
-  rootLinks: readonly ToolChildSessionLink[],
-  nestedParents: readonly { sessionId: string; childSessionLinks: readonly ToolChildSessionLink[] }[],
-): Map<string, ToolChildSessionLinkStatus> {
-  const statusByChildSessionId = new Map<string, ToolChildSessionLinkStatus>();
-  for (const link of rootLinks) statusByChildSessionId.set(link.childSessionId, link.status);
-  for (const parent of nestedParents) {
-    for (const link of parent.childSessionLinks) {
-      if (link.parentSessionId === parent.sessionId) {
-        statusByChildSessionId.set(link.childSessionId, link.status);
-      }
-    }
-  }
-  return statusByChildSessionId;
 }
 
 function agentRoleMark(displayName: string): string {
@@ -72,28 +70,14 @@ export function SessionAgentsInspector({ projection }: { projection: SessionInsp
   const navigate = useNavigate();
   const focused = searchParams.get("focus") ?? sessionId;
   const { data: agentDescriptors = [] } = useAgents();
-  const rootActivity = useSessionFamilyActivity(slug, sessionId);
-  const childSessionLinks = useSessionStore(sessionId, (state) => state.childSessionLinks, slug);
+  const canonicalRootSessionId = projection.items[0]?.sessionId ?? "";
+  const rootActivity = useSessionFamilyActivity(slug, canonicalRootSessionId);
   const pendingHitl = useAttentionVisibleScopedHitl([slug]);
   const gateByOwner = useMemo(() => new Map(pendingHitl.map((entry) => [
     entry.ownerSessionId,
     entry.view.source.type === "ask_user" ? "Question" as const : "Permission" as const,
   ])), [pendingHitl]);
   const sessionAgents = projection.items;
-  const nestedParentSessionIds = useMemo(
-    () => sessionAgents
-      .filter((agent) => agent.sessionId !== sessionId && agent.hasChildren)
-      .map((agent) => agent.sessionId),
-    [sessionAgents, sessionId],
-  );
-  const nestedParentQueries = useQueries({
-    queries: nestedParentSessionIds.map((parentSessionId) => sessionQueryOptions(slug, parentSessionId)),
-  });
-  const nestedParentSessions = nestedParentQueries.flatMap((query) => query.data === undefined ? [] : [query.data]);
-  const childStatusBySessionId = useMemo(
-    () => buildInspectorChildStatusMap(childSessionLinks, nestedParentSessions),
-    [childSessionLinks, nestedParentSessions],
-  );
 
   if (projection.isLoading) return <InspectorNotice>Loading agents…</InspectorNotice>;
   if (projection.error) return <InspectorNotice tone="error">Failed to load agents</InspectorNotice>;
@@ -104,9 +88,11 @@ export function SessionAgentsInspector({ projection }: { projection: SessionInsp
       <nav data-testid="context-agent-tree" aria-label="Agents">
       {sessionAgents.map((agent) => {
         const displayName = resolveAgentDisplayName(agent.type, agentDescriptors);
+        const isRootAgent = agent.sessionId === canonicalRootSessionId;
         const status = resolveInspectorAgentStatus(
-          agent.sessionId === sessionId ? rootActivity : undefined,
-          agent.sessionId === sessionId ? undefined : childStatusBySessionId.get(agent.sessionId),
+          isRootAgent ? rootActivity : undefined,
+          isRootAgent ? undefined : agent.linkStatus ?? undefined,
+          isRootAgent ? undefined : agent.latestExecutionStatus,
           gateByOwner.get(agent.sessionId),
         );
         const statusTone = status.tone ?? statusVisual(status.kind).tone;

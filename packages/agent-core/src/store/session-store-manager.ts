@@ -26,7 +26,7 @@ import type {
   ReasoningPart,
   ToolPart,
 } from "@archcode/protocol";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import type { Logger } from "../logger";
 import {
@@ -36,6 +36,7 @@ import {
   SessionCwdReferenceScanError,
   SessionFileNotFoundError,
   SessionInitialPersistenceError,
+  SessionFamilySnapshotConflictError,
   SessionTreeIntegrityError,
 } from "./errors";
 import { SessionFileSchema, sessionFileInternals, type HydratedSessionFile, type SessionSummary } from "./helpers";
@@ -54,6 +55,9 @@ import {
   MAX_EVENTS,
 } from "./types";
 
+const SESSION_FAMILY_PERSISTENCE_BARRIER_TIMEOUT_MS = 100;
+const SESSION_FAMILY_PERSISTENCE_POLL_INTERVAL_MS = 5;
+
 export interface SessionStoreManagerOptions {
   readonly logger: Logger;
 }
@@ -64,6 +68,16 @@ export interface SessionReadSnapshot {
     SessionStoreState,
     "executionCount" | "isRunning" | "isStreamingModel" | "currentExecutionId" | "currentAssistantMessageId"
   >;
+}
+
+/** One request-scoped, read-only durable family capture. */
+export interface SessionFamilySnapshot {
+  readonly rootSessionId: string;
+  readonly revision: string;
+  readonly tree: SessionTreeResponse;
+  readonly files: ReadonlyMap<string, HydratedSessionFile>;
+  /** In-process persistence revisions verified against the single JSON read. */
+  readonly persistenceRevisions: ReadonlyMap<string, number>;
 }
 
 export interface DurableSessionMutation<T> {
@@ -1170,121 +1184,159 @@ export class SessionStoreManager {
     }
   }
 
-  async buildSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse> {
-    const rootFile = await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId);
+  async captureSessionFamilySnapshot(
+    workspaceRoot: string,
+    rootSessionId: string,
+  ): Promise<SessionFamilySnapshot> {
+    const sessionsDir = getSessionsDir(workspaceRoot);
+    const directoryRevisionBefore = await readPathBarrier(sessionsDir);
+    const descendants = await readDescendantSessionEntries(workspaceRoot, rootSessionId);
     const rootFilePath = getSessionPath(workspaceRoot, rootSessionId);
-    if (rootFile.sessionId !== rootSessionId) {
-      throw new SessionTreeIntegrityError(
-        "session_id_mismatch",
-        rootFile.sessionId,
-        rootFilePath,
-        `Session ID mismatch: expected "${rootSessionId}", found "${rootFile.sessionId}" in file`,
-      );
-    }
-    if (rootFile.parentSessionId !== undefined) {
-      throw new NotRootSessionError(rootSessionId, rootFile.parentSessionId);
-    }
-    if (rootFile.rootSessionId !== rootSessionId) {
-      throw new SessionTreeIntegrityError(
-        "root_mismatch",
-        rootFile.sessionId,
-        rootFilePath,
-        `Root session ID mismatch: expected "${rootSessionId}", found "${rootFile.rootSessionId}" in file`,
-      );
-    }
-
-    const rootNode: SessionTreeNode = { session: toSessionSummary(rootFile), children: [] };
-    const sessions = new Map<string, SessionSummary>([[rootSessionId, rootNode.session]]);
-    const parsedEntries: Array<{
-      entry: { sessionId: string; filePath: string };
-      summary: SessionSummary;
-    }> = [];
-
-    for (const entry of await readDescendantSessionEntries(workspaceRoot, rootSessionId)) {
-      const parsed = await readSessionFileForTree(entry.sessionId, entry.filePath);
-      if (sessions.has(parsed.sessionId)) {
-        throw new SessionTreeIntegrityError(
-          "duplicate_session",
-          parsed.sessionId,
-          entry.filePath,
-          `Duplicate session ID "${parsed.sessionId}" found while building tree`,
-        );
-      }
-      if (parsed.sessionId !== entry.sessionId) {
-        throw new SessionTreeIntegrityError(
-          "session_id_mismatch",
-          parsed.sessionId,
-          entry.filePath,
-          `Session ID mismatch: expected "${entry.sessionId}", found "${parsed.sessionId}" in file`,
-        );
-      }
-
-      const summary = toSessionSummary(parsed);
-      sessions.set(summary.sessionId, summary);
-      parsedEntries.push({ entry, summary });
-    }
-
-    for (const { entry, summary } of parsedEntries) {
-      const parentSessionId = summary.parentSessionId;
-      if (parentSessionId === undefined) {
-        if (summary.rootSessionId !== summary.sessionId) {
-          throw new SessionTreeIntegrityError(
-            "not_root",
-            summary.sessionId,
-            entry.filePath,
-            `Session "${summary.sessionId}" has no parent but declares root "${summary.rootSessionId}"`,
-          );
-        }
-        continue;
-      }
-
-      const parent = sessions.get(parentSessionId);
-      if (parent === undefined) {
-        throw new SessionTreeIntegrityError(
-          "missing_parent",
-          summary.sessionId,
-          entry.filePath,
-          `Parent session "${parentSessionId}" for "${summary.sessionId}" was not found`,
-        );
-      }
-      if (parent.rootSessionId !== summary.rootSessionId) {
-        throw new SessionTreeIntegrityError(
-          "root_mismatch",
-          summary.sessionId,
-          entry.filePath,
-          `Session "${summary.sessionId}" declares root "${summary.rootSessionId}" but parent "${parentSessionId}" belongs to "${parent.rootSessionId}"`,
-        );
-      }
-
-      const cycle = findParentCycle(summary.sessionId, summary.rootSessionId, sessions);
-      if (cycle.length > 0) {
-        throw new SessionTreeIntegrityError(
-          "cycle",
-          summary.sessionId,
-          entry.filePath,
-          `Cycle detected in session tree: ${cycle.join(" -> ")}`,
+    const candidateSessionIds = [rootSessionId, ...descendants.map((entry) => entry.sessionId)];
+    const persistenceRevisions = new Map(candidateSessionIds.map((sessionId) => [
+      sessionId,
+      this.#persistenceRevisions.get(this.key(sessionId, workspaceRoot))?.latestQueued ?? 0,
+    ] as const));
+    const candidateFilePaths = [rootFilePath, ...descendants.map((entry) => entry.filePath)];
+    const fileBarriersBefore = await readFileBarrierMap(candidateFilePaths);
+    const captured = await readSessionFamily(
+      rootSessionId,
+      rootFilePath,
+      await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId),
+      descendants,
+    );
+    const familyIds = captured.familyIds;
+    const familyFilePaths = [...familyIds].map((sessionId) => getSessionPath(workspaceRoot, sessionId));
+    for (const sessionId of familyIds) {
+      const expected = persistenceRevisions.get(sessionId) ?? 0;
+      const revisions = this.#persistenceRevisions.get(this.key(sessionId, workspaceRoot));
+      if ((revisions?.latestQueued ?? 0) !== expected || (revisions?.latestSucceeded ?? 0) < expected) {
+        await this.#awaitSnapshotPersistenceConflict(
+          rootSessionId,
+          sessionId,
+          workspaceRoot,
+          expected,
         );
       }
     }
-
-    const childrenByParent = new Map<string, SessionSummary[]>();
-    for (const { summary } of parsedEntries) {
-      if (summary.rootSessionId !== rootSessionId || summary.parentSessionId === undefined) continue;
-      const siblings = childrenByParent.get(summary.parentSessionId) ?? [];
-      siblings.push(summary);
-      childrenByParent.set(summary.parentSessionId, siblings);
+    const directoryRevisionAfter = await readPathBarrier(sessionsDir);
+    const fileRevisionBefore = composeFileBarrier(familyFilePaths, fileBarriersBefore);
+    const fileRevisionAfter = await readFileBarrier(familyFilePaths);
+    const revisionBefore = `${directoryRevisionBefore}|${fileRevisionBefore}`;
+    const revisionAfter = `${directoryRevisionAfter}|${fileRevisionAfter}`;
+    if (revisionAfter !== revisionBefore) {
+      throw new SessionFamilySnapshotConflictError(rootSessionId, revisionBefore, revisionAfter);
     }
+    for (const sessionId of familyIds) {
+      const expected = persistenceRevisions.get(sessionId) ?? 0;
+      if ((this.#persistenceRevisions.get(this.key(sessionId, workspaceRoot))?.latestQueued ?? 0) !== expected) {
+        throw new SessionFamilySnapshotConflictError(
+          rootSessionId,
+          `${revisionBefore}|persist:${sessionId}:${expected}`,
+          `${revisionAfter}|persist:${sessionId}:changed`,
+        );
+      }
+    }
+    return {
+      rootSessionId,
+      revision: revisionAfter,
+      tree: { root: captured.rootNode, diagnostics: [] },
+      files: captured.files,
+      persistenceRevisions: new Map(
+        [...familyIds].map((sessionId) => [sessionId, persistenceRevisions.get(sessionId) ?? 0]),
+      ),
+    };
+  }
 
-    attachChildren(rootNode, childrenByParent);
-    return { root: rootNode, diagnostics: [] };
+  /** Cheap read barrier check for Runtime's durable/live projection retry loop. */
+  async isSessionFamilySnapshotCurrent(
+    workspaceRoot: string,
+    snapshot: SessionFamilySnapshot,
+  ): Promise<boolean> {
+    for (const [sessionId, revision] of snapshot.persistenceRevisions) {
+      if ((this.#persistenceRevisions.get(this.key(sessionId, workspaceRoot))?.latestQueued ?? 0) !== revision) {
+        return false;
+      }
+    }
+    const filePaths = [...snapshot.files.keys()]
+      .map((sessionId) => getSessionPath(workspaceRoot, sessionId));
+    const revision = [
+      await readPathBarrier(getSessionsDir(workspaceRoot)),
+      await readFileBarrier(filePaths),
+    ].join("|");
+    return revision === snapshot.revision;
+  }
+
+  async #awaitSnapshotPersistenceConflict(
+    rootSessionId: string,
+    sessionId: string,
+    workspaceRoot: string,
+    expectedRevision: number,
+  ): Promise<never> {
+    const key = this.key(sessionId, workspaceRoot);
+    const deadline = Date.now() + SESSION_FAMILY_PERSISTENCE_BARRIER_TIMEOUT_MS;
+    while (true) {
+      const failure = this.#persistFailures.get(key);
+      if (failure !== undefined) throw failure;
+      const revisions = this.#persistenceRevisions.get(key);
+      const currentRevision = revisions?.latestQueued ?? 0;
+      if ((revisions?.latestSucceeded ?? 0) >= currentRevision) {
+        throw new SessionFamilySnapshotConflictError(
+          rootSessionId,
+          `persist:${sessionId}:${expectedRevision}`,
+          `persist:${sessionId}:${currentRevision}`,
+        );
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new SessionFamilySnapshotConflictError(
+          rootSessionId,
+          `persist:${sessionId}:${expectedRevision}`,
+          `persist:${sessionId}:timeout:${SESSION_FAMILY_PERSISTENCE_BARRIER_TIMEOUT_MS}ms`,
+        );
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, Math.min(remainingMs, SESSION_FAMILY_PERSISTENCE_POLL_INTERVAL_MS));
+      });
+    }
+  }
+
+  async buildSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse> {
+    return (await this.#captureSessionFamilySnapshotWithRetry(workspaceRoot, rootSessionId)).tree;
+  }
+
+  async #captureSessionFamilySnapshotWithRetry(
+    workspaceRoot: string,
+    rootSessionId: string,
+  ): Promise<SessionFamilySnapshot> {
+    const maxAttempts = 3;
+    let conflict: SessionFamilySnapshotConflictError | undefined;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        return await this.captureSessionFamilySnapshot(workspaceRoot, rootSessionId);
+      } catch (error) {
+        if (!(error instanceof SessionFamilySnapshotConflictError)) throw error;
+        conflict = error;
+      }
+    }
+    throw conflict;
   }
 
   async listSessionFamilyToolBatchHitlIds(workspaceRoot: string, rootSessionId: string): Promise<string[]> {
-    const tree = await this.buildSessionTree(workspaceRoot, rootSessionId);
-    const sessionIds = collectSessionTreeIds(tree.root);
+    const snapshot = await this.#captureSessionFamilySnapshotWithRetry(workspaceRoot, rootSessionId);
+    const sessionIds = collectSessionTreeIds(snapshot.tree.root);
     const blocked = new Set<string>();
     for (const sessionId of sessionIds) {
-      const session = await this.getSessionFile(workspaceRoot, sessionId);
+      const session = snapshot.files.get(sessionId);
+      if (session === undefined) {
+        throw new SessionTreeIntegrityError(
+          "missing_parent",
+          sessionId,
+          getSessionPath(workspaceRoot, sessionId),
+          `Session family snapshot is missing Session "${sessionId}"`,
+        );
+      }
       const activeBatch = session.toolBatches.find((batch) => batch.archivedAt === undefined);
       for (const hitlId of activeBatch?.calls.flatMap((call) => call.state === "blocked" && call.blocker?.hitlId !== undefined ? [call.blocker.hitlId] : []) ?? []) {
         blocked.add(hitlId);
@@ -1560,7 +1612,7 @@ function sameResolvedPath(left: string, right: string): boolean {
 async function readDescendantSessionEntries(
   workspaceRoot: string,
   rootSessionId: string,
-): Promise<Array<{ sessionId: string; filePath: string }>> {
+): Promise<DescendantSessionEntry[]> {
   const dir = getSessionsDir(workspaceRoot);
   try {
     const entries: Array<{ sessionId: string; filePath: string }> = [];
@@ -1572,6 +1624,161 @@ async function readDescendantSessionEntries(
     return entries;
   } catch (error) {
     if (isMissingFileError(error)) return [];
+    throw error;
+  }
+}
+
+interface DescendantSessionEntry {
+  readonly sessionId: string;
+  readonly filePath: string;
+}
+
+interface SessionFamilyRead {
+  readonly rootNode: SessionTreeNode;
+  readonly files: Map<string, HydratedSessionFile>;
+  readonly familyIds: Set<string>;
+}
+
+async function readSessionFamily(
+  rootSessionId: string,
+  rootFilePath: string,
+  rootFile: HydratedSessionFile,
+  descendants: readonly DescendantSessionEntry[],
+): Promise<SessionFamilyRead> {
+  if (rootFile.sessionId !== rootSessionId) {
+    throw new SessionTreeIntegrityError(
+      "session_id_mismatch",
+      rootFile.sessionId,
+      rootFilePath,
+      `Session ID mismatch: expected "${rootSessionId}", found "${rootFile.sessionId}" in file`,
+    );
+  }
+  if (rootFile.parentSessionId !== undefined) {
+    throw new NotRootSessionError(rootSessionId, rootFile.parentSessionId);
+  }
+  if (rootFile.rootSessionId !== rootSessionId) {
+    throw new SessionTreeIntegrityError(
+      "root_mismatch",
+      rootFile.sessionId,
+      rootFilePath,
+      `Root session ID mismatch: expected "${rootSessionId}", found "${rootFile.rootSessionId}" in file`,
+    );
+  }
+
+  const rootNode: SessionTreeNode = { session: toSessionSummary(rootFile), children: [] };
+  const sessions = new Map<string, SessionSummary>([[rootSessionId, rootNode.session]]);
+  const files = new Map<string, HydratedSessionFile>([[rootSessionId, rootFile]]);
+  const parsedEntries: Array<{ entry: DescendantSessionEntry; summary: SessionSummary }> = [];
+
+  for (const entry of descendants) {
+    const parsed = await readSessionFileForTree(entry.sessionId, entry.filePath);
+    if (sessions.has(parsed.sessionId)) {
+      throw new SessionTreeIntegrityError(
+        "duplicate_session",
+        parsed.sessionId,
+        entry.filePath,
+        `Duplicate session ID "${parsed.sessionId}" found while building tree`,
+      );
+    }
+    if (parsed.sessionId !== entry.sessionId) {
+      throw new SessionTreeIntegrityError(
+        "session_id_mismatch",
+        parsed.sessionId,
+        entry.filePath,
+        `Session ID mismatch: expected "${entry.sessionId}", found "${parsed.sessionId}" in file`,
+      );
+    }
+
+    const summary = toSessionSummary(parsed);
+    sessions.set(summary.sessionId, summary);
+    files.set(summary.sessionId, parsed);
+    parsedEntries.push({ entry, summary });
+  }
+
+  for (const { entry, summary } of parsedEntries) {
+    const parentSessionId = summary.parentSessionId;
+    if (parentSessionId === undefined) {
+      if (summary.rootSessionId !== summary.sessionId) {
+        throw new SessionTreeIntegrityError(
+          "not_root",
+          summary.sessionId,
+          entry.filePath,
+          `Session "${summary.sessionId}" has no parent but declares root "${summary.rootSessionId}"`,
+        );
+      }
+      continue;
+    }
+
+    const parent = sessions.get(parentSessionId);
+    if (parent === undefined) {
+      throw new SessionTreeIntegrityError(
+        "missing_parent",
+        summary.sessionId,
+        entry.filePath,
+        `Parent session "${parentSessionId}" for "${summary.sessionId}" was not found`,
+      );
+    }
+    if (parent.rootSessionId !== summary.rootSessionId) {
+      throw new SessionTreeIntegrityError(
+        "root_mismatch",
+        summary.sessionId,
+        entry.filePath,
+        `Session "${summary.sessionId}" declares root "${summary.rootSessionId}" but parent "${parentSessionId}" belongs to "${parent.rootSessionId}"`,
+      );
+    }
+
+    const cycle = findParentCycle(summary.sessionId, summary.rootSessionId, sessions);
+    if (cycle.length > 0) {
+      throw new SessionTreeIntegrityError(
+        "cycle",
+        summary.sessionId,
+        entry.filePath,
+        `Cycle detected in session tree: ${cycle.join(" -> ")}`,
+      );
+    }
+  }
+
+  const childrenByParent = new Map<string, SessionSummary[]>();
+  for (const { summary } of parsedEntries) {
+    if (summary.rootSessionId !== rootSessionId || summary.parentSessionId === undefined) continue;
+    const siblings = childrenByParent.get(summary.parentSessionId) ?? [];
+    siblings.push(summary);
+    childrenByParent.set(summary.parentSessionId, siblings);
+  }
+
+  attachChildren(rootNode, childrenByParent);
+  const familyIds = new Set(collectSessionTreeIds(rootNode));
+  for (const sessionId of files.keys()) {
+    if (!familyIds.has(sessionId)) files.delete(sessionId);
+  }
+  return { rootNode, files, familyIds };
+}
+
+async function readFileBarrier(filePaths: readonly string[]): Promise<string> {
+  const barriers = await readFileBarrierMap(filePaths);
+  return composeFileBarrier(filePaths, barriers);
+}
+
+async function readFileBarrierMap(filePaths: readonly string[]): Promise<ReadonlyMap<string, string>> {
+  return new Map(await Promise.all(filePaths.map(async (path) => [path, await readPathBarrier(path)] as const)));
+}
+
+function composeFileBarrier(
+  filePaths: readonly string[],
+  barriers: ReadonlyMap<string, string>,
+): string {
+  return [...filePaths]
+    .sort()
+    .map((path) => barriers.get(path) ?? `${path}:missing`)
+    .join("|");
+}
+
+async function readPathBarrier(path: string): Promise<string> {
+  try {
+    const metadata = await stat(path, { bigint: true });
+    return `${path}:${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`;
+  } catch (error) {
+    if (isMissingFileError(error)) return `${path}:missing`;
     throw error;
   }
 }
@@ -1806,7 +2013,7 @@ function attachChildren(
 ): void {
   const children = childrenByParent.get(node.session.sessionId) ?? [];
   node.children = children
-    .sort((left, right) => left.createdAt - right.createdAt)
+    .sort((left, right) => left.createdAt - right.createdAt || left.sessionId.localeCompare(right.sessionId))
     .map((session) => ({ session, children: [] }));
   for (const child of node.children) attachChildren(child, childrenByParent);
 }

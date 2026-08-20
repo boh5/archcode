@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { getSessionPath } from "../store/sessions-dir";
 import { createTestProjectContextResolver } from "./test-project-context-resolver";
 import { setLlmAdapterForTest } from "../llm/adapter";
-import { DELEGATION_CORE_TOOLS } from "./constants";
+import { DELEGATION_CONTROL_TOOLS } from "./constants";
 import type { AgentDefinition } from "./factory-types";
 import type { ToolExecutionContext } from "../tools/types";
 import type { DelegationRequest } from "@archcode/protocol";
@@ -27,10 +27,18 @@ import {
   EMPTY_ATTACHMENT_MODEL_PROJECTOR,
   resolveEmptyAttachmentReadPaths,
 } from "../attachments/test-helpers";
+import type { StoreApi } from "zustand";
+import type { SessionStoreState } from "../store/types";
 
 const TEST_WORKSPACE_ROOT = join(import.meta.dir, "__test_tmp__", `session-agent-manager-${crypto.randomUUID()}`);
 const registryFixtures: TestToolRegistryFixture[] = [];
 const outputAccessFixture = createTestToolRegistryFixture();
+
+function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void } {
+  let resolveValue: (value: T) => void = () => {};
+  const promise = new Promise<T>((resolve) => { resolveValue = resolve; });
+  return { promise, resolve: resolveValue };
+}
 
 function createTestRegistry(descriptors: AnyToolDescriptor[]): ToolRegistry {
   const fixture = createTestToolRegistryFixture({ descriptors });
@@ -113,7 +121,7 @@ const identityLeadDefinition = {
     delegateTargets: ["explore"],
   },
   tools: {
-    tools: ["file_read", "identity_probe", ...DELEGATION_CORE_TOOLS],
+    tools: ["file_read", "identity_probe", ...DELEGATION_CONTROL_TOOLS],
     delegateTargets: ["explore"],
   },
   hooks: {
@@ -168,7 +176,7 @@ function createIdentityManager(
   const toolRegistry = createTestRegistry([
     identityProbe,
     makeTool("file_read"),
-    ...DELEGATION_CORE_TOOLS.map(makeTool),
+    ...DELEGATION_CONTROL_TOOLS.map(makeTool),
   ]);
   const skillService = new SkillService({
     builtinSkills: {
@@ -264,6 +272,43 @@ describe("SessionAgentManager", () => {
     ]);
 
     expect(first).toBe(second);
+  });
+
+  test("superseded deferred activation cannot register or clear the next generation", async () => {
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const workspaceRoot = TEST_WORKSPACE_ROOT;
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const firstLoad = deferred<StoreApi<SessionStoreState>>();
+    const secondLoad = deferred<StoreApi<SessionStoreState>>();
+    const originalGetOrLoad = storeManager.getOrLoad.bind(storeManager);
+    let loadCount = 0;
+    storeManager.getOrLoad = async (requestedSessionId, requestedWorkspaceRoot) => {
+      loadCount += 1;
+      if (loadCount === 1) return await firstLoad.promise;
+      if (loadCount === 2) return await secondLoad.promise;
+      return await originalGetOrLoad(requestedSessionId, requestedWorkspaceRoot);
+    };
+    const manager = createManager(undefined, storeManager);
+
+    const staleActivation = manager.getOrCreate(workspaceRoot, sessionId);
+    void staleActivation.catch(() => undefined);
+    manager.releaseAgent(workspaceRoot, sessionId);
+    const freshActivation = manager.getOrCreate(workspaceRoot, sessionId);
+
+    firstLoad.resolve(store);
+    await expect(staleActivation).rejects.toThrow("was superseded");
+    const joinedFreshActivation = manager.getOrCreate(workspaceRoot, sessionId);
+    expect(loadCount).toBe(2);
+
+    secondLoad.resolve(store);
+    const [fresh, joined] = await Promise.all([freshActivation, joinedFreshActivation]);
+    expect(joined).toBe(fresh);
+    expect(manager.get(workspaceRoot, sessionId)).toBe(fresh);
+    expect(loadCount).toBe(2);
   });
 
   test("clearTombstone allows recreating a deleted session", async () => {
@@ -423,7 +468,7 @@ describe("SessionAgentManager", () => {
       expect(warmIdentity).toEqual({
         depth: expectedDepth,
         allowedTools: expectedDepth === 0
-          ? ["file_read", ...DELEGATION_CORE_TOOLS, "identity_probe"].sort()
+          ? ["file_read", ...DELEGATION_CONTROL_TOOLS, "identity_probe"].sort()
           : ["file_read", "identity_probe"].sort(),
         delegateTargets: expectedDepth === 0 ? ["explore"] : [],
         activeSkillNames: [IDENTITY_SKILL_NAME],

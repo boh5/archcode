@@ -18,6 +18,8 @@ export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
 export { resumeSessionTool, ResumeSessionInputSchema, executeResumeSession } from "./resume-session";
 export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 export { cancelSessionTool, CancelSessionInputSchema, executeCancelSession } from "./cancel-session";
+export { listAgentsTool, ListAgentsInputSchema, executeListAgents } from "./list-agents";
+export { sendMessageTool, SendMessageInputSchema, executeSendMessage } from "./send-message";
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 export { skillListTool, createSkillListTool, SkillListInputSchema } from "./skill-list";
 export { skillReadTool, createSkillReadTool, SkillReadInputSchema } from "./skill-read";
@@ -47,6 +49,8 @@ import { delegateTool } from "./delegate";
 import { resumeSessionTool } from "./resume-session";
 import { backgroundOutputTool } from "./background-output";
 import { cancelSessionTool } from "./cancel-session";
+import { listAgentsTool } from "./list-agents";
+import { sendMessageTool } from "./send-message";
 import { outputReadTool, outputSearchTool } from "./output-artifacts";
 import { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 import { skillListTool } from "./skill-list";
@@ -80,6 +84,8 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     resumeSessionTool,
     backgroundOutputTool,
     cancelSessionTool,
+    listAgentsTool,
+    sendMessageTool,
     skillListTool,
     skillReadTool,
     outputReadTool,

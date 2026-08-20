@@ -304,7 +304,7 @@ interface FakeManagerOptions {
   childRunStarted?: () => void;
   childCanonicalMessage?: (message: string) => void;
   childRunOptions?: (options: AgentRunOptions | undefined) => void;
-  getAgent?: (sessionId: string) => Agent;
+  getAgent?: (sessionId: string) => Agent | Promise<Agent>;
   onReleaseAgent?: (sessionId: string) => void;
   executionScopeValidator?: ConstructorParameters<typeof SessionExecutionManager>[0]["executionScopeValidator"];
   deletionLifecycle?: ConstructorParameters<typeof SessionExecutionManager>[0]["deletionLifecycle"];
@@ -432,17 +432,35 @@ function storeCallbacks(manager: SessionStoreManager): Pick<
 
 function createFakeManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}): SessionAgentManager {
   const cachedAgents = new Map<string, MockAgent>(Object.entries(agents));
+  const pendingAgents = new Map<string, { readonly token: symbol; readonly promise: Promise<MockAgent> }>();
   return {
     getOrCreate: mock(async (_root: string, sessionId: string) => {
       const cached = cachedAgents.get(sessionId);
       if (cached !== undefined) return cached;
-      const agent = (options.getAgent?.(sessionId) ?? agents[sessionId]) as MockAgent | undefined;
-      if (agent !== undefined) cachedAgents.set(sessionId, agent);
-      return agent!;
+      const pending = pendingAgents.get(sessionId);
+      if (pending !== undefined) return await pending.promise;
+      const token = Symbol(`test-agent-activation:${sessionId}`);
+      const promise = (async () => {
+        try {
+          const agent = await (options.getAgent?.(sessionId) ?? agents[sessionId]) as MockAgent | undefined;
+          if (agent === undefined) throw new Error(`Missing Agent ${sessionId}`);
+          if (pendingAgents.get(sessionId)?.token !== token) {
+            agent.dispose();
+            throw new Error(`Agent activation for Session "${sessionId}" was superseded`);
+          }
+          cachedAgents.set(sessionId, agent);
+          return agent;
+        } finally {
+          if (pendingAgents.get(sessionId)?.token === token) pendingAgents.delete(sessionId);
+        }
+      })();
+      pendingAgents.set(sessionId, { token, promise });
+      return await promise;
     }),
     get: mock((_root: string, sessionId: string) => cachedAgents.get(sessionId)),
     getFactory: mock(() => options.factory ?? makeFactory()),
     createChildAgent: mock((input: { workspaceRoot: string; sessionId: string; store: MockAgent["store"]; depth: number }) => {
+      pendingAgents.delete(input.sessionId);
       const childAgent = options.childAgentFactory?.(input) ?? {
         store: input.store,
         classifyCommand: mock((_input: string) => null),
@@ -475,9 +493,48 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
     releaseAgent: mock((_root: string, sessionId: string) => {
       cachedAgents.get(sessionId)?.dispose();
       cachedAgents.delete(sessionId);
+      pendingAgents.delete(sessionId);
       options.onReleaseAgent?.(sessionId);
     }),
   } as unknown as SessionAgentManager;
+}
+
+function sequencedChildAgentFactory(
+  runs: readonly Promise<MockAgentResult>[],
+  ignoreAbortRunIndexes: readonly number[] = [],
+  onDispose?: () => void,
+  onRun?: (runIndex: number) => void,
+): NonNullable<FakeManagerOptions["childAgentFactory"]> {
+  return (input) => {
+    let runIndex = 0;
+    let disposed = false;
+    return {
+      store: input.store,
+      classifyCommand: mock((_input: string) => null),
+      executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
+      run: mock(async (_binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> => {
+        if (options === undefined) throw new Error("Execution identity is required");
+        const currentRunIndex = runIndex++;
+        onRun?.(currentRunIndex);
+        const currentRun = runs[currentRunIndex] ?? Promise.reject(new Error("Unexpected child run"));
+        const result = ignoreAbortRunIndexes.includes(currentRunIndex)
+          ? await currentRun
+          : await withAbort(currentRun, options.abort);
+        if (disposed) return normalizeMockAgentResult(result);
+        const stepId = crypto.randomUUID();
+        input.store.getState().append({ type: "step-start", stepId, step: options.initialStep });
+        input.store.getState().append({ type: "text-start", stepId, blockId: "output" });
+        input.store.getState().append({ type: "text-delta", stepId, blockId: "output", text: result.text });
+        input.store.getState().append({ type: "text-end", stepId, blockId: "output" });
+        input.store.getState().append({ type: "step-end", stepId, step: options.initialStep, finishReason: "stop" });
+        return normalizeMockAgentResult(result, stepId);
+      }),
+      dispose: mock(() => {
+        disposed = true;
+        onDispose?.();
+      }),
+    } as unknown as MockAgent;
+  };
 }
 
 function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
@@ -690,6 +747,9 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
 
 function inputServicePort(service: SessionInputService): NonNullable<FakeManagerOptions["sessionInputService"]> {
   return {
+    acceptParentAgentMessage: (input) => service.acceptParentAgentMessage(input),
+    getParentAgentMessageReplay: (input) => service.getParentAgentMessageReplay(input),
+    beginChildResumeExecution: (input) => service.beginChildResumeExecution(input),
     beginQueueExecution: (input) => service.beginQueueExecution(input),
     beginDirectExecution: (input) => service.beginDirectExecution(input),
     claimSteer: (input) => service.claimSteer(input),
@@ -6493,7 +6553,7 @@ describe("SessionExecutionManager", () => {
     })).rejects.toThrow(ChildSessionParentMismatchError);
   });
 
-  test("cancelChildSession on running descendant aborts, marks link cancelled, appends reminder", async () => {
+  test("cancelDescendantSession waits for running descendant links, reminders, and barriers", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const childRun = deferred<MockAgentResult>();
@@ -6508,9 +6568,10 @@ describe("SessionExecutionManager", () => {
       parentAbort: undefined,
     });
 
-    expect(manager.cancelChildSession(workspaceRoot, parentId, child.sessionId)).toBe(true);
+    const cancellation = manager.cancelDescendantSession(workspaceRoot, parentId, child.sessionId);
+    await Bun.sleep(20);
     childRun.resolve({ text: "done", steps: 1 });
-    await child.result;
+    expect(await cancellation).toBe("cancelled");
 
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
       childSessionId: child.sessionId,
@@ -6518,19 +6579,1187 @@ describe("SessionExecutionManager", () => {
     });
     const reminders = parentStore.getState().reminders;
     expect(reminders.some((reminder) => reminder.source.type === "subagent_cancelled" && reminder.sessionId === child.sessionId)).toBe(true);
+    expect(child.store.getState().queueDispatchBarrierAt).toBeNumber();
   });
 
-  test("cancelChildSession on non-descendant throws ChildSessionNotDescendantError", async () => {
+  test("cancelDescendantSession force-terminalizes a hung descendant and frees its slot", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    let childRunCount = 0;
+    const { manager } = createManager({}, {
+      sessionFamilyStopTimeoutMs: 50,
+      factory: makeFactoryWithChildPolicy({ maxConcurrent: 1 }),
+      childAgentFactory: (input) => ({
+        store: input.store,
+        classifyCommand: mock(() => null),
+        executeCommand: mock(async (): Promise<AgentCommandResult> => ({ kind: "handled" })),
+        run: mock(async (): Promise<AgentResult> => {
+          childRunCount += 1;
+          if (childRunCount === 1) {
+            await new Promise<never>(() => undefined);
+          }
+          return { outcome: "terminal", text: "done", steps: 1, status: "completed" };
+        }),
+        dispose: mock(() => undefined),
+      }) as unknown as MockAgent,
+    });
+
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "hung-descendant",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Hung descendant",
+        objective: "ignore cancellation",
+        skills: [],
+        background: true,
+      }),
+    });
+
+    await expect(manager.cancelDescendantSession(workspaceRoot, parentId, child.sessionId))
+      .resolves.toBe("cancelled");
+    expect(manager.getExecution(workspaceRoot, child.sessionId)).toBeUndefined();
+    expect(manager.getSessionFamilyActivity(workspaceRoot, parentId)).toBe("idle");
+    expect(child.store.getState().executions.at(-1)).toMatchObject({ status: "cancelled" });
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      childSessionId: child.sessionId,
+      status: "cancelled",
+    });
+    expect(parentStore.getState().reminders.some((reminder) => (
+      reminder.source.type === "subagent_cancelled"
+      && reminder.sessionId === child.sessionId
+    ))).toBe(true);
+    expect(child.store.getState().queueDispatchBarrierAt).toBeNumber();
+
+    const nextChild = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "after-hung-descendant",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "After hung descendant",
+        objective: "use the released slot",
+        skills: [],
+        background: false,
+      }),
+    });
+    await expect(nextChild.result).resolves.toMatchObject({
+      outcome: "terminal",
+      executionStatus: "completed",
+    });
+  });
+
+  test("cancelDescendantSession fences a late parent message after force-terminalizing its child", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const acceptanceEntered = deferred<void>();
+    const releaseAcceptance = deferred<void>();
+    const baseInputPort = inputServicePort(inputService);
+    const { manager } = createManager({}, {
+      sessionFamilyStopTimeoutMs: 50,
+      factory: makeFactory(),
+      sessionInputService: {
+        ...baseInputPort,
+        acceptParentAgentMessage: async (input) => {
+          acceptanceEntered.resolve(undefined);
+          await releaseAcceptance.promise;
+          return await inputService.acceptParentAgentMessage(input);
+        },
+      },
+      childAgentFactory: (input) => ({
+        store: input.store,
+        classifyCommand: mock(() => null),
+        executeCommand: mock(async (): Promise<AgentCommandResult> => ({ kind: "handled" })),
+        run: mock(async (): Promise<AgentResult> => {
+          await new Promise<never>(() => undefined);
+          return { outcome: "terminal", text: "never", steps: 1, status: "completed" };
+        }),
+        dispose: mock(() => undefined),
+      }) as unknown as MockAgent,
+    });
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "force-with-message",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Hung child with late message",
+        objective: "ignore cancellation",
+        skills: [],
+        background: true,
+      }),
+    });
+    const sending = manager.sendMessageToChild(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentAgentName: "lead",
+      parentExecutionId: "parent-execution",
+      parentRunOrdinal: 0,
+      parentToolBatchId: "parent-batch",
+      parentToolCallId: "late-send",
+      sessionId: child.sessionId,
+      expectedExecutionId: child.executionId,
+      message: "must not revive after cancellation",
+      delivery: "queue",
+      clientRequestId: "late-send-after-force",
+    });
+    await acceptanceEntered.promise;
+
+    await expect(manager.cancelDescendantSession(workspaceRoot, parentId, child.sessionId))
+      .resolves.toBe("cancelled");
+    expect(child.store.getState().queueDispatchBarrierAt).toBeNumber();
+
+    releaseAcceptance.resolve(undefined);
+    await expect(sending).rejects.toBeTruthy();
+    expect(child.store.getState().pendingMessages).toEqual([]);
+    expect(child.store.getState().inputRequestReceipts).toEqual([]);
+    expect(await manager.tryStartQueuedExecution({
+      slug: "",
+      workspaceRoot,
+      sessionId: child.sessionId,
+    })).toBeUndefined();
+    expect(manager.getSessionFamilyActivity(workspaceRoot, parentId)).toBe("idle");
+  });
+
+  test("cancelDescendantSession aborts a hung pending descendant launch without late revival", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const pendingResolutionEntered = deferred<void>();
+    const releasePendingResolution = deferred<readonly []>();
+    const baseFactory = makeDeepExploreFactory();
+    let skillResolutionCount = 0;
+    const factory = {
+      ...baseFactory,
+      resolveDelegatedSkillNames: mock(async () => {
+        skillResolutionCount += 1;
+        if (skillResolutionCount <= 2) return [];
+        pendingResolutionEntered.resolve(undefined);
+        return await releasePendingResolution.promise;
+      }),
+    } as AgentFactory;
+    const { manager } = createManager({}, {
+      factory,
+      sessionFamilyStopTimeoutMs: 50,
+    });
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "existing-child",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Existing child",
+        objective: "finish first",
+        skills: [],
+        background: false,
+      }),
+    });
+    await child.result;
+
+    const nestedSessionId = crypto.randomUUID();
+    const pendingNested = manager.startChildExecution(workspaceRoot, {
+      parentStore: child.store,
+      parentSessionId: child.sessionId,
+      parentToolCallId: "pending-nested-child",
+      childSessionId: nestedSessionId,
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Pending nested child",
+        objective: "never finish admission",
+        skills: [],
+        background: true,
+      }),
+    });
+    await pendingResolutionEntered.promise;
+
+    await expect(manager.cancelDescendantSession(workspaceRoot, parentId, child.sessionId))
+      .resolves.toBe("cancelled");
+    expect(manager.getSessionFamilyActivity(workspaceRoot, parentId)).toBe("idle");
+
+    releasePendingResolution.resolve([]);
+    await expect(pendingNested).rejects.toBeInstanceOf(SessionFamilyStopInProgressError);
+    expect(storeManager.get(nestedSessionId, workspaceRoot)).toBeUndefined();
+    expect((await storeManager.buildSessionTree(workspaceRoot, parentId)).root.children[0]?.children)
+      .toEqual([]);
+  });
+
+  test("cancelDescendantSession fences a child Queue dispatcher suspended in activation validation", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const validationEntered = deferred<void>();
+    const releaseValidation = deferred<readonly []>();
+    let deferValidation = false;
+    const factory = {
+      ...makeFactory(),
+      resolveDelegatedSkillNames: mock(async () => {
+        if (!deferValidation) return [];
+        validationEntered.resolve(undefined);
+        return await releaseValidation.promise;
+      }),
+    } as AgentFactory;
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const { manager } = createManager({}, {
+      factory,
+      sessionInputService: inputServicePort(inputService),
+      sessionFamilyStopTimeoutMs: 50,
+    });
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "queue-cancel-existing",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Queue cancel child",
+        objective: "finish initial execution",
+        skills: [],
+        background: false,
+      }),
+    });
+    await child.result;
+    await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "must remain queued after cancellation",
+      clientRequestId: "queue-cancel-message",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: "parent-execution",
+        senderRunOrdinal: 0,
+        senderToolBatchId: "parent-batch",
+        senderToolCallId: "queue-cancel-send",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+    const executionCount = child.store.getState().executions.length;
+    deferValidation = true;
+    const starting = manager.tryStartQueuedExecution({
+      slug: "",
+      workspaceRoot,
+      sessionId: child.sessionId,
+    });
+    await validationEntered.promise;
+
+    await expect(manager.cancelDescendantSession(workspaceRoot, parentId, child.sessionId))
+      .resolves.toBe("cancelled");
+    expect(child.store.getState().queueDispatchBarrierAt).toBeNumber();
+
+    deferValidation = false;
+    releaseValidation.resolve([]);
+    expect(await starting).toBeUndefined();
+    await Bun.sleep(0);
+    expect(child.store.getState().executions).toHaveLength(executionCount);
+    expect(child.store.getState().pendingMessages.map((message) => message.content))
+      .toEqual(["must remain queued after cancellation"]);
+    expect(parentStore.getState().childSessionLinks.some((link) => (
+      link.toolName === "send_message" && link.parentToolCallId === "queue-cancel-send"
+    ))).toBe(false);
+    expect(parentStore.getState().reminders.some((reminder) => (
+      reminder.source.type === "queue_dispatch_blocked" && reminder.sessionId === child.sessionId
+    ))).toBe(false);
+    expect(manager.getSessionFamilyActivity(workspaceRoot, parentId)).toBe("idle");
+
+    const next = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "after-queue-cancel",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "After Queue cancel",
+        objective: "prove the child slot was released",
+        skills: [],
+        background: false,
+      }),
+    });
+    await expect(next.result).resolves.toMatchObject({ outcome: "terminal" });
+  });
+
+  test("cancelDescendantSession invalidates a deferred resume activation before a fresh resume", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const staleActivation = deferred<Agent>();
+    const freshRun = deferred<MockAgentResult>();
+    const staleFactory = sequencedChildAgentFactory([Promise.resolve({ text: "stale", steps: 1 })]);
+    const freshFactory = sequencedChildAgentFactory([freshRun.promise]);
+    let activationCount = 0;
+    let staleAgent: MockAgent | undefined;
+    let freshAgent: MockAgent | undefined;
+    const harness = createManager({}, {
+      factory: makeFactory(),
+      sessionFamilyStopTimeoutMs: 5,
+      getAgent: (sessionId) => {
+        activationCount += 1;
+        const store = storeManager.get(sessionId, workspaceRoot);
+        if (store === undefined) throw new Error(`Missing Session ${sessionId}`);
+        if (activationCount === 1) {
+          staleAgent ??= staleFactory({ workspaceRoot, sessionId, store, depth: 1 });
+          return staleActivation.promise;
+        }
+        freshAgent ??= freshFactory({ workspaceRoot, sessionId, store, depth: 1 });
+        return freshAgent;
+      },
+    });
+    const child = await harness.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "initial-before-deferred-resume",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Deferred resume child", background: false }),
+    });
+    await child.result;
+    harness.sessionAgentManager.releaseAgent(workspaceRoot, child.sessionId);
+
+    const staleResume = harness.manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "stale-resume",
+      toolName: "resume_session",
+      sessionId: child.sessionId,
+      instruction: "stale activation",
+      background: false,
+    });
+    void staleResume.catch(() => undefined);
+    while (activationCount === 0) await Bun.sleep(0);
+
+    await expect(harness.manager.cancelDescendantSession(workspaceRoot, parentId, child.sessionId))
+      .resolves.toBe("cancelled");
+    expect(harness.manager.getSessionFamilyActivity(workspaceRoot, parentId)).toBe("idle");
+
+    const freshResume = await harness.manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "fresh-resume",
+      toolName: "resume_session",
+      sessionId: child.sessionId,
+      instruction: "fresh activation",
+      background: false,
+    });
+    expect(activationCount).toBe(2);
+    expect(freshAgent).toBeDefined();
+
+    staleActivation.resolve(staleAgent!);
+    await expect(staleResume).rejects.toThrow("was superseded");
+    expect(staleAgent?.dispose).toHaveBeenCalledTimes(1);
+    expect(harness.sessionAgentManager.get(workspaceRoot, child.sessionId)).toBe(freshAgent);
+    expect(freshResume.store.getState().currentExecutionId).toBe(freshResume.executionId);
+
+    freshRun.resolve({ text: "fresh completed", steps: 1 });
+    await expect(freshResume.result).resolves.toMatchObject({
+      outcome: "terminal",
+      executionStatus: "completed",
+    });
+    expect((await storeManager.buildSessionTree(workspaceRoot, parentId)).root.children).toHaveLength(1);
+  });
+
+  test("sendMessageToChild replays one durable receipt after the expected child Execution stops", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const childRun = deferred<MockAgentResult>();
+    const { manager } = createManager({}, { factory: makeFactory(), childRun: childRun.promise });
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "initial-child",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Replay child",
+        objective: "wait for a queued correction",
+        skills: [],
+        background: true,
+      }),
+      parentAbort: undefined,
+    });
+    const request = {
+      parentStore,
+      parentSessionId: parentId,
+      parentAgentName: "lead",
+      parentExecutionId: "parent-execution",
+      parentRunOrdinal: 0,
+      parentToolBatchId: "parent-batch",
+      parentToolCallId: "send-call",
+      sessionId: child.sessionId,
+      expectedExecutionId: child.executionId,
+      message: "persist this once",
+      delivery: "queue" as const,
+      clientRequestId: "send-message-replay",
+    };
+
+    const accepted = await manager.sendMessageToChild(workspaceRoot, request);
+    expect(accepted.delivery).toBe("queued");
+    childRun.resolve({ text: "first execution done", steps: 1 });
+    await child.result;
+
+    const beforeReplay = child.store.getState();
+    expect(await manager.sendMessageToChild(workspaceRoot, request)).toEqual(accepted);
+    const afterReplay = child.store.getState();
+    expect(afterReplay.messages).toHaveLength(beforeReplay.messages.length);
+    expect(afterReplay.inputRequestReceipts).toHaveLength(beforeReplay.inputRequestReceipts.length);
+    expect(afterReplay.executions).toHaveLength(beforeReplay.executions.length);
+    expect(afterReplay.messages.filter((message) => message.id === accepted.messageId)).toHaveLength(1);
+    expect(afterReplay.inputRequestReceipts.filter((receipt) => (
+      receipt.kind === "message" && receipt.clientRequestId === request.clientRequestId
+    ))).toHaveLength(1);
+  });
+
+  test("steered send_message Link is durable before terminalization and settles exactly once", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const allowConsume = deferred<void>();
+    const consumed = deferred<void>();
+    const allowReturn = deferred<void>();
+    const steerMailboxReady = deferred<void>();
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const inputPort = inputServicePort(inputService);
+    const harness = createManager({}, {
+      factory: makeFactory(),
+      sessionInputService: {
+        ...inputPort,
+        claimSteer: async (input) => {
+          const claimed = await inputService.claimSteer(input);
+          setTimeout(() => steerMailboxReady.resolve(undefined), 0);
+          return claimed;
+        },
+      },
+      childAgentFactory: (input) => ({
+        store: input.store,
+        cwd: input.store.getState().cwd,
+        classifyCommand: () => null,
+        executeCommand: async () => ({ kind: "handled" as const }),
+        run: async (_binding: ExecutionModelBinding, options?: AgentRunOptions) => {
+          await allowConsume.promise;
+          await options?.consumeSteers?.();
+          consumed.resolve(undefined);
+          await allowReturn.promise;
+          return { outcome: "terminal" as const, text: "done", steps: 1, status: "completed" as const };
+        },
+        dispose: () => undefined,
+      }) as unknown as MockAgent,
+    });
+    const child = await harness.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "steer-link-child",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Steer Link child", background: true }),
+    });
+    const sending = harness.manager.sendMessageToChild(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentAgentName: "lead",
+      parentExecutionId: "parent-execution",
+      parentRunOrdinal: 0,
+      parentToolBatchId: "parent-batch",
+      parentToolCallId: "steer-send-call",
+      sessionId: child.sessionId,
+      expectedExecutionId: child.executionId,
+      message: "steer this execution",
+      delivery: "steer",
+      clientRequestId: "steer-link-message",
+    });
+    await steerMailboxReady.promise;
+    allowConsume.resolve(undefined);
+    await consumed.promise;
+    await expect(sending).resolves.toMatchObject({ delivery: "steered" });
+    expect(parentStore.getState().childSessionLinks.filter((link) => (
+      link.toolName === "send_message" && link.parentToolCallId === "steer-send-call"
+    ))).toEqual([
+      expect.objectContaining({ childExecutionId: child.executionId, status: "running" }),
+    ]);
+    const linksBeforeLiveReconcile = parentStore.getState().childSessionLinks;
+    const reconciled = await harness.manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: child.sessionId,
+    });
+    expect(reconciled?.executionId).toBe(child.executionId);
+    expect(parentStore.getState().childSessionLinks).toEqual(linksBeforeLiveReconcile);
+
+    allowReturn.resolve(undefined);
+    await child.result;
+    expect(parentStore.getState().childSessionLinks.filter((link) => (
+      link.toolName === "send_message" && link.parentToolCallId === "steer-send-call"
+    ))).toEqual([
+      expect.objectContaining({ childExecutionId: child.executionId, status: "completed" }),
+    ]);
+    expect(parentStore.getState().reminders.filter((reminder) => (
+      reminder.sessionId === child.sessionId
+      && reminder.source.type === "subagent_completed"
+      && reminder.source.childExecutionId === child.executionId
+    ))).toHaveLength(1);
+  });
+
+  test("terminal gate waits for an in-flight steered Link persistence", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const allowConsume = deferred<void>();
+    const agentReturned = deferred<void>();
+    const linkFlushEntered = deferred<void>();
+    const releaseLinkFlush = deferred<void>();
+    const steerMailboxReady = deferred<void>();
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const inputPort = inputServicePort(inputService);
+    const harness = createManager({}, {
+      factory: makeFactory(),
+      sessionInputService: {
+        ...inputPort,
+        claimSteer: async (input) => {
+          const claimed = await inputService.claimSteer(input);
+          setTimeout(() => steerMailboxReady.resolve(undefined), 0);
+          return claimed;
+        },
+      },
+      flushSessionStore: async (sessionId) => {
+        if (sessionId === parentId && parentStore.getState().childSessionLinks.some((link) => (
+          link.toolName === "send_message" && link.parentToolCallId === "terminal-race-send"
+        ))) {
+          linkFlushEntered.resolve(undefined);
+          await releaseLinkFlush.promise;
+        }
+      },
+      childAgentFactory: (input) => ({
+        store: input.store,
+        cwd: input.store.getState().cwd,
+        classifyCommand: () => null,
+        executeCommand: async () => ({ kind: "handled" as const }),
+        run: async (_binding: ExecutionModelBinding, options?: AgentRunOptions) => {
+          await allowConsume.promise;
+          await options?.consumeSteers?.();
+          agentReturned.resolve(undefined);
+          return { outcome: "terminal" as const, text: "done", steps: 1, status: "completed" as const };
+        },
+        dispose: () => undefined,
+      }) as unknown as MockAgent,
+    });
+    const child = await harness.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "terminal-race-child",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Terminal race child", background: true }),
+    });
+    const sending = harness.manager.sendMessageToChild(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentAgentName: "lead",
+      parentExecutionId: "parent-execution",
+      parentRunOrdinal: 0,
+      parentToolBatchId: "parent-batch",
+      parentToolCallId: "terminal-race-send",
+      sessionId: child.sessionId,
+      expectedExecutionId: child.executionId,
+      message: "finish while Link persistence is blocked",
+      delivery: "steer",
+      clientRequestId: "terminal-race-message",
+    });
+    await steerMailboxReady.promise;
+    allowConsume.resolve(undefined);
+    await Promise.all([agentReturned.promise, linkFlushEntered.promise]);
+    expect(child.store.getState().executions.at(-1)).toMatchObject({
+      id: child.executionId,
+      status: "running",
+    });
+
+    releaseLinkFlush.resolve(undefined);
+    await expect(sending).resolves.toMatchObject({ delivery: "steered" });
+    await child.result;
+    expect(parentStore.getState().childSessionLinks.filter((link) => (
+      link.toolName === "send_message" && link.parentToolCallId === "terminal-race-send"
+    ))).toEqual([
+      expect.objectContaining({ childExecutionId: child.executionId, status: "completed" }),
+    ]);
+    expect(parentStore.getState().reminders.filter((reminder) => (
+      reminder.sessionId === child.sessionId
+      && reminder.source.type === "subagent_completed"
+      && reminder.source.childExecutionId === child.executionId
+    ))).toHaveLength(1);
+  });
+
+  test("child Queue continuation installs a fresh timeout for every Execution", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const firstRun = deferred<MockAgentResult>();
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const harness = createManager({}, {
+      factory: makeFactoryWithChildPolicy({ timeoutMs: 60_000 }),
+      sessionInputService: inputServicePort(inputService),
+      childAgentFactory: sequencedChildAgentFactory([
+        firstRun.promise,
+        new Promise<MockAgentResult>(() => undefined),
+      ]),
+    });
+    const child = await harness.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "initial-timeout-child",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Timed Queue child", background: false }),
+    });
+    await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "continue under a fresh deadline",
+      clientRequestId: "queue-timeout",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: "sender-timeout",
+        senderRunOrdinal: 0,
+        senderToolBatchId: "sender-timeout-batch",
+        senderToolCallId: "sender-timeout-call",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+
+    firstRun.resolve({ text: "first done", steps: 1 });
+    await child.result;
+    let queued = harness.manager.getExecution(workspaceRoot, child.sessionId);
+    for (let attempt = 0; queued?.executionId === child.executionId && attempt < 20; attempt += 1) {
+      await Bun.sleep(0);
+      queued = harness.manager.getExecution(workspaceRoot, child.sessionId);
+    }
+    expect(queued?.executionId).not.toBe(child.executionId);
+    expect(harness.deadlineScheduler.scheduledDelays()).toHaveLength(2);
+    harness.deadlineScheduler.fireScheduled();
+    await queued?.promise;
+    expect(child.store.getState().executions.at(-1)?.status).toBe("timed_out");
+  });
+
+  test("Queue Link flush failure terminalizes the new Execution without barriering the previous one", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const firstRun = deferred<MockAgentResult>();
+    const lateHungRun = deferred<MockAgentResult>();
+    const freshRun = deferred<MockAgentResult>();
+    const queueRunEntered = deferred<void>();
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    let failedQueueLinkFlush = false;
+    let oldDisposed = 0;
+    let oldAgent: MockAgent | undefined;
+    let freshAgent: MockAgent | undefined;
+    const oldAgentFactory = sequencedChildAgentFactory(
+      [firstRun.promise, lateHungRun.promise],
+      [1],
+      () => { oldDisposed += 1; },
+      (runIndex) => {
+        if (runIndex === 1) queueRunEntered.resolve(undefined);
+      },
+    );
+    const freshAgentFactory = sequencedChildAgentFactory([freshRun.promise]);
+    const harness = createManager({}, {
+      factory: makeFactory(),
+      sessionInputService: inputServicePort(inputService),
+      childAgentFactory: (input) => {
+        oldAgent = oldAgentFactory(input);
+        return oldAgent;
+      },
+      getAgent: (sessionId) => {
+        const store = storeManager.get(sessionId, workspaceRoot);
+        if (store === undefined) throw new Error(`Missing Session ${sessionId}`);
+        freshAgent ??= freshAgentFactory({ workspaceRoot, sessionId, store, depth: 1 });
+        return freshAgent;
+      },
+      flushSessionStore: async (sessionId) => {
+        if (
+          !failedQueueLinkFlush
+          && sessionId === parentId
+          && parentStore.getState().childSessionLinks.some((link) => link.toolName === "send_message")
+        ) {
+          failedQueueLinkFlush = true;
+          await queueRunEntered.promise;
+          throw new Error("one parent Link flush failed");
+        }
+      },
+    });
+    const child = await harness.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "initial-flush-child",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Flush child", background: false }),
+    });
+    await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "continue once",
+      clientRequestId: "queue-flush-failure",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: "flush-sender-execution",
+        senderRunOrdinal: 0,
+        senderToolBatchId: "flush-sender-batch",
+        senderToolCallId: "flush-sender-call",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+
+    firstRun.resolve({ text: "initial done", steps: 1 });
+    const settling = child.result;
+    await harness.deadlineScheduler.whenScheduled();
+    expect(harness.deadlineScheduler.scheduledDelays().at(-1)).toBe(10_000);
+    harness.deadlineScheduler.fireScheduled();
+    await settling;
+    expect(failedQueueLinkFlush).toBe(true);
+    const queueExecution = child.store.getState().executions.at(-1)!;
+    expect(queueExecution.id).not.toBe(child.executionId);
+    expect(queueExecution.status).toBe("cancelled");
+    expect(child.store.getState().queueDispatchBarrierAt).toBeUndefined();
+    expect(harness.manager.getExecution(workspaceRoot, child.sessionId)).toBeUndefined();
+    expect(parentStore.getState().childSessionLinks).toContainEqual(expect.objectContaining({
+      toolName: "send_message",
+      childExecutionId: queueExecution.id,
+      status: "cancelled",
+    }));
+    expect(parentStore.getState().reminders).toContainEqual(expect.objectContaining({
+      sessionId: child.sessionId,
+      source: expect.objectContaining({
+        type: "subagent_cancelled",
+        childExecutionId: queueExecution.id,
+      }),
+    }));
+    expect(oldDisposed).toBe(1);
+
+    const resumed = await harness.manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-after-flush-failure",
+      toolName: "resume_session",
+      sessionId: child.sessionId,
+      instruction: "resume on a fresh Agent",
+      background: false,
+    });
+    expect(freshAgent).toBeDefined();
+    expect(freshAgent).not.toBe(oldAgent);
+    const messagesBeforeLateHungRun = child.store.getState().messages.map((message) => message.id);
+    lateHungRun.resolve({ text: "late old output", steps: 1 });
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    expect(child.store.getState().currentExecutionId).toBe(resumed.executionId);
+    expect(child.store.getState().messages.map((message) => message.id)).toEqual(messagesBeforeLateHungRun);
+
+    freshRun.resolve({ text: "fresh result", steps: 1 });
+    await expect(resumed.result).resolves.toMatchObject({
+      outcome: "terminal",
+      executionStatus: "completed",
+    });
+  });
+
+  test("child Queue abortCascade binds only the exact live sender Execution run", async () => {
+    const parentId = crypto.randomUUID();
+    const parentRun = deferred<MockAgentResult>();
+    const parentAgent = new MockAgent(parentId, parentRun.promise, workspaceRoot);
+    const firstChildRun = deferred<MockAgentResult>();
+    const exactQueueRun = new Promise<MockAgentResult>(() => undefined);
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const exact = createManager({ [parentId]: parentAgent }, {
+      factory: makeFactoryWithChildPolicy({ abortCascade: true }),
+      sessionInputService: inputServicePort(inputService),
+      childAgentFactory: sequencedChildAgentFactory([firstChildRun.promise, exactQueueRun]),
+    });
+    const parentExecution = await exact.manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: parentId,
+      input: { kind: "direct", text: "run parent" },
+    });
+    await parentExecution.started;
+    const child = await exact.manager.startChildExecution(workspaceRoot, {
+      parentStore: parentAgent.store,
+      parentSessionId: parentId,
+      parentExecutionId: parentExecution.executionId,
+      parentRunOrdinal: parentExecution.runOrdinal,
+      parentToolCallId: "initial-exact-child",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Exact sender child", background: false }),
+    });
+    await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "exact sender continuation",
+      clientRequestId: "exact-sender-queue",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: parentExecution.executionId,
+        senderRunOrdinal: parentExecution.runOrdinal,
+        senderToolBatchId: "exact-sender-batch",
+        senderToolCallId: "exact-sender-call",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+    firstChildRun.resolve({ text: "first done", steps: 1 });
+    await child.result;
+    const queued = exact.manager.getExecution(workspaceRoot, child.sessionId);
+    expect(queued?.executionId).not.toBe(child.executionId);
+    parentExecution.abortController.abort(new Error("parent stopped"));
+    await queued?.promise;
+    expect(child.store.getState().executions.at(-1)?.status).toBe("aborted");
+    await parentExecution.promise;
+
+    const otherParentId = crypto.randomUUID();
+    const otherParentRun = deferred<MockAgentResult>();
+    const otherParent = new MockAgent(otherParentId, otherParentRun.promise, workspaceRoot);
+    const otherFirstRun = deferred<MockAgentResult>();
+    const otherQueueRun = deferred<MockAgentResult>();
+    const nonExact = createManager({ [otherParentId]: otherParent }, {
+      factory: makeFactoryWithChildPolicy({ abortCascade: true }),
+      sessionInputService: inputServicePort(inputService),
+      childAgentFactory: sequencedChildAgentFactory([otherFirstRun.promise, otherQueueRun.promise]),
+    });
+    const otherParentExecution = await nonExact.manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: otherParentId,
+      input: { kind: "direct", text: "run other parent" },
+    });
+    await otherParentExecution.started;
+    const otherChild = await nonExact.manager.startChildExecution(workspaceRoot, {
+      parentStore: otherParent.store,
+      parentSessionId: otherParentId,
+      parentToolCallId: "initial-nonexact-child",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Nonexact sender child", background: false }),
+    });
+    await inputService.acceptParentAgentMessage({
+      sessionId: otherChild.sessionId,
+      workspaceRoot,
+      text: "stale sender continuation",
+      clientRequestId: "nonexact-sender-queue",
+      expectedExecutionId: otherChild.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: otherParentId,
+        senderAgentName: "lead",
+        senderExecutionId: otherParentExecution.executionId,
+        senderRunOrdinal: otherParentExecution.runOrdinal + 1,
+        senderToolBatchId: "nonexact-sender-batch",
+        senderToolCallId: "nonexact-sender-call",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+    otherFirstRun.resolve({ text: "first done", steps: 1 });
+    await otherChild.result;
+    const nonExactQueued = nonExact.manager.getExecution(workspaceRoot, otherChild.sessionId);
+    expect(nonExactQueued?.executionId).not.toBe(otherChild.executionId);
+    otherParentExecution.abortController.abort(new Error("parent stopped"));
+    await Bun.sleep(0);
+    expect(nonExactQueued?.abortController.signal.aborted).toBe(false);
+    otherQueueRun.resolve({ text: "queue done", steps: 1 });
+    await nonExactQueued?.promise;
+    expect(otherChild.store.getState().executions.at(-1)?.status).toBe("completed");
+    await otherParentExecution.promise;
+  });
+
+  test("child Queue Links belong only to each consumed selection prefix and sender", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const firstRun = deferred<MockAgentResult>();
+    const firstPrefixRun = deferred<MockAgentResult>();
+    const secondPrefixRun = deferred<MockAgentResult>();
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const harness = createManager({}, {
+      factory: makeFactory(),
+      modelRuntime: makeModelRuntime(true, "test:model", "test-runtime-links"),
+      sessionInputService: inputServicePort(inputService),
+      childAgentFactory: sequencedChildAgentFactory([
+        firstRun.promise,
+        firstPrefixRun.promise,
+        secondPrefixRun.promise,
+      ]),
+    });
+    const child = await harness.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "initial-prefix-child",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Prefix child", background: false }),
+    });
+    const firstMessage = await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "first selection",
+      clientRequestId: "first-prefix",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: "sender-execution-a",
+        senderRunOrdinal: 0,
+        senderToolBatchId: "sender-batch-a",
+        senderToolCallId: "sender-call-a",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+    const secondMessage = await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "second selection",
+      clientRequestId: "second-prefix",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: "sender-execution-b",
+        senderRunOrdinal: 1,
+        senderToolBatchId: "sender-batch-b",
+        senderToolCallId: "sender-call-b",
+      },
+      requestedModelSelection: {
+        mode: "session_override",
+        selection: { model: "test:other" },
+      },
+    });
+    firstRun.resolve({ text: "initial done", steps: 1 });
+    await child.result;
+    const firstQueued = harness.manager.getExecution(workspaceRoot, child.sessionId);
+    if (firstQueued === undefined || firstQueued.executionId === child.executionId) {
+      throw new Error("Expected first Queue prefix");
+    }
+    for (let attempt = 0; parentStore.getState().childSessionLinks.every((link) => (
+      link.childExecutionId !== firstQueued.executionId
+    )) && attempt < 30; attempt += 1) {
+      await Bun.sleep(0);
+    }
+    expect(parentStore.getState().childSessionLinks.filter((link) => link.toolName === "send_message")).toEqual([
+      expect.objectContaining({ parentToolCallId: "sender-call-a", childExecutionId: firstQueued.executionId }),
+    ]);
+    expect(child.store.getState().pendingMessages.map((message) => message.id)).toEqual([secondMessage.messageId]);
+
+    firstPrefixRun.resolve({ text: "first prefix", steps: 1 });
+    await firstQueued.promise;
+    let secondQueued = harness.manager.getExecution(workspaceRoot, child.sessionId);
+    for (let attempt = 0; (
+      secondQueued === undefined || secondQueued.executionId === firstQueued.executionId
+    ) && attempt < 30; attempt += 1) {
+      await Bun.sleep(0);
+      secondQueued = harness.manager.getExecution(workspaceRoot, child.sessionId);
+    }
+    expect(secondQueued?.executionId).not.toBe(firstQueued.executionId);
+    await Bun.sleep(10);
+    for (let attempt = 0; parentStore.getState().childSessionLinks.filter((link) => (
+      link.toolName === "send_message"
+    )).length < 2 && attempt < 30; attempt += 1) {
+      await Bun.sleep(0);
+    }
+    const state = child.store.getState();
+    expect(state.pendingMessages).toEqual([]);
+    expect(state.executions).toHaveLength(3);
+    const firstExecutionId = state.messages.find((message) => message.id === firstMessage.messageId)?.executionId;
+    const secondExecutionId = state.messages.find((message) => message.id === secondMessage.messageId)?.executionId;
+    expect(firstExecutionId).toBeString();
+    expect(secondExecutionId).toBeString();
+    expect(secondExecutionId).not.toBe(firstExecutionId);
+    expect(parentStore.getState().childSessionLinks.filter((link) => link.toolName === "send_message")).toEqual([
+      expect.objectContaining({ parentToolCallId: "sender-call-a", childExecutionId: firstExecutionId }),
+      expect.objectContaining({ parentToolCallId: "sender-call-b", childExecutionId: secondExecutionId }),
+    ]);
+    secondPrefixRun.resolve({ text: "second prefix", steps: 1 });
+    await secondQueued?.promise;
+  });
+
+  test("restart reconciliation terminalizes every Link bound to one completed child Execution", async () => {
+    const parentId = crypto.randomUUID();
+    const childSessionId = crypto.randomUUID();
+    const childExecutionId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const childStore = storeManager.create(childSessionId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Steered child",
+      delegationRequest: delegationRequest({
+        agent_type: "explore",
+        title: "Steered child",
+        background: true,
+      }),
+    });
+    childStore.getState().append(testExecutionStart(childExecutionId));
+    const endedAt = Date.now() + 1;
+    childStore.getState().append(testExecutionEnd(childExecutionId, "completed", { endedAt, runEndedAt: endedAt }));
+    const base = {
+      ...makeChildLink(parentId, childSessionId, "explore"),
+      childExecutionId,
+    };
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: { ...base, parentToolCallId: "delegate-call", toolName: "delegate" },
+    });
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: { ...base, parentToolCallId: "steer-call", toolName: "send_message" },
+    });
+
+    const restarted = createManager({}, { factory: makeFactory() }).manager;
+    await restarted.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childSessionId,
+    });
+
+    expect(parentStore.getState().childSessionLinks.filter((link) => (
+      link.childExecutionId === childExecutionId
+    )).map((link) => [link.parentToolCallId, link.status])).toEqual([
+      ["delegate-call", "completed"],
+      ["steer-call", "completed"],
+    ]);
+    expect(parentStore.getState().reminders.filter((reminder) => (
+      reminder.sessionId === childSessionId
+      && reminder.source.type === "subagent_completed"
+      && reminder.source.childExecutionId === childExecutionId
+    ))).toHaveLength(1);
+  });
+
+  test("startup reconciliation rebuilds a missing Queue Link from exact canonical provenance once", async () => {
+    const parentId = crypto.randomUUID();
+    const childSessionId = crypto.randomUUID();
+    const childExecutionId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    const childStore = storeManager.create(childSessionId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Recovery child",
+      delegationRequest: delegationRequest({
+        agent_type: "explore",
+        title: "Recovery child",
+        background: false,
+      }),
+    });
+    const recoveryBatch = blockedToolBatch("queue-link-recovery");
+    const recoveryCall = {
+      ...recoveryBatch.calls[0]!,
+      toolCallId: "recovery-send-call",
+      toolName: "send_message",
+      state: "running" as const,
+      blocker: undefined,
+    };
+    parentStore.setState({
+      toolBatches: [{
+        ...recoveryBatch,
+        partitions: [{ type: "serial", callIds: [recoveryCall.toolCallId] }],
+        calls: [recoveryCall],
+      }],
+    });
+    childStore.getState().append(testExecutionStart(childExecutionId));
+    const acceptedAt = childStore.getState().executions[0]!.startedAt;
+    childStore.setState({
+      messages: [{
+        id: "recovery-queue-message",
+        role: "user",
+        parts: [{
+          type: "text",
+          id: "recovery-queue-message:text",
+          text: "recover this Queue Link",
+          createdAt: acceptedAt,
+          completedAt: acceptedAt,
+        }],
+        createdAt: acceptedAt,
+        completedAt: acceptedAt,
+        executionId: childExecutionId,
+        runOrdinal: 0,
+        inputSource: "parent_agent",
+        parentAgentProvenance: {
+          senderSessionId: parentId,
+          senderAgentName: "lead",
+          senderExecutionId: recoveryBatch.executionId,
+          senderRunOrdinal: recoveryBatch.runOrdinal,
+          senderToolBatchId: recoveryBatch.batchId,
+          senderToolCallId: recoveryCall.toolCallId,
+        },
+        modelAudit: {
+          requested: TEST_REQUESTED_MODEL_SELECTION,
+          actual: TEST_BINDING_SUMMARY.selection,
+        },
+      }],
+    });
+
+    const restarted = createManager({}, {
+      factory: makeFactory(),
+    }).manager;
+    await restarted.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childSessionId,
+    });
+    await restarted.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: childSessionId,
+    });
+
+    expect(parentStore.getState().childSessionLinks.filter((link) => (
+      link.toolName === "send_message" && link.childExecutionId === childExecutionId
+    ))).toEqual([
+      expect.objectContaining({
+        parentToolCallId: recoveryCall.toolCallId,
+        status: "interrupted",
+      }),
+    ]);
+    expect(parentStore.getState().reminders.filter((reminder) => (
+      reminder.sessionId === childSessionId
+      && reminder.source.type === "subagent_failed"
+      && reminder.source.childExecutionId === childExecutionId
+      && reminder.terminalState === "interrupted"
+    ))).toHaveLength(1);
+  });
+
+  test("cancelDescendantSession on non-descendant throws ChildSessionNotDescendantError", async () => {
     const parentId = crypto.randomUUID();
     const strangerId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     storeManager.create(strangerId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, { factory: makeFactory() });
 
-    expect(() => manager.cancelChildSession(workspaceRoot, parentId, strangerId)).toThrow(ChildSessionNotDescendantError);
+    await expect(manager.cancelDescendantSession(workspaceRoot, parentId, strangerId)).rejects.toThrow(ChildSessionNotDescendantError);
   });
 
-  test("cancelChildSession on non-running session returns false", async () => {
+  test("cancelDescendantSession on an already stopped subtree returns already_stopped", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
     const { manager } = createManager({}, { factory: makeFactory() });
@@ -6545,6 +7774,135 @@ describe("SessionExecutionManager", () => {
     });
     await child.result;
 
-    expect(manager.cancelChildSession(workspaceRoot, parentId, child.sessionId)).toBe(false);
+    expect(await manager.cancelDescendantSession(workspaceRoot, parentId, child.sessionId)).toBe("already_stopped");
+  });
+
+  test("startup child Queue permanent admission failure writes one barrier and blocked reminder", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      sessionInputService: inputServicePort(inputService),
+    });
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "initial-child",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Queued child",
+        objective: "first",
+        skills: [],
+        background: false,
+      }),
+      parentAbort: undefined,
+    });
+    await child.result;
+    await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "queued before restart",
+      clientRequestId: "queued-before-restart",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: "parent-execution",
+        senderRunOrdinal: 0,
+        senderToolBatchId: "parent-batch",
+        senderToolCallId: "send-call",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+    child.store.setState({
+      delegationRequest: {
+        ...child.store.getState().delegationRequest!,
+        profile: "deep",
+      },
+    });
+
+    expect(await manager.tryStartQueuedExecution({
+      slug: "",
+      workspaceRoot,
+      sessionId: child.sessionId,
+    })).toBeUndefined();
+
+    expect(child.store.getState().queueDispatchBarrierAt).toBeNumber();
+    expect(parentStore.getState().reminders).toContainEqual(expect.objectContaining({
+      source: expect.objectContaining({
+        type: "queue_dispatch_blocked",
+        sessionId: child.sessionId,
+        blockedAfterExecutionId: child.executionId,
+      }),
+    }));
+  });
+
+  test("shutdown keeps a child Queue retryable for the next manager", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const first = createManager({}, {
+      factory: makeFactory(),
+      sessionInputService: inputServicePort(inputService),
+    });
+    const child = await first.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "initial-before-shutdown",
+      toolName: "delegate",
+      request: delegationRequest({
+        agent_type: "explore",
+        title: "Retry queued child",
+        objective: "first",
+        skills: [],
+        background: false,
+      }),
+    });
+    await child.result;
+    await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "retry after restart",
+      clientRequestId: "queued-across-shutdown",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: "parent-execution",
+        senderRunOrdinal: 0,
+        senderToolBatchId: "parent-batch",
+        senderToolCallId: "send-call",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+
+    expect(first.manager.closeAdmissionIfIdle()).toEqual({ ready: true });
+    expect(await first.manager.tryStartQueuedExecution({
+      slug: "",
+      workspaceRoot,
+      sessionId: child.sessionId,
+    })).toBeUndefined();
+    expect(child.store.getState().queueDispatchBarrierAt).toBeUndefined();
+    expect(parentStore.getState().reminders.some((reminder) => (
+      reminder.source.type === "queue_dispatch_blocked"
+      && reminder.sessionId === child.sessionId
+    ))).toBe(false);
+
+    const second = createManager({}, {
+      factory: makeFactory(),
+      sessionInputService: inputServicePort(inputService),
+    });
+    const restarted = await second.manager.tryStartQueuedExecution({
+      slug: "",
+      workspaceRoot,
+      sessionId: child.sessionId,
+    });
+    expect(restarted).toBeDefined();
+    await restarted?.promise;
+    expect(child.store.getState().pendingMessages).toEqual([]);
   });
 });

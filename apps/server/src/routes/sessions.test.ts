@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
-import { NotRootSessionError, ProjectRegistry, SessionAutomationReferenceConflictError, SessionDeleteConflictError, SessionDeleteInProgressError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionModelSelectionNotAllowedError, silentLogger } from "@archcode/agent-core";
+import { AgentTreeProjectionError, NotRootSessionError, ProjectRegistry, SessionAutomationReferenceConflictError, SessionDeleteConflictError, SessionDeleteInProgressError, SessionFamilyStopConflictError, SessionFamilyStopInProgressError, SessionModelSelectionNotAllowedError, silentLogger } from "@archcode/agent-core";
 import { createRuntimeApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -183,6 +183,13 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       return sessions.get(`${input.workspaceRoot}\0${input.sessionId}`)!;
     },
     listSessionTree: async (workspaceRoot: string, rootSessionId: string) => {
+      if (rootSessionId === "tree-conflict") {
+        throw new AgentTreeProjectionError(
+          "active_execution_mismatch",
+          rootSessionId,
+          "Agent Tree snapshot changed during capture",
+        );
+      }
       const key = `${workspaceRoot}\0${rootSessionId}`;
       const session = sessions.get(key);
       if (!session) throw new MissingSessionFileError();
@@ -191,9 +198,13 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       }
       type RuntimeTreeNode = {
         session: { sessionId: string; rootSessionId: string; parentSessionId?: string; title: string | null; createdAt: number };
+        depth: number;
+        latestExecutionStatus: string | null;
+        activeExecutionId: string | null;
+        linkStatus: string | null;
         children: RuntimeTreeNode[];
       };
-      const toNode = (nodeSession: StoredSessionBody): RuntimeTreeNode => ({
+      const toNode = (nodeSession: StoredSessionBody, depth = 0): RuntimeTreeNode => ({
         session: {
           sessionId: nodeSession.sessionId,
           rootSessionId: nodeSession.rootSessionId,
@@ -201,9 +212,13 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
           title: nodeSession.title ?? null,
           createdAt: nodeSession.createdAt,
         },
+        depth,
+        latestExecutionStatus: nodeSession.executions.at(-1)?.status ?? null,
+        activeExecutionId: null,
+        linkStatus: null,
         children: [...sessions.entries()]
           .filter(([entryKey, candidate]) => entryKey.startsWith(`${workspaceRoot}\0`) && candidate.parentSessionId === nodeSession.sessionId)
-          .map(([, candidate]) => toNode(candidate)),
+          .map(([, candidate]) => toNode(candidate, depth + 1)),
       });
 
       return {
@@ -723,9 +738,28 @@ describe("sessions routes", () => {
           title: "Root",
           createdAt: 1000,
         },
+        depth: 0,
+        latestExecutionStatus: null,
+        activeExecutionId: null,
+        linkStatus: null,
         children: [],
       },
       diagnostics: [],
+    });
+  });
+
+  test("GET /api/projects/:slug/sessions/:sessionId/tree returns 409 for an unstable projection", async () => {
+    const { app, project } = await createTestApp("tree-conflict");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/tree-conflict/tree`);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "BAD_REQUEST",
+        message: "Agent Tree snapshot changed during capture",
+        details: { scopeCode: "AGENT_TREE_SNAPSHOT_CONFLICT" },
+      },
     });
   });
 

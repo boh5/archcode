@@ -1,4 +1,5 @@
 import type { StoreApi } from "zustand";
+import type { AgentTreeProjection } from "@archcode/protocol";
 import type {
   SessionExecutionSuspension,
   SessionExecutionTerminalStatus,
@@ -9,7 +10,13 @@ import type { SessionStoreState } from "../../store/types";
 import type { ResolvedToolSet, ToolRegistry } from "../../tools/registry";
 import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import type { ProjectContext } from "../../projects/types";
-import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
+import type {
+  CancelDescendantSession,
+  ChildExecutionHandle,
+  ChildExecutionRequest,
+  ResumeChildRequest,
+  SendMessageToChild,
+} from "../../delegation/types";
 import type { SkillPackageSnapshot, SkillService } from "../../skills";
 import type { QueryLoopHooks } from "./loop-hooks";
 import type { Logger } from "../../logger";
@@ -56,8 +63,10 @@ export interface QueryLoopOptions {
   /** Materializes pending model-context domain notices at a fail-closed model boundary. */
   prepareModelContext?: () => Promise<void>;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
-  cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  cancelDescendantSession?: CancelDescendantSession;
+  sendMessageToChild?: SendMessageToChild;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  getAgentTreeProjection?: (workspaceRoot: string, rootSessionId: string) => Promise<AgentTreeProjection>;
   acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   agentName: string;
   currentDepth?: number;

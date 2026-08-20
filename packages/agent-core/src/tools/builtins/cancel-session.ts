@@ -18,7 +18,7 @@ export async function executeCancelSession(
   input: CancelSessionInput,
   ctx: ToolExecutionContext,
 ): Promise<RawToolResult> {
-  if (ctx.cancelChildSession === undefined) {
+  if (ctx.cancelDescendantSession === undefined) {
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_CANCEL_SESSION_UNAVAILABLE",
@@ -39,9 +39,9 @@ export async function executeCancelSession(
     });
   }
 
-  let cancelled: boolean;
+  let result: "cancelled" | "already_stopped";
   try {
-    cancelled = ctx.cancelChildSession(workspaceRoot, callingSessionId, input.session_id);
+    result = await ctx.cancelDescendantSession(workspaceRoot, callingSessionId, input.session_id);
   } catch (error) {
     if (error instanceof ChildSessionNotDescendantError) {
       return createToolErrorResult({
@@ -62,11 +62,11 @@ export async function executeCancelSession(
     });
   }
 
-  if (!cancelled) {
-    return createTextToolResult(`Session ${input.session_id} is not running. No action taken.`);
+  if (result === "already_stopped") {
+    return createTextToolResult(JSON.stringify({ session_id: input.session_id, status: "already_stopped" }));
   }
 
-  return createTextToolResult(`Session ${input.session_id} cancelled successfully. All descendant sessions were aborted.`);
+  return createTextToolResult(JSON.stringify({ session_id: input.session_id, status: "cancelled" }));
 }
 
 export const cancelSessionTool = defineTool({

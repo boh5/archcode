@@ -472,11 +472,18 @@ export function handleSSEEvent(
         });
       }
 
-      if (envelope.payload.type === "execution-start" || envelope.payload.type === "execution-end") {
+      if (
+        envelope.payload.type === "execution-start"
+        || envelope.payload.type === "execution-suspended"
+        || envelope.payload.type === "execution-suspension-updated"
+        || envelope.payload.type === "execution-resumed"
+        || envelope.payload.type === "execution-end"
+      ) {
         deps.invalidateQueries({
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
         deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
+        deps.invalidateQueries({ queryKey: queryKeys.tree(envelope.slug, store.getState().rootSessionId) });
       }
 
       if (envelope.payload.type === "session.goal_changed") {
@@ -516,6 +523,15 @@ export function handleSSEEvent(
     case "reset": {
       const reset = parsed as GlobalSSEResetEvent;
       deps.invalidateQueries({ queryKey: queryKeys.session(reset.slug, reset.sessionId) });
+      const sessionState = deps.findStore(reset.sessionId, reset.slug)?.getState();
+      const rootSessionId = sessionState?.hydrationStatus === "hydrated"
+        ? sessionState.rootSessionId
+        : undefined;
+      deps.invalidateQueries({
+        queryKey: rootSessionId === undefined
+          ? queryKeys.sessions(reset.slug)
+          : queryKeys.tree(reset.slug, rootSessionId),
+      });
       deps.refreshMcpStatus();
       break;
     }

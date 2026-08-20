@@ -30,10 +30,13 @@ import {
   TOOL_LSP_SYMBOLS,
   TOOL_WEB_FETCH,
   TOOL_DELEGATE,
+  TOOL_LIST_AGENTS,
+  TOOL_SEND_MESSAGE,
   TOOL_WAIT_FOR_REMINDER,
   TOOL_BACKGROUND_OUTPUT,
   TOOL_OUTPUT_READ,
   TOOL_OUTPUT_SEARCH,
+  TOOL_CANCEL_SESSION,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,
@@ -79,10 +82,13 @@ const ALL_BUILTIN_NAMES = [
   TOOL_LSP_SYMBOLS,
   TOOL_WEB_FETCH,
   TOOL_DELEGATE,
+  TOOL_LIST_AGENTS,
+  TOOL_SEND_MESSAGE,
   TOOL_WAIT_FOR_REMINDER,
   TOOL_BACKGROUND_OUTPUT,
   TOOL_OUTPUT_READ,
   TOOL_OUTPUT_SEARCH,
+  TOOL_CANCEL_SESSION,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,
@@ -126,10 +132,13 @@ describe("tool name constants", () => {
     expect(TOOL_LSP_SYMBOLS).toBe("lsp_symbols");
     expect(TOOL_WEB_FETCH).toBe("web_fetch");
     expect(TOOL_DELEGATE).toBe("delegate");
+    expect(TOOL_LIST_AGENTS).toBe("list_agents");
+    expect(TOOL_SEND_MESSAGE).toBe("send_message");
     expect(TOOL_WAIT_FOR_REMINDER).toBe("wait_for_reminder");
     expect(TOOL_BACKGROUND_OUTPUT).toBe("background_output");
     expect(TOOL_OUTPUT_READ).toBe("output_read");
     expect(TOOL_OUTPUT_SEARCH).toBe("output_search");
+    expect(TOOL_CANCEL_SESSION).toBe("cancel_session");
     expect(TOOL_SKILL_LIST).toBe("skill_list");
     expect(TOOL_SKILL_READ).toBe("skill_read");
     expect(TOOL_MEMORY_READ).toBe("memory_read");
@@ -175,6 +184,8 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_BASH]).toBe("shell");
     expect(TOOL_CATEGORY_MAP[TOOL_PROJECT_TODO_UPDATE]).toBe("interaction");
     expect(TOOL_CATEGORY_MAP[TOOL_WEB_FETCH]).toBe("web");
+    expect(TOOL_CATEGORY_MAP[TOOL_LIST_AGENTS]).toBe("delegation");
+    expect(TOOL_CATEGORY_MAP[TOOL_SEND_MESSAGE]).toBe("delegation");
     expect(TOOL_CATEGORY_MAP[TOOL_SKILL_LIST]).toBe("skill");
     expect(TOOL_CATEGORY_MAP[TOOL_MEMORY_READ]).toBe("memory");
     expect(TOOL_CATEGORY_MAP[TOOL_CREATE_GOAL]).toBe("goal");
@@ -212,6 +223,8 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("github_get_pull_request")).toBe("git");
     expect(getToolCategory("github_create_issue_comment")).toBe("git");
     expect(getToolCategory("github_rerun_workflow_run")).toBe("git");
+    expect(getToolCategory("list_agents")).toBe("delegation");
+    expect(getToolCategory("send_message")).toBe("delegation");
     expect(getToolCategory("create_goal")).toBe("goal");
     expect(getToolCategory("get_goal")).toBe("goal");
     expect(getToolCategory("update_goal")).toBe("goal");
@@ -227,6 +240,8 @@ describe("isBuiltinToolName()", () => {
     expect(isBuiltinToolName("github_get_pull_request")).toBe(true);
     expect(isBuiltinToolName("github_create_issue_comment")).toBe(true);
     expect(isBuiltinToolName("github_rerun_workflow_run")).toBe(true);
+    expect(isBuiltinToolName("list_agents")).toBe(true);
+    expect(isBuiltinToolName("send_message")).toBe(true);
     expect(isBuiltinToolName("create_goal")).toBe(true);
     expect(isBuiltinToolName("get_goal")).toBe(true);
     expect(isBuiltinToolName("update_goal")).toBe(true);

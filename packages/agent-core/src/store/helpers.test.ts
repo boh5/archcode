@@ -825,6 +825,39 @@ describe("session transcript serialization", () => {
     }).success).toBe(false);
   });
 
+  test("SessionFileSchema keeps historical input readable and validates parent Agent provenance", () => {
+    const sessionId = uniqueSessionId("parent-agent-provenance");
+    const historical = sampleMessages()[0]!;
+    if (historical.role !== "user") throw new Error("Expected canonical user fixture");
+    expect(historical).not.toHaveProperty("inputSource");
+    expect(SessionFileSchema.safeParse(
+      persistedFile(persistedState(sessionId, [historical], [])),
+    ).success).toBe(true);
+
+    const parentAgentProvenance = {
+      senderSessionId: "parent-session",
+      senderAgentName: "lead",
+      senderExecutionId: "parent-execution",
+      senderRunOrdinal: 0,
+      senderToolBatchId: "parent-batch",
+      senderToolCallId: "parent-call",
+    };
+    const parentMessage = {
+      ...historical,
+      inputSource: "parent_agent" as const,
+      parentAgentProvenance,
+    };
+    expect(SessionFileSchema.safeParse(
+      persistedFile(persistedState(sessionId, [parentMessage], [])),
+    ).success).toBe(true);
+    expect(SessionFileSchema.safeParse(
+      persistedFile(persistedState(sessionId, [{ ...historical, inputSource: "parent_agent" }], [])),
+    ).success).toBe(false);
+    expect(SessionFileSchema.safeParse(
+      persistedFile(persistedState(sessionId, [{ ...historical, parentAgentProvenance }], [])),
+    ).success).toBe(false);
+  });
+
   test("SessionFileSchema keeps provenance-free internal system notices legal", () => {
     const sessionId = uniqueSessionId("internal-system-notice");
     const notice: StoredMessage = {

@@ -1,5 +1,7 @@
 export type {
   AgentDescriptor,
+  AgentTreeNode,
+  AgentTreeProjection,
   Project,
   DirectoryEntry,
   DirectoryListResponse,

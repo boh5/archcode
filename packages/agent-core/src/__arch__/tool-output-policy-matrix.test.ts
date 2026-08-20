@@ -24,6 +24,8 @@ const INLINE = [
   "todo_write",
   "wait_for_reminder",
   "cancel_session",
+  "list_agents",
+  "send_message",
   "skill_list",
   "memory_write",
   "automation_create",

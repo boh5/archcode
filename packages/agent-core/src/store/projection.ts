@@ -4,6 +4,7 @@ import type {
   AttachmentDescriptor,
   FinalizedToolResult,
   GoalNoticePart,
+  ParentAgentMessageProvenance,
 } from "@archcode/protocol";
 import { TOOL_OUTPUT_PREVIEW_MAX_BYTES, TOOL_OUTPUT_PREVIEW_MAX_LINES } from "../tool-output/constants";
 import { projectCanonicalText } from "../tool-output/projection";
@@ -128,6 +129,26 @@ export function projectModelMessagesFromStoredMessages(
         }
       }
       if (usesArrayContent) flushText();
+
+      const inputEnvelope = message.inputSource === "parent_agent" && message.parentAgentProvenance !== undefined
+        ? {
+            open: renderParentAgentInputOpen(message.parentAgentProvenance),
+            close: "</parent-agent-message>",
+          }
+        : message.executionId !== undefined && message.inputSource === undefined
+          ? {
+              open: '<external-input source="unknown">',
+              close: "</external-input>",
+            }
+          : undefined;
+      if (inputEnvelope !== undefined) {
+        if (usesArrayContent) {
+          contentParts.unshift({ type: "text", text: inputEnvelope.open });
+          contentParts.push({ type: "text", text: inputEnvelope.close });
+        } else {
+          content = [inputEnvelope.open, content, inputEnvelope.close].join("\n");
+        }
+      }
 
       if (usesArrayContent && contentParts.length > 0) {
         modelMessages.push({
@@ -298,6 +319,15 @@ export function projectModelMessagesFromStoredMessages(
     attachmentSlots,
     ...(compressionProjection === undefined ? {} : { refMap: compressionProjection.refMap }),
   };
+}
+
+function renderParentAgentInputOpen(
+  provenance: ParentAgentMessageProvenance,
+): string {
+  return [
+    "<parent-agent-message>",
+    `Sender: ${JSON.stringify(provenance)}`,
+  ].join("\n");
 }
 
 function findLatestGoalNotice(messages: readonly StoredMessage[]): GoalNoticePart | undefined {

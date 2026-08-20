@@ -1,5 +1,5 @@
 import type { Schema as AiSchema } from "ai";
-import type { HitlResponse } from "@archcode/protocol";
+import type { AgentTreeProjection, HitlResponse } from "@archcode/protocol";
 import type { FinalizedToolResult } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
@@ -10,7 +10,9 @@ import type {
   ChildExecutionHandle,
   ChildExecutionOutcome,
   ChildExecutionRequest,
+  CancelDescendantSession,
   ResumeChildRequest,
+  SendMessageToChild,
 } from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
@@ -97,8 +99,11 @@ export interface ToolExecutionContext {
   /** Scope-bound artifact accessor. Descriptors never receive project/root authorization fields. */
   outputArtifacts?: ToolOutputAccessService;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
-  cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  cancelDescendantSession?: CancelDescendantSession;
+  sendMessageToChild?: SendMessageToChild;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  /** Shared Runtime Agent Tree projection used by HTTP and list_agents. */
+  getAgentTreeProjection?: (workspaceRoot: string, rootSessionId: string) => Promise<AgentTreeProjection>;
   /** Acquires a root-scoped cwd-transition lease; callers must always release it. */
   acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   currentDepth?: number;

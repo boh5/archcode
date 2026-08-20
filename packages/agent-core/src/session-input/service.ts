@@ -5,8 +5,10 @@ import type {
   SessionInputReceipt,
   SessionMessageInputReceipt,
   PendingSessionMessage,
+  ParentAgentMessageProvenance,
   SessionMessage,
   SessionMessageSource,
+  ExecutionStartEvent,
   ExecutionModelBindingSummary,
   MessageModelAudit,
   RequestedModelSelection,
@@ -114,6 +116,24 @@ export interface BeginSessionInputResult {
   readonly messages: SessionMessage[];
 }
 
+export interface ParentAgentMessageAcceptanceInput {
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+  readonly text: string;
+  readonly clientRequestId: string;
+  readonly expectedExecutionId: string;
+  readonly delivery: "steer" | "queue";
+  readonly provenance: ParentAgentMessageProvenance;
+  readonly requestedModelSelection: RequestedModelSelection;
+  /** Runtime generation fence; a cancelled target Execution cannot accept late input. */
+  readonly signal?: AbortSignal;
+}
+
+export type ParentAgentMessageReplayInput = Omit<
+  ParentAgentMessageAcceptanceInput,
+  "requestedModelSelection"
+>;
+
 /** Exact durable pending revision paired with its already-resolved per-message audit. */
 export interface ResolvedSessionInputSnapshot {
   readonly pending: PendingSessionMessage;
@@ -151,6 +171,33 @@ export class SessionInputService {
     ));
   }
 
+  async getParentAgentMessageReplay(
+    input: ParentAgentMessageReplayInput,
+  ): Promise<MessageAcceptance | undefined> {
+    assertMessageContent(input.text, []);
+    assertNonEmpty(input.clientRequestId, "clientRequestId");
+    assertNonEmpty(input.expectedExecutionId, "expectedExecutionId");
+    validateParentAgentProvenance(input.provenance);
+    const state = await this.#store.getSessionFile(input.workspaceRoot, input.sessionId);
+    const receipt = state.inputRequestReceipts.find(
+      (candidate) => candidate.clientRequestId === input.clientRequestId,
+    );
+    if (receipt === undefined) return undefined;
+    const requestFingerprint = receipt.kind === "message"
+      ? parentAgentMessageFingerprint({
+          ...input,
+          requestedModelSelection: receipt.requestedModelSelection,
+        })
+      : undefined;
+    if (receipt.kind !== "message" || receipt.requestFingerprint !== requestFingerprint) {
+      throw new SessionInputConflictError(
+        "idempotency",
+        `clientRequestId ${input.clientRequestId} was already used for different input`,
+      );
+    }
+    return acceptanceForMessageReceipt(state, receipt);
+  }
+
   /** Persists the Queue cutoff for an explicit Stop that has no active root Execution record. */
   async recordQueueDispatchBarrier(input: {
     sessionId: string;
@@ -158,7 +205,6 @@ export class SessionInputService {
     timestamp: number;
   }): Promise<void> {
     await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
-      assertRootSession(state);
       return {
         result: undefined,
         patch: {
@@ -546,6 +592,81 @@ export class SessionInputService {
     );
   }
 
+  /**
+   * Accepts one idempotent message from the exact durable parent. Runtime owns
+   * live-Execution and lineage admission; this mutation permanently preserves
+   * that authority as message provenance and never treats it as user input.
+   */
+  async acceptParentAgentMessage(input: ParentAgentMessageAcceptanceInput): Promise<MessageAcceptance> {
+    assertMessageContent(input.text, []);
+    assertNonEmpty(input.clientRequestId, "clientRequestId");
+    assertNonEmpty(input.expectedExecutionId, "expectedExecutionId");
+    validateParentAgentProvenance(input.provenance);
+    const requestFingerprint = parentAgentMessageFingerprint(input);
+
+    return await this.#store.commitDurableSessionMutation(
+      input.sessionId,
+      input.workspaceRoot,
+      (state) => {
+        input.signal?.throwIfAborted();
+        if (state.parentSessionId !== input.provenance.senderSessionId) {
+          throw new SessionInputConflictError(
+            "not_root",
+            `Session ${state.sessionId} is not a direct child of ${input.provenance.senderSessionId}`,
+          );
+        }
+        const existing = state.inputRequestReceipts.find(
+          (receipt) => receipt.clientRequestId === input.clientRequestId,
+        );
+        if (existing !== undefined) {
+          if (existing.kind !== "message" || existing.requestFingerprint !== requestFingerprint) {
+            throw new SessionInputConflictError(
+              "idempotency",
+              `clientRequestId ${input.clientRequestId} was already used for different input`,
+            );
+          }
+          return { result: acceptanceForMessageReceipt(state, existing) };
+        }
+
+        const messageId = crypto.randomUUID();
+        assertMessageIdentityAvailable(state, messageId);
+        const acceptedAt = nextSessionTimestamp(state);
+        const message: PendingSessionMessage = {
+          id: messageId,
+          clientRequestId: input.clientRequestId,
+          content: input.text,
+          attachments: [],
+          source: "parent_agent",
+          parentAgentProvenance: copyParentAgentProvenance(input.provenance),
+          state: "queued",
+          revision: 0,
+          acceptedAt,
+          updatedAt: acceptedAt,
+          requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+          executionSkillNames: [],
+        };
+        const receipt: SessionMessageInputReceipt = {
+          kind: "message",
+          clientRequestId: input.clientRequestId,
+          messageId,
+          requestFingerprint,
+          status: "pending",
+          requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+        };
+        return {
+          result: {
+            clientRequestId: input.clientRequestId,
+            messageId,
+            status: "pending" as const,
+            message: copyPendingMessage(message),
+          },
+          patch: { inputRequestReceipts: [...state.inputRequestReceipts, receipt] },
+          events: [{ type: "session.message_accepted", message }],
+        };
+      },
+    );
+  }
+
   async editMessage(input: {
     sessionId: string;
     workspaceRoot: string;
@@ -616,7 +737,6 @@ export class SessionInputService {
   }): Promise<PendingSessionMessage> {
     assertNonEmpty(input.expectedExecutionId, "expectedExecutionId");
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
-      assertRootSession(state);
       const current = requireQueuedMessage(state, input.messageId, input.expectedRevision);
       const message: PendingSessionMessage = {
         ...current,
@@ -643,15 +763,22 @@ export class SessionInputService {
     snapshots: readonly ResolvedSessionInputSnapshot[];
     binding: ExecutionModelBindingSummary;
     origin: SessionExecutionOrigin;
+    executionStart?: ExecutionStartEvent;
     signal?: AbortSignal;
   }): Promise<BeginSessionInputResult> {
     assertNonEmpty(input.executionId, "executionId");
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
       input.signal?.throwIfAborted();
-      assertRootSession(state);
       if (input.snapshots.length === 0) {
         throw new SessionInputConflictError("empty_queue", `Session ${state.sessionId} has no queued input`);
       }
+      if (state.parentSessionId !== undefined && input.executionStart === undefined) {
+        throw new SessionInputConflictError(
+          "state",
+          `Child Session ${state.sessionId} Queue claim requires its atomic execution start`,
+        );
+      }
+      assertExecutionStartMatches(input.executionStart, input.executionId, input.binding, input.origin);
       const queued = state.pendingMessages.filter((message) => message.state === "queued");
       const pendingMessages = input.snapshots.map((snapshot, index) => {
         const current = queued[index];
@@ -679,7 +806,123 @@ export class SessionInputService {
             "canonical",
           ),
         },
-        events: [{ type: "session.messages_committed", executionId: input.executionId, messages }],
+        events: [
+          ...(input.executionStart === undefined ? [] : [input.executionStart]),
+          { type: "session.messages_committed", executionId: input.executionId, messages },
+        ],
+      };
+    });
+  }
+
+  /**
+   * Atomically binds the existing FIFO Queue prefix and the explicit resume
+   * instruction to one child Execution. The Queue is always projected first;
+   * the instruction cannot overwrite or bypass preserved work or its barrier.
+   */
+  async beginChildResumeExecution(input: {
+    sessionId: string;
+    workspaceRoot: string;
+    executionId: string;
+    runOrdinal: number;
+    snapshots: readonly ResolvedSessionInputSnapshot[];
+    binding: ExecutionModelBindingSummary;
+    instruction: string;
+    clientRequestId: string;
+    provenance: ParentAgentMessageProvenance;
+    requestedModelSelection: RequestedModelSelection;
+    modelAudit: MessageModelAudit;
+    executionStart: ExecutionStartEvent;
+    signal?: AbortSignal;
+  }): Promise<BeginSessionInputResult> {
+    assertNonEmpty(input.executionId, "executionId");
+    assertNonEmpty(input.clientRequestId, "clientRequestId");
+    assertMessageContent(input.instruction, []);
+    validateParentAgentProvenance(input.provenance);
+    assertExecutionStartMatches(input.executionStart, input.executionId, input.binding, "tool_call");
+    return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
+      input.signal?.throwIfAborted();
+      if (state.parentSessionId !== input.provenance.senderSessionId) {
+        throw new SessionInputConflictError(
+          "not_root",
+          `Session ${state.sessionId} is not a direct child of ${input.provenance.senderSessionId}`,
+        );
+      }
+      if (state.inputRequestReceipts.some((receipt) => receipt.clientRequestId === input.clientRequestId)) {
+        throw new SessionInputConflictError(
+          "idempotency",
+          `clientRequestId ${input.clientRequestId} already exists`,
+        );
+      }
+
+      const queued = state.pendingMessages.filter((message) => message.state === "queued");
+      const pendingMessages = input.snapshots.map((snapshot, index) => {
+        const current = queued[index];
+        validateResolvedSnapshot(current, snapshot, input.binding, "queued");
+        return current!;
+      });
+      const instructionId = crypto.randomUUID();
+      assertMessageIdentityAvailable(state, instructionId);
+      const acceptedAt = nextSessionTimestamp(state);
+      const instruction: PendingSessionMessage = {
+        id: instructionId,
+        clientRequestId: input.clientRequestId,
+        content: input.instruction,
+        attachments: [],
+        source: "parent_agent",
+        parentAgentProvenance: copyParentAgentProvenance(input.provenance),
+        state: "queued",
+        revision: 0,
+        acceptedAt,
+        updatedAt: acceptedAt,
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+        executionSkillNames: [],
+      };
+      validateAudit(instruction, input.modelAudit, input.binding);
+      const committedAt = Math.max(acceptedAt, nextSessionTimestamp(state));
+      const messages = [
+        ...pendingMessages.map((message, index) => toCanonicalMessage(
+          message,
+          input.executionId,
+          input.runOrdinal,
+          committedAt,
+          input.snapshots[index]!.modelAudit,
+        )),
+        toCanonicalMessage(
+          instruction,
+          input.executionId,
+          input.runOrdinal,
+          committedAt,
+          input.modelAudit,
+        ),
+      ];
+      const instructionReceipt: SessionMessageInputReceipt = {
+        kind: "message",
+        clientRequestId: input.clientRequestId,
+        messageId: instructionId,
+        requestFingerprint: parentAgentResumeFingerprint(input),
+        status: "canonical",
+        requestedModelSelection: copyRequestedSelection(input.requestedModelSelection),
+      };
+      return {
+        result: {
+          pendingMessages: [...pendingMessages, instruction].map(copyPendingMessage),
+          messages: messages.map(copySessionMessage),
+        },
+        patch: {
+          queueDispatchBarrierAt: undefined,
+          inputRequestReceipts: [
+            ...updateReceiptStatuses(
+              state.inputRequestReceipts,
+              new Set(pendingMessages.map((message) => message.id)),
+              "canonical",
+            ),
+            instructionReceipt,
+          ],
+        },
+        events: [
+          input.executionStart,
+          { type: "session.messages_committed", executionId: input.executionId, messages },
+        ],
       };
     });
   }
@@ -767,7 +1010,6 @@ export class SessionInputService {
     if (input.snapshots.length === 0) return [];
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
       input.signal?.throwIfAborted();
-      assertRootSession(state);
       const committedAt = input.committedAt ?? nextSessionTimestamp(state);
       const pendingMessages = input.snapshots.map((snapshot) => {
         const current = state.pendingMessages.find((message) => message.id === snapshot.pending.id);
@@ -816,7 +1058,6 @@ export class SessionInputService {
     messageIds?: readonly string[];
   }): Promise<PendingSessionMessage[]> {
     return await this.#store.commitDurableSessionMutation(input.sessionId, input.workspaceRoot, (state) => {
-      assertRootSession(state);
       const requestedIds = input.messageIds === undefined ? undefined : new Set(input.messageIds);
       const matches = state.pendingMessages.filter((message) =>
         message.state === "steering"
@@ -1004,6 +1245,10 @@ function toCanonicalMessage(
     completedAt,
     executionId,
     runOrdinal,
+    inputSource: pending.source,
+    ...(pending.parentAgentProvenance === undefined
+      ? {}
+      : { parentAgentProvenance: copyParentAgentProvenance(pending.parentAgentProvenance) }),
     modelAudit: copyModelAudit(modelAudit),
     ...(includeClientRequestId ? { clientRequestId: pending.clientRequestId } : {}),
   };
@@ -1150,6 +1395,52 @@ export function sessionInputFingerprint(
   return hash.digest("hex");
 }
 
+function parentAgentMessageFingerprint(input: ParentAgentMessageAcceptanceInput): string {
+  const provenance = input.provenance;
+  return createHash("sha256")
+    .update("parent-agent-message\0")
+    .update(sessionInputFingerprint("parent_agent", input.text, [], input.requestedModelSelection))
+    .update("\0")
+    .update(input.expectedExecutionId)
+    .update("\0")
+    .update(input.delivery)
+    .update("\0")
+    .update(provenance.senderSessionId)
+    .update("\0")
+    .update(provenance.senderAgentName)
+    .update("\0")
+    .update(provenance.senderExecutionId)
+    .update("\0")
+    .update(String(provenance.senderRunOrdinal))
+    .update("\0")
+    .update(provenance.senderToolBatchId)
+    .update("\0")
+    .update(provenance.senderToolCallId)
+    .digest("hex");
+}
+
+function parentAgentResumeFingerprint(input: {
+  readonly instruction: string;
+  readonly executionId: string;
+  readonly provenance: ParentAgentMessageProvenance;
+  readonly requestedModelSelection: RequestedModelSelection;
+}): string {
+  return createHash("sha256")
+    .update("parent-agent-resume\0")
+    .update(sessionInputFingerprint("parent_agent", input.instruction, [], input.requestedModelSelection))
+    .update("\0")
+    .update(input.executionId)
+    .update("\0")
+    .update(input.provenance.senderSessionId)
+    .update("\0")
+    .update(input.provenance.senderExecutionId)
+    .update("\0")
+    .update(input.provenance.senderToolBatchId)
+    .update("\0")
+    .update(input.provenance.senderToolCallId)
+    .digest("hex");
+}
+
 export function skillCommandInputFingerprint(input: Pick<
   NormalizedSkillCommandInput,
   "source" | "requestedModelSelection" | "activation"
@@ -1220,6 +1511,9 @@ function copyPendingMessage(message: PendingSessionMessage): PendingSessionMessa
     attachments: message.attachments.map((attachment) => ({ ...attachment })),
     requestedModelSelection: copyRequestedSelection(message.requestedModelSelection),
     executionSkillNames: [...message.executionSkillNames],
+    ...(message.parentAgentProvenance === undefined
+      ? {}
+      : { parentAgentProvenance: copyParentAgentProvenance(message.parentAgentProvenance) }),
     ...(message.targetModelAudit === undefined
       ? {}
       : { targetModelAudit: copyModelAudit(message.targetModelAudit) }),
@@ -1239,7 +1533,27 @@ function copySessionMessage(message: SessionMessage): SessionMessage {
       ? { ...part, attachment: { ...part.attachment } }
       : { ...part }),
     ...(message.modelAudit === undefined ? {} : { modelAudit: copyModelAudit(message.modelAudit) }),
+    ...(message.parentAgentProvenance === undefined
+      ? {}
+      : { parentAgentProvenance: copyParentAgentProvenance(message.parentAgentProvenance) }),
   };
+}
+
+function validateParentAgentProvenance(provenance: ParentAgentMessageProvenance): void {
+  assertNonEmpty(provenance.senderSessionId, "senderSessionId");
+  assertNonEmpty(provenance.senderAgentName, "senderAgentName");
+  assertNonEmpty(provenance.senderExecutionId, "senderExecutionId");
+  assertNonEmpty(provenance.senderToolBatchId, "senderToolBatchId");
+  assertNonEmpty(provenance.senderToolCallId, "senderToolCallId");
+  if (!Number.isInteger(provenance.senderRunOrdinal) || provenance.senderRunOrdinal < 0) {
+    throw new TypeError("senderRunOrdinal must be a non-negative integer");
+  }
+}
+
+function copyParentAgentProvenance(
+  provenance: ParentAgentMessageProvenance,
+): ParentAgentMessageProvenance {
+  return { ...provenance };
 }
 
 function copyRequestedSelection(requested: RequestedModelSelection): RequestedModelSelection {
@@ -1265,6 +1579,26 @@ function sameSelection(
   right: ExecutionModelBindingSummary["selection"],
 ): boolean {
   return left.model === right.model && left.variant === right.variant;
+}
+
+function assertExecutionStartMatches(
+  event: ExecutionStartEvent | undefined,
+  executionId: string,
+  binding: ExecutionModelBindingSummary,
+  origin: SessionExecutionOrigin,
+): void {
+  if (event === undefined) return;
+  if (
+    event.executionId !== executionId
+    || event.origin !== origin
+    || event.binding.modelRuntimeRevision !== binding.modelRuntimeRevision
+    || !sameSelection(event.binding.selection, binding.selection)
+  ) {
+    throw new SessionInputConflictError(
+      "state",
+      `Execution start ${event.executionId} does not match input claim ${executionId}`,
+    );
+  }
 }
 
 function sameOptionalModelAudit(

@@ -399,7 +399,12 @@ export async function runQueryLoop(
           return await options.startChildExecution!(request);
         },
       }),
-      ...(options.cancelChildSession === undefined ? {} : { cancelChildSession: options.cancelChildSession }),
+      ...(options.cancelDescendantSession === undefined ? {} : {
+        cancelDescendantSession: options.cancelDescendantSession,
+      }),
+      ...(options.sendMessageToChild === undefined ? {} : {
+        sendMessageToChild: options.sendMessageToChild,
+      }),
       ...(options.resumeChildSession === undefined ? {} : {
         resumeChildSession: async (workspaceRoot, request) => {
           if (!request.background) {
@@ -412,6 +417,9 @@ export async function runQueryLoop(
         },
       }),
       ...(options.acquireSessionCwdTransition === undefined ? {} : { acquireSessionCwdTransition: options.acquireSessionCwdTransition }),
+      ...(options.getAgentTreeProjection === undefined ? {} : {
+        getAgentTreeProjection: options.getAgentTreeProjection,
+      }),
       agentName: options.agentName,
       ...(currentDepth === undefined ? {} : { currentDepth }),
       onInputResolved(input) {

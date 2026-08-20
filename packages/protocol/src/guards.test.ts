@@ -291,6 +291,52 @@ describe("protocol event guards", () => {
     })).toBe(true);
   });
 
+  test("preserves strict parent Agent provenance on pending and canonical input", () => {
+    const parentAgentProvenance = {
+      senderSessionId: "parent-session",
+      senderAgentName: "lead",
+      senderExecutionId: "parent-execution",
+      senderRunOrdinal: 0,
+      senderToolBatchId: "parent-batch",
+      senderToolCallId: "parent-call",
+    };
+    expect(isSessionEventPayload({
+      type: "session.message_accepted",
+      message: {
+        ...pendingMessage,
+        source: "parent_agent",
+        parentAgentProvenance,
+      },
+    })).toBe(true);
+    expect(isSessionEventPayload({
+      type: "session.messages_committed",
+      executionId: "execution-1",
+      messages: [{
+        ...canonicalMessage,
+        inputSource: "parent_agent",
+        parentAgentProvenance,
+      }],
+    })).toBe(true);
+    expect(isSessionEventPayload({
+      type: "session.message_accepted",
+      message: { ...pendingMessage, source: "parent_agent" },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "session.message_accepted",
+      message: {
+        ...pendingMessage,
+        source: "parent_agent",
+        parentAgentProvenance,
+        executionSkillNames: null,
+      },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      type: "session.messages_committed",
+      executionId: "execution-1",
+      messages: [{ ...canonicalMessage, inputSource: "parent_agent" }],
+    })).toBe(false);
+  });
+
   test("rejects empty attachment input, duplicate ids, and descriptor extensions", () => {
     expect(isSessionEventPayload({
       type: "session.message_accepted",

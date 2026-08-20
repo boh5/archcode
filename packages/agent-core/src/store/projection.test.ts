@@ -356,6 +356,70 @@ describe("toModelMessagesFromStoredMessages", () => {
     ]);
   });
 
+  test("labels parent Agent input with its durable sender provenance", () => {
+    const canonical = storedMessage("user", [textPart("review the failing test")]);
+    if (canonical.role !== "user") throw new Error("Expected user message fixture");
+    const message = {
+      ...canonical,
+      inputSource: "parent_agent" as const,
+      parentAgentProvenance: {
+        senderSessionId: "parent-session",
+        senderAgentName: "lead",
+        senderExecutionId: "parent-execution",
+        senderRunOrdinal: 0,
+        senderToolBatchId: "parent-batch",
+        senderToolCallId: "parent-call",
+      },
+    };
+
+    expect(toModelMessagesFromStoredMessages([message])).toEqual([{
+      role: "user",
+      content: [
+        "<parent-agent-message>",
+        `Sender: ${JSON.stringify(message.parentAgentProvenance)}`,
+        "review the failing test",
+        "</parent-agent-message>",
+      ].join("\n"),
+    }]);
+  });
+
+  test("labels historical canonical input with unknown external provenance", () => {
+    const canonical = storedMessage("user", [textPart("legacy instruction")]);
+    if (canonical.role !== "user") throw new Error("Expected user message fixture");
+
+    expect(toModelMessagesFromStoredMessages([{
+      ...canonical,
+      executionId: "historical-execution",
+    }])).toEqual([{
+      role: "user",
+      content: [
+        '<external-input source="unknown">',
+        "legacy instruction",
+        "</external-input>",
+      ].join("\n"),
+    }]);
+  });
+
+  test("wraps historical attachment input without guessing its external source", () => {
+    const canonical = storedMessage("user", [textPart("inspect"), attachmentPart()]);
+    if (canonical.role !== "user") throw new Error("Expected user message fixture");
+
+    const projected = toModelMessagesFromStoredMessages([{
+      ...canonical,
+      executionId: "historical-execution",
+    }]);
+    const content = projected[0]?.content;
+
+    expect(Array.isArray(content)).toBe(true);
+    expect(content).toEqual(expect.arrayContaining([
+      { type: "text", text: '<external-input source="unknown">' },
+      { type: "text", text: "</external-input>" },
+    ]));
+    expect(JSON.stringify(content)).not.toContain("source=\"user\"");
+    expect(JSON.stringify(content)).not.toContain("source=\"automation\"");
+    expect(JSON.stringify(content)).not.toContain("parent-agent-message");
+  });
+
   test("projects escaped attachment markers with non-forgeable object-reference sidecars", () => {
     const attachment = attachmentPart();
     const projection = projectModelMessagesFromStoredMessages([

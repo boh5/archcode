@@ -30,6 +30,8 @@ import { SessionGoalService } from "./session-goal";
 import { testExecutionEnd, testExecutionStart, testExecutionSuspended } from "./testing/test-execution-fixtures";
 import { getAttachmentContentPath } from "./attachments";
 import { getSessionPath } from "./store/sessions-dir";
+import { NotRootSessionError, SessionFamilySnapshotConflictError } from "./store/errors";
+import { SessionSteerUnavailableError } from "./execution/session-execution-manager";
 
 const tmpRoots: string[] = [];
 const requestedModelSelection: RequestedModelSelection = {
@@ -693,6 +695,91 @@ describe("createRuntime", () => {
       await runtime.shutdown();
     }
   });
+  test("retries a transient durable conflict when projecting the shared Agent Tree", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpRuntimeFactory: () => makeFakeMcpRuntime(),
+    });
+    const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Agent tree conflict retry" });
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "direct" },
+      title: "Agent tree conflict retry",
+    });
+    const originalCapture = SessionStoreManager.prototype.captureSessionFamilySnapshot;
+    let captureAttempts = 0;
+    SessionStoreManager.prototype.captureSessionFamilySnapshot = async function (...args) {
+      captureAttempts += 1;
+      if (captureAttempts === 1) {
+        throw new SessionFamilySnapshotConflictError(session.sessionId, "revision-1", "revision-2");
+      }
+      return await originalCapture.apply(this, args);
+    };
+
+    try {
+      const tree = await runtime.listSessionTree(workspaceRoot, session.sessionId);
+      expect(tree.root.session.sessionId).toBe(session.sessionId);
+      expect(captureAttempts).toBe(2);
+      expect(project.workspaceRoot).toBe(workspaceRoot);
+    } finally {
+      SessionStoreManager.prototype.captureSessionFamilySnapshot = originalCapture;
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+    }
+  });
+
+  test("keeps the external pending-message Steer entry root-only", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ servers: {} })),
+      mcpRuntimeFactory: () => makeFakeMcpRuntime(),
+    });
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Root-only Steer" });
+    const root = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "direct" },
+      title: "Root-only Steer",
+    });
+    const childSessionId = crypto.randomUUID();
+    const externalStoreManager = new SessionStoreManager({ logger: silentLogger });
+    externalStoreManager.create(childSessionId, workspaceRoot, {
+      rootSessionId: root.sessionId,
+      parentSessionId: root.sessionId,
+      agentName: "explore",
+      title: "Child must reject external Steer",
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Child must reject external Steer",
+        objective: "Remain inaccessible to the external root-only Steer entry.",
+        skills: [],
+        background: true,
+      },
+    });
+    await externalStoreManager.flushSession(childSessionId, workspaceRoot);
+
+    try {
+      await expect(runtime.steerPendingSessionMessage({
+        workspaceRoot,
+        sessionId: childSessionId,
+        messageId: "child-message",
+        expectedRevision: 0,
+        expectedExecutionId: "child-execution",
+      })).rejects.toBeInstanceOf(NotRootSessionError);
+      await expect(runtime.steerPendingSessionMessage({
+        workspaceRoot,
+        sessionId: root.sessionId,
+        messageId: "root-message",
+        expectedRevision: 0,
+        expectedExecutionId: "root-execution",
+      })).rejects.toBeInstanceOf(SessionSteerUnavailableError);
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+    }
+  });
+
   test("integrates Analyst and Build results through the ordinary Lead delegation path", async () => {
     const workspaceRoot = await makeTempRoot();
     const runtime = await createRuntime({

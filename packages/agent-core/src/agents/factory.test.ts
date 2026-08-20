@@ -10,7 +10,7 @@ import { skillListTool } from "../tools/builtins/skill-list";
 import { skillReadTool } from "../tools/builtins/skill-read";
 import { ResolvedToolSet } from "../tools/registry";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
-import { DELEGATION_CORE_TOOLS } from "./constants";
+import { DELEGATION_CONTROL_TOOLS } from "./constants";
 import { SkillNotAllowedError } from "./errors";
 import {
   AgentStoreIdentityMismatchError,
@@ -115,7 +115,7 @@ function makeFactory(
   toolRegistry: createTestRegistry([
     makeTool("unknown_tool"),
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-    ...DELEGATION_CORE_TOOLS.map(makeTool),
+    ...DELEGATION_CONTROL_TOOLS.map(makeTool),
   ]),
   skillService: options.skillService ?? createTestSkillService(),
   storeManager,
@@ -131,7 +131,7 @@ const READ_ONLY_FIXTURE_TOOLS = [
   "file_read", "grep", "glob", "git_status", "git_diff", "ast_grep_search",
   "lsp_diagnostics", "lsp_goto_definition", "lsp_find_references", "lsp_symbols", "web_fetch",
 ] as const;
-const explorerTools = [...READ_ONLY_FIXTURE_TOOLS, ...DELEGATION_CORE_TOOLS] as const;
+const explorerTools = [...READ_ONLY_FIXTURE_TOOLS, ...DELEGATION_CONTROL_TOOLS] as const;
 const nonDelegatingExplorerTools = READ_ONLY_FIXTURE_TOOLS;
 
 describe("createAgentFactory", () => {
@@ -222,7 +222,7 @@ describe("createAgentFactory", () => {
     toolRegistry: createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-      ...DELEGATION_CORE_TOOLS.map(makeTool),
+      ...DELEGATION_CONTROL_TOOLS.map(makeTool),
     ]),
     skillService,
     storeManager,
@@ -302,7 +302,7 @@ describe("createAgentFactory", () => {
     expect(factory.resolveAllowedTools(definition(), 0)).toEqual([
       "unknown_tool",
       ...READ_ONLY_FIXTURE_TOOLS,
-      ...DELEGATION_CORE_TOOLS,
+      ...DELEGATION_CONTROL_TOOLS,
     ]);
     expect(factory.resolveAllowedTools(customDefinition, 0)).toEqual(["grep", "delegate"]);
     expect(factory.resolveAllowedTools(customDefinition, 1)).toEqual(["grep", "delegate"]);
@@ -310,13 +310,13 @@ describe("createAgentFactory", () => {
     expect(factory.resolveAllowedTools(delegatingDefinition, 1)).toEqual([
       "unknown_tool",
       ...READ_ONLY_FIXTURE_TOOLS,
-      ...DELEGATION_CORE_TOOLS,
+      ...DELEGATION_CONTROL_TOOLS,
     ]);
     // depth 2 (< 3): delegation tools still present
     expect(factory.resolveAllowedTools(delegatingDefinition, 2)).toEqual([
       "unknown_tool",
       ...READ_ONLY_FIXTURE_TOOLS,
-      ...DELEGATION_CORE_TOOLS,
+      ...DELEGATION_CONTROL_TOOLS,
     ]);
     // depth 3 (>= 3): delegation tools stripped
     expect(factory.resolveAllowedTools(delegatingDefinition, 3)).toEqual(["unknown_tool", ...READ_ONLY_FIXTURE_TOOLS]);
@@ -434,7 +434,7 @@ describe("factoryResolveAllowedTools static base-tool projection", () => {
       toolRegistry: createTestRegistry([
         makeTool("unknown_tool"),
         ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-        ...DELEGATION_CORE_TOOLS.map(makeTool),
+        ...DELEGATION_CONTROL_TOOLS.map(makeTool),
         ...extraTools,
       ]),
       skillService: createTestSkillService(),
@@ -460,7 +460,7 @@ describe("factoryResolveAllowedTools static base-tool projection", () => {
     const registry = createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
-      ...DELEGATION_CORE_TOOLS.map(makeTool),
+      ...DELEGATION_CONTROL_TOOLS.map(makeTool),
     ]);
     const factory = createAgentFactory({
       definitions: [def],

@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import { ChildSessionNotDescendantError } from "../../agents/errors";
+import type { CancelDescendantSession } from "../../delegation/types";
 import { storeManager } from "../../store/store";
 import { expectTextDraft } from "../test-results";
 import type { RawToolResult, ToolExecutionContext } from "../types";
@@ -11,7 +12,7 @@ const CHILD_SESSION_ID = "child-session-xyz";
 const NON_DESCENDANT_ID = "other-session-999";
 const WORKSPACE_ROOT = "/workspace/test";
 
-function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
+function makeContext(overrides: Partial<ToolExecutionContext> & { cancelDescendantSession?: CancelDescendantSession } = {}): ToolExecutionContext {
   const store = storeManager.create(`cancel-parent-${crypto.randomUUID()}`, WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
   return {
     store,
@@ -30,7 +31,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
     projectContext: createTestProjectContext(WORKSPACE_ROOT),
     agentName: "lead",
     ...overrides,
-  };
+  } as ToolExecutionContext;
 }
 
 function isToolError(result: RawToolResult): boolean {
@@ -75,8 +76,8 @@ describe("cancel_session tool", () => {
   });
 
   describe("execute", () => {
-    it("returns error when ctx.cancelChildSession is undefined", async () => {
-      const ctx = makeContext({ cancelChildSession: undefined });
+    it("returns error when strong-cancel Runtime wiring is undefined", async () => {
+      const ctx = makeContext();
       const result = await executeCancelSession({ session_id: CHILD_SESSION_ID }, ctx);
       expect(isToolError(result)).toBe(true);
       if (isToolError(result)) {
@@ -87,38 +88,38 @@ describe("cancel_session tool", () => {
     it("returns error when cancelling own session", async () => {
       const callingSessionId = "self-session-id";
       const store = storeManager.create(callingSessionId, WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
-      const cancelChildSession = mock(() => true);
+      const cancelDescendantSession = mock(async () => "cancelled" as const);
       const ctx = makeContext({
         store,
-        cancelChildSession: cancelChildSession as unknown as ToolExecutionContext["cancelChildSession"],
+        cancelDescendantSession,
       });
       const result = await executeCancelSession({ session_id: callingSessionId }, ctx);
       expect(isToolError(result)).toBe(true);
       if (isToolError(result)) {
         expect(errorOutput(result)).toContain("Cannot cancel own session");
       }
-      expect(cancelChildSession).not.toHaveBeenCalled();
+      expect(cancelDescendantSession).not.toHaveBeenCalled();
     });
 
     it("cancels a running descendant and returns success", async () => {
-      const cancelChildSession = mock(() => true);
+      const cancelDescendantSession = mock(async () => "cancelled" as const);
       const ctx = makeContext({
-        cancelChildSession: cancelChildSession as unknown as ToolExecutionContext["cancelChildSession"],
+        cancelDescendantSession,
       });
       const callingSessionId = ctx.store.getState().sessionId;
       const result = await executeCancelSession({ session_id: CHILD_SESSION_ID }, ctx);
       expect(isToolError(result)).toBe(false);
       expect(expectTextDraft(result)).toContain(CHILD_SESSION_ID);
-      expect(cancelChildSession).toHaveBeenCalledTimes(1);
-      expect(cancelChildSession).toHaveBeenCalledWith(WORKSPACE_ROOT, callingSessionId, CHILD_SESSION_ID);
+      expect(cancelDescendantSession).toHaveBeenCalledTimes(1);
+      expect(cancelDescendantSession).toHaveBeenCalledWith(WORKSPACE_ROOT, callingSessionId, CHILD_SESSION_ID);
     });
 
     it("returns error when target is not a descendant (ChildSessionNotDescendantError)", async () => {
-      const cancelChildSession = mock(() => {
+      const cancelDescendantSession = mock(async () => {
         throw new ChildSessionNotDescendantError(PARENT_SESSION_ID, NON_DESCENDANT_ID);
       });
       const ctx = makeContext({
-        cancelChildSession: cancelChildSession as unknown as ToolExecutionContext["cancelChildSession"],
+        cancelDescendantSession,
       });
       const result = await executeCancelSession({ session_id: NON_DESCENDANT_ID }, ctx);
       expect(isToolError(result)).toBe(true);
@@ -128,22 +129,22 @@ describe("cancel_session tool", () => {
       }
     });
 
-    it("returns info message when session is not running (callback returns false)", async () => {
-      const cancelChildSession = mock(() => false);
+    it("returns already_stopped only after the strong-cancel owner confirms the whole subtree", async () => {
+      const cancelDescendantSession = mock(async () => "already_stopped" as const);
       const ctx = makeContext({
-        cancelChildSession: cancelChildSession as unknown as ToolExecutionContext["cancelChildSession"],
+        cancelDescendantSession,
       });
       const result = await executeCancelSession({ session_id: CHILD_SESSION_ID }, ctx);
       expect(isToolError(result)).toBe(false);
-      expect(expectTextDraft(result)).toContain("not running");
+      expect(expectTextDraft(result)).toContain("already_stopped");
     });
 
     it("returns error when target session does not exist (callback throws generic error)", async () => {
-      const cancelChildSession = mock(() => {
+      const cancelDescendantSession = mock(async () => {
         throw new Error(`Session "${CHILD_SESSION_ID}" not found`);
       });
       const ctx = makeContext({
-        cancelChildSession: cancelChildSession as unknown as ToolExecutionContext["cancelChildSession"],
+        cancelDescendantSession,
       });
       const result = await executeCancelSession({ session_id: CHILD_SESSION_ID }, ctx);
       expect(isToolError(result)).toBe(true);

@@ -372,12 +372,22 @@ const AttachmentDescriptorListSchema = z.array(AttachmentDescriptorSchema)
     "attachments must not contain duplicate ids",
   );
 
+const ParentAgentMessageProvenanceSchema = z.strictObject({
+  senderSessionId: z.string().trim().min(1),
+  senderAgentName: z.string().trim().min(1),
+  senderExecutionId: z.string().trim().min(1),
+  senderRunOrdinal: z.number().int().nonnegative(),
+  senderToolBatchId: z.string().trim().min(1),
+  senderToolCallId: z.string().trim().min(1),
+});
+
 const PendingSessionMessageSchema = z.strictObject({
   id: z.string().trim().min(1),
   clientRequestId: z.string().trim().min(1),
   content: z.string(),
   attachments: AttachmentDescriptorListSchema,
-  source: z.enum(["user", "automation"]),
+  source: z.enum(["user", "automation", "parent_agent"]),
+  parentAgentProvenance: ParentAgentMessageProvenanceSchema.optional(),
   state: z.enum(["queued", "steering"]),
   revision: z.number().int().nonnegative(),
   acceptedAt: z.number(),
@@ -389,6 +399,21 @@ const PendingSessionMessageSchema = z.strictObject({
   requestedModelSelection: RequestedModelSelectionSchema,
   executionSkillNames: z.array(z.string().trim().min(1)).max(1),
 }).superRefine((message, ctx) => {
+  if ((message.source === "parent_agent") !== (message.parentAgentProvenance !== undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["parentAgentProvenance"],
+      message: "parentAgentProvenance must exist exactly for parent_agent input",
+    });
+  }
+  if (message.source === "parent_agent"
+    && (message.attachments.length > 0 || message.executionSkillNames.length > 0)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["source"],
+      message: "parent_agent input must be text-only and cannot activate a Skill",
+    });
+  }
   if (message.content.trim().length === 0 && message.attachments.length === 0) {
     ctx.addIssue({
       code: "custom",
@@ -461,18 +486,28 @@ const ReminderSourceSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("subagent_completed"),
     sessionId: z.string(),
+    childExecutionId: z.string().optional(),
   }),
   z.strictObject({
     type: z.literal("subagent_failed"),
     sessionId: z.string(),
+    childExecutionId: z.string().optional(),
   }),
   z.strictObject({
     type: z.literal("subagent_timed_out"),
     sessionId: z.string(),
+    childExecutionId: z.string().optional(),
   }),
   z.strictObject({
     type: z.literal("subagent_cancelled"),
     sessionId: z.string(),
+    childExecutionId: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal("queue_dispatch_blocked"),
+    sessionId: z.string(),
+    blockedAfterExecutionId: z.string(),
+    error: z.string(),
   }),
   z.strictObject({
     type: z.literal("session_goal_changed"),
@@ -719,11 +754,28 @@ const UserStoredMessageSchema = z.strictObject({
   executionId: z.string().optional(),
   runOrdinal: z.number().int().nonnegative().optional(),
   clientRequestId: z.string().optional(),
+  inputSource: z.enum(["user", "automation", "parent_agent"]).optional(),
+  parentAgentProvenance: ParentAgentMessageProvenanceSchema.optional(),
   stepId: z.never().optional(),
   outputPhase: z.never().optional(),
   compacted: z.boolean().optional(),
   modelAudit: MessageModelAuditSchema.optional(),
 }).superRefine((message, ctx) => {
+  if ((message.inputSource === "parent_agent") !== (message.parentAgentProvenance !== undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["parentAgentProvenance"],
+      message: "parentAgentProvenance must exist exactly for parent_agent canonical input",
+    });
+  }
+  if (message.inputSource === "parent_agent"
+    && message.parts.some((part) => part.type === "attachment")) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["parts"],
+      message: "parent_agent canonical input must be text-only",
+    });
+  }
   if ((message.executionId === undefined) !== (message.runOrdinal === undefined)) {
     ctx.addIssue({
       code: "custom",

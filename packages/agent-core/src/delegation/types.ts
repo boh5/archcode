@@ -58,3 +58,36 @@ export interface ResumeChildRequest {
   readonly background: boolean;
   readonly parentAbort?: AbortSignal;
 }
+
+export interface ParentAgentMessageRequest {
+  readonly parentStore: StoreApi<SessionStoreState>;
+  readonly parentSessionId: string;
+  readonly parentAgentName: string;
+  readonly parentExecutionId: string;
+  readonly parentRunOrdinal: number;
+  readonly parentToolBatchId: string;
+  readonly parentToolCallId: string;
+  readonly sessionId: string;
+  readonly expectedExecutionId: string;
+  readonly message: string;
+  readonly delivery: "steer" | "queue";
+  readonly clientRequestId: string;
+}
+
+export interface ParentAgentMessageResult {
+  readonly sessionId: string;
+  readonly executionId: string;
+  readonly messageId: string;
+  readonly delivery: "steered" | "queued";
+}
+
+export type SendMessageToChild = (
+  workspaceRoot: string,
+  request: ParentAgentMessageRequest,
+) => Promise<ParentAgentMessageResult>;
+
+export type CancelDescendantSession = (
+  workspaceRoot: string,
+  parentSessionId: string,
+  childSessionId: string,
+) => Promise<"cancelled" | "already_stopped">;

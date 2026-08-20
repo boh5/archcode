@@ -14,7 +14,7 @@ import type {
   ProjectAutomationInventoryItem,
   ProjectTodoPlan,
   ProjectTodoAttachmentListResponse,
-  SessionTreeResponse,
+  AgentTreeProjection,
   ProjectTodo,
 } from "./types";
 import {
@@ -172,7 +172,7 @@ export function sessionTreeQueryOptions(slug: string, rootSessionId: string) {
   return queryOptions({
     queryKey: queryKeys.tree(slug, rootSessionId),
     queryFn: async () => {
-      const response = await apiFetch<SessionTreeResponse>(
+      const response = await apiFetch<AgentTreeProjection>(
         `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(rootSessionId)}/tree`,
       );
       return response;

@@ -13,7 +13,7 @@ import type { AnyToolDescriptor } from "../tools/types";
 import { createTextToolResult } from "../tools/results";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { worktreeEnterTool, worktreeExitTool } from "../tools/builtins/worktree";
-import { DELEGATION_CORE_TOOLS } from "./constants";
+import { DELEGATION_CONTROL_TOOLS } from "./constants";
 import {
   ConfiguredAgent,
   IneligibleSessionWorktreeToolError,
@@ -156,7 +156,7 @@ function makeToolRegistry() {
     ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),
     makeTool("file_write"),
     makeTool("file_edit"),
-    ...DELEGATION_CORE_TOOLS.map(makeTool),
+    ...DELEGATION_CONTROL_TOOLS.map(makeTool),
     makeTool("project_todo_update"),
   ]);
 }
@@ -279,7 +279,7 @@ function createAgent(options: {
       || (definition.tools.delegateTargets?.length ?? 0) === 0
       || agentDepth >= definition.childPolicy.maxDepth
     ) {
-      return resolved.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
+      return resolved.filter((name) => !(DELEGATION_CONTROL_TOOLS as readonly string[]).includes(name));
     }
     return resolved;
   };

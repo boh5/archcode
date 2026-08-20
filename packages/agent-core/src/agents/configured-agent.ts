@@ -6,6 +6,7 @@ import {
   type ProjectTodo,
   type PromptTraceSnapshot,
 } from "@archcode/protocol";
+import type { AgentTreeProjection } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
@@ -29,7 +30,13 @@ import type { SessionGoalService } from "../session-goal";
 import type { AttachmentModelProjector } from "../attachments";
 import { ProjectTodoNotFoundError } from "../todos/errors";
 import { TOOL_WORKTREE_ENTER, TOOL_WORKTREE_EXIT } from "../tools/names";
-import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import type {
+  CancelDescendantSession,
+  ChildExecutionHandle,
+  ChildExecutionRequest,
+  ResumeChildRequest,
+  SendMessageToChild,
+} from "../delegation/types";
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
 import type { AgentDefinition, AgentMcpToolSnapshot, DelegationCapabilitySnapshot } from "./factory-types";
 import { projectModelToolDescriptors } from "./model-tool-projection";
@@ -84,8 +91,10 @@ export interface ConfiguredAgentOptions {
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   readonly delegationCapabilities: DelegationCapabilitySnapshot;
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
-  readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  readonly cancelDescendantSession?: CancelDescendantSession;
+  readonly sendMessageToChild?: SendMessageToChild;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  readonly getAgentTreeProjection?: (workspaceRoot: string, rootSessionId: string) => Promise<AgentTreeProjection>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   readonly resolveMcpToolSnapshot?: (
     builtinServerNames: AgentDefinition["builtinMcpServers"],
@@ -178,8 +187,10 @@ export class ConfiguredAgent implements Agent {
   private readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   private readonly delegationCapabilities: DelegationCapabilitySnapshot;
   private readonly startChildExecution: ((request: ChildExecutionRequest) => Promise<ChildExecutionHandle>) | undefined;
-  private readonly cancelChildSession: ((workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean) | undefined;
+  private readonly cancelDescendantSession: CancelDescendantSession | undefined;
+  private readonly sendMessageToChild: SendMessageToChild | undefined;
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
+  private readonly getAgentTreeProjection: ConfiguredAgentOptions["getAgentTreeProjection"];
   private readonly acquireSessionCwdTransition: ((workspaceRoot: string, sessionId: string) => () => void) | undefined;
   private readonly resolveMcpToolSnapshot: ConfiguredAgentOptions["resolveMcpToolSnapshot"];
   private readonly logger: Logger;
@@ -217,8 +228,10 @@ export class ConfiguredAgent implements Agent {
     this.resolveAllowedTools = options.resolveAllowedTools;
     this.delegationCapabilities = options.delegationCapabilities;
     this.startChildExecution = options.startChildExecution;
-    this.cancelChildSession = options.cancelChildSession;
+    this.cancelDescendantSession = options.cancelDescendantSession;
+    this.sendMessageToChild = options.sendMessageToChild;
     this.resumeChildSession = options.resumeChildSession;
+    this.getAgentTreeProjection = options.getAgentTreeProjection;
     this.acquireSessionCwdTransition = options.acquireSessionCwdTransition;
     this.resolveMcpToolSnapshot = options.resolveMcpToolSnapshot;
 
@@ -436,8 +449,10 @@ export class ConfiguredAgent implements Agent {
             consumeSteers,
             ...(prepareModelContext === undefined ? {} : { prepareModelContext }),
             startChildExecution: this.startChildExecution,
-            cancelChildSession: this.cancelChildSession,
+            cancelDescendantSession: this.cancelDescendantSession,
+            sendMessageToChild: this.sendMessageToChild,
             resumeChildSession: this.resumeChildSession,
+            getAgentTreeProjection: this.getAgentTreeProjection,
             acquireSessionCwdTransition: this.acquireSessionCwdTransition,
             agentName: this.definition.name,
             currentDepth: this.depth,

@@ -6,7 +6,11 @@ import { silentLogger } from "../logger";
 import { sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { SessionInputConflictError, SessionInputService } from "./service";
-import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
+import {
+  testExecutionEnd,
+  testExecutionMemoryPolicy,
+  testExecutionStart,
+} from "../testing/test-execution-fixtures";
 
 const WORKSPACE = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
 const ROOT_SESSION_ID = "00000000-0000-4000-8000-000000000001";
@@ -18,6 +22,15 @@ const BINDING = {
   resolution: "profile_default" as const, modelRuntimeRevision: "runtime-1",
 };
 const MODEL_AUDIT = { requested: REQUESTED_MODEL_SELECTION, actual: BINDING.selection };
+const executionStart = (executionId: string, origin: "user_message" | "tool_call") => ({
+  type: "execution-start" as const,
+  executionId,
+  binding: BINDING,
+  memoryPolicy: testExecutionMemoryPolicy,
+  origin,
+  maxSteps: 50,
+  executionSkills: [],
+});
 const ATTACHMENT_A: AttachmentDescriptor = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   name: "alpha<&>.png",
@@ -826,5 +839,323 @@ describe("SessionInputService", () => {
       expect(error).toBeInstanceOf(SessionInputConflictError);
       expect(error).toMatchObject({ reason: "not_root" });
     }
+  });
+
+  test("accepts a direct-parent message idempotently and preserves provenance in canonical history", async () => {
+    await manager.createSessionFile(WORKSPACE, {
+      agentName: "explore",
+      rootSessionId: ROOT_SESSION_ID,
+      parentSessionId: ROOT_SESSION_ID,
+    }, CHILD_SESSION_ID);
+    const provenance = {
+      senderSessionId: ROOT_SESSION_ID,
+      senderAgentName: "lead",
+      senderExecutionId: "parent-execution",
+      senderRunOrdinal: 2,
+      senderToolBatchId: "parent-batch",
+      senderToolCallId: "parent-call",
+    };
+    const input = {
+      sessionId: CHILD_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "inspect the failing branch",
+      clientRequestId: "parent-message-1",
+      expectedExecutionId: "child-execution",
+      delivery: "queue" as const,
+      provenance,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    };
+
+    const accepted = await service.acceptParentAgentMessage(input);
+    expect(await service.getParentAgentMessageReplay(input)).toEqual(accepted);
+    const replay = await service.acceptParentAgentMessage(input);
+    expect(replay).toEqual(accepted);
+    const queued = await service.getPendingMessages(CHILD_SESSION_ID, WORKSPACE);
+    expect(queued).toEqual([expect.objectContaining({
+      source: "parent_agent",
+      parentAgentProvenance: provenance,
+    })]);
+
+    await service.beginQueueExecution({
+      sessionId: CHILD_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      executionId: "child-execution-2",
+      runOrdinal: 0,
+      snapshots: [{ pending: queued[0]!, modelAudit: MODEL_AUDIT }],
+      binding: BINDING,
+      origin: "tool_call",
+      executionStart: executionStart("child-execution-2", "tool_call"),
+    });
+    const file = await manager.getSessionFile(WORKSPACE, CHILD_SESSION_ID);
+    expect(file.messages[0]).toMatchObject({
+      inputSource: "parent_agent",
+      parentAgentProvenance: provenance,
+      executionId: "child-execution-2",
+    });
+    expect(await service.getParentAgentMessageReplay(input)).toMatchObject({
+      clientRequestId: input.clientRequestId,
+      messageId: accepted.messageId,
+      status: "canonical",
+    });
+  });
+
+  test("atomically commits preserved Queue input before one parent resume instruction and clears its barrier", async () => {
+    await manager.createSessionFile(WORKSPACE, {
+      agentName: "explore",
+      rootSessionId: ROOT_SESSION_ID,
+      parentSessionId: ROOT_SESSION_ID,
+    }, CHILD_SESSION_ID);
+    const provenance = {
+      senderSessionId: ROOT_SESSION_ID,
+      senderAgentName: "lead",
+      senderExecutionId: "parent-execution",
+      senderRunOrdinal: 0,
+      senderToolBatchId: "resume-batch",
+      senderToolCallId: "resume-call",
+    };
+    const accepted = await service.acceptParentAgentMessage({
+      sessionId: CHILD_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "queued before cancellation",
+      clientRequestId: "queued-before-resume",
+      expectedExecutionId: "stopped-execution",
+      delivery: "queue",
+      provenance: { ...provenance, senderToolCallId: "send-call" },
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    });
+    await service.recordQueueDispatchBarrier({
+      sessionId: CHILD_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      timestamp: Date.now() + 100,
+    });
+    const queued = await service.getPendingMessages(CHILD_SESSION_ID, WORKSPACE);
+
+    const result = await service.beginChildResumeExecution({
+      sessionId: CHILD_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      executionId: "resumed-execution",
+      runOrdinal: 0,
+      snapshots: [{ pending: queued[0]!, modelAudit: MODEL_AUDIT }],
+      binding: BINDING,
+      instruction: "resume after the queued correction",
+      clientRequestId: "resume-instruction",
+      provenance,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+      modelAudit: MODEL_AUDIT,
+      executionStart: executionStart("resumed-execution", "tool_call"),
+    });
+
+    expect(result.messages.map((message) => message.parts[0])).toMatchObject([
+      { type: "text", text: "queued before cancellation" },
+      { type: "text", text: "resume after the queued correction" },
+    ]);
+    expect(result.pendingMessages[0]?.id).toBe(accepted.messageId);
+    const file = await manager.getSessionFile(WORKSPACE, CHILD_SESSION_ID);
+    expect(file.pendingMessages).toEqual([]);
+    expect(file.queueDispatchBarrierAt).toBeUndefined();
+    expect(file.inputRequestReceipts.map((receipt) => receipt.status)).toEqual(["canonical", "canonical"]);
+    expect(file.executions).toEqual([
+      expect.objectContaining({ id: "resumed-execution", status: "running" }),
+    ]);
+    expect(file.messages.map((message) => message.executionId)).toEqual([
+      "resumed-execution",
+      "resumed-execution",
+    ]);
+  });
+
+  test("persists either the old child state or the complete resume execution and input claim", async () => {
+    await manager.createSessionFile(WORKSPACE, {
+      agentName: "explore",
+      rootSessionId: ROOT_SESSION_ID,
+      parentSessionId: ROOT_SESSION_ID,
+      title: "Atomic resume child",
+      activeSkillNames: [],
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Atomic resume child",
+        objective: "Verify atomic child resume persistence.",
+        skills: [],
+        background: false,
+      },
+    }, CHILD_SESSION_ID);
+    const provenance = {
+      senderSessionId: ROOT_SESSION_ID,
+      senderAgentName: "lead",
+      senderExecutionId: "parent-execution",
+      senderRunOrdinal: 0,
+      senderToolBatchId: "resume-batch",
+      senderToolCallId: "resume-call",
+    };
+    await service.acceptParentAgentMessage({
+      sessionId: CHILD_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "preserved queue input",
+      clientRequestId: "preserved-before-fault",
+      expectedExecutionId: "old-execution",
+      delivery: "queue",
+      provenance: { ...provenance, senderToolCallId: "send-call" },
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    });
+    const queued = await service.getPendingMessages(CHILD_SESSION_ID, WORKSPACE);
+    const controlledSave = controlNextSessionSave(new Error("resume checkpoint failed"));
+    try {
+      const starting = service.beginChildResumeExecution({
+        sessionId: CHILD_SESSION_ID,
+        workspaceRoot: WORKSPACE,
+        executionId: "atomic-resume-execution",
+        runOrdinal: 0,
+        snapshots: [{ pending: queued[0]!, modelAudit: MODEL_AUDIT }],
+        binding: BINDING,
+        instruction: "resume atomically",
+        clientRequestId: "atomic-resume-instruction",
+        provenance,
+        requestedModelSelection: REQUESTED_MODEL_SELECTION,
+        modelAudit: MODEL_AUDIT,
+        executionStart: executionStart("atomic-resume-execution", "tool_call"),
+      });
+      const startOutcome = starting.then(
+        () => ({ kind: "completed" as const }),
+        (error: unknown) => ({ kind: "failed" as const, error }),
+      );
+      const first = await Promise.race([
+        controlledSave.saveStarted.then(() => ({ kind: "saving" as const })),
+        startOutcome,
+      ]);
+      if (first.kind !== "saving") throw first.kind === "failed" ? first.error : new Error("Resume save did not start");
+
+      const warm = manager.get(CHILD_SESSION_ID, WORKSPACE)!.getState();
+      expect(warm.executions.at(-1)).toMatchObject({ id: "atomic-resume-execution", status: "running" });
+      expect(warm.pendingMessages).toEqual([]);
+      expect(warm.messages).toHaveLength(2);
+
+      const durableOld = await sessionFileInternals.readSessionFile(CHILD_SESSION_ID, WORKSPACE);
+      expect(durableOld.executions).toEqual([]);
+      expect(durableOld.pendingMessages).toHaveLength(1);
+      expect(durableOld.messages).toEqual([]);
+
+      controlledSave.release();
+      expect(await startOutcome).toMatchObject({
+        kind: "failed",
+        error: expect.objectContaining({ message: "resume checkpoint failed" }),
+      });
+      const durableAfterFailure = await sessionFileInternals.readSessionFile(CHILD_SESSION_ID, WORKSPACE);
+      expect(durableAfterFailure.executions).toEqual([]);
+      expect(durableAfterFailure.pendingMessages).toHaveLength(1);
+      expect(durableAfterFailure.messages).toEqual([]);
+      expect(durableAfterFailure.inputRequestReceipts.some((receipt) => (
+        receipt.clientRequestId === "atomic-resume-instruction"
+      ))).toBe(false);
+    } finally {
+      controlledSave.restore();
+    }
+  });
+
+  test("restarts a failed atomic child Queue claim from the old durable state exactly once", async () => {
+    await manager.createSessionFile(WORKSPACE, {
+      agentName: "explore",
+      rootSessionId: ROOT_SESSION_ID,
+      parentSessionId: ROOT_SESSION_ID,
+      title: "Atomic Queue child",
+      activeSkillNames: [],
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "Atomic Queue child",
+        objective: "Verify atomic child Queue persistence.",
+        skills: [],
+        background: false,
+      },
+    }, CHILD_SESSION_ID);
+    const child = manager.get(CHILD_SESSION_ID, WORKSPACE)!;
+    child.getState().append(testExecutionStart("previous-child-execution"));
+    const endedAt = Date.now() + 1;
+    child.getState().append(testExecutionEnd("previous-child-execution", "completed", {
+      endedAt,
+      runEndedAt: endedAt,
+      runSettlement: {
+        key: `run:${CHILD_SESSION_ID}:previous-child-execution:0`,
+        goalInstanceId: null,
+      },
+      terminalSettlement: {
+        key: `terminal:${CHILD_SESSION_ID}:previous-child-execution`,
+        goalInstanceId: null,
+      },
+    }));
+    await manager.flushSession(CHILD_SESSION_ID, WORKSPACE);
+    const provenance = {
+      senderSessionId: ROOT_SESSION_ID,
+      senderAgentName: "lead",
+      senderExecutionId: "parent-execution",
+      senderRunOrdinal: 0,
+      senderToolBatchId: "queue-batch",
+      senderToolCallId: "queue-call",
+    };
+    await service.acceptParentAgentMessage({
+      sessionId: CHILD_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      text: "retry this Queue prefix",
+      clientRequestId: "atomic-queue-message",
+      expectedExecutionId: "previous-child-execution",
+      delivery: "queue",
+      provenance,
+      requestedModelSelection: REQUESTED_MODEL_SELECTION,
+    });
+    const queued = await service.getPendingMessages(CHILD_SESSION_ID, WORKSPACE);
+    const controlledSave = controlNextSessionSave(new Error("queue checkpoint failed"));
+    try {
+      const first = service.beginQueueExecution({
+        sessionId: CHILD_SESSION_ID,
+        workspaceRoot: WORKSPACE,
+        executionId: "failed-queue-execution",
+        runOrdinal: 0,
+        snapshots: [{ pending: queued[0]!, modelAudit: MODEL_AUDIT }],
+        binding: BINDING,
+        origin: "tool_call",
+        executionStart: executionStart("failed-queue-execution", "tool_call"),
+      });
+      const firstOutcome = first.then(
+        () => ({ kind: "completed" as const }),
+        (error: unknown) => ({ kind: "failed" as const, error }),
+      );
+      const entered = await Promise.race([
+        controlledSave.saveStarted.then(() => true),
+        firstOutcome.then((outcome) => { throw outcome.kind === "failed" ? outcome.error : new Error("Queue save did not start"); }),
+      ]);
+      expect(entered).toBe(true);
+      const durableOld = await sessionFileInternals.readSessionFile(CHILD_SESSION_ID, WORKSPACE);
+      expect(durableOld.executions.map((execution) => execution.id)).toEqual(["previous-child-execution"]);
+      expect(durableOld.pendingMessages).toHaveLength(1);
+      expect(durableOld.messages).toEqual([]);
+
+      controlledSave.release();
+      expect(await firstOutcome).toMatchObject({
+        kind: "failed",
+        error: expect.objectContaining({ message: "queue checkpoint failed" }),
+      });
+    } finally {
+      controlledSave.restore();
+    }
+
+    const restartedManager = new SessionStoreManager({ logger: silentLogger });
+    const restartedService = new SessionInputService(restartedManager, { resolveDescriptors });
+    const retryQueue = await restartedService.getPendingMessages(CHILD_SESSION_ID, WORKSPACE);
+    await restartedService.beginQueueExecution({
+      sessionId: CHILD_SESSION_ID,
+      workspaceRoot: WORKSPACE,
+      executionId: "retried-queue-execution",
+      runOrdinal: 0,
+      snapshots: [{ pending: retryQueue[0]!, modelAudit: MODEL_AUDIT }],
+      binding: BINDING,
+      origin: "tool_call",
+      executionStart: executionStart("retried-queue-execution", "tool_call"),
+    });
+    const durableRetry = await restartedManager.getSessionFile(WORKSPACE, CHILD_SESSION_ID);
+    expect(durableRetry.executions.map((execution) => execution.id)).toEqual([
+      "previous-child-execution",
+      "retried-queue-execution",
+    ]);
+    expect(durableRetry.messages.map((message) => message.executionId)).toEqual(["retried-queue-execution"]);
+    expect(durableRetry.pendingMessages).toEqual([]);
   });
 });

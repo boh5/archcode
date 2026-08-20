@@ -288,19 +288,21 @@ function isPendingSessionMessage(value: unknown): boolean {
     || !exact(
       message,
       ["id", "clientRequestId", "content", "attachments", "source", "state", "revision", "acceptedAt", "updatedAt", "requestedModelSelection", "executionSkillNames"],
-      ["targetExecutionId", "targetRunOrdinal", "targetModelAudit", "claimedAt"],
+      ["parentAgentProvenance", "targetExecutionId", "targetRunOrdinal", "targetModelAudit", "claimedAt"],
     )
     || !isString(message.id)
     || !isString(message.clientRequestId)
     || !isString(message.content)
     || !isAttachmentDescriptorArray(message.attachments)
-    || !oneOf(message.source, ["user", "automation"])
+    || !oneOf(message.source, ["user", "automation", "parent_agent"])
+    || !arrayOf(message.executionSkillNames, isString)
+    || ((message.source === "parent_agent") !== isParentAgentMessageProvenance(message.parentAgentProvenance))
+    || (message.source === "parent_agent" && ((message.attachments as unknown[]).length > 0 || (message.executionSkillNames as unknown[]).length > 0))
     || !oneOf(message.state, ["queued", "steering"])
     || !isNonNegativeInteger(message.revision)
     || !isFiniteNumber(message.acceptedAt)
     || !isFiniteNumber(message.updatedAt)
     || !isRequestedModelSelection(message.requestedModelSelection)
-    || !arrayOf(message.executionSkillNames, isString)
     || !optionalString(message.targetExecutionId)
     || (message.targetRunOrdinal !== undefined && !isNonNegativeSafeInteger(message.targetRunOrdinal))
     || (message.targetModelAudit !== undefined && !isMessageModelAudit(message.targetModelAudit))
@@ -325,7 +327,7 @@ function isCommittedUserMessage(value: unknown, executionId: string): boolean {
     && exact(
       message,
       ["id", "role", "parts", "createdAt"],
-      ["completedAt", "executionId", "runOrdinal", "clientRequestId", "compacted", "modelAudit"],
+      ["completedAt", "executionId", "runOrdinal", "clientRequestId", "inputSource", "parentAgentProvenance", "compacted", "modelAudit"],
     )
     && isString(message.id)
     && message.role === "user"
@@ -338,8 +340,30 @@ function isCommittedUserMessage(value: unknown, executionId: string): boolean {
     && message.executionId === executionId
     && isNonNegativeSafeInteger(message.runOrdinal)
     && optionalString(message.clientRequestId)
+    && (message.inputSource === undefined || oneOf(message.inputSource, ["user", "automation", "parent_agent"]))
+    && ((message.inputSource === "parent_agent") === isParentAgentMessageProvenance(message.parentAgentProvenance))
+    && (message.inputSource !== "parent_agent" || parts.every((part) => record(part)?.type !== "attachment"))
     && isMessageModelAudit(message.modelAudit)
     && (message.compacted === undefined || typeof message.compacted === "boolean");
+}
+
+function isParentAgentMessageProvenance(value: unknown): boolean {
+  const provenance = record(value);
+  return provenance !== undefined
+    && exact(provenance, [
+      "senderSessionId",
+      "senderAgentName",
+      "senderExecutionId",
+      "senderRunOrdinal",
+      "senderToolBatchId",
+      "senderToolCallId",
+    ])
+    && isString(provenance.senderSessionId)
+    && isString(provenance.senderAgentName)
+    && isString(provenance.senderExecutionId)
+    && isNonNegativeSafeInteger(provenance.senderRunOrdinal)
+    && isString(provenance.senderToolBatchId)
+    && isString(provenance.senderToolCallId);
 }
 
 function isCommittedUserAttachmentPart(value: unknown): boolean {
@@ -929,7 +953,15 @@ function isReminderSource(value: unknown): boolean {
     return exact(source, ["type", "pendingTodos"]) && arrayOf(source.pendingTodos, isSessionTodo);
   }
   if (oneOf(source.type, ["subagent_completed", "subagent_failed", "subagent_timed_out", "subagent_cancelled"])) {
-    return exact(source, ["type", "sessionId"]) && isString(source.sessionId);
+    return exact(source, ["type", "sessionId"], ["childExecutionId"])
+      && isString(source.sessionId)
+      && optionalString(source.childExecutionId);
+  }
+  if (source.type === "queue_dispatch_blocked") {
+    return exact(source, ["type", "sessionId", "blockedAfterExecutionId", "error"])
+      && isString(source.sessionId)
+      && isString(source.blockedAfterExecutionId)
+      && isString(source.error);
   }
   if (source.type === "session_goal_changed") {
     return exact(source, ["type", "notice"]) && isGoalNoticePart(source.notice);
