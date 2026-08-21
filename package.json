@@ -1,6 +1,6 @@
 {
   "name": "archcode",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "private": true,
   "description": "The open-source, self-hosted workbench for AI coding.",
   "type": "module",
