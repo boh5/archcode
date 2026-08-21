@@ -1026,6 +1026,10 @@ export interface ConfigMemorySettings {
   autoLearning?: boolean;
 }
 
+export interface ConfigPermissionSettings {
+  autoReview?: boolean;
+}
+
 export interface ConfigGithubIntegrationSettings {
   enabled?: boolean;
   tokenEnv?: string;
@@ -1047,6 +1051,7 @@ export interface ServerConfigDocument<Secret> {
   };
   integrations?: { github?: ConfigGithubIntegrationSettings };
   memory?: ConfigMemorySettings;
+  permissions?: ConfigPermissionSettings;
 }
 
 /** Safe configuration returned by GET /api/config. */

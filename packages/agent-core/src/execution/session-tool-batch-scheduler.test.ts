@@ -19,6 +19,7 @@ import { createTextToolResult } from "../tools/results";
 import { SecretRedactionPolicy } from "../security";
 import { SkillService } from "../skills";
 import { createTestProjectContext } from "../tools/test-project-context";
+import { deferTestApprovalReviewer } from "../tools/test-approval-reviewer";
 import type { AnyToolDescriptor, RawToolResult, ToolCallLike, ToolExecutionContext } from "../tools/types";
 import { testExecutionStart } from "../testing/test-execution-fixtures";
 import { adaptMcpTool } from "../mcp/tool-adapter";
@@ -52,6 +53,7 @@ async function createHarness(logger: Logger = silentLogger) {
   const registry = new ToolRegistry({
     finalizer: new ToolOutputFinalizer({ artifactStore }),
     hitlCodec: new HitlBoundaryCodec(redactionPolicy),
+    approvalReviewer: deferTestApprovalReviewer,
     logger,
   });
   registry.register(defineTool({

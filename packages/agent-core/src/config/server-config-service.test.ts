@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ServerConfigEditableView, ServerConfigUpdate } from "@archcode/protocol";
@@ -52,6 +52,7 @@ function config(): Record<string, unknown> {
       deep: profile,
       fast: { ...profile, variant: "fast" },
     },
+    permissions: { autoReview: true },
     mcp: {
       servers: {
         custom: {
@@ -363,6 +364,7 @@ describe("ServerConfigService", () => {
     expect(snapshot.configPath).toBe(resolveServerConfigPath(service.homeDir));
     expect(snapshot.modelRuntimeRevision).toBe(service.modelRuntime.current.revision);
     expect(snapshot.restartRequiredSections).toEqual([]);
+    expect(snapshot.config.permissions).toEqual({ autoReview: true });
     expect(snapshot.config.provider.local.options).toEqual({
       baseURL: "http://localhost:8090/v1",
       apiKey: { configured: true },
@@ -370,6 +372,119 @@ describe("ServerConfigService", () => {
       queryParams: { token: { configured: true } },
     });
     expect((snapshot.config.mcp?.servers.custom as any).headers).toEqual({ Authorization: { configured: true } });
+  });
+
+  test("materializes the default auto-review policy across startup and GET", async () => {
+    const service = await createUnloadedService();
+    const omittedPermissions = config() as Record<string, unknown>;
+    delete omittedPermissions.permissions;
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(omittedPermissions, null, 2)}\n`, { mode: 0o600 });
+
+    await activateReady(service);
+
+    expect(service.getPermissionReviewPolicy()).toEqual({ autoReview: true });
+    expect((await service.getSnapshot()).config.permissions)
+      .toEqual({ autoReview: true });
+  });
+
+  test("round-trips false and publishes successful permission policy saves live", async () => {
+    const service = await createService();
+    const initial = await service.getSnapshot();
+    const disabled = preserveSecrets(initial.config);
+    disabled.permissions = { autoReview: false };
+
+    const savedDisabled = await service.save({
+      expectedRevision: initial.revision,
+      config: disabled,
+    });
+
+    expect(savedDisabled.config.permissions).toEqual({ autoReview: false });
+    expect(service.getPermissionReviewPolicy()).toEqual({ autoReview: false });
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).permissions)
+      .toEqual({ autoReview: false });
+
+    const enabled = preserveSecrets(savedDisabled.config);
+    enabled.permissions = { autoReview: true };
+    await service.save({ expectedRevision: savedDisabled.revision, config: enabled });
+    expect(service.getPermissionReviewPolicy()).toEqual({ autoReview: true });
+  });
+
+  test("does not publish an invalid permission policy save", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const invalid = preserveSecrets(snapshot.config) as unknown as Record<string, any>;
+    invalid.permissions = { autoReview: false, mode: "allow_all" };
+
+    await expect(service.save({
+      expectedRevision: snapshot.revision,
+      config: invalid as ServerConfigUpdate,
+    })).rejects.toMatchObject({
+      issues: [{ path: "permissions", message: "Unrecognized key: \"mode\"" }],
+    });
+    expect(service.getPermissionReviewPolicy()).toEqual({ autoReview: true });
+  });
+
+  test("does not publish permission policy before revision and disk commits", async () => {
+    const service = await createService();
+    const snapshot = await service.getSnapshot();
+    const disabled = preserveSecrets(snapshot.config);
+    disabled.permissions = { autoReview: false };
+
+    await expect(service.save({
+      expectedRevision: "stale",
+      config: disabled,
+    })).rejects.toBeInstanceOf(ConfigRevisionConflictError);
+    expect(service.getPermissionReviewPolicy()).toEqual({ autoReview: true });
+
+    const configDirectory = join(service.homeDir, ".archcode");
+    await chmod(configDirectory, 0o500);
+    try {
+      await expect(service.save({
+        expectedRevision: snapshot.revision,
+        config: disabled,
+      })).rejects.toBeInstanceOf(ConfigSemanticValidationError);
+      expect(service.getPermissionReviewPolicy()).toEqual({ autoReview: true });
+    } finally {
+      await chmod(configDirectory, 0o700);
+    }
+  });
+
+  test("Setup and auth writers preserve an explicit disabled policy", async () => {
+    const service = await createUnloadedService();
+    const candidate = initialConfig() as Record<string, any>;
+    candidate.permissions = { autoReview: false };
+
+    await service.initialize(candidate);
+    expect(service.getPermissionReviewPolicy()).toEqual({ autoReview: false });
+
+    await service.updateAuthPasswordHash(PASSWORD_HASH);
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).permissions)
+      .toEqual({ autoReview: false });
+    await service.updateAuthPasswordHash(undefined);
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).permissions)
+      .toEqual({ autoReview: false });
+  });
+
+  test("selective Config recovery preserves and activates the permission policy", async () => {
+    const service = await createUnloadedService();
+    const invalid = config() as Record<string, any>;
+    invalid.permissions = { autoReview: false, mode: "allow_all" };
+    await mkdir(join(service.homeDir, ".archcode"), { recursive: true });
+    await writeFile(service.configPath, `${JSON.stringify(invalid, null, 2)}\n`, { mode: 0o600 });
+
+    const startup = await service.activateForStartup();
+    if (startup.status !== "config_error") throw new Error("Expected invalid Config");
+    const plan = service.invalidConfigRemovalPlan(startup.error);
+    const result = await service.removeInvalidConfigItems(
+      plan.revision!,
+      [plan.items[0]!.id],
+    );
+
+    expect(result.status).toBe("ready");
+    expect(service.getPermissionReviewPolicy()).toEqual({ autoReview: false });
+    expect(JSON.parse(await readFile(service.configPath, "utf8")).permissions)
+      .toEqual({ autoReview: false });
   });
 
   for (const adapter of providerAdapterCatalog.list()) {

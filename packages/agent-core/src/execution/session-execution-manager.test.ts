@@ -677,6 +677,7 @@ function makeModelRuntime(
       deep: { ...agent },
       fast: { ...agent },
     },
+    permissions: { autoReview: true },
   };
   const info = new ModelInfo({
     model: {} as LanguageModelV3,

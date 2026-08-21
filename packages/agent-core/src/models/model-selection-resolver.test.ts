@@ -60,6 +60,7 @@ function config(): ArchCodeConfig {
       deep: { model: "local:alpha", variant: "deep", options: { temperature: 0.25 } },
       fast: { model: "local:beta", variant: "fast", options: { temperature: 0.05 } },
     },
+    permissions: { autoReview: true },
   };
 }
 

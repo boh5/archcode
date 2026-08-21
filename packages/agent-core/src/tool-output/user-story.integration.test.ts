@@ -16,6 +16,7 @@ import { toModelMessagesFromStoredMessages } from "../store/projection";
 import { bashTool } from "../tools/builtins/bash";
 import { outputReadTool, outputSearchTool } from "../tools/builtins/output-artifacts";
 import { createTestProjectContext } from "../tools/test-project-context";
+import { deferTestApprovalReviewer } from "../tools/test-approval-reviewer";
 import { expectSettledResult } from "../tools/test-results";
 import { createRegistry, type ToolRegistry } from "../tools/registry";
 import type { ToolExecutionContext } from "../tools/types";
@@ -376,6 +377,7 @@ function createOutputPlane(rootDir: string): OutputPlane {
   const registry = createRegistry({
     finalizer: new ToolOutputFinalizer({ artifactStore: store }),
     hitlCodec: new HitlBoundaryCodec(redactionPolicy),
+    approvalReviewer: deferTestApprovalReviewer,
     logger: silentLogger,
   }, [bashTool, outputReadTool, outputSearchTool]);
   return { store, registry };

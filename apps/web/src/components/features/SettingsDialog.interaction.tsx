@@ -219,6 +219,158 @@ describe("SettingsDialog interactions", () => {
     expect(changeButton.disabled).toBe(true);
   });
 
+  test("locks Config editing and navigation while a password mutation is pending", async () => {
+    let resolvePassword!: (response: Response) => void;
+    const passwordResponse = new Promise<Response>((resolve) => { resolvePassword = resolve; });
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: mock(async (url: string) => {
+        if (url === "/api/auth/status") return Response.json({ required: true });
+        if (url === "/api/auth/password") return await passwordResponse;
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    });
+    const onReload = mock(async () => {});
+    act(() => root.render(
+      <DialogRoot open>
+        <SettingsBody snapshot={snapshot} servers={{}} onReload={onReload} section="security" />
+      </DialogRoot>,
+    ));
+
+    await waitForText("Login is required");
+    change(input("Current password"), "current password");
+    change(input("New password"), "replacement password");
+    change(input("Confirm password"), "replacement password");
+    const changeButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Change password") as HTMLButtonElement;
+
+    act(() => changeButton.click());
+    await act(async () => { await Promise.resolve(); });
+
+    const controls = container.querySelector("[data-settings-controls]") as HTMLFieldSetElement;
+    const review = container.querySelector('input[aria-label="AI approval review"]') as HTMLInputElement;
+    const models = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Models") as HTMLButtonElement;
+    expect(controls.disabled).toBe(true);
+    expect(models.disabled).toBe(true);
+    expect(review.matches(":disabled")).toBe(true);
+    act(() => review.click());
+    expect(review.checked).toBe(true);
+    expect(container.textContent).not.toContain("Unsaved changes");
+
+    await act(async () => {
+      resolvePassword(Response.json({ required: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect((container.querySelector("[data-settings-controls]") as HTMLFieldSetElement).disabled).toBe(false);
+    expect([...container.querySelectorAll("button")].find((button) => button.textContent === "Models")?.disabled).toBe(false);
+  });
+
+  test("keeps Auto-review in the shared Config draft and protects password mutations while dirty", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: mock(async (url: string, init?: RequestInit) => {
+        requests.push({ url, init });
+        if (url === "/api/auth/status") return Response.json({ required: true });
+        if (url === "/api/config") {
+          return Response.json({
+            ...successfulSaveResponse(),
+            config: { ...snapshot.config, permissions: { autoReview: false } },
+          });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    });
+    const onReload = mock(async () => {});
+    act(() => root.render(
+      <DialogRoot open>
+        <SettingsBody snapshot={snapshot} servers={{}} onReload={onReload} section="security" />
+      </DialogRoot>,
+    ));
+
+    await waitForText("AI approval review");
+    await waitForText("Login is required");
+    const review = container.querySelector('input[aria-label="AI approval review"]') as HTMLInputElement;
+    expect(review.checked).toBe(true);
+
+    act(() => review.click());
+    expect(review.checked).toBe(false);
+    expect(container.textContent).toContain("Unsaved changes");
+
+    change(input("Current password"), "current password");
+    change(input("New password"), "replacement password");
+    change(input("Confirm password"), "replacement password");
+    const changeButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Change password") as HTMLButtonElement;
+    const removeButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Remove password") as HTMLButtonElement;
+    expect(changeButton.disabled).toBe(true);
+    expect(container.textContent).toContain("Save or Reload your Config draft before changing the server password.");
+
+    await act(async () => {
+      click("Save changes");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const configRequest = requests.find((request) => request.url === "/api/config");
+    expect(configRequest).toBeDefined();
+    const body = JSON.parse(String(configRequest?.init?.body)) as { password?: unknown; config?: { permissions?: { autoReview?: boolean } } };
+    expect(body.config?.permissions?.autoReview).toBe(false);
+    expect(body.password).toBeUndefined();
+    expect(requests.map(({ url }) => url)).not.toContain("/api/auth/password");
+    expect(review.closest("label")?.className).toContain("[@media(pointer:coarse)]:min-h-11");
+    expect(changeButton.className).toContain("[@media(pointer:coarse)]:min-h-11");
+    expect(removeButton.className).toContain("[@media(pointer:coarse)]:min-h-11");
+  });
+
+  test("reload restores the server Auto-review value and clears the dirty password guard", async () => {
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: mock(async (url: string) => {
+        if (url === "/api/auth/status") return Response.json({ required: true });
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    });
+    const onReload = mock(async () => {});
+    act(() => root.render(
+      <DialogRoot open>
+        <SettingsBody snapshot={snapshot} servers={{}} onReload={onReload} section="security" />
+      </DialogRoot>,
+    ));
+
+    await waitForText("AI approval review");
+    await waitForText("Login is required");
+    const review = container.querySelector('input[aria-label="AI approval review"]') as HTMLInputElement;
+    act(() => review.click());
+    expect(container.textContent).toContain("Unsaved changes");
+
+    const serverSnapshot = structuredClone(snapshot);
+    serverSnapshot.config.permissions = { autoReview: true };
+    await act(async () => {
+      click("Reload");
+      root.render(
+        <DialogRoot open>
+          <SettingsBody snapshot={serverSnapshot} servers={{}} onReload={onReload} section="security" />
+        </DialogRoot>,
+      );
+      await Promise.resolve();
+    });
+
+    expect((container.querySelector('input[aria-label="AI approval review"]') as HTMLInputElement).checked).toBe(true);
+    expect(container.textContent).toContain("All changes saved");
+    change(input("Current password"), "current password");
+    change(input("New password"), "replacement password");
+    change(input("Confirm password"), "replacement password");
+    const changeButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Change password") as HTMLButtonElement;
+    expect(changeButton.disabled).toBe(false);
+  });
+
   test("adds a provider and model while exposing options and variants as JSON", () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     click("Add provider");

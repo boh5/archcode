@@ -35,6 +35,10 @@ export const memoryConfigSchema = z.strictObject({
   autoLearning: z.boolean().default(true),
 }).optional();
 
+export const permissionsConfigSchema = z.strictObject({
+  autoReview: z.boolean().default(true),
+}).default({ autoReview: true });
+
 const ARGON2ID_PHC_PATTERN = /^\$argon2id\$v=19\$m=[1-9]\d*,t=[1-9]\d*,p=[1-9]\d*\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$/;
 
 export const authConfigSchema = z
@@ -57,6 +61,7 @@ export const archcodeConfigSchema = z
       fast: profileConfigSchema,
     }),
     memory: memoryConfigSchema,
+    permissions: permissionsConfigSchema,
     auth: authConfigSchema.optional(),
   })
   .strict();
@@ -67,6 +72,7 @@ export type ProfileConfig = z.infer<typeof profileConfigSchema>;
 export type GithubIntegrationConfig = z.infer<typeof githubIntegrationConfigSchema>;
 export type IntegrationsConfig = z.infer<typeof integrationsConfigSchema>;
 export type MemoryConfig = NonNullable<z.infer<typeof memoryConfigSchema>>;
+export type PermissionsConfig = z.infer<typeof permissionsConfigSchema>;
 export type AuthConfig = z.infer<typeof authConfigSchema>;
 export type ArchCodeConfig = z.infer<typeof archcodeConfigSchema>;
 

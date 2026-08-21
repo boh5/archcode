@@ -12,6 +12,8 @@ import { silentLogger } from "../logger";
 import { SecretRedactionPolicy } from "../security";
 import { createRegistry, type ToolRegistry } from "./registry";
 import type { AnyToolDescriptor } from "./types";
+import type { ApprovalReviewer } from "../approval-review";
+import { deferTestApprovalReviewer } from "./test-approval-reviewer";
 
 export interface TestToolRegistryFixture {
   readonly registry: ToolRegistry;
@@ -28,6 +30,7 @@ export function createTestToolRegistryFixture(options: {
   readonly descriptors?: AnyToolDescriptor[];
   readonly secretLiterals?: readonly string[];
   readonly logger?: Logger;
+  readonly approvalReviewer?: ApprovalReviewer;
 } = {}): TestToolRegistryFixture {
   const rootDir = join(tmpdir(), `archcode-tool-registry-${crypto.randomUUID()}`);
   const artifactStore = new ToolOutputArtifactStore({ rootDir });
@@ -35,7 +38,12 @@ export function createTestToolRegistryFixture(options: {
   const hitlCodec = new HitlBoundaryCodec(redactionPolicy);
   const finalizer = new ToolOutputFinalizer({ artifactStore });
   const registry = createRegistry(
-    { finalizer, hitlCodec, logger: options.logger ?? silentLogger },
+    {
+      finalizer,
+      hitlCodec,
+      approvalReviewer: options.approvalReviewer ?? deferTestApprovalReviewer,
+      logger: options.logger ?? silentLogger,
+    },
     options.descriptors ?? [],
   );
   return {

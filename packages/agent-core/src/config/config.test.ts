@@ -56,6 +56,23 @@ describe("parseConfig", () => {
       deep: { model: "xxx:gpt-5.2" },
       fast: { model: "xxx:gpt-5.2" },
     });
+    expect(config.permissions).toEqual({ autoReview: true });
+  });
+
+  test("defaults permission auto-review and preserves an explicit false", () => {
+    expect(parseConfig(VALID_CONFIG_WITH_PROFILES).permissions)
+      .toEqual({ autoReview: true });
+    expect(parseConfig({
+      ...VALID_CONFIG_WITH_PROFILES,
+      permissions: { autoReview: false },
+    }).permissions).toEqual({ autoReview: false });
+  });
+
+  test("rejects unknown permission settings", () => {
+    expect(() => parseConfig({
+      ...VALID_CONFIG_WITH_PROFILES,
+      permissions: { autoReview: true, mode: "allow_all" },
+    })).toThrow(ConfigValidationError);
   });
 
   test("rejects unknown top-level fields", () => {

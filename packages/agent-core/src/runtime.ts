@@ -147,6 +147,7 @@ import {
 import { ToolOutputArtifactStore, computeProjectIdentity } from "./tool-output/artifact-store";
 import { ToolOutputFinalizer } from "./tool-output/finalizer";
 import { createRuntimeLogSafetyBoundary, SecretRedactionPolicy } from "./security";
+import { ApprovalReviewService } from "./approval-review";
 import { rootSessionSourceTodoId, USER_DATA_DIR_NAME } from "@archcode/protocol";
 import {
   resolveAttachmentReadPaths,
@@ -587,7 +588,19 @@ export async function createRuntime(
       artifactStore: toolOutputArtifactStore,
     });
     const hitlCodec = new HitlBoundaryCodec(redactionPolicy);
-    const toolRegistry = createToolRegistry({ finalizer, hitlCodec, logger: runtimeLogger.child({ module: "tools.registry" }) });
+    const approvalReviewer = new ApprovalReviewService({
+      modelRuntime,
+      modelSelectionResolver,
+      isEnabled: () => configService.getPermissionReviewPolicy().autoReview,
+      redactionPolicy,
+      logger: runtimeLogger.child({ module: "approval-review" }),
+    });
+    const toolRegistry = createToolRegistry({
+      finalizer,
+      hitlCodec,
+      approvalReviewer,
+      logger: runtimeLogger.child({ module: "tools.registry" }),
+    });
     registerBuiltinTools(toolRegistry, runtimeLogger.child({ module: "tools" }), {
       github: resolvedGithubConfig,
     });

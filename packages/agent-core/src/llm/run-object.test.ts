@@ -114,6 +114,31 @@ describe("runLlmObject", () => {
     expect(mockGenerateText).toHaveBeenCalledTimes(2);
   });
 
+  test("supports one provider attempt and one schema attempt for control-plane calls", async () => {
+    const schema = z.strictObject({ name: z.string() });
+    mockGenerateText.mockImplementation(async () => {
+      throw Object.assign(new Error("rate limit"), { status: 429 });
+    });
+
+    await expect(runLlmObject(makeInput({
+      schema,
+      attemptPolicy: { providerAttempts: 1, schemaAttempts: 1 },
+    }))).rejects.toMatchObject({ name: "LlmMaxRetriesError", attempts: 1 });
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+
+    mockGenerateText.mockReset();
+    mockGenerateText.mockImplementation(async () => ({
+      text: "",
+      toolCalls: [{ toolName: "result", input: { name: 123 } as unknown }],
+    }) as never);
+
+    await expect(runLlmObject(makeInput({
+      schema,
+      attemptPolicy: { providerAttempts: 1, schemaAttempts: 1 },
+    }))).rejects.toBeInstanceOf(LlmSchemaValidationError);
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
   test("throws object error when model does not call result tool", async () => {
     const schema = z.strictObject({ name: z.string() });
     mockGenerateText.mockImplementationOnce(async () => ({ text: "", toolCalls: [] }) as never);

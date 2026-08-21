@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings · ArchCode</title>
+  <link rel="stylesheet" href="./styles.css?v=settings-shared-4">
+  <style>
+    /* Settings-only states. Shared tokens, layout, and cross-page behavior stay in styles.css/app.js. */
+    .settings-page-underlay { display:flex; min-height:100dvh; flex:1; align-items:center; justify-content:center; padding:24px; background:var(--bg); }
+    .settings-page-underlay > div { max-width:560px; color:var(--text-3); font-size:12px; line-height:1.55; text-align:center; }
+    .settings-page-underlay strong { display:block; margin-bottom:6px; color:var(--text-2); font-size:14px; }
+  </style>
+</head>
+<body class="page-settings">
+  <div class="app-shell">
+    <nav class="project-rail" aria-label="Projects">
+      <a class="rail-home" href="./todos.html" aria-label="Open ArchCode All todos"><img src="./logo.svg" alt="" width="20" height="20"></a>
+      <a class="rail-project active" href="./todos.html" aria-label="Open ArchCode Todos">ac</a>
+      <button class="rail-action" type="button" aria-label="Open project" aria-haspopup="dialog" data-open-project><span data-icon="plus"></span></button>
+      <div class="rail-spacer"></div>
+      <button class="rail-action" type="button" aria-label="Settings" aria-haspopup="dialog" data-open-settings><span data-icon="settings"></span></button>
+      <button class="rail-action" type="button" data-theme-toggle aria-label="Toggle theme"><span data-icon="sun"></span></button>
+    </nav>
+    <main class="work-canvas">
+      <div class="settings-page-underlay" aria-hidden="true"><div><strong>Settings workspace</strong>Global server and application configuration stays in one bounded dialog.</div></div>
+    </main>
+  </div>
+
+  <script src="./app.js?v=settings-shared-4"></script>
+</body>
+</html>

@@ -20,6 +20,7 @@ import { ToolRegistry } from "../../tools/registry";
 import { createTextToolResult } from "../../tools/results";
 import { SecretRedactionPolicy } from "../../security";
 import { createTestProjectContext } from "../../tools/test-project-context";
+import { deferTestApprovalReviewer } from "../../tools/test-approval-reviewer";
 import type { ToolExecutionContext } from "../../tools/types";
 import { runQueryLoop } from "./loop";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
@@ -175,6 +176,7 @@ async function createHarness() {
   const registry = new ToolRegistry({
     finalizer: new ToolOutputFinalizer({ artifactStore }),
     hitlCodec: new HitlBoundaryCodec(redactionPolicy),
+    approvalReviewer: deferTestApprovalReviewer,
     logger: silentLogger,
   });
   const toolOutputAccess: ToolOutputAccessService = {

@@ -41,6 +41,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
   const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({});
   const [saveError, setSaveError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [passwordMutationPending, setPasswordMutationPending] = useState(false);
   const [restartRequiredSections, setRestartRequiredSections] = useState(snapshot.restartRequiredSections);
   const [modelsAppliedLive, setModelsAppliedLive] = useState(false);
   const [savedWhileRuntimeUnavailable, setSavedWhileRuntimeUnavailable] = useState(false);
@@ -121,6 +122,7 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
   };
 
   const selectSection = (next: SettingsSection) => {
+    if (passwordMutationPending) return;
     setSection(next);
     onSectionChange?.(next);
   };
@@ -129,16 +131,16 @@ export function SettingsBody({ snapshot, adapterCatalog, servers, onReload, runt
     <SettingsShellHeader />
     {section !== "updates" && section !== "runtime-data" && <SettingsApplyNotice modelsAppliedLive={modelsAppliedLive} restartRequiredSections={runtime.state === "ready" ? restartRequiredSections : []} savedWhileRuntimeUnavailable={savedWhileRuntimeUnavailable} />}
     <div data-settings-workspace className="flex min-h-0 flex-1 flex-col min-[641px]:flex-row">
-      <SettingsSidebar section={section} onSelect={selectSection} invalidProfileCount={invalidProfileCount} />
+      <SettingsSidebar section={section} onSelect={selectSection} invalidProfileCount={invalidProfileCount} interactionDisabled={passwordMutationPending} />
       {section === "updates"
         ? <main className="min-h-0 min-w-0 flex-1 overflow-y-auto border-r-[10px] border-r-transparent bg-bg-base px-4 py-[17px] min-[641px]:px-6 min-[641px]:pb-[26px] min-[641px]:pt-[22px]"><SettingsUpdatesPanel /></main>
         : section === "runtime-data"
           ? <main className="min-h-0 min-w-0 flex-1 overflow-y-auto border-r-[10px] border-r-transparent bg-bg-base px-4 py-[17px] min-[641px]:px-6 min-[641px]:pb-[26px] min-[641px]:pt-[22px]"><SettingsRuntimeDataPanel runtime={runtime} onRefreshRuntime={onRefreshRuntime} /></main>
-        : <fieldset data-settings-controls disabled={saving || reloading} className="contents">
+        : <fieldset data-settings-controls disabled={saving || reloading || passwordMutationPending} className="contents">
           <div className="flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto border-r-[10px] border-r-transparent bg-bg-base px-4 py-[17px] min-[641px]:px-6 min-[641px]:pb-[26px] min-[641px]:pt-[22px]">
             <div hidden={section !== "models"}><SettingsModelsPanel config={draft} adapterCatalog={adapterCatalog} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
             <div hidden={section !== "profiles"}><SettingsProfilesPanel config={draft} onChange={setDraft} errors={fieldErrors} onJsonValidationChange={onJsonValidationChange} jsonResetVersion={jsonResetVersion} /></div>
-            {section === "security" && <SettingsSecurityPanel onConfigChanged={onReload} />}
+            {section === "security" && <SettingsSecurityPanel config={draft} configDirty={dirty} onChange={setDraft} onConfigChanged={onReload} onPasswordMutationPendingChange={setPasswordMutationPending} />}
             <div hidden={section !== "mcp"}><SettingsMcpPanel active={section === "mcp"} config={draft} savedConfig={snapshot.config} expectedRevision={snapshot.revision} servers={servers} onChange={setDraft} errors={errors} runtimeAvailable={runtime.state === "ready"} /></div>
             {section === "skills" && <SettingsSkillsPanel projectSlug={projectSlug} />}
             <div hidden={section !== "memory"}><SettingsMemoryPanel config={draft} onChange={setDraft} errors={errors} projectSlug={projectSlug} active={section === "memory"} /></div>
@@ -220,8 +222,8 @@ function SettingsWorkspace({ active, section, runtime, onRefreshRuntime, project
         : "Loading settings…"}</SettingsLoadState>;
 }
 
-export function SettingsSidebar({ section, onSelect, invalidProfileCount = 0, recoveryMode = false }: { section: SettingsSection; onSelect: (section: SettingsSection) => void; invalidProfileCount?: number; recoveryMode?: boolean }) {
-  return <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-bg-elevated min-[641px]:w-[172px] min-[641px]:border-b-0 min-[641px]:border-r"><SettingsNavigation activeSection={section} onSelect={onSelect} invalidProfileCount={invalidProfileCount} recoveryMode={recoveryMode} /></aside>;
+export function SettingsSidebar({ section, onSelect, invalidProfileCount = 0, recoveryMode = false, interactionDisabled = false }: { section: SettingsSection; onSelect: (section: SettingsSection) => void; invalidProfileCount?: number; recoveryMode?: boolean; interactionDisabled?: boolean }) {
+  return <aside className="flex shrink-0 flex-col border-b border-border-subtle bg-bg-elevated min-[641px]:w-[172px] min-[641px]:border-b-0 min-[641px]:border-r"><SettingsNavigation activeSection={section} onSelect={onSelect} invalidProfileCount={invalidProfileCount} recoveryMode={recoveryMode} interactionDisabled={interactionDisabled} /></aside>;
 }
 
 function SettingsShellHeader() {

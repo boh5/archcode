@@ -73,6 +73,14 @@ export interface ServerConfigRuntimeSaveResult {
   readonly resolvedMcpConfig: ResolvedMcpConfig;
 }
 
+export interface PermissionReviewPolicy {
+  readonly autoReview: boolean;
+}
+
+const DEFAULT_PERMISSION_REVIEW_POLICY: PermissionReviewPolicy = Object.freeze({
+  autoReview: true,
+});
+
 export type ServerConfigActivationResult =
   | { readonly status: "setup" }
   | {
@@ -187,6 +195,7 @@ export class ServerConfigService {
   readonly configPath: string;
   readonly modelRuntime: ModelRuntime;
   readonly memoryPolicyRuntime: MemoryPolicyRuntime;
+  private permissionReviewPolicy: PermissionReviewPolicy = DEFAULT_PERMISSION_REVIEW_POLICY;
   private readonly invalidConfigRemovalSecret = randomBytes(32);
   private startupConfig: ArchCodeConfig | undefined;
   private writeTail: Promise<void> = Promise.resolve();
@@ -420,6 +429,11 @@ export class ServerConfigService {
     return providerAdapterCatalog.toDto();
   }
 
+  /** Current live policy read by the Runtime for each unresolved ask. */
+  getPermissionReviewPolicy(): PermissionReviewPolicy {
+    return this.permissionReviewPolicy;
+  }
+
   async save(request: UpdateServerConfigRequest): Promise<ServerConfigSnapshot> {
     const result = await this.saveWithRuntimeConfig(request);
     return result.snapshot;
@@ -467,6 +481,7 @@ export class ServerConfigService {
           }
         }
         if (preparedModelRuntime !== undefined) this.modelRuntime.publish(preparedModelRuntime);
+        this.permissionReviewPolicy = permissionReviewPolicyForConfig(validated);
       };
       const nextPolicy = memoryPolicyForConfig(validated);
       if (sameMemoryPolicy(this.memoryPolicyRuntime.current.policy, nextPolicy)) {
@@ -556,6 +571,7 @@ export class ServerConfigService {
   ): ServerConfigInitialization {
     this.modelRuntime.publish(prepared);
     this.memoryPolicyRuntime.initialize(memoryPolicyForConfig(config));
+    this.permissionReviewPolicy = permissionReviewPolicyForConfig(config);
     this.startupConfig = config;
     const { auth, ...runtimeConfig } = config;
     return {
@@ -1646,6 +1662,12 @@ function memoryPolicyForConfig(config: ArchCodeConfig): MemoryPolicy {
 function sameMemoryPolicy(left: MemoryPolicy, right: MemoryPolicy): boolean {
   return left.useMemory === right.useMemory
     && left.autoLearning === right.autoLearning;
+}
+
+function permissionReviewPolicyForConfig(
+  config: ArchCodeConfig,
+): PermissionReviewPolicy {
+  return Object.freeze({ autoReview: config.permissions.autoReview });
 }
 
 function errorMessage(cause: unknown): string {

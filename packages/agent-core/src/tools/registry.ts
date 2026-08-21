@@ -1,5 +1,6 @@
 import type { FinalizedToolResult, HitlResponse } from "@archcode/protocol";
 import type { Logger } from "../logger";
+import type { ApprovalReviewer } from "../approval-review";
 import type { ChildExecutionOutcome } from "../delegation/types";
 import { silentLogger } from "../logger";
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
@@ -30,6 +31,7 @@ import {
 export interface ToolRegistryOptions {
   readonly finalizer: ToolOutputFinalizer;
   readonly hitlCodec: HitlBoundaryCodec;
+  readonly approvalReviewer: ApprovalReviewer;
   readonly logger?: Logger;
 }
 
@@ -53,6 +55,7 @@ export class ToolRegistry {
   readonly #logger: Logger;
   readonly #finalizer: ToolOutputFinalizer;
   readonly #hitlCodec: HitlBoundaryCodec;
+  readonly #approvalReviewer: ApprovalReviewer;
 
   readonly globalHooks: {
     readonly before: BeforeHook[];
@@ -64,6 +67,7 @@ export class ToolRegistry {
     this.#logger = options.logger ?? silentLogger;
     this.#finalizer = options.finalizer;
     this.#hitlCodec = options.hitlCodec;
+    this.#approvalReviewer = options.approvalReviewer;
   }
 
   register(descriptor: AnyToolDescriptor): void {
@@ -303,7 +307,12 @@ export class ToolRegistry {
       this.#logFailure("tool.onInputResolved.failed", descriptor.name, error);
     }
 
-    const permission = await this.#resolvePermission(descriptor, currentInput, context);
+    const permission = await this.#resolvePermission(
+      descriptor,
+      currentInput,
+      context,
+      resume === undefined,
+    );
     if (permission.kind === "settled") return this.settleSystem(toolCall, context, permission.raw);
     if (permission.kind === "blocked") {
       if (resume === undefined) return this.#createBlockedOutcome(toolCall, context, permission.request);
@@ -545,10 +554,12 @@ export class ToolRegistry {
     descriptor: AnyToolDescriptor,
     input: unknown,
     context: ToolExecutionContext,
+    initialAttempt: boolean,
   ): Promise<PermissionResolution> {
     try {
-      return await this.#resolvePermissionUnsafe(descriptor, input, context);
+      return await this.#resolvePermissionUnsafe(descriptor, input, context, initialAttempt);
     } catch (error) {
+      if (context.abort.aborted) throw error;
       return { kind: "settled", raw: pipelineError("permission-denied", error, false) };
     }
   }
@@ -557,6 +568,7 @@ export class ToolRegistry {
     descriptor: AnyToolDescriptor,
     input: unknown,
     context: ToolExecutionContext,
+    initialAttempt: boolean,
   ): Promise<PermissionResolution> {
     const decisions: PermissionDecision[] = [];
     for (const permission of this.globalPermissions) {
@@ -577,6 +589,24 @@ export class ToolRegistry {
     if (!unsatisfied) {
       context.permissionOutcome = "allow";
       return { kind: "allow" };
+    }
+
+    if (initialAttempt) {
+      let review;
+      try {
+        review = await this.#approvalReviewer.review({
+          context,
+          permission: unsatisfied,
+          input,
+        });
+      } catch (error) {
+        if (context.abort.aborted) throw error;
+        this.#logFailure("tool.approval-review.failed", descriptor.name, error);
+      }
+      if (review?.outcome === "approved") {
+        context.permissionOutcome = "allow";
+        return { kind: "allow" };
+      }
     }
     context.permissionOutcome = "ask";
 

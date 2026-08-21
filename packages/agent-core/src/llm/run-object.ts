@@ -20,8 +20,18 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
     }),
   };
   let lastSchemaError: LlmSchemaValidationError | undefined;
+  const schemaAttempts = input.attemptPolicy?.schemaAttempts ?? LLM_OBJECT_SCHEMA_REPAIR_ATTEMPTS;
+  const retryProfile = input.attemptPolicy === undefined
+    ? undefined
+    : {
+        totalAttempts: input.attemptPolicy.providerAttempts,
+        baseDelayMs: 0,
+        factor: 1,
+        jitterRatio: 0,
+        maxDelayMs: 0,
+      };
 
-  for (let repairAttempt = 1; repairAttempt <= LLM_OBJECT_SCHEMA_REPAIR_ATTEMPTS; repairAttempt++) {
+  for (let repairAttempt = 1; repairAttempt <= schemaAttempts; repairAttempt++) {
     const prompt = repairAttempt === 1 ? input.prompt : buildRepairPrompt(input.prompt, lastSchemaError);
     const result = await withLlmRetry(async () => getLlmAdapter().generateText({
       model: input.model,
@@ -30,7 +40,7 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
       abortSignal: input.abortSignal,
       tools,
       ...callOptions,
-    }), "LLM object generation", undefined, {
+    }), "LLM object generation", retryProfile, {
       abortSignal: input.abortSignal,
       retryScheduler: input.retryScheduler,
       redactSensitiveText: input.redactSensitiveText,
@@ -50,7 +60,7 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
         context: { schema: input.schemaName, repairAttempt },
         error: { name: err.name, message: err.message },
       });
-      if (repairAttempt >= LLM_OBJECT_SCHEMA_REPAIR_ATTEMPTS) throw err;
+      if (repairAttempt >= schemaAttempts) throw err;
     }
   }
 

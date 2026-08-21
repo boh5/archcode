@@ -56,6 +56,21 @@ under another selected section.
   UTF-8-byte contract, and supports enable, change, and remove actions. Changing
   or removing the password states that existing browser sessions are signed
   out. The shared Config footer does not pretend to submit password fields.
+- Security also exposes one Config-backed `AI approval review` toggle. Its
+  default is enabled when `permissions.autoReview` is absent, and its helper
+  copy states that the fast model only approves one action when it clearly fits
+  the current task; uncertainty or failure still asks the user. The toggle
+  participates in the shared Config draft, dirty state, Save, Reload, revision
+  conflict, and feedback behavior; it does not add a permission mode or model
+  selector.
+- While the Config draft is dirty, password mutation actions are disabled and
+  the Security section tells the user to Save or Reload first. Password fields
+  and their independent request/error lifecycle remain separate from Config
+  persistence, and saving the Config never submits password values.
+- While a password mutation request is pending, lock Settings section
+  navigation, Config controls, Save, and Reload. This prevents a successful
+  password request and its authoritative reload from discarding a newer Config
+  draft created during the request.
 - Runtime Data is an independent inspection and recovery workflow. Project
   selection enables the destructive action; Retry Runtime is secondary; Delete
   opens the exact irreversible confirmation described below. It never uses the
@@ -192,4 +207,7 @@ polite live region; destructive and request errors use an alert.
 - All controls retain visible focus rings and at least 44px hit areas on coarse
   pointers. Dialog Escape and Cancel remain available until deletion begins.
 - Light and dark modes use existing semantic tokens. No page-local colors,
-  decorative animation, or new prototype are introduced.
+  decorative animation, or additional parallel prototype are introduced. The
+  current Settings visual reference is `../prototypes/settings.html`; it keeps
+  the existing bounded dialog, rail, section navigation, shared Config footer,
+  and Security states described above.
