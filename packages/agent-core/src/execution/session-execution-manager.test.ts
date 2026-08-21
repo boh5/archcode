@@ -6569,8 +6569,15 @@ describe("SessionExecutionManager", () => {
       parentAbort: undefined,
     });
 
+    const cancellationEntered = deferred<void>();
+    const stopWatchingCancellation = parentStore.subscribe((state) => {
+      if (state.childSessionLinks.some((link) => (
+        link.childSessionId === child.sessionId && link.status === "cancelling"
+      ))) cancellationEntered.resolve(undefined);
+    });
     const cancellation = manager.cancelDescendantSession(workspaceRoot, parentId, child.sessionId);
-    await Bun.sleep(20);
+    await cancellationEntered.promise;
+    stopWatchingCancellation();
     childRun.resolve({ text: "done", steps: 1 });
     expect(await cancellation).toBe("cancelled");
 
@@ -7492,6 +7499,17 @@ describe("SessionExecutionManager", () => {
       source: { kind: "direct" },
       agentName: "lead",
     });
+    const firstLinkPersisted = deferred<void>();
+    const secondLinkPersisted = deferred<void>();
+    const stopWatchingLinks = parentStore.subscribe((state) => {
+      const sendMessageLinks = state.childSessionLinks.filter((link) => link.toolName === "send_message");
+      if (sendMessageLinks.some((link) => link.parentToolCallId === "sender-call-a")) {
+        firstLinkPersisted.resolve(undefined);
+      }
+      if (sendMessageLinks.some((link) => link.parentToolCallId === "sender-call-b")) {
+        secondLinkPersisted.resolve(undefined);
+      }
+    });
     const firstRun = deferred<MockAgentResult>();
     const firstPrefixRun = deferred<MockAgentResult>();
     const secondPrefixRun = deferred<MockAgentResult>();
@@ -7556,11 +7574,7 @@ describe("SessionExecutionManager", () => {
     if (firstQueued === undefined || firstQueued.executionId === child.executionId) {
       throw new Error("Expected first Queue prefix");
     }
-    for (let attempt = 0; parentStore.getState().childSessionLinks.every((link) => (
-      link.childExecutionId !== firstQueued.executionId
-    )) && attempt < 30; attempt += 1) {
-      await Bun.sleep(0);
-    }
+    await firstLinkPersisted.promise;
     expect(parentStore.getState().childSessionLinks.filter((link) => link.toolName === "send_message")).toEqual([
       expect.objectContaining({ parentToolCallId: "sender-call-a", childExecutionId: firstQueued.executionId }),
     ]);
@@ -7576,12 +7590,8 @@ describe("SessionExecutionManager", () => {
       secondQueued = harness.manager.getExecution(workspaceRoot, child.sessionId);
     }
     expect(secondQueued?.executionId).not.toBe(firstQueued.executionId);
-    await Bun.sleep(10);
-    for (let attempt = 0; parentStore.getState().childSessionLinks.filter((link) => (
-      link.toolName === "send_message"
-    )).length < 2 && attempt < 30; attempt += 1) {
-      await Bun.sleep(0);
-    }
+    await secondLinkPersisted.promise;
+    stopWatchingLinks();
     const state = child.store.getState();
     expect(state.pendingMessages).toEqual([]);
     expect(state.executions).toHaveLength(3);
