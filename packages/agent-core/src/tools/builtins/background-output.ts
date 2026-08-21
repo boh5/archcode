@@ -128,7 +128,12 @@ export async function executeBackgroundOutput(
       message: `Child Session store not found: ${input.session_id}`,
     });
   }
-  if (childStore.getState().parentSessionId !== parentSessionId) {
+  const parentRootSessionId = ctx.store.getState().rootSessionId;
+  const childState = childStore.getState();
+  if (
+    childState.parentSessionId !== parentSessionId
+    || childState.rootSessionId !== parentRootSessionId
+  ) {
     return createToolErrorResult({
       kind: "execution",
       code: "TOOL_CHILD_SESSION_NOT_DIRECT",

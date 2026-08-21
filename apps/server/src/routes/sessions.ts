@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import {
+  AgentTreeProjectionError,
   NotRootSessionError,
   SessionDeleteConflictError,
   SessionDeleteInProgressError,
   SessionAutomationReferenceConflictError,
   SessionFamilyStopConflictError,
   SessionFamilyStopInProgressError,
+  SessionFamilySnapshotConflictError,
   SessionFileNotFoundError,
   SessionGoalServiceError,
   SessionModelSelectionConflictError,
@@ -148,6 +150,11 @@ export function createSessionsRoutes(runtime: AgentRuntime): Hono {
       }
       if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
         throw new SessionNotFoundError(sessionId);
+      }
+      if (error instanceof AgentTreeProjectionError || error instanceof SessionFamilySnapshotConflictError) {
+        throw new ServerError("BAD_REQUEST", error.message, 409, {
+          scopeCode: "AGENT_TREE_SNAPSHOT_CONFLICT",
+        });
       }
       throw error;
     }

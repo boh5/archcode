@@ -1,7 +1,7 @@
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import type { ProjectContextResolver } from "../projects/context-resolver";
-import type { BuiltinMcpServerName } from "@archcode/protocol";
+import type { AgentTreeProjection, BuiltinMcpServerName } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
@@ -11,7 +11,13 @@ import type { ToolRegistry } from "../tools/index";
 import { ConfiguredAgent } from "./configured-agent";
 import { SkillNotAllowedError } from "./errors";
 import type { StoreApi } from "zustand";
-import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import type {
+  CancelDescendantSession,
+  ChildExecutionHandle,
+  ChildExecutionRequest,
+  ResumeChildRequest,
+  SendMessageToChild,
+} from "../delegation/types";
 import type {
   AgentDefinition,
   AgentMcpToolSnapshot,
@@ -19,7 +25,7 @@ import type {
   DelegationCapabilitySnapshot,
   DelegationTargetCapability,
 } from "./factory-types";
-import { DELEGATION_CORE_TOOLS } from "./constants";
+import { DELEGATION_CONTROL_TOOLS } from "./constants";
 import type { Agent } from "./types";
 import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
@@ -45,8 +51,10 @@ export interface AgentFactoryConfig {
   readonly sessionGoalService?: SessionGoalService;
   readonly versionControlDetector?: VersionControlDetector;
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
-  readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  readonly cancelDescendantSession?: CancelDescendantSession;
+  readonly sendMessageToChild?: SendMessageToChild;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  readonly getAgentTreeProjection?: (workspaceRoot: string, rootSessionId: string) => Promise<AgentTreeProjection>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   readonly resolveMcpToolSnapshot?: (
     builtinServerNames: readonly BuiltinMcpServerName[],
@@ -233,8 +241,10 @@ function createConfiguredAgent(
     delegationCapabilities,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
     startChildExecution: config.startChildExecution,
-    cancelChildSession: config.cancelChildSession,
+    cancelDescendantSession: config.cancelDescendantSession,
+    sendMessageToChild: config.sendMessageToChild,
     resumeChildSession: config.resumeChildSession,
+    getAgentTreeProjection: config.getAgentTreeProjection,
     acquireSessionCwdTransition: config.acquireSessionCwdTransition,
     resolveMcpToolSnapshot: config.resolveMcpToolSnapshot,
   });
@@ -252,7 +262,7 @@ function factoryResolveAllowedTools(
     || (definition.tools.delegateTargets?.length ?? 0) === 0
     || depth >= definition.childPolicy.maxDepth
   ) {
-    return all.filter((name) => !(DELEGATION_CORE_TOOLS as readonly string[]).includes(name));
+    return all.filter((name) => !(DELEGATION_CONTROL_TOOLS as readonly string[]).includes(name));
   }
 
   return all;

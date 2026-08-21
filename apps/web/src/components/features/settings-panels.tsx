@@ -186,11 +186,13 @@ export function SettingsNavigation({
   onSelect,
   invalidProfileCount = 0,
   recoveryMode = false,
+  interactionDisabled = false,
 }: {
   activeSection: SettingsSection;
   onSelect: (section: SettingsSection) => void;
   invalidProfileCount?: number;
   recoveryMode?: boolean;
+  interactionDisabled?: boolean;
 }) {
   const entries: Array<[SettingsSection, string]> = [
     ...(recoveryMode ? [["config-recovery", "Config Recovery"]] as Array<[SettingsSection, string]> : []),
@@ -207,7 +209,10 @@ export function SettingsNavigation({
   return <nav aria-label="Settings sections" className="grid grid-cols-3 gap-[3px] p-2 min-[641px]:flex min-[641px]:flex-col min-[641px]:gap-0.5 min-[641px]:p-2.5">
     <p className="col-span-3 px-[7px] pb-[3px] pt-0.5 text-[9.5px] font-bold uppercase tracking-[0.12em] text-text-tertiary min-[641px]:px-2.5 min-[641px]:pb-1.5 min-[641px]:pt-1.5">Server</p>
     {entries.map(([id, label]) => {
-      const disabled = recoveryMode && id !== "config-recovery" && id !== "updates";
+      const disabled = interactionDisabled || recoveryMode && id !== "config-recovery" && id !== "updates";
+      const disabledReason = interactionDisabled
+        ? "unavailable while the password update is in progress"
+        : "unavailable until the global configuration is valid";
       const showsInvalidProfiles = id === "profiles" && invalidProfileCount > 0;
       const attentionMessage = showsInvalidProfiles
         ? `${invalidProfileCount} variant ${invalidProfileCount === 1 ? "reference needs" : "references need"} attention`
@@ -219,9 +224,9 @@ export function SettingsNavigation({
         disabled={disabled}
         aria-current={id === activeSection ? "page" : undefined}
         aria-label={disabled
-          ? `${label}, unavailable until the global configuration is valid`
+          ? `${label}, ${disabledReason}`
           : attentionMessage === undefined ? undefined : `${label}, ${attentionMessage}`}
-        title={disabled ? "Unavailable until the global configuration is valid" : attentionMessage}
+        title={disabled ? disabledReason[0]!.toUpperCase() + disabledReason.slice(1) : attentionMessage}
         data-invalid-count={showsInvalidProfiles ? invalidProfileCount : undefined}
         className={`relative min-h-10 min-w-0 rounded-[5px] px-1.5 text-center text-[11px] font-medium transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:cursor-not-allowed disabled:text-text-muted min-[641px]:min-h-[34px] min-[641px]:px-2.5 min-[641px]:text-left ${id === activeSection ? "bg-brand-subtle text-brand before:absolute before:bottom-0 before:left-2.5 before:right-2.5 before:h-0.5 before:rounded-full before:bg-brand min-[641px]:font-semibold min-[641px]:before:bottom-2 min-[641px]:before:left-0 min-[641px]:before:right-auto min-[641px]:before:top-2 min-[641px]:before:h-auto min-[641px]:before:w-0.5" : disabled ? "" : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
       >

@@ -13,6 +13,7 @@ import { LiveToolOutputPublisher } from "../tool-output/live-publisher";
 import type { Logger } from "../logger";
 import { createTestProjectContext } from "./test-project-context";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "./test-registry";
+import { deferTestApprovalReviewer } from "./test-approval-reviewer";
 import { expectBlockedOutcome, expectBlockedRequest, expectSettledResult } from "./test-results";
 import { createTextToolResult } from "./results";
 import { askUserTool } from "./builtins/ask-user";
@@ -373,7 +374,11 @@ describe("ToolRegistry registration and resolution", () => {
   test("createRegistry registers initial descriptors", () => {
     const backing = fixture();
     const tool = descriptor();
-    const registry = createRegistry({ finalizer: backing.finalizer, hitlCodec: backing.hitlCodec }, [tool]);
+    const registry = createRegistry({
+      finalizer: backing.finalizer,
+      hitlCodec: backing.hitlCodec,
+      approvalReviewer: deferTestApprovalReviewer,
+    }, [tool]);
     expect(registry.getAll()).toEqual([tool]);
     expect(registry.globalHooks).toEqual({ before: [], finalized: [] });
     expect(registry.globalPermissions).toEqual([]);
@@ -575,6 +580,220 @@ describe("ToolRegistry permission and durable HITL boundary", () => {
     created.registry.globalPermissions.push(async () => { order.push("global"); return { outcome: "allow" }; });
     await created.registry.execute({ toolName: "echo", toolCallId: "permission-order", input: {} }, context("echo"));
     expect(order).toEqual(["global", "tool"]);
+  });
+
+  test("Reviewer is skipped for allow, deny, and an existing project approval", async () => {
+    const review = mock(async (_request: unknown) => ({ outcome: "approved" as const }));
+
+    const allowed = fixture({
+      approvalReviewer: { review },
+      descriptors: [descriptor({ permissions: [async () => ({ outcome: "allow" })] })],
+    });
+    expectSettledResult(await allowed.registry.execute(
+      { toolName: "echo", toolCallId: "allowed-without-review", input: {} },
+      context("echo"),
+    ));
+
+    const denied = fixture({
+      approvalReviewer: { review },
+      descriptors: [descriptor({ permissions: [async () => ({ outcome: "deny", reason: "blocked" })] })],
+    });
+    expectSettledResult(await denied.registry.execute(
+      { toolName: "echo", toolCallId: "denied-without-review", input: {} },
+      context("echo"),
+    ));
+
+    const scope = { kind: "tool-operation" as const, toolName: "echo", operation: "run", target: "approved" };
+    const approved = fixture({
+      approvalReviewer: { review },
+      descriptors: [descriptor({ permissions: [async () => ({
+        outcome: "ask",
+        approval: { eligible: true, scope, display: "Run echo", reason: "Approve" },
+      })] })],
+    });
+    const approvedContext = context("echo");
+    await approvedContext.projectContext.approvals.load(approvedContext.projectContext.project.workspaceRoot);
+    await approvedContext.projectContext.approvals.addApproval(scope, {
+      display: "Run echo",
+      reason: "Existing approval",
+      grantedBy: {},
+    });
+    expectSettledResult(await approved.registry.execute(
+      { toolName: "echo", toolCallId: approvedContext.toolCallId, input: {} },
+      approvedContext,
+    ));
+
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  test("Reviewer approves only the exact post-hook action without persisting approval", async () => {
+    const review = mock(async (_request: unknown) => ({ outcome: "approved" as const }));
+    const execute = mock(async (input: unknown) => createTextToolResult(JSON.stringify(input)));
+    const created = fixture({
+      approvalReviewer: { review },
+      descriptors: [descriptor({
+        inputSchema: z.object({ value: z.string() }).strict(),
+        hooks: { before: [async () => ({ value: "post-hook" })] },
+        permissions: [async () => ({
+          outcome: "ask",
+          source: "tool-guard",
+          ruleId: "EFFECT_REVIEW",
+          reason: "Exact rule reason",
+          prompt: "Human-facing prompt",
+          approval: { eligible: false, display: "Echo", reason: "Review echo" },
+        })],
+        execute,
+      })],
+    });
+    const ctx = context("echo");
+    const addApproval = spyOn(ctx.projectContext.approvals, "addApproval");
+
+    const result = expectSettledResult(await created.registry.execute(
+      { toolName: "echo", toolCallId: ctx.toolCallId, input: { value: "original" } },
+      ctx,
+    ));
+
+    expect(result.output.preview).toBe('{"value":"post-hook"}');
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(review.mock.calls[0]?.[0]).toMatchObject({
+      context: ctx,
+      input: { value: "post-hook" },
+      permission: {
+        outcome: "ask",
+        source: "tool-guard",
+        ruleId: "EFFECT_REVIEW",
+        reason: "Exact rule reason",
+        prompt: "Human-facing prompt",
+      },
+    });
+    expect(execute).toHaveBeenCalledWith({ value: "post-hook" }, ctx);
+    expect(addApproval).not.toHaveBeenCalled();
+    expect(ctx.permissionOutcome).toBe("allow");
+    addApproval.mockRestore();
+  });
+
+  test("Reviewer defer preserves the existing HITL request and human resume skips re-review", async () => {
+    const review = mock(async () => ({ outcome: "deferred" as const, reason: "ask_user" as const }));
+    const execute = mock(async () => createTextToolResult("approved by user"));
+    const created = fixture({
+      approvalReviewer: { review },
+      descriptors: [descriptor({
+        permissions: [async () => ({ outcome: "ask", reason: "approval needed" })],
+        execute,
+      })],
+    });
+    const ctx = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const blocked = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    expect(blocked.request.source.type).toBe("tool_permission");
+
+    const result = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: blocked.request,
+      requestKey: blocked.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx,
+    }));
+
+    expect(result.output.preview).toBe("approved by user");
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  test("human resume rejects changed or newly allowed facts and preserves a new deny without re-review", async () => {
+    const review = mock(async () => ({ outcome: "deferred" as const, reason: "ask_user" as const }));
+    let target = "first";
+    let outcome: "ask" | "allow" | "deny" = "ask";
+    const created = fixture({
+      approvalReviewer: { review },
+      descriptors: [descriptor({ permissions: [async () => {
+        if (outcome === "allow") return { outcome: "allow" };
+        if (outcome === "deny") return { outcome: "deny", reason: "Policy now denies" };
+        return {
+          outcome: "ask",
+          approval: {
+            eligible: true,
+            scope: { kind: "tool-operation", toolName: "echo", operation: "run", target },
+            display: "Run echo",
+            reason: "Approve",
+          },
+        };
+      }] })],
+    });
+    const ctx = context("echo");
+    const toolCall = { toolName: "echo", toolCallId: ctx.toolCallId, input: {} };
+    const first = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    target = "changed";
+    const changed = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: first.request,
+      requestKey: first.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx,
+    }));
+    expect(changed.details?.error?.code).toBe("TOOL_BLOCKED_RESPONSE_INVALID");
+
+    target = "first";
+    const second = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    outcome = "allow";
+    const nowAllowed = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: second.request,
+      requestKey: second.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx,
+    }));
+    expect(nowAllowed.details?.error?.code).toBe("TOOL_BLOCKED_RESPONSE_INVALID");
+
+    outcome = "ask";
+    const third = expectBlockedOutcome(await created.registry.execute(toolCall, ctx));
+    outcome = "deny";
+    const nowDenied = expectSettledResult(await created.registry.resumeBlocked({
+      toolCall,
+      request: third.request,
+      requestKey: third.requestKey,
+      response: { type: "permission_decision", decision: "approve_once" },
+      context: ctx,
+    }));
+    expect(nowDenied.details?.error?.code).toBe("TOOL_PERMISSION_DENIED");
+    expect(review).toHaveBeenCalledTimes(3);
+  });
+
+  test("Reviewer failures defer to HITL unless the Session signal is aborted", async () => {
+    for (const failure of [
+      new DOMException("Provider cancelled its own request", "AbortError"),
+      new Error("Unexpected Reviewer failure"),
+    ]) {
+      const review = mock(async () => { throw failure; });
+      const created = fixture({
+        approvalReviewer: { review },
+        descriptors: [descriptor({ permissions: [async () => ({ outcome: "ask" })] })],
+      });
+      const ctx = context("echo");
+
+      expectBlockedOutcome(await created.registry.execute(
+        { toolName: "echo", toolCallId: ctx.toolCallId, input: {} },
+        ctx,
+      ));
+      expect(review).toHaveBeenCalledTimes(1);
+    }
+
+    const controller = new AbortController();
+    const sessionAbort = new DOMException("Session cancelled", "AbortError");
+    const review = mock(async () => { throw sessionAbort; });
+    const created = fixture({
+      approvalReviewer: { review },
+      descriptors: [descriptor({ permissions: [async () => ({ outcome: "ask" })] })],
+    });
+    const ctx = context("echo");
+    ctx.abort = controller.signal;
+    controller.abort(sessionAbort);
+
+    await expect(created.registry.execute(
+      { toolName: "echo", toolCallId: ctx.toolCallId, input: {} },
+      ctx,
+    )).rejects.toBe(sessionAbort);
+    expect(review).toHaveBeenCalledTimes(1);
   });
 
   test("permission deny runs after input hooks, skips execution, and preserves structured kind/code", async () => {

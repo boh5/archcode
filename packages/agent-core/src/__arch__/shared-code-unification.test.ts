@@ -8,7 +8,7 @@ describe("Agent permission architecture", () => {
   test("keeps Agent-level permission tables in definitions", () => {
     const constants = readFileSync(join(projectRoot, "packages/agent-core/src/agents/constants.ts"), "utf8");
     expect(constants).toContain("SKILL_ACCESS_TOOLS");
-    expect(constants).toContain("DELEGATION_CORE_TOOLS");
+    expect(constants).toContain("DELEGATION_CONTROL_TOOLS");
 
     for (const name of ["lead", "analyst", "build", "analyst", "explore", "librarian", "lead"]) {
       const source = readFileSync(join(projectRoot, `packages/agent-core/src/agents/definitions/${name}.ts`), "utf8");
@@ -17,7 +17,7 @@ describe("Agent permission architecture", () => {
 
     for (const name of ["lead", "analyst", "build", "analyst"]) {
       const source = readFileSync(join(projectRoot, `packages/agent-core/src/agents/definitions/${name}.ts`), "utf8");
-      expect(source).toContain("...DELEGATION_CORE_TOOLS");
+      expect(source).toContain("...DELEGATION_CONTROL_TOOLS");
     }
   });
 });

@@ -702,17 +702,30 @@ function waitForFamilyIdle(
   projectSlug: string,
   rootSessionId: string,
 ): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      resolve();
+    };
     const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => {
       if (event.projectSlug !== projectSlug
         || event.rootSessionId !== rootSessionId
         || event.activity !== "idle") return;
-      unsubscribe();
-      resolve();
+      finish();
     });
     if (runtime.getSessionFamilyActivity(workspaceRoot, rootSessionId) === "idle") {
-      unsubscribe();
-      resolve();
+      void runtime.getSessionFile(workspaceRoot, rootSessionId).then((file) => {
+        if (file.pendingMessages.some((message) => message.state === "queued")) return;
+        finish();
+      }).catch((error) => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        reject(error);
+      });
     }
   });
 }

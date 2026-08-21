@@ -153,6 +153,7 @@ describe("current tool and config wire types", () => {
         },
       },
       integrations: { github: { enabled: true, tokenEnv: "GITHUB_TOKEN" } },
+      permissions: { autoReview: false },
     } satisfies ServerConfigUpdate;
 
     expect(serializeRoundTrip(config)).toEqual(config);

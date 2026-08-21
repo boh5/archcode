@@ -1,4 +1,4 @@
-import type { BuiltinMcpServerName } from "@archcode/protocol";
+import type { AgentTreeProjection, BuiltinMcpServerName } from "@archcode/protocol";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { scopedKey } from "../store/key";
@@ -11,7 +11,13 @@ import type { AgentFactory } from "./factory";
 import type { AgentDefinition, AgentMcpToolSnapshot } from "./factory-types";
 import type { Agent } from "./types";
 import type { Logger } from "../logger";
-import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import type {
+  CancelDescendantSession,
+  ChildExecutionHandle,
+  ChildExecutionRequest,
+  ResumeChildRequest,
+  SendMessageToChild,
+} from "../delegation/types";
 import { assertValidSessionCwd } from "../store/session-cwd";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
@@ -32,8 +38,10 @@ export interface SessionAgentManagerConfig {
     rootSessionId: string,
   ) => Promise<ReadonlySet<string>>;
   readonly startChildExecution?: (workspaceRoot: string, request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
-  readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  readonly cancelDescendantSession?: CancelDescendantSession;
+  readonly sendMessageToChild?: SendMessageToChild;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  readonly getAgentTreeProjection?: (workspaceRoot: string, rootSessionId: string) => Promise<AgentTreeProjection>;
   readonly acquireSessionCwdTransition?: (workspaceRoot: string, sessionId: string) => () => void;
   readonly resolveMcpToolSnapshot?: (
     builtinServerNames: readonly BuiltinMcpServerName[],
@@ -43,9 +51,14 @@ export interface SessionAgentManagerConfig {
 
 const DEFAULT_TOMBSTONE_TTL_MS = 300000;
 
+interface PendingAgentActivation {
+  readonly token: symbol;
+  readonly promise: Promise<Agent>;
+}
+
 export class SessionAgentManager {
   #agents = new Map<string, Agent>();
-  #pendingAgents = new Map<string, Promise<Agent>>();
+  #pendingAgents = new Map<string, PendingAgentActivation>();
   #factories = new Map<string, AgentFactory>();
   #tombstones = new Map<string, number>();
   #config: SessionAgentManagerConfig;
@@ -53,8 +66,10 @@ export class SessionAgentManager {
   readonly #storeManager: SessionStoreManager;
   readonly #logger: Logger;
   #startChildExecution: SessionAgentManagerConfig["startChildExecution"];
-  #cancelChildSession: SessionAgentManagerConfig["cancelChildSession"];
+  #cancelDescendantSession: SessionAgentManagerConfig["cancelDescendantSession"];
+  #sendMessageToChild: SessionAgentManagerConfig["sendMessageToChild"];
   #resumeChildSession: SessionAgentManagerConfig["resumeChildSession"];
+  #getAgentTreeProjection: SessionAgentManagerConfig["getAgentTreeProjection"];
   #acquireSessionCwdTransition: SessionAgentManagerConfig["acquireSessionCwdTransition"];
 
   constructor(config: SessionAgentManagerConfig) {
@@ -62,8 +77,10 @@ export class SessionAgentManager {
     this.#storeManager = config.storeManager;
     this.#logger = config.logger;
     this.#startChildExecution = config.startChildExecution;
-    this.#cancelChildSession = config.cancelChildSession;
+    this.#cancelDescendantSession = config.cancelDescendantSession;
+    this.#sendMessageToChild = config.sendMessageToChild;
     this.#resumeChildSession = config.resumeChildSession;
+    this.#getAgentTreeProjection = config.getAgentTreeProjection;
     this.#acquireSessionCwdTransition = config.acquireSessionCwdTransition;
     this.tombstoneTtlMs = config.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
   }
@@ -72,12 +89,20 @@ export class SessionAgentManager {
     this.#startChildExecution = callback;
   }
 
-  setCancelChildSession(callback: SessionAgentManagerConfig["cancelChildSession"]): void {
-    this.#cancelChildSession = callback;
+  setCancelDescendantSession(callback: SessionAgentManagerConfig["cancelDescendantSession"]): void {
+    this.#cancelDescendantSession = callback;
+  }
+
+  setSendMessageToChild(callback: SessionAgentManagerConfig["sendMessageToChild"]): void {
+    this.#sendMessageToChild = callback;
   }
 
   setResumeChildSession(callback: SessionAgentManagerConfig["resumeChildSession"]): void {
     this.#resumeChildSession = callback;
+  }
+
+  setGetAgentTreeProjection(callback: SessionAgentManagerConfig["getAgentTreeProjection"]): void {
+    this.#getAgentTreeProjection = callback;
   }
 
   setAcquireSessionCwdTransition(callback: SessionAgentManagerConfig["acquireSessionCwdTransition"]): void {
@@ -99,10 +124,11 @@ export class SessionAgentManager {
     }
 
     const pending = this.#pendingAgents.get(key);
-    if (pending) return pending;
+    if (pending) return pending.promise;
 
-    const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key);
-    this.#pendingAgents.set(key, promise);
+    const token = Symbol(`agent-activation:${key}`);
+    const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key, token);
+    this.#pendingAgents.set(key, { token, promise });
     return promise;
   }
 
@@ -111,18 +137,27 @@ export class SessionAgentManager {
     return this.#agents.get(scopedKey(workspaceRoot, sessionId));
   }
 
-  async #createAndRegisterAgent(workspaceRoot: string, sessionId: string, key: string): Promise<Agent> {
+  async #createAndRegisterAgent(
+    workspaceRoot: string,
+    sessionId: string,
+    key: string,
+    token: symbol,
+  ): Promise<Agent> {
     try {
       const agent = await this.#createAgent(workspaceRoot, sessionId);
       if (this.#isTombstonedKey(key)) {
         agent.dispose();
         throw new Error(`Session "${sessionId}" in workspace "${workspaceRoot}" has been deleted`);
       }
+      if (this.#pendingAgents.get(key)?.token !== token) {
+        agent.dispose();
+        throw new Error(`Agent activation for Session "${sessionId}" was superseded`);
+      }
 
       this.#agents.set(key, agent);
       return agent;
     } finally {
-      this.#pendingAgents.delete(key);
+      if (this.#pendingAgents.get(key)?.token === token) this.#pendingAgents.delete(key);
     }
   }
 
@@ -150,6 +185,7 @@ export class SessionAgentManager {
     const key = scopedKey(input.workspaceRoot, input.sessionId);
     const existing = this.#agents.get(key);
     if (existing) return;
+    this.#pendingAgents.delete(key);
 
     const factory = this.getFactory(input.workspaceRoot);
     const state = input.store.getState();
@@ -163,6 +199,7 @@ export class SessionAgentManager {
   dispose(workspaceRoot: string, sessionId: string): void {
     const key = scopedKey(workspaceRoot, sessionId);
     this.#tombstones.set(key, Date.now());
+    this.#pendingAgents.delete(key);
     const agent = this.#agents.get(key);
     if (!agent) {
       this.#storeManager.delete(sessionId, workspaceRoot);
@@ -242,8 +279,10 @@ export class SessionAgentManager {
           }
           return this.#startChildExecution(workspaceRoot, request);
         },
-        cancelChildSession: this.#cancelChildSession,
+        cancelDescendantSession: this.#cancelDescendantSession,
+        sendMessageToChild: this.#sendMessageToChild,
         resumeChildSession: this.#resumeChildSession,
+        getAgentTreeProjection: this.#getAgentTreeProjection,
         acquireSessionCwdTransition: this.#acquireSessionCwdTransition,
         resolveMcpToolSnapshot: this.#config.resolveMcpToolSnapshot,
         logger: this.#logger,

@@ -16,3 +16,8 @@ export const LLM_SHORT_RETRY_PROFILE: LlmRetryProfile = {
 
 export const LLM_OBJECT_SCHEMA_REPAIR_ATTEMPTS = 2;
 export const AI_SDK_MANAGED_MAX_RETRIES = 0;
+
+export const LLM_OBJECT_SINGLE_ATTEMPT_POLICY = Object.freeze({
+  providerAttempts: 1,
+  schemaAttempts: 1,
+} as const);

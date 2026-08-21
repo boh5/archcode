@@ -10,6 +10,7 @@ import type {
   AssistantOutputPart,
   AssistantSessionPart,
   ReasoningPart,
+  Reminder,
   RecoveryNoticePart,
   RunningToolPart,
   SessionMessage,
@@ -602,10 +603,11 @@ export function reduceStreamEvent(
       }
 
       if (isSubAgentReminder(event.reminder)) {
+        const nextKey = subAgentReminderKey(event.reminder);
         const hasTerminalReminder = state.reminders.some(
           (reminder) =>
-            reminder.sessionId === event.reminder.sessionId &&
-            isSubAgentReminder(reminder),
+            isSubAgentReminder(reminder)
+            && subAgentReminderKey(reminder) === nextKey,
         );
 
         if (hasTerminalReminder) return {};
@@ -1089,8 +1091,20 @@ function areTodosValid(todos: readonly SessionTodo[]): boolean {
   return inProgressCount <= 1;
 }
 
-function isSubAgentReminder(reminder: { source: { type: string } }): boolean {
-  return reminder.source.type.startsWith("subagent_");
+function isSubAgentReminder(reminder: Reminder): boolean {
+  return reminder.source.type.startsWith("subagent_")
+    || reminder.source.type === "queue_dispatch_blocked";
+}
+
+function subAgentReminderKey(reminder: Reminder): string {
+  const source = reminder.source;
+  if (source.type === "queue_dispatch_blocked") {
+    return `blocked:${source.sessionId}:${source.blockedAfterExecutionId}`;
+  }
+  if (source.type.startsWith("subagent_") && "sessionId" in source) {
+    return `terminal:${source.sessionId}:${source.childExecutionId ?? "legacy"}`;
+  }
+  throw new TypeError("Expected a sub-agent reminder");
 }
 
 function incrementUserMessages(stats: SessionStats): SessionStats {

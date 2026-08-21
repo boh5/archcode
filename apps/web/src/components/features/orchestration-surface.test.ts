@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildInspectorChildStatusMap,
   resolveInspectorAgentStatus,
 } from "./context-inspector/SessionAgentsInspector";
 
@@ -37,55 +36,20 @@ describe("orchestration workbench surface", () => {
     expect(context).toContain('["Working dir"');
   });
 
-  test("uses only authoritative runtime and child-link statuses in the Agent tree", () => {
+  test("uses only authoritative family activity and projected link statuses in the Agent tree", () => {
     expect(resolveInspectorAgentStatus("running").label).toBe("Running");
     expect(resolveInspectorAgentStatus("running").kind).toBe("running");
     expect(resolveInspectorAgentStatus("idle").label).toBe("Idle");
     expect(resolveInspectorAgentStatus("stopping")).toMatchObject({ label: "Stopping", kind: "running", tone: "warning" });
     expect(resolveInspectorAgentStatus(undefined, "waiting_for_human").label).toBe("Paused");
     expect(resolveInspectorAgentStatus(undefined, "waiting_for_human").kind).toBe("pending");
-    expect(resolveInspectorAgentStatus("waiting_for_human", undefined, "Permission")).toMatchObject({ label: "Permission", kind: "needs_you" });
-    expect(resolveInspectorAgentStatus("waiting_for_human", undefined, "Question")).toMatchObject({ label: "Question", kind: "needs_you" });
+    expect(resolveInspectorAgentStatus("waiting_for_human", undefined, undefined, "Permission")).toMatchObject({ label: "Permission", kind: "needs_you" });
+    expect(resolveInspectorAgentStatus("waiting_for_human", undefined, undefined, "Question")).toMatchObject({ label: "Question", kind: "needs_you" });
     expect(resolveInspectorAgentStatus(undefined, "cancelled").label).toBe("Stopped");
     expect(resolveInspectorAgentStatus(undefined, "cancelled").kind).toBe("stopped");
     expect(resolveInspectorAgentStatus(undefined, "cancelled").detail).toBe("Cancelled");
     expect(resolveInspectorAgentStatus(undefined, "completed").label).toBe("Completed");
+    expect(resolveInspectorAgentStatus(undefined, undefined, "suspended")).toMatchObject({ label: "Paused", kind: "pending" });
     expect(resolveInspectorAgentStatus(undefined).label).toBe("Status unavailable");
-  });
-  test("resolves nested child status from each authoritative parent Session link", () => {
-    const base = {
-      parentToolCallId: "delegate",
-      toolName: "delegate",
-      childExecutionId: "child-execution",
-      childAgentName: "build",
-      childProfile: "deep",
-      childSkillNames: [] as string[],
-      title: "Delegated work",
-      depth: 1,
-      background: false,
-      createdAt: 1,
-    } as const;
-    const statuses = buildInspectorChildStatusMap(
-      [{
-        ...base,
-        parentSessionId: "root",
-        childSessionId: "child",
-        status: "completed",
-      }],
-      [{
-        sessionId: "child",
-        childSessionLinks: [{
-          ...base,
-          parentSessionId: "child",
-          childSessionId: "grandchild",
-          childAgentName: "explore",
-          childProfile: "fast",
-          status: "waiting_for_human",
-        }],
-      }],
-    );
-
-    expect(statuses.get("child")).toBe("completed");
-    expect(statuses.get("grandchild")).toBe("waiting_for_human");
   });
 });

@@ -44,10 +44,20 @@ export interface LlmObjectInput<T> {
   logger?: Logger;
   retryScheduler?: RetryScheduler;
   redactSensitiveText: SensitiveTextRedactor;
+  /**
+   * Explicitly narrows provider and schema attempts for control-plane callers.
+   * Omission preserves the managed LLM defaults used by existing callers.
+   */
+  attemptPolicy?: LlmObjectAttemptPolicy;
   /** Observes normalized model usage without changing the structured result contract. */
   onUsage?: (usage: NormalizedUsage) => void;
   /** Schema name used in tool definition (defaults to "result") */
   schemaName?: string;
   /** Schema description used in tool definition */
   schemaDescription?: string;
+}
+
+export interface LlmObjectAttemptPolicy {
+  readonly providerAttempts: 1;
+  readonly schemaAttempts: 1;
 }

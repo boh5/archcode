@@ -167,9 +167,11 @@ export {
   SessionDeleteConflictError,
   SessionFileNotFoundError,
   SessionInitialPersistenceError,
+  SessionFamilySnapshotConflictError,
   SessionTreeIntegrityError,
 } from "./store/errors";
 export type { SessionTreeIntegrityReason } from "./store/errors";
+export * from "./agent-tree";
 export { SessionInputConflictError, SessionInputService, nextSessionTimestamp } from "./session-input/service";
 export {
   SessionModelSelectionConflictError,

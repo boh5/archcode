@@ -350,6 +350,19 @@ describe("background_output source pages", () => {
     expect(result.isError).toBe(true);
     expect(result.details?.error?.code).toBe("TOOL_INVALID_BACKGROUND_SESSION");
   });
+
+  test("rejects a forged direct child whose durable Root belongs to another family", async () => {
+    const ctx = context();
+    const store = child(ctx);
+    appendUser(store, "forged", "SECRET_FROM_OTHER_ROOT");
+    store.setState({ rootSessionId: crypto.randomUUID() });
+
+    const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_CHILD_SESSION_NOT_DIRECT");
+    expect(JSON.stringify(result)).not.toContain("SECRET_FROM_OTHER_ROOT");
+  });
 });
 
 function createManualDeadlineScheduler(): {

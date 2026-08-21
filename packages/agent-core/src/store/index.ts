@@ -56,6 +56,7 @@ export type {
   SessionStoreState,
 } from "./types";
 export { BusyError, InvalidExecutionTransitionError } from "./types";
+export type { SessionFamilySnapshot } from "./session-store-manager";
 export { getAssistantText } from "./helpers";
 export {
   projectModelMessagesFromStoredMessages,

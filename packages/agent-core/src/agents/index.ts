@@ -1,7 +1,7 @@
 export type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "./types";
 export {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
-  DELEGATION_CORE_TOOLS,
+  DELEGATION_CONTROL_TOOLS,
   MAX_CONCURRENT_SUB_AGENTS,
   SKILL_ACCESS_TOOLS,
 } from "./constants";

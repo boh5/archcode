@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -15,7 +15,12 @@ import {
 import { COMPRESSION_SUMMARY_SECTION_NAMES, createEmptyCompressionState } from "../compression";
 import { SessionStoreManager } from "./session-store-manager";
 import type { SessionToolBatch } from "./types";
-import { NotRootSessionError, SessionInitialPersistenceError, SessionTreeIntegrityError } from "./errors";
+import {
+  NotRootSessionError,
+  SessionFamilySnapshotConflictError,
+  SessionInitialPersistenceError,
+  SessionTreeIntegrityError,
+} from "./errors";
 import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
@@ -1964,6 +1969,277 @@ describe("SessionStoreManager", () => {
     expect(tree.root.children[0].session.agentName).toBe("explore");
     expect(tree.root.children[0].children).toHaveLength(1);
     expect(tree.root.children[0].children[0].session.sessionId).toBe(grandchildSessionId);
+  });
+
+  test("buildSessionTree() breaks sibling timestamp ties by Session ID", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root", createdAt: 1 });
+    const laterId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const earlierId = "00000000-0000-4000-8000-000000000001";
+    for (const childSessionId of [laterId, earlierId]) {
+      await writeSessionFile({
+        sessionId: childSessionId,
+        rootSessionId,
+        parentSessionId: rootSessionId,
+        title: childSessionId,
+        createdAt: 2,
+      });
+    }
+
+    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
+
+    expect(tree.root.children.map((child) => child.session.sessionId)).toEqual([earlierId, laterId]);
+  });
+
+  test("captureSessionFamilySnapshot() keeps full durable files from the same tree read", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    const otherRootSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root", createdAt: 1 });
+    await writeSessionFile({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      title: "child",
+      createdAt: 2,
+    });
+    await writeSessionFile({ sessionId: otherRootSessionId, title: "other", createdAt: 3 });
+
+    const snapshot = await manager.captureSessionFamilySnapshot(TMP_DIR, rootSessionId);
+
+    expect(snapshot.rootSessionId).toBe(rootSessionId);
+    expect(snapshot.revision.length).toBeGreaterThan(0);
+    expect([...snapshot.files.keys()].sort()).toEqual([childSessionId, rootSessionId].sort());
+    expect(snapshot.files.get(childSessionId)?.title).toBe("child");
+    expect(snapshot.tree.root.children[0]?.session.sessionId).toBe(childSessionId);
+    expect(await manager.isSessionFamilySnapshotCurrent(TMP_DIR, snapshot)).toBe(true);
+
+    await writeSessionFile({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      title: "changed-child",
+      createdAt: 2,
+    });
+    expect(await manager.isSessionFamilySnapshotCurrent(TMP_DIR, snapshot)).toBe(false);
+  });
+
+  test("a successful family snapshot reads each captured Session file exactly once", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    const otherRootSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root", createdAt: 1 });
+    await writeSessionFile({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      title: "child",
+      createdAt: 2,
+    });
+    await writeSessionFile({ sessionId: otherRootSessionId, title: "other", createdAt: 3 });
+    const file = spyOn(Bun, "file");
+
+    try {
+      const snapshot = await manager.captureSessionFamilySnapshot(TMP_DIR, rootSessionId);
+
+      expect([...snapshot.files.keys()].sort()).toEqual([childSessionId, rootSessionId].sort());
+      for (const capturedSessionId of [rootSessionId, childSessionId]) {
+        expect(file.mock.calls.filter(([path]) => String(path) === canonicalSessionPath(capturedSessionId))).toHaveLength(1);
+      }
+    } finally {
+      file.mockRestore();
+    }
+  });
+
+  test("Agent Tree retries after queued family persistence becomes durable", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    const rootStore = manager.create(rootSessionId, TMP_DIR, { source: { kind: "direct" }, agentName: "lead" });
+    manager.create(childSessionId, TMP_DIR, {
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      title: "child",
+      agentName: "explore",
+      activeSkillNames: [],
+      delegationRequest: {
+        agent_type: "explore",
+        profile: "fast",
+        title: "child",
+        objective: "Capture a durable family snapshot.",
+        skills: [],
+        background: true,
+      },
+    });
+    await Promise.all([
+      manager.flushSession(rootSessionId, TMP_DIR),
+      manager.flushSession(childSessionId, TMP_DIR),
+    ]);
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let releaseSave!: () => void;
+    const saveReleased = new Promise<void>((resolve) => { releaseSave = resolve; });
+    let markSaveStarted!: () => void;
+    const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve; });
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      markSaveStarted();
+      await saveReleased;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      rootStore.getState().append({
+        type: "tool-child-session-link",
+        link: {
+          parentSessionId: rootSessionId,
+          parentToolCallId: "call-1",
+          toolName: "delegate",
+          childSessionId,
+          childExecutionId: "execution-1",
+          childAgentName: "explore",
+          childProfile: "fast",
+          childSkillNames: [],
+          title: "child",
+          depth: 1,
+          background: true,
+          status: "running",
+          createdAt: 1,
+        },
+      });
+      await saveStarted;
+
+      let captured = false;
+      const capture = manager.buildSessionTree(TMP_DIR, rootSessionId)
+        .then((value) => {
+          captured = true;
+          return value;
+        });
+      await Promise.resolve();
+      expect(captured).toBe(false);
+
+      releaseSave();
+      const tree = await capture;
+      const snapshot = await manager.captureSessionFamilySnapshot(TMP_DIR, rootSessionId);
+      expect(tree.root.session.sessionId).toBe(rootSessionId);
+      expect(snapshot.files.get(rootSessionId)?.childSessionLinks).toHaveLength(1);
+      expect(snapshot.files.get(rootSessionId)?.childSessionLinks[0]?.status).toBe("running");
+    } finally {
+      releaseSave();
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("Agent Tree capture does not await persistence from a separate root family", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const targetRootSessionId = sessionId();
+    const blockedRootSessionId = sessionId();
+    await manager.createSessionFile(
+      TMP_DIR,
+      { source: { kind: "direct" }, agentName: "lead", title: "target-root" },
+      targetRootSessionId,
+    );
+    await manager.createSessionFile(
+      TMP_DIR,
+      { source: { kind: "direct" }, agentName: "lead", title: "blocked-root" },
+      blockedRootSessionId,
+    );
+    const blockedRootStore = manager.get(blockedRootSessionId, TMP_DIR)!;
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let markBlockedSaveStarted!: () => void;
+    const blockedSaveStarted = new Promise<void>((resolve) => { markBlockedSaveStarted = resolve; });
+    let releaseBlockedSave!: () => void;
+    const blockedSaveReleased = new Promise<void>((resolve) => { releaseBlockedSave = resolve; });
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      if (state.sessionId !== blockedRootSessionId) {
+        await originalSave(state, workspaceRoot);
+        return;
+      }
+      markBlockedSaveStarted();
+      await blockedSaveReleased;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      blockedRootStore.getState().setTitle("blocked persistence");
+      await blockedSaveStarted;
+
+      const captureAndTree = Promise.all([
+        manager.captureSessionFamilySnapshot(TMP_DIR, targetRootSessionId),
+        manager.buildSessionTree(TMP_DIR, targetRootSessionId),
+      ]);
+      const bounded = await Promise.race([
+        captureAndTree,
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 500)),
+      ]);
+
+      expect(bounded).not.toBe("timeout");
+      if (bounded === "timeout") return;
+      const [snapshot, tree] = bounded;
+      expect([...snapshot.files.keys()]).toEqual([targetRootSessionId]);
+      expect(snapshot.tree.root.session.sessionId).toBe(targetRootSessionId);
+      expect(tree.root.session.sessionId).toBe(targetRootSessionId);
+    } finally {
+      releaseBlockedSave();
+      await manager.flushSession(blockedRootSessionId, TMP_DIR).catch(() => {});
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
+  test("Agent Tree snapshot paths reject a target family persistence hang within a deadline", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    await manager.createSessionFile(
+      TMP_DIR,
+      { source: { kind: "direct" }, agentName: "lead", title: "target-root" },
+      rootSessionId,
+    );
+    const rootStore = manager.get(rootSessionId, TMP_DIR)!;
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    let markSaveStarted!: () => void;
+    const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve; });
+    let releaseSave!: () => void;
+    const saveReleased = new Promise<void>((resolve) => { releaseSave = resolve; });
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      if (state.sessionId !== rootSessionId) {
+        await originalSave(state, workspaceRoot);
+        return;
+      }
+      markSaveStarted();
+      await saveReleased;
+      await originalSave(state, workspaceRoot);
+    };
+
+    try {
+      rootStore.getState().setTitle("blocked target persistence");
+      await saveStarted;
+
+      const results = await Promise.race([
+        Promise.allSettled([
+          manager.captureSessionFamilySnapshot(TMP_DIR, rootSessionId),
+          manager.buildSessionTree(TMP_DIR, rootSessionId),
+          manager.listSessionFamilyToolBatchHitlIds(TMP_DIR, rootSessionId),
+        ]),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1_000)),
+      ]);
+
+      expect(results).not.toBe("timeout");
+      if (results === "timeout") throw new Error("Agent Tree snapshot persistence barrier was unbounded");
+      for (const result of results) {
+        expect(result.status).toBe("rejected");
+        if (result.status === "rejected") {
+          expect(result.reason).toBeInstanceOf(SessionFamilySnapshotConflictError);
+        }
+      }
+    } finally {
+      releaseSave();
+      await manager.flushSession(rootSessionId, TMP_DIR).catch(() => {});
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
   });
 
   test("buildSessionTree() fails instead of skipping invalid descendants", async () => {

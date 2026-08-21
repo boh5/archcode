@@ -1579,6 +1579,31 @@ describe("reduceStreamEvent", () => {
     expect(state.reminders[0]).toMatchObject({ id: "reminder-1", consumedAt: expect.any(Number) });
   });
 
+  test("deduplicates child reminders by Session and Execution, not Session forever", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "reminder", reminder: makeReminder({
+        id: "child-execution-a",
+        source: { type: "subagent_completed", sessionId: "child", childExecutionId: "execution-a" },
+        sessionId: "child",
+      }) },
+      { type: "reminder", reminder: makeReminder({
+        id: "child-execution-a-duplicate",
+        source: { type: "subagent_completed", sessionId: "child", childExecutionId: "execution-a" },
+        sessionId: "child",
+      }) },
+      { type: "reminder", reminder: makeReminder({
+        id: "child-execution-b",
+        source: { type: "subagent_completed", sessionId: "child", childExecutionId: "execution-b" },
+        sessionId: "child",
+      }) },
+    ]);
+
+    expect(state.reminders.map((reminder) => reminder.id)).toEqual([
+      "child-execution-a",
+      "child-execution-b",
+    ]);
+  });
+
   test("creates user messages", () => {
     const state = applyEvents(createProjection({ currentExecutionId: "run-user" }), [
       committedUserEvent("hello", "run-user"),

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import type { DiffFile, SessionTreeNode } from "../../../api/types";
-import { useSessionTree } from "../../../api/queries";
+import type { AgentTreeNode, DiffFile } from "../../../api/types";
+import { useSession, useSessionTree } from "../../../api/queries";
 import { useLiveSessionDiff } from "../../../hooks/use-live-session-diff";
 
 export interface InspectorAgentEntry {
@@ -11,6 +11,9 @@ export interface InspectorAgentEntry {
   profile: string;
   depth: number;
   hasChildren: boolean;
+  latestExecutionStatus: AgentTreeNode["latestExecutionStatus"];
+  activeExecutionId: string | null;
+  linkStatus: AgentTreeNode["linkStatus"];
 }
 
 export interface SessionInspectorProjection {
@@ -26,7 +29,7 @@ export interface SessionInspectorProjection {
   };
 }
 
-export function flattenInspectorAgents(node: SessionTreeNode | undefined, depth = 0): InspectorAgentEntry[] {
+export function flattenInspectorAgents(node: AgentTreeNode | undefined): InspectorAgentEntry[] {
   if (!node) return [];
   return [
     {
@@ -34,10 +37,13 @@ export function flattenInspectorAgents(node: SessionTreeNode | undefined, depth 
       name: node.session.title || "Untitled",
       type: node.session.agentName,
       profile: node.session.profile,
-      depth,
+      depth: node.depth,
       hasChildren: node.children.length > 0,
+      latestExecutionStatus: node.latestExecutionStatus,
+      activeExecutionId: node.activeExecutionId,
+      linkStatus: node.linkStatus,
     },
-    ...node.children.flatMap((child) => flattenInspectorAgents(child, depth + 1)),
+    ...node.children.flatMap((child) => flattenInspectorAgents(child)),
   ];
 }
 
@@ -45,13 +51,21 @@ export function flattenInspectorAgents(node: SessionTreeNode | undefined, depth 
 export function useSessionInspectorProjection(): SessionInspectorProjection {
   const { slug = "", sessionId = "" } = useParams<{ slug: string; sessionId: string }>();
   const [searchParams] = useSearchParams();
-  const tree = useSessionTree(slug, sessionId);
+  const session = useSession(slug, sessionId);
+  const tree = useSessionTree(slug, session.data?.rootSessionId ?? "");
   const fullDiffOpen = searchParams.get("view") === "diff";
-  const changes = useLiveSessionDiff(slug, sessionId, !fullDiffOpen);
+  const changes = useLiveSessionDiff(slug, sessionId, {
+    enabled: !fullDiffOpen,
+    activityRootSessionId: session.data?.rootSessionId ?? "",
+  });
   const agents = useMemo(() => flattenInspectorAgents(tree.data?.root), [tree.data]);
 
   return {
-    agents: { items: agents, isLoading: tree.isLoading, error: tree.error },
+    agents: {
+      items: agents,
+      isLoading: session.isPending || tree.isLoading,
+      error: session.error ?? tree.error,
+    },
     changes: { files: changes.data, isLoading: changes.isLoading, error: changes.error },
   };
 }

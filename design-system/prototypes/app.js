@@ -1118,7 +1118,13 @@
       deep: { model: 'openai:gpt-5.6-luna', variant: 'deep', options: { temperature: 0.3 } },
       fast: { model: 'openai:gpt-5.6-luna', variant: 'fast', options: { temperature: 0.1 } },
     },
-    loginEnabled: true,
+    autoReview: true,
+    loginEnabled: false,
+    passwordMutationPending: undefined,
+    securityCurrentPassword: '',
+    securityPassword: '',
+    securityConfirmation: '',
+    securityAttempted: false,
     securityMessage: '',
     runtimeSelected: false,
     runtimeDeleted: false,
@@ -1144,12 +1150,12 @@
     updatePhase: 'current',
   });
   let settingsState = createSettingsState();
-  const settingsConfigKeys = ['providerName', 'providerPackage', 'providerBaseUrl', 'modelName', 'contextLimit', 'outputLimit', 'inputText', 'inputImage', 'outputText', 'modelOptions', 'modelVariants', 'providerRemoved', 'extraProvider', 'extraModel', 'profiles', 'context7Enabled', 'customMcp', 'extraMcp', 'mcpUrl', 'useMemory', 'autoLearning', 'githubEnabled', 'githubTokenEnv', 'githubOwner', 'githubRepo'];
+  const settingsConfigKeys = ['providerName', 'providerPackage', 'providerBaseUrl', 'modelName', 'contextLimit', 'outputLimit', 'inputText', 'inputImage', 'outputText', 'modelOptions', 'modelVariants', 'providerRemoved', 'extraProvider', 'extraModel', 'profiles', 'context7Enabled', 'customMcp', 'extraMcp', 'mcpUrl', 'useMemory', 'autoLearning', 'githubEnabled', 'githubTokenEnv', 'githubOwner', 'githubRepo', 'autoReview'];
   const captureSettingsConfig = () => Object.fromEntries(settingsConfigKeys.map((key) => [key, structuredClone(settingsState[key])]));
   const captureSettingsMemory = () => structuredClone({ personalMemory: settingsState.personalMemory, topicName: settingsState.topicName, topicTitle: settingsState.topicTitle, topicContent: settingsState.topicContent, topicIsNew: settingsState.topicIsNew });
   let savedSettingsConfig = captureSettingsConfig();
   let savedSettingsMemory = captureSettingsMemory();
-  const settingsConfigSections = new Set(['models', 'profiles', 'mcp', 'memory', 'github']);
+  const settingsConfigSections = new Set(['models', 'profiles', 'security', 'mcp', 'memory', 'github']);
   const settingsHeading = (kicker, title, description) => `<header class="settings-panel-head"><span class="section-kicker">${kicker}</span><h3 tabindex="-1">${title}</h3><p>${description}</p></header>`;
   const settingsField = (label, control, hint = '') => `<label class="settings-field"><span>${label}</span>${control}${hint ? `<small>${hint}</small>` : ''}</label>`;
   const settingsToggle = (binding, checked, label, description) => `<label class="settings-toggle"><span><strong>${label}</strong><small>${description}</small></span><input type="checkbox" role="switch" data-settings-bind="${binding}" ${checked ? 'checked' : ''}><i aria-hidden="true"></i></label>`;
@@ -1163,6 +1169,33 @@
   const settingsModelExists = (model) => !settingsState.providerRemoved && (model === 'openai:gpt-5.6-luna' || (model === 'openai:model-2' && settingsState.extraModel));
   const settingsVariantKeysForModel = (model) => model === 'openai:gpt-5.6-luna' ? Object.keys(settingsState.modelVariants || {}) : [];
   const settingsMissingVariantCount = () => Object.values(settingsState.profiles).filter((profile) => settingsModelExists(profile.model) && profile.variant && !settingsVariantKeysForModel(profile.model).includes(profile.variant)).length;
+  let settingsPasswordTimer;
+  const settingsPasswordBytes = (value) => new TextEncoder().encode(value).byteLength;
+  const resetSettingsPasswordDraft = () => {
+    settingsState.securityCurrentPassword = '';
+    settingsState.securityPassword = '';
+    settingsState.securityConfirmation = '';
+    settingsState.securityAttempted = false;
+  };
+  const settingsPasswordError = () => {
+    const current = settingsState.securityCurrentPassword;
+    const password = settingsState.securityPassword;
+    const confirmation = settingsState.securityConfirmation;
+    if (settingsPasswordBytes(current) > 1024) return 'Current password exceeds 1024 UTF-8 bytes.';
+    if (settingsPasswordBytes(password) > 1024) return 'Password must not exceed 1024 UTF-8 bytes.';
+    if (password && password.length < 10) return 'Use at least 10 characters.';
+    if (password && password !== confirmation) return 'Passwords do not match.';
+    if (settingsState.loginEnabled && settingsState.securityAttempted && !current) return 'Enter the current password.';
+    return '';
+  };
+  const settingsPasswordValid = () => {
+    const current = settingsState.securityCurrentPassword;
+    const password = settingsState.securityPassword;
+    return Boolean(password)
+      && password.length >= 10
+      && Boolean(current || !settingsState.loginEnabled)
+      && !settingsPasswordError();
+  };
 
   function renderSettingsModels() {
     const providerCard = settingsState.providerRemoved ? '' : `<article class="settings-block">
@@ -1212,12 +1245,29 @@
   }
 
   function renderSettingsSecurity() {
-    const current = settingsState.loginEnabled ? settingsField('Current password', '<input type="password" autocomplete="current-password" data-settings-security="current">') : '';
+    const hasLogin = settingsState.loginEnabled;
+    const dirty = settingsState.dirtySections.size > 0;
+    const pending = Boolean(settingsState.passwordMutationPending);
+    const passwordError = settingsPasswordError();
+    const current = hasLogin ? '<label class="settings-field"><span>Current password</span><input type="password" autocomplete="current-password" data-settings-security="current"></label>' : '';
+    const primaryLabel = pending ? (settingsState.passwordMutationPending === 'remove' ? 'Removing…' : 'Saving…') : hasLogin ? 'Change password' : 'Enable login';
+    const dirtyDescription = dirty ? ' aria-describedby="security-password-dirty-hint"' : '';
     return `${settingsHeading('Server settings', 'Security', 'Manage the one password that protects this ArchCode server.')}
-      <div class="settings-status-card ${settingsState.loginEnabled ? 'attention' : 'error'}"><span data-icon="shield"></span><div><strong>${settingsState.loginEnabled ? 'Login is required' : 'Login is disabled'}</strong><p>${settingsState.loginEnabled ? 'Changing or removing the password signs every existing browser session out.' : 'Anyone who can reach this server can control ArchCode.'}</p></div></div>
-      <div class="settings-form-grid security-grid">${current}${settingsField(settingsState.loginEnabled ? 'New password' : 'Password', '<input type="password" minlength="10" autocomplete="new-password" data-settings-security="password">', 'Use at least 10 characters.')}${settingsField('Confirm password', '<input type="password" minlength="10" autocomplete="new-password" data-settings-security="confirmation">')}</div>
-      <p class="settings-inline-message" role="status" data-settings-inline-message ${settingsState.securityMessage ? '' : 'hidden'}>${escapePrototypeHtml(settingsState.securityMessage)}</p>
-      <div class="settings-section-actions"><button class="primary-button" type="button" data-settings-action="save-password" data-settings-security-primary disabled>${settingsState.loginEnabled ? 'Change password' : 'Enable login'}</button>${settingsState.loginEnabled ? '<button class="danger-button" type="button" data-settings-action="remove-password" data-settings-security-remove disabled>Remove password</button>' : ''}</div>`;
+      <div class="settings-page-security-review"><label><input type="checkbox" aria-label="AI approval review" data-settings-bind="autoReview" ${settingsState.autoReview ? 'checked' : ''}><span><strong>AI approval review</strong><small>Fast model only approves a single action when it clearly fits the current task; if it is uncertain or fails, you’ll still be asked.</small></span></label></div>
+      <div class="settings-page-security-card settings-page-security-status ${hasLogin ? 'attention' : 'error'}" data-settings-page-login-status>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+        <div><strong>${hasLogin ? 'Login is required' : 'Login is disabled'}</strong><p>${hasLogin ? 'Changing or removing the password signs every existing browser session out.' : 'Anyone who can reach this server can control ArchCode.'}</p></div>
+      </div>
+      <div class="settings-page-security-card">
+        <h4>Server password</h4><p>${hasLogin ? 'Use the current password to change or remove login.' : 'Set a password to require login for every browser session.'}</p>
+        <div class="settings-form-grid security-grid">${current}<label class="settings-field"><span>${hasLogin ? 'New password' : 'Password'}</span><input type="password" minlength="10" autocomplete="new-password" data-settings-security="password"><small>Use at least 10 characters.</small></label><label class="settings-field"><span>Confirm password</span><input type="password" minlength="10" autocomplete="new-password" data-settings-security="confirmation"></label></div>
+        <p class="settings-page-security-lock" id="security-password-dirty-hint" role="status" data-settings-security-dirty-hint ${dirty ? '' : 'hidden'}><span>Save or Reload your Config draft before changing the server password.</span></p>
+        <p class="settings-page-security-lock" role="status" data-settings-security-pending-hint ${pending ? '' : 'hidden'}><span>Password request is pending. Settings controls are locked until it completes.</span></p>
+        <p class="settings-page-security-message" role="status" aria-live="polite" data-settings-inline-message ${settingsState.securityMessage ? '' : 'hidden'}>${escapePrototypeHtml(settingsState.securityMessage)}</p>
+        <p class="settings-page-security-error" role="alert" data-settings-security-error ${passwordError ? '' : 'hidden'}>${escapePrototypeHtml(passwordError)}</p>
+        <div class="settings-page-security-actions"><button class="primary-button" type="button"${dirtyDescription} data-settings-action="save-password" data-settings-security-primary disabled>${primaryLabel}</button>${hasLogin ? `<button class="danger-button" type="button"${dirtyDescription} data-settings-action="remove-password" data-settings-security-remove disabled>Remove password</button>` : ''}</div>
+        <p class="settings-page-security-note">Password changes are independent from Config Save and sign out existing browser sessions.</p>
+      </div>`;
   }
 
   function renderSettingsRuntimeData() {
@@ -1295,6 +1345,7 @@
     settingsFooter.hidden = independent;
     if (independent) return;
     const dirty = settingsState.dirtySections.size > 0;
+    const pending = Boolean(settingsState.passwordMutationPending);
     const invalidJson = Object.values(settingsState.jsonErrors).some(Boolean);
     const invalidProfiles = Object.values(settingsState.profiles).some((profile) => settingsState.providerRemoved
       || (profile.model === 'openai:model-2' && !settingsState.extraModel)
@@ -1306,7 +1357,25 @@
       status.classList.toggle('attention', dirty && !invalidProfiles && !invalidJson);
       status.classList.toggle('error', invalidProfiles || invalidJson);
     }
-    if (save) save.disabled = !dirty || invalidProfiles || invalidJson;
+    if (save) save.disabled = pending || !dirty || invalidProfiles || invalidJson;
+    const reload = settingsFooter.querySelector('[data-settings-action="reload"]');
+    if (reload) reload.disabled = pending;
+  }
+
+  function syncSettingsInteractionLock() {
+    if (!settingsDialog) return;
+    const locked = Boolean(settingsState.passwordMutationPending);
+    settingsDialog.querySelectorAll('[data-settings-section], [data-settings-panel] input, [data-settings-panel] select, [data-settings-panel] textarea, [data-settings-panel] button, [data-settings-footer] button').forEach((control) => {
+      if (!locked) {
+        if (control.dataset.settingsLockDisabled !== undefined) {
+          control.disabled = control.dataset.settingsLockDisabled === 'true';
+          delete control.dataset.settingsLockDisabled;
+        }
+        return;
+      }
+      if (control.dataset.settingsLockDisabled === undefined) control.dataset.settingsLockDisabled = String(control.disabled);
+      control.disabled = true;
+    });
   }
 
   function syncSettingsProfileAttention() {
@@ -1337,33 +1406,71 @@
     syncSettingsFooter();
     syncSettingsProfileAttention();
     renderIcons(settingsPanel);
+    syncSettingsInteractionLock();
     syncSettingsSecurityControls();
   }
 
   function syncSettingsSecurityControls() {
     if (settingsState.section !== 'security' || !settingsPanel) return;
-    const current = settingsPanel.querySelector('[data-settings-security="current"]')?.value || '';
-    const password = settingsPanel.querySelector('[data-settings-security="password"]')?.value || '';
-    const confirmation = settingsPanel.querySelector('[data-settings-security="confirmation"]')?.value || '';
+    const currentInput = settingsPanel.querySelector('[data-settings-security="current"]');
+    const passwordInput = settingsPanel.querySelector('[data-settings-security="password"]');
+    const confirmationInput = settingsPanel.querySelector('[data-settings-security="confirmation"]');
+    const current = settingsState.securityCurrentPassword;
+    const password = settingsState.securityPassword;
+    const confirmation = settingsState.securityConfirmation;
+    if (currentInput && currentInput.value !== current) currentInput.value = current;
+    if (passwordInput && passwordInput.value !== password) passwordInput.value = password;
+    if (confirmationInput && confirmationInput.value !== confirmation) confirmationInput.value = confirmation;
     const message = settingsPanel.querySelector('[data-settings-inline-message]');
+    const dirtyHint = settingsPanel.querySelector('[data-settings-security-dirty-hint]');
+    const pendingHint = settingsPanel.querySelector('[data-settings-security-pending-hint]');
+    const errorNode = settingsPanel.querySelector('[data-settings-security-error]');
     const primary = settingsPanel.querySelector('[data-settings-security-primary]');
     const remove = settingsPanel.querySelector('[data-settings-security-remove]');
-    const byteLength = (value) => new TextEncoder().encode(value).byteLength;
-    const currentTooLong = byteLength(current) > 1024;
-    const passwordError = currentTooLong
-      ? 'Current password exceeds 1024 UTF-8 bytes.'
-      : byteLength(password) > 1024
-        ? 'Password must not exceed 1024 UTF-8 bytes.'
-        : password.length > 0 && password.length < 10
-          ? 'Use at least 10 characters.'
-          : password && password !== confirmation ? 'Passwords do not match.' : '';
-    if (message && !settingsState.securityMessage) {
-      message.textContent = passwordError;
-      message.hidden = !passwordError;
-      message.classList.toggle('error', Boolean(passwordError));
+    const passwordError = settingsPasswordError();
+    const currentTooLong = settingsPasswordBytes(current) > 1024;
+    const dirty = settingsState.dirtySections.size > 0;
+    const pending = Boolean(settingsState.passwordMutationPending);
+    if (dirtyHint) dirtyHint.hidden = !dirty || pending;
+    if (pendingHint) pendingHint.hidden = !pending;
+    if (message) {
+      message.textContent = settingsState.securityMessage;
+      message.hidden = !settingsState.securityMessage || Boolean(passwordError);
     }
-    if (primary) primary.disabled = !password || Boolean(passwordError) || (settingsState.loginEnabled && !current);
-    if (remove) remove.disabled = !current || currentTooLong;
+    if (errorNode) {
+      errorNode.textContent = passwordError;
+      errorNode.hidden = !passwordError;
+    }
+    if (primary) {
+      primary.disabled = pending || dirty || !settingsPasswordValid();
+      primary.textContent = pending ? (settingsState.passwordMutationPending === 'remove' ? 'Removing…' : 'Saving…') : settingsState.loginEnabled ? 'Change password' : 'Enable login';
+    }
+    if (remove) {
+      remove.disabled = pending || dirty || !current || currentTooLong;
+      remove.textContent = pending && settingsState.passwordMutationPending === 'remove' ? 'Removing…' : 'Remove password';
+    }
+    syncSettingsInteractionLock();
+    syncSettingsFooter();
+  }
+
+  function startSettingsPasswordMutation(action) {
+    window.clearTimeout(settingsPasswordTimer);
+    settingsState.passwordMutationPending = action;
+    settingsState.securityAttempted = false;
+    settingsState.securityMessage = '';
+    renderSettings();
+    settingsPasswordTimer = window.setTimeout(() => {
+      settingsPasswordTimer = undefined;
+      settingsState.passwordMutationPending = undefined;
+      settingsState.loginEnabled = action !== 'remove';
+      resetSettingsPasswordDraft();
+      settingsState.securityMessage = settingsDialog?.open === false ? '' : action === 'remove'
+        ? 'Login removed. Anyone who can reach the server can now control ArchCode.'
+        : action === 'set'
+          ? 'Login enabled. A password is now required.'
+          : 'Password changed. Existing browser sessions were signed out.';
+      renderSettings();
+    }, 450);
   }
 
   function markSettingsDirty(section = settingsState.section) {
@@ -1396,6 +1503,7 @@
     if (event.target === settingsDialog) return settingsDialog.close();
     const sectionButton = event.target.closest('[data-settings-section]');
     if (sectionButton) {
+      if (settingsState.passwordMutationPending) return;
       settingsState.section = sectionButton.dataset.settingsSection;
       renderSettings();
       settingsPanel.scrollTop = 0;
@@ -1417,18 +1525,22 @@
     if (action === 'replace-secret') { actionButton.closest('.settings-secret').innerHTML = '<input type="password" aria-label="Replacement API key" placeholder="Enter replacement secret" data-settings-bind="replacementSecret">'; markSettingsDirty('models'); }
     if (action === 'remove-provider') openSettingsConfirmation('remove-provider', 'Remove provider?', 'Profile bindings may need repair before the configuration can be saved.', '<p><strong>openai</strong> and its configured models will be removed from this draft.</p>', 'Remove provider');
     if (action === 'save-password') {
-      const current = settingsPanel.querySelector('[data-settings-security="current"]')?.value || '';
-      const password = settingsPanel.querySelector('[data-settings-security="password"]')?.value || '';
-      const confirmation = settingsPanel.querySelector('[data-settings-security="confirmation"]')?.value || '';
-      settingsState.securityMessage = password.length < 10 ? 'Use at least 10 characters.' : password !== confirmation ? 'Passwords do not match.' : settingsState.loginEnabled && !current ? 'Enter the current password.' : settingsState.loginEnabled ? 'Password changed. Existing browser sessions were signed out.' : 'Login enabled. A password is now required.';
-      if (password.length >= 10 && password === confirmation && (!settingsState.loginEnabled || current)) settingsState.loginEnabled = true;
-      renderSettings();
+      if (settingsState.dirtySections.size > 0 || settingsState.passwordMutationPending) return;
+      if (!settingsPasswordValid()) {
+        settingsState.securityAttempted = true;
+        syncSettingsSecurityControls();
+        return;
+      }
+      startSettingsPasswordMutation(settingsState.loginEnabled ? 'change' : 'set');
     }
     if (action === 'remove-password') {
-      const current = settingsPanel.querySelector('[data-settings-security="current"]')?.value || '';
-      settingsState.securityMessage = current ? 'Login removed. Anyone who can reach the server can now control ArchCode.' : 'Enter the current password before removing login.';
-      if (current) settingsState.loginEnabled = false;
-      renderSettings();
+      if (settingsState.dirtySections.size > 0 || settingsState.passwordMutationPending) return;
+      if (!settingsState.securityCurrentPassword || settingsPasswordBytes(settingsState.securityCurrentPassword) > 1024) {
+        settingsState.securityAttempted = true;
+        syncSettingsSecurityControls();
+        return;
+      }
+      startSettingsPasswordMutation('remove');
     }
     if (action === 'retry-runtime') { settingsState.runtimeMessage = settingsState.runtimeDeleted ? 'Runtime has no project state to load.' : 'Runtime retry completed. The current state is ready.'; renderSettings(); }
     if (action === 'delete-runtime') openSettingsConfirmation('delete-runtime', 'Delete selected Runtime data?', 'This action is permanent and affects only the selected project Runtime directories.', '<ul><li><strong>ArchCode</strong> · ~/Developer/AI/archcode/.archcode/runtime</li></ul><p>Sessions, Todos, Automations, HITL requests, permissions, attachments, and project Memory will be removed. Source files, .git, plans, Skills, project registration, and global Config remain.</p>', 'Delete runtime data');
@@ -1472,6 +1584,7 @@
       settingsState.dirtySections.clear();
       const messages = [];
       if (changed.has('models') || changed.has('profiles')) messages.push('Model and Profile changes applied live.');
+      if (changed.has('security')) messages.push('AI approval review saved and will apply live.');
       if (changed.has('github')) messages.push('Restart required for: GitHub.');
       if (changed.has('mcp')) messages.push('Configuration saved; MCP draft applied to the live Runtime.');
       if (changed.has('memory')) messages.push('Memory configuration saved.');
@@ -1513,7 +1626,12 @@
       if (binding === 'modelVariants') syncSettingsProfileAttention();
       return;
     }
-    if (event.target.closest('[data-settings-security]')) {
+    const securityControl = event.target.closest('[data-settings-security]');
+    if (securityControl) {
+      const binding = securityControl.dataset.settingsSecurity;
+      const stateKey = binding === 'current' ? 'securityCurrentPassword' : binding === 'password' ? 'securityPassword' : binding === 'confirmation' ? 'securityConfirmation' : undefined;
+      if (stateKey) settingsState[stateKey] = securityControl.value;
+      settingsState.securityAttempted = false;
       settingsState.securityMessage = '';
       syncSettingsSecurityControls();
       return;
@@ -1613,6 +1731,8 @@
   const openSettingsButtons = [...document.querySelectorAll('[data-open-settings]')];
   openSettingsButtons.forEach((button) => button.addEventListener('click', () => {
     settingsOrigin = button;
+    resetSettingsPasswordDraft();
+    settingsState.securityMessage = '';
     settingsState.section = 'models';
     renderSettings();
     settingsPanel.scrollTop = 0;
@@ -1627,6 +1747,8 @@
   });
   settingsDialog?.addEventListener('close', () => {
     restoreSettingsDraft({ memory: true });
+    resetSettingsPasswordDraft();
+    settingsState.securityMessage = '';
     settingsState.section = 'models';
     settingsOrigin?.focus();
   });

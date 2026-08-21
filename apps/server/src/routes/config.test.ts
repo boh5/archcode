@@ -30,6 +30,7 @@ const snapshot = {
       },
     },
     profiles: {},
+    permissions: { autoReview: true },
   },
   revision: "revision-1",
   modelRuntimeRevision: "revision-1",
@@ -96,15 +97,27 @@ describe("config routes", () => {
   });
 
   test("returns the independent MCP apply result with a config save", async () => {
-    const service = createService();
+    const disabledConfig = {
+      ...snapshot.config,
+      permissions: { autoReview: false },
+    };
+    const disabledResponse = {
+      ...savedResponse,
+      config: disabledConfig,
+    };
+    const service = createService({ save: mock(async () => disabledResponse) });
     const response = await createApp(service).request("/", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ expectedRevision: "revision-1", config: snapshot.config }),
+      body: JSON.stringify({ expectedRevision: "revision-1", config: disabledConfig }),
     });
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(savedResponse);
+    expect(await response.json()).toEqual(disabledResponse);
+    expect(service.save).toHaveBeenCalledWith({
+      expectedRevision: "revision-1",
+      config: disabledConfig,
+    });
   });
 
   test("returns the secret-free model runtime catalog", async () => {

@@ -516,7 +516,14 @@ describe("query loop LLM stream recovery", () => {
     expect(tool).toMatchObject({ type: "tool", state: "interrupted" });
     expect(tool).not.toHaveProperty("result");
     const modelMessages = store.getState().toModelMessages();
-    expect(modelMessages[0]).toEqual({ role: "user", content: wrappedMessage("m0001", "Use tool") });
+    expect(modelMessages[0]).toEqual({
+      role: "user",
+      content: wrappedMessage("m0001", [
+        '<external-input source="unknown">',
+        "Use tool",
+        "</external-input>",
+      ].join("\n")),
+    });
     expect(JSON.stringify(modelMessages)).toContain("Recovered");
     expect(JSON.stringify(modelMessages)).not.toContain("tc-pending");
   });

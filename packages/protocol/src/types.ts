@@ -260,7 +260,17 @@ export type ExecutionTransitionValidation =
   | { outcome: "duplicate" }
   | { outcome: "invalid"; reason: string };
 
-export type SessionMessageSource = "user" | "automation";
+export type SessionMessageSource = "user" | "automation" | "parent_agent";
+
+/** Immutable audit identity for input sent by a direct parent Agent tool call. */
+export interface ParentAgentMessageProvenance {
+  senderSessionId: string;
+  senderAgentName: string;
+  senderExecutionId: string;
+  senderRunOrdinal: number;
+  senderToolBatchId: string;
+  senderToolCallId: string;
+}
 
 export interface PendingSessionMessage {
   id: string;
@@ -268,6 +278,7 @@ export interface PendingSessionMessage {
   content: string;
   attachments: AttachmentDescriptor[];
   source: SessionMessageSource;
+  parentAgentProvenance?: ParentAgentMessageProvenance;
   state: "queued" | "steering";
   revision: number;
   acceptedAt: number;
@@ -323,18 +334,28 @@ export type ReminderSource =
   | {
       type: "subagent_completed";
       sessionId: string;
+      childExecutionId?: string;
     }
   | {
       type: "subagent_failed";
       sessionId: string;
+      childExecutionId?: string;
     }
   | {
       type: "subagent_timed_out";
       sessionId: string;
+      childExecutionId?: string;
     }
   | {
       type: "subagent_cancelled";
       sessionId: string;
+      childExecutionId?: string;
+    }
+  | {
+      type: "queue_dispatch_blocked";
+      sessionId: string;
+      blockedAfterExecutionId: string;
+      error: string;
     }
   | {
       type: "session_goal_changed";
@@ -1005,6 +1026,10 @@ export interface ConfigMemorySettings {
   autoLearning?: boolean;
 }
 
+export interface ConfigPermissionSettings {
+  autoReview?: boolean;
+}
+
 export interface ConfigGithubIntegrationSettings {
   enabled?: boolean;
   tokenEnv?: string;
@@ -1026,6 +1051,7 @@ export interface ServerConfigDocument<Secret> {
   };
   integrations?: { github?: ConfigGithubIntegrationSettings };
   memory?: ConfigMemorySettings;
+  permissions?: ConfigPermissionSettings;
 }
 
 /** Safe configuration returned by GET /api/config. */
@@ -1398,6 +1424,10 @@ interface SessionMessageBase {
   runOrdinal?: number;
   /** Correlates a canonical user message with Queue admission and optimistic UI. */
   clientRequestId?: string;
+  /** Absent on historical canonical input whose external source was not recorded. */
+  inputSource?: SessionMessageSource;
+  /** Present exactly when inputSource is parent_agent. */
+  parentAgentProvenance?: ParentAgentMessageProvenance;
   compacted?: boolean;
 }
 
@@ -1429,6 +1459,8 @@ export interface ModelStepAssistantMessage extends SessionMessageBase {
   /** Normalized Runtime-owned phase for this model attempt's Assistant output. */
   outputPhase: "commentary" | "final_answer";
   clientRequestId?: never;
+  inputSource?: never;
+  parentAgentProvenance?: never;
   modelAudit?: never;
 }
 

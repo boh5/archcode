@@ -926,6 +926,49 @@ describe("handleSSEEvent", () => {
     });
   });
 
+  test("invalidates the canonical Agent Tree on Execution lifecycle changes", () => {
+    const store = createMockStore();
+    store.getState = () => ({
+      applyRemoteEnvelope: mockApplyRemoteEnvelope,
+      rootSessionId: "root-session",
+    }) as unknown as WebSessionStoreState;
+    mockFindWebSessionStore.mockReturnValue(store);
+    const envelope: GlobalSessionEventEnvelope = {
+      type: "event",
+      slug: "proj",
+      sessionId: "child-session",
+      eventId: 1,
+      createdAt: 1,
+      agentName: "explore",
+      payload: {
+        type: "execution-start",
+        executionId: "execution-1",
+        origin: "user_message",
+        binding: {
+          selection: { model: "test:model" },
+          providerId: "test",
+          modelId: "model",
+          providerDisplayName: "Test",
+          modelDisplayName: "Model",
+          resolution: "profile_default",
+          modelRuntimeRevision: "revision-1",
+        },
+        memoryPolicy: {
+          policy: { useMemory: true, autoLearning: true },
+          epoch: { bootId: "boot", generation: 1 },
+        },
+        maxSteps: 50,
+        executionSkills: [],
+      },
+    };
+
+    handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.tree("proj", "root-session"),
+    });
+  });
+
   test("purges deleted Session state and invalidates every Session consumer", () => {
     createWebSessionStore("root-session", "proj");
     sessionRuntimeStore.getState().applyChange({
@@ -1012,20 +1055,55 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 
-  test("invalidates session query on reset event", () => {
+  test("invalidates the session and its canonical Agent Tree on reset", () => {
     const resetEvent: GlobalSSEResetEvent = {
       type: "reset",
       slug: "my-project",
       sessionId: "session-1",
       reason: "stale_cursor",
     };
+    mockFindWebSessionStore.mockReturnValue({
+      ...createMockStore(),
+      getState: () => ({
+        hydrationStatus: "hydrated",
+        rootSessionId: "root-session",
+      }) as WebSessionStoreState,
+    } as StoreApi<WebSessionStoreState>);
 
     handleSSEEvent({ event: "reset", data: JSON.stringify(resetEvent) }, deps);
 
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "my-project", "sessions", "session-1"],
     });
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.tree("my-project", "root-session"),
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(2);
+  });
+
+  test("invalidates the project Session prefix when reset arrives before child identity hydration", () => {
+    const resetEvent: GlobalSSEResetEvent = {
+      type: "reset",
+      slug: "my-project",
+      sessionId: "child-session",
+      reason: "stale_cursor",
+    };
+    mockFindWebSessionStore.mockReturnValue({
+      ...createMockStore(),
+      getState: () => ({
+        hydrationStatus: "pending",
+        rootSessionId: "child-session",
+      }) as WebSessionStoreState,
+    } as StoreApi<WebSessionStoreState>);
+
+    handleSSEEvent({ event: "reset", data: JSON.stringify(resetEvent) }, deps);
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.sessions("my-project"),
+    });
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: queryKeys.tree("my-project", "child-session"),
+    });
   });
 
   test("refreshes MCP status snapshot on reset event", () => {

@@ -56,6 +56,17 @@ export class SessionTreeIntegrityError extends Error {
   }
 }
 
+export class SessionFamilySnapshotConflictError extends Error {
+  constructor(
+    public readonly rootSessionId: string,
+    public readonly revisionBefore: string,
+    public readonly revisionAfter: string,
+  ) {
+    super(`Session family "${rootSessionId}" changed while its durable snapshot was captured`);
+    this.name = "SessionFamilySnapshotConflictError";
+  }
+}
+
 export class InvalidSessionCwdError extends Error {
   constructor(
     public readonly cwd: string,

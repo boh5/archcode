@@ -3,6 +3,7 @@ import { defineTool } from "../define-tool";
 import { createTextToolResult } from "../results";
 import type { Reminder } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
+import type { SessionExecutionRecord } from "@archcode/protocol";
 
 const WaitForReminderConditionSchema = z
   .enum(["all", "any"])
@@ -56,14 +57,30 @@ const systemWaitForReminderScheduler: WaitForReminderScheduler = {
   },
 };
 
-function getMatchingReminders(reminders: readonly Reminder[], sessionIds: readonly string[]): Reminder[] {
+function getMatchingReminders(
+  reminders: readonly Reminder[],
+  sessionIds: readonly string[],
+  latestExecutions: ReadonlyMap<string, SessionExecutionRecord | undefined>,
+): Reminder[] {
   const wanted = new Set(sessionIds);
   return reminders.filter(
-    (reminder) =>
-      reminder.delivery === "on_demand" &&
-      reminder.consumedAt === null &&
-      reminder.sessionId !== undefined &&
-      wanted.has(reminder.sessionId),
+    (reminder) => {
+      if (
+        reminder.delivery !== "on_demand"
+        || reminder.consumedAt !== null
+        || reminder.sessionId === undefined
+        || !wanted.has(reminder.sessionId)
+      ) return false;
+      const latest = latestExecutions.get(reminder.sessionId);
+      if (latest === undefined || latest.status === "running" || latest.status === "suspended") return false;
+      if (reminder.source.type === "queue_dispatch_blocked") {
+        return reminder.source.blockedAfterExecutionId === latest.id;
+      }
+      if (!reminder.source.type.startsWith("subagent_") || !("childExecutionId" in reminder.source)) {
+        return false;
+      }
+      return reminder.source.childExecutionId === latest.id;
+    },
   );
 }
 
@@ -113,19 +130,40 @@ function findSatisfiedReminders(
   reminders: readonly Reminder[],
   sessionIds: readonly string[],
   condition: WaitForReminderInput["condition"],
+  latestExecutions: ReadonlyMap<string, SessionExecutionRecord | undefined>,
 ): Reminder[] | undefined {
-  const matchingReminders = getMatchingReminders(reminders, sessionIds);
+  const matchingReminders = distinctRemindersBySession(
+    getMatchingReminders(reminders, sessionIds, latestExecutions),
+  );
   if (!isConditionSatisfied(matchingReminders, sessionIds, condition)) return undefined;
   return selectRemindersToConsume(matchingReminders, sessionIds, condition);
 }
 
-function consumeReminders(input: { reminders: Reminder[] }): WaitForReminderResult {
+function distinctRemindersBySession(reminders: readonly Reminder[]): Reminder[] {
+  const selected = new Map<string, Reminder>();
+  for (const reminder of reminders) {
+    if (reminder.sessionId !== undefined && !selected.has(reminder.sessionId)) {
+      selected.set(reminder.sessionId, reminder);
+    }
+  }
+  return [...selected.values()];
+}
+
+function consumeReminders(input: { reminders: Reminder[] }): Extract<WaitForReminderResult, { status: "success" }> {
   return {
     status: "success",
     reminders: input.reminders,
     consumed_ids: input.reminders.map((reminder) => reminder.id),
   };
 }
+
+type ReminderConsumeAttempt =
+  | { readonly kind: "pending" }
+  | { readonly kind: "conflict" }
+  | {
+      readonly kind: "committed";
+      readonly value: Extract<WaitForReminderResult, { status: "success" }>;
+    };
 
 export async function executeWaitForReminder(
   input: WaitForReminderInput,
@@ -135,16 +173,26 @@ export async function executeWaitForReminder(
   if (input.session_ids.length === 0) {
     return JSON.stringify({ status: "error", message: "session_ids must not be empty" } satisfies WaitForReminderResult);
   }
+  if (
+    typeof input.condition === "object"
+    && input.condition.count > new Set(input.session_ids).size
+  ) {
+    return JSON.stringify({
+      status: "error",
+      message: "condition.count must not exceed the number of distinct session_ids",
+    } satisfies WaitForReminderResult);
+  }
 
   if (ctx.abort.aborted) {
     return JSON.stringify({ status: "aborted" } satisfies WaitForReminderResult);
   }
 
-  const result = await waitForMatch(input, ctx, scheduler);
-  if (result.status === "success" && result.consumed_ids.length > 0) {
-    ctx.store.getState().append({ type: "reminder-consumed", reminderIds: result.consumed_ids });
+  const childError = await validateDirectChildren(ctx, input.session_ids);
+  if (childError !== undefined) {
+    return JSON.stringify({ status: "error", message: childError } satisfies WaitForReminderResult);
   }
 
+  const result = await waitForMatch(input, ctx, scheduler);
   return JSON.stringify(result);
 }
 
@@ -155,6 +203,10 @@ function waitForMatch(
 ): Promise<WaitForReminderResult> {
   return new Promise((resolve) => {
     let settled = false;
+    let checking = false;
+    let recheck = false;
+    let terminalRequested: "timeout" | "aborted" | undefined;
+    let consumptionCommitted = false;
     let unsubscribe: (() => void) | undefined;
     let timeout: WaitForReminderDeadlineHandle | undefined;
 
@@ -171,22 +223,50 @@ function waitForMatch(
       resolve(result);
     };
 
-    const check = () => {
-      const reminders = ctx.store.getState().reminders;
-      const satisfied = findSatisfiedReminders(reminders, input.session_ids, input.condition);
-      if (satisfied !== undefined) {
-        settle(consumeReminders({ reminders: satisfied }));
+    const check = async () => {
+      if (settled) return;
+      if (checking) {
+        recheck = true;
+        return;
+      }
+      checking = true;
+      try {
+        const consumed = await tryConsumeSatisfiedReminders(
+          input,
+          ctx,
+          () => terminalRequested === undefined && !settled,
+          () => { consumptionCommitted = true; },
+        );
+        if (consumed !== undefined) settle(consumed);
+      } catch (error) {
+        settle({ status: "error", message: error instanceof Error ? error.message : String(error) });
+      } finally {
+        checking = false;
+        if (recheck && !settled) {
+          recheck = false;
+          void check();
+        }
       }
     };
 
-    const onAbort = () => settle({ status: "aborted" });
+    const onAbort = () => {
+      if (settled || consumptionCommitted || terminalRequested !== undefined) return;
+      terminalRequested = "aborted";
+      settle({ status: "aborted" });
+    };
 
     // Subscribe first so reminders arriving during setup cannot be missed.
-    unsubscribe = ctx.store.subscribe(check);
+    unsubscribe = ctx.store.subscribe(() => { void check(); });
     ctx.abort.addEventListener("abort", onAbort, { once: true });
     timeout = scheduler.schedule(input.timeout_ms, () => {
-      const matchingReminders = getMatchingReminders(ctx.store.getState().reminders, input.session_ids);
-      settle({ status: "timeout", pending: pendingSessionIds(matchingReminders, input.session_ids) });
+      if (settled || consumptionCommitted) return;
+      terminalRequested ??= "timeout";
+      void latestChildExecutions(ctx, input.session_ids).then((latest) => {
+        const matchingReminders = getMatchingReminders(ctx.store.getState().reminders, input.session_ids, latest);
+        settle({ status: "timeout", pending: pendingSessionIds(matchingReminders, input.session_ids) });
+      }, (error) => {
+        settle({ status: "error", message: error instanceof Error ? error.message : String(error) });
+      });
     });
 
     if (ctx.abort.aborted) {
@@ -194,8 +274,131 @@ function waitForMatch(
       return;
     }
 
-    check();
+    void check();
   });
+}
+
+async function validateDirectChildren(
+  ctx: ToolExecutionContext,
+  sessionIds: readonly string[],
+): Promise<string | undefined> {
+  const parent = ctx.store.getState();
+  for (const sessionId of new Set(sessionIds)) {
+    const child = await ctx.storeManager.getOrLoad(
+      sessionId,
+      ctx.projectContext.project.workspaceRoot,
+    ).catch(() => undefined);
+    if (
+      child === undefined
+      || child.getState().parentSessionId !== parent.sessionId
+      || child.getState().rootSessionId !== parent.rootSessionId
+    ) return `Session ${sessionId} is not a direct child of ${parent.sessionId}`;
+  }
+  return undefined;
+}
+
+async function latestChildExecutions(
+  ctx: ToolExecutionContext,
+  sessionIds: readonly string[],
+): Promise<ReadonlyMap<string, SessionExecutionRecord | undefined>> {
+  const snapshots = await latestChildExecutionSnapshots(ctx, sessionIds);
+  return new Map(
+    [...snapshots].map(([sessionId, snapshot]) => [sessionId, snapshot.execution]),
+  );
+}
+
+interface LatestChildExecutionSnapshot {
+  readonly execution: SessionExecutionRecord | undefined;
+  readonly revision: number;
+  readonly readCurrent: () => {
+    readonly execution: SessionExecutionRecord | undefined;
+    readonly revision: number;
+  };
+}
+
+async function latestChildExecutionSnapshots(
+  ctx: ToolExecutionContext,
+  sessionIds: readonly string[],
+): Promise<ReadonlyMap<string, LatestChildExecutionSnapshot>> {
+  const snapshots = new Map<string, LatestChildExecutionSnapshot>();
+  for (const sessionId of new Set(sessionIds)) {
+    const child = await ctx.storeManager.getOrLoad(
+      sessionId,
+      ctx.projectContext.project.workspaceRoot,
+    );
+    const state = child.getState();
+    snapshots.set(sessionId, {
+      execution: state.executions.at(-1),
+      revision: state.nextEventId,
+      readCurrent: () => {
+        const current = child.getState();
+        return {
+          execution: current.executions.at(-1),
+          revision: current.nextEventId,
+        };
+      },
+    });
+  }
+  return snapshots;
+}
+
+function areLatestChildSnapshotsCurrent(
+  snapshots: ReadonlyMap<string, LatestChildExecutionSnapshot>,
+): boolean {
+  for (const snapshot of snapshots.values()) {
+    const current = snapshot.readCurrent();
+    if (
+      current.revision !== snapshot.revision
+      || current.execution?.id !== snapshot.execution?.id
+    ) return false;
+  }
+  return true;
+}
+
+async function tryConsumeSatisfiedReminders(
+  input: WaitForReminderInput,
+  ctx: ToolExecutionContext,
+  canConsume: () => boolean,
+  onConsumptionCommitted: () => void,
+): Promise<WaitForReminderResult | undefined> {
+  while (canConsume()) {
+    const snapshots = await latestChildExecutionSnapshots(ctx, input.session_ids);
+    const latest = new Map(
+      [...snapshots].map(([sessionId, snapshot]) => [sessionId, snapshot.execution]),
+    );
+    const attempt = await ctx.storeManager.commitDurableSessionMutation<ReminderConsumeAttempt>(
+      ctx.store.getState().sessionId,
+      ctx.projectContext.project.workspaceRoot,
+      (state) => {
+        if (!canConsume()) return { result: { kind: "pending" } as const };
+        if (!areLatestChildSnapshotsCurrent(snapshots)) {
+          return { result: { kind: "conflict" } as const };
+        }
+        const satisfied = findSatisfiedReminders(
+          state.reminders,
+          input.session_ids,
+          input.condition,
+          latest,
+        );
+        if (satisfied === undefined) return { result: { kind: "pending" } as const };
+        if (!areLatestChildSnapshotsCurrent(snapshots)) {
+          return { result: { kind: "conflict" } as const };
+        }
+        const result = consumeReminders({ reminders: satisfied });
+        onConsumptionCommitted();
+        return {
+          result: { kind: "committed", value: result } as const,
+          events: [{
+            type: "reminder-consumed",
+            reminderIds: result.consumed_ids,
+          }],
+        };
+      },
+    );
+    if (attempt.kind === "committed") return attempt.value;
+    if (attempt.kind === "pending") return undefined;
+  }
+  return undefined;
 }
 
 export const waitForReminderTool = defineTool({

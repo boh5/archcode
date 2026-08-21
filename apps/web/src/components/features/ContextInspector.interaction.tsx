@@ -4,7 +4,9 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { JSDOM } from "jsdom";
-import type { SessionTreeResponse } from "../../api/types";
+import type { AgentTreeProjection } from "../../api/types";
+import { queryKeys } from "../../api/queries";
+import { sessionRuntimeStore } from "../../store/session-runtime-store";
 
 const originals = new Map<string, PropertyDescriptor | undefined>();
 
@@ -12,7 +14,7 @@ mock.module("./context-inspector/SessionInspector", () => ({
   SessionInspector: ({ activeTab }: { activeTab: string }) => <div data-testid="active-panel">{activeTab}</div>,
 }));
 
-const treeResponse: SessionTreeResponse = {
+const treeResponse: AgentTreeProjection = {
   root: {
     session: {
       sessionId: "root",
@@ -27,6 +29,10 @@ const treeResponse: SessionTreeResponse = {
       createdAt: 1,
       updatedAt: 2,
     },
+    depth: 0,
+    latestExecutionStatus: "completed",
+    activeExecutionId: null,
+    linkStatus: null,
     children: [{
       session: {
         sessionId: "child",
@@ -41,6 +47,10 @@ const treeResponse: SessionTreeResponse = {
         createdAt: 1,
         updatedAt: 2,
       },
+      depth: 1,
+      latestExecutionStatus: "completed",
+      activeExecutionId: null,
+      linkStatus: "completed",
       children: [],
     }],
   },
@@ -48,10 +58,13 @@ const treeResponse: SessionTreeResponse = {
 };
 
 const apiFetch = mock(async (path: string): Promise<unknown> => {
+  if (path === "/api/projects/demo/sessions/root") return treeResponse.root.session;
+  if (path === "/api/projects/demo/sessions/child") return treeResponse.root.children[0]!.session;
   if (path === "/api/projects/demo/sessions/root/tree") return treeResponse;
   if (path === "/api/projects/demo/diff?sessionId=root") {
     return { files: [{ path: "src/index.ts", status: "modified", additions: 2, deletions: 1 }] };
   }
+  if (path === "/api/projects/demo/diff?sessionId=child") return { files: [] };
   throw new Error(`Unexpected Inspector request: ${path}`);
 });
 
@@ -86,7 +99,10 @@ function restoreDom(): void {
   originals.clear();
 }
 
-afterEach(restoreDom);
+afterEach(() => {
+  restoreDom();
+  sessionRuntimeStore.getState().reset();
+});
 
 describe("ContextInspector keyboard tabs", () => {
   test("supports ArrowLeft/ArrowRight/Home/End while keeping focus and URL state aligned", async () => {
@@ -104,7 +120,11 @@ describe("ContextInspector keyboard tabs", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     ));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    });
 
     const tab = (label: string) => Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .find((element) => element.textContent?.startsWith(label))!;
@@ -137,6 +157,68 @@ describe("ContextInspector keyboard tabs", () => {
     await key(tab("Agents"), "ArrowLeft");
     expect(tab("Context").getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(tab("Context"));
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+    dom.window.close();
+  });
+
+  test("queries the shared Agent Tree by durable root after navigating to a child Session", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root")!;
+    const root = createRoot(container);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    apiFetch.mockClear();
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["demo"],
+      families: [{ projectSlug: "demo", rootSessionId: "root", activity: "running" }],
+      createdAt: 1,
+    });
+
+    await act(async () => root.render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/projects/demo/sessions/child"]}>
+          <Routes>
+            <Route path="/projects/:slug/sessions/:sessionId" element={<ContextInspector kind="session" />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ));
+    await act(async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    });
+
+    expect(apiFetch).toHaveBeenCalledWith("/api/projects/demo/sessions/child");
+    expect(apiFetch).toHaveBeenCalledWith("/api/projects/demo/sessions/root/tree");
+    expect(apiFetch).not.toHaveBeenCalledWith("/api/projects/demo/sessions/child/tree");
+    expect(apiFetch).toHaveBeenCalledWith("/api/projects/demo/diff?sessionId=child");
+    expect(container.querySelector('[data-testid="inspector-count-agents"]')?.textContent).toBe("2");
+    const childDiffQuery = queryClient.getQueryCache().find({
+      queryKey: queryKeys.diff("demo", "child"),
+    });
+    expect((childDiffQuery?.options as { refetchInterval?: unknown }).refetchInterval).toBe(2_000);
+
+    const diffCallsBeforeStop = apiFetch.mock.calls.filter(
+      ([path]) => path === "/api/projects/demo/diff?sessionId=child",
+    ).length;
+    await act(async () => {
+      sessionRuntimeStore.getState().applyChange({
+        type: "session.runtime_changed",
+        projectSlug: "demo",
+        rootSessionId: "root",
+        activity: "idle",
+        createdAt: 2,
+      });
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    });
+    expect(apiFetch.mock.calls.filter(
+      ([path]) => path === "/api/projects/demo/diff?sessionId=child",
+    ).length).toBe(diffCallsBeforeStop + 1);
 
     await act(async () => root.unmount());
     queryClient.clear();

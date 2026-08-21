@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
+  DELEGATION_CONTROL_TOOLS,
   MAX_CONCURRENT_SUB_AGENTS,
   SKILL_ACCESS_TOOLS,
 } from "../constants";
@@ -39,10 +40,12 @@ const EXPECTED_TOOL_MATRIX = {
     "lsp_symbols",
     "web_fetch",
     "delegate",
-    "resume_session",
+    "list_agents",
+    "send_message",
     "background_output",
     "wait_for_reminder",
     "cancel_session",
+    "resume_session",
     "output_read",
     "output_search",
     "compress",
@@ -77,9 +80,12 @@ const EXPECTED_TOOL_MATRIX = {
     "memory_write",
     "project_todo_update",
     "delegate",
-    "resume_session",
+    "list_agents",
+    "send_message",
     "background_output",
     "wait_for_reminder",
+    "cancel_session",
+    "resume_session",
     "output_read",
     "output_search",
     "compress",
@@ -104,9 +110,12 @@ const EXPECTED_TOOL_MATRIX = {
     "memory_read",
     "todo_write",
     "delegate",
-    "resume_session",
+    "list_agents",
+    "send_message",
     "background_output",
     "wait_for_reminder",
+    "cancel_session",
+    "resume_session",
     "output_read",
     "output_search",
     "compress",
@@ -133,9 +142,12 @@ const EXPECTED_TOOL_MATRIX = {
     "lsp_symbols",
     "web_fetch",
     "delegate",
-    "resume_session",
+    "list_agents",
+    "send_message",
     "background_output",
     "wait_for_reminder",
+    "cancel_session",
+    "resume_session",
     "output_read",
     "output_search",
     "compress",
@@ -244,6 +256,20 @@ describe("Agent catalog", () => {
     expect(Object.fromEntries(
       agentDefinitions.map((definition) => [definition.name, [...definition.tools.tools]]),
     ) as unknown).toEqual(EXPECTED_TOOL_MATRIX);
+  });
+
+  test("shares one explicit seven-tool delegation control package", () => {
+    for (const definition of [
+      leadAgentDefinition,
+      discussionAgentDefinition,
+      analystAgentDefinition,
+      buildAgentDefinition,
+    ]) {
+      expect(definition.tools.tools).toEqual(expect.arrayContaining([...DELEGATION_CONTROL_TOOLS]));
+    }
+    for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
+      for (const tool of DELEGATION_CONTROL_TOOLS) expect(definition.tools.tools).not.toContain(tool);
+    }
   });
 
   test("keeps Skills guidance-only and core lifecycle manuals available", () => {

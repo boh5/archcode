@@ -51,6 +51,8 @@ export const TOOL_WEB_FETCH = "web_fetch";
 
 // Delegation
 export const TOOL_DELEGATE = "delegate";
+export const TOOL_LIST_AGENTS = "list_agents";
+export const TOOL_SEND_MESSAGE = "send_message";
 export const TOOL_RESUME_SESSION = "resume_session";
 export const TOOL_WAIT_FOR_REMINDER = "wait_for_reminder";
 export const TOOL_BACKGROUND_OUTPUT = "background_output";
@@ -107,6 +109,8 @@ export type BuiltinToolName =
   | typeof TOOL_LSP_SYMBOLS
   | typeof TOOL_WEB_FETCH
   | typeof TOOL_DELEGATE
+  | typeof TOOL_LIST_AGENTS
+  | typeof TOOL_SEND_MESSAGE
   | typeof TOOL_RESUME_SESSION
   | typeof TOOL_WAIT_FOR_REMINDER
   | typeof TOOL_BACKGROUND_OUTPUT
@@ -173,6 +177,8 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_LSP_SYMBOLS]: "lsp",
   [TOOL_WEB_FETCH]: "web",
   [TOOL_DELEGATE]: "delegation",
+  [TOOL_LIST_AGENTS]: "delegation",
+  [TOOL_SEND_MESSAGE]: "delegation",
   [TOOL_RESUME_SESSION]: "delegation",
   [TOOL_WAIT_FOR_REMINDER]: "delegation",
   [TOOL_BACKGROUND_OUTPUT]: "delegation",

@@ -23,6 +23,7 @@ import type { SessionStoreState } from "../store/types";
 import { testExecutionStart } from "../testing/test-execution-fixtures";
 import { bashTool, runBashCommand } from "../tools/builtins/bash";
 import { createTestProjectContext } from "../tools/test-project-context";
+import { deferTestApprovalReviewer } from "../tools/test-approval-reviewer";
 import { createRegistry } from "../tools/registry";
 import {
   createToolExecutionContext,
@@ -520,6 +521,7 @@ async function createHarness(options: {
   const registry = createRegistry({
     finalizer,
     hitlCodec: new HitlBoundaryCodec(new SecretRedactionPolicy([])),
+    approvalReviewer: deferTestApprovalReviewer,
     logger: silentLogger,
   }, [options.descriptorFactory?.(artifactRoot) ?? bashTool]);
   const finalizedObservations = new Map<string, {

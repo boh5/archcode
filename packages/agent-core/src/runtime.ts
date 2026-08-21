@@ -39,10 +39,16 @@ import { normalizeSkillUseArgs, validateSkillActivation } from "./commands/skill
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import { projectSessionCompression } from "./store/session-read-projection";
 import { resolveSessionProfile } from "./agents/session-profile";
-import { NotRootSessionError, SessionFileNotFoundError } from "./store/errors";
+import {
+  NotRootSessionError,
+  SessionFamilySnapshotConflictError,
+  SessionFileNotFoundError,
+} from "./store/errors";
+import { AgentTreeProjectionError, projectAgentTree } from "./agent-tree";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
   AgentDescriptor,
+  AgentTreeProjection,
   Automation,
   AutomationInvocation,
   ExecutionModelBindingSummary,
@@ -70,7 +76,6 @@ import type {
   CompressionStateSnapshot,
   SessionGoal,
   SessionProjection,
-  SessionTreeResponse,
   RootSessionSource,
   RootSessionSummary,
   ProjectSessionInventoryItem,
@@ -142,6 +147,7 @@ import {
 import { ToolOutputArtifactStore, computeProjectIdentity } from "./tool-output/artifact-store";
 import { ToolOutputFinalizer } from "./tool-output/finalizer";
 import { createRuntimeLogSafetyBoundary, SecretRedactionPolicy } from "./security";
+import { ApprovalReviewService } from "./approval-review";
 import { rootSessionSourceTodoId, USER_DATA_DIR_NAME } from "@archcode/protocol";
 import {
   resolveAttachmentReadPaths,
@@ -153,6 +159,17 @@ import {
   type UploadSessionAttachmentInput,
   type UploadProjectAttachmentResult,
 } from "./attachments";
+
+function activeExecutionSnapshotsEqual(
+  left: ReadonlyMap<string, string>,
+  right: ReadonlyMap<string, string>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [sessionId, executionId] of left) {
+    if (right.get(sessionId) !== executionId) return false;
+  }
+  return true;
+}
 
 interface ActiveGoalReconciliationSnapshot {
   readonly isRootLead: boolean;
@@ -440,7 +457,7 @@ export interface AgentRuntime {
   getSessionExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined;
   subscribeSessionEvents(listener: (event: GlobalSessionEventEnvelope) => void): () => void;
   deleteSession(workspaceRoot: string, sessionId: string): Promise<void>;
-  listSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse>;
+  listSessionTree(workspaceRoot: string, rootSessionId: string): Promise<AgentTreeProjection>;
   disposeSessionAgent(workspaceRoot: string, sessionId: string): void;
   disposeAllSessionAgents(): void;
   isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
@@ -571,7 +588,19 @@ export async function createRuntime(
       artifactStore: toolOutputArtifactStore,
     });
     const hitlCodec = new HitlBoundaryCodec(redactionPolicy);
-    const toolRegistry = createToolRegistry({ finalizer, hitlCodec, logger: runtimeLogger.child({ module: "tools.registry" }) });
+    const approvalReviewer = new ApprovalReviewService({
+      modelRuntime,
+      modelSelectionResolver,
+      isEnabled: () => configService.getPermissionReviewPolicy().autoReview,
+      redactionPolicy,
+      logger: runtimeLogger.child({ module: "approval-review" }),
+    });
+    const toolRegistry = createToolRegistry({
+      finalizer,
+      hitlCodec,
+      approvalReviewer,
+      logger: runtimeLogger.child({ module: "tools.registry" }),
+    });
     registerBuiltinTools(toolRegistry, runtimeLogger.child({ module: "tools" }), {
       github: resolvedGithubConfig,
     });
@@ -950,8 +979,17 @@ export async function createRuntime(
         if (projectSlug === undefined) {
           throw new Error(`Cannot reconcile released continuation for unregistered workspace ${workspaceRoot}`);
         }
-        await reconcileRegisteredProject(workspaceRoot, projectSlug, {
+        // Reconciliation may inspect the parent's still-running Tool Batch
+        // (for example wait_for_reminder). It must not delay child slot release,
+        // terminal Reminder publication, or the child's next Queue execution.
+        void reconcileRegisteredProject(workspaceRoot, projectSlug, {
           sessionId,
+        }).catch((error) => {
+          runtimeLogger.error("project.runtime.continuation_reconcile_unavailable", {
+            error,
+            context: { projectSlug, sessionId },
+            meta: { workspaceRoot },
+          });
         });
       },
       resolveGoalInstanceId: async ({ workspaceRoot, rootSessionId }) => (
@@ -1577,6 +1615,21 @@ export async function createRuntime(
       });
     }
 
+    async function steerPendingRootSessionMessage(input: {
+      readonly workspaceRoot: string;
+      readonly sessionId: string;
+      readonly messageId: string;
+      readonly expectedRevision: number;
+      readonly expectedExecutionId: string;
+    }) {
+      const store = await sessionStoreManager.getOrLoad(input.sessionId, input.workspaceRoot);
+      const state = store.getState();
+      if (state.parentSessionId !== undefined || state.rootSessionId !== input.sessionId) {
+        throw new NotRootSessionError(input.sessionId, state.parentSessionId ?? state.rootSessionId);
+      }
+      return await executionManager.steerQueuedMessage(input);
+    }
+
     const sessionFamilyStopService = new SessionFamilyStopService({
       sessionFamilyController: {
         acquireStop: (input) => executionManager.acquireSessionFamilyStop(input),
@@ -1854,8 +1907,10 @@ export async function createRuntime(
     async function recoverQueuedSessionInputs(workspaceRoot: string, projectSlug: string): Promise<void> {
       const summaries = await sessionStoreManager.listAllSessionSummaries(workspaceRoot);
       for (const summary of summaries) {
-        if (summary.sessionId !== summary.rootSessionId) continue;
-        if (executionManager.getSessionFamilyActivity(workspaceRoot, summary.sessionId) !== "idle") continue;
+        if (
+          summary.sessionId === summary.rootSessionId
+          && executionManager.getSessionFamilyActivity(workspaceRoot, summary.sessionId) !== "idle"
+        ) continue;
         await executionManager.tryStartQueuedExecution({
           slug: projectSlug,
           workspaceRoot,
@@ -2038,9 +2093,64 @@ export async function createRuntime(
       });
     }
 
+    async function getAgentTreeProjection(
+      workspaceRoot: string,
+      rootSessionId: string,
+    ): Promise<AgentTreeProjection> {
+      const maxAttempts = 3;
+      let lastRevision = "unavailable";
+      let stableProjectionError: AgentTreeProjectionError | undefined;
+      let lastSnapshotConflict: SessionFamilySnapshotConflictError | undefined;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        let snapshot: Awaited<ReturnType<SessionStoreManager["captureSessionFamilySnapshot"]>>;
+        try {
+          snapshot = await sessionStoreManager.captureSessionFamilySnapshot(
+            workspaceRoot,
+            rootSessionId,
+          );
+        } catch (error) {
+          if (!(error instanceof SessionFamilySnapshotConflictError)) throw error;
+          lastRevision = error.revisionAfter;
+          lastSnapshotConflict = error;
+          continue;
+        }
+        lastSnapshotConflict = undefined;
+        lastRevision = snapshot.revision;
+        const activeBefore = executionManager.snapshotActiveExecutionIds(workspaceRoot, rootSessionId);
+        let projection: AgentTreeProjection;
+        try {
+          projection = projectAgentTree(snapshot, activeBefore);
+        } catch (error) {
+          if (!(error instanceof AgentTreeProjectionError)
+            || (error.reason !== "active_execution_mismatch" && error.reason !== "unknown_active_session")) {
+            throw error;
+          }
+          const durableCurrent = await sessionStoreManager.isSessionFamilySnapshotCurrent(workspaceRoot, snapshot);
+          const activeAfter = executionManager.snapshotActiveExecutionIds(workspaceRoot, rootSessionId);
+          stableProjectionError = durableCurrent && activeExecutionSnapshotsEqual(activeBefore, activeAfter)
+            ? error
+            : undefined;
+          continue;
+        }
+        const durableCurrent = await sessionStoreManager.isSessionFamilySnapshotCurrent(workspaceRoot, snapshot);
+        const activeAfter = executionManager.snapshotActiveExecutionIds(workspaceRoot, rootSessionId);
+        if (durableCurrent && activeExecutionSnapshotsEqual(activeBefore, activeAfter)) return projection;
+        stableProjectionError = undefined;
+      }
+      if (stableProjectionError !== undefined) throw stableProjectionError;
+      if (lastSnapshotConflict !== undefined) throw lastSnapshotConflict;
+      throw new SessionFamilySnapshotConflictError(rootSessionId, lastRevision, "unstable-runtime-snapshot");
+    }
+
     sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
-    sessionAgentManager.setCancelChildSession((workspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(workspaceRoot, parentSessionId, childSessionId));
+    sessionAgentManager.setCancelDescendantSession((workspaceRoot, parentSessionId, childSessionId) => (
+      executionManager.cancelDescendantSession(workspaceRoot, parentSessionId, childSessionId)
+    ));
+    sessionAgentManager.setSendMessageToChild((workspaceRoot, request) => (
+      executionManager.sendMessageToChild(workspaceRoot, request)
+    ));
     sessionAgentManager.setResumeChildSession((workspaceRoot, request) => executionManager.resumeChildExecution(workspaceRoot, request));
+    sessionAgentManager.setGetAgentTreeProjection(getAgentTreeProjection);
     sessionAgentManager.setAcquireSessionCwdTransition((workspaceRoot, sessionId) => executionManager.acquireSessionCwdTransition(workspaceRoot, sessionId));
 
     async function getProjectControlPlaneSnapshot(
@@ -2453,7 +2563,7 @@ export async function createRuntime(
         workspaceRoot: input.workspaceRoot,
         rootSessionId: input.sessionId,
       }, () => sessionInputService.deleteMessage(input)),
-      steerPendingSessionMessage: (input) => executionManager.steerQueuedMessage(input),
+      steerPendingSessionMessage: steerPendingRootSessionMessage,
       getSessionFamilyActivity: (workspaceRoot, rootSessionId) => executionManager.getSessionFamilyActivity(workspaceRoot, rootSessionId),
       stopSessionFamily: async (workspaceRoot, rootSessionId) => {
         await rememberProject(workspaceRoot);
@@ -2517,7 +2627,7 @@ export async function createRuntime(
         );
         await publishSessionResourceChanged(workspaceRoot, rootSessionId);
       },
-      listSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
+      listSessionTree: getAgentTreeProjection,
       disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),
       isSessionTombstoned: (workspaceRoot, sessionId) => sessionAgentManager.isTombstoned(workspaceRoot, sessionId),
