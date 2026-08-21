@@ -7,6 +7,24 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-08-21
+
+### Added
+
+- Add a durable delegated-session control plane with one shared Agent Tree,
+  live `steer` or next-run `queue` messaging, background result reads, direct
+  child waiting and resumption, and strong descendant-subtree cancellation.
+- Add automatic Fast-profile review for unresolved `ask` permission decisions
+  before HITL, with fail-closed fallback and an explicit Security setting.
+
+### Changed
+
+- Project the same persisted Session and live Execution facts into Agent tools,
+  SSE, and the Web inspector so parent and child lifecycle state stays
+  consistent across restart, suspension, cancellation, and continuation.
+- Refresh the public product narrative, concepts, screenshots, and README around
+  the Todo-first engineering workbench and its durable orchestration model.
+
 ## [0.0.9] - 2026-08-18
 
 ### Added
