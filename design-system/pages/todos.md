@@ -1,9 +1,9 @@
 # Todos Page Overrides
 
 > Read [`../MASTER.md`](../MASTER.md) first. Todos contains three inventory
-> surfaces: Active, Rejected, and Archived. Active opens as a centered List and
-> retains Board as a secondary layout. A lightweight preview connects those
-> inventory layouts to the independent Todo detail route.
+> surfaces: Active, Rejected, and Archived. Active is one centered lifecycle
+> List. A lightweight preview connects that inventory to the independent Todo
+> detail route.
 
 ## Purpose
 
@@ -22,31 +22,33 @@ They are project-owned lifecycle entities, not Session-local checklists.
   the exact number of unresolved requests plus blocked/budget-limited Work or
   Automation Goals for that Todo. Activating that row opens the Todo's canonical
   Work destination, where the individual actions are expanded.
-- The compact canvas header shows `All todos` and the total count. The command
-  row below owns `Filter todos`, the `List / Board` layout toggle, and the
-  `Active / Rejected / Archived` surface switcher. `New todo` remains the single
-  primary action in the persistent Todo navigator; do not duplicate it in the
-  canvas header or command row.
+- The compact canvas header shows the `WORK` eyebrow, `All todos`, and the
+  canonical Active Todo total. The command
+  row below owns `Filter todos` and the `Active / Rejected / Archived` surface
+  switcher. `New todo` remains the single primary action in the persistent Todo
+  navigator; do not duplicate it in the canvas header or command row.
 - Keep that command header as a stable two-column grid on desktop. The lead group
-  contains the filter, capped at 420px, plus the compact icon-only layout toggle;
-  the action group contains the three equal surface choices. At
-  `≤720px`, stack the two groups into full-width rows. Match the current
-  prototype values exactly: the filter is 38px high on precise pointers, the two
-  icon-only layout controls are 32px square, and the surface switcher remains
-  38px high with 30px inner buttons. At `≤720px`, filter and layout controls
-  become 44px touch targets. Enabled
-  layout and surface buttons use the pointer cursor.
+  contains the filter, capped at 420px; the action group contains the three equal
+  surface choices. At `≤720px`, stack both into full-width rows. Match the
+  current prototype values exactly: the filter is 38px high on desktop and 44px
+  high at `≤720px`; the surface switcher keeps its compact 38px visible shell
+  with 30px inner buttons at every width. On coarse pointers, expand each surface
+  button's actual hit target to at least 44px without enlarging or displacing that
+  visible shell. Enabled surface buttons use the pointer cursor.
 - Do not reserve permanent canvas space for Todo capture. `New Todo` opens the
   transient capture dialog specified below. Its visible close control is the
   prototype's 34px square icon button.
-- Active List uses a centered 980px maximum reading width. Board may expand to
-  1500px because its lanes need horizontal working space. Opening preview never
-  changes either width or horizontal alignment.
-- Selecting an Active row or Board card opens the lightweight preview. `Open
+- Active uses a centered 980px maximum reading width. Opening preview never
+  changes its width or horizontal alignment.
+- Selecting an Active row opens the lightweight preview. `Open
   details` enters `/projects/:slug/todos/:todoId`; direct links enter that route
   without requiring preview first.
 - Closing preview or returning from detail preserves the filter query, selected
-  surface, Active layout, focused item, and scroll position.
+  surface, focused item, and scroll position.
+- Navigator and List selection use the shared low-chroma
+  `--selection-field` plus a 2px inset brand edge and a clear text/icon cue.
+  Selection never changes item bounds or uses a saturated fill, glow, or
+  floating-card shadow.
 
 ## Search and Filter
 
@@ -55,23 +57,39 @@ They are project-owned lifecycle entities, not Session-local checklists.
   another search icon to the compact canvas header.
 - `Filter Todos` matches stable ID, canonical Todo content, and visible
   runtime metadata without changing lifecycle state or opening the detail page.
-- Filtering Active updates the visible List groups and Board lanes from the same
-  match set. Board keeps all four lanes visible and both layouts update their
-  group/lane counts. Rejected and Archived filter only their selected lists.
+- Filtering Active updates visible List groups and their counts. Rejected and
+  Archived filter only their selected lists.
 - Follow the shared filter visual/interaction contract while keeping the filter
-  page-local; do not introduce a generic `EntityFilter` component. Show a
-  no-results message without replacing the layout toggle, surface switcher, or
-  `New Todo` action.
+  page-local; do not introduce a generic `EntityFilter` component. A no-results
+  state keeps the filter, surface switcher, and persistent `New Todo` action
+  visible and exposes a direct `Clear filter` recovery.
+
+## Inventory Empty States
+
+- First-use is determined by the canonical Todo inventory across Active,
+  Rejected, and Archived, not by the currently selected surface or Active
+  lifecycle group. When that total inventory is zero, explain Todo capture in
+  one concise line on the Active surface. Rejected and Archived remain quiet
+  secondary-surface empty states. A canvas action may invoke the existing `New
+  Todo` flow only as a quiet/secondary action; the persistent navigator `New
+  todo` remains the dominant project-creation primary.
+- When Todos exist but a lifecycle group or selected secondary surface has no
+  items, keep one quiet line close to its heading. Do not add a
+  centered illustration panel or a creation CTA. Active may therefore be empty
+  while Rejected or Archived still contains Todos without becoming first-use.
+- When the canonical inventory is non-empty and a query produces no visible
+  items, name the filter cause and expose `Clear filter`. Creating a new Todo is
+  not a filter-recovery action.
 
 ## Active List Surface
 
-- Active List is the default project Todo surface. Group it by Ideas, Ready, In
-  Progress, and Done so lifecycle remains scannable without four wide lanes.
+- Active List is the project Todo inventory. Group it by Ideas, Ready, In
+  Progress, and Done so lifecycle remains scannable in one continuous surface.
 - Keep the List centered at a 980px maximum width with equal outer gutters. Its
   header, rows, dividers, and preview state must never drift to one side of the
   work canvas.
-- The inventory filter uses the prototype's 4px control radius at every
-  breakpoint; it does not inherit the 6px card radius.
+- The inventory filter uses `--shape-compact` (4px) at every breakpoint; it does
+  not inherit the 6px card radius.
 - Match the current prototype workspace padding: 28px top, 20px horizontal,
   64px bottom on desktop; 18px top, 12px horizontal, 64px bottom at `≤720px`.
   Active groups use a 26px vertical gap. Group headers have a 29px minimum
@@ -80,13 +98,28 @@ They are project-owned lifecycle entities, not Session-local checklists.
 - Each row shows the prototype's display-only lead: the first Markdown heading
   when present, otherwise the first normalized content, capped at 80
   characters. This never adds a persisted Todo title. Quiet relative update
-  metadata remains `Updated {relative time}`. Only In Progress rows may add the
-  same derived operational line as Board cards.
+  metadata remains `Updated {relative time}`. A row may replace that quiet line
+  with one authoritative derived operational line when linked work materially
+  needs attention or reports active/review/error state. In particular, an Idea
+  may show `Needs you · Question` when its linked Discussion is waiting for an
+  answer; the Todo remains in Ideas.
+- Do not render a provisional operational line until Session and Automation
+  inventory plus runtime and HITL snapshots are authoritative. Once ready, use
+  this precedence: **`Needs you`** for unresolved HITL or blocked/budget-limited
+  Goals; **`Failed`** for the latest terminal failed/stopped attempt; **`Working`**
+  for live work; **`Ready to review`** for a completed result awaiting acceptance;
+  **`Scheduled`** for a future active Automation; otherwise retain the quiet
+  update line. A newer active or terminal attempt supersedes an older failure.
 - List rows begin with a 30px state-orbit column, then flexible copy and the
   trailing affordance. They use 12px gaps, `10px 8px` padding, a 66px minimum
   height, and one bottom rule. Excerpts are 13.5px/600 at 1.35 line-height;
-  metadata is 11.5px at 1.35 line-height with 4px top spacing. Focus/selection uses the
-  prototype's hover field plus a 2px inset brand rule without changing bounds.
+  metadata is 11.5px at 1.35 line-height with 4px top spacing. Selection follows
+  the shared field-and-edge treatment without changing bounds; keyboard focus
+  remains the independent shared focus-visible primitive.
+- At `≤720px`, rows retain their 66px visible minimum and `10px 8px` padding,
+  use a 27px state-orbit column, and hide the trailing chevron. The row remains
+  the full-width activation target; no metadata-critical state may live only in
+  the hidden trailing affordance.
 - Use flat rows separated by rules. Do not turn every row into a floating card,
   repeat its lifecycle label, or show linked-work counts.
 - The row itself is the single inventory action and opens Preview or canonical
@@ -96,92 +129,6 @@ They are project-owned lifecycle entities, not Session-local checklists.
 - Prototype inventory navigation uses visible controls and ordinary Tab order.
   Do not register document-level letter shortcuts.
 
-## Board Surface
-
-Board is the secondary Active layout. Desktop uses four lanes:
-
-1. Ideas — captured intent that still needs shaping.
-2. Ready — clear enough to start or hand off.
-3. In Progress — work has started, even when its current processing is idle.
-4. Done — completed intent that may be reopened or archived.
-
-Responsive columns:
-
-| Width | Columns |
-|---|---:|
-| `>1260px` | 4 |
-| `721–1260px` | 2 |
-| `≤720px` | 4 horizontally scrollable lanes, each `min(240px, 82vw)` |
-
-Lane rules:
-
-- Lanes are open structural columns, not card containers. The current lane
-  drop target spans the remaining Board height (420px desktop, 360px narrow).
-  Do not draw a permanent lane
-  perimeter, radius, or large filled empty box. A current drag target may use
-  one temporary quiet field.
-- Lane headers own one lifecycle icon, the lifecycle label, one bottom rule, and
-  a quiet tabular count. `Idea` is neutral, `Ready` uses brand, `In progress`
-  uses live lime, and `Done` uses success green. The Done lane uses the shared
-  outline `check` glyph. Carry that same semantic tone into the current
-  prototype's 2px top rule, a very low-chroma lane wash that fades by 190px,
-  and a 9% header-only horizontal field. This is lifecycle orientation, not a
-  filled lane container; keep the rest of the column open. Do not repeat these
-  lifecycle icons inside every card.
-- Lane contents use 10px top spacing, 8px horizontal insets, and a 10px card
-  gap. Todo cards are the
-  Board's only persistent card layer. Use a subtle border, surface background,
-  6px radius, 56px visual minimum height, and no outer elevation. A quiet inset
-  top edge and a lifecycle-mixed hover border are allowed; they must not make
-  the cards appear to float.
-- Cards use the prototype hover response: border/background emphasis and a
-  `translateY(-0.5px)` lift; pressed cards return to the baseline at 0.995
-  scale without shifting surrounding layout.
-- Preserve the dedicated full-height drag activator. Its precise-pointer width
-  is 28px; on coarse/touch pointers it expands to 44px. The grip is an operation
-  affordance, not a lifecycle icon. Keep it visually quiet until card or direct
-  handle hover/focus; a narrow divider may separate the handle from the link
-  content without becoming a second status column.
-- A Todo has no title. Each card shows only the first 80 characters of its
-  canonical Markdown after mechanically removing line-leading Markdown markers
-  and collapsing whitespace. Clamp this content excerpt to two lines; do not add
-  a second preview, artifact metadata, or linked-work counts.
-- The lane header owns the visible lifecycle label for Board cards. Preserve the
-  lifecycle state in data, drag announcements, and accessible context rather
-  than repeating `Idea`, `Ready`, `In Progress`, or `Done` inside every card.
-- Only In Progress cards may show the compact derived operational line. It is
-  not another Todo lifecycle state and is never persisted. Derive it from the
-  linked Work Session, Todo-origin Automation run, unresolved HITL, Goal,
-  Execution, and Automation inventory already loaded by the page.
-- Do not render a provisional operational line until Session and Automation
-  inventory plus runtime and HITL snapshots are authoritative. Once ready, use
-  this precedence: **`Needs you`** for unresolved HITL or blocked/budget-limited
-  Goals (product phrase; pair with attention tone); **`Failed`** for the latest
-  terminal failed/stopped attempt with **error** tone — never amber attention;
-  **`Working`** for live work (signal tone); **`Ready to review`** for the latest
-  completed result awaiting acceptance; **`Scheduled`** for a future active
-  Automation; otherwise **`Idle`**. A newer active or terminal attempt supersedes
-  an older failure, while an Automation dispatch alone is never completion. The
-  Board prototype demonstrates Needs you, Failed, Working, and Ready to review
-  operational lines.
-- Card link content uses 10px padding on all sides beside the dedicated drag
-  activator. Its compact
-  title is 12.5px/500 at 1.48 line-height. The operational line
-  uses a 6px status dot plus visible 11.5px/500 text and an optional short detail
-  after a separator; the running dot alone may pulse. Keep it inside the existing
-  card boundary without a badge stack, nested card, action, lifecycle control,
-  or full-width internal divider.
-- Empty-lane guidance stays close to the lane header and aligns with card text;
-  do not center it inside the full desktop drop target.
-- Pointer and touch dragging target the lane under the pointer rather than the
-  dragged card rectangle. A successful move updates Board counts and the List
-  projection together. Dragging is not the only lifecycle path: the canonical
-  Todo detail lifecycle control remains available.
-- During drag, only the active card may lift and receive temporary elevation;
-  the target lane uses one temporary brand field. A successful drop gets one
-  220ms border/translate landing response, then returns to the ordinary flat
-  card state. Reduced motion removes that response.
-
 ## Rejected Surface
 
 - Use a centered flat list at a maximum width of 980px.
@@ -190,12 +137,12 @@ Lane rules:
   12px gaps, `10px 8px` padding, and 66px minimum height as Active. The display
   lead is 13.5px/600 at 1.35 line-height and clamps to two lines; the state line
   is 11.5px at 1.35 line-height with 4px top
-  spacing. Recovery controls are 32px high for precise pointers and 44px for
+  spacing. Recovery controls are 34px high for precise pointers and 44px for
   coarse pointers.
 - Every row preserves the compact content excerpt and rejection reason.
 - Primary recovery is `Restore to Idea`.
 - Use amber for the rejected/reconsideration signal, never destructive red.
-- Do not mix Rejected items back into the active Board.
+- Do not mix Rejected items back into the Active inventory.
 
 ## Archived Surface
 
@@ -214,8 +161,8 @@ Lane rules:
 - Open one compact modal dialog containing a visible `Todo content` label,
   Markdown textarea, helper copy, and three explicit outcomes:
   `Save / Start discussion / Run now`.
-  Center it against the viewport, including the project rail, over a 58% black
-  backdrop. Desktop geometry is a 500px maximum width, 12px radius, 52px
+  Center it against the viewport, including the project rail, over a 56% black
+  backdrop. Desktop geometry is a 560px maximum width, 12px radius, 52px
   header, 18px body inset, 126px default textarea, and `12px 18px` footer.
   Entry uses the prototype's 200ms scale/fade and reduced motion removes it.
 - `Save` creates one Idea and starts no Agent work. Its confirmation says the
@@ -247,22 +194,63 @@ Lane rules:
 
 ## Inventory Preview
 
-- Selecting an Active List row or Board card opens a right-side preview up to
+- Selecting an Active List row opens a right-side preview up to
   420px wide. It overlays rather than compresses or re-centers the inventory.
 - The preview starts below the Todo command header and covers only the inventory
-  canvas. It uses the prototype's 420px maximum width, 52px header, 30px close
-  control, 18px body inset, gradient surface, left divider, directional shadow,
+  canvas. It uses the prototype's 420px maximum width, 52px header, 34px close
+  control, `22px 18px` body inset, gradient surface, left divider, directional shadow,
   200ms horizontal entry, and 180ms quiet scrim fade. Reduced motion removes
   both animations.
-- Preview is non-editing. It may show a bounded content excerpt, current
-  lifecycle state, derived runtime signal, and a short linked-work list, plus
-  navigation or workflow-launch actions. It never edits canonical Markdown,
-  changes lifecycle, manages References or Plan, or reproduces the complete
-  detail document.
+- Preview keeps canonical Todo content and durable context read-only. It may
+  show a bounded content excerpt, derived runtime signal, and a short linked-work
+  list, plus navigation or workflow-launch actions. Its only direct mutation is
+  the compact ordinary lifecycle control specified below; it never edits
+  canonical Markdown, manages References or Plan, exposes Reject/Archive, or
+  reproduces the complete detail document.
+- Replace the passive lifecycle chip with one compact custom
+  **`Stage: {label} ▾`** trigger in the metadata row. The menu contains exactly
+  `Idea / Ready / In progress / Done`; the current item is marked and cannot
+  submit a no-op. This is the same canonical lifecycle as Todo detail, not a
+  second preview-only state. `Reject Todo…` and `Archive Todo` remain deliberate
+  actions on the full detail route.
+- The Stage trigger exposes `aria-haspopup="menu"`, `aria-expanded`, and its
+  controlled menu ID. Menu choices use `menuitemradio` with `aria-checked` for
+  the current stage. Enter, Space, or ArrowDown opens the menu with the current
+  item focused; ArrowUp/ArrowDown and Home/End move through choices; Enter or
+  Space selects; Escape closes and restores focus to the trigger. Tab dismisses
+  the menu and continues through the Preview's existing trapped focus order.
+  Pointer interaction and a visible shared focus ring remain equivalent; do not
+  fall back to a browser-native select.
+- Choosing a non-current stage performs one revision-safe Todo mutation. While
+  it is pending, keep Preview open, mark the Stage control busy, disable its
+  trigger and choices against duplicate submission, and announce the operation
+  politely. On success, keep Preview open and selected, update its Stage and
+  lifecycle-appropriate actions, move the underlying List row to the matching
+  group, and synchronize lifecycle and navigator counts. The moved row retains
+  identity so closing Preview can restore focus to it in its new group.
+- A revision conflict never overwrites newer Todo data. Keep Preview open and
+  show an inline error beside the Stage control that explains the Todo changed
+  elsewhere and offers an explicit refresh-and-retry path; focus moves to that
+  recovery control. Other failures use the same local cause-and-recovery
+  treatment rather than a detached generic toast.
+- Stage movement does not own Session execution. In particular, choosing `In
+  progress` changes only the Todo lifecycle; it neither starts nor stops a
+  Session. `Start Work / Continue Work` remains the separate explicit execution
+  action. A linked `Running` or `Needs you` signal remains visible after any
+  stage change, even when that signal and the selected lifecycle differ.
+- Pure lifecycle `In progress` uses the neutral activity treatment, never the
+  lime live treatment. A row, navigator marker, or Preview may use lime only
+  when it independently projects current `Running` work; moving an ordinary
+  Todo to `In progress` must not visually imply that a Session was started.
+- Moving to `Done` asks for one confirmation only when linked Work is currently
+  `Running` or `Needs you`. The confirmation explains that the Todo will move
+  but linked Work will keep running or waiting, and offers `Cancel / Move to
+  Done`. All other ordinary stage movements apply directly without
+  confirmation.
 - `Open details` is the explicit path to the canonical Todo route. Keep direct
   deep links valid; preview is never a routing prerequisite.
-- Preview hierarchy is `18px display lead → five-line 13px plain-text body excerpt → Updated/state
-  chips → optional operational field → optional linked-work rows → footnote`.
+- Preview hierarchy is `18px display lead → five-line 13px plain-text body excerpt → Stage
+  control + Updated metadata → optional operational field → optional linked-work rows → footnote`.
   Linked work uses one 52px minimum row with a status orbit, title/context, and
   trailing state. The footer gives the lifecycle-appropriate primary action one
   full 36px row; `Open details` and an additional Discussion action share a
@@ -276,7 +264,7 @@ Lane rules:
   which names the dialog without drawing an initial focus ring. The first
   forward Tab moves to the visible Close control; reverse Tab moves to the last
   footer action. Focus remains trapped until dismissal.
-- Visible row/card activation updates the preview while it remains open. At
+- Visible row activation updates the preview while it remains open. At
   `≤720px`, skip the narrow drawer and open full detail directly.
 
 ## Todo Detail Route
@@ -298,9 +286,10 @@ The Todo destination begins with one lifecycle control row containing only the
 four normal icon-and-label actions: `Idea / Ready / In progress / Done`. A
 labeled quiet `More` control follows them and progressively discloses
 `Reject Todo…` and `Archive Todo`; these exceptional exits never appear as
-peers of normal lifecycle movement. Its icon and color mapping is identical to
-the Todos Board lane headers. Selecting a non-current lifecycle action performs
-the canonical mutation; Session Execution state remains independent. At
+peers of normal lifecycle movement. Their icon and color mapping follows the
+lifecycle vocabulary used by the Todo inventory. Selecting a non-current
+lifecycle action performs the canonical mutation; Session Execution state
+remains independent. At
 `≤720px`, the row stacks and every lifecycle/menu/recovery control remains a
 44px touch target.
 
@@ -388,9 +377,11 @@ change:
   Work` opens the most recently updated bound Work Session.
 - `New discussion`, `Create automation`, and `New work session` remain in the
   Work list header for explicit linked-work creation and management;
-- the four lifecycle buttons are the only normal status-movement controls.
-  A labeled `More` menu in that same row owns `Reject Todo…` and `Archive Todo`;
-  no second lifecycle or completion surface is added;
+- the four lifecycle buttons are the full detail route's expanded normal
+  status-movement controls. Preview's compact Stage menu targets the same
+  canonical mutation and is the only inventory shortcut; it does not create a
+  second lifecycle model. A labeled `More` menu in the detail row owns `Reject
+  Todo…` and `Archive Todo`;
 - conditional Result owns only `Open Session`, which drills into the exact
   completed Work Session that produced the trusted final output.
 
@@ -429,11 +420,11 @@ reweight actions, but must not silently remove them.
 Route behavior:
 
 - direct deep links render the same complete entity surface;
-- the inventory command header belongs only to List, Board, Rejected, and
-  Archived surfaces. Full Todo detail does not retain `Filter Todos`, layout or
-  surface switches, or `New Todo` above the document;
+- the inventory command header belongs only to Active, Rejected, and
+  Archived surfaces. Full Todo detail does not retain `Filter Todos`, surface
+  switches, or `New Todo` above the document;
 - `Open details` from preview reaches this route, and a visible back action
-  returns to the originating Todo surface, layout, query, and scroll position;
+  returns to the originating Todo surface, query, and scroll position;
 - the document remains readable at approximately 820px;
 - use one continuous document surface. Linked Discussions, Work Sessions, and
   Automation Sessions belong to Work; do not add a permanent Todo context rail,
@@ -443,8 +434,8 @@ Route behavior:
 
 - Todo detail places one flat `References` region between `Todo content` and
   `Plan`. The region keeps `Add files` reachable even when its list is empty.
-  References are never a Board card, preview control, tab, separate attachment
-  page, or count badge on project surfaces.
+  References are never a preview control, tab, separate attachment page, or
+  count badge on project surfaces.
 - `Add files` opens the native multi-file picker and the surrounding drop target
   accepts drag-and-drop. The button remains the keyboard/touch alternative and
   all uploads activate serially using the latest Todo revision from the prior
@@ -470,16 +461,17 @@ Route behavior:
 ## Todos-Specific Avoidances
 
 - omitting Rejected or Archived because Active is the primary surface;
-- treating Todos as a generic Kanban clone;
-- drag-and-drop as the only way to change state;
-- large rounded lane containers;
-- oversized or decorative lane-count treatments, or a permanent divider around
-  the drag activator;
 - rendering every Todo detail section as an equal rounded card;
 - showing full empty References, Plan, Sessions, or Automations sections for a
   simple Todo;
 - hiding existing linked work, lifecycle actions, or the canonical detail route;
-- allowing preview to edit content or lifecycle, manage durable context, or
-  resize and push the underlying inventory to one side;
+- allowing preview to edit content or durable context, reproduce the full
+  lifecycle row, expose Reject/Archive, or resize and push the underlying
+  inventory to one side;
+- coupling Preview Stage movement to Session start/stop, hiding `Running` or
+  `Needs you` because the Todo moved groups, or confirming every ordinary stage
+  change;
+- implementing the Preview Stage control as a browser-native select or an
+  inaccessible custom menu;
 - restoring a permanent capture composer above the inventory;
 - presenting capture as an AI prompt.

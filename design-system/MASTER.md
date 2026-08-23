@@ -1,7 +1,7 @@
 # Signal Workbench Design System
 
 > Target UI specification synchronized with the current effective prototypes on
-> 2026-08-17. This Master and its page overrides define the approved product and
+> 2026-08-23. This Master and its page overrides define the approved product and
 > interaction contract. Current product code remains authoritative for existing
 > runtime facts, domain state, persistence, and behavior that this specification
 > does not intentionally change. For a page with a current effective prototype,
@@ -16,7 +16,8 @@
 > [`todos.html`](prototypes/todos.html),
 > [`automations.html`](prototypes/automations.html),
 > [`sessions.html`](prototypes/sessions.html), or
-> [`session.html`](prototypes/session.html).
+> [`session.html`](prototypes/session.html). The Runtime-recovery form is covered
+> by [`settings.html`](prototypes/settings.html).
 
 ## Product Fit
 
@@ -117,21 +118,18 @@ naming scheme in prototypes.
 | `--error-field` | `#f8e8e6` | Error/removal field |
 | `--neutral` | `#626a62` | Neutral status |
 | `--neutral-field` | `#eceeea` | Neutral status field |
+| `--auxiliary-blue` | `#426da9` | Recovered state, Analyst identity, safe image type, and syntax function only |
+| `--auxiliary-blue-field` | `#e7eef9` | Quiet field for the approved auxiliary-blue roles |
 | `--selection-field` | `#eeedf8` | Quiet selected row |
 | `--running-field` | `#f1f4e7` | Quiet running row |
 | `--attention-field` | `#f8f2e8` | Quiet attention band |
 | `--rail` | `#eceeea` | Light project rail |
-| `--rail-ink` | `#171917` | Active rail content |
-| `--rail-muted` | `#626a62` | Inactive rail content |
-| `--rail-hover` | `#e1e3df` | Rail hover field |
 | `--rail-active` | `#d7dbd4` | Active project field |
-| `--rail-border` | `#cdd1ca` | Rail boundaries and separators |
-| `--terminal-bg` | `#252620` | Bash output surface |
-| `--terminal-text` | `#d7d6cd` | Bash output foreground |
-| `--terminal-muted` | `#aaa99f` | Bash process metadata |
-| `--terminal-success` | `#b6d84b` | Successful Bash exit |
-| `--terminal-error` | `#ed8178` | Failed Bash exit |
-| `--focus` | `0 0 0 3px rgb(97 87 213 / 23%)` | Focus ring |
+| `--terminal-bg` | `#22251f` | Bash, code-preview, and Diff output surface |
+| `--terminal-text` | `#dce1d8` | Terminal/code foreground |
+| `--terminal-muted` | `#aab2a7` | Terminal/Diff context |
+| `--terminal-add` | `#9bd2ab` | Diff/code addition |
+| `--focus-color` | `#6157d5` | Focus-indicator ink; geometry belongs to the shared focus primitive |
 
 ### Dark Theme
 
@@ -168,48 +166,93 @@ naming scheme in prototypes.
 | `--error-field` | `#3b2421` | Error/removal field |
 | `--neutral` | `#9ca49a` | Neutral status |
 | `--neutral-field` | `#232723` | Neutral status field |
+| `--auxiliary-blue` | `#8eb5f6` | Recovered state, Analyst identity, safe image type, and syntax function only |
+| `--auxiliary-blue-field` | `#202d43` | Quiet field for the approved auxiliary-blue roles |
 | `--selection-field` | `#26243a` | Quiet selected row |
 | `--running-field` | `#22291b` | Quiet running row |
 | `--attention-field` | `#2c271e` | Quiet attention band |
 | `--rail` | `#060706` | Project rail |
-| `--rail-ink` | `#f2f4ef` | Active rail content |
-| `--rail-muted` | `#858c83` | Inactive rail content |
-| `--rail-hover` | `#1c201c` | Rail hover field |
 | `--rail-active` | `#232723` | Active project field |
-| `--rail-border` | `#363c36` | Rail boundaries and separators |
-| `--terminal-bg` | `#0f100e` | Bash output surface |
-| `--terminal-text` | `#dad9d1` | Bash output foreground |
-| `--terminal-muted` | `#aaa99f` | Bash process metadata |
-| `--terminal-success` | `#b6d84b` | Successful Bash exit |
-| `--terminal-error` | `#ed8178` | Failed Bash exit |
-| `--focus` | `0 0 0 3px rgb(164 155 255 / 26%)` | Focus ring |
+| `--terminal-bg` | `#0b0d0c` | Bash, code-preview, and Diff output surface |
+| `--terminal-text` | `#bbc5b8` | Terminal/code foreground |
+| `--terminal-muted` | `#aab2a7` | Terminal/Diff context |
+| `--terminal-add` | `#9bd2ab` | Diff/code addition |
+| `--focus-color` | `#a49bff` | Focus-indicator ink; geometry belongs to the shared focus primitive |
 
 Implementation aliases do not introduce new colors:
 
-- `--info` follows `--brand`;
-- `--brand-subtle` and `--info-muted` follow `--brand-field`;
+- `--info` follows `--auxiliary-blue`, and `--info-muted` follows
+  `--auxiliary-blue-field`; the prototype aliases are `--blue` and
+  `--blue-field`;
+- `--brand-subtle` follows `--brand-field`;
 - `--success-muted`, `--warning-muted`, `--error-muted`, and
   `--neutral-muted` follow their matching `*-field` token;
-- `--terminal-border` is `rgb(255 255 255 / 10%)` in both themes.
+- `--terminal-border`, `--terminal-meta`, and `--terminal-dot` are the shared
+  code-surface structure aliases; terminal success/error reuse the approved
+  success/error semantics rather than adding another status palette.
+- Only `--rail` and `--rail-active` are dedicated rail materials. Rail text,
+  hover, and boundaries reuse `--text-tertiary`, `--text-primary`,
+  `--bg-hover`, and `--border-subtle`. `--rail-active` is not a second
+  selection language or a saturated brand block.
+- `--primary-fill` resolves to `brand 92% + bg-muted 8%` in light mode and
+  `brand 80% + bg-muted 20%` in dark mode; `--primary-hover` resolves to
+  `--brand` in light mode and `brand 86% + bg-muted 14%` in dark mode. These
+  aliases define one restrained action tone, not a second brand palette.
+- `--focus` is the composite-control alias `0 0 0 2px var(--focus-color)`.
+  Standalone controls use the same opaque 2px ink as an outline with a 2px
+  offset; neither form is translucent or blurred.
 
 The supporting HTML prototypes use shorter aliases only as direct references to
 the same values: `--bg / --surface / --surface-2 / --surface-3 / --elevated`
 map to base, surface, elevated, muted, and overlay; `--line / --line-strong`
 map to subtle and default borders; `--text / --text-2 / --text-3 / --text-4`
 map to primary, secondary, tertiary, and muted text. `--lime`, `--green`,
-`--amber`, and `--red` map to signal, success, warning, and error;
+`--amber`, and `--red` map to signal, success, warning, and error; their
+`*-field` aliases map to the matching semantic status fields;
 `--lime-text` maps to `--signal-foreground` for accessible live text on neutral
 surfaces. They are not a second color system.
+
+### Surface Role Mapping
+
+Light and dark themes use the same semantic material map. Dark mode consumes
+the existing graphite ladder rather than inventing another set of page-local
+dark surfaces.
+
+| Product role | Semantic surface | Boundary / depth rule |
+|---|---|---|
+| Workspace canvas and sustained-reading document | `--bg-base`, with `--bg-surface` only for a bounded reading region | Prefer spacing or a hairline; no ambient shadow |
+| Project/Todo navigation, compact headers, inventory groups | `--bg-surface` | Structural inset edge or `--border-subtle` |
+| Inputs, ToolCards, compact controls, and contained transient records | `--bg-elevated` | `--border-default`; elevation only when the element truly overlaps content |
+| Persistent or responsive Context Inspector | `--bg-surface` | Stays the same sibling material; responsive mode adds only drawer elevation and scrim |
+| Todo Preview, navigation drawers, dialogs, menus, and popovers | `--bg-overlay` | Matching role elevation plus the edge or scrim that explains attachment |
+| User-intent messages and secondary neutral fields | `--bg-muted` | Existing border/inset treatment; never promote these into floating cards |
+| Hover and pressed feedback | `--bg-hover`, then `--bg-active` | State layers only; they do not become component base materials |
+
+Selected, running, attention, success, and error fields mix their semantic
+state into the component's assigned base material; they do not choose a higher
+surface merely to look more prominent.
 
 ### Color Discipline
 
 - Indigo means selected, navigable, or user-triggered action.
 - Lime means currently live or running. Never use it as a general accent.
+- Todo `In progress` is a lifecycle value, not proof of live execution. By
+  itself it uses the quiet neutral activity treatment; only an independently
+  derived `Running` signal may promote that Todo row or marker to lime.
 - Green means completed; amber means attention; red means error/destructive.
 - Large surfaces remain neutral. Semantic colors appear as narrow fields,
   status glyphs, short labels, or inset rules.
 - Selection, running, and attention use separate low-chroma neutral fields so
   their large surfaces do not become colored blocks.
+- Selected and active entity rows, navigation rows, tree rows, and source-menu
+  options combine the low-chroma `--selection-field`, one 2px inset brand edge,
+  and clear text or icon state. Compact tabs and segmented controls remain on
+  their neutral control surface and use the existing underline/bottom-edge
+  language instead. Neither family uses a saturated brand fill, outer glow,
+  floating shadow, or geometry change to communicate selection.
+- Auxiliary blue is not a second brand. Reserve it for recovered state,
+  Analyst identity, safe image type, and syntax-function distinction; ordinary
+  information and actions remain neutral or brand-colored according to role.
 - A primary action may use a narrow, single-hue indigo gradient built only from
   brand tones. Do not use purple-to-pink, rainbow, animated, or large-surface
   gradients as generic AI decoration, and do not imitate another developer tool
@@ -294,20 +337,34 @@ The prototype aliases map directly as `--radius-xs / --radius-sm /
 
 Do not make every surface a rounded card. Structural groups should prefer
 dividers, background changes, and inset rules.
+New or revised shared-component CSS uses the shape token matching its semantic
+role rather than introducing another raw radius. A page override may state an
+exact resolved pixel value only when documenting a deliberate page-specific
+exception; map it to an existing token where the values and roles already agree.
 
 Elevation:
 
 - Ordinary rows and cards have no drop shadow.
-- `--elevation-sm` is the compact Composer/input shadow used by the current
-  prototype: `0 16px 38px rgb(23 28 22 / 15%)` in light mode and
-  `0 16px 42px rgb(0 0 0 / 30%)` in dark mode, plus the shared inset top edge.
-- Inspectors, drawers, and off-canvas navigation use
-  `0 22px 56px rgb(25 28 22 / 18%)` in light mode and
-  `0 22px 56px rgb(0 0 0 / 52%)` in dark mode.
+- Elevation is role-based rather than a generic size ladder:
+
+  | Role token | Light | Dark | Purpose |
+  |---|---|---|---|
+  | `--elevation-popover` | `0 14px 34px rgb(23 28 22 / 10%)` | `0 14px 34px rgb(0 0 0 / 34%)` | Smallest full-perimeter separation for menus, compact popovers, and tooltips |
+  | `--elevation-composer` | `0 -12px 30px rgb(23 28 22 / 9%)` | `0 -12px 34px rgb(0 0 0 / 22%)` | Restrained upward boundary; the Composer remains docked rather than floating |
+  | `--elevation-drawer` | `-18px 0 48px rgb(23 28 22 / 14%)` | `-18px 0 48px rgb(0 0 0 / 38%)` | Directional separation for right-edge Inspectors and Todo Preview |
+  | `--elevation-modal` | `0 24px 70px rgb(23 28 22 / 18%)` | `0 24px 70px rgb(0 0 0 / 52%)` | Strongest transient layer, used only with a modal scrim |
+
+- Left-edge drawers mirror `--elevation-drawer` on the x axis through
+  `--elevation-drawer-start`: positive 18px with the same blur, color, and
+  opacity. Each role combines semantic fill, border, optional inset edge, and
+  the lowest approved shadow that still explains stacking.
+- Implementation `sm / md / lg` elevation names are migration aliases, not the
+  design authority. Map them to approved roles, then merge or remove aliases
+  that resolve to the same value.
 - Subtle hover micro-interactions use 0.5–1px `translateY` transforms on interactive
   rows and cards for perceived responsiveness without raised shadows.
-- Primary buttons use a single-hue indigo gradient, brand-tinted shadow, and one
-  inset highlight to reinforce depth and intentionality.
+- Primary-button depth belongs to the shared Button treatment below and is not
+  part of the surface elevation scale.
 
 ### Optical Depth and Functional Glass
 
@@ -324,12 +381,12 @@ page-wide style applied to every surface.
   boundary shadow. These are structural separators, not ambient effects.
 - Modal backdrops may use a 4px blur with a 55–60% dark scrim to separate the
   active decision from its context. Drawers, popovers, menus, dialogs, Todo
-  Preview, and the floating Composer may use their existing elevation token.
-- Primary, Composer Send/Queue, and primary HITL controls may use the shared
-  single-hue indigo gradient. Neutral secondary controls remain flat.
+  Preview, and the Composer use their matching role-based elevation.
+- Primary, Composer Send/Queue, and primary HITL controls use the shared primary
+  treatment. Neutral secondary controls remain flat.
 - A neutral gradient is allowed inside an existing user-message or overlay
   surface when both stops remain within the same semantic surface family.
-- Ordinary Todo cards, inventory rows, Work disclosures, Tool rows, status
+- Ordinary Todo detail regions, inventory rows, Work disclosures, Tool rows, status
   fields, and Inspector rows stay flat. They may use a subtle inset top edge,
   border change, or semantic field, but never an outer glow or floating shadow.
 - Do not add full-canvas ambient blobs, grain/noise overlays, permanent luminous
@@ -372,7 +429,8 @@ Todo-bound Session: project rail | Todo navigation | Session canvas | 312px insp
   not recreate `Todos / Automations / Sessions` as a top toolbar.
 - A rail destination has exactly one current-state surface. The brand mark and
   project marks must not retain their neutral hover/default background when
-  selected; the brand field is the sole active background.
+  selected. Use the low-chroma `--rail-active` surface alias plus a narrow brand
+  edge and clear mark/icon state; do not replace it with a saturated brand field.
 - A selected Todo uses one 58px compact shell header for its content-derived
   display lead, lifecycle state, and `Todo / Work`. The display lead is never a
   persisted title field. A concrete Session adds one 50px context row; at touch
@@ -396,7 +454,6 @@ Responsive behavior:
 | `721–980px` | 52px rail + canvas; Todo navigation becomes a left drawer; Session Inspector remains a right overlay |
 | `561–720px` | 48px rail + canvas; the same Todo-navigation drawer and Session-Inspector overlay remain |
 | `≤560px` | 48px rail + canvas; Todo shell additionally wraps to 88px and the Session Inspector begins below the combined 145px context |
-| `≤720px` | Todo Board keeps four horizontally scrollable lanes; each lane is `min(240px, 82vw)` so lifecycle remains spatially stable |
 
 Narrow-screen rules:
 
@@ -417,8 +474,8 @@ Narrow-screen rules:
   showing duplicate marks; do not use single-letter marks, Discord-style
   avatars, or per-project icon inventiveness. Utility controls (search, Needs
   you, Settings, theme) stay outline SVG icons.
-- Active project uses the same indigo selection language as other navigation:
-  a quiet brand field, brand-colored mark, and narrow indigo edge. Lime remains
+- Active project uses the same selection language as other navigation: a quiet
+  `--rail-active` field, brand-colored mark, and narrow indigo edge. Lime remains
   exclusive to genuinely running/live work and never doubles as selection.
 - Project marks keep their registration order. Switching projects updates only
   active state and must never move, replace, or reorder desktop rail entries. At
@@ -435,9 +492,9 @@ Narrow-screen rules:
   keyboard behavior required for editing, menus, dialogs, and accessibility is
   preserved and must never capture an unrelated system shortcut.
 - The project rail is theme-adaptive: warm neutral in light mode and graphite
-  in dark mode. Its brand mark, hover fields, selected project, separators, and
-  icon contrast use the matching `--rail-*` tokens; never leave a permanently
-  black rail inside the light theme.
+  in dark mode. Its base and selected project use `--rail` / `--rail-active`;
+  mark, hover, separator, and icon contrast reuse the shared text, hover, and
+  border semantics. Never leave a permanently black rail inside the light theme.
 - The lower rail utility order is global search, Needs you, Settings, then the
   theme switch. Global search sits immediately above Needs you after the rail
   separator.
@@ -463,12 +520,17 @@ Narrow-screen rules:
 - `Runs` and `Schedules` are presentation labels only. The canonical product
   entities remain `Session` and `Automation`; their API names, stored source
   identities, and `/sessions` / `/automations` route families are not renamed.
-- The persistent sidebar owns project identity. The work canvas uses the current
-  Todo, Automation, or Session title as its visible heading and does not repeat a
-  generic inventory title merely to label the route.
-- Do not show ordinary entity totals in a top tab strip. Sidebar counts appear
-  only where they support decisions, such as `Needs you` or a Todo lifecycle
-  group.
+- The persistent sidebar owns project identity. Inventory canvases still expose
+  one compact presentation heading for orientation: `WORK · All todos`,
+  `OPERATIONS · Runs`, or `OPERATIONS · Schedules`, followed by the page's
+  approved count. A selected Todo, Automation, or Session uses its actual
+  content-derived or entity title instead. Do not repeat another generic title
+  inside the scrolling content.
+- Do not show ordinary entity totals in a top tab strip. The Todo navigator uses
+  explicit count semantics: `All todos` is the Active canonical Todo total,
+  `Runs` is the active Session count, and `Schedules` is the Automation-
+  definition total. A lifecycle/group count is the number of affected entities;
+  a `Needs you` Todo row's trailing count is its unresolved action total.
 - Search has two explicit scopes and never relies on placement alone:
   - the project rail opens `Search all work` across every registered project;
   - each inventory page exposes one visible `Filter {entity}` field that only
@@ -570,11 +632,11 @@ Todo operational line, inventory cue) — not decorative copy.
 | Needs you / HITL attention | `--warning` / `--attention-field` | Amber icon/orbit + `Needs you` (or mechanism tag where density rules allow); use only the quiet inset/surface rings from the current prototype, never a decorative outer glow |
 | Done / completed | `--success` / `--success-field` | Shared outline **check** SVG (same language as Todos Done `data-icon="check"`) or completed text — never a freehand CSS border-hack check |
 | Failed / error | `--error` / `--error-field` | Red icon/orbit + `Failed` or recovery wording |
-| Ready to review | brand-tinted quiet marker (not lime) | Review-ready inventory cue with brand color glow on focus |
-| Selected / active | `--brand` / `--selection-field` | Indigo field or inset rule |
+| Ready to review | brand-tinted quiet marker (not lime) | Brand-tinted marker + accessible state text; add the shared focus-visible ring when interactive |
+| Selected / active | `--brand` / `--selection-field` | Low-chroma field + 2px inset brand edge + clear text/icon state |
 | Idle / stopped / neutral | `--neutral` / outline orbit | Outline neutral orbit; no lime |
 
-Shared **status-orbit** (and page aliases: session/automation/session-finder/session-picker) is one primitive: same sizes, tones, spin only while `.running`, and `prefers-reduced-motion` freezes spin. Done/completed orbits use the same SVG glyph language as Todos lane Done — do not fork a CSS pseudo-element check. Do not fork per-page orbit CSS.
+Shared **status-orbit** (and page aliases: session/automation/session-finder/session-picker) is one primitive: same sizes, tones, spin only while `.running`, and `prefers-reduced-motion` freezes spin. Done/completed orbits use the same SVG glyph language as the Todos Done lifecycle state — do not fork a CSS pseudo-element check. Do not fork per-page orbit CSS.
 
 Automation invocation state is not Session or Execution completion: a
 `dispatched` invocation remains visibly `Dispatched` and must never be labeled
@@ -588,35 +650,63 @@ pulse, status-orbit spin while running, and terminal cursor may loop.
 ### Buttons
 
 - Primary: shared `.primary-button` (or product equivalent) — indigo fill,
-  6px radius, 34px default height, 11px horizontal padding, 7px content gap,
-  and 11.5px / 600 text. Disabled state uses muted fill without a second “fake
+  6px radius, 34px default minimum height, 11px horizontal padding, 7px content
+  gap, and 11.5px / 600 text. Disabled state uses muted fill without a second “fake
   primary” style. `New todo` is the persistent project-level creation primary;
   selected-detail actions such as `Run now` may be the one local primary.
   Secondary inventory creation actions such as `New Session` and
   `New Automation` use the shared quiet button primitive and never compete with
-  `New todo`. Do not invent page-local primary button classes. Primary
-  buttons may use the shared single-hue indigo gradient plus brand-tinted shadows
-  (`0 1px 3px rgba(99, 102, 241, 0.3)`) with
-  subtle inset highlights (`inset 0 1px 0 rgba(255, 255, 255, 0.1)`) and a 1px
-  upward hover transform to reinforce intentionality.
+  `New todo`. Do not invent page-local primary button classes. The default
+  treatment is one restrained, lower-saturation indigo tone. A narrow same-hue
+  tonal gradient, subtle inset edge, or small brand-tinted shadow is optional
+  reinforcement, not a mandatory bundle; its saturation and depth require
+  light/dark prototype acceptance and must never read as glow.
 - Secondary: elevated neutral surface, 1px border, 6px radius.
 - Icon button: 32–40px visible control; expand the hit area to 44px on coarse
   pointers.
 - Hover micro-interactions use 0.5–1px `translateY(-1px)` transforms on buttons
-  and interactive cards for perceived responsiveness. Primary button hover deepens
-  the brand shadow and increases inset highlight opacity.
-- Each view has one visually dominant primary action.
+  and interactive cards for perceived responsiveness. Primary hover changes
+  tone or boundary before adding more shadow and must not become a floating
+  card.
+- Each decision region has at most one visually dominant primary action.
+  A persistent project-creation primary and a selected-detail local primary may
+  coexist only when spatial separation and lower-weight surrounding actions
+  make their scopes unambiguous.
 
 ### Rows and Cards
 
 - Inventory, archived, and rejected items are rows separated by rules.
-- Todo cards are one card level only; never nest a card inside another card.
+- Todo inventory stays flat rows. Todo Preview and detail regions use at most one
+  card level; never nest a card inside another card.
 - A Todo has one canonical Markdown `content` value and no title or summary.
   Inventory surfaces show only a mechanically normalized, bounded prefix of
   that content; Todo detail renders the complete content without removing its
   first line.
-- Selection uses a 2px indigo inset rule plus border change.
+- Selection uses `--selection-field` plus a 2px inset brand edge without
+  changing row/card bounds. A border change may reinforce this state but cannot
+  replace the shared field-and-edge language.
 - Running or attention rows may use a semantic field and 3px inset rule.
+
+### Empty States
+
+- Resolve empty presentation only after the canonical inventory has loaded
+  authoritatively. Loading, unavailable, and error states remain truthful and
+  take precedence; then resolve canonical first-use, filter no-results when the
+  inventory is non-empty, and finally empty groups/secondary surfaces.
+- A first-use state exists only when the canonical inventory for that entity is
+  truly empty, not merely when the selected lifecycle surface, group, or filter
+  has no visible rows. It gives one concise explanation and may expose one
+  contextual action. An already-visible persistent primary keeps authority; a
+  canvas action that invokes the same flow is quiet/secondary rather than a
+  duplicate dominant primary. An illustration or icon is optional.
+- An empty lifecycle group or secondary surface uses one quiet line near
+  its group heading. It does not add a centered illustration panel or creation
+  CTA.
+- A filter no-results state keeps the relevant controls visible, names the
+  filtering cause, and provides a direct clear/reset action. Creating a new
+  entity is not a filter-recovery action.
+- Page overrides decide whether a valid empty state is inline, centered, or
+  omitted when empty groups carry no decision value.
 
 ### Session Header
 
@@ -642,19 +732,24 @@ Execution is a mandatory product entity, not an optional visual section.
 - One Execution's process is presented through a compact `Work` disclosure,
   without wrapping the whole turn in an Execution card.
 - Running Work is expanded so current progress remains visible. Completed Work
-  collapses to `Worked for {duration}` with only a chevron and expansion
-  affordance.
+  collapses to `Worked for {duration}` and may append ` · {N} tools` when that
+  Work Segment contains settled Tool calls. This is the only Work-row aggregate:
+  it counts settled calls rather than visual groups, uses a singular `1 tool`,
+  and disappears when zero or when narrow space is insufficient.
 - A running summary reads `Working for {duration}` (or `Working · {duration}`) and
   may append one current activity label after an em dash.
 - When Work is suspended for the user (HITL / permission), the fold label uses
   time/mechanism wording such as **`Paused · Worked for {duration}`** — not a
   second `Needs you` slogan. Product urgency remains on the Session header and
   Composer.
-- Do not show Execution number, model, message count, step count, Tool count, or
-  Child count in the visible Work row. Preserve Execution identity in product
-  data and stable DOM identity.
-- The accessible disclosure name includes the Work segment, terminal/live
-  state, elapsed duration, and current activity when present.
+- Do not show Execution number, model, message count, step count, Child count, or
+  another runtime aggregate in the visible Work row. Preserve Execution identity
+  in product data and stable DOM identity. Running Work never exposes a changing
+  Tool count; paused Work may append the same settled Segment aggregate as a
+  completed row.
+- The accessible disclosure name includes the Work segment, terminal/live state,
+  elapsed duration, the settled Tool aggregate when present, and current activity
+  when present.
 - A final Agent response is editorial content after Work and remains visible
   when Work is collapsed. Never place the final response inside the disclosure.
 - An Execution without final Agent text does not receive a fabricated empty
@@ -671,9 +766,11 @@ Execution is a mandatory product entity, not an optional visual section.
 
 - Project two or more consecutive ordinary tool calls within one Execution as a
   Tool Run, including calls split across model-step Assistant messages.
-- Reasoning is an independent Work timeline module and a hard Tool Run boundary.
-  Rendered Assistant text, `delegate`, `ask_user`, Recovery, and Compaction are
-  also hard boundaries.
+- Reasoning with displayable text is an independent Work timeline module and a
+  hard Tool Run boundary. A Reasoning event without displayable text still
+  separates adjacent Tool Runs but renders no unavailable, token-only, or
+  synthesized placeholder row. Rendered Assistant text, `delegate`, `ask_user`,
+  Recovery, and Compaction are also hard boundaries.
 - A settled Tool Run summary is the ordered, comma-separated canonical tool-name
   list, for example `file_read, grep, glob, lsp_diagnostics`.
 - Do not add a Tool count, completed label, representative target, or repeated
@@ -765,9 +862,19 @@ Execution is a mandatory product entity, not an optional visual section.
   never presented as an aggregate Todo diff or as proof of Session authorship.
 - Todo and every Work-list/detail state retain direct deep links and predictable
   browser/app Back behavior. Returning from Work detail restores the Work list's
-  filter and scroll position. An inventory may still open a lightweight,
-  non-editing preview drawer first, but that drawer exposes one explicit route
-  into this complete Todo shell.
+  filter and scroll position. An inventory may still open a lightweight Preview
+  drawer first. Preview keeps canonical content and durable context read-only,
+  exposes one explicit route into the complete Todo shell, and may offer one
+  compact `Stage: {label} ▾` menu for ordinary `Idea / Ready / In progress /
+  Done` movement. Reject, Archive, content editing, References, and Plan remain
+  on the complete Todo route.
+- Preview Stage movement mutates only the Todo lifecycle; it never starts,
+  stops, cancels, or resolves linked Work. Derived `Running` and `Needs you`
+  signals remain visible across lifecycle movement. Only a move to `Done` while
+  linked Work is `Running` or `Needs you` asks for confirmation; other ordinary
+  moves apply directly. A successful mutation keeps Preview open and
+  synchronizes the List projection and counts, while a pending or revision-
+  conflicting mutation remains disabled and recoverable in place.
 - Overlays use a scrim and a visible close action, never resize the underlying
   inventory canvas, keep keyboard focus inside a modal while it is open, and
   restore focus to their trigger when dismissed. While a modal submission is
@@ -821,14 +928,14 @@ Motion explains state changes; it is not decoration.
 | `--motion-instant` | 120ms | Press and short visibility response |
 | `--motion-fast` | 140ms | Hover, surface response, Queue-row entry |
 | `--motion-standard` | 180ms | One-shot state change and overlay exit |
-| `--motion-deliberate` | 220ms | Drawer entry and spatial landing feedback |
+| `--motion-deliberate` | 220ms | Drawer entry and deliberate spatial feedback |
 | `--motion-attention` | 700ms | Bounded attention feedback |
 | `--motion-activity` | 1.8s | Running activity only |
 
 - Do not add route-transition choreography or GSAP.
 - Do not animate layout width/height for disclosure; switch content and rotate
   the chevron.
-- Todo Preview, Work disclosure, Queue/HITL entry, drag landing, and Composer
+- Todo Preview, Work disclosure, Queue/HITL entry, and Composer
   terminal-action changes may use the current 140–220ms opacity/transform
   transitions because each one explains a user-triggered state change. They
   must not add layout movement or become ambient looping motion.
@@ -841,7 +948,19 @@ Motion explains state changes; it is not decoration.
 - Expansion controls expose `aria-expanded`; use `aria-controls` when a stable
   detail ID exists.
 - Icon-only controls have accessible names.
-- Focus uses the indigo focus ring and is never removed without replacement.
+- Every keyboard-interactive control uses one shared `:focus-visible`
+  primitive. It is never removed without replacement, remains visibly distinct
+  on base, surface, elevated, and overlay backgrounds, and has at least 3:1
+  contrast against adjacent colors. The approved primitive is an opaque 2px
+  `--focus-color` indicator: standalone controls use a 2px-offset outline and
+  composite fields may use the equivalent unblurred 2px `--focus` boundary.
+- Focus is independent of selected, pressed, and active state. When states
+  coincide, the focus primitive remains separately perceivable instead of
+  reusing the selected inset edge as its only signal.
+- Ordinary-size informative text, including secondary and muted metadata, has
+  at least 4.5:1 contrast against every actual background on which it appears.
+  Necessary non-text component boundaries and state indicators have at least
+  3:1 contrast against adjacent colors.
 - Status meaning always includes text or an icon in addition to color.
 - Toasts use `role="status"` and `aria-live="polite"`.
 - Preserve keyboard reading order when sidebars and inspectors become overlays.
@@ -872,6 +991,10 @@ Motion explains state changes; it is not decoration.
 - [ ] Preserve every product entity and action shown in the current product.
 - [ ] Use semantic theme tokens rather than page-local colors.
 - [ ] Verify light and dark modes independently.
+- [ ] Measure informative text contrast on every mapped surface; do not validate
+      a token only against white or the base canvas.
+- [ ] Keyboard-test the shared focus primitive on base, surface, elevated, and
+      overlay backgrounds and confirm at least 3:1 adjacent contrast.
 - [ ] Verify 390px, 760px, 1024px, and 1440px widths.
 - [ ] Confirm no document-level horizontal overflow.
 - [ ] Confirm the brand mark returns to `All todos` and no project page
@@ -906,9 +1029,13 @@ Motion explains state changes; it is not decoration.
 - [ ] Confirm shared done/completed status-orbit uses the same check glyph
       language as Todos Done.
 - [ ] Confirm project rail uses Quiet two-letter monograms for projects.
-- [ ] Confirm Todo preview preserves the inventory layout and state, does not
-      mutate durable Todo content or lifecycle, and keeps the full detail route
-      directly reachable.
+- [ ] Confirm Todo Preview preserves the inventory layout, keeps durable content
+      and context read-only, and keeps the full detail route directly reachable.
+- [ ] Keyboard-test the Preview `Stage: {label} ▾` menu, pending and revision-
+      conflict recovery, List/group/count synchronization, and focus restoration
+      to the moved row. Confirm `In progress` does not start/stop Work, operational
+      signals survive stage movement, and only `Done` with `Running` or `Needs
+      you` linked Work asks for confirmation.
 - [ ] Confirm keyboard focus and accessible expansion state.
 - [ ] Confirm `prefers-reduced-motion`.
 - [ ] Confirm product and prototype resolve the shared system-native sans and

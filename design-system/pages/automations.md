@@ -13,15 +13,22 @@ attention, and recover the exact Session associated with every dispatched run.
 Missed or pre-dispatch failures remain Automation events and may not yet own a
 Session.
 
+`Schedules` is the presentation label for the Automation inventory at
+`/automations`; the canonical entity remains `Automation`. It is not a third
+sibling page beside a separate Automations surface.
+
 ## Structure
 
 - Keep the project rail and Todo navigator; `Schedules` is the active secondary
   destination.
+- The compact canvas header shows the `OPERATIONS` eyebrow, `Schedules`, and the
+  canonical Automation-definition total. It is orientation, not a metric card.
 - Use one page-local command row with `Filter Automations` on the left and an
   `All / Active / Paused` status control plus quiet `New Automation` on the
   right. `New Todo` remains the navigator's single primary creation action;
   Automation creation stays fully available. Status buttons expose
-  `aria-pressed` and never act as navigation Tabs.
+  `aria-pressed` and never act as navigation Tabs. They use a neutral pressed
+  control treatment, not the shared selected-entity field and edge.
 - At `721–760px`, keep the filter on the left while stacking the status control
   and `New Automation` in the right action group. At `≤720px`, stack the filter,
   status control, and creation action into full-width rows. Keep the interactive
@@ -41,6 +48,22 @@ Session.
 - At `≤720px`, the detail back action and both title actions are 44px tall. A
   list selection moves focus to the detail title; the back action restores the
   exact originating row.
+
+## Empty States
+
+- First-use exists only when the canonical project Automation-definition
+  inventory is zero. Explain scheduled or repeatable work in one concise line
+  and point toward the existing quiet command-row `New Automation` action; do
+  not add a second button of the same weight. Do not auto-select or manufacture
+  an empty detail; the navigator `New Todo` remains the dominant
+  project-creation primary.
+- When definitions exist but the query or status control produces no rows, keep
+  those controls visible and name the filtering cause. Query-only filtering uses
+  `Clear filter`, status-only filtering uses `Show all`, and combined filtering
+  uses `Reset filters`. Do not reuse first-use copy or make creation the recovery
+  action.
+- Omit an empty decision group; do not render a decorative group shell merely
+  to show its zero count.
 
 ## Automation List
 
@@ -76,14 +99,17 @@ Session.
   not animate a definition merely because its next run is scheduled.
 - Rows use subtle hover micro-interactions (0.5px `translateY` lift) with
   background color change for perceived responsiveness without raised shadows.
-- Selection uses the shared indigo selected treatment. Needs-you state keeps
-  explicit text in addition to amber color.
+- Selection uses `--selection-field` plus a 2px inset brand edge without
+  changing row bounds or vertical rhythm and without turning the row into a
+  floating card. Needs-you state keeps explicit text in addition to amber color.
 - `Filter Automations` matches stable ID, name, instruction, schedule, linked
-  Todo canonical content, and visible run state. Show a
-  helpful no-results state in place of the list without hiding the filter or
-  New Automation action.
+  Todo canonical content, and visible run state. Follow the Empty States
+  recovery contract without hiding the filter, status control, or `New
+  Automation` action.
 - `New Automation` uses the shared quiet button primitive on this secondary
-  surface. The selected detail's `Run now` remains the single primary action.
+  surface. The selected detail's `Run now` remains its local primary action;
+  spatial separation keeps that detail decision distinct from the persistent
+  navigator's project-level `New Todo` primary.
 
 ## Selected Detail
 
@@ -106,6 +132,9 @@ Session.
 - Automation and Invocation identities are UUIDs. Recent-run rows use truthful
   time/state copy and exact UUID-backed links; do not invent `Run #18`-style
   sequential identities.
+- A selected Automation with no Invocations keeps the Recent runs region and
+  reads `No runs yet`. `Run now` remains the local primary action; do not add
+  an empty illustration, synthesized run, or disabled placeholder row.
 - A linked Todo opens its stable Todo detail URL. Absence of a linked Todo is
   valid and does not make the Automation incomplete.
 

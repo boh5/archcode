@@ -13,6 +13,8 @@ attention, and start work directly without manufacturing a Todo first.
 
 - Keep the project rail and Todo navigator; `Runs` is the active secondary
   destination.
+- The compact canvas header shows the `OPERATIONS` eyebrow, `Runs`, and the
+  active Session count as `{N} active`. It is orientation, not a KPI card.
 - Use one compact command row: local Session filter, one source filter, and a
   quiet `New Session` action. `New Todo` remains the navigator's single primary
   creation action; direct Session creation remains fully available without
@@ -31,16 +33,22 @@ attention, and start work directly without manufacturing a Todo first.
 
 ## Session Rows
 
-- Row order is shared status orbit, Session title and source context, then action
-  state or elapsed time.
-- Desktop rows begin with a 30px status-orbit column, use 12px gaps, `10px 8px`
-  padding, a 66px minimum height, and one bottom separator. The remaining
-  columns hold the flexible copy, optional state/time, and trailing chevron.
-  Titles are 13.5px/600 at 1.35 line-height; source context is 11.5px at 1.35
-  line-height with 4px top spacing and a compact uppercase source label.
-  At `≤720px`, rows use a 72px minimum height and a 27px status column; secondary
-  time/owner/chevron metadata hides while the explicit action-required state
-  remains in the trailing column.
+- Every desktop group uses the same four row tracks: 30px status orbit,
+  flexible Session copy, one shared fixed-width trailing state/time track, and
+  a fixed chevron track. The trailing track has one width across `Needs you`,
+  `Running`, and `Recent`; its copy is right-aligned and uses tabular figures so
+  state and time do not drift horizontally between groups.
+- Desktop rows use 12px gaps, `10px 8px` padding, a 66px minimum height, and one
+  bottom separator. Titles are 13.5px/600 at 1.35 line-height; source context is
+  11.5px at 1.35 line-height with 4px top spacing and a compact uppercase source
+  label.
+- At `≤720px`, rows use a 72px minimum height and a 27px status column. Keep an
+  explicit action-required or failed state in the trailing position; hide
+  secondary running/recent time and the chevron first. The source-context line
+  keeps source, durable parent context, and owner metadata in document order,
+  then naturally ellipsizes as one line according to the remaining width. At
+  390px this means retaining as much of that line as fits rather than explicitly
+  hiding either source or owner.
 - Rows use subtle hover micro-interactions (0.5px `translateY` lift) with
   background color change for perceived responsiveness without raised shadows.
 - Every row identifies one source: `Todo`, `Automation`, or `Direct`.
@@ -69,13 +77,28 @@ attention, and start work directly without manufacturing a Todo first.
 - Treat search and source as one left-aligned filter cluster with an 8px gap;
   keep `New Session` independently anchored to the far right. Never distribute
   the three controls as equal islands across the command row.
-- The source filter is one compact, workbench-styled native single-select:
-  `All sources`, `Todo`, `Automation`, `Direct`. It uses the shared control border, filter
-  icon, explicit chevron, and focus ring while retaining platform option
-  behavior. Do not build a second custom popover for this prototype. Do not add another
-  state filter because the decision groups already expose state.
+- The source filter is one compact workbench single-select trigger for
+  `All sources`, `Todo`, `Automation`, and `Direct`. It uses the shared control
+  border, filter icon, explicit chevron, and focus ring, then opens one anchored
+  ArchCode listbox using the shared popover elevation. Do not expose a browser-
+  native select or system option sheet in this prototype.
+- Its current compact geometry is an explicit Runs-page exception: the trigger
+  uses a 7px radius, the anchored menu an 8px radius, and each option a 5px
+  radius. On coarse pointers, every option must expose at least a 44px hit
+  target; keep the compact visual treatment while the shared CSS implements
+  that approved interaction rule.
+- The selected source option uses `--selection-field`, a 2px inset brand edge,
+  and a check glyph. Arrow keys, Home/End, Enter/Space, Escape, outside click,
+  and Tab departure all behave predictably; Escape and committed selection
+  return focus to the trigger. Do not add another state filter because the
+  decision groups already expose state.
 - A no-results state suggests another Session title or stable ID and keeps the
   source filter visible as the explicit way to narrow by origin.
+- When the canonical Session inventory is truly empty, show the quiet first-use
+  copy `No Sessions yet` beneath the unchanged command row. Point users to the
+  existing `New Session` action or to Todo/Automation entry; do not add a second
+  creation button inside the canvas. Filter no-results never masquerades as
+  first-use, and canonical first-use takes precedence over any stale controls.
 - Project-rail `Search all work` is the only navigational search. The visible
   field only filters the Sessions inventory; do not duplicate search in the
   compact canvas header.
@@ -101,8 +124,9 @@ attention, and start work directly without manufacturing a Todo first.
 - At `≤720px`, search takes the full first row of the command surface; source
   filter and New Session remain 44px touch targets beneath it. Match the current prototype's
   10px top, 12px bottom, and 12px horizontal command-surface padding.
-- Row metadata may wrap to two lines. Hide elapsed time before hiding source,
-  title, or the action-required state.
+- Keep title and source context on their respective single lines. Hide elapsed
+  time before truncating the source-context line; let its source, parent, and
+  owner copy ellipsize naturally instead of applying field-specific hiding.
 
 ## Sessions-Specific Avoidances
 

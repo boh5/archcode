@@ -10,11 +10,9 @@
     moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     more: '<circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/>',
-    grip: '<circle cx="9" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="17" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="1" fill="currentColor" stroke="none"/>',
     panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
     inspector: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
     list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/>',
-    board: '<rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="10" rx="1"/>',
     play: '<path d="m8 5 11 7-11 7Z"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     'corner-down-right': '<path d="M15 10l5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>',
@@ -475,23 +473,9 @@
   window.addEventListener('resize', syncInspectorState);
   syncInspectorState();
 
-  document.querySelectorAll('[data-view]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const value = button.dataset.view;
-      const controls = button.closest('[data-view-controls]');
-      const target = controls?.dataset.viewControls ? document.getElementById(controls.dataset.viewControls) : null;
-      const scope = target || button.closest('[data-view-scope]') || document;
-      (controls || scope).querySelectorAll('[data-view]').forEach((item) => {
-        const selected = item === button;
-        item.classList.toggle('active', selected);
-        item.setAttribute('aria-pressed', String(selected));
-      });
-      scope.querySelectorAll('[data-view-panel]').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== value; });
-      window.syncPrototypeTodoFilter?.();
-    });
-  });
   document.querySelectorAll('[data-surface]').forEach((button) => {
     button.addEventListener('click', () => {
+      window.closePrototypeTodoPreview?.({ restoreFocus: false });
       const value = button.dataset.surface;
       const scope = button.closest('[data-surface-scope]') || document;
       scope.querySelectorAll('[data-surface]').forEach((item) => {
@@ -563,218 +547,43 @@
     const target = navTodoTitles[label];
     if (target) link.href = todoDetailUrl(target[0], target[1]);
   });
+  const todoLaneLabels = { idea: 'Ideas', ready: 'Ready', in_progress: 'In progress', done: 'Done' };
+  const todoLaneVisuals = {
+    idea: { tone: 'neutral', icon: 'spark' },
+    ready: { tone: 'ready', icon: 'play' },
+    in_progress: { tone: 'progress', icon: 'activity' },
+    done: { tone: 'done', icon: 'check' },
+  };
   document.querySelectorAll('.page-todos [data-view-panel="list"] .work-group').forEach((group) => {
     const heading = group.querySelector('.group-heading span')?.textContent.trim().toLocaleLowerCase() || '';
-    const lane = heading.startsWith('ready') ? 'ready' : heading.startsWith('in progress') ? 'in_progress' : heading.startsWith('done') ? 'done' : 'idea';
+    const lane = group.dataset.todoStage || (heading.startsWith('ready') ? 'ready' : heading.startsWith('in progress') ? 'in_progress' : heading.startsWith('done') ? 'done' : 'idea');
     group.querySelectorAll('a.todo-filter-item').forEach((link) => {
       const title = link.querySelector('strong')?.textContent.trim() || 'Todo';
       link.href = todoDetailUrl(title, lane);
     });
   });
 
-  const todoBoard = document.querySelector('.todo-board');
-  if (todoBoard) {
-    const laneLabels = { idea: 'Ideas', ready: 'Ready', in_progress: 'In progress', done: 'Done' };
-    const laneVisuals = {
-      idea: { tone: 'neutral', icon: 'spark' },
-      ready: { tone: 'ready', icon: 'play' },
-      in_progress: { tone: 'live', icon: 'activity' },
-      done: { tone: 'done', icon: 'check' },
-    };
-    const lanes = [...todoBoard.querySelectorAll('[data-todo-lane]')];
-    let draggedTodoCard;
-    let pointerDropLane;
-
-    function bindTodoCardInteractions(wrapper, handle) {
-      let pointerDrag;
-      let mouseDrag;
-      handle.addEventListener('mousedown', (event) => {
-        if (event.button !== 0) return;
-        mouseDrag = { startX: event.clientX, startY: event.clientY, active: false };
-      });
-      document.addEventListener('mousemove', (event) => {
-        if (!mouseDrag) return;
-        if (!mouseDrag.active && Math.hypot(event.clientX - mouseDrag.startX, event.clientY - mouseDrag.startY) < 6) return;
-        mouseDrag.active = true;
-        event.preventDefault();
-        draggedTodoCard = wrapper;
-        wrapper.classList.add('dragging');
-        pointerDropLane = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-todo-lane]');
-        lanes.forEach((lane) => lane.classList.toggle('drop-target', lane === pointerDropLane));
-      });
-      document.addEventListener('mouseup', (event) => {
-        if (!mouseDrag) return;
-        if (mouseDrag.active) event.preventDefault();
-        if (mouseDrag.active && pointerDropLane) {
-          handle.dataset.justDragged = 'true';
-          moveTodoCard(wrapper, pointerDropLane);
-        }
-        wrapper.classList.remove('dragging');
-        lanes.forEach((lane) => lane.classList.remove('drop-target'));
-        pointerDropLane = undefined;
-        draggedTodoCard = undefined;
-        mouseDrag = undefined;
-      });
-      handle.addEventListener('pointerdown', (event) => {
-        if (event.pointerType === 'mouse' || event.button !== 0) return;
-        pointerDrag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false };
-        handle.setPointerCapture(event.pointerId);
-      });
-      handle.addEventListener('pointermove', (event) => {
-        if (event.pointerType === 'mouse' || !pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
-        if (!pointerDrag.active && Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 6) return;
-        pointerDrag.active = true;
-        event.preventDefault();
-        draggedTodoCard = wrapper;
-        wrapper.classList.add('dragging');
-        pointerDropLane = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-todo-lane]');
-        lanes.forEach((lane) => lane.classList.toggle('drop-target', lane === pointerDropLane));
-      });
-      handle.addEventListener('pointerup', (event) => {
-        if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
-        if (pointerDrag.active) event.preventDefault();
-        if (pointerDrag.active && pointerDropLane) {
-          handle.dataset.justDragged = 'true';
-          moveTodoCard(wrapper, pointerDropLane);
-        }
-        wrapper.classList.remove('dragging');
-        lanes.forEach((lane) => lane.classList.remove('drop-target'));
-        pointerDropLane = undefined;
-        draggedTodoCard = undefined;
-        pointerDrag = undefined;
-      });
-      handle.addEventListener('pointercancel', () => {
-        wrapper.classList.remove('dragging');
-        lanes.forEach((lane) => lane.classList.remove('drop-target'));
-        pointerDropLane = undefined;
-        draggedTodoCard = undefined;
-        pointerDrag = undefined;
-      });
-      handle.addEventListener('click', () => {
-        if (handle.dataset.justDragged === 'true') {
-          delete handle.dataset.justDragged;
-          return;
-        }
-        const currentLaneIndex = lanes.indexOf(wrapper.closest('[data-todo-lane]'));
-        moveTodoCard(wrapper, lanes[(currentLaneIndex + 1) % lanes.length]);
-      });
-    }
-
-    todoBoard.querySelectorAll('a.todo-card').forEach((link, index) => {
-      const wrapper = document.createElement('article');
-      wrapper.className = 'todo-card todo-filter-item';
-      wrapper.dataset.filterText = link.dataset.filterText || link.textContent;
-      link.className = 'todo-card-link';
-      delete link.dataset.filterText;
-      const handle = document.createElement('button');
-      handle.className = 'todo-card-drag';
-      handle.type = 'button';
-      const title = link.querySelector('strong')?.textContent.trim() || 'Todo';
-      link.href = todoDetailUrl(title, link.closest('[data-todo-lane]')?.dataset.todoLane || 'idea');
-      wrapper.dataset.todoId = new URL(link.href, location.href).searchParams.get('todo') || `prototype-todo-${index + 1}`;
-      handle.setAttribute('aria-label', `Move ${title} to the next lifecycle lane`);
-      handle.setAttribute('title', 'Drag to another lifecycle lane, or press to move to the next lane');
-      handle.innerHTML = '<span data-icon="grip"></span>';
-      link.replaceWith(wrapper);
-      wrapper.append(handle, link);
-      renderIcons(wrapper);
-
-      bindTodoCardInteractions(wrapper, handle);
-    });
-
-    function syncLaneCounts() {
-      lanes.forEach((lane) => {
-        const count = lane.querySelectorAll('.todo-card:not([hidden])').length;
-        const badge = lane.querySelector(':scope > header b');
-        if (badge) badge.textContent = String(count);
-      });
-      document.querySelectorAll('[data-view-panel="list"] .work-group').forEach((group) => {
-        const count = group.querySelectorAll('.work-row:not([hidden])').length;
-        const badge = group.querySelector('.group-heading b');
-        if (badge) badge.textContent = String(count);
-      });
-    }
-
-    function syncListProjection(displayLead, laneKey, todoId) {
-      const listRows = [...document.querySelectorAll('[data-view-panel="list"] .work-row')];
-      const row = listRows.find((item) => (todoId && item.dataset.todoId === todoId)
-        || item.querySelector('strong')?.textContent.trim() === displayLead);
-      const targetGroup = [...document.querySelectorAll('[data-view-panel="list"] .work-group')].find((group) => group.querySelector('.group-heading span')?.textContent.trim().startsWith(laneLabels[laneKey]));
-      if (!row || !targetGroup) return;
-      targetGroup.querySelector('.work-list')?.appendChild(row);
-      const content = prototypeTodoById(todoId)?.content || displayLead;
-      if (row instanceof HTMLAnchorElement) row.href = todoDetailUrl(content, laneKey, todoId);
-      const visual = laneVisuals[laneKey];
-      const orbit = row.querySelector('.work-orbit');
-      if (orbit) {
-        orbit.className = `work-orbit ${visual.tone}`;
-        orbit.innerHTML = `<span data-icon="${visual.icon}"></span>`;
-        renderIcons(orbit);
-      }
-      const secondary = row.querySelector('.work-copy > span');
-      if (secondary) secondary.textContent = 'Moved just now';
-    }
-
-    function moveTodoCard(card, lane) {
-      if (!card || !lane || card.parentElement === lane) return;
-      const restoreHandleFocus = card.contains(document.activeElement);
-      const laneKey = lane.dataset.todoLane;
-      const displayLead = card.querySelector('strong')?.textContent.trim() || 'Todo';
-      const todoId = card.dataset.todoId;
-      const content = prototypeTodoById(todoId)?.content || displayLead;
-      lane.appendChild(card);
-      card.classList.remove('landing');
-      requestAnimationFrame(() => {
-        card.classList.add('landing');
-        window.setTimeout(() => card.classList.remove('landing'), 220);
-      });
-      const cardLink = card.querySelector('.todo-card-link');
-      if (cardLink instanceof HTMLAnchorElement) cardLink.href = todoDetailUrl(content, laneKey, todoId);
-      updatePrototypeTodoLane(todoId, laneKey);
-      card.dataset.filterText = `${content} ${laneKey}`.toLocaleLowerCase();
-      const secondary = card.querySelector('small');
-      if (secondary) secondary.remove();
-      syncListProjection(displayLead, laneKey, todoId);
-      syncLaneCounts();
-      showToast(`${displayLead} moved to ${laneLabels[laneKey]}.`);
-      if (restoreHandleFocus) requestAnimationFrame(() => card.querySelector('.todo-card-drag')?.focus());
-    }
-
-    window.addPrototypeTodo = (content, laneKey = 'idea', activity = 'Restored', todoId) => {
-      const targetLane = todoBoard.querySelector(`[data-todo-lane="${laneKey}"]`);
-      const targetList = [...document.querySelectorAll('.page-todos [data-view-panel="list"] .work-group')]
-        .find((group) => group.querySelector('.group-heading span')?.textContent.trim().startsWith(laneLabels[laneKey]))?.querySelector('.work-list');
-      if (!targetLane || !targetList) return;
-      const todo = savePrototypeTodo(content, laneKey, todoId);
-      const displayLead = projectTodoDisplayLead(todo.content);
-      const href = todoDetailUrl(todo.content, laneKey, todo.id);
-      const visual = laneVisuals[laneKey];
-      const card = document.createElement('article');
-      card.className = 'todo-card todo-filter-item';
-      card.dataset.filterText = `${todo.content} ${laneKey}`.toLocaleLowerCase();
-      card.dataset.stableId = todo.id;
-      card.dataset.todoId = todo.id;
-      card.innerHTML = `<button class="todo-card-drag" type="button" aria-label="Move ${escapePrototypeHtml(displayLead)} to the next lifecycle lane" title="Drag to another lifecycle lane, or press to move to the next lane"><span data-icon="grip"></span></button><a class="todo-card-link" href="${href}"><strong></strong></a>`;
-      card.querySelector('strong').textContent = displayLead;
-      bindTodoCardInteractions(card, card.querySelector('.todo-card-drag'));
-      targetLane.appendChild(card);
-      const row = document.createElement('a');
-      row.className = 'work-row todo-filter-item';
-      row.dataset.filterText = `${todo.content} ${laneKey}`.toLocaleLowerCase();
-      row.dataset.stableId = todo.id;
-      row.dataset.todoId = todo.id;
-      row.href = href;
-      row.innerHTML = `<span class="work-orbit ${visual.tone}"><span data-icon="${visual.icon}"></span></span><span class="work-copy"><strong></strong><span>${activity} just now</span></span><span data-icon="chevron"></span>`;
-      row.querySelector('strong').textContent = displayLead;
-      targetList.appendChild(row);
-      renderIcons(card);
-      renderIcons(row);
-      syncLaneCounts();
-      window.syncPrototypeTodoFilter?.();
-    };
-    window.addPrototypeIdeaTodo = (content, todoId) => window.addPrototypeTodo(content, 'idea', 'Created', todoId);
-
-  }
+  window.addPrototypeTodo = (content, laneKey = 'idea', activity = 'Restored', todoId) => {
+    const targetGroup = [...document.querySelectorAll('.page-todos [data-view-panel="list"] .work-group')]
+      .find((group) => group.dataset.todoStage === laneKey);
+    const targetList = targetGroup?.querySelector('.work-list');
+    const visual = todoLaneVisuals[laneKey];
+    if (!targetList || !visual) return;
+    const todo = savePrototypeTodo(content, laneKey, todoId);
+    const displayLead = projectTodoDisplayLead(todo.content);
+    const row = document.createElement('a');
+    row.className = 'work-row todo-filter-item';
+    row.dataset.filterText = `${todo.content} ${laneKey}`.toLocaleLowerCase();
+    row.dataset.stableId = todo.id;
+    row.dataset.todoId = todo.id;
+    row.href = todoDetailUrl(todo.content, laneKey, todo.id);
+    row.innerHTML = `<span class="work-orbit ${visual.tone}"><span data-icon="${visual.icon}"></span></span><span class="work-copy"><strong></strong><span>${activity} just now</span></span><span data-icon="chevron"></span>`;
+    row.querySelector('strong').textContent = displayLead;
+    targetList.appendChild(row);
+    renderIcons(row);
+    window.syncPrototypeTodoFilter?.();
+  };
+  window.addPrototypeIdeaTodo = (content, todoId) => window.addPrototypeTodo(content, 'idea', 'Created', todoId);
 
   const todoPreviewItems = [...document.querySelectorAll('.page-todos [data-surface-panel="active"] .todo-filter-item')];
   if (todoPreviewItems.length) {
@@ -784,14 +593,24 @@
       <aside class="todo-preview" role="dialog" aria-modal="true" aria-labelledby="todo-preview-heading" data-todo-preview hidden>
         <h2 class="sr-only" id="todo-preview-heading" tabindex="-1">Todo detail</h2>
         <header><span><i></i> Preview</span><button class="icon-button" type="button" aria-label="Close preview" data-todo-preview-close><span data-icon="close"></span></button></header>
-        <div class="todo-preview-body"><h3 data-todo-preview-title></h3><p class="todo-preview-excerpt" data-todo-preview-copy></p><div class="todo-preview-meta"><span class="status-label" data-todo-preview-status></span><span data-todo-preview-updated>Updated recently</span></div><div class="todo-preview-operational" data-todo-preview-operational hidden><span class="section-kicker">Current activity</span><strong data-todo-preview-runtime></strong></div><section class="todo-preview-linked" data-todo-preview-linked hidden><span class="section-kicker">Linked work</span><a data-todo-preview-work><span class="work-orbit"><span data-icon="activity"></span></span><span><strong data-todo-preview-work-title></strong><small data-todo-preview-work-context></small></span><span class="status-label" data-todo-preview-work-status></span></a></section><p class="todo-preview-footnote">Preview is read-only. Open details for the complete Markdown, references, Plan, lifecycle, and result.</p></div>
+        <div class="todo-preview-body"><h3 data-todo-preview-title></h3><p class="todo-preview-excerpt" data-todo-preview-copy></p><div class="todo-preview-meta"><div class="todo-preview-stage" data-todo-preview-stage><button class="todo-preview-stage-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="todo-preview-stage-options" data-todo-preview-stage-trigger><span>Stage:</span><strong data-todo-preview-stage-label>Idea</strong><span data-icon="down"></span></button><div class="todo-preview-stage-menu" id="todo-preview-stage-options" role="menu" aria-label="Todo stage" data-todo-preview-stage-menu hidden><button type="button" role="menuitemradio" aria-checked="true" data-todo-preview-stage-option="idea"><span class="work-orbit neutral"><span data-icon="spark"></span></span><span>Idea</span><span data-icon="check"></span></button><button type="button" role="menuitemradio" aria-checked="false" data-todo-preview-stage-option="ready"><span class="work-orbit ready"><span data-icon="play"></span></span><span>Ready</span><span data-icon="check" hidden></span></button><button type="button" role="menuitemradio" aria-checked="false" data-todo-preview-stage-option="in_progress"><span class="work-orbit progress"><span data-icon="activity"></span></span><span>In progress</span><span data-icon="check" hidden></span></button><button type="button" role="menuitemradio" aria-checked="false" data-todo-preview-stage-option="done"><span class="work-orbit done"><span data-icon="check"></span></span><span>Done</span><span data-icon="check" hidden></span></button></div><span class="sr-only" aria-live="polite" data-todo-preview-stage-status></span></div><span data-todo-preview-updated>Updated recently</span></div><section class="todo-preview-stage-confirm" aria-label="Confirm Todo stage change" data-todo-preview-stage-confirm hidden><strong>Linked work is still <span data-todo-preview-stage-confirm-state>running</span>.</strong><p>Moving this Todo to Done changes only its stage. It will not stop or resolve the linked Session.</p><div><button class="quiet-button" type="button" data-todo-preview-stage-cancel>Cancel</button><button class="secondary-button" type="button" data-todo-preview-stage-confirm-action>Move to Done</button></div></section><div class="todo-preview-operational" data-todo-preview-operational hidden><span class="section-kicker">Current activity</span><strong data-todo-preview-runtime></strong></div><section class="todo-preview-linked" data-todo-preview-linked hidden><span class="section-kicker">Linked work</span><a data-todo-preview-work><span class="work-orbit"><span data-icon="activity"></span></span><span><strong data-todo-preview-work-title></strong><small data-todo-preview-work-context></small></span><span class="status-label" data-todo-preview-work-status></span></a></section><p class="todo-preview-footnote">Content and context stay read-only here. Stage changes organize the Todo only. Open details for Markdown, references, Plan, Reject, Archive, and result.</p></div>
         <footer><button class="primary-button" type="button" data-todo-preview-action hidden></button><div class="todo-preview-secondary"><a class="quiet-button" data-todo-preview-details>Open details</a><button class="quiet-button" type="button" data-todo-preview-discussion hidden>Discussion</button></div></footer>
       </aside>`);
     const preview = document.querySelector('[data-todo-preview]');
     const previewScrim = document.querySelector('.todo-preview-scrim');
     const previewHeading = preview?.querySelector('#todo-preview-heading');
     const previewTitle = preview?.querySelector('[data-todo-preview-title]');
-    const previewStatus = preview?.querySelector('[data-todo-preview-status]');
+    const previewStage = preview?.querySelector('[data-todo-preview-stage]');
+    const previewStageTrigger = preview?.querySelector('[data-todo-preview-stage-trigger]');
+    const previewStageLabel = preview?.querySelector('[data-todo-preview-stage-label]');
+    const previewStageMenu = preview?.querySelector('[data-todo-preview-stage-menu]');
+    const previewStageOptions = [...(preview?.querySelectorAll('[data-todo-preview-stage-option]') || [])];
+    const previewStageStatus = preview?.querySelector('[data-todo-preview-stage-status]');
+    const previewStageConfirm = preview?.querySelector('[data-todo-preview-stage-confirm]');
+    const previewStageConfirmState = preview?.querySelector('[data-todo-preview-stage-confirm-state]');
+    const previewStageCancel = preview?.querySelector('[data-todo-preview-stage-cancel]');
+    const previewStageConfirmAction = preview?.querySelector('[data-todo-preview-stage-confirm-action]');
+    const previewUpdated = preview?.querySelector('[data-todo-preview-updated]');
     const previewRuntime = preview?.querySelector('[data-todo-preview-runtime]');
     const previewOperational = preview?.querySelector('[data-todo-preview-operational]');
     const previewLinked = preview?.querySelector('[data-todo-preview-linked]');
@@ -804,9 +623,9 @@
     const previewDetails = preview?.querySelector('[data-todo-preview-details]');
     const previewDiscussion = preview?.querySelector('[data-todo-preview-discussion]');
     const previewLanePresentation = {
-      idea: ['Idea', 'neutral'], ready: ['Ready', 'ready'], in_progress: ['In progress', 'live'], done: ['Done', 'done'],
+      idea: ['Idea', 'neutral'], ready: ['Ready', 'ready'], in_progress: ['In progress', 'progress'], done: ['Done', 'done'],
     };
-    const previewActionCopy = { idea: 'Start discussion', ready: 'Start work', in_progress: 'Continue work' };
+    const previewCompactMedia = matchMedia('(max-width: 720px)');
     const previewExcerpts = {
       'Model profile defaults per project': 'Allow a project to specialize model selection without copying the full provider configuration or hiding invalid references.',
       'Choose the recovery policy for interrupted runs': 'Verify the stale worktree before moving it to Trash, without touching the project root or active Sessions.',
@@ -814,13 +633,232 @@
       'Add a durable permission audit trail': 'Retain the request, decision, and resumed Execution relationship without inventing a second continuation run.',
     };
     const previewLinkedWork = {
-      'Model profile defaults per project': ['running', 'Implementation · Project profile defaults', 'Work Session · codex/project-profile-defaults', 'Running', 'live'],
-      'Choose the recovery policy for interrupted runs': ['permission', 'Recovery verification', 'Work Session · recovery-policy', 'Needs you', 'attention'],
-      'Review the Todo → Run handoff contract': ['question', 'Handoff recommendation', 'Discussion · project root', 'Needs you', 'attention'],
-      'Add a durable permission audit trail': ['ready', 'Audit trail implementation', 'Work Session · project root', 'Completed', 'done'],
-      'Make tool output recovery inspectable': ['output-recovery-review', 'Output recovery verification', 'Work Session · output-recovery', 'Completed', 'done'],
-      'Recover remote projects after cold start': ['remote-recovery-failed', 'Remote recovery verification', 'Work Session · remote-cold-start', 'Failed', 'error'],
+      'Model profile defaults per project': { sample: 'running', title: 'Implementation · Project profile defaults', context: 'Work Session · codex/project-profile-defaults', status: 'Running', tone: 'live', kind: 'work' },
+      'Choose the recovery policy for interrupted runs': { sample: 'permission', title: 'Recovery verification', context: 'Work Session · recovery-policy', status: 'Needs you', tone: 'attention', kind: 'work' },
+      'Review the Todo → Run handoff contract': { sample: 'question', title: 'Handoff recommendation', context: 'Discussion · project root', status: 'Needs you', tone: 'attention', kind: 'discussion' },
+      'Add a durable permission audit trail': { sample: 'ready', title: 'Audit trail implementation', context: 'Work Session · project root', status: 'Completed', tone: 'done', kind: 'work' },
+      'Make tool output recovery inspectable': { sample: 'output-recovery-review', title: 'Output recovery verification', context: 'Work Session · output-recovery', status: 'Completed', tone: 'done', kind: 'work' },
+      'Recover remote projects after cold start': { sample: 'remote-recovery-failed', title: 'Remote recovery verification', context: 'Work Session · remote-cold-start', status: 'Failed', tone: 'error', kind: 'work' },
     };
+    let previewContext;
+    let previewStagePending = false;
+    let previewCloseAfterPending = false;
+    let previewStageTimer;
+
+    function previewLinkedWorkState(displayLead) {
+      const linkedWork = previewLinkedWork[displayLead];
+      if (!linkedWork || !['Running', 'Needs you'].includes(linkedWork.status)) return undefined;
+      return linkedWork.status;
+    }
+    function syncPreviewStagePresentation(lane) {
+      const [label, tone] = previewLanePresentation[lane] || previewLanePresentation.idea;
+      if (previewStageLabel) previewStageLabel.textContent = label;
+      if (previewStageTrigger) {
+        previewStageTrigger.className = `todo-preview-stage-trigger ${tone}`;
+        previewStageTrigger.setAttribute('aria-label', `Change Todo stage, current ${label}`);
+      }
+      previewStageOptions.forEach((option) => {
+        const selected = option.dataset.todoPreviewStageOption === lane;
+        option.setAttribute('aria-checked', String(selected));
+        const check = option.querySelector(':scope > [data-icon="check"]');
+        if (check) check.hidden = !selected;
+      });
+    }
+    function setPreviewStagePending(pending) {
+      previewStagePending = pending;
+      if (previewStageTrigger) {
+        previewStageTrigger.disabled = pending;
+        previewStageTrigger.setAttribute('aria-busy', String(pending));
+      }
+      previewStageOptions.forEach((option) => { option.disabled = pending; });
+      if (previewStageCancel) previewStageCancel.disabled = pending;
+      if (previewStageConfirmAction) previewStageConfirmAction.disabled = pending;
+      document.querySelectorAll('[data-todo-preview-close]').forEach((control) => { control.disabled = pending; });
+      if (pending) {
+        if (previewStageLabel) previewStageLabel.textContent = 'Updating…';
+        if (previewStageStatus) previewStageStatus.textContent = 'Updating Todo stage.';
+      }
+      else if (previewContext) syncPreviewStagePresentation(previewContext.lane);
+    }
+    function closePreviewStageMenu({ restoreFocus = false } = {}) {
+      if (previewStageMenu) previewStageMenu.hidden = true;
+      previewStageTrigger?.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) previewStageTrigger?.focus();
+    }
+    function openPreviewStageMenu({ edge = 'selected' } = {}) {
+      if (!previewStageMenu || !previewStageTrigger || previewStagePending) return;
+      if (previewStageConfirm) previewStageConfirm.hidden = true;
+      previewStageMenu.hidden = false;
+      previewStageTrigger.setAttribute('aria-expanded', 'true');
+      const selectedIndex = Math.max(0, previewStageOptions.findIndex((option) => option.getAttribute('aria-checked') === 'true'));
+      const target = edge === 'first'
+        ? previewStageOptions[0]
+        : edge === 'last'
+          ? previewStageOptions.at(-1)
+          : previewStageOptions[selectedIndex];
+      requestAnimationFrame(() => target?.focus());
+    }
+    function syncPreviewActions(displayLead, lane, todoId) {
+      const linkedWork = previewLinkedWork[displayLead];
+      const linkedSample = linkedWork?.sample;
+      const hasWorkSession = linkedWork?.kind === 'work';
+      const hasDiscussion = linkedWork?.kind === 'discussion';
+      const todoRouteKey = todoId || knownTodoKeys.get(displayLead);
+      const todoQuery = todoRouteKey ? `&todo=${encodeURIComponent(todoRouteKey)}` : '';
+      let actionCopy = '';
+      let actionHref = '';
+      if (lane === 'idea') {
+        actionCopy = hasDiscussion ? 'Continue discussion' : 'Start discussion';
+        actionHref = hasDiscussion && linkedSample
+          ? `./session.html?view=detail&sample=${linkedSample}`
+          : `./session.html?view=detail&sample=discussion-new${todoQuery}&lane=idea`;
+      } else if (lane === 'ready' || lane === 'in_progress') {
+        actionCopy = hasWorkSession ? 'Continue work' : 'Start work';
+        actionHref = hasWorkSession && linkedSample
+          ? `./session.html?view=detail&sample=${linkedSample}`
+          : `./session.html?view=detail&sample=work-new${todoQuery}&lane=in_progress`;
+      }
+      if (previewAction) {
+        previewAction.hidden = !actionCopy || !actionHref;
+        previewAction.textContent = actionCopy;
+        previewAction.dataset.previewActionHref = actionHref;
+      }
+      if (previewDiscussion) {
+        const showDiscussion = lane !== 'idea';
+        previewDiscussion.hidden = !showDiscussion;
+        previewDiscussion.textContent = hasDiscussion ? 'Continue discussion' : 'Discussion';
+        previewDiscussion.dataset.previewDiscussionHref = hasDiscussion && linkedSample
+          ? `./session.html?view=detail&sample=${linkedSample}`
+          : `./session.html?view=detail&sample=discussion-new${todoQuery}&lane=${lane}`;
+      }
+    }
+    function listGroupForStage(lane) {
+      return document.querySelector(`.page-todos [data-view-panel="list"] .work-group[data-todo-stage="${lane}"]`);
+    }
+    function syncNavigatorLifecycleCounts() {
+      const sections = [...document.querySelectorAll('.page-todos .todo-nav .nav-section')];
+      for (const [label, stage] of [['Ready', 'ready'], ['In progress', 'in_progress']]) {
+        const section = sections.find((candidate) => candidate.querySelector('.nav-section-title span')?.textContent.trim() === label);
+        const count = section?.querySelector('.nav-section-title b');
+        const group = listGroupForStage(stage);
+        if (count && group) count.textContent = String(group.querySelectorAll('.todo-filter-item').length);
+      }
+    }
+    function syncNavigatorLifecycle(displayLead, lane, operationalTone, href) {
+      const sections = [...document.querySelectorAll('.page-todos .todo-nav .nav-section')];
+      const sectionLabel = (section) => section.querySelector('.nav-section-title span')?.textContent.trim();
+      const lifecycleSections = sections.filter((section) => ['In progress', 'Ready'].includes(sectionLabel(section)));
+      const needsYouSection = sections.find((section) => sectionLabel(section) === 'Needs you');
+      const needsYouRow = [...(needsYouSection?.querySelectorAll('.nav-row') || [])]
+        .find((row) => row.querySelector('span:nth-child(2)')?.textContent.trim() === displayLead);
+      let navRow = lifecycleSections
+        .flatMap((section) => [...section.querySelectorAll('.nav-row')])
+        .find((row) => row.querySelector('span:nth-child(2)')?.textContent.trim() === displayLead);
+      const targetLabel = lane === 'ready' ? 'Ready' : lane === 'in_progress' ? 'In progress' : undefined;
+      const targetSection = lifecycleSections.find((section) => sectionLabel(section) === targetLabel);
+      if (needsYouRow) {
+        if (href) needsYouRow.href = href;
+        if (navRow) navRow.hidden = true;
+        syncNavigatorLifecycleCounts();
+        return;
+      }
+      if (targetSection && !navRow) {
+        navRow = document.createElement('a');
+        navRow.className = 'nav-row';
+        navRow.innerHTML = '<span class="nav-status"></span><span></span>';
+        navRow.querySelector('span:nth-child(2)').textContent = displayLead;
+      }
+      if (!targetSection) {
+        if (navRow) navRow.hidden = true;
+        syncNavigatorLifecycleCounts();
+        return;
+      }
+      targetSection.appendChild(navRow);
+      targetSection.hidden = false;
+      navRow.hidden = false;
+      if (href) navRow.href = href;
+      const status = navRow.querySelector('.nav-status');
+      if (status) {
+        status.className = `nav-status ${operationalTone || (lane === 'ready' ? 'ready' : 'progress')}`;
+      }
+      syncNavigatorLifecycleCounts();
+    }
+    function previewRowOperationalTone(item) {
+      if (item.querySelector('.attention-copy')) return 'attention';
+      if (item.querySelector('.live-copy')) return 'live';
+      if (item.querySelector('.review-copy')) return 'review';
+      if (item.querySelector('.error-copy')) return 'error';
+      return undefined;
+    }
+    function movePreviewTodoToLane(context, lane) {
+      const targetGroup = listGroupForStage(lane);
+      const targetList = targetGroup?.querySelector('.work-list');
+      if (!targetList || !context.item) return false;
+      targetList.insertBefore(context.item, targetList.querySelector(':scope > [data-group-empty]'));
+      const secondary = context.item.querySelector('.work-copy > span')?.textContent.trim() || '';
+      context.item.dataset.filterText = `${context.content} ${secondary} ${lane}`.toLocaleLowerCase();
+      const link = context.item.matches('a') ? context.item : context.item.querySelector('a');
+      if (link instanceof HTMLAnchorElement) link.href = todoDetailUrl(context.content, lane, context.todoId);
+      if (context.todoId && prototypeTodoById(context.todoId)) updatePrototypeTodoLane(context.todoId, lane);
+      const operationalTone = previewRowOperationalTone(context.item);
+      if (!operationalTone) {
+        const orbit = context.item.querySelector('.work-orbit');
+        const visual = todoLaneVisuals[lane];
+        if (orbit && visual) {
+          orbit.className = `work-orbit ${visual.tone}`;
+          orbit.innerHTML = `<span data-icon="${visual.icon}"></span>`;
+          renderIcons(orbit);
+        }
+      }
+      syncNavigatorLifecycle(context.displayLead, lane, operationalTone, link instanceof HTMLAnchorElement ? link.getAttribute('href') : undefined);
+      window.syncPrototypeTodoFilter?.();
+      return true;
+    }
+    function applyPreviewStageChange(lane) {
+      const context = previewContext;
+      if (!context || previewStagePending || context.lane === lane) {
+        closePreviewStageMenu({ restoreFocus: true });
+        return;
+      }
+      closePreviewStageMenu();
+      if (previewStageConfirm) previewStageConfirm.hidden = true;
+      previewHeading?.focus();
+      setPreviewStagePending(true);
+      window.clearTimeout(previewStageTimer);
+      previewStageTimer = window.setTimeout(() => {
+        const moved = movePreviewTodoToLane(context, lane);
+        if (moved) {
+          context.lane = lane;
+          syncPreviewStagePresentation(lane);
+          syncPreviewActions(context.displayLead, lane, context.todoId);
+          if (previewDetails) previewDetails.href = todoDetailUrl(context.content, lane, context.todoId);
+          const linkedState = previewLinkedWorkState(context.displayLead);
+          if (previewStageStatus) previewStageStatus.textContent = `Todo stage updated to ${previewLanePresentation[lane][0]}.`;
+          showToast(`Todo moved to ${previewLanePresentation[lane][0]}.${linkedState ? ` Linked work remains ${linkedState}.` : ''}`);
+        }
+        setPreviewStagePending(false);
+        if (previewCloseAfterPending || previewCompactMedia.matches) {
+          previewCloseAfterPending = false;
+          closeTodoPreview();
+        }
+        else previewStageTrigger?.focus();
+      }, 240);
+    }
+    function requestPreviewStageChange(lane) {
+      if (!previewContext || lane === previewContext.lane) {
+        closePreviewStageMenu({ restoreFocus: true });
+        return;
+      }
+      const linkedState = previewLinkedWorkState(previewContext.displayLead);
+      if (lane === 'done' && linkedState) {
+        closePreviewStageMenu();
+        if (previewStageConfirmState) previewStageConfirmState.textContent = linkedState;
+        if (previewStageConfirm) previewStageConfirm.hidden = false;
+        requestAnimationFrame(() => previewStageCancel?.focus());
+        return;
+      }
+      applyPreviewStageChange(lane);
+    }
     function syncTodoPreviewInset() {
       const command = document.querySelector('.page-todos .inventory-command');
       if (command) document.documentElement.style.setProperty('--todo-preview-top', `${Math.round(command.getBoundingClientRect().bottom)}px`);
@@ -829,8 +867,18 @@
     window.addEventListener('resize', syncTodoPreviewInset);
     syncTodoPreviewInset();
     let previewCloseTimer;
-    function closeTodoPreview() {
+    function clearTodoPreviewSelection() {
+      document.querySelectorAll('.page-todos [data-surface-panel="active"] .todo-filter-item.is-selected').forEach((row) => {
+        row.classList.remove('is-selected');
+        row.removeAttribute('aria-current');
+      });
+    }
+    function closeTodoPreview({ restoreFocus = true } = {}) {
+      if (previewStagePending) return;
+      clearTodoPreviewSelection();
       if (!preview || preview.hidden) return;
+      closePreviewStageMenu();
+      if (previewStageConfirm) previewStageConfirm.hidden = true;
       window.clearTimeout(previewCloseTimer);
       preview.classList.remove('preview-opening');
       preview.classList.add('preview-closing');
@@ -841,7 +889,18 @@
       }
       const origin = previewOrigin;
       previewOrigin = undefined;
-      origin?.focus();
+      const visibleOrigin = origin && !origin.hidden && origin.getClientRects().length > 0 ? origin : undefined;
+      if (restoreFocus) (visibleOrigin || todoFilterInput)?.focus();
+      if (previewCompactMedia.matches) {
+        preview.hidden = true;
+        preview.classList.remove('preview-closing');
+        if (previewScrim) {
+          previewScrim.hidden = true;
+          previewScrim.classList.remove('preview-closing');
+          previewScrim.disabled = false;
+        }
+        return;
+      }
       previewCloseTimer = window.setTimeout(() => {
         preview.hidden = true;
         preview.classList.remove('preview-closing');
@@ -852,6 +911,14 @@
         }
       }, 180);
     }
+    previewCompactMedia.addEventListener('change', (event) => {
+      if (!event.matches || !preview || preview.hidden) return;
+      if (previewStagePending) {
+        previewCloseAfterPending = true;
+        return;
+      }
+      closeTodoPreview();
+    });
     function openTodoPreview(item) {
       const link = item.matches('a') ? item : item.querySelector('a');
       const linkUrl = link?.href ? new URL(link.href, location.href) : undefined;
@@ -860,55 +927,51 @@
       const displayLead = storedTodo
         ? projectTodoDisplayLead(storedTodo.content)
         : item.querySelector('strong')?.textContent.trim() || 'Todo';
-      const groupHeading = item.closest('.work-group')?.querySelector('.group-heading span')?.textContent.trim().toLocaleLowerCase() || '';
-      const lane = item.closest('[data-todo-lane]')?.dataset.todoLane
-        || (groupHeading.startsWith('ready') ? 'ready' : groupHeading.startsWith('in progress') ? 'in_progress' : groupHeading.startsWith('done') ? 'done' : 'idea');
-      const [status, tone] = previewLanePresentation[lane];
+      const group = item.closest('.work-group');
+      const groupHeading = group?.querySelector('.group-heading span')?.textContent.trim().toLocaleLowerCase() || '';
+      const lane = group?.dataset.todoStage || (groupHeading.startsWith('ready') ? 'ready' : groupHeading.startsWith('in progress') ? 'in_progress' : groupHeading.startsWith('done') ? 'done' : 'idea');
       previewOrigin = link || item;
+      previewContext = {
+        item,
+        todoId,
+        content: storedTodo?.content || displayLead,
+        displayLead,
+        lane,
+      };
+      previewCloseAfterPending = false;
+      if (previewStageStatus) previewStageStatus.textContent = '';
+      closePreviewStageMenu();
+      if (previewStageConfirm) previewStageConfirm.hidden = true;
+      setPreviewStagePending(false);
+      syncPreviewStagePresentation(lane);
+      clearTodoPreviewSelection();
+      const itemStableId = item.dataset.stableId;
+      document.querySelectorAll('.page-todos [data-surface-panel="active"] .todo-filter-item').forEach((candidate) => {
+        const sameTodo = itemStableId
+          ? candidate.dataset.stableId === itemStableId
+          : candidate.querySelector('strong')?.textContent.trim() === displayLead;
+        candidate.classList.toggle('is-selected', sameTodo);
+        if (sameTodo) candidate.setAttribute('aria-current', 'true');
+        else candidate.removeAttribute('aria-current');
+      });
       if (previewTitle) previewTitle.textContent = displayLead;
       if (previewCopy) previewCopy.textContent = storedTodo
         ? projectTodoPreviewExcerpt(storedTodo.content)
         : previewExcerpts[displayLead] || 'Review the captured problem statement and acceptance boundary before changing this Todo. Open details for the complete canonical content.';
-      if (previewStatus) { previewStatus.textContent = status; previewStatus.className = `status-label ${tone}`; }
-      const runtime = (item.querySelector('small') || item.querySelector('.work-copy > span'))?.textContent.trim() || '';
-      if (previewRuntime) previewRuntime.textContent = runtime;
-      if (previewOperational) previewOperational.hidden = !runtime;
+      const secondary = (item.querySelector('small') || item.querySelector('.work-copy > span'))?.textContent.trim() || '';
+      const hasOperationalSignal = Boolean(item.querySelector('.attention-copy,.live-copy,.review-copy,.error-copy'));
+      if (previewUpdated) previewUpdated.textContent = hasOperationalSignal ? 'Updated recently' : secondary || 'Updated recently';
+      if (previewRuntime) previewRuntime.textContent = secondary;
+      if (previewOperational) previewOperational.hidden = !hasOperationalSignal;
       if (previewDetails) previewDetails.href = link?.href || todoDetailUrl(storedTodo?.content || displayLead, lane, todoId);
-      const existingSessionSamples = {
-        'Choose the recovery policy for interrupted runs': 'permission',
-        'Model profile defaults per project': 'running',
-        'Review the Todo → Run handoff contract': 'question',
-        'Make tool output recovery inspectable': 'output-recovery-review',
-        'Recover remote projects after cold start': 'remote-recovery-failed',
-      };
-      const actionCopy = previewActionCopy[lane];
-      const todoRouteKey = todoId || knownTodoKeys.get(displayLead);
-      const todoQuery = todoRouteKey ? `&todo=${encodeURIComponent(todoRouteKey)}` : '';
-      const actionHref = lane === 'idea'
-        ? `./session.html?view=detail&sample=discussion-new${todoQuery}&lane=idea`
-        : lane === 'ready'
-          ? `./session.html?view=detail&sample=work-new${todoQuery}&lane=in_progress`
-          : existingSessionSamples[displayLead]
-            ? `./session.html?view=detail&sample=${existingSessionSamples[displayLead]}`
-            : '';
-      if (previewAction) {
-        previewAction.hidden = !actionCopy || !actionHref;
-        previewAction.textContent = actionCopy || '';
-        previewAction.dataset.previewActionHref = actionHref;
-      }
+      syncPreviewActions(displayLead, lane, todoId);
       const linkedWork = previewLinkedWork[displayLead];
       if (previewLinked) previewLinked.hidden = !linkedWork;
       if (linkedWork) {
-        const [sample, workTitle, context, workStatus, workTone] = linkedWork;
-        if (previewWork) previewWork.href = `./session.html?view=detail&sample=${sample}`;
-        if (previewWorkTitle) previewWorkTitle.textContent = workTitle;
-        if (previewWorkContext) previewWorkContext.textContent = context;
-        if (previewWorkStatus) { previewWorkStatus.textContent = workStatus; previewWorkStatus.className = `status-label ${workTone}`; }
-      }
-      if (previewDiscussion) {
-        const showDiscussion = lane !== 'idea';
-        previewDiscussion.hidden = !showDiscussion;
-        previewDiscussion.dataset.previewDiscussionHref = `./session.html?view=detail&sample=discussion-new${todoQuery}&lane=${lane}`;
+        if (previewWork) previewWork.href = `./session.html?view=detail&sample=${linkedWork.sample}`;
+        if (previewWorkTitle) previewWorkTitle.textContent = linkedWork.title;
+        if (previewWorkContext) previewWorkContext.textContent = linkedWork.context;
+        if (previewWorkStatus) { previewWorkStatus.textContent = linkedWork.status; previewWorkStatus.className = `status-label ${linkedWork.tone}`; }
       }
       window.clearTimeout(previewCloseTimer);
       if (preview) {
@@ -928,25 +991,97 @@
     }
     document.querySelector('#todo-active-layout')?.addEventListener('click', (event) => {
       const item = event.target.closest('.todo-filter-item');
-      if (!item || event.target.closest('.todo-card-drag') || matchMedia('(max-width: 720px)').matches) return;
+      if (!item || matchMedia('(max-width: 720px)').matches) return;
       event.preventDefault();
       openTodoPreview(item);
     });
+    window.closePrototypeTodoPreview = closeTodoPreview;
     document.querySelectorAll('[data-todo-preview-close]').forEach((button) => button.addEventListener('click', closeTodoPreview));
+    previewStageTrigger?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (previewStageMenu?.hidden) openPreviewStageMenu();
+      else closePreviewStageMenu({ restoreFocus: true });
+    });
+    previewStageTrigger?.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        openPreviewStageMenu({ edge: event.key === 'ArrowUp' ? 'last' : 'selected' });
+      } else if (event.key === 'Escape' && previewStageMenu && !previewStageMenu.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        closePreviewStageMenu({ restoreFocus: true });
+      }
+    });
+    previewStageOptions.forEach((option) => {
+      option.addEventListener('click', () => requestPreviewStageChange(option.dataset.todoPreviewStageOption));
+      option.addEventListener('keydown', (event) => {
+        const index = previewStageOptions.indexOf(option);
+        const targetIndex = event.key === 'ArrowDown'
+          ? (index + 1) % previewStageOptions.length
+          : event.key === 'ArrowUp'
+            ? (index - 1 + previewStageOptions.length) % previewStageOptions.length
+            : event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? previewStageOptions.length - 1
+                : null;
+        if (targetIndex !== null) {
+          event.preventDefault();
+          previewStageOptions[targetIndex]?.focus();
+        } else if (event.key === 'Tab') {
+          event.preventDefault();
+          closePreviewStageMenu();
+          const focusable = [...preview.querySelectorAll('button:not([hidden]):not(:disabled),a[href]:not([hidden]),[tabindex="0"]')]
+            .filter((element) => !element.closest('[hidden]') && element.getClientRects().length > 0);
+          const triggerIndex = focusable.indexOf(previewStageTrigger);
+          const target = event.shiftKey
+            ? focusable[triggerIndex - 1] || focusable.at(-1)
+            : focusable[triggerIndex + 1] || focusable[0];
+          target?.focus();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          closePreviewStageMenu({ restoreFocus: true });
+        }
+      });
+    });
+    previewStageCancel?.addEventListener('click', () => {
+      if (previewStageConfirm) previewStageConfirm.hidden = true;
+      previewStageTrigger?.focus();
+    });
+    previewStageConfirmAction?.addEventListener('click', () => applyPreviewStageChange('done'));
+    previewStage?.addEventListener('focusout', () => {
+      requestAnimationFrame(() => {
+        if (!previewStage.contains(document.activeElement)) closePreviewStageMenu();
+      });
+    });
     previewAction?.addEventListener('click', () => {
       if (previewAction.dataset.previewActionHref) location.href = previewAction.dataset.previewActionHref;
     });
     previewDiscussion?.addEventListener('click', () => {
       if (previewDiscussion.dataset.previewDiscussionHref) location.href = previewDiscussion.dataset.previewDiscussionHref;
     });
+    preview?.addEventListener('click', (event) => {
+      if (!event.target.closest('[data-todo-preview-stage]')) closePreviewStageMenu();
+    });
     preview?.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         event.preventDefault();
+        if (previewStageMenu && !previewStageMenu.hidden) {
+          closePreviewStageMenu({ restoreFocus: true });
+          return;
+        }
+        if (previewStageConfirm && !previewStageConfirm.hidden) {
+          previewStageConfirm.hidden = true;
+          previewStageTrigger?.focus();
+          return;
+        }
         closeTodoPreview();
         return;
       }
       if (event.key !== 'Tab') return;
-      const focusable = [...preview.querySelectorAll('button:not([hidden]):not(:disabled),a[href]:not([hidden]),[tabindex="0"]')];
+      const focusable = [...preview.querySelectorAll('button:not([hidden]):not(:disabled),a[href]:not([hidden]),[tabindex="0"]')]
+        .filter((element) => !element.closest('[hidden]') && element.getClientRects().length > 0);
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable.at(-1);
@@ -1811,65 +1946,164 @@
     const title = row.querySelector('strong')?.textContent.trim();
     if (title && prototypeStableIds.has(title)) row.dataset.stableId = prototypeStableIds.get(title);
   });
-  let todoFilterEmpty;
-  if (todoActiveLayout) {
-    todoFilterEmpty = document.createElement('p');
-    todoFilterEmpty.className = 'inventory-empty';
-    todoFilterEmpty.dataset.todoFilterEmpty = '';
-    todoFilterEmpty.textContent = 'No Todos match this filter.';
-    todoFilterEmpty.hidden = true;
-    todoActiveLayout.appendChild(todoFilterEmpty);
-  }
-  document.querySelectorAll('.page-todos [data-surface-panel="rejected"],.page-todos [data-surface-panel="archived"]').forEach((panel) => {
+  const todoFilterInput = document.querySelector('.page-todos [data-filter-input]');
+  const todoFixtureSample = new URLSearchParams(location.search).get('sample');
+  const todoFirstUse = document.querySelector('[data-todo-first-use]');
+  const todoFilterEmpty = document.querySelector('[data-todo-filter-empty]');
+  const todoLifecycleLabel = (container) => {
+    return container.querySelector('.group-heading span')?.textContent.trim() || 'this group';
+  };
+  todoActiveLayout?.querySelectorAll('[data-view-panel="list"] .work-group').forEach((container) => {
+    const host = container.querySelector('.work-list');
+    if (!host || host.querySelector(':scope > [data-group-empty]')) return;
     const empty = document.createElement('p');
-    empty.className = 'inventory-empty';
-    empty.dataset.surfaceFilterEmpty = '';
-    empty.textContent = 'No Todos match this filter.';
+    empty.className = 'group-empty';
+    empty.dataset.groupEmpty = '';
     empty.hidden = true;
-    panel.appendChild(empty);
+    host.appendChild(empty);
   });
+  const todoRowSuppressedByFixture = (row) => {
+    if (todoFixtureSample === 'first-use') return true;
+    if (todoFixtureSample !== 'group-empty') return false;
+    return row.closest('.work-group')?.dataset.todoStage === 'ready';
+  };
+  const todoCanonicalRows = () => [
+    ...document.querySelectorAll('.page-todos [data-surface-panel="active"] [data-view-panel="list"] .todo-filter-item'),
+    ...document.querySelectorAll('.page-todos [data-surface-panel="rejected"] .todo-filter-item,.page-todos [data-surface-panel="archived"] .todo-filter-item'),
+  ].filter((row) => !todoRowSuppressedByFixture(row));
   function syncTodoFilterProjection() {
     if (!todoActiveLayout) return;
+    const query = todoFilterInput?.value.trim().toLocaleLowerCase() || '';
+    document.querySelectorAll('.page-todos .todo-filter-item').forEach((row) => {
+      const searchText = `${row.dataset.filterText || ''} ${row.dataset.stableId || ''} ${row.textContent}`.toLocaleLowerCase();
+      row.hidden = todoRowSuppressedByFixture(row) || Boolean(query && !searchText.includes(query));
+    });
+    const canonicalRows = todoCanonicalRows();
+    const firstUse = canonicalRows.length === 0;
+    const activeCanonicalCount = [...document.querySelectorAll('.page-todos [data-surface-panel="active"] [data-view-panel="list"] .todo-filter-item')]
+      .filter((row) => !todoRowSuppressedByFixture(row)).length;
+    const canvasCount = document.querySelector('.page-todos .object-title .count-pill');
+    const navigatorCount = document.querySelector('.page-todos .nav-row[href="./todos.html"] b');
+    if (canvasCount) canvasCount.textContent = String(activeCanonicalCount);
+    if (navigatorCount) navigatorCount.textContent = String(activeCanonicalCount);
+    document.querySelectorAll('.page-todos .todo-nav .nav-section').forEach((section) => {
+      const label = section.querySelector('.nav-section-title span')?.textContent.trim();
+      const lifecycleSection = ['Needs you', 'In progress', 'Ready'].includes(label);
+      section.hidden = lifecycleSection && (firstUse || (todoFixtureSample === 'group-empty' && label === 'Ready'));
+    });
+    const selectedSurface = document.querySelector('.page-todos [data-surface].active')?.dataset.surface || 'active';
+    const activeList = todoActiveLayout.querySelector('[data-view-panel="list"]');
+    const activeVisibleCount = activeList?.querySelectorAll('.todo-filter-item:not([hidden])').length || 0;
+    const activeFilterNoResults = selectedSurface === 'active' && !firstUse && Boolean(query) && activeVisibleCount === 0;
+    if (todoFirstUse) todoFirstUse.hidden = !(selectedSurface === 'active' && firstUse);
+    if (todoFilterEmpty) {
+      todoFilterEmpty.hidden = !activeFilterNoResults;
+      const reason = todoFilterEmpty.querySelector('[data-todo-filter-reason]');
+      if (reason) reason.textContent = `No Todos match “${todoFilterInput.value.trim()}”. Try another phrase or stable ID.`;
+    }
+    if (activeList) activeList.hidden = firstUse || activeFilterNoResults;
     todoActiveLayout.querySelectorAll('[data-view-panel="list"] .work-group').forEach((group) => {
       const visibleCount = group.querySelectorAll('.todo-filter-item:not([hidden])').length;
-      group.hidden = visibleCount === 0;
+      const canonicalCount = [...group.querySelectorAll('.todo-filter-item')].filter((row) => !todoRowSuppressedByFixture(row)).length;
+      group.hidden = firstUse || activeFilterNoResults;
       const count = group.querySelector('.group-heading b');
       if (count) count.textContent = String(visibleCount);
+      const empty = group.querySelector('[data-group-empty]');
+      if (empty) {
+        empty.hidden = firstUse || activeFilterNoResults || visibleCount > 0;
+        empty.textContent = query && canonicalCount > 0
+          ? `No matching Todos in ${todoLifecycleLabel(group)}.`
+          : `No Todos in ${todoLifecycleLabel(group)}.`;
+      }
     });
-    todoActiveLayout.querySelectorAll('[data-todo-lane]').forEach((lane) => {
-      const visibleCount = lane.querySelectorAll('.todo-filter-item:not([hidden])').length;
-      const count = lane.querySelector(':scope > header b');
-      if (count) count.textContent = String(visibleCount);
-    });
-    const visiblePanel = [...todoActiveLayout.querySelectorAll('[data-view-panel]')].find((panel) => !panel.hidden);
-    if (todoFilterEmpty) todoFilterEmpty.hidden = Boolean(visiblePanel?.querySelector('.todo-filter-item:not([hidden])'));
     document.querySelectorAll('.page-todos [data-surface-panel="rejected"],.page-todos [data-surface-panel="archived"]').forEach((panel) => {
       const empty = panel.querySelector('[data-surface-filter-empty]');
-      if (empty) empty.hidden = panel.hidden || Boolean(panel.querySelector('.todo-filter-item:not([hidden])'));
+      const rows = [...panel.querySelectorAll('.todo-filter-item')].filter((row) => !todoRowSuppressedByFixture(row));
+      const visibleCount = panel.querySelectorAll('.todo-filter-item:not([hidden])').length;
+      const noResults = Boolean(query) && visibleCount === 0;
+      const group = panel.querySelector('.work-group');
+      if (group) group.hidden = rows.length === 0 || noResults;
+      if (!empty) return;
+      empty.hidden = panel.hidden || (rows.length > 0 && !noResults);
+      const surface = panel.dataset.surfacePanel;
+      const title = empty.querySelector('strong');
+      const reason = empty.querySelector('[data-todo-filter-reason]');
+      const reset = empty.querySelector('[data-todo-filter-reset]');
+      if (noResults) {
+        if (title) title.textContent = 'No matching Todos';
+        if (reason) reason.textContent = `No ${surface} Todos match “${todoFilterInput.value.trim()}”.`;
+        if (reset) reset.hidden = false;
+      } else {
+        if (title) title.textContent = `No ${surface} Todos`;
+        if (reason) reason.textContent = `${surface[0].toUpperCase() + surface.slice(1)} Todos remain available here when present.`;
+        if (reset) reset.hidden = true;
+      }
     });
   }
   window.syncPrototypeTodoFilter = syncTodoFilterProjection;
 
   document.querySelectorAll('[data-filter-input]').forEach((input) => {
-    const selector = input.dataset.filterInput;
-    input.addEventListener('input', () => {
-      const query = input.value.trim().toLocaleLowerCase();
-      document.querySelectorAll(selector).forEach((row) => {
-        const searchText = `${row.dataset.filterText || ''} ${row.dataset.stableId || ''} ${row.textContent}`.toLocaleLowerCase();
-        row.hidden = Boolean(query) && !searchText.includes(query);
-      });
-      syncTodoFilterProjection();
-    });
+    input.addEventListener('input', syncTodoFilterProjection);
   });
+  document.querySelectorAll('[data-todo-filter-reset]').forEach((button) => button.addEventListener('click', () => {
+    if (todoFilterInput) todoFilterInput.value = '';
+    syncTodoFilterProjection();
+    todoFilterInput?.focus();
+  }));
+  if (todoFilterInput && todoFixtureSample === 'filter-empty') todoFilterInput.value = 'no matching stable id';
+  syncTodoFilterProjection();
 
   const runFilter = document.querySelector('[data-run-filter]');
   const sourceFilter = document.querySelector('[data-source-filter]');
+  const sourceFilterShell = document.querySelector('[data-source-filter-shell]');
+  const sourceFilterMenu = document.querySelector('[data-source-filter-menu]');
+  const sourceFilterLabel = document.querySelector('[data-source-filter-label]');
+  const sourceOptions = [...document.querySelectorAll('[data-source-option]')];
+  const runFixtureSample = new URLSearchParams(location.search).get('sample');
+  function closeSourceFilter({ restoreFocus = false } = {}) {
+    if (!sourceFilterMenu || !sourceFilter) return;
+    sourceFilterMenu.hidden = true;
+    sourceFilter.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) sourceFilter.focus();
+  }
+  function openSourceFilter({ edge = 'selected' } = {}) {
+    if (!sourceFilterMenu || !sourceFilter || sourceOptions.length === 0) return;
+    sourceFilterMenu.hidden = false;
+    sourceFilter.setAttribute('aria-expanded', 'true');
+    const selectedIndex = Math.max(0, sourceOptions.findIndex((option) => option.getAttribute('aria-selected') === 'true'));
+    const target = edge === 'first'
+      ? sourceOptions[0]
+      : edge === 'last'
+        ? sourceOptions.at(-1)
+        : sourceOptions[selectedIndex];
+    requestAnimationFrame(() => target?.focus());
+  }
+  function setSourceFilter(value, { sync = true, restoreFocus = true } = {}) {
+    if (!sourceFilter) return;
+    const selected = sourceOptions.find((option) => option.dataset.sourceOption === value) || sourceOptions[0];
+    const selectedValue = selected?.dataset.sourceOption || 'all';
+    const selectedLabel = selected?.querySelector('[data-source-option-label]')?.textContent.trim() || 'All sources';
+    sourceFilter.dataset.sourceValue = selectedValue;
+    sourceFilter.setAttribute('aria-label', `Session source: ${selectedLabel}`);
+    if (sourceFilterLabel) sourceFilterLabel.textContent = selectedLabel;
+    sourceOptions.forEach((option) => {
+      const isSelected = option === selected;
+      option.setAttribute('aria-selected', String(isSelected));
+      const check = option.querySelector('[data-icon="check"]');
+      if (check) check.hidden = !isSelected;
+    });
+    closeSourceFilter({ restoreFocus });
+    if (sync) syncRunFilters();
+  }
   function syncRunFilters() {
     const query = runFilter?.value.trim().toLocaleLowerCase() || '';
-    const source = sourceFilter?.value || 'all';
-    document.querySelectorAll('.run-filter-item').forEach((row) => {
+    const source = sourceFilter?.dataset.sourceValue || 'all';
+    const canonicalRows = [...document.querySelectorAll('.run-filter-item')];
+    const firstUse = canonicalRows.length === 0 || runFixtureSample === 'first-use';
+    canonicalRows.forEach((row) => {
       const searchText = `${row.dataset.filterText || ''} ${row.dataset.stableId || ''} ${row.textContent}`;
-      row.hidden = Boolean(query && !searchText.toLocaleLowerCase().includes(query))
+      row.hidden = firstUse
+        || Boolean(query && !searchText.toLocaleLowerCase().includes(query))
         || Boolean(source !== 'all' && row.dataset.source !== source);
     });
     document.querySelectorAll('.page-runs .work-group').forEach((group) => {
@@ -1878,11 +2112,94 @@
       const count = group.querySelector('.group-heading > b');
       if (count) count.textContent = String(visibleCount);
     });
+    const firstUseState = document.querySelector('[data-run-first-use]');
+    if (firstUseState) firstUseState.hidden = !firstUse;
+    const activeCount = document.querySelector('[data-run-active-count]');
+    const navCount = document.querySelector('[data-run-count]');
+    if (firstUse) {
+      if (activeCount) activeCount.textContent = '0 active';
+      if (navCount) navCount.textContent = '0';
+    }
     const empty = document.querySelector('[data-run-filter-empty]');
-    if (empty) empty.hidden = Boolean(document.querySelector('.page-runs .run-filter-item:not([hidden])'));
+    if (empty) {
+      const hasVisibleRows = Boolean(document.querySelector('.page-runs .run-filter-item:not([hidden])'));
+      empty.hidden = firstUse || hasVisibleRows;
+      const title = empty.querySelector('[data-run-filter-empty-title]');
+      const reason = empty.querySelector('[data-run-filter-empty-reason]');
+      const reset = empty.querySelector('[data-run-filter-reset]');
+      if (title) title.textContent = query && source !== 'all'
+        ? 'No Sessions match these filters'
+        : query
+          ? `No Sessions match “${runFilter.value.trim()}”`
+          : 'No Sessions match this source';
+      if (reason) reason.textContent = query && source !== 'all'
+        ? 'Try another title or stable ID, or restore All sources.'
+        : query
+          ? 'Try another Session title or stable ID.'
+          : 'Choose All sources to restore the complete Session inventory.';
+      if (reset) reset.textContent = query && source !== 'all' ? 'Reset filters' : query ? 'Clear filter' : 'Show all';
+    }
   }
   runFilter?.addEventListener('input', syncRunFilters);
-  sourceFilter?.addEventListener('change', syncRunFilters);
+  sourceFilter?.addEventListener('click', () => {
+    if (sourceFilter.getAttribute('aria-expanded') === 'true') closeSourceFilter();
+    else openSourceFilter();
+  });
+  sourceFilter?.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    openSourceFilter({ edge: event.key === 'ArrowUp' ? 'last' : 'selected' });
+  });
+  sourceOptions.forEach((option) => option.addEventListener('click', () => {
+    setSourceFilter(option.dataset.sourceOption);
+  }));
+  sourceFilterMenu?.addEventListener('keydown', (event) => {
+    const currentIndex = sourceOptions.indexOf(document.activeElement);
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      const current = sourceOptions[currentIndex];
+      if (current) setSourceFilter(current.dataset.sourceOption);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSourceFilter({ restoreFocus: true });
+      return;
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      closeSourceFilter();
+      if (event.shiftKey) runFilter?.focus();
+      else document.querySelector('[data-new-session]')?.focus();
+      return;
+    }
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? sourceOptions.length - 1
+        : event.key === 'ArrowDown'
+          ? (currentIndex + 1 + sourceOptions.length) % sourceOptions.length
+          : event.key === 'ArrowUp'
+            ? (currentIndex - 1 + sourceOptions.length) % sourceOptions.length
+            : -1;
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    sourceOptions[nextIndex]?.focus();
+  });
+  sourceFilterShell?.addEventListener('focusout', (event) => {
+    if (!sourceFilterShell.contains(event.relatedTarget)) closeSourceFilter();
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!sourceFilterShell?.contains(event.target)) closeSourceFilter();
+  });
+  document.querySelector('[data-run-filter-reset]')?.addEventListener('click', () => {
+    if (runFilter) runFilter.value = '';
+    setSourceFilter('all', { sync: false, restoreFocus: false });
+    syncRunFilters();
+    runFilter?.focus();
+  });
+  setSourceFilter(sourceFilter?.dataset.sourceValue || 'all', { sync: false, restoreFocus: false });
+  syncRunFilters();
   document.querySelector('[data-new-session]')?.addEventListener('click', () => {
     location.href = './session.html?view=detail&sample=direct-ready';
   });
@@ -1890,18 +2207,86 @@
   const scheduleFilter = document.querySelector('[data-schedule-filter]');
   const scheduleViewButtons = [...document.querySelectorAll('[data-schedule-view]')];
   let scheduleView = 'all';
+  function replaceScheduleLocation(automationKey) {
+    const url = new URL(location.href);
+    if (automationKey) url.searchParams.set('automation', automationKey);
+    else url.searchParams.delete('automation');
+    const filterValue = scheduleFilter?.value.trim();
+    if (filterValue) url.searchParams.set('filter', filterValue);
+    else url.searchParams.delete('filter');
+    history.replaceState(null, '', `${url.pathname.split('/').pop()}${url.search}`);
+  }
   function syncScheduleFilters() {
     const query = scheduleFilter?.value.trim().toLocaleLowerCase() || '';
     document.querySelectorAll('.schedule-group').forEach((group) => {
       const statusMatches = scheduleView === 'all' || group.dataset.scheduleStatus === scheduleView;
       group.querySelectorAll('.schedule-filter-item').forEach((row) => {
         const searchText = `${row.dataset.filterText || ''} ${row.dataset.stableId || ''} ${row.textContent}`;
-        row.hidden = !statusMatches || Boolean(query && !searchText.toLocaleLowerCase().includes(query));
+        row.hidden = !row.dataset.scheduleItem || !statusMatches || Boolean(query && !searchText.toLocaleLowerCase().includes(query));
       });
-      group.hidden = !group.querySelector('.schedule-filter-item:not([hidden])');
+      const visibleCount = group.querySelectorAll('.schedule-filter-item:not([hidden])').length;
+      group.hidden = visibleCount === 0;
+      const count = group.querySelector('.group-heading b');
+      if (count) count.textContent = String(visibleCount);
     });
+    const definitions = [...document.querySelectorAll('[data-schedule-item]')];
+    const visibleRows = definitions.filter((row) => !row.hidden);
+    const firstUse = definitions.length === 0;
+    const firstUseState = document.querySelector('[data-schedule-first-use]');
+    const workspace = document.querySelector('[data-schedule-workspace]');
+    const detail = document.querySelector('.page-schedules .detail-panel');
+    if (firstUseState) firstUseState.hidden = !firstUse;
+    if (workspace) workspace.hidden = firstUse;
+    document.querySelectorAll('[data-schedule-count]').forEach((count) => { count.textContent = String(definitions.length); });
+    document.body.classList.toggle('schedule-no-results', !firstUse && visibleRows.length === 0);
     const empty = document.querySelector('[data-schedule-filter-empty]');
-    if (empty) empty.hidden = Boolean(document.querySelector('.schedule-filter-item:not([hidden])'));
+    if (empty) {
+      empty.hidden = firstUse || visibleRows.length > 0;
+      const reason = empty.querySelector('[data-schedule-filter-reason]');
+      const detailCopy = reason?.nextElementSibling;
+      const reset = empty.querySelector('[data-schedule-filter-reset]');
+      if (reason) reason.textContent = query && scheduleView !== 'all'
+        ? 'No Automations match these filters'
+        : query
+          ? `No Automations match “${scheduleFilter.value.trim()}”`
+          : 'No Automations match this status';
+      if (detailCopy) detailCopy.textContent = query && scheduleView !== 'all'
+        ? 'Clear the query and restore All statuses to recover the inventory.'
+        : query
+          ? 'Try another Automation name, instruction, or stable ID.'
+          : 'Restore All statuses to see every Automation definition.';
+      if (reset) reset.textContent = query && scheduleView !== 'all' ? 'Reset filters' : query ? 'Clear filter' : 'Show all';
+    }
+    if (detail) detail.hidden = firstUse || visibleRows.length === 0;
+    if (firstUse || visibleRows.length === 0) {
+      document.body.classList.remove('schedule-detail-open');
+      definitions.forEach((row) => {
+        row.classList.remove('featured');
+        row.removeAttribute('aria-current');
+      });
+      replaceScheduleLocation(null);
+    } else {
+      const selectedRow = document.querySelector(`[data-schedule-item="${selectedAutomationKey || ''}"]`);
+      const selectedStillVisible = selectedRow && !selectedRow.hidden;
+      const selectedIsPresented = selectedStillVisible && selectedRow.classList.contains('featured');
+      const desktopSchedule = matchMedia('(min-width: 841px)').matches;
+      if (desktopSchedule && !selectedIsPresented) {
+        const nextRow = selectedStillVisible ? selectedRow : visibleRows[0];
+        renderAutomationDetail(nextRow.dataset.scheduleItem, { openMobile: false, writeUrl: true });
+      } else if (!desktopSchedule && !selectedIsPresented) {
+        document.body.classList.remove('schedule-detail-open');
+        definitions.forEach((row) => {
+          row.classList.remove('featured');
+          row.removeAttribute('aria-current');
+        });
+        replaceScheduleLocation(null);
+      } else {
+        replaceScheduleLocation(selectedAutomationKey);
+      }
+    }
+    if (firstUse) {
+      selectedAutomationKey = undefined;
+    }
   }
   scheduleFilter?.addEventListener('input', syncScheduleFilters);
   scheduleViewButtons.forEach((button) => button.addEventListener('click', () => {
@@ -1913,6 +2298,17 @@
     });
     syncScheduleFilters();
   }));
+  document.querySelector('[data-schedule-filter-reset]')?.addEventListener('click', () => {
+    if (scheduleFilter) scheduleFilter.value = '';
+    scheduleView = 'all';
+    scheduleViewButtons.forEach((item) => {
+      const selected = item.dataset.scheduleView === 'all';
+      item.classList.toggle('active', selected);
+      item.setAttribute('aria-pressed', String(selected));
+    });
+    syncScheduleFilters();
+    scheduleFilter?.focus();
+  });
 
   const automationSamples = {
     license: {
@@ -1954,6 +2350,7 @@
       if (count) count.textContent = String(rows.length);
       group.hidden = rows.length === 0;
     });
+    syncScheduleFilters();
   }
   function projectAutomationRowState(key) {
     const sample = automationSamples[key];
@@ -2002,7 +2399,12 @@
     const sample = automationSamples[key];
     if (!sample) return;
     selectedAutomationKey = key;
-    document.querySelectorAll('[data-schedule-item]').forEach((row) => row.classList.toggle('featured', row.dataset.scheduleItem === key));
+    document.querySelectorAll('[data-schedule-item]').forEach((row) => {
+      const selected = row.dataset.scheduleItem === key;
+      row.classList.toggle('featured', selected);
+      if (selected) row.setAttribute('aria-current', 'true');
+      else row.removeAttribute('aria-current');
+    });
     const status = document.querySelector('[data-automation-detail-status]');
     if (status) { status.textContent = sample.status; status.className = `section-kicker ${sample.tone}`; }
     const values = {
@@ -2065,13 +2467,13 @@
       runNow.title = sample.definitionState === 'disabled' ? 'Enable this Automation before running it' : 'Run this Automation now';
     }
     document.body.classList.toggle('schedule-detail-open', openMobile);
-    if (writeUrl) history.replaceState(null, '', `./automations.html?automation=${key}`);
+    if (writeUrl) replaceScheduleLocation(key);
     if (focus) requestAnimationFrame(() => document.querySelector('[data-automation-detail-title]')?.focus());
   }
   document.querySelectorAll('[data-schedule-item]').forEach((row) => row.addEventListener('click', () => renderAutomationDetail(row.dataset.scheduleItem, { focus: matchMedia('(max-width: 840px)').matches })));
   document.querySelector('[data-schedule-detail-back]')?.addEventListener('click', () => {
     document.body.classList.remove('schedule-detail-open');
-    history.replaceState(null, '', './automations.html');
+    replaceScheduleLocation(null);
     document.querySelector(`[data-schedule-item="${selectedAutomationKey}"]`)?.focus();
   });
   if (document.querySelector('[data-schedule-item]')) {
@@ -2084,10 +2486,14 @@
       renderAutomationDetail('license', { openMobile: false, writeUrl: true });
     } else {
       document.body.classList.remove('schedule-detail-open');
-      document.querySelectorAll('[data-schedule-item]').forEach((row) => row.classList.remove('featured'));
+      document.querySelectorAll('[data-schedule-item]').forEach((row) => {
+        row.classList.remove('featured');
+        row.removeAttribute('aria-current');
+      });
       if (requestedAutomation) history.replaceState(null, '', './automations.html');
     }
   }
+  syncScheduleFilters();
 
   const automationDialog = document.querySelector('[data-automation-dialog]');
   const automationForm = document.querySelector('[data-automation-form]');
@@ -2140,7 +2546,7 @@
     syncAutomationChoices('automation-location');
     syncAutomationChoices('automation-trigger', 'trigger');
     if (definitionControls) definitionControls.hidden = automationEditorMode !== 'edit';
-    const definitionState = sample.definitionState || 'active';
+    const definitionState = sample?.definitionState || 'active';
     if (definitionStatus) definitionStatus.textContent = definitionState === 'disabled' ? 'Inactive' : definitionState === 'paused' ? 'Paused' : 'Scheduled';
     if (automationLifecycle) automationLifecycle.textContent = definitionState === 'disabled' ? 'Enable Automation' : definitionState === 'paused' ? 'Resume Automation' : 'Pause Automation';
     if (deleteConfirmation) deleteConfirmation.hidden = true;
@@ -2166,11 +2572,15 @@
     }
     showToast(activating ? 'Automation activated.' : 'Automation paused.');
   });
-  document.querySelector('[data-automation-delete]')?.addEventListener('click', () => {
+  const automationDeleteButton = document.querySelector('[data-automation-delete]');
+  automationDeleteButton?.addEventListener('click', () => {
     if (deleteConfirmation) deleteConfirmation.hidden = false;
     requestAnimationFrame(() => document.querySelector('[data-automation-delete-cancel]')?.focus());
   });
-  document.querySelector('[data-automation-delete-cancel]')?.addEventListener('click', () => { if (deleteConfirmation) deleteConfirmation.hidden = true; });
+  document.querySelector('[data-automation-delete-cancel]')?.addEventListener('click', () => {
+    if (deleteConfirmation) deleteConfirmation.hidden = true;
+    automationDeleteButton?.focus();
+  });
   document.querySelector('[data-automation-delete-confirm]')?.addEventListener('click', () => {
     const removedKey = selectedAutomationKey;
     document.querySelector(`[data-schedule-item="${removedKey}"]`)?.remove();
@@ -2179,7 +2589,7 @@
     automationDialog?.close();
     const nextRow = document.querySelector('[data-schedule-item]');
     if (nextRow) renderAutomationDetail(nextRow.dataset.scheduleItem, { openMobile: false, writeUrl: true });
-    else history.replaceState(null, '', './automations.html');
+    else syncScheduleFilters();
     showToast('Automation deleted; durable Sessions were preserved.');
   });
   automationForm?.addEventListener('submit', (event) => {
@@ -2334,6 +2744,7 @@
   const modelLabel = document.querySelector('[data-composer-model-label]');
   const variantLabel = document.querySelector('[data-composer-variant-label]');
   const modelMenuOptions = [...document.querySelectorAll('[data-model-option], [data-effort-option]')];
+  const selectedModelIndex = () => modelMenuOptions.findIndex((option) => option.matches('[data-model-option].active'));
   function setModelMenuOpen(open, focusIndex) {
     if (modelMenu) modelMenu.hidden = !open;
     modelTrigger?.setAttribute('aria-expanded', String(open));
@@ -2351,7 +2762,8 @@
     }
     if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
     event.preventDefault();
-    setModelMenuOpen(true, event.key === 'ArrowDown' ? 0 : -1);
+    const selectedIndex = selectedModelIndex();
+    setModelMenuOpen(true, selectedIndex >= 0 ? selectedIndex : event.key === 'ArrowDown' ? 0 : -1);
   });
   modelMenu?.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
@@ -2426,13 +2838,13 @@
 
   const todoFixtures = {
     profile: {
-      status: 'In progress', tone: 'live', lane: 'in_progress', workCount: 5, plan: 'present',
+      status: 'In progress', tone: 'progress', lane: 'in_progress', workCount: 5, plan: 'present',
       contentHtml: '<h3>Model profile defaults per project</h3><p>Allow a project to specialize model selection without copying the full provider configuration or hiding invalid references.</p><h4>Problem</h4><p>Every project currently inherits all three global profiles. A full configuration copy would drift and make validation ambiguous.</p><h4>Acceptance criteria</h4><ul><li>Override principal, deep, or fast independently.</li><li>Missing keys inherit the matching global profile.</li><li>Unknown models and variants fail before work starts.</li><li>The resolved profile is recorded on each Execution.</li></ul>',
       markdown: '# Model profile defaults per project\n\nAllow a project to specialize model selection without copying the full provider configuration or hiding invalid references.\n\n## Problem\n\nEvery project currently inherits all three global profiles. A full configuration copy would drift and make validation ambiguous.\n\n## Acceptance criteria\n\n- Override principal, deep, or fast independently.\n- Missing keys inherit the matching global profile.\n- Unknown models and variants fail before work starts.\n- The resolved profile is recorded on each Execution.',
       references: [['profile-precedence.md', '6.2 KB · text/markdown'], ['config-resolution.png', '184 KB · image/png']],
     },
     recovery: {
-      status: 'In progress', tone: 'live', lane: 'in_progress', workCount: 1, plan: 'absent',
+      status: 'In progress', tone: 'progress', lane: 'in_progress', workCount: 1, plan: 'absent',
       contentHtml: '<h3>Choose the recovery policy for interrupted runs</h3><p>Verify the stale worktree before moving it to Trash, without touching the project root or active Sessions.</p><h4>Acceptance criteria</h4><ul><li>Run the focused recovery verification first.</li><li>Require an explicit permission for the destructive boundary.</li><li>Preserve the exact recovery location in the final report.</li></ul>',
       markdown: '# Choose the recovery policy for interrupted runs\n\nVerify the stale worktree before moving it to Trash, without touching the project root or active Sessions.\n\n## Acceptance criteria\n\n- Run the focused recovery verification first.\n- Require an explicit permission for the destructive boundary.\n- Preserve the exact recovery location in the final report.',
       references: [['recovery-policy.md', '4.8 KB · text/markdown'], ['worktree-inventory.txt', '2.1 KB · text/plain']],
@@ -2450,13 +2862,13 @@
       references: [['permission-contract.md', '5.1 KB · text/markdown']],
     },
     outputRecovery: {
-      status: 'In progress', tone: 'live', lane: 'in_progress', workCount: 1, plan: 'absent',
+      status: 'In progress', tone: 'progress', lane: 'in_progress', workCount: 1, plan: 'absent',
       contentHtml: '<h3>Make tool output recovery inspectable</h3><p>Keep large finalized tool output recoverable through bounded, authorized reads without exposing an unbounded escape hatch.</p><h4>Acceptance criteria</h4><ul><li>Preserve redaction before artifact persistence.</li><li>Expose bounded read and search operations.</li><li>Keep the exact Session relationship visible.</li></ul>',
       markdown: '# Make tool output recovery inspectable\n\nKeep large finalized tool output recoverable through bounded, authorized reads without exposing an unbounded escape hatch.\n\n## Acceptance criteria\n\n- Preserve redaction before artifact persistence.\n- Expose bounded read and search operations.\n- Keep the exact Session relationship visible.',
       references: [['tool-output-contract.md', '7.4 KB · text/markdown']],
     },
     remoteRecovery: {
-      status: 'In progress', tone: 'live', lane: 'in_progress', workCount: 1, plan: 'absent',
+      status: 'In progress', tone: 'progress', lane: 'in_progress', workCount: 1, plan: 'absent',
       contentHtml: '<h3>Recover remote projects after cold start</h3><p>Restore registered project runtime context after a remote host restart without treating a listening port as runtime readiness.</p><h4>Acceptance criteria</h4><ul><li>Validate project registry and runtime data.</li><li>Preserve durable Session recovery.</li><li>Report the exact failed prerequisite.</li></ul>',
       markdown: '# Recover remote projects after cold start\n\nRestore registered project runtime context after a remote host restart without treating a listening port as runtime readiness.\n\n## Acceptance criteria\n\n- Validate project registry and runtime data.\n- Preserve durable Session recovery.\n- Report the exact failed prerequisite.',
       references: [['cold-start-checklist.md', '4.1 KB · text/markdown']],
@@ -2859,7 +3271,7 @@
       ? requestedLane
       : storedTodo?.lane || 'idea';
     const dynamicPresentation = {
-      idea: ['Idea', 'neutral'], ready: ['Ready', 'ready'], in_progress: ['In progress', 'live'], done: ['Done', 'done'],
+      idea: ['Idea', 'neutral'], ready: ['Ready', 'ready'], in_progress: ['In progress', 'progress'], done: ['Done', 'done'],
     };
     const baseFixture = todoFixtures[sample.todo] || todoFixtures.profile;
     const dynamicFixture = Boolean((sample.shellOnly || sample.dynamicTodo) && storedTodo);
@@ -2979,7 +3391,7 @@
   const todoLanePresentation = {
     idea: ['Idea', 'neutral'],
     ready: ['Ready', 'ready'],
-    in_progress: ['In progress', 'live'],
+    in_progress: ['In progress', 'progress'],
     done: ['Done', 'done'],
   };
   function updateTodoDetailRouteAndNavigator(lane = lastActiveTodoLane, state) {
@@ -3020,7 +3432,7 @@
     row.hidden = false;
     row.classList.add('active');
     const status = row.querySelector('.nav-status');
-    if (status) status.className = `nav-status ${lane === 'ready' ? 'ready' : 'live'}`;
+    if (status) status.className = `nav-status ${lane === 'ready' ? 'ready' : 'progress'}`;
     row.href = `${route.pathname.split('/').pop()}${route.search}`;
   }
   function applyTodoLifecycleLane(lane) {
@@ -3362,6 +3774,7 @@
     });
   });
 
+  const questionCard = document.querySelector('[data-hitl-card="question"]');
   const questionOptions = [...document.querySelectorAll('[data-question-option]')];
   const questionCustom = document.querySelector('[data-question-custom]');
   const questionSubmit = document.querySelector('[data-question-submit]');
@@ -3406,9 +3819,24 @@
     }
     resumeHitlSession(action);
   }
-  questionSubmit?.addEventListener('click', () => resolveCurrentHitl('Answer submitted'));
+  questionSubmit?.addEventListener('click', () => {
+    const selectedOption = questionOptions.find((option) => option.classList.contains('selected'));
+    const answer = questionCustom?.value.trim()
+      || selectedOption?.querySelector('strong')?.textContent.trim()
+      || selectedOption?.textContent.trim()
+      || '';
+    const question = questionCard?.querySelector('legend')?.textContent.trim() || '';
+    window.projectSettledAskUserRecord?.({ kind: 'single', answer, questions: [{ question, answer }] });
+    resolveCurrentHitl('Answer submitted');
+  });
   document.querySelectorAll('[data-hitl-resolve]').forEach((button) => button.addEventListener('click', () => resolveCurrentHitl(`${button.textContent.trim()} applied`)));
-  document.querySelectorAll('[data-hitl-cancel]').forEach((button) => button.addEventListener('click', () => resolveCurrentHitl('Request cancelled')));
+  document.querySelectorAll('[data-hitl-cancel]').forEach((button) => button.addEventListener('click', () => {
+    if (document.body.dataset.sessionSample === 'question') {
+      const question = questionCard?.querySelector('legend')?.textContent.trim() || '';
+      window.projectSettledAskUserRecord?.({ kind: 'cancelled', questions: [{ question, answer: '' }] });
+    }
+    resolveCurrentHitl('Request cancelled');
+  }));
 
   const queueEditDialog = document.querySelector('[data-queue-edit-dialog]');
   const queueEditInput = document.querySelector('[data-queue-edit-input]');
@@ -3509,7 +3937,8 @@
     const segment = document.createElement('section');
     segment.className = `work-segment ${waiting ? 'paused' : 'running'}`;
     segment.dataset.workSegment = `turn-${segmentId}`;
-    segment.innerHTML = `<button class="work-summary-control" type="button" aria-expanded="true" aria-controls="${segmentId}" data-work-disclosure><span data-icon="down"></span>${waiting ? '' : '<span class="work-live-dot" aria-hidden="true"></span>'}<strong>${waiting ? 'Paused · Waiting for your response' : 'Working for <span class="tabular">just now</span>'}</strong><span class="work-current-activity">— New Session input</span><span class="work-summary-divider"></span></button><div class="work-segment-body" id="${segmentId}"><p class="work-commentary"></p></div>`;
+    segment.dataset.settledToolCount = '0';
+    segment.innerHTML = `<button class="work-summary-control" type="button" aria-expanded="true" aria-controls="${segmentId}" data-work-disclosure><span data-icon="down"></span>${waiting ? '' : '<span class="work-live-dot" aria-hidden="true"></span>'}<strong>${waiting ? 'Paused · Worked for <span class="tabular">just now</span>' : 'Working for <span class="tabular">just now</span>'}</strong><span class="work-current-activity">— ${waiting ? 'Waiting for your response' : 'New Session input'}</span><span class="work-summary-divider"></span></button><div class="work-segment-body" id="${segmentId}"><p class="work-commentary"></p></div>`;
     segment.querySelector('.work-commentary').textContent = waiting
       ? 'This input is bound to the root Session and will continue after the pending request resolves.'
       : 'The root Session accepted this input and opened a new current Work segment.';

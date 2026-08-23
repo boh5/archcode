@@ -17,14 +17,23 @@ away.
 - Synthetic content is allowed when it is needed to expose the current product
   states, but every state must use the current component hierarchy, labels,
   visual semantics, and interaction rules.
-- Keep the sample compact while covering: completed and suspended Work,
-  Reasoning, grouped ordinary Tools, singleton mutation/Bash calls, a failed
-  Tool, Delegation, Recovery, Compaction, Permission, Ask User,
-  Queue/Steering, a visible final response, and Agent/Changes/Context inspector
-  states.
-- Representative Permission and Ask User samples expose both current HITL
-  presentations for review. They are separate Session fixtures, not product tabs;
-  one live Session shows only its active request family.
+- The default `view=detail&sample=running` fixture contains one collapsed,
+  completed historical Segment followed by one expanded live Segment. Expanding
+  the historical Segment exposes grouped ordinary Tool Runs, visible Reasoning,
+  one intentionally empty Reasoning boundary with no row, settled singleton
+  mutation and Bash calls, Delegation, Recovery, and Compaction. The live
+  Segment exposes the current mutation and active Bash call in the same timeline
+  language. The Queue and the Agents/Changes/Context Inspector are present in
+  this fixture.
+- `sample=permission` and `sample=question` are separate paused Work fixtures for
+  the two current HITL presentations; one concrete Session shows only its active
+  request family. `sample=ready` exposes a settled `ask_user` record and visible
+  final response. `sample=automation-license-failed` exposes the failed singleton
+  Bash presentation. `sample=direct-completed` and `sample=automation-run`
+  exercise completed source-only Session shells.
+- The default Inspector fixture truthfully contains `Agents 3` and `Changes 3`;
+  its child rows demonstrate Completed and Running graphical states with
+  accessible names.
 - Do not replace this representative sample with whichever live Session happens
   to contain the least content.
 
@@ -131,6 +140,10 @@ header and conversation. Do not move Execution into the inspector.
   show state, useful recency, and branch/worktree only when authoritative. The
   list supports real New Discussion, New Work Session, and Create Automation
   actions. It is a scalable list/detail route, never a single dropdown.
+- When search or type filters hide every linked Work row, keep the toolbar
+  visible, name the active query/type cause, and offer one `Reset filters`
+  action that clears both controls. This is the shared filter no-results state,
+  not a first-use or creation state.
 - Work detail exposes one compact `All work` back action and preserves Work-list
   filter/scroll state. Direct Work-detail links fall back to the Work list when
   Back has no in-shell parent.
@@ -154,9 +167,8 @@ header and conversation. Do not move Execution into the inspector.
   document. Moving among Idea, Ready, In Progress, and Done mutates the Todo;
   Reject and Archive/Restore remain available without being mistaken for
   Session Execution status.
-- Lifecycle buttons use the same icon and tone map as Todos Board lane headers:
-  neutral `spark`, brand `play`, live `activity`, and success `check`. Board cards
-  do not repeat those icons.
+- Lifecycle buttons use the shared Todo lifecycle icon and tone map: neutral
+  `spark`, brand `play`, live `activity`, and success `check`.
 - The canonical document is ordered as
   **Todo content → References → Plan → Result when trusted final output exists**.
   This preserves `Intent → inputs → implementation guidance → accepted/review
@@ -243,15 +255,22 @@ running:    user message → expanded Work
   adjacent steering or queued inputs therefore remain independently foldable
   without inventing a second Execution. A Segment never merges Executions or
   infers ownership from visual proximity.
-- A completed Work summary reads `Worked for {duration}`. A running summary
-  reads `Working for {duration}` (prototype) or `Working · {duration}` and may
-  append `— {current activity}`.
+- A completed Work summary reads `Worked for {duration}` and may append
+  ` · {N} tools` when that Segment contains one or more settled Tool calls.
+  Count settled calls, not visual Tool Run groups; use `1 tool` for the singular
+  form and omit the aggregate when it is zero. This aggregate is Segment-scoped;
+  the Session-header Tool count remains Session-scoped.
+- A running summary reads `Working for {duration}` (prototype) or `Working ·
+  {duration}` and may append `— {current activity}`. It never shows a changing
+  Tool count while the Segment is live.
 - When Work is waiting on the user, the fold uses **`Paused · Worked for
-  {duration}`** (or equivalent time/mechanism copy). Do **not** put product
-  `Needs you` on the Work chevron row; that slogan belongs on the Session header
-  badge and Composer state only.
-- Do not show `Execution {number}`, steps, Tool count, Child count, model, or
-  binding metadata in the visible Work row.
+  {duration}`** (or equivalent time/mechanism copy) and may append the same
+  settled Segment Tool aggregate. Do **not** put product `Needs you` on the Work
+  chevron row; that slogan belongs on the Session header badge and Composer state
+  only.
+- Do not show `Execution {number}`, steps, Child count, model, binding metadata,
+  or any other runtime aggregate in the visible Work row. The settled,
+  Segment-scoped Tool aggregate above is the only permitted Work-row count.
 - Preserve the Execution identity in product data even though it is visually
   omitted.
 - Only the latest Segment of a running Execution may read `Working` and
@@ -282,7 +301,9 @@ running:    user message → expanded Work
   coarse pointers.
 - Put the chevron first. Running Work adds one small live pulse before
   `Working`; completed Work needs no repeated success icon.
-- The label is 13px/600. Duration uses tabular figures.
+- The label is 13px/600. Duration and the optional settled Tool aggregate use
+  tabular figures and remain on the same line. At narrow widths, omit the Tool
+  aggregate before losing the duration or state label.
 - A running current-activity label is quiet, single-line, and separated with an
   em dash. Truncate it before expanding the Work row into multiple metadata
   lines.
@@ -332,9 +353,12 @@ running:    user message → expanded Work
 - Tool details remain inside Work; do not move them to the Context Inspector.
 - Within one Execution, project two or more consecutive ordinary tool calls as
   one Tool Run, even when model steps create multiple Assistant messages.
-- Reasoning is a dedicated Work timeline disclosure and a hard Tool Run
-  boundary. Preserve `Tool → Reasoning → Tool` in that exact visual order;
-  never move Reasoning into a Tool Run or drop it. Rendered Assistant text,
+- Reasoning with displayable text is a dedicated Work timeline disclosure and a
+  hard Tool Run boundary. When that text exists, preserve `Tool → Reasoning →
+  Tool` in that exact visual order and never move Reasoning into a Tool Run. A
+  Reasoning event with no displayable text still preserves the projection
+  boundary but renders no standalone row: do not show `Reasoning unavailable`,
+  token-only placeholders, or an invented summary. Rendered Assistant text,
   `delegate`, `ask_user`, Recovery, and Compaction are also hard boundaries.
 - Once every call settles, the collapsed row shows the canonical tool names in
   authoritative order, separated by comma and space:
@@ -367,6 +391,23 @@ running:    user message → expanded Work
   the terminal output plus exit code, duration, and concise result.
 - `delegate`, `ask_user`, Recovery, and Compaction retain their dedicated
   presentation.
+- An `ask_user` result with one finalized, displayable answer group collapses to
+  `Question answered · {available answer summary}`. Join multiple selected
+  answers from that group in their authoritative order, then mechanically
+  truncate to one line rather than paraphrasing.
+- A complete multi-question result collapses to `{N} questions answered`. A
+  bounded presentation marked `truncated` uses `Answer recorded · details
+  truncated` instead of guessing omitted text or counts. Expansion shows only
+  the finalized Q/A groups actually available to the Web and identifies
+  truncation when present. Cancelled or failed calls retain their terminal/error
+  presentation and never read `answered`.
+- Pending `ask_user` remains actionable exclusively in the existing Composer
+  HITL surface. This change introduces no pending ToolCard state, badge, or
+  response controls; any already-projected Work context remains read-only.
+- When that pending call settles, append its terminal `ask_user` record to the
+  same current Work Segment, preserve the exact available question and answer,
+  and increment that Segment's settled-call count once. Resuming continues the
+  same Execution; never update an unrelated historical record or fixture.
 - Delegation, Recovery, and Compaction use one nested record shell: 6px radius,
   default border, 10px horizontal header/content padding, and no raised outer
   shadow. Delegation alone may tint that border with brand to show child work.
@@ -390,13 +431,14 @@ column rather than leaving an empty rail.
 - **No summary strip** above the tab bar. Do not restate Session status, agent
   count, or file count as a chrome line — those already live on the Session
   header/Composer, Agents/Changes tab badges, and Context property rows.
-- Tab bar may carry counts (`Agents 4`, `Changes 3`). Active tab uses a brand
-  underline inset 6px from each edge, not a filled pill block. Counts use a
-  quiet 16px-high rounded field; the active count receives a restrained brand
-  tint.
-- Type floor is 10.5px for tertiary uppercase summary keys only; primary labels
-  remain ~11–12.5px and operational metadata ~11–11.5px. No sub-10.5px text is
-  permitted in the inspector.
+- The current fixture carries the truthful inline counts `Agents 3` and
+  `Changes 3`; Context has no invented count. Counts are quiet 9.5px monospace
+  brand text, not badges or filled fields. The active tab uses a 2px brand
+  underline inset 7px from each edge and aligned to the tab-bar bottom rule,
+  not a filled pill block.
+- The 9.5px floor is reserved for inline tab counts and compact tertiary
+  summary keys/figures. Primary labels remain ~11–12.5px and operational
+  metadata ~11–11.5px; ordinary labels never drop to the tertiary floor.
 
 ### Agents
 
@@ -405,12 +447,17 @@ column rather than leaving an empty rail.
 - Each row: role mark · **Role** + profile · one-line objective · trailing state.
   Skills/profile extras stay muted or hidden by default; do not force a third
   equal-weight text line.
-- Selection: quiet hover field and/or 2px brand inset edge — not a large brand
-  wash card.
+- Selection uses the shared `--selection-field` plus 2px inset brand edge — not
+  a large brand wash card. Keyboard focus remains an independent focus-visible
+  signal.
 - Trailing state uses the shared status map. When Lead is gated, show the HITL
   request family (**`Permission`** or **`Question`**) rather than repeating
   product `Needs you`. Use **`Failed`**, **`Running`**, or **`Completed`** for
   non-gate states.
+- A compact ordinary child row may replace the trailing text label with the
+  prototype's 13px success check or 6px live pulse when space is constrained.
+  The graphic must expose the exact state through an accessible name and title
+  (`Completed` or `Running`); color or motion alone is never the label.
 - Activating a node selects it in the tree. When the product supports it, also
   switches the main canvas to that child Agent's durable Session. Child views
   are inspect-only in this root workbench: keep one quiet ownership cue above
@@ -529,7 +576,7 @@ column rather than leaving an empty rail.
   density. No up/down reorder controls — attach order is enough.
 - Agent identity and one mutually exclusive terminal action remain in the quiet
   input surface below those priority cues.
-- The input surface uses the compact Composer elevation and a stable 1px border.
+- The input surface uses `--elevation-composer` and a stable 1px border.
   Its resting border mixes only a small amount of brand into the structural
   line, and its neutral same-family vertical surface gradient resolves to the
   elevated surface by 78px. Use the Master Composer shadow and 12px radius.
