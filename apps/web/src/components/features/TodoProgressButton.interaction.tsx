@@ -136,6 +136,9 @@ describe("TodoProgressButton interactions", () => {
     expect(
       container.querySelector('[aria-current="step"]')?.textContent,
     ).toContain("Current");
+    expect(
+      container.querySelector('[aria-current="step"] span:last-child')?.className,
+    ).toContain("text-signal-foreground");
     expect(preview.textContent).toContain("Upcoming");
     expect(preview.textContent).toContain("P0");
     expect(preview.textContent).toContain("Run tests");

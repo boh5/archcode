@@ -90,7 +90,7 @@ export function InspectorShell<T extends string>({
             <span>{tab.label}</span>
             {tab.count !== undefined ? (
               <span
-                className={`min-w-4 rounded-full bg-bg-muted px-[5px] font-mono text-[10px] font-semibold leading-4 tabular-nums text-text-tertiary ${activeTab === tab.id ? "bg-[color:color-mix(in_srgb,var(--brand)_14%,var(--bg-muted))] text-text-secondary" : ""}`}
+                className="font-mono text-[9.5px] font-semibold leading-4 tabular-nums text-brand"
                 data-testid={`inspector-count-${tab.id}`}
                 aria-label={`${tab.label} count ${tab.count === "loading" ? "loading" : tab.count === "unavailable" ? "unavailable" : tab.count}`}
               >

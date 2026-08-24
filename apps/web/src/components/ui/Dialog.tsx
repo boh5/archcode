@@ -24,7 +24,7 @@ function DialogContent({
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-[70] bg-[rgba(6,8,7,0.56)] opacity-0 backdrop-blur-[4px] transition-opacity duration-[var(--motion-deliberate)] ease-[var(--ease-enter)] data-[state=open]:opacity-100 data-[state=closed]:ease-[var(--ease-exit)]" />
       <DialogPrimitive.Content
-        className={`!fixed inset-0 z-[71] m-auto ${sizeClass} rounded-lg border border-border-strong bg-bg-overlay shadow-lg focus:outline-none data-[state=open]:animate-overlay-enter data-[state=closed]:animate-overlay-exit ${className ?? ""}`}
+        className={`!fixed inset-0 z-[71] m-auto ${sizeClass} rounded-[var(--shape-dialog)] border border-border-strong bg-bg-overlay shadow-[var(--elevation-modal)] focus:outline-none data-[state=open]:animate-overlay-enter data-[state=closed]:animate-overlay-exit ${className ?? ""}`}
         {...props}
       >
         {children}

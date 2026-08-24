@@ -86,6 +86,7 @@ export function SessionContextDetails() {
         ? `${nextModelSelection.resolved.modelDisplayName}${nextModelSelection.resolved.selection.variant ? ` · ${nextModelSelection.resolved.selection.variant}` : ""}`
         : "Syncing…",
     ],
+    ["Profile", session.profile],
     ["Tokens", stats.usage.totalTokens.toLocaleString()],
     ["Working dir", cwd],
   ];

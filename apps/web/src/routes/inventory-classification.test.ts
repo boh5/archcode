@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { ProjectAutomationInventoryItem, ProjectSessionInventoryItem } from "../api/types";
-import { automationInventoryEmptyMessage, classifyAutomationInventory, matchesAutomationInventory } from "./automations";
+import { automationInventoryEmptyMessage, classifyAutomationInventory, matchesAutomationInventory, presentAutomationInventoryEmptyState } from "./automations";
 import { presentAutomationSurface } from "../lib/automation-surface-presentation";
-import { classifySessionInventory, matchesSessionInventory, presentSessionInventoryStatus, sessionInventoryEmptyMessage } from "./project-sessions";
+import { classifySessionInventory, matchesSessionInventory, presentSessionInventoryEmptyState, presentSessionInventoryStatus, sessionInventoryEmptyMessage } from "./project-sessions";
 
 const automation = (id: string, status: "active" | "paused" | "disabled", invocationStatus?: "failed" | "missed" | "dispatched"): ProjectAutomationInventoryItem => ({
   automation: {
@@ -41,6 +41,20 @@ describe("inventory classification", () => {
     expect(automationInventoryEmptyMessage(2)).toBe("No Automations match this name, ID, action, or schedule.");
     expect(sessionInventoryEmptyMessage(0)).toBe("No Sessions yet. Start one directly or run work from a Todo.");
     expect(sessionInventoryEmptyMessage(2)).toBe("No Sessions match this title, ID, or source.");
+    expect(presentSessionInventoryEmptyState(0, "stale", "todo")).toEqual({
+      title: "No Sessions yet",
+      detail: "Use New Session above for direct work, or start work from a Todo or Automation.",
+    });
+    expect(presentSessionInventoryEmptyState(2, "missing", "todo").recoveryLabel).toBe("Reset filters");
+    expect(presentSessionInventoryEmptyState(2, "missing", "all").recoveryLabel).toBe("Clear filter");
+    expect(presentSessionInventoryEmptyState(2, "", "direct").recoveryLabel).toBe("Show all");
+    expect(presentAutomationInventoryEmptyState(0, "stale", "paused")).toEqual({
+      title: "No Automations yet",
+      detail: "Use “New Automation” above to set up repeatable or scheduled work in durable Sessions.",
+    });
+    expect(presentAutomationInventoryEmptyState(2, "missing", "paused").recoveryLabel).toBe("Reset filters");
+    expect(presentAutomationInventoryEmptyState(2, "missing", "all").recoveryLabel).toBe("Clear filter");
+    expect(presentAutomationInventoryEmptyState(2, "", "active").recoveryLabel).toBe("Show all");
   });
 
   test("assigns each Automation to exactly one operational group", () => {

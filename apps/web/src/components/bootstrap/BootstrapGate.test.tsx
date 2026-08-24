@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { BootstrapGate } from "./BootstrapGate";
 import { notifyAuthInvalidated } from "../../api/client";
+import { AppRoot } from "../../app-root";
 
 const originalFetch = globalThis.fetch;
 const originalWindow = globalThis.window;
@@ -104,6 +105,7 @@ describe("BootstrapGate", () => {
   });
 
   test("opens the complete Settings workspace on Runtime error", async () => {
+    window.localStorage.setItem("archcodeTheme", "light");
     globalThis.fetch = mock(async (input: RequestInfo | URL) => {
       if (String(input) === "/api/bootstrap") return Response.json({
         mode: "ready",
@@ -116,10 +118,11 @@ describe("BootstrapGate", () => {
     }) as unknown as typeof fetch;
 
     await act(async () => {
-      root.render(<BootstrapGate><p>Workbench mounted</p></BootstrapGate>);
+      root.render(<AppRoot><BootstrapGate><p>Workbench mounted</p></BootstrapGate></AppRoot>);
       await Promise.resolve();
     });
 
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(document.body.textContent).toContain("Runtime Data");
     expect(document.body.textContent).toContain("Session data could not be loaded.");
     expect(document.body.textContent).toContain("Models");
@@ -139,6 +142,22 @@ describe("BootstrapGate", () => {
     expect(document.body.textContent).toContain("Open Config Recovery from your terminal");
     expect(document.body.textContent).toContain("Repair the invalid global configuration at");
     expect(document.body.textContent).not.toContain("Reset configuration");
+    expect(document.body.textContent).not.toContain("Workbench mounted");
+  });
+
+  test("applies the saved light theme to recovery before the workbench mounts", async () => {
+    window.localStorage.setItem("archcodeTheme", "light");
+    globalThis.fetch = mock(async () => Response.json({
+      mode: "config_error",
+      message: "The global configuration is invalid. Open Config Recovery from the server terminal.",
+    })) as unknown as typeof fetch;
+
+    await act(async () => {
+      root.render(<AppRoot><BootstrapGate><p>Workbench mounted</p></BootstrapGate></AppRoot>);
+    });
+
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(document.body.textContent).toContain("Open Config Recovery from your terminal");
     expect(document.body.textContent).not.toContain("Workbench mounted");
   });
 

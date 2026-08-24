@@ -20,7 +20,7 @@ const STATE_LABEL: Record<TodoProgressState, string> = {
 };
 
 const STATE_TONE: Record<TodoProgressState, StatusTone> = {
-  running: "info",
+  running: "signal",
   waiting: "warning",
   blocked: "warning",
   failed: "error",
@@ -211,7 +211,7 @@ export function TodoProgressButton({ slug, sessionId }: { slug: string; sessionI
             id={popoverId}
             role="region"
             aria-label="Todo progress details"
-            className="select-text rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md"
+            className="select-text rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay p-3 shadow-[var(--elevation-popover)]"
           >
             <div className="mb-2 flex items-start justify-between gap-3">
               <div>
@@ -254,7 +254,7 @@ function TodoProgressItem({ todo }: { todo: SessionTodo }) {
       aria-current={todo.status === "in_progress" ? "step" : undefined}
     >
       <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center">
-        {todo.status === "completed" ? <Check size={13} className="text-success" /> : todo.status === "in_progress" ? <CircleDot size={13} className="text-info" /> : todo.status === "cancelled" ? <X size={13} className="text-neutral" /> : <Circle size={11} className="text-neutral" />}
+        {todo.status === "completed" ? <Check size={13} className="text-success" /> : todo.status === "in_progress" ? <CircleDot size={13} className="text-signal-foreground" /> : todo.status === "cancelled" ? <X size={13} className="text-neutral" /> : <Circle size={11} className="text-neutral" />}
       </span>
       <span className={`min-w-0 flex-1 text-xs leading-5 ${todo.status === "completed" || todo.status === "cancelled" ? "text-text-tertiary line-through" : "text-text-secondary"}`}>
         {presentation.content}
@@ -264,7 +264,7 @@ function TodoProgressItem({ todo }: { todo: SessionTodo }) {
           {PRIORITY_LABEL[presentation.priority]}
         </span>
       )}
-      <span className={`shrink-0 text-[11px] ${todo.status === "in_progress" ? "text-info" : todo.status === "completed" ? "text-success" : todo.status === "cancelled" ? "text-neutral" : "text-text-tertiary"}`}>{label}</span>
+      <span className={`shrink-0 text-[11px] ${todo.status === "in_progress" ? "text-signal-foreground" : todo.status === "completed" ? "text-success" : todo.status === "cancelled" ? "text-neutral" : "text-text-tertiary"}`}>{label}</span>
     </div>
   );
 }

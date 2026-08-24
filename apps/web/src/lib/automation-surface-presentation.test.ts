@@ -6,7 +6,7 @@ import type {
   ProjectSessionInventoryItem,
 } from "@archcode/protocol";
 import type { AutomationHitlAttention, AutomationSessionLink } from "./automation-hitl-attention";
-import { presentAutomationSurface } from "./automation-surface-presentation";
+import { presentAutomationInvocationRow, presentAutomationSurface } from "./automation-surface-presentation";
 
 const automation: Automation = {
   id: "automation-secret-id",
@@ -109,9 +109,9 @@ describe("Automation surface presentation", () => {
 
     expect(result).toMatchObject({
       statusLabel: "Running",
-      actionLabel: "Existing Session",
-      locationLabel: "Target Session workspace",
-      bindingLabel: "Target Session’s existing Agent + Profile",
+      actionLabel: "Send message",
+      locationLabel: "Existing Session",
+      bindingLabel: "Existing Session",
     });
     expect(result.context).not.toContain("target-secret-id");
     expect(result.context).not.toContain("Send message");
@@ -122,7 +122,42 @@ describe("Automation surface presentation", () => {
     const result = present({});
     expect(result.statusLabel).toBe("Scheduled");
     expect(result.rowSignal).not.toContain("Scheduled ·");
-    expect(result.context).toContain("Inspect regressions");
+    expect(result.context).toBe("Direct · Every 1 minute");
     expect(result.context).not.toContain(automation.id);
+  });
+
+  test("keeps terminal and pending Invocation status ahead of linked Session activity", () => {
+    const linkedSession = {
+      session: { sessionId: "linked-session", source: { kind: "direct" } },
+      latestExecution: { id: "completed-execution", status: "completed", startedAt: 1, endedAt: 2 },
+    } as ProjectSessionInventoryItem;
+
+    expect(presentAutomationInvocationRow(invocation("failed"), linkedSession, "running")).toEqual({
+      visualKind: "failed", statusLabel: "Failed", openSessionId: "linked-session",
+    });
+    expect(presentAutomationInvocationRow(invocation("missed"), linkedSession, "running")).toEqual({
+      visualKind: "failed", statusLabel: "Missed", openSessionId: "linked-session",
+    });
+    expect(presentAutomationInvocationRow(invocation("cancelled"), linkedSession, "running")).toEqual({
+      visualKind: "stopped", statusLabel: "Cancelled", openSessionId: "linked-session",
+    });
+    expect(presentAutomationInvocationRow(invocation("pending"), linkedSession, "running")).toEqual({
+      visualKind: "pending", statusLabel: "Pending", openSessionId: "linked-session",
+    });
+  });
+
+  test("opens only a Session resolved from the authoritative inventory", () => {
+    const orphaned = { ...invocation("dispatched"), sessionId: "missing-session" };
+    expect(presentAutomationInvocationRow(orphaned, undefined, undefined)).toEqual({
+      visualKind: "idle", statusLabel: "Dispatched",
+    });
+
+    const linkedSession = {
+      session: { sessionId: "resolved-session", source: { kind: "direct" } },
+      latestExecution: { id: "completed-execution", status: "completed", startedAt: 1, endedAt: 2 },
+    } as ProjectSessionInventoryItem;
+    expect(presentAutomationInvocationRow(orphaned, linkedSession, "idle")).toEqual({
+      visualKind: "completed", statusLabel: "Completed", openSessionId: "resolved-session",
+    });
   });
 });

@@ -22,7 +22,7 @@
   --text-primary: #171917;
   --text-secondary: #424742;
   --text-tertiary: #626a62;
-  --text-muted: #747c74;
+  --text-muted: #626a62;
 
   --brand: #6157d5;
   --brand-hover: #5148c1;
@@ -40,14 +40,15 @@
   --error-field: #f8e8e6;
   --neutral: #626a62;
   --neutral-field: #eceeea;
+  --auxiliary-blue: #426da9;
+  --auxiliary-blue-field: #e7eef9;
   --selection-field: #eeedf8;
   --running-field: #f1f4e7;
   --attention-field: #f8f2e8;
 
-  /* Informational UI remains indigo. Lime is reserved for live work only. */
-  --info: #6157d5;
-  --brand-subtle: #eeecfb;
-  --info-muted: #eeecfb;
+  --info: var(--auxiliary-blue);
+  --brand-subtle: var(--brand-field);
+  --info-muted: var(--auxiliary-blue-field);
   --success-muted: #e8f2eb;
   --warning-muted: #f7eddd;
   --error-muted: #f8e8e6;
@@ -56,26 +57,38 @@
   --error-muted-opaque: #f8e8e6;
 
   --rail: #eceeea;
-  --rail-ink: #171917;
-  --rail-muted: #626a62;
-  --rail-hover: #e1e3df;
+  --rail-ink: var(--text-primary);
+  --rail-muted: var(--text-tertiary);
+  --rail-hover: var(--bg-hover);
   --rail-active: #d7dbd4;
-  --rail-border: #cdd1ca;
-  --terminal-bg: #252620;
-  --terminal-text: #d7d6cd;
-  --terminal-muted: #aaa99f;
-  --terminal-success: #b6d84b;
-  --terminal-error: #ed8178;
-  --terminal-border: rgb(255 255 255 / 10%);
-  --focus: 0 0 0 3px rgb(97 87 213 / 23%);
+  --rail-border: var(--border-subtle);
+  --terminal-bg: #22251f;
+  --terminal-text: #dce1d8;
+  --terminal-muted: #aab2a7;
+  --terminal-add: #9bd2ab;
+  --terminal-success: var(--success);
+  --terminal-error: var(--error);
+  --terminal-border: #202520;
+  --terminal-meta: #7f887c;
+  --terminal-dot: #30372f;
+  --focus-color: #6157d5;
+  --focus: 0 0 0 2px var(--focus-color);
 
-  --elevation-sm: 0 10px 30px rgb(26 31 25 / 9%);
-  --elevation-md: 0 22px 56px rgb(25 28 22 / 18%);
-  --elevation-lg: 0 22px 56px rgb(25 28 22 / 18%);
+  --primary-fill: color-mix(in srgb, var(--brand) 92%, var(--bg-muted));
+  --primary-hover: var(--brand);
 
-  --shape-control: 4px;
+  --elevation-popover: 0 14px 34px rgb(23 28 22 / 10%);
+  --elevation-composer: 0 -12px 30px rgb(23 28 22 / 9%);
+  --elevation-drawer: -18px 0 48px rgb(23 28 22 / 14%);
+  --elevation-drawer-start: 18px 0 48px rgb(23 28 22 / 14%);
+  --elevation-modal: 0 24px 70px rgb(23 28 22 / 18%);
+  --elevation-edge: inset 0 1px 0 rgb(255 255 255 / 75%);
+
+  --shape-compact: 4px;
+  --shape-control: 6px;
   --shape-card: 6px;
   --shape-popover: 8px;
+  --shape-message: 10px;
   --shape-dialog: 12px;
 
   --font-stack-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
@@ -133,13 +146,15 @@
   --error-field: #3b2421;
   --neutral: #9ca49a;
   --neutral-field: #232723;
+  --auxiliary-blue: #8eb5f6;
+  --auxiliary-blue-field: #202d43;
   --selection-field: #26243a;
   --running-field: #22291b;
   --attention-field: #2c271e;
 
-  --info: #a49bff;
-  --brand-subtle: #2b2845;
-  --info-muted: #2b2845;
+  --info: var(--auxiliary-blue);
+  --brand-subtle: var(--brand-field);
+  --info-muted: var(--auxiliary-blue-field);
   --success-muted: #203329;
   --warning-muted: #352b1b;
   --error-muted: #3b2421;
@@ -148,50 +163,61 @@
   --error-muted-opaque: #3b2421;
 
   --rail: #060706;
-  --rail-ink: #f2f4ef;
-  --rail-muted: #858c83;
-  --rail-hover: #1c201c;
+  --rail-ink: var(--text-primary);
+  --rail-muted: var(--text-tertiary);
+  --rail-hover: var(--bg-hover);
   --rail-active: #232723;
-  --rail-border: #363c36;
-  --terminal-bg: #0f100e;
-  --terminal-text: #dad9d1;
-  --terminal-muted: #aaa99f;
-  --terminal-success: #b6d84b;
-  --terminal-error: #ed8178;
-  --terminal-border: rgb(255 255 255 / 10%);
-  --focus: 0 0 0 3px rgb(164 155 255 / 26%);
+  --rail-border: var(--border-subtle);
+  --terminal-bg: #0b0d0c;
+  --terminal-text: #bbc5b8;
+  --terminal-muted: #aab2a7;
+  --terminal-add: #9bd2ab;
+  --terminal-success: var(--success);
+  --terminal-error: var(--error);
+  --terminal-border: #202520;
+  --terminal-meta: #7f887c;
+  --terminal-dot: #30372f;
+  --focus-color: #a49bff;
+  --focus: 0 0 0 2px var(--focus-color);
 
-  --elevation-sm: 0 14px 34px rgb(0 0 0 / 32%);
-  --elevation-md: 0 22px 56px rgb(0 0 0 / 52%);
-  --elevation-lg: 0 22px 56px rgb(0 0 0 / 52%);
+  --primary-fill: color-mix(in srgb, var(--brand) 80%, var(--bg-muted));
+  --primary-hover: color-mix(in srgb, var(--brand) 86%, var(--bg-muted));
+
+  --elevation-popover: 0 14px 34px rgb(0 0 0 / 34%);
+  --elevation-composer: 0 -12px 34px rgb(0 0 0 / 22%);
+  --elevation-drawer: -18px 0 48px rgb(0 0 0 / 38%);
+  --elevation-drawer-start: 18px 0 48px rgb(0 0 0 / 38%);
+  --elevation-modal: 0 24px 70px rgb(0 0 0 / 52%);
+  --elevation-edge: inset 0 1px 0 rgb(255 255 255 / 7%);
 }
 
 .composer-card {
   border-color: color-mix(in srgb, var(--brand) 17%, var(--border-default));
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-elevated) 88%, var(--bg-surface)), var(--bg-elevated) 78px);
-  box-shadow: 0 16px 38px rgb(23 28 22 / 15%), inset 0 1px 0 rgb(255 255 255 / 75%);
+  box-shadow: var(--elevation-composer), inset 0 1px 0 rgb(255 255 255 / 75%);
 }
 
 .composer-card:focus-within {
   border-color: color-mix(in srgb, var(--brand) 44%, var(--border-default));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 18%, transparent), 0 16px 38px rgb(23 28 22 / 15%), inset 0 1px 0 rgb(255 255 255 / 75%);
+  box-shadow: var(--focus), var(--elevation-composer), inset 0 1px 0 rgb(255 255 255 / 75%);
 }
 
-[data-theme="dark"] .composer-card {
-  box-shadow: 0 16px 42px rgb(0 0 0 / 30%), inset 0 1px 0 rgb(255 255 255 / 7%);
+[data-theme="dark"] .composer-card,
+[data-theme="dark"] .composer-card:focus-within {
+  box-shadow: var(--elevation-composer), inset 0 1px 0 rgb(255 255 255 / 7%);
 }
 
 [data-theme="dark"] .composer-card:focus-within {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 18%, transparent), 0 16px 42px rgb(0 0 0 / 30%), inset 0 1px 0 rgb(255 255 255 / 7%);
+  box-shadow: var(--focus), var(--elevation-composer), inset 0 1px 0 rgb(255 255 255 / 7%);
 }
 
 .composer-terminal-primary {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--brand) 28%, var(--brand-hover)), var(--brand-hover));
+  background: var(--primary-fill);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%), 0 2px 8px color-mix(in srgb, var(--brand) 26%, transparent);
 }
 
 .composer-terminal-primary:hover {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--brand) 46%, var(--brand-hover)), var(--brand-hover));
+  background: var(--primary-hover);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 4px 12px color-mix(in srgb, var(--brand) 30%, transparent);
 }
 
@@ -259,6 +285,8 @@
   --color-error-muted-opaque: var(--error-muted-opaque);
   --color-info: var(--info);
   --color-info-muted: var(--info-muted);
+  --color-auxiliary-blue: var(--auxiliary-blue);
+  --color-auxiliary-blue-field: var(--auxiliary-blue-field);
   --color-neutral: var(--neutral);
   --color-neutral-field: var(--neutral-field);
   --color-neutral-muted: var(--neutral-muted);
@@ -266,12 +294,8 @@
   --color-running-field: var(--running-field);
   --color-attention-field: var(--attention-field);
 
-  /* Shadows */
-  --shadow-sm: var(--elevation-sm);
-  --shadow-md: var(--elevation-md);
-  --shadow-lg: var(--elevation-lg);
-
   /* Radii */
+  --radius-xs: var(--shape-compact);
   --radius-sm: var(--shape-control);
   --radius-md: var(--shape-card);
   --radius-lg: var(--shape-popover);
@@ -314,6 +338,10 @@
 
   body {
     background-color: var(--bg-base);
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--brand) 28%, transparent);
   }
 
   /* Scrollbar */
@@ -398,15 +426,15 @@
 }
 
 .primary-action-button {
-  box-shadow: 0 1px 3px rgb(97 87 213 / 30%), inset 0 1px 0 rgb(255 255 255 / 10%);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--brand) 30%, transparent), inset 0 1px 0 rgb(255 255 255 / 10%);
 }
 
 .primary-action-button:hover:not(:disabled) {
-  box-shadow: 0 3px 8px rgb(97 87 213 / 30%), inset 0 1px 0 rgb(255 255 255 / 18%);
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--brand) 30%, transparent), inset 0 1px 0 rgb(255 255 255 / 18%);
 }
 
 .primary-action-button:active:not(:disabled) {
-  box-shadow: 0 1px 3px rgb(97 87 213 / 24%), inset 0 1px 0 rgb(255 255 255 / 8%);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--brand) 24%, transparent), inset 0 1px 0 rgb(255 255 255 / 8%);
 }
 
 .primary-action-button:disabled {
@@ -415,10 +443,6 @@
 
 .workbench-row-lift:hover {
   transform: translateY(-0.5px);
-}
-
-.todo-card-selected {
-  box-shadow: inset 2px 0 0 var(--brand);
 }
 
 @keyframes activity-rotate {

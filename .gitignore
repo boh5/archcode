@@ -1,3 +1,4 @@
+.DS_Store
 node_modules/
 dist/
 *.tsbuildinfo
@@ -8,6 +9,7 @@ bun.lockb
 .archcode
 .specra
 .playwright-mcp
+.omo/
 .codex/config.toml
 __test_tmp__/
 __test__/

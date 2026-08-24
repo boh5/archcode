@@ -1,14 +1,41 @@
-import { useCallback, useEffect, useState } from "react";
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 export type Theme = "light" | "dark";
 
 const STORAGE_KEY = "archcodeTheme";
 
+function readStoredTheme(): Theme | undefined {
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    return stored === "light" || stored === "dark" ? stored : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function persistTheme(theme: Theme): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, theme);
+  } catch {
+    // The current tab still applies the chosen theme when storage is unavailable.
+  }
+}
+
 function getInitialTheme(): Theme {
   if (typeof window === "undefined") return "dark";
 
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
+  const stored = readStoredTheme();
+  if (stored !== undefined) return stored;
 
   return window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
@@ -19,12 +46,19 @@ function applyTheme(theme: Theme) {
   document.documentElement.setAttribute("data-theme", theme);
 }
 
-export function useTheme() {
+interface ThemeContextValue {
+  theme: Theme;
+  toggleTheme: () => void;
+}
+
+const ThemeContext = createContext<ThemeContextValue | null>(null);
+
+export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
-  // Keep the document attribute owned by the root theme state, including
-  // responsive shell remounts and same-tab updates.
-  useEffect(() => {
+  // The provider sits above bootstrap/recovery gates, so every product state
+  // receives the saved theme before the browser paints it.
+  useLayoutEffect(() => {
     applyTheme(theme);
   }, [theme]);
 
@@ -43,13 +77,17 @@ export function useTheme() {
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setTheme((prev) => {
-      const next = prev === "dark" ? "light" : "dark";
-      window.localStorage.setItem(STORAGE_KEY, next);
-      applyTheme(next);
-      return next;
-    });
-  }, []);
+    const next = theme === "dark" ? "light" : "dark";
+    persistTheme(next);
+    setTheme(next);
+  }, [theme]);
 
-  return { theme, toggleTheme };
+  const value = useMemo(() => ({ theme, toggleTheme }), [theme, toggleTheme]);
+  return createElement(ThemeContext.Provider, { value }, children);
+}
+
+export function useTheme(): ThemeContextValue {
+  const value = useContext(ThemeContext);
+  if (value === null) throw new Error("useTheme must be used within ThemeProvider");
+  return value;
 }

@@ -23,13 +23,15 @@ export function SessionChangesInspector({ projection }: { projection: SessionIns
     <section data-testid="context-changed-files">
       <span className="block text-[10.5px] font-bold uppercase leading-[21px] tracking-[0.09em] text-text-tertiary">Current checkout</span>
       <p className="mb-3 mt-1 text-[10.5px] leading-[1.45] text-text-tertiary">Working tree for this root Session family. It is not an aggregate Todo diff.</p>
-      <dl className={`mb-3 mt-2.5 grid overflow-hidden rounded-[6px] border border-border-default ${hasAggregateDiffstat ? "grid-cols-3" : "grid-cols-1"}`}>
-        <div className="border-border-default bg-bg-muted p-2 [&:not(:last-child)]:border-r"><dt className="text-[10.5px] uppercase tracking-[0.07em] text-text-tertiary">Files</dt><dd className="mt-1 font-mono text-[11px] font-semibold leading-none text-text-secondary">{files.length}</dd></div>
+      <p className="mb-3 mt-2.5 font-mono text-[11px] font-semibold leading-4 tabular-nums text-text-secondary" data-testid="context-change-summary">
+        {files.length} {files.length === 1 ? "file" : "files"}
         {hasAggregateDiffstat ? <>
-          <div className="border-r border-border-default bg-bg-muted p-2"><dt className="text-[10.5px] uppercase tracking-[0.07em] text-text-tertiary">Additions</dt><dd className="mt-1 font-mono text-[11px] font-semibold leading-none text-success">+{additions}</dd></div>
-          <div className="bg-bg-muted p-2"><dt className="text-[10.5px] uppercase tracking-[0.07em] text-text-tertiary">Deletions</dt><dd className="mt-1 font-mono text-[11px] font-semibold leading-none text-error">−{deletions}</dd></div>
+          <span className="text-text-tertiary"> · </span>
+          <span className="text-success">+{additions}</span>
+          <span className="text-text-tertiary"> </span>
+          <span className="text-error">−{deletions}</span>
         </> : null}
-      </dl>
+      </p>
       <div>
         {files.map((file) => (
           <button

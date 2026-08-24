@@ -82,10 +82,10 @@ function facts(overrides: Partial<ProjectTodoOperationalFacts> = {}): ProjectTod
 }
 
 describe("Todo operational state", () => {
-  test("waits for authoritative facts and only decorates active In Progress Todos", () => {
+  test("waits for authoritative facts and keeps quiet lifecycle rows undecorated", () => {
     expect(deriveProjectTodoOperationalState(facts({ authoritative: false }))).toBeUndefined();
     expect(deriveProjectTodoOperationalState(facts({ todo: { ...todo, status: "ready" } }))).toBeUndefined();
-    expect(deriveProjectTodoOperationalState(facts())).toEqual({ label: "Idle", kind: "idle" });
+    expect(deriveProjectTodoOperationalState(facts())).toBeUndefined();
   });
 
   test("gives unresolved user attention precedence over active work", () => {
@@ -96,6 +96,17 @@ describe("Todo operational state", () => {
       activityBySessionId: activity,
       attentionBySessionId: new Map([["work-1", "Permission"]]),
     }))).toEqual({ label: "Needs you", detail: "Permission", kind: "needs_you" });
+  });
+
+  test("projects linked Discussion attention without changing an Idea lifecycle", () => {
+    const discussion = workSession("discussion", 10, null, {
+      source: { kind: "todo", todoId: todo.id, entry: "discussion" },
+    });
+    expect(deriveProjectTodoOperationalState(facts({
+      todo: { ...todo, status: "idea" },
+      sessions: [discussion],
+      attentionBySessionId: new Map([["discussion", "Question"]]),
+    }))).toEqual({ label: "Needs you", detail: "Question", kind: "needs_you" });
   });
 
   test("uses exact linked-root HITL and never infers Needs you from family activity", () => {
@@ -113,7 +124,7 @@ describe("Todo operational state", () => {
     expect(deriveProjectTodoOperationalState(facts({
       sessions: [waiting],
       activityBySessionId: new Map([["waiting", "waiting_for_human"]]),
-    }))).toEqual({ label: "Working", detail: "Waiting for response", kind: "running" });
+    }))).toEqual({ label: "Waiting", detail: "Waiting for dependency", kind: "pending" });
   });
 
   test("shows current work instead of an older terminal failure", () => {

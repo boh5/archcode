@@ -2,19 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ChevronRight, ListTodo, Pencil, Play } from "lucide-react";
 import { projectTodoContentExcerpt, type SessionFamilyActivity } from "@archcode/protocol";
-import { useAutomation, useAutomationInvocations, useProjectTodos, useSession, useSessionInventory } from "../api/queries";
+import { useAutomation, useAutomationInvocations, useProjectTodos, useSessionInventory } from "../api/queries";
 import { usePauseAutomation, useResumeAutomation, useRunAutomationNow } from "../api/mutations";
 import type { Automation, AutomationInvocation, ProjectSessionInventoryItem } from "../api/types";
 import { EditAutomationDialog } from "../components/features/EditAutomationDialog";
 import { deriveAutomationHitlAttention, indexAutomationSessionLinks, type AutomationHitlAttention } from "../lib/automation-hitl-attention";
-import { hitlAttentionPath, useAttentionVisibleScopedHitl } from "../store/hitl-store";
-import { formatAutomationTrigger } from "../lib/automation-trigger-presentation";
+import { hitlAttentionPath, useAttentionVisibleScopedHitl, useHitlProjectInitialized } from "../store/hitl-store";
+import { formatAutomationScheduleTime, formatAutomationTrigger } from "../lib/automation-trigger-presentation";
 import { StatusGlyph } from "../components/primitives/StatusGlyph";
 import { PrimaryActionButton } from "../components/primitives/PrimaryActionButton";
 import { RelativeTime } from "../components/primitives/TemporalText";
-import { automationInvocationStatusLabel } from "../lib/automation-status-presentation";
-import { presentAutomationSurface, type AutomationSurfacePresentation } from "../lib/automation-surface-presentation";
-import { useSessionRuntimeFamilies } from "../store/session-runtime-store";
+import { presentAutomationInvocationRow, presentAutomationSurface, type AutomationSurfacePresentation } from "../lib/automation-surface-presentation";
+import { useSessionRuntimeFamilies, useSessionRuntimeInitialized } from "../store/session-runtime-store";
 import { AutomationsRoute } from "./automations";
 
 export function AutomationDetailRoute() {
@@ -29,7 +28,9 @@ export function AutomationDetailRoute() {
   const sessionInventory = useSessionInventory(slug);
   const todos = useProjectTodos(slug);
   const scopedHitl = useAttentionVisibleScopedHitl([slug]);
+  const hitlInitialized = useHitlProjectInitialized(slug);
   const runtimeFamilies = useSessionRuntimeFamilies();
+  const runtimeInitialized = useSessionRuntimeInitialized(slug);
   const runNow = useRunAutomationNow();
   const pause = usePauseAutomation();
   const resume = useResumeAutomation();
@@ -57,8 +58,15 @@ export function AutomationDetailRoute() {
     return () => window.cancelAnimationFrame(frame);
   }, [automation.data?.id, location.state]);
 
-  if (automation.isLoading) return <AutomationsRoute detail={<p className="p-6 text-[13px] text-text-tertiary">Loading automation…</p>} />;
+  if (automation.isLoading) return <AutomationsRoute detail={<p className="p-6 text-[13px] text-text-tertiary">Loading Automation…</p>} />;
+  if (automation.error) return <AutomationsRoute detail={<p className="p-6 text-[13px] text-error">Failed to load Automation</p>} />;
   if (!automation.data) return <AutomationsRoute detail={<p className="p-6 text-[13px] text-error">Automation not found</p>} />;
+  if (invocations.error || sessionInventory.error) {
+    return <AutomationsRoute detail={<p className="p-6 text-[13px] text-error">Failed to load Automation state</p>} />;
+  }
+  if (!invocations.isSuccess || !sessionInventory.isSuccess || !runtimeInitialized || !hitlInitialized) {
+    return <AutomationsRoute detail={<p className="p-6 text-[13px] text-text-tertiary">Loading Automation state…</p>} />;
+  }
 
   const value = automation.data;
   const latestInvocation = invocations.data?.at(-1);
@@ -76,7 +84,6 @@ export function AutomationDetailRoute() {
     sessionLinks,
     targetSession: value.action.kind === "send_message" ? sessionsById.get(value.action.sessionId) : undefined,
     activityBySessionId,
-    linkedTodoContent,
   });
   const filterQuery = searchParams.get("q") ?? "";
   const filterStatus = searchParams.get("status");
@@ -89,7 +96,7 @@ export function AutomationDetailRoute() {
     ? "text-error"
     : presentation.tone === "attention"
       ? "text-warning"
-      : presentation.tone === "running" || presentation.statusLabel === "Scheduled"
+      : presentation.tone === "running"
         ? "text-signal-foreground"
         : "text-text-tertiary";
 
@@ -109,7 +116,13 @@ export function AutomationDetailRoute() {
           </span>
           <h1 ref={titleRef} tabIndex={-1} className="mt-1 min-w-0 text-[16px] font-semibold leading-[1.35] tracking-[-0.02em] text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]">{value.name}</h1>
         </header>
-        <AutomationProvenance automation={value} linkedTodoContent={linkedTodoContent} slug={slug} />
+        <AutomationProvenance
+          automation={value}
+          linkedTodoContent={linkedTodoContent}
+          sessionInventoryLoading={sessionInventory.isLoading}
+          slug={slug}
+          sourceSession={value.origin.kind === "direct" ? undefined : sessionsById.get(value.origin.sessionId)}
+        />
         <AutomationConfiguration automation={value} presentation={presentation} />
         <AutomationAttention problemInvocation={problemInvocation} hitlAttention={hitlAttention} />
         <InvocationHistory
@@ -131,10 +144,11 @@ export function AutomationDetailRoute() {
         <EditAutomationDialog
           automation={value}
           lifecyclePending={pause.isPending || resume.isPending}
+          lifecycleError={pause.error ?? resume.error}
           onClose={() => setEditing(false)}
           onDeleted={() => navigate(automationsHref)}
-          onPause={() => pause.mutate({ slug, automationId }, { onSuccess: () => setEditing(false) })}
-          onResume={() => resume.mutate({ slug, automationId }, { onSuccess: () => setEditing(false) })}
+          onPause={() => pause.mutate({ slug, automationId })}
+          onResume={() => resume.mutate({ slug, automationId })}
           open={editing}
           slug={slug}
         />
@@ -143,9 +157,14 @@ export function AutomationDetailRoute() {
   );
 }
 
-function AutomationProvenance({ automation, linkedTodoContent, slug }: { automation: Automation; linkedTodoContent?: string; slug: string }) {
+function AutomationProvenance({ automation, linkedTodoContent, sessionInventoryLoading, slug, sourceSession }: {
+  automation: Automation;
+  linkedTodoContent?: string;
+  sessionInventoryLoading: boolean;
+  slug: string;
+  sourceSession?: ProjectSessionInventoryItem;
+}) {
   const sessionId = automation.origin.kind === "direct" ? "" : automation.origin.sessionId;
-  const source = useSession(slug, sessionId);
   if (automation.origin.kind === "direct") {
     return <div className="m-[14px] rounded-[7px] border border-border-default bg-bg-muted px-3 py-2.5"><span className="block text-[10.5px] font-bold uppercase leading-[1.5] tracking-[0.09em] text-text-tertiary">Created from</span><p className="mt-[5px] text-[11px] leading-[1.5] text-text-secondary">Created directly in Schedules.</p></div>;
   }
@@ -160,11 +179,11 @@ function AutomationProvenance({ automation, linkedTodoContent, slug }: { automat
       ) : null}
       <div className="m-[14px] rounded-[7px] border border-border-default bg-bg-muted px-3 py-2.5">
         <span className="block text-[10.5px] font-bold uppercase leading-[1.5] tracking-[0.09em] text-text-tertiary">Created from</span>
-        {source.isLoading ? (
+        {sessionInventoryLoading ? (
           <p className="mt-[5px] text-[11px] text-text-tertiary">Loading source Session…</p>
-        ) : source.data ? (
+        ) : sourceSession ? (
           <Link className="mt-[5px] inline-flex text-[11px] font-semibold text-brand hover:underline" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}`}>
-            Session · {source.data.title || sessionId}
+            Session · {sourceSession.session.title || sessionId}
           </Link>
         ) : (
           <p className="mt-[5px] text-[11px] text-text-tertiary">Session {sessionId} · unavailable</p>
@@ -254,7 +273,7 @@ function InvocationHistory({ activityBySessionId, invocations, isLoading, sessio
         <Link className="text-[10.5px] font-semibold text-brand hover:underline focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]" to={`/projects/${encodeURIComponent(slug)}/sessions`}>All runs</Link>
       </header>
       {isLoading ? <p className="py-4 text-[11px] text-text-tertiary">Loading history…</p> : null}
-      {!isLoading && !invocations?.length ? <p className="py-5 text-center text-[11px] text-text-tertiary">No runs yet. The first dispatched Invocation will appear here.</p> : null}
+      {!isLoading && !invocations?.length ? <p className="py-5 text-center text-[11px] text-text-tertiary">No runs yet</p> : null}
       {invocations?.length ? <div>{invocations.map((item) => (
         <InvocationRow
           activity={item.sessionId ? activityBySessionId.get(item.sessionId) : undefined}
@@ -277,35 +296,8 @@ function InvocationRow({ activity, item, linkedSession, slug, targeted }: {
   targeted: boolean;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
-  const executionStatus = linkedSession?.latestExecution?.status;
-  const actualRunning = executionStatus === "running" || activity === "running" || activity === "resuming";
-  const visualKind = item.status === "failed" || item.status === "missed"
-    ? "failed"
-    : item.status === "cancelled"
-      ? "stopped"
-      : item.status === "pending"
-        ? "pending"
-        : actualRunning
-          ? "running"
-          : executionStatus === "completed"
-            ? "completed"
-            : executionStatus === "failed" || executionStatus === "timed_out" || executionStatus === "max_steps"
-              ? "failed"
-              : executionStatus === "suspended"
-                ? "blocked"
-                : executionStatus
-                  ? "stopped"
-                  : "idle";
-  const runLabel = actualRunning
-    ? "Running"
-    : executionStatus === "completed"
-      ? "Completed"
-      : executionStatus === "failed" || executionStatus === "timed_out" || executionStatus === "max_steps"
-        ? "Failed"
-        : executionStatus === "suspended"
-          ? "Suspended"
-          : automationInvocationStatusLabel(item.status);
-  const due = new Date(item.dueAt);
+  const presentation = presentAutomationInvocationRow(item, linkedSession, activity);
+  const activityTimestamp = Date.parse(item.completedAt ?? item.dispatchedAt ?? item.createdAt);
 
   useEffect(() => {
     if (!targeted) return;
@@ -320,9 +312,9 @@ function InvocationRow({ activity, item, linkedSession, slug, targeted }: {
       data-invocation-id={item.id}
       tabIndex={targeted ? -1 : undefined}
     >
-      <span aria-hidden="true" className="grid h-[27px] w-[27px] place-items-center rounded-[7px] border border-border-subtle bg-bg-muted"><StatusGlyph kind={visualKind} size={12} /></span>
-      {item.sessionId ? <Link className="min-w-0 hover:text-text-primary" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(item.sessionId)}?invocation=${encodeURIComponent(item.id)}`}><strong className="block truncate text-[12px] font-semibold">{due.toLocaleString()}</strong><small className="block truncate text-[10.5px] text-text-tertiary">{runLabel} · Open Session</small></Link> : <span className="min-w-0"><strong className="block truncate text-[12px] font-semibold">{due.toLocaleString()}</strong><small className="block truncate text-[10.5px] text-text-tertiary">{automationInvocationStatusLabel(item.status)}{item.error ? ` · ${item.error}` : ""}</small></span>}
-      <time className="font-mono text-[10.5px] text-text-tertiary" dateTime={item.dueAt}>{due.toLocaleDateString(undefined, { weekday: "short" })}</time>
+      <span aria-hidden="true" className="grid h-[27px] w-[27px] place-items-center rounded-[7px] border border-border-subtle bg-bg-muted"><StatusGlyph kind={presentation.visualKind} size={12} /></span>
+      {presentation.openSessionId ? <Link className="min-w-0 hover:text-text-primary" to={`/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(presentation.openSessionId)}?invocation=${encodeURIComponent(item.id)}`}><strong className="block truncate text-[12px] font-semibold">{formatAutomationScheduleTime(item.dueAt)}</strong><small className="block truncate text-[10.5px] text-text-tertiary">{presentation.statusLabel} · Open Session</small></Link> : <span className="min-w-0"><strong className="block truncate text-[12px] font-semibold">{formatAutomationScheduleTime(item.dueAt)}</strong><small className="block truncate text-[10.5px] text-text-tertiary">{presentation.statusLabel}{item.error ? ` · ${item.error}` : ""}</small></span>}
+      <time className="font-mono text-[10.5px] text-text-tertiary" dateTime={item.completedAt ?? item.dispatchedAt ?? item.createdAt}><RelativeTime timestamp={activityTimestamp} /></time>
     </div>
   );
 }

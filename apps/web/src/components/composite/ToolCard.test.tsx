@@ -187,6 +187,7 @@ describe("ToolCard strict result consumer", () => {
     });
     const text = textContent(element);
     expect(text).toContain("1 file · +2 −1");
+    expect(textContent(findByTestId(element, "ask-user-summary"))).toBe("Question answered · Yes");
     expect(text).toContain("showing a simplified, truncated diff");
     expect(findByTestId(element, "tool-diff-disclosure")).toBeDefined();
     expect(text).toContain("Proceed?");
@@ -197,6 +198,69 @@ describe("ToolCard strict result consumer", () => {
     expect(text).not.toContain("description:");
     expect(text).not.toContain("raw preview must not supply answers");
     expect(findByType(element, "diff")?.props?.["data-default-expanded"]).toBe(true);
+  });
+
+  test("summarizes complete multi-question and bounded ask_user results without guessing", () => {
+    const multi = ToolCard({
+      part: {
+        ...completed({
+          isError: false,
+          output: baseOutput,
+          details: { presentations: [{
+            kind: "ask_user",
+            answers: [
+              { question: "Scope?", answers: ["New Sessions"] },
+              { question: "Fallback?", answers: ["No"] },
+            ],
+          }] },
+        }),
+        toolName: "ask_user",
+      },
+      projectSlug: "demo",
+      sessionId: "root-1",
+    });
+    expect(textContent(findByTestId(multi, "ask-user-summary"))).toBe("2 questions answered");
+
+    stateValues = [true, false];
+    stateIndex = 0;
+    const truncated = ToolCard({
+      part: {
+        ...completed({
+          isError: false,
+          output: baseOutput,
+          details: { presentations: [{
+            kind: "ask_user",
+            answers: [{ question: "Scope?", answers: ["New Sessions"] }],
+            truncated: true,
+          }] },
+        }),
+        toolName: "ask_user",
+      },
+      projectSlug: "demo",
+      sessionId: "root-1",
+    });
+    expect(textContent(findByTestId(truncated, "ask-user-summary"))).toBe("Answer recorded · details truncated");
+    expect(findByTestId(truncated, "ask-user-truncation")).toBeDefined();
+  });
+
+  test("never labels a failed ask_user call as answered", () => {
+    const failedAsk: ErrorToolPart = {
+      ...completed({
+        isError: true,
+        output: baseOutput,
+        details: { presentations: [{
+          kind: "ask_user",
+          answers: [{ question: "Proceed?", answers: ["Yes"] }],
+        }] },
+      }),
+      state: "error",
+      toolName: "ask_user",
+    };
+    const element = ToolCard({ part: failedAsk, projectSlug: "demo", sessionId: "root-1" });
+
+    expect(findByTestId(element, "ask-user-summary")).toBeUndefined();
+    expect(textContent(element)).not.toContain("answered");
+    expect(textContent(element)).toContain("Error");
   });
 
   test("caps a long canonical tool name while preserving its full title", () => {

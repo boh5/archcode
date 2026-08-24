@@ -30,9 +30,12 @@ describe("orchestration workbench surface", () => {
     expect(changes).toContain("min-h-10");
     expect(changes).toContain("[@media(pointer:coarse)]:min-h-11");
     expect(changes).toContain("grid-cols-[16px_minmax(0,1fr)_auto]");
+    expect(changes).toContain('data-testid="context-change-summary"');
+    expect(changes).toContain('font-mono text-[11px] font-semibold');
     expect(context).toContain('data-testid="context-property-list"');
     expect(context).toContain('["Goal"');
     expect(context).toContain('["Execution"');
+    expect(context).toContain('["Profile"');
     expect(context).toContain('["Working dir"');
   });
 
@@ -50,6 +53,8 @@ describe("orchestration workbench surface", () => {
     expect(resolveInspectorAgentStatus(undefined, "cancelled").detail).toBe("Cancelled");
     expect(resolveInspectorAgentStatus(undefined, "completed").label).toBe("Completed");
     expect(resolveInspectorAgentStatus(undefined, undefined, "suspended")).toMatchObject({ label: "Paused", kind: "pending" });
+    expect(resolveInspectorAgentStatus("idle", undefined, "completed")).toMatchObject({ label: "Completed", kind: "completed" });
+    expect(resolveInspectorAgentStatus("running", undefined, "completed")).toMatchObject({ label: "Running", kind: "running" });
     expect(resolveInspectorAgentStatus(undefined).label).toBe("Status unavailable");
   });
 });

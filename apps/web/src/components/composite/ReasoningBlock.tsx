@@ -4,26 +4,10 @@ import type { ReasoningPart } from "@archcode/protocol";
 import { WORK_ACTIVITY_CHILD_LANE_CLASS } from "../primitives/ConversationRail";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 
-export function ReasoningUsageSummary({ tokens }: { readonly tokens: number }) {
-  const formattedTokens = Math.floor(tokens).toLocaleString();
-
-  return (
-    <div
-      role="note"
-      aria-label={`Reasoning used ${formattedTokens} tokens. Reasoning text was not provided by the model.`}
-      className={`flex min-h-9 items-center gap-[7px] px-2 text-[12px] leading-4 text-text-tertiary [@media(pointer:coarse)]:min-h-11 ${WORK_ACTIVITY_CHILD_LANE_CLASS}`}
-      data-testid="reasoning-usage-summary"
-    >
-      <Sparkles size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
-      <span className="font-medium text-text-secondary">Reasoning</span>
-      <span className="tabular-nums">{formattedTokens} tokens</span>
-      <span>· text unavailable</span>
-    </div>
-  );
-}
-
 export function ReasoningBlock({ part }: { readonly part: ReasoningPart }) {
   const [expanded, setExpanded] = useState(false);
+  if (part.text.trim().length === 0) return null;
+
   const streaming = !part.completedAt;
   const bodyId = `reasoning-body-${part.id}`;
 

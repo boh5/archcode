@@ -59,10 +59,11 @@ const locked = {
     surface: ["#f2f3f0", "#f8f8f6", "#ffffff", "#ffffff"],
     interaction: ["#e6e8e4", "#dde0da"],
     border: ["#e1e3df", "#cdd1ca", "#9fa69d"],
-    text: ["#171917", "#424742", "#626a62", "#747c74"],
+    text: ["#171917", "#424742", "#626a62", "#626a62"],
     semantic: ["#6157d5", "#2f7752", "#8a5e13", "#b14840", "#626a62"],
     signal: ["#758b22", "#eef3d8", "#506015", "#151b00"],
-    rail: ["#eceeea", "#171917", "#626a62", "#e1e3df", "#d7dbd4", "#cdd1ca"],
+    auxiliary: ["#426da9", "#e7eef9"],
+    rail: ["#eceeea", "var(--text-primary)", "var(--text-tertiary)", "var(--bg-hover)", "#d7dbd4", "var(--border-subtle)"],
   },
   dark: {
     selector: '[data-theme="dark"]',
@@ -72,7 +73,8 @@ const locked = {
     text: ["#f5f7f2", "#d0d5cc", "#a2ab9f", "#8a9487"],
     semantic: ["#a49bff", "#82c49a", "#deb96e", "#f08b82", "#9ca49a"],
     signal: ["#c1dd64", "#29331b", "#d9ec8c", "#202807"],
-    rail: ["#060706", "#f2f4ef", "#858c83", "#1c201c", "#232723", "#363c36"],
+    auxiliary: ["#8eb5f6", "#202d43"],
+    rail: ["#060706", "var(--text-primary)", "var(--text-tertiary)", "var(--bg-hover)", "#232723", "var(--border-subtle)"],
   },
 } as const;
 
@@ -83,6 +85,7 @@ const groups = {
   text: ["text-primary", "text-secondary", "text-tertiary", "text-muted"],
   semantic: ["brand", "success", "warning", "error", "neutral"],
   signal: ["signal", "signal-field", "signal-foreground", "signal-ink"],
+  auxiliary: ["auxiliary-blue", "auxiliary-blue-field"],
   rail: ["rail", "rail-ink", "rail-muted", "rail-hover", "rail-active", "rail-border"],
 } as const;
 
@@ -118,6 +121,7 @@ describe("workbench visual tokens", () => {
       ["warning", "warning-field"],
       ["error", "error-field"],
       ["neutral", "neutral-field"],
+      ["auxiliary-blue", "auxiliary-blue-field"],
     ] as const;
     for (const theme of Object.values(locked)) {
       const source = block(theme.selector);
@@ -138,8 +142,10 @@ describe("workbench visual tokens", () => {
   test("reserves lime for signal state fields", () => {
     for (const theme of Object.values(locked)) {
       const source = block(theme.selector);
-      expect(variable(source, "info")).toBe(variable(source, "brand"));
+      expect(variable(source, "info")).toBe("var(--auxiliary-blue)");
+      expect(variable(source, "info-muted")).toBe("var(--auxiliary-blue-field)");
       expect(variable(source, "signal")).not.toBe(variable(source, "brand"));
+      expect(variable(source, "signal")).not.toBe(variable(source, "auxiliary-blue"));
       expect(variable(source, "signal-field")).not.toBe(variable(source, "brand-field"));
       expect(
         contrast(rgb(variable(source, "signal-foreground")), rgb(variable(source, "signal-field"))),
@@ -182,10 +188,15 @@ describe("workbench visual tokens", () => {
     expect(css).toContain("animation: status-attention var(--motion-attention) var(--ease-standard) 2");
     expect(css).toContain("animation: status-complete var(--motion-standard) var(--ease-standard) 1");
     expect(css).toContain(".primary-action-button {");
-    expect(css).toContain("0 1px 3px rgb(97 87 213 / 30%)");
+    expect(css).toContain("0 1px 3px color-mix(in srgb, var(--brand) 30%, transparent)");
+    expect(css).toContain("--elevation-popover:");
+    expect(css).toContain("--elevation-composer:");
+    expect(css).toContain("--elevation-drawer:");
+    expect(css).toContain("--elevation-modal:");
+    expect(css).toContain("--shape-control: 6px");
+    expect(css).toContain("--shape-dialog: 12px");
     expect(css).toContain(".workbench-row-lift:hover {");
     expect(css).toContain("translateY(-0.5px)");
-    expect(css).toContain(".todo-card-selected {");
     expect(css).toContain(".todo-detail-scroll {");
     expect(css).toContain("scrollbar-width: auto");
     expect(css).toContain(".todo-detail-scroll::-webkit-scrollbar {");

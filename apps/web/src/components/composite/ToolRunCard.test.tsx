@@ -296,7 +296,7 @@ describe("ToolRunCard", () => {
     expect(textContent(element)).toContain("react");
   });
 
-  test("shows each distinct exact tool name in first-seen order after every call settles", () => {
+  test("shows every exact tool name in canonical order after every call settles", () => {
     booleanStates = [false];
     const element = ToolRunCard(props([
       completed("one", "a.ts"),
@@ -306,11 +306,11 @@ describe("ToolRunCard", () => {
     ]));
     const names = findByTestId(element, "tool-run-tool-names");
 
-    expect(textContent(names)).toBe("file_read, grep, bash");
-    expect(names?.props?.title).toBe("file_read, grep, bash");
+    expect(textContent(names)).toBe("file_read, grep, file_read, bash");
+    expect(names?.props?.title).toBe("file_read, grep, file_read, bash");
     expect(names?.props?.className).toContain("truncate");
     expect(findButtons(element)[0]?.props?.["aria-label"]).toBe(
-      "4 tool calls, file_read, grep, bash, Completed",
+      "4 tool calls, file_read, grep, file_read, bash, Completed",
     );
     expect(textContent(element)).not.toContain("a.ts");
     expect(textContent(element)).not.toContain("Completed");
@@ -325,10 +325,10 @@ describe("ToolRunCard", () => {
     const summary = findByTestId(element, "tool-run-tool-names");
     const summaryButton = findButtons(element)[0];
 
-    expect(textContent(summary)).toBe("file_read");
+    expect(textContent(summary)).toBe("file_read, file_read");
     expect(textContent(element)).toContain("Error");
     expect(summaryButton?.props?.["aria-label"]).toBe(
-      "2 tool calls, file_read, Error",
+      "2 tool calls, file_read, file_read, Error",
     );
   });
 
@@ -342,7 +342,7 @@ describe("ToolRunCard", () => {
     const summaryButton = findButtons(element)[0];
 
     expect(summaryButton?.props?.["aria-label"]).toBe(
-      "3 tool calls, file_read, 2 Interrupted",
+      "3 tool calls, file_read, file_read, file_read, 2 Interrupted",
     );
     expect(textContent(element)).toContain("2 Interrupted");
     expect(textContent(element)).not.toContain("Completed");
@@ -356,7 +356,7 @@ describe("ToolRunCard", () => {
       interrupted("two", "b.ts"),
     ]));
     expect(findButtons(element)[0]?.props?.["aria-label"]).toBe(
-      "2 tool calls, file_read, Error, 1 Interrupted",
+      "2 tool calls, file_read, file_read, Error, 1 Interrupted",
     );
     expect(textContent(element)).toContain("Error");
     expect(textContent(element)).toContain("Interrupted");

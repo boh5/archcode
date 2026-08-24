@@ -189,6 +189,19 @@ describe("PartRenderer", () => {
     expect(text).toContain("Reasoning");
   });
 
+  test("renders no placeholder for an empty reasoning boundary", () => {
+    const part: ReasoningPart = {
+      type: "reasoning",
+      id: "reasoning-empty",
+      blockId: "reasoning-empty-block",
+      text: "   ",
+      createdAt: Date.now(),
+      completedAt: Date.now(),
+    };
+
+    expect(PartRenderer({ part, ...defaultProps })).toBeNull();
+  });
+
   test("renders recovery-notice part", () => {
     const part: RecoveryNoticePart = {
       type: "recovery-notice",

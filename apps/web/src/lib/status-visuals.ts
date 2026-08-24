@@ -57,7 +57,7 @@ export const STATUS_VISUALS: Readonly<Record<VisualStatusKind, StatusVisualSpec>
   stopped: { glyph: CircleStop, tone: "neutral", loops: false },
   idle: { glyph: Circle, tone: "neutral", loops: false },
   unknown: { glyph: CircleDashed, tone: "neutral", loops: false },
-  enabled: { glyph: Calendar, tone: "info", loops: false },
+  enabled: { glyph: Calendar, tone: "neutral", loops: false },
   disabled: { glyph: Ban, tone: "neutral", loops: false },
 };
 

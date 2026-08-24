@@ -4,6 +4,7 @@ import {
   intervalFromMilliseconds,
   intervalToMilliseconds,
   isoToLocalDateTimeInput,
+  minimumIntervalValue,
 } from "./EditAutomationDialog";
 
 describe("EditAutomationDialog interval controls", () => {
@@ -17,6 +18,12 @@ describe("EditAutomationDialog interval controls", () => {
     expect(intervalFromMilliseconds(7_200_000)).toEqual({ value: 2, unit: "hours" });
     expect(intervalFromMilliseconds(900_000)).toEqual({ value: 15, unit: "minutes" });
     expect(intervalFromMilliseconds(90_000)).toEqual({ value: 90, unit: "seconds" });
+  });
+
+  test("uses the canonical interval minimum for each displayed unit", () => {
+    expect(minimumIntervalValue("seconds")).toBe(30);
+    expect(minimumIntervalValue("minutes")).toBe(1);
+    expect(minimumIntervalValue("hours")).toBe(1);
   });
 
   test("projects an ISO instant into the local datetime input", () => {

@@ -245,6 +245,45 @@ describe("ChatInput runtime controls", () => {
     expect(textContent(tree)).not.toContain("Images may be sent to the selected model provider.");
   });
 
+  test("submits only on plain Enter and never during IME composition", () => {
+    activity = "idle";
+    hitlReady = true;
+    let tree = renderChatInput();
+    let textarea = findAll(tree, (element) => element.type === "textarea")[0];
+    (textarea?.props?.onChange as (event: unknown) => void)({ target: { value: "Keyboard contract" } });
+    tree = rerenderChatInput();
+    textarea = findAll(tree, (element) => element.type === "textarea")[0];
+
+    const blockedCases = [
+      { shiftKey: true, altKey: false, ctrlKey: false, metaKey: false, nativeEvent: { isComposing: false, keyCode: 13 } },
+      { shiftKey: false, altKey: true, ctrlKey: false, metaKey: false, nativeEvent: { isComposing: false, keyCode: 13 } },
+      { shiftKey: false, altKey: false, ctrlKey: true, metaKey: false, nativeEvent: { isComposing: false, keyCode: 13 } },
+      { shiftKey: false, altKey: false, ctrlKey: false, metaKey: true, nativeEvent: { isComposing: false, keyCode: 13 } },
+      { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, nativeEvent: { isComposing: true, keyCode: 13 } },
+      { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, nativeEvent: { isComposing: false, keyCode: 229 } },
+    ];
+    for (const event of blockedCases) {
+      const preventDefault = mock(() => {});
+      (textarea?.props?.onKeyDown as (event: unknown) => void)({ key: "Enter", ...event, preventDefault });
+      expect(preventDefault).not.toHaveBeenCalled();
+    }
+    expect(postMessageMutate).not.toHaveBeenCalled();
+
+    const preventDefault = mock(() => {});
+    (textarea?.props?.onKeyDown as (event: unknown) => void)({
+      key: "Enter",
+      shiftKey: false,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      nativeEvent: { isComposing: false, keyCode: 13 },
+      preventDefault,
+    });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(postMessageMutate).toHaveBeenCalledTimes(1);
+  });
+
   test("renders the complete Skill inventory with accessible availability states", () => {
     activity = "idle";
     hitlReady = true;

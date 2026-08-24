@@ -215,6 +215,33 @@ function runningTool(id: string, path: string, createdAt: number): AssistantSess
   };
 }
 
+function completedTool(id: string, path: string, createdAt: number): AssistantSessionPart {
+  const zeroCount = { bytes: 0, lines: 0 };
+  return {
+    type: "tool",
+    id,
+    state: "completed",
+    toolCallId: `call:${id}`,
+    toolName: "file_read",
+    input: { path },
+    result: {
+      isError: false,
+      output: {
+        preview: "",
+        completeness: "complete",
+        observed: zeroCount,
+        canonical: zeroCount,
+        stored: zeroCount,
+        omitted: zeroCount,
+        recovery: { kind: "none" },
+      },
+    },
+    createdAt,
+    startedAt: createdAt,
+    endedAt: createdAt + 1,
+  };
+}
+
 function reasoningPart(
   id: string,
   text: string,
@@ -330,7 +357,8 @@ describe("ExecutionWorkstream", () => {
     const summary = container.querySelector<HTMLButtonElement>('[data-testid^="work-summary-"]');
     expect(bubble?.className).toContain("max-w-[640px]");
     expect(bubble?.className).toContain("rounded-[10px]");
-    expect(bubble?.className).toContain("border-0");
+    expect(bubble?.className).toContain("border-border-subtle");
+    expect(bubble?.className).toContain("shadow-[inset_0_1px_0");
     expect(bubble?.className).toContain("px-[17px]");
     expect(bubble?.className).toContain("py-[15px]");
     expect(summary?.className).toContain("min-h-9");
@@ -338,7 +366,7 @@ describe("ExecutionWorkstream", () => {
     expect(summary?.className).not.toContain("max-w-");
   });
 
-  test("renders commentary and tools in exact Work order with per-attempt token-only Reasoning", async () => {
+  test("keeps token-only Reasoning as a silent boundary without inventing rows", async () => {
     await render(
       [
         message("input", "user", "Inspect", 5),
@@ -369,27 +397,15 @@ describe("ExecutionWorkstream", () => {
     });
     const body = container.querySelector(`[id="work-body-${segmentId}"]`);
     const bodyText = body?.textContent ?? "";
-    const usageRows = Array.from(
-      body?.querySelectorAll('[data-testid="reasoning-usage-summary"]') ?? [],
-    );
-
-    expect(usageRows.map((row) => row.textContent)).toEqual([
-      expect.stringContaining("137 tokens"),
-      expect.stringContaining("56 tokens"),
-    ]);
+    expect(body?.querySelector('[data-testid="reasoning-block"]')).toBeNull();
+    expect(bodyText).not.toContain("text unavailable");
+    expect(bodyText).not.toContain("137 tokens");
+    expect(bodyText).not.toContain("56 tokens");
     expect(bodyText).not.toContain("193");
-    expect(bodyText.indexOf("137 tokens")).toBeLessThan(
-      bodyText.indexOf("First commentary"),
-    );
     expect(bodyText.indexOf("First commentary")).toBeLessThan(
       bodyText.indexOf("one.ts"),
     );
-    expect(bodyText.indexOf("one.ts")).toBeLessThan(
-      bodyText.indexOf("56 tokens"),
-    );
-    expect(bodyText.indexOf("56 tokens")).toBeLessThan(
-      bodyText.indexOf("Second commentary"),
-    );
+    expect(bodyText.indexOf("one.ts")).toBeLessThan(bodyText.indexOf("Second commentary"));
     expect(bodyText.indexOf("Second commentary")).toBeLessThan(
       bodyText.indexOf("two.ts"),
     );
@@ -397,6 +413,23 @@ describe("ExecutionWorkstream", () => {
       container.querySelector('[data-testid="final-response-execution"]')
         ?.textContent,
     ).toContain("Done");
+  });
+
+  test("shows the settled call aggregate only on a closed Work Segment", async () => {
+    await render(
+      [
+        message("input", "user", "Inspect", 5),
+        modelMessage("attempt", "step-1", [
+          completedTool("tool-1", "one.ts", 10),
+          completedTool("tool-2", "two.ts", 12),
+        ], 10),
+      ],
+      completed(),
+    );
+
+    const summary = container.querySelector<HTMLButtonElement>('[data-testid="work-summary-work:execution:after:input"]');
+    expect(summary?.textContent).toContain("2 tools");
+    expect(summary?.getAttribute("aria-label")).toContain("2 tools");
   });
 
   test("renders multiple Reasoning blocks independently without a token placeholder", async () => {
@@ -421,9 +454,29 @@ describe("ExecutionWorkstream", () => {
 
     expect(body?.querySelectorAll('[data-testid="reasoning-block"]'))
       .toHaveLength(2);
-    expect(body?.querySelector('[data-testid="reasoning-usage-summary"]'))
-      .toBeNull();
+    expect(body?.textContent).not.toContain("text unavailable");
+    expect(body?.textContent).not.toContain("193 tokens");
     expect(body?.textContent).toContain("Between");
+  });
+
+  test("does not render an empty canonical Reasoning part", async () => {
+    await render(
+      [modelMessage("attempt", "step-1", [
+        completedTool("before", "before.ts", 10),
+        reasoningPart("empty-reasoning", "   ", 11),
+        completedTool("after", "after.ts", 12),
+      ], 10)],
+      completed(),
+    );
+    const segmentId = "work:execution:implicit";
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(`[data-testid="work-summary-${segmentId}"]`)?.click();
+    });
+    const body = container.querySelector(`[id="work-body-${segmentId}"]`);
+
+    expect(body?.querySelector('[data-testid="reasoning-block"]')).toBeNull();
+    expect(body?.textContent).not.toContain("unavailable");
+    expect(body?.querySelectorAll("[data-tool-card]")).toHaveLength(2);
   });
 
   test("renders adjacent canonical UserMessages as independent empty Work Segments", async () => {

@@ -378,7 +378,7 @@ export function ExecutionNavigationRail({
             ref={tooltipRef}
             id={tooltipId}
             role="tooltip"
-            className="pointer-events-none fixed z-[100] max-w-[320px] overflow-hidden rounded-md border border-border-default bg-bg-overlay px-3 py-2 text-[11px] leading-4 text-text-primary shadow-md animate-overlay-enter"
+            className="pointer-events-none fixed z-[100] max-w-[320px] overflow-hidden rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay px-3 py-2 text-[11px] leading-4 text-text-primary shadow-[var(--elevation-popover)] animate-overlay-enter"
             style={
               tooltipPosition === null
                 ? { left: 0, top: 0, visibility: "hidden" }
