@@ -308,8 +308,15 @@ function TodoPreview({ todo, slug, operationalState, operationalReadiness, sessi
     if (restoreFocus) requestAnimationFrame(() => stageTriggerRef.current?.focus());
   };
   const applyStage = async (target: ProjectTodoLane, { confirmed }: { confirmed: boolean }) => {
-    if (pending || target === currentStage) {
+    if (pending) {
       closeStageMenu(true);
+      return;
+    }
+    if (target === currentStage) {
+      closeStageMenu(true);
+      setConfirmDone(false);
+      setStageError(null);
+      setStageStatus(`Todo stage is already ${labelForStatus(target)}.`);
       return;
     }
     if (target === "done" && currentStage !== "done") {

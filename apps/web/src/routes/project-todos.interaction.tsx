@@ -25,7 +25,7 @@ bootstrapDom.window.close();
 let dom: JSDOM;
 let root: Root;
 let client: QueryClient;
-let responseMode: "success" | "failure" | "pending";
+let responseMode: "success" | "failure" | "conflict-applied" | "pending";
 let resolveIdeaPatch: (() => void) | undefined;
 let patches: Array<Record<string, unknown>>;
 let fetchMock: ReturnType<typeof mock>;
@@ -120,8 +120,13 @@ beforeEach(() => {
     requests.push({ method, path, ...(body === undefined ? {} : { body }) });
     if (method === "PATCH" && path.endsWith("/todos/idea")) {
       patches.push(body as Record<string, unknown>);
-      if (responseMode === "failure") {
-        todos[0] = { ...todos[0]!, revision: todos[0]!.revision + 1 };
+      if (responseMode === "failure" || responseMode === "conflict-applied") {
+        const requestedStatus = (body as { status?: ProjectTodo["status"] } | undefined)?.status;
+        todos[0] = {
+          ...todos[0]!,
+          ...(responseMode === "conflict-applied" && requestedStatus !== undefined ? { status: requestedStatus } : {}),
+          revision: todos[0]!.revision + 1,
+        };
         return Response.json({ error: { code: "CONFLICT", message: "stale Todo" } }, { status: 409 });
       }
       const respond = () => {
@@ -616,6 +621,24 @@ describe("Project Todos preview actions", () => {
       { expectedRevision: 3, status: "ready" },
       { expectedRevision: 4, status: "ready" },
     ]);
+  });
+
+  test("clears a conflict without resubmitting when refresh already reached the target Stage", async () => {
+    responseMode = "conflict-applied";
+    await render();
+    await openPreview("idea");
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Ready"))!);
+
+    await waitFor(() => document.querySelector('[role="alert"]')?.textContent?.includes("changed elsewhere") === true);
+    await waitFor(() => document.querySelector('[aria-label="Change Todo stage, current Ready"]') !== null);
+    const retry = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Refresh and retry")!;
+    expect(patches).toEqual([{ expectedRevision: 3, status: "ready" }]);
+
+    await click(retry);
+    await waitFor(() => document.querySelector('[role="alert"]') === null);
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("Todo stage is already Ready.");
+    expect(patches).toEqual([{ expectedRevision: 3, status: "ready" }]);
   });
 
   test("keeps Preview busy and blocks every dismissal while a Stage mutation is pending", async () => {
