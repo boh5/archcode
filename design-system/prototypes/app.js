@@ -130,7 +130,7 @@
     })[character]);
   }
   function renderPrototypeMarkdown(markdown) {
-    const output = [];
+    const output = document.createDocumentFragment();
     const paragraph = [];
     let listType;
     let listItems = [];
@@ -138,20 +138,35 @@
     let codeLines = [];
     const flushParagraph = () => {
       if (!paragraph.length) return;
-      output.push(`<p>${escapePrototypeHtml(paragraph.join(' '))}</p>`);
+      const node = document.createElement('p');
+      node.textContent = paragraph.join(' ');
+      output.appendChild(node);
       paragraph.length = 0;
     };
     const flushList = () => {
       if (!listType) return;
-      output.push(`<${listType}>${listItems.map((item) => `<li>${escapePrototypeHtml(item)}</li>`).join('')}</${listType}>`);
+      const list = document.createElement(listType);
+      listItems.forEach((item) => {
+        const node = document.createElement('li');
+        node.textContent = item;
+        list.appendChild(node);
+      });
+      output.appendChild(list);
       listType = undefined;
       listItems = [];
+    };
+    const appendCodeBlock = () => {
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = codeLines.join('\n');
+      pre.appendChild(code);
+      output.appendChild(pre);
     };
     String(markdown || '').split(/\r?\n/).forEach((line) => {
       const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})/);
       if (fence) {
         if (fenceMatch && fenceMatch[1][0] === fence[0] && fenceMatch[1].length >= fence.length) {
-          output.push(`<pre><code>${escapePrototypeHtml(codeLines.join('\n'))}</code></pre>`);
+          appendCodeBlock();
           fence = undefined;
           codeLines = [];
         } else codeLines.push(line);
@@ -168,7 +183,9 @@
         flushParagraph();
         flushList();
         const level = Math.min(6, heading[1].length + 2);
-        output.push(`<h${level}>${escapePrototypeHtml(heading[2])}</h${level}>`);
+        const node = document.createElement(`h${level}`);
+        node.textContent = heading[2];
+        output.appendChild(node);
         return;
       }
       const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
@@ -189,13 +206,15 @@
       flushList();
       paragraph.push(line.trim());
     });
-    if (fence) output.push(`<pre><code>${escapePrototypeHtml(codeLines.join('\n'))}</code></pre>`);
+    if (fence) appendCodeBlock();
     flushParagraph();
     flushList();
-    return output.join('');
+    return output;
   }
   window.prototypeTodoDisplayLead = projectTodoDisplayLead;
-  window.renderPrototypeTodoMarkdown = renderPrototypeMarkdown;
+  window.renderPrototypeTodoMarkdown = (target, markdown) => {
+    target.replaceChildren(renderPrototypeMarkdown(markdown));
+  };
   window.persistPrototypeTodoContent = (id, content, lane = 'idea') => savePrototypeTodo(content, lane, id);
 
   function ensureSharedDialogs() {

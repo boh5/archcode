@@ -326,46 +326,7 @@ Every project currently inherits all three global profiles. A full configuration
         };
         const renderMarkdownSample = (source) => {
           if (!contentView) return;
-          if (window.renderPrototypeTodoMarkdown) {
-            contentView.innerHTML = window.renderPrototypeTodoMarkdown(source);
-            return;
-          }
-          contentView.replaceChildren();
-          let list;
-          let listKind;
-          source.split(/\r?\n/).forEach((rawLine) => {
-            const line = rawLine.trim();
-            if (!line) { list = undefined; listKind = undefined; return; }
-            const heading = line.match(/^(#{1,6})\s+(.+)$/);
-            const unordered = line.match(/^[-*+]\s+(.+)$/);
-            const ordered = line.match(/^\d+[.)]\s+(.+)$/);
-            if (heading) {
-              const node = document.createElement(`h${Math.min(6, heading[1].length + 2)}`);
-              node.textContent = heading[2];
-              contentView.appendChild(node);
-              list = undefined;
-              listKind = undefined;
-              return;
-            }
-            const item = unordered ?? ordered;
-            if (item) {
-              const kind = unordered ? 'ul' : 'ol';
-              if (!list || listKind !== kind) {
-                list = document.createElement(kind);
-                listKind = kind;
-                contentView.appendChild(list);
-              }
-              const node = document.createElement('li');
-              node.textContent = item[1];
-              list.appendChild(node);
-              return;
-            }
-            const paragraph = document.createElement('p');
-            paragraph.textContent = line;
-            contentView.appendChild(paragraph);
-            list = undefined;
-            listKind = undefined;
-          });
+          window.renderPrototypeTodoMarkdown(contentView, source);
         };
         editButton?.addEventListener('click', () => { contentView.hidden = true; contentEditor.hidden = false; editButton.hidden = true; contentInput?.focus(); });
         document.querySelector('[data-todo-content-cancel]')?.addEventListener('click', () => { contentEditor.hidden = true; contentView.hidden = false; editButton.hidden = false; editButton.focus(); });
@@ -415,11 +376,33 @@ Every project currently inherits all three global profiles. A full configuration
             const objectUrl = URL.createObjectURL(file);
             const row = document.createElement('li');
             row.dataset.objectUrl = objectUrl;
-            row.innerHTML = `<span class="reference-type${openInline ? ' image' : ''}">${extension}</span><span><strong></strong><small><b></b><i>·</i><em></em></small></span><span class="todo-reference-actions"><button type="button">${openInline ? 'Open' : 'Download'}</button><button type="button" data-todo-reference-remove>Remove</button></span>`;
-            row.querySelector('strong').textContent = file.name;
-            row.querySelector('small b').textContent = `${Math.max(0.1, file.size / 1024).toFixed(1)} KB`;
-            row.querySelector('small em').textContent = file.type || 'application/octet-stream';
-            row.querySelector('.todo-reference-actions button').addEventListener('click', () => {
+            const type = document.createElement('span');
+            type.className = `reference-type${openInline ? ' image' : ''}`;
+            type.textContent = extension;
+            const details = document.createElement('span');
+            const name = document.createElement('strong');
+            name.textContent = file.name;
+            const metadata = document.createElement('small');
+            const size = document.createElement('b');
+            size.textContent = `${Math.max(0.1, file.size / 1024).toFixed(1)} KB`;
+            const separator = document.createElement('i');
+            separator.textContent = '·';
+            const mediaType = document.createElement('em');
+            mediaType.textContent = file.type || 'application/octet-stream';
+            metadata.append(size, separator, mediaType);
+            details.append(name, metadata);
+            const actions = document.createElement('span');
+            actions.className = 'todo-reference-actions';
+            const open = document.createElement('button');
+            open.type = 'button';
+            open.textContent = openInline ? 'Open' : 'Download';
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.dataset.todoReferenceRemove = '';
+            remove.textContent = 'Remove';
+            actions.append(open, remove);
+            row.append(type, details, actions);
+            open.addEventListener('click', () => {
               if (openInline) window.open(objectUrl, '_blank', 'noopener,noreferrer');
               else {
                 const download = document.createElement('a');
@@ -431,7 +414,7 @@ Every project currently inherits all three global profiles. A full configuration
               }
               notify(`${openInline ? 'Opened' : 'Downloaded'} ${file.name}`);
             });
-            bindRemove(row.querySelector('[data-todo-reference-remove]'));
+            bindRemove(remove);
             referenceList?.appendChild(row);
           });
           referenceInput.value = '';
