@@ -32,6 +32,11 @@ export function resolveInspectorAgentStatus(
     const status = presentChildExecutionStatus(childStatus);
     return { label: status.label, kind: childExecutionVisualKind(childStatus), detail: status.detail };
   }
+  if (rootActivity !== undefined && rootActivity !== "idle") {
+    const visual = sessionFamilyVisual(rootActivity);
+    const label = sessionFamilyActivityLabel(rootActivity);
+    return { label, ...visual };
+  }
   if (latestExecutionStatus !== undefined && latestExecutionStatus !== null) {
     if (latestExecutionStatus === "running") return { label: "Running", kind: "running" };
     if (latestExecutionStatus === "suspended") return { label: "Paused", kind: "pending" };
@@ -92,7 +97,7 @@ export function SessionAgentsInspector({ projection }: { projection: SessionInsp
         const status = resolveInspectorAgentStatus(
           isRootAgent ? rootActivity : undefined,
           isRootAgent ? undefined : agent.linkStatus ?? undefined,
-          isRootAgent ? undefined : agent.latestExecutionStatus,
+          agent.latestExecutionStatus,
           gateByOwner.get(agent.sessionId),
         );
         const statusTone = status.tone ?? statusVisual(status.kind).tone;
@@ -101,7 +106,7 @@ export function SessionAgentsInspector({ projection }: { projection: SessionInsp
             key={agent.sessionId}
             type="button"
             aria-current={focused === agent.sessionId ? "true" : undefined}
-            className={`relative grid min-h-[42px] w-full grid-cols-[25px_minmax(0,1fr)_auto] items-center gap-2 rounded-[6px] border px-1.5 py-[5px] text-left transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:[box-shadow:inset_0_0_0_2px_var(--brand)] ${focused === agent.sessionId ? "border-border-default bg-bg-muted [box-shadow:inset_2px_0_0_var(--brand)]" : "border-transparent hover:bg-bg-hover"}`}
+            className={`relative grid min-h-[42px] w-full grid-cols-[25px_minmax(0,1fr)_auto] items-center gap-2 rounded-[6px] border px-1.5 py-[5px] text-left transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:[box-shadow:inset_0_0_0_2px_var(--brand)] ${focused === agent.sessionId ? "border-border-default bg-selection-field [box-shadow:inset_2px_0_0_var(--brand)]" : "border-transparent hover:bg-bg-hover"}`}
             style={{ marginLeft: agent.depth * 12, width: `calc(100% - ${agent.depth * 12}px)` }}
             onClick={() => navigate({ search: buildAgentFocusSearch(searchParams, sessionId, agent.sessionId) })}
           >

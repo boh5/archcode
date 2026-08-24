@@ -76,7 +76,7 @@ function WorkbenchShell() {
             <Link
               key={scopedHitlIdentity(entry)}
               to={hitlAttentionPath(entry)}
-              className="flex items-start gap-2 rounded-lg border border-warning/50 bg-bg-overlay p-3 shadow-md transition-colors duration-[var(--motion-fast)] hover:border-warning hover:bg-bg-hover"
+              className="flex items-start gap-2 rounded-[var(--shape-card)] border border-warning/50 bg-bg-overlay p-3 transition-colors duration-[var(--motion-fast)] hover:border-warning hover:bg-bg-hover"
               data-testid="hitl-live-toast"
             >
               <StatusGlyph kind="needs_you" size={14} className="mt-1" />

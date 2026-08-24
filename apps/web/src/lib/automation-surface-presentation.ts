@@ -1,5 +1,5 @@
 import {
-  projectTodoContentExcerpt,
+  type AutomationInvocation,
   type ProjectAutomationInventoryItem,
   type ProjectSessionInventoryItem,
   type SessionFamilyActivity,
@@ -9,8 +9,9 @@ import {
   type AutomationHitlAttention,
   type AutomationSessionLink,
 } from "./automation-hitl-attention";
-import { automationStatusLabel } from "./automation-status-presentation";
+import { automationInvocationStatusLabel, automationStatusLabel } from "./automation-status-presentation";
 import { formatAutomationScheduleTime, formatAutomationTrigger } from "./automation-trigger-presentation";
+import type { VisualStatusKind } from "./status-visuals";
 
 export type AutomationSurfaceGroup = "needs-you" | "scheduled" | "paused" | "inactive";
 export type AutomationSurfaceTone = "error" | "attention" | "running" | "neutral";
@@ -29,13 +30,18 @@ export interface AutomationSurfacePresentation {
   readonly bindingLabel: string;
 }
 
+export interface AutomationInvocationRowPresentation {
+  readonly visualKind: VisualStatusKind;
+  readonly statusLabel: string;
+  readonly openSessionId?: string;
+}
+
 interface AutomationSurfacePresentationInput {
   readonly item: ProjectAutomationInventoryItem;
   readonly attention: AutomationHitlAttention;
   readonly sessionLinks: readonly AutomationSessionLink[];
   readonly targetSession?: ProjectSessionInventoryItem;
   readonly activityBySessionId: ReadonlyMap<string, SessionFamilyActivity>;
-  readonly linkedTodoContent?: string;
   readonly now?: number;
 }
 
@@ -45,7 +51,6 @@ export function presentAutomationSurface({
   sessionLinks,
   targetSession,
   activityBySessionId,
-  linkedTodoContent,
   now,
 }: AutomationSurfacePresentationInput): AutomationSurfacePresentation {
   const { automation, latestInvocation } = item;
@@ -59,18 +64,20 @@ export function presentAutomationSurface({
   const nextRunLabel = automation.nextFireAt
     ? formatAutomationScheduleTime(automation.nextFireAt, now)
     : definitionLabel;
-  const contextSubject = linkedTodoContent
-    ? `linked to ${projectTodoContentExcerpt(linkedTodoContent)}`
-    : projectTodoContentExcerpt(automation.action.message);
+  const sourceLabel = automation.origin.kind === "todo"
+    ? "Todo"
+    : automation.origin.kind === "session"
+      ? "Session"
+      : "Direct";
   const actionLabel = automation.action.kind === "start_session"
-    ? `New Session · ${automation.action.location === "project" ? "Project" : "Worktree"}`
-    : "Existing Session";
+    ? "Start new Lead Session"
+    : "Send message";
   const locationLabel = automation.action.kind === "start_session"
-    ? automation.action.location === "project" ? "Project checkout" : "Fresh worktree"
-    : "Target Session workspace";
+    ? automation.action.location === "project" ? "Project checkout" : "Managed worktree"
+    : "Existing Session";
   const bindingLabel = automation.action.kind === "start_session"
-    ? "Lead + principal"
-    : "Target Session’s existing Agent + Profile";
+    ? "Lead · principal"
+    : "Existing Session";
 
   if (latestInvocation?.status === "failed" || latestInvocation?.status === "missed") {
     const label = latestInvocation.status === "failed" ? "Failed" : "Missed";
@@ -80,7 +87,7 @@ export function presentAutomationSurface({
       rowSignal: label,
       tone: "error",
       orbit: "failed",
-      context: `${trigger} · definition ${definitionLabel.toLocaleLowerCase()} · last run ${label.toLocaleLowerCase()}`,
+      context: `${sourceLabel} · Last Invocation ${label.toLocaleLowerCase()}`,
       nextRunLabel,
       actionLabel,
       locationLabel,
@@ -95,7 +102,7 @@ export function presentAutomationSurface({
       rowSignal: "Needs you",
       tone: "attention",
       orbit: "attention",
-      context: `${trigger} · linked Session needs a response`,
+      context: `${sourceLabel} · Linked Session needs a response`,
       nextRunLabel,
       actionLabel,
       locationLabel,
@@ -110,7 +117,7 @@ export function presentAutomationSurface({
       rowSignal: "Pending",
       tone: "neutral",
       orbit: definitionGroup === "scheduled" ? "scheduled" : "paused",
-      context: `${trigger} · dispatch pending`,
+      context: `${sourceLabel} · Dispatch pending`,
       nextRunLabel,
       actionLabel,
       locationLabel,
@@ -134,7 +141,7 @@ export function presentAutomationSurface({
       rowSignal: "Running",
       tone: "running",
       orbit: "running",
-      context: `${trigger} · linked Session is running`,
+      context: `${sourceLabel} · Linked Session running`,
       nextRunLabel,
       actionLabel,
       locationLabel,
@@ -148,10 +155,53 @@ export function presentAutomationSurface({
     rowSignal: definitionGroup === "scheduled" ? nextRunLabel : definitionLabel,
     tone: "neutral",
     orbit: definitionGroup === "scheduled" ? "scheduled" : "paused",
-    context: `${trigger} · ${contextSubject}`,
+    context: `${sourceLabel} · ${trigger}`,
     nextRunLabel,
     actionLabel,
     locationLabel,
     bindingLabel,
   };
+}
+
+export function presentAutomationInvocationRow(
+  invocation: AutomationInvocation,
+  linkedSession: ProjectSessionInventoryItem | undefined,
+  activity: SessionFamilyActivity | undefined,
+): AutomationInvocationRowPresentation {
+  const openSessionId = linkedSession?.session.sessionId;
+  const withLink = (presentation: Omit<AutomationInvocationRowPresentation, "openSessionId">): AutomationInvocationRowPresentation => ({
+    ...presentation,
+    ...(openSessionId === undefined ? {} : { openSessionId }),
+  });
+
+  if (invocation.status === "failed" || invocation.status === "missed") {
+    return withLink({ visualKind: "failed", statusLabel: automationInvocationStatusLabel(invocation.status) });
+  }
+  if (invocation.status === "cancelled") {
+    return withLink({ visualKind: "stopped", statusLabel: "Cancelled" });
+  }
+  if (invocation.status === "pending") {
+    return withLink({ visualKind: "pending", statusLabel: "Pending" });
+  }
+
+  if (linkedSession !== undefined) {
+    if (activity === "waiting_for_human") return withLink({ visualKind: "pending", statusLabel: "Waiting" });
+    if (activity === "running") return withLink({ visualKind: "running", statusLabel: "Running" });
+    if (activity === "resuming") return withLink({ visualKind: "running", statusLabel: "Resuming" });
+    if (activity === "stopping") return withLink({ visualKind: "running", statusLabel: "Stopping" });
+
+    const executionStatus = linkedSession.latestExecution?.status;
+    if (executionStatus === "running") return withLink({ visualKind: "running", statusLabel: "Running" });
+    if (executionStatus === "completed") return withLink({ visualKind: "completed", statusLabel: "Completed" });
+    if (executionStatus === "failed" || executionStatus === "timed_out" || executionStatus === "max_steps") {
+      return withLink({ visualKind: "failed", statusLabel: "Failed" });
+    }
+    if (executionStatus === "suspended") return withLink({ visualKind: "blocked", statusLabel: "Suspended" });
+    if (executionStatus === "aborted" || executionStatus === "cancelled" || executionStatus === "interrupted") {
+      const detail = executionStatus === "aborted" ? "Aborted" : executionStatus === "cancelled" ? "Cancelled" : "Interrupted";
+      return withLink({ visualKind: "stopped", statusLabel: `Stopped · ${detail}` });
+    }
+  }
+
+  return withLink({ visualKind: "idle", statusLabel: "Dispatched" });
 }

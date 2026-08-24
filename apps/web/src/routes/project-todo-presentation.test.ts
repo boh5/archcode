@@ -12,16 +12,16 @@ import {
 
 describe("Project Todo presentation", () => {
   test("presents only canonical Todo status and archive facts", () => {
-    expect(presentProjectTodoCard({ status: "in_progress" })).toMatchObject({ label: "In Progress", tone: "signal" });
+    expect(presentProjectTodoCard({ status: "in_progress" })).toMatchObject({ label: "In Progress", tone: "neutral" });
     expect(presentProjectTodoCard({ status: "done", archivedAt: 1 })).toMatchObject({ label: "Archived" });
   });
 
-  test("keeps four explicit board lanes in product order", () => {
+  test("keeps four explicit List groups in product order", () => {
     expect(Object.keys(PROJECT_TODO_LANE_PRESENTATIONS)).toEqual(["idea", "ready", "in_progress", "done"]);
-    expect(PROJECT_TODO_LANE_PRESENTATIONS.idea).toMatchObject({ Icon: Sparkles, tone: "neutral" });
-    expect(PROJECT_TODO_LANE_PRESENTATIONS.ready).toMatchObject({ Icon: Play, tone: "brand" });
-    expect(PROJECT_TODO_LANE_PRESENTATIONS.in_progress).toMatchObject({ Icon: Activity, tone: "signal" });
-    expect(PROJECT_TODO_LANE_PRESENTATIONS.done).toMatchObject({ Icon: Check, tone: "success" });
+    expect(PROJECT_TODO_LANE_PRESENTATIONS.idea).toEqual({ title: "Ideas", emptyTitle: "No ideas yet", Icon: Sparkles });
+    expect(PROJECT_TODO_LANE_PRESENTATIONS.ready).toEqual({ title: "Ready", emptyTitle: "Nothing ready", Icon: Play });
+    expect(PROJECT_TODO_LANE_PRESENTATIONS.in_progress).toEqual({ title: "In Progress", emptyTitle: "No work in progress", Icon: Activity });
+    expect(PROJECT_TODO_LANE_PRESENTATIONS.done).toEqual({ title: "Done", emptyTitle: "Nothing completed", Icon: Check });
   });
 
   test("derives the prototype display lead without creating a Todo title", () => {
@@ -65,5 +65,15 @@ describe("Project Todo presentation", () => {
       ...item,
       latestExecution: { status: "running" },
     } as ProjectSessionInventoryItem)).toMatchObject({ kind: "running", label: "Running" });
+    expect(presentProjectTodoLinkedSession(item, { activity: "waiting_for_human" }))
+      .toMatchObject({ kind: "pending", label: "Waiting" });
+    expect(presentProjectTodoLinkedSession({
+      ...item,
+      latestExecution: { status: "suspended" },
+    } as ProjectSessionInventoryItem)).toMatchObject({ kind: "pending", label: "Waiting" });
+    expect(presentProjectTodoLinkedSession(item, {
+      activity: "waiting_for_human",
+      attention: "Question",
+    })).toMatchObject({ kind: "needs_you", label: "Needs you" });
   });
 });

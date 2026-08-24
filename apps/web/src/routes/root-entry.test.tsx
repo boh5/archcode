@@ -90,6 +90,9 @@ Object.defineProperty(globalThis, "window", {
 
 mock.module("react", () => ({
   default: {},
+  forwardRef: (render: (props: Record<string, unknown>, ref: unknown) => unknown) => (
+    props: Record<string, unknown>
+  ) => render(props, null),
   useEffect,
 }));
 mock.module("react/jsx-dev-runtime", () => ({ Fragment, jsxDEV: jsx, jsx, jsxs: jsx }));
@@ -159,7 +162,7 @@ describe("RootEntryRoute", () => {
     query = { ...query, data: [], isLoading: false, isFetching: false };
     const empty = RootEntryRoute();
     expect(textContent(empty)).toContain("Open a project to begin");
-    const open = findAll(empty, (element) => element.type === "button" && textContent(element).includes("Open project"))[0];
+    const open = findAll(empty, (element) => typeof element.props?.onClick === "function" && textContent(element).includes("Open project"))[0];
     (open?.props?.onClick as () => void)();
     expect(openAddProjectModal).toHaveBeenCalledTimes(1);
 

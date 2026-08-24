@@ -98,7 +98,7 @@ export function IconAction({
           ref={tooltipRef}
           id={tooltipId}
           role="tooltip"
-          className="pointer-events-none fixed z-[100] whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary shadow-md animate-overlay-enter"
+          className="pointer-events-none fixed z-[100] whitespace-nowrap rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary shadow-[var(--elevation-popover)] animate-overlay-enter"
           style={position === null ? { left: 0, top: 0, visibility: "hidden" } : position}
         >
           {label}

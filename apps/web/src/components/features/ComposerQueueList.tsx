@@ -146,7 +146,7 @@ function DurableQueueRow({
       title={`Requested model: ${selectionLabel(message.requestedModelSelection.selection)}`}
     >
       {message.state === "steering" ? (
-        <span className="inline-grid size-6 shrink-0 place-items-center rounded-full bg-bg-active text-info" data-queue-visual="steering">
+        <span className="inline-grid size-6 shrink-0 place-items-center rounded-full bg-bg-active text-signal-foreground" data-queue-visual="steering">
           <ActivityArc label="Steering" size={13} />
         </span>
       ) : (
@@ -287,7 +287,7 @@ function LocalQueueRow({ message, slug, sessionId }: { message: LocalSendingMess
           <TriangleAlert aria-hidden="true" size={13} />
         </span>
       ) : (
-        <span className="inline-grid size-6 shrink-0 place-items-center rounded-full bg-bg-active text-info" data-queue-visual="sending" role="img" aria-label="Sending">
+        <span className="inline-grid size-6 shrink-0 place-items-center rounded-full bg-bg-active text-signal-foreground" data-queue-visual="sending" role="img" aria-label="Sending">
           <LoaderCircle aria-hidden="true" className="animate-activity" size={13} />
         </span>
       )}

@@ -315,6 +315,7 @@ function TodoDetailView({ todo, slug, sessionInventory, sessionsLoading, session
   });
   const activeWork = filteredWork.filter(isActiveTodoWork);
   const historyWork = filteredWork.filter((item) => !isActiveTodoWork(item));
+  const workFiltering = normalizedFilter.length > 0 || workKind !== "all";
   const linkedRootIds = new Set(associatedSessionItems.map(({ session }) => session.sessionId));
   const todoHitl = attentionEligible ? scopedHitl.filter((entry) => linkedRootIds.has(entry.rootSessionId)) : [];
   const goalGates = attentionEligible ? associatedSessionItems.filter(({ session }) => {
@@ -498,7 +499,7 @@ function TodoDetailView({ todo, slug, sessionInventory, sessionsLoading, session
             {actionError ? <p role="alert" className="mt-3 text-[11px] leading-4 text-error">{actionError}</p> : null}
             {sessionsAvailable && activeWork.length > 0 ? <TodoWorkSection id="active-todo-work" label="Active" items={activeWork} onOpen={openWork} /> : null}
             {sessionsAvailable && historyWork.length > 0 ? <TodoWorkSection id="history-todo-work" label="History" items={historyWork} onOpen={openWork} /> : null}
-            {sessionsAvailable && filteredWork.length === 0 ? <p className="mt-[22px] rounded-lg border border-dashed border-border-subtle p-6 text-center text-[12px] text-text-tertiary">No work matches this filter.</p> : null}
+            {sessionsAvailable && filteredWork.length === 0 ? <div className="mt-[19px] flex min-h-12 items-center justify-between gap-3 border-y border-border-subtle px-2 py-2 text-[11.5px] text-text-tertiary"><span>{workFiltering ? "No linked work matches these filters." : "No linked work yet."}</span>{workFiltering ? <button type="button" className="min-h-8 rounded-sm px-2.5 font-semibold text-text-secondary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:min-h-11" onClick={() => { setWorkFilter(""); setWorkKind("all"); }}>Clear filters</button> : null}</div> : null}
           </div>
         </div>
       )}
@@ -538,14 +539,14 @@ function TodoLifecycleBand({ status, archived, pending, onMove }: {
         ? lane === "idea"
           ? "border-border-default bg-bg-active text-text-primary"
           : lane === "in_progress"
-            ? "border-signal/25 bg-signal-field text-signal-foreground"
+            ? "border-border-default bg-bg-active text-text-primary"
             : lane === "done"
               ? "border-success/25 bg-success-field text-success"
               : "border-brand/25 bg-brand-field text-brand"
         : index < currentIndex
           ? "text-text-secondary"
           : "text-text-tertiary hover:bg-[color:color-mix(in_srgb,var(--bg-hover)_70%,transparent)] hover:text-text-secondary";
-      return <button key={lane} type="button" aria-pressed={current} aria-label={current ? `Current Todo status: ${label}` : `Move Todo to ${label}`} disabled={archived || pending} onClick={() => { if (!current) onMove(lane); }} className={`inline-flex min-h-[31px] min-w-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[5px] border border-transparent px-[9px] text-[10.5px] font-semibold tracking-[-0.01em] transition-[background-color,border-color,color] duration-[var(--motion-fast)] focus-visible:z-10 focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] disabled:cursor-not-allowed disabled:opacity-45 [@media(max-width:720px)]:min-h-11 [@media(max-width:720px)]:flex-1 ${tone}`}><Icon className={current && lane === "in_progress" ? "animate-activity-pulse" : ""} size={12} strokeWidth={1.7} aria-hidden="true" /><span>{label}</span></button>;
+      return <button key={lane} type="button" aria-pressed={current} aria-label={current ? `Current Todo status: ${label}` : `Move Todo to ${label}`} disabled={archived || pending} onClick={() => { if (!current) onMove(lane); }} className={`inline-flex min-h-[31px] min-w-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[5px] border border-transparent px-[9px] text-[10.5px] font-semibold tracking-[-0.01em] transition-[background-color,border-color,color] duration-[var(--motion-fast)] focus-visible:z-10 focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] disabled:cursor-not-allowed disabled:opacity-45 [@media(max-width:720px)]:min-h-11 [@media(max-width:720px)]:flex-1 ${tone}`}><Icon size={12} strokeWidth={1.7} aria-hidden="true" /><span>{label}</span></button>;
     })}
   </div>;
 }
@@ -650,8 +651,7 @@ function linkedStateTone(kind: ReturnType<typeof presentProjectTodoLinkedSession
   return kind === "running" ? "text-signal-foreground"
     : kind === "needs_you" || kind === "paused" ? "text-warning"
       : kind === "completed" ? "text-text-tertiary"
-        : kind === "failed" ? "text-error"
-          : kind === "enabled" ? "text-info" : "text-text-tertiary";
+        : kind === "failed" ? "text-error" : "text-text-tertiary";
 }
 function TodoActionButton({ children, onClick, disabled, variant = "default", compactOnMobile = false }: { children: ReactNode; onClick: () => void; disabled?: boolean; variant?: "default" | "primary" | "quiet" | "danger"; compactOnMobile?: boolean }) {
   const tone = variant === "primary"

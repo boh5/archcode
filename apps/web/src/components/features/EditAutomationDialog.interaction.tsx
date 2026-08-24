@@ -5,7 +5,7 @@ import {
   AUTOMATION_TIMEZONE_MAX_LENGTH,
 } from "@archcode/protocol";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
@@ -199,6 +199,76 @@ describe("EditAutomationDialog limits", () => {
     if (discard === undefined) throw new Error("Missing Discard changes button");
     act(() => discard.click());
     expect(closeCount).toBe(1);
+  });
+
+  test("preserves a dirty draft through Pause, Resume, and lifecycle failure", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    let closeCount = 0;
+    let failNext = false;
+
+    function LifecycleHarness() {
+      const [current, setCurrent] = useState(automation);
+      const [pending, setPending] = useState(false);
+      const [error, setError] = useState<Error | undefined>();
+      const changeStatus = (status: Automation["status"]) => {
+        setPending(true);
+        setError(undefined);
+        queueMicrotask(() => {
+          if (failNext) setError(new Error("Lifecycle update failed safely"));
+          else setCurrent((value) => ({ ...value, status }));
+          setPending(false);
+        });
+      };
+      return <EditAutomationDialog
+        open
+        onClose={() => { closeCount += 1; }}
+        onDeleted={() => {}}
+        onPause={() => changeStatus("paused")}
+        onResume={() => changeStatus("active")}
+        lifecyclePending={pending}
+        lifecycleError={error}
+        slug="archcode"
+        automation={current}
+      />;
+    }
+
+    await act(async () => {
+      root.render(<QueryClientProvider client={client}><LifecycleHarness /></QueryClientProvider>);
+      await Promise.resolve();
+    });
+    change(field("automation-name"), "Dirty lifecycle draft");
+    change(field("automation-message"), "Keep this unsaved message.");
+
+    const lifecycleButton = () => [...document.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Pause Automation" || button.textContent?.trim() === "Resume Automation");
+    const clickLifecycle = async () => {
+      const button = lifecycleButton();
+      if (button === undefined) throw new Error("Missing lifecycle button");
+      await act(async () => {
+        button.click();
+        await Promise.resolve();
+      });
+    };
+
+    await clickLifecycle();
+    expect(lifecycleButton()?.textContent?.trim()).toBe("Resume Automation");
+    expect(field("automation-name").value).toBe("Dirty lifecycle draft");
+    expect(field("automation-message").value).toBe("Keep this unsaved message.");
+    expect(closeCount).toBe(0);
+
+    await clickLifecycle();
+    expect(lifecycleButton()?.textContent?.trim()).toBe("Pause Automation");
+    expect(field("automation-name").value).toBe("Dirty lifecycle draft");
+    expect(field("automation-message").value).toBe("Keep this unsaved message.");
+    expect(closeCount).toBe(0);
+
+    failNext = true;
+    await clickLifecycle();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Lifecycle update failed safely");
+    expect(lifecycleButton()?.textContent?.trim()).toBe("Pause Automation");
+    expect(field("automation-name").value).toBe("Dirty lifecycle draft");
+    expect(field("automation-message").value).toBe("Keep this unsaved message.");
+    expect(closeCount).toBe(0);
   });
 
   test("keeps deletion inside the editor, preserves the draft on cancel, and retries after failure", async () => {

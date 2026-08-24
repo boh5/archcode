@@ -202,7 +202,7 @@ export function AddProjectModal({ open, onClose, returnFocusTarget }: AddProject
       onClick={handleOverlayClick}
       onKeyDownCapture={handleDialogKeyDown}
     >
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-project-title" className="flex max-h-[60vh] w-[min(560px,92vw)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-overlay shadow-lg">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-project-title" className="flex max-h-[60vh] w-[min(560px,92vw)] flex-col overflow-hidden rounded-[var(--shape-dialog)] border border-border-strong bg-bg-overlay shadow-[var(--elevation-modal)]">
         <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4 shrink-0">
           <h2 id="add-project-title" className="text-[14px] font-semibold leading-5 text-text-primary">
             Add Project

@@ -197,7 +197,7 @@ export function ProjectBar({ compactProjectInventory = false, onAddProject, onSe
               <span
                 id={`project-tooltip-${project.slug}`}
                 role="tooltip"
-                className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100"
+                className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-[var(--elevation-popover)] transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100"
               >
                 {project.name}
               </span>
@@ -218,7 +218,7 @@ export function ProjectBar({ compactProjectInventory = false, onAddProject, onSe
           onClick={() => setPickerOpen(true)}
         >
           <Ellipsis size={16} aria-hidden="true" />
-          <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-md border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100">More projects</span>
+          <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-[var(--elevation-popover)] transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100">More projects</span>
         </button>
       )}
 
@@ -229,7 +229,7 @@ export function ProjectBar({ compactProjectInventory = false, onAddProject, onSe
         onClick={handleAddProject}
       >
         <Plus size={16} aria-hidden="true" />
-        <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-lg border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-md transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100">
+        <span role="tooltip" className="pointer-events-none absolute left-12 z-50 whitespace-nowrap rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay px-2 py-1 text-[11px] leading-4 text-text-primary opacity-0 shadow-[var(--elevation-popover)] transition-opacity duration-[var(--motion-fast)] group-hover:opacity-100 group-focus-visible:opacity-100">
           Open project
         </span>
       </button>

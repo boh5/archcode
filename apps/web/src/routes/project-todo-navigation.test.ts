@@ -102,10 +102,42 @@ describe("Project Todo navigator projection", () => {
     const failed = deriveProjectTodoNavigationProjection(facts({ sessionsState: "error" }));
     expect(failed.needsYou.count).toBeUndefined();
     expect(failed.needsYou.state).toBe("error");
+    expect(failed.runs.count).toBeUndefined();
+    expect(failed.runs.state).toBe("error");
 
     const todoFailed = deriveProjectTodoNavigationProjection(facts({ todosState: "error" }));
     expect(todoFailed.inProgress).toEqual({ rows: [], state: "error" });
     expect(todoFailed.ready).toEqual({ rows: [], state: "error" });
+  });
+
+  test("uses canonical Active Todos and active Session families for navigator counts", () => {
+    const running = {
+      ...session("running", { kind: "direct" }),
+      latestExecution: { id: "run", status: "running" as const, startedAt: 2 },
+    };
+    const failed = {
+      ...session("failed", { kind: "direct" }),
+      latestExecution: { id: "fail", status: "failed" as const, startedAt: 2, endedAt: 3 },
+    };
+    const completed = {
+      ...session("completed", { kind: "direct" }),
+      latestExecution: { id: "done", status: "completed" as const, startedAt: 2, endedAt: 3 },
+    };
+    const waiting = session("waiting", { kind: "direct" });
+    const attention = session("attention", { kind: "direct" });
+    const projection = deriveProjectTodoNavigationProjection(facts({
+      todos: [
+        todo("active", "ready"),
+        todo("rejected", "rejected"),
+        todo("archived", "done", { archivedAt: 2 }),
+      ],
+      sessions: [running, failed, completed, waiting, attention],
+      activityBySessionId: new Map([["waiting", "waiting_for_human"]]),
+      attentionBySessionId: new Map([["attention", "Question"]]),
+    }));
+
+    expect(projection.allTodos.count).toBe(1);
+    expect(projection.runs.count).toBe(4);
   });
 
   test("keeps exact Needs-you rows authoritative when only Schedules fails", () => {

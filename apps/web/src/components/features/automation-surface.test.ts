@@ -13,10 +13,12 @@ describe("Automation navigation and detail actions", () => {
     const presentation = await source("lib/automation-surface-presentation.ts");
     expect(detail).toContain("Run now");
     expect(detail).toContain("<PrimaryActionButton disabled={runNow.isPending}");
-    expect(presentation).toContain('"Lead + principal"');
-    expect(presentation).toContain('"Target Session’s existing Agent + Profile"');
+    expect(presentation).toContain('"Lead · principal"');
+    expect(presentation).toContain('"Existing Session"');
     expect(dialog).toContain(">Definition controls</span>");
     expect(dialog).toContain('automation.status === "paused" ? "Resume Automation" : "Pause Automation"');
+    expect(detail).toContain('onPause={() => pause.mutate({ slug, automationId })}');
+    expect(detail).toContain('onResume={() => resume.mutate({ slug, automationId })}');
     expect(dialog).toContain("Delete Automation");
     expect(detail).toContain(">Recent runs</span>");
     expect(detail).toContain("Open Session");
@@ -75,6 +77,7 @@ describe("Automation navigation and detail actions", () => {
     expect(list).toContain("detailSearch={detailSearchSuffix}");
     expect(list).toContain('aria-current={selected ? "page" : undefined}');
     expect(list).toContain("restoreRowRef.current?.focus()");
+    expect(list).toContain('inventory.isSuccess ? inventory.data.length : "—"');
     expect(list).toContain("state={{ focusAutomationDetail: true }}");
     expect(detail).toContain("to={automationsHref}");
     expect(detail).toContain("state={{ restoreAutomationId: value.id }}");

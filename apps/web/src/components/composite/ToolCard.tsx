@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import type {
-  ToolAskUserPresentation,
-  ToolDiffPresentation,
-  ToolPart,
-  ToolProcessDetails,
+import {
+  getToolCategory,
+  TOOL_ASK_USER,
+  type ToolAskUserPresentation,
+  type ToolDiffPresentation,
+  type ToolPart,
+  type ToolProcessDetails,
 } from "@archcode/protocol";
 import { ChevronRight } from "lucide-react";
 import {
   getToolSummary,
   summarizeToolDiffMetadata,
 } from "../../lib/tool-format";
-import { getToolCategory } from "@archcode/protocol";
 import { DiffView } from "../diff/DiffView";
 import {
   WORK_ACTIVITY_CHILD_LANE_CLASS,
@@ -25,6 +26,18 @@ const STATUS_LABEL: Record<ToolPart["state"], string> = {
   completed: "Completed",
   error: "Error",
 };
+
+function summarizeAskUserPresentation(
+  presentation: ToolAskUserPresentation,
+): string | undefined {
+  if (presentation.truncated) return "Answer recorded · details truncated";
+  if (presentation.answers.length > 1) {
+    return `${presentation.answers.length} questions answered`;
+  }
+  const answerGroup = presentation.answers[0];
+  if (answerGroup === undefined || answerGroup.answers.length === 0) return undefined;
+  return `Question answered · ${answerGroup.answers.join(", ")}`;
+}
 
 export interface ToolCardProps {
   readonly part: ToolPart;
@@ -53,6 +66,12 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
   const askPresentation = details?.presentations?.find(
     (presentation): presentation is ToolAskUserPresentation => presentation.kind === "ask_user",
   );
+  const askSummary = part.toolName === TOOL_ASK_USER
+    && part.state === "completed"
+    && settled?.isError === false
+    && askPresentation
+    ? summarizeAskUserPresentation(askPresentation)
+    : undefined;
   const recovery = settled?.output.recovery;
   const artifactRecovery = recovery?.kind === "artifact" ? recovery : undefined;
 
@@ -95,7 +114,26 @@ export function ToolCard({ part, projectSlug, sessionId, grouped = false }: Tool
     ? WORK_ACTIVITY_NESTED_LANE_CLASS
     : WORK_ACTIVITY_CHILD_LANE_CLASS;
   const summaryClass = `tool-card-summary-control grid min-h-9 select-none grid-cols-[14px_minmax(98px,160px)_minmax(0,1fr)_auto] items-center gap-[9px] rounded-[5px] bg-transparent px-[9px] py-[7px] text-left [@media(max-width:560px)]:grid-cols-[14px_minmax(90px,112px)_minmax(0,1fr)_auto] [@media(pointer:coarse)]:min-h-11 ${summaryBorderClass} ${summaryLaneClass}`;
-  const summaryContent = (
+  const summaryContent = askSummary ? (
+    <>
+      <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-fast)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
+      <strong
+        className="col-span-2 min-w-0 truncate text-[12.5px] font-semibold text-text-secondary"
+        title={askSummary}
+        data-testid="ask-user-summary"
+      >
+        {askSummary}
+      </strong>
+      {diffSummary ? (
+        <span className="shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums text-text-tertiary [@media(max-width:560px)]:hidden">
+          {diffSummary.fileCount} {diffSummary.fileCount === 1 ? "file" : "files"}
+          {diffSummary.additions !== undefined && diffSummary.deletions !== undefined
+            ? ` · +${diffSummary.additions} −${diffSummary.deletions}`
+            : null}
+        </span>
+      ) : <span className="h-px min-w-6 bg-border-subtle" aria-hidden="true" />}
+    </>
+  ) : (
     <>
       {hasDetails
         ? <ChevronRight size={10} className={`text-text-muted transition-transform duration-[var(--motion-fast)] ${expanded ? "rotate-90" : ""}`} aria-hidden="true" />
@@ -282,18 +320,19 @@ function KeyValueRows({ entries }: { entries: Record<string, string> }) {
 function AskUserResult({ presentation }: { presentation: ToolAskUserPresentation }) {
   return (
     <div className="border-t border-border-subtle px-3 py-2" data-testid="ask-user-result">
-      <div className="flex flex-col gap-2">
+      <dl className="flex flex-col">
         {presentation.answers.map((exchange, index) => (
-          <div key={`${exchange.question}-${index}`} className="rounded-sm border border-border-subtle bg-bg-elevated px-3 py-2">
-            <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-[12px] leading-4">
-              <span className="text-text-tertiary">Question</span>
-              <span className="text-text-primary break-words">{exchange.question}</span>
-              <span className="text-text-tertiary">Answer</span>
-              <span className="text-success break-words">{exchange.answers.join(", ")}</span>
-            </div>
+          <div key={`${exchange.question}-${index}`} className="grid grid-cols-[minmax(92px,34%)_minmax(0,1fr)] gap-x-3 border-b border-border-subtle px-1 py-2 last:border-b-0">
+            <dt className="break-words text-[11.5px] leading-[1.45] text-text-tertiary">{exchange.question}</dt>
+            <dd className="break-words text-right text-[11.5px] font-medium leading-[1.45] text-text-primary">{exchange.answers.join(", ")}</dd>
           </div>
         ))}
-      </div>
+      </dl>
+      {presentation.truncated && (
+        <p className="mt-2 border-t border-border-subtle px-1 pt-2 text-[11px] leading-4 text-warning" data-testid="ask-user-truncation">
+          Additional finalized details are not available in this bounded Web projection.
+        </p>
+      )}
     </div>
   );
 }

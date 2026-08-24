@@ -78,8 +78,8 @@ export function HitlBell({
           role="dialog"
           aria-label="Work that needs you"
           className={mobile
-            ? "fixed inset-x-2 bottom-2 z-50 max-h-[min(76vh,560px)] overflow-y-auto rounded-[10px] border border-border-strong bg-bg-overlay shadow-lg"
-            : "fixed bottom-14 left-[62px] z-50 w-[min(360px,calc(100vw-76px))] overflow-hidden rounded-[10px] border border-border-strong bg-bg-overlay shadow-lg"
+            ? "fixed inset-x-2 bottom-2 z-50 max-h-[min(76vh,560px)] overflow-y-auto rounded-[var(--shape-popover)] border border-border-strong bg-bg-overlay shadow-[var(--elevation-popover)]"
+            : "fixed bottom-14 left-[62px] z-50 w-[min(360px,calc(100vw-76px))] overflow-hidden rounded-[var(--shape-popover)] border border-border-strong bg-bg-overlay shadow-[var(--elevation-popover)]"
           }
         >
           <header className="flex min-h-[58px] items-center justify-between gap-3 border-b border-border-default py-[9px] pl-[13px] pr-2.5">

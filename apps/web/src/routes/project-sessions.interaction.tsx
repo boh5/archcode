@@ -13,6 +13,7 @@ import {
   currentSessionSnapshotGeneration,
 } from "../store/session-store";
 import { queryKeys } from "../api/queries";
+import type { ProjectAutomationInventoryItem, ProjectSessionInventoryItem } from "../api/types";
 import {
   sessionAuthoritativeSnapshot,
   type SessionAuthoritativeSnapshotFixture,
@@ -90,9 +91,10 @@ function restoreGlobals(): void {
 
 const bootstrapDom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
 installDom(bootstrapDom);
-const [{ ProjectSessionsRoute }, { SessionComposerDock }] = await Promise.all([
+const [{ ProjectSessionsRoute }, { SessionComposerDock }, { AutomationsRoute }] = await Promise.all([
   import("./project-sessions"),
   import("../components/features/SessionComposerDock"),
+  import("./automations"),
 ]);
 restoreGlobals();
 bootstrapDom.window.close();
@@ -149,6 +151,11 @@ function DirectSessionDestination() {
       <SessionComposerDock slug={slug} sessionId={sessionId} focusComposer={focusComposer} />
     </div>
   );
+}
+
+function RouteLocation() {
+  const location = useLocation();
+  return <output data-testid="route-location">{location.pathname}</output>;
 }
 
 async function settle(): Promise<void> {
@@ -233,8 +240,170 @@ afterEach(async () => {
   restoreGlobals();
 });
 
-describe("ProjectSessionsRoute direct creation", () => {
-  test("renders the prototype-native Session source selector and updates its canonical value", async () => {
+describe("Runs and Schedules interactions", () => {
+  test("keeps a dependency-waiting Session label visible in every row layout", async () => {
+    const item = {
+      session: {
+        sessionId: "waiting-session",
+        title: "Dependency wait",
+        agentName: "lead",
+        source: { kind: "direct" },
+        updatedAt: 2,
+      },
+      latestExecution: { id: "waiting-execution", status: "suspended", startedAt: 1 },
+    } as ProjectSessionInventoryItem;
+    client.setQueryData(queryKeys.sessions("demo"), [item]);
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["demo"],
+      families: [{ projectSlug: "demo", rootSessionId: "waiting-session", activity: "waiting_for_human" }],
+      createdAt: 2,
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <SettingsModalProvider>
+            <MemoryRouter initialEntries={["/projects/demo/sessions"]}>
+              <Routes>
+                <Route path="/projects/:slug/sessions" element={<ProjectSessionsRoute />} />
+              </Routes>
+            </MemoryRouter>
+          </SettingsModalProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    await waitFor(() => document.querySelector('[aria-labelledby="sessions-running"]')?.textContent?.includes("Dependency wait") === true);
+    const row = document.querySelector('a[aria-label^="Dependency wait,"]');
+    const waitingLabel = row?.querySelector('[title="Waiting · Waiting for dependency"]');
+    expect(row?.textContent).toContain("Waiting");
+    expect(waitingLabel).toBeInstanceOf(dom.window.HTMLElement);
+    expect(waitingLabel?.parentElement?.classList.contains("flex")).toBe(true);
+    expect(waitingLabel?.parentElement?.classList.contains("hidden")).toBe(false);
+    expect(row?.querySelector(".font-mono")).toBeNull();
+  });
+
+  test("waits for authoritative runtime and HITL snapshots before classifying Sessions", async () => {
+    const item = {
+      session: {
+        sessionId: "live-session",
+        title: "Live Session",
+        agentName: "lead",
+        source: { kind: "direct" },
+        updatedAt: 2,
+      },
+      latestExecution: { id: "completed-execution", status: "completed", startedAt: 1, endedAt: 2 },
+    } as ProjectSessionInventoryItem;
+    client.setQueryData(queryKeys.sessions("demo"), [item]);
+    sessionRuntimeStore.getState().reset();
+    hitlStore.getState().reset();
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <SettingsModalProvider>
+            <MemoryRouter initialEntries={["/projects/demo/sessions"]}>
+              <Routes>
+                <Route path="/projects/:slug/sessions" element={<ProjectSessionsRoute />} />
+              </Routes>
+            </MemoryRouter>
+          </SettingsModalProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await waitFor(() => document.body.textContent?.includes("Loading Session state…") === true);
+    expect(document.querySelector("h1")?.textContent).toContain("— active");
+
+    await act(async () => {
+      sessionRuntimeStore.getState().applySnapshot({
+        type: "session.runtime.snapshot",
+        projectSlugs: ["demo"],
+        families: [{ projectSlug: "demo", rootSessionId: "live-session", activity: "running" }],
+        createdAt: 2,
+      });
+      hitlStore.getState().applySnapshot({
+        type: "hitl.snapshot",
+        projectSlugs: ["demo"],
+        entries: [],
+        createdAt: 2,
+      });
+    });
+    await waitFor(() => document.querySelector('[aria-labelledby="sessions-running"]')?.textContent?.includes("Live Session") === true);
+    expect(document.querySelector("h1")?.textContent).toContain("1 active");
+  });
+
+  test("defers the desktop Automation selection until every state projection is authoritative", async () => {
+    const item = {
+      automation: {
+        id: "automation-ready",
+        projectSlug: "demo",
+        origin: { kind: "direct" },
+        name: "Ready Automation",
+        trigger: { kind: "interval", everyMs: 60_000 },
+        action: { kind: "start_session", message: "Check the project.", location: "project" },
+        status: "active",
+        createdAt: "2026-08-24T00:00:00.000Z",
+        updatedAt: "2026-08-24T00:00:00.000Z",
+        nextFireAt: "2026-08-24T01:00:00.000Z",
+      },
+      latestInvocation: null,
+    } as ProjectAutomationInventoryItem;
+    client.setQueryData(queryKeys.projectAutomations("demo"), [item]);
+    client.setQueryData(queryKeys.sessions("demo"), []);
+    client.setQueryData(queryKeys.projectTodos("demo"), []);
+    sessionRuntimeStore.getState().reset();
+    hitlStore.getState().reset();
+    Object.defineProperty(dom.window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        media: "(min-width: 841px)",
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent: () => true,
+      } as MediaQueryList),
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <SettingsModalProvider>
+            <MemoryRouter initialEntries={["/projects/demo/automations"]}>
+              <Routes>
+                <Route path="/projects/:slug/automations" element={<><AutomationsRoute /><RouteLocation /></>} />
+                <Route path="/projects/:slug/automations/:automationId" element={<><AutomationsRoute detail={<div>Selected Automation</div>} /><RouteLocation /></>} />
+              </Routes>
+            </MemoryRouter>
+          </SettingsModalProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await waitFor(() => document.body.textContent?.includes("Loading Automation state…") === true);
+    expect(document.querySelector('[data-testid="route-location"]')?.textContent).toBe("/projects/demo/automations");
+
+    await act(async () => {
+      sessionRuntimeStore.getState().applySnapshot({
+        type: "session.runtime.snapshot",
+        projectSlugs: ["demo"],
+        families: [],
+        createdAt: 2,
+      });
+      hitlStore.getState().applySnapshot({
+        type: "hitl.snapshot",
+        projectSlugs: ["demo"],
+        entries: [],
+        createdAt: 2,
+      });
+    });
+    await waitFor(() => document.querySelector('[data-testid="route-location"]')?.textContent === "/projects/demo/automations/automation-ready");
+    expect(document.body.textContent).toContain("Ready Automation");
+  });
+
+  test("operates the Session source listbox with roving focus and predictable departure", async () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
@@ -250,21 +419,101 @@ describe("ProjectSessionsRoute direct creation", () => {
     });
     await waitFor(() => document.querySelector('[data-testid="session-source-picker"]') !== null);
 
-    const select = document.querySelector('[data-testid="session-source-picker"] select');
-    if (!(select instanceof dom.window.HTMLSelectElement)) throw new Error("Missing native Session source selector");
-    expect(select.getAttribute("aria-label")).toBe("Session source");
-    expect([...select.options].map((option) => [option.value, option.textContent])).toEqual([
-      ["all", "All sources"],
-      ["todo", "Todo"],
-      ["automation", "Automation"],
-      ["direct", "Direct"],
+    const picker = document.querySelector('[data-testid="session-source-picker"]');
+    const trigger = picker?.querySelector("button");
+    if (!(trigger instanceof dom.window.HTMLButtonElement)) throw new Error("Missing Session source trigger");
+    expect(trigger.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.getAttribute("aria-label")).toBe("Session source: All sources");
+
+    await act(async () => trigger.click());
+    await waitFor(() => trigger.getAttribute("aria-expanded") === "true");
+    const listbox = document.querySelector('[role="listbox"][aria-label="Session source"]');
+    const options = [...(listbox?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
+    expect(options.map((option) => [option.textContent?.trim(), option.getAttribute("aria-selected")])).toEqual([
+      ["All sources", "true"],
+      ["Todo", "false"],
+      ["Automation", "false"],
+      ["Direct", "false"],
     ]);
+    await waitFor(() => document.activeElement === options[0]);
 
     await act(async () => {
-      select.value = "direct";
-      select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+      options[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "End", bubbles: true }));
     });
-    await waitFor(() => select.value === "direct");
+    expect(document.activeElement).toBe(options[3]);
+    await act(async () => {
+      options[3]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await waitFor(() => trigger.getAttribute("aria-label") === "Session source: Direct");
+    await waitFor(() => document.activeElement === trigger);
+
+    await act(async () => {
+      trigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    });
+    await waitFor(() => trigger.getAttribute("aria-expanded") === "true");
+    const reopenedOptions = [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')];
+    await waitFor(() => document.activeElement === reopenedOptions[3]);
+    await act(async () => {
+      reopenedOptions[3]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await waitFor(() => trigger.getAttribute("aria-expanded") === "false" && document.activeElement === trigger);
+
+    await act(async () => trigger.click());
+    await waitFor(() => document.querySelector('[role="listbox"]') !== null);
+    const tabOption = document.activeElement;
+    await act(async () => {
+      tabOption?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    });
+    const newSession = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("New Session"));
+    if (!(newSession instanceof dom.window.HTMLButtonElement)) throw new Error("Missing New Session button");
+    expect(document.activeElement).toBe(newSession);
+
+    await act(async () => {
+      trigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    await waitFor(() => document.querySelector('[role="listbox"]') !== null);
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+    });
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Filter Sessions");
+
+    await act(async () => trigger.click());
+    await waitFor(() => document.querySelector('[role="listbox"]') !== null);
+    await act(async () => {
+      document.body.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+    });
+    await waitFor(() => trigger.getAttribute("aria-expanded") === "false");
+  });
+
+  test("reverse Tab follows the visible filter controls before leaving Sources", async () => {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <SettingsModalProvider>
+            <MemoryRouter initialEntries={["/projects/demo/sessions?q=test"]}>
+              <Routes>
+                <Route path="/projects/:slug/sessions" element={<ProjectSessionsRoute />} />
+              </Routes>
+            </MemoryRouter>
+          </SettingsModalProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await waitFor(() => document.querySelector('[aria-label="Clear Session filter"]') !== null);
+
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="session-source-picker"] > button');
+    const clear = document.querySelector<HTMLButtonElement>('[aria-label="Clear Session filter"]');
+    if (!trigger || !clear) throw new Error("Missing Sources or Clear control");
+
+    await act(async () => {
+      trigger.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    await waitFor(() => document.querySelector('[role="listbox"]') !== null);
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+    });
+    expect(document.activeElement).toBe(clear);
   });
 
   test("creates one direct root, navigates exactly, and focuses the ready composer", async () => {

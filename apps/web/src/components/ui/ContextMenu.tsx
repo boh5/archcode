@@ -10,7 +10,7 @@ function ContextMenuContent({
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content
-        className={`z-50 min-w-[8rem] overflow-hidden rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md data-[state=open]:animate-overlay-enter data-[state=closed]:animate-overlay-exit ${className ?? ""}`}
+        className={`z-50 min-w-[8rem] overflow-hidden rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay p-1 shadow-[var(--elevation-popover)] data-[state=open]:animate-overlay-enter data-[state=closed]:animate-overlay-exit ${className ?? ""}`}
         {...props}
       />
     </ContextMenuPrimitive.Portal>

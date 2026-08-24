@@ -27,6 +27,7 @@ mock.module("../store/hitl-store", () => ({
 }));
 
 const { RootLayout } = await import("./root-layout");
+const { ThemeProvider } = await import("../hooks/use-theme");
 
 function installDom(width = 1440): JSDOM {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
@@ -82,7 +83,7 @@ describe("RootLayout global shell", () => {
       ],
     }], { initialEntries: ["/"] });
 
-    await act(async () => root.render(<RouterProvider router={router} />));
+    await act(async () => root.render(<ThemeProvider><RouterProvider router={router} /></ThemeProvider>));
     const projectBar = document.querySelector('[data-testid="project-bar"]');
     expect(projectBar?.parentElement?.className).toContain("w-12");
     expect(projectBar?.parentElement?.className).toContain("min-[721px]:w-[52px]");
@@ -103,7 +104,7 @@ describe("RootLayout global shell", () => {
       children: [{ path: "/", element: <div>Entry</div> }],
     }], { initialEntries: ["/"] });
 
-    await act(async () => root.render(<RouterProvider router={router} />));
+    await act(async () => root.render(<ThemeProvider><RouterProvider router={router} /></ThemeProvider>));
     const skip = document.querySelector('a[href="#work-canvas"]') as HTMLAnchorElement;
     const canvas = document.querySelector("main#work-canvas") as HTMLElement;
     skip.focus();

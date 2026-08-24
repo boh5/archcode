@@ -144,8 +144,6 @@ export function ProjectTodoNavigator({
         </NavigationSection>
       </nav>
 
-      <div className="h-[42px] shrink-0 border-t border-border-subtle px-2 py-3 text-[10.5px] text-text-tertiary">Todo workspace</div>
-
       <EditProjectDialog open={editing} onClose={() => setEditing(false)} project={project} />
       <CloseProjectDialog
         open={closing}

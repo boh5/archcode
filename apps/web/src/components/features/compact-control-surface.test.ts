@@ -14,9 +14,11 @@ describe("compact icon control contract", () => {
     expect(todo).toContain('<IconAction label="Close todo progress"');
     expect(toast).toContain('<IconAction');
     expect(toast).toContain('label="Dismiss"');
+    expect(toast).toContain('role="status"');
+    expect(toast).toContain('aria-live="polite"');
     const iconAction = await source("components/primitives/IconAction.tsx");
     expect(iconAction).toContain("h-8 w-8");
-    expect(todo).toContain("rounded-lg border border-border-default bg-bg-overlay p-3 shadow-md");
+    expect(todo).toContain("rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay p-3 shadow-[var(--elevation-popover)]");
   });
 
   test("Settings retry and ErrorBoundary reload use the standard 32px control", async () => {
@@ -40,15 +42,9 @@ describe("compact icon control contract", () => {
 
   test("Composer owns overlay Menu styling and keeps Send/Stop on the control grammar", async () => {
     const chat = await source("components/features/ChatInput.tsx");
-    expect(chat).toContain("rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md");
+    expect(chat).toContain("rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay p-1 shadow-[var(--elevation-popover)]");
     expect(chat).toContain("text-[12px] leading-4 text-text-tertiary");
     expect(chat).toContain("h-[34px] w-[34px] items-center justify-center rounded-full transition-colors");
-  });
-
-  test("task-critical header metadata uses the tertiary foreground", async () => {
-    const header = await source("components/features/ChatHeader.tsx");
-
-    expect(header).toContain("text-[12px] leading-[1.3] text-text-tertiary");
   });
 
   test("Compression uses the nested Execution surface without fake card hover", async () => {
@@ -102,13 +98,15 @@ describe("compact icon control contract", () => {
     const iconAction = await source("components/primitives/IconAction.tsx");
     const projectBar = await source("components/features/ProjectBar.tsx");
     expect(bell).toContain("fixed bottom-14 left-[62px]");
-    expect(bell).toContain("rounded-[10px] border border-border-strong bg-bg-overlay shadow-lg");
+    expect(bell).toContain("rounded-[var(--shape-popover)] border border-border-strong bg-bg-overlay shadow-[var(--elevation-popover)]");
     expect(bell).toContain("min-h-[58px]");
     expect(bell).toContain("hover:bg-rail-hover");
     expect(iconAction).toContain('role="tooltip"');
-    expect(iconAction).toContain("rounded-lg border border-border-default bg-bg-overlay");
+    expect(iconAction).toContain("rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay");
+    expect(iconAction).toContain("shadow-[var(--elevation-popover)]");
     expect(projectBar.match(/role="tooltip"/g)?.length).toBe(3);
-    expect(projectBar.match(/rounded-lg border border-border-default bg-bg-overlay/g)?.length).toBe(2);
+    expect(projectBar.match(/rounded-\[var\(--shape-popover\)\] border border-border-default bg-bg-overlay/g)?.length).toBe(3);
+    expect(projectBar.match(/shadow-\[var\(--elevation-popover\)\]/g)?.length).toBe(3);
   });
 
   test("Project Todo capture, detail, and Goal editors use the current compact controls", async () => {

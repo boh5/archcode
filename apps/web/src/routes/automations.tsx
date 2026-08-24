@@ -13,11 +13,11 @@ import {
   type AutomationSurfaceGroup,
   type AutomationSurfacePresentation,
 } from "../lib/automation-surface-presentation";
-import { useAttentionVisibleScopedHitl } from "../store/hitl-store";
-import { useSessionRuntimeFamilies } from "../store/session-runtime-store";
+import { useAttentionVisibleScopedHitl, useHitlProjectInitialized } from "../store/hitl-store";
+import { useSessionRuntimeFamilies, useSessionRuntimeInitialized } from "../store/session-runtime-store";
 
 export type AutomationInventoryGroup = AutomationSurfaceGroup;
-type AutomationStatusFilter = "all" | "active" | "paused";
+export type AutomationStatusFilter = "all" | "active" | "paused";
 
 export interface PresentedAutomationInventoryItem {
   readonly item: ProjectAutomationInventoryItem;
@@ -74,17 +74,53 @@ export function automationInventoryEmptyMessage(totalCount: number): string {
     : "No Automations match this name, ID, action, or schedule.";
 }
 
+export function presentAutomationInventoryEmptyState(
+  totalCount: number,
+  query: string,
+  status: AutomationStatusFilter,
+): { title: string; detail: string; recoveryLabel?: string } {
+  if (totalCount === 0) {
+    return {
+      title: "No Automations yet",
+      detail: "Use “New Automation” above to set up repeatable or scheduled work in durable Sessions.",
+    };
+  }
+  const normalizedQuery = query.trim();
+  if (normalizedQuery && status !== "all") {
+    return {
+      title: "No Automations match these filters",
+      detail: "Clear the query and restore All statuses to recover the inventory.",
+      recoveryLabel: "Reset filters",
+    };
+  }
+  if (normalizedQuery) {
+    return {
+      title: `No Automations match “${normalizedQuery}”`,
+      detail: "Try another Automation name, instruction, or stable ID.",
+      recoveryLabel: "Clear filter",
+    };
+  }
+  return {
+    title: "No Automations match this status",
+    detail: "Restore All statuses to see every Automation definition.",
+    recoveryLabel: "Show all",
+  };
+}
+
 export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
   const { slug = "", automationId } = useParams<{ slug: string; automationId?: string }>();
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [creating, setCreating] = useState(false);
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const inventory = useAutomationInventory(slug);
   const sessionInventory = useSessionInventory(slug);
   const todos = useProjectTodos(slug);
   const scopedHitl = useAttentionVisibleScopedHitl([slug]);
+  const hitlInitialized = useHitlProjectInitialized(slug);
   const runtimeFamilies = useSessionRuntimeFamilies();
+  const runtimeInitialized = useSessionRuntimeInitialized(slug);
   const todoContents = useMemo(() => new Map((todos.data ?? []).map((todo) => [todo.id, todo.content])), [todos.data]);
   const sessionLinksByAutomation = useMemo(
     () => indexAutomationSessionLinks(sessionInventory.data ?? []),
@@ -99,14 +135,15 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
       .filter((family) => family.projectSlug === slug)
       .map((family) => [family.rootSessionId, family.activity] as const),
   ), [runtimeFamilies, slug]);
-  const presentedRows = useMemo<PresentedAutomationInventoryItem[]>(() => (inventory.data ?? []).map((item) => {
+  const presentationReady = inventory.isSuccess
+    && sessionInventory.isSuccess
+    && runtimeInitialized
+    && hitlInitialized;
+  const presentedRows = useMemo<PresentedAutomationInventoryItem[]>(() => presentationReady ? (inventory.data ?? []).map((item) => {
     const sessionLinks = sessionLinksByAutomation.get(item.automation.id) ?? [];
     const attention = deriveAutomationHitlAttention(item.automation, sessionLinks, scopedHitl);
     const targetSession = item.automation.action.kind === "send_message"
       ? sessionsById.get(item.automation.action.sessionId)
-      : undefined;
-    const linkedTodoContent = item.automation.origin.kind === "todo"
-      ? todoContents.get(item.automation.origin.todoId)
       : undefined;
     return {
       item,
@@ -116,10 +153,9 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
         sessionLinks,
         targetSession,
         activityBySessionId,
-        linkedTodoContent,
       }),
     };
-  }), [activityBySessionId, inventory.data, scopedHitl, sessionLinksByAutomation, sessionsById, todoContents]);
+  }) : [], [activityBySessionId, inventory.data, presentationReady, scopedHitl, sessionLinksByAutomation, sessionsById]);
   const query = searchParams.get("q") ?? "";
   const statusParam = searchParams.get("status");
   const statusFilter: AutomationStatusFilter = statusParam === "active" || statusParam === "paused" ? statusParam : "all";
@@ -137,27 +173,38 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
   }).toString();
   const detailSearchSuffix = detailSearch ? `?${detailSearch}` : "";
   const firstVisibleAutomation = groups["needs-you"][0] ?? groups.scheduled[0] ?? groups.paused[0] ?? groups.inactive[0];
+  const selectedIsVisible = automationId !== undefined
+    && filtered.some(({ item }) => item.automation.id === automationId);
+  const inventoryHref = `/projects/${encodeURIComponent(slug)}/automations${detailSearchSuffix}`;
+  const detailVisible = presentationReady && detail !== undefined && selectedIsVisible && filtered.length > 0;
   const restoreAutomationId = typeof location.state === "object" && location.state !== null && "restoreAutomationId" in location.state
     ? String(location.state.restoreAutomationId)
     : undefined;
   const restoreRowRef = useRef<HTMLAnchorElement>(null);
   useEffect(() => {
-    if (!inventory.isLoading && restoreAutomationId !== undefined) restoreRowRef.current?.focus();
-  }, [inventory.isLoading, restoreAutomationId]);
+    if (presentationReady && restoreAutomationId !== undefined) restoreRowRef.current?.focus();
+  }, [presentationReady, restoreAutomationId]);
   useEffect(() => {
-    if (detail !== undefined || automationId !== undefined || inventory.isLoading || firstVisibleAutomation === undefined || typeof window.matchMedia !== "function") return;
+    if (!presentationReady || typeof window.matchMedia !== "function") return;
     const splitViewport = window.matchMedia("(min-width: 841px)");
-    const openFirstVisible = () => {
-      if (!splitViewport.matches) return;
-      navigate(
-        `/projects/${encodeURIComponent(slug)}/automations/${encodeURIComponent(firstVisibleAutomation.item.automation.id)}${detailSearchSuffix}`,
-        { replace: true },
-      );
+    const synchronizeSelection = () => {
+      if (splitViewport.matches) {
+        if (firstVisibleAutomation !== undefined && !selectedIsVisible) {
+          navigate(
+            `/projects/${encodeURIComponent(slug)}/automations/${encodeURIComponent(firstVisibleAutomation.item.automation.id)}${detailSearchSuffix}`,
+            { replace: true },
+          );
+        } else if (firstVisibleAutomation === undefined && automationId !== undefined) {
+          navigate(inventoryHref, { replace: true });
+        }
+        return;
+      }
+      if (automationId !== undefined && !selectedIsVisible) navigate(inventoryHref, { replace: true });
     };
-    openFirstVisible();
-    splitViewport.addEventListener("change", openFirstVisible);
-    return () => splitViewport.removeEventListener("change", openFirstVisible);
-  }, [automationId, detail, detailSearchSuffix, firstVisibleAutomation, inventory.isLoading, navigate, slug]);
+    synchronizeSelection();
+    splitViewport.addEventListener("change", synchronizeSelection);
+    return () => splitViewport.removeEventListener("change", synchronizeSelection);
+  }, [automationId, detailSearchSuffix, firstVisibleAutomation, inventoryHref, navigate, presentationReady, selectedIsVisible, slug]);
   const setQuery = (value: string) => {
     const next = new URLSearchParams(searchParams);
     if (value) next.set("q", value); else next.delete("q");
@@ -168,20 +215,27 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
     if (value === "all") next.delete("status"); else next.set("status", value);
     setSearchParams(next, { replace: true });
   };
+  const recoverFilters = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("q");
+    next.delete("status");
+    setSearchParams(next, { replace: true });
+    requestAnimationFrame(() => filterInputRef.current?.focus());
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-bg-base" aria-label="Schedules workspace">
       <header className="flex min-h-[58px] shrink-0 items-center gap-2 border-b border-border-default bg-bg-surface py-2.5 pl-[66px] pr-3 min-[981px]:px-[18px]">
         <div className="min-w-0">
           <p className="text-[9px] font-semibold uppercase leading-3 tracking-[0.08em] text-text-tertiary">Operations</p>
-          <h1 className="mt-px text-[17px] font-semibold leading-5 tracking-[-0.025em] text-text-primary">Schedules <span className="ml-1 inline-flex min-h-[19px] items-center rounded-full bg-bg-muted px-2 align-middle text-[10px] font-semibold tabular-nums text-text-secondary">{inventory.data?.length ?? 0}</span></h1>
+          <h1 className="mt-px text-[17px] font-semibold leading-5 tracking-[-0.025em] text-text-primary">Schedules <span className="ml-1 inline-flex min-h-[19px] items-center rounded-full bg-bg-muted px-2 align-middle text-[10px] font-semibold tabular-nums text-text-secondary">{inventory.isSuccess ? inventory.data.length : "—"}</span></h1>
         </div>
       </header>
       <div className="grid shrink-0 grid-cols-1 gap-2 border-b border-border-default bg-bg-base px-3 pb-[14px] pt-[18px] min-[721px]:flex min-[721px]:items-center min-[721px]:justify-between min-[721px]:px-5 min-[721px]:pt-7 min-[761px]:gap-[14px]">
         <label className="group flex h-11 w-full max-w-none min-w-0 items-center gap-2 rounded-md border border-border-subtle bg-[color-mix(in_srgb,var(--bg-base)_82%,var(--bg-surface))] py-0 pl-3 pr-1 text-text-tertiary shadow-[inset_0_1px_0_rgb(255_255_255/3%)] transition-[border-color,background-color,box-shadow] duration-[var(--motion-fast)] hover:border-border-default hover:bg-bg-elevated focus-within:border-brand focus-within:bg-bg-elevated focus-within:[box-shadow:var(--focus)] min-[721px]:max-w-[430px] min-[721px]:flex-[0_1_430px] min-[761px]:h-[38px]">
           <Search className="shrink-0 transition-colors duration-[var(--motion-fast)] group-focus-within:text-brand" size={14} aria-hidden="true" />
           <span className="sr-only">Filter Automations</span>
-          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Automations…" autoComplete="off" spellCheck={false} className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-0.5 text-[16px] text-text-primary outline-none placeholder:text-text-tertiary [&::-webkit-search-cancel-button]:appearance-none min-[721px]:text-[12px]" />
+          <input ref={filterInputRef} type="search" aria-label="Filter Automations" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter Automations…" autoComplete="off" spellCheck={false} className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent px-0.5 text-[16px] text-text-primary outline-none placeholder:text-text-tertiary [&::-webkit-search-cancel-button]:appearance-none min-[721px]:text-[12px]" />
           {query ? <button type="button" aria-label="Clear Automation filter" onClick={() => setQuery("")} className="grid h-7 w-7 shrink-0 place-items-center rounded-sm text-text-tertiary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)]"><X size={12} aria-hidden="true" /></button> : null}
         </label>
         <div className="grid grid-cols-1 gap-2 min-[721px]:w-[164px] min-[761px]:flex min-[761px]:w-auto min-[761px]:items-center">
@@ -192,7 +246,7 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
                 type="button"
                 aria-pressed={statusFilter === value}
                 onClick={() => setStatus(value)}
-                className={`inline-flex min-h-11 items-center justify-center rounded-sm px-2.5 text-[11.5px] font-semibold leading-[1.5] tracking-normal text-text-secondary transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[761px]:min-h-[30px] ${statusFilter === value ? "bg-bg-active text-text-primary shadow-sm" : "hover:bg-bg-hover hover:text-text-primary"}`}
+                className={`inline-flex min-h-11 items-center justify-center rounded-sm px-2.5 text-[11.5px] font-semibold leading-[1.5] tracking-normal text-text-secondary transition-colors duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] min-[761px]:min-h-[30px] ${statusFilter === value ? "bg-bg-active text-text-primary shadow-[inset_0_-2px_0_var(--brand)]" : "hover:bg-bg-hover hover:text-text-primary"}`}
               >
                 {value[0].toUpperCase() + value.slice(1)}
               </button>
@@ -208,12 +262,21 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
         </div>
       </div>
       <div className="block min-h-0 flex-1 overflow-auto min-[841px]:mx-auto min-[841px]:mt-[22px] min-[841px]:grid min-[841px]:w-[calc(100%_-_40px)] min-[841px]:max-w-[1420px] min-[841px]:grid-cols-[minmax(0,1fr)_360px] min-[841px]:grid-rows-[max-content_64px] min-[841px]:items-start min-[841px]:gap-x-[22px] min-[841px]:gap-y-0">
-        <section className={`min-h-0 min-w-0 overflow-auto bg-bg-base min-[841px]:overflow-visible ${detail === undefined ? "col-span-2" : "hidden min-[841px]:block"}`} aria-label="Automation list">
+        <section className={`min-h-0 min-w-0 overflow-auto bg-bg-base min-[841px]:overflow-visible ${detailVisible ? "hidden min-[841px]:block" : "col-span-2"}`} aria-label="Automation list">
           <div className="w-full px-3 pb-9 pt-[18px] min-[721px]:px-5 min-[721px]:pb-12 min-[721px]:pt-[22px] min-[841px]:px-0 min-[841px]:pt-0">
-          {inventory.isLoading ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Automations…</p> : null}
+          {!inventory.isSuccess && !inventory.error ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Automations…</p> : null}
           {inventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Automations</p> : null}
-          {!inventory.isLoading && !inventory.error && filtered.length === 0 ? <p className="py-16 text-center text-[13px] text-text-tertiary">{automationInventoryEmptyMessage(inventory.data?.length ?? 0)}</p> : null}
-          {(["needs-you", "scheduled", "paused", "inactive"] as const).map((group) => groups[group].length > 0 ? (
+          {inventory.isSuccess && sessionInventory.error ? <p className="py-10 text-center text-[13px] text-error">Failed to load Session state</p> : null}
+          {inventory.isSuccess && !sessionInventory.error && !presentationReady ? <p className="py-10 text-center text-[13px] text-text-tertiary">Loading Automation state…</p> : null}
+          {presentationReady && filtered.length === 0 ? (
+            <AutomationInventoryEmptyState
+              onRecover={recoverFilters}
+              query={query}
+              status={statusFilter}
+              totalCount={inventory.data?.length ?? 0}
+            />
+          ) : null}
+          {presentationReady ? (["needs-you", "scheduled", "paused", "inactive"] as const).map((group) => groups[group].length > 0 ? (
             <AutomationGroup
               detailSearch={detailSearchSuffix}
               group={group}
@@ -224,14 +287,42 @@ export function AutomationsRoute({ detail }: { detail?: ReactNode } = {}) {
               selectedAutomationId={automationId}
               slug={slug}
             />
-          ) : null)}
+          ) : null) : null}
           </div>
         </section>
-        {detail !== undefined ? <section className="min-h-0 min-w-0 overflow-visible bg-bg-surface min-[841px]:overflow-hidden min-[841px]:rounded-[10px] min-[841px]:border min-[841px]:border-border-default" aria-label="Selected Automation detail">{detail}</section> : null}
+        {detailVisible ? <section className="min-h-0 min-w-0 overflow-visible bg-bg-surface min-[841px]:overflow-hidden min-[841px]:rounded-[10px] min-[841px]:border min-[841px]:border-border-default" aria-label="Selected Automation detail">{detail}</section> : null}
         <div aria-hidden="true" className="hidden min-[841px]:col-span-2 min-[841px]:block min-[841px]:h-16" />
       </div>
       <EditAutomationDialog open={creating} onClose={() => setCreating(false)} slug={slug} />
     </div>
+  );
+}
+
+function AutomationInventoryEmptyState({ totalCount, query, status, onRecover }: {
+  totalCount: number;
+  query: string;
+  status: AutomationStatusFilter;
+  onRecover: () => void;
+}) {
+  const presentation = presentAutomationInventoryEmptyState(totalCount, query, status);
+  if (totalCount === 0) {
+    return (
+      <section className="flex min-h-[220px] flex-col items-start justify-center border-y border-border-subtle px-2 py-[42px] text-left">
+        <strong className="text-[12px] font-semibold text-text-secondary">{presentation.title}</strong>
+        <p className="mt-[3px] max-w-[52ch] text-[12px] leading-[1.6] text-text-tertiary">{presentation.detail}</p>
+      </section>
+    );
+  }
+  return (
+    <section className="my-[18px] flex min-h-[74px] items-center justify-between gap-[18px] border-y border-border-subtle px-0.5 py-3.5 text-left">
+      <span className="min-w-0 text-[12px] leading-[1.55] text-text-tertiary" role="status" aria-live="polite">
+        <strong className="mb-[3px] block font-semibold text-text-secondary">{presentation.title}</strong>
+        {presentation.detail}
+      </span>
+      <button type="button" onClick={onRecover} className="inline-flex min-h-[34px] shrink-0 items-center justify-center rounded-md border border-border-default bg-transparent px-[11px] text-[11.5px] font-semibold text-text-secondary hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] [@media(pointer:coarse)]:min-h-11">
+        {presentation.recoveryLabel}
+      </button>
+    </section>
   );
 }
 
@@ -248,7 +339,7 @@ function AutomationGroup({ detailSearch, group, items, restoreAutomationId, rest
   return (
     <section className="[&+section]:mt-[26px]" aria-labelledby={`automations-${group}`}>
       <header className="flex min-h-[29px] items-baseline justify-between gap-3 px-[7px] pb-2">
-        <h2 id={`automations-${group}`} className="text-[11px] font-bold uppercase tracking-[0.06em] text-text-primary">{label}</h2>
+        <h2 id={`automations-${group}`} className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.06em] text-text-primary"><span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${group === "needs-you" ? "bg-warning" : "bg-text-tertiary"}`} />{label}</h2>
         <span className="text-[10.5px] tabular-nums text-text-tertiary">{items.length}</span>
       </header>
       <div className="border-t border-border-default">
@@ -268,14 +359,14 @@ function AutomationGroup({ detailSearch, group, items, restoreAutomationId, rest
               ref={automation.id === restoreAutomationId ? restoreRowRef : undefined}
               state={{ focusAutomationDetail: true }}
               to={`/projects/${slug}/automations/${automation.id}${detailSearch}`}
-              className={`workbench-row-lift grid min-h-[72px] grid-cols-[27px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border-subtle px-2 py-2.5 text-left text-text-secondary transition-[background-color,color,transform,box-shadow] duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand min-[721px]:min-h-[66px] min-[721px]:grid-cols-[30px_minmax(0,1fr)_auto_14px] ${selected ? "my-[5px] !px-2.5 rounded-lg border border-brand/25 bg-selection-field shadow-[inset_2px_0_0_var(--brand)]" : ""}`}
+              className={`workbench-row-lift grid min-h-[72px] grid-cols-[27px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border-subtle px-2 py-2.5 text-left text-text-secondary transition-[background-color,color,transform,box-shadow] duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand min-[721px]:min-h-[66px] min-[721px]:grid-cols-[30px_minmax(0,1fr)_auto_14px] ${selected ? "bg-selection-field shadow-[inset_2px_0_0_var(--brand)]" : ""}`}
             >
               <AutomationStatusOrbit group={presentation.group} orbit={presentation.orbit} />
               <span className="min-w-0">
-                <span className="block truncate text-[13px] font-semibold leading-[1.35] text-text-primary">{automation.name}</span>
-                <span className="mt-[3px] block truncate text-[10.5px] leading-[1.35] text-text-tertiary">{presentation.context}</span>
+                <span className="block truncate text-[13.5px] font-semibold leading-[1.35] text-text-primary">{automation.name}</span>
+                <span className="mt-1 block truncate text-[11.5px] leading-[1.35] text-text-tertiary">{presentation.context}</span>
               </span>
-              <span className={`inline-flex min-h-[23px] shrink-0 items-center whitespace-nowrap rounded-[5px] border px-2 text-[9.5px] font-semibold ${automationStatusLabelClass(presentation.tone)} ${signalTone}`}>{presentation.rowSignal}</span>
+              <span className={`inline-flex min-h-[23px] shrink-0 items-center whitespace-nowrap rounded-[5px] border px-2 text-[10.5px] font-semibold ${automationStatusLabelClass(presentation.tone)} ${signalTone}`}>{presentation.rowSignal}</span>
               <ChevronRight size={13} className="hidden text-text-tertiary min-[721px]:block" aria-hidden="true" />
             </Link>
           );

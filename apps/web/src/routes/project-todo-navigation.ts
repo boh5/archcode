@@ -6,6 +6,7 @@ import type {
   SessionFamilyActivity,
 } from "@archcode/protocol";
 import type { ProjectTodoOperationalState } from "./project-todo-presentation";
+import { sessionInventoryIsActive } from "../lib/session-family-presentation";
 import {
   deriveProjectTodoNeedsUser,
   deriveProjectTodoOperationalState,
@@ -81,6 +82,11 @@ export function deriveProjectTodoNavigationProjection(
     facts.automationsState,
     facts.runtimeState,
   ]);
+  const runsDependencies = combineDependencyStates([
+    facts.sessionsState,
+    facts.hitlState,
+    facts.runtimeState,
+  ]);
   const selectedSession = facts.selectedSessionId === undefined
     ? undefined
     : facts.sessions.find(({ session }) => session.sessionId === facts.selectedSessionId)?.session;
@@ -115,6 +121,13 @@ export function deriveProjectTodoNavigationProjection(
     ? facts.todos.filter((todo) => deriveProjectTodoNeedsUser(todo, facts.sessions, facts.attentionBySessionId))
     : [];
   const needsYouIds = new Set(needsYouTodos.map((todo) => todo.id));
+  const activeSessionCount = runsDependencies === "ready"
+    ? facts.sessions.filter((item) => sessionInventoryIsActive(
+      item,
+      facts.activityBySessionId.get(item.session.sessionId),
+      facts.attentionBySessionId.has(item.session.sessionId),
+    )).length
+    : undefined;
   const selectedTodoUsesWorkSurface = facts.selectedTodoId !== undefined
     && facts.pathname === `/projects/${encodeURIComponent(facts.slug)}/todos/${encodeURIComponent(facts.selectedTodoId)}/work`;
   const row = (todo: ProjectTodo, group: "needs" | "lifecycle"): ProjectTodoNavigationRow => ({
@@ -133,7 +146,9 @@ export function deriveProjectTodoNavigationProjection(
     allTodos: {
       state: facts.todosState,
       current: isTodoInventory,
-      ...(facts.todosState === "ready" ? { count: facts.todos.length } : {}),
+      ...(facts.todosState === "ready" ? {
+        count: facts.todos.filter((todo) => todo.archivedAt === undefined && todo.status !== "rejected").length,
+      } : {}),
     },
     needsYou: {
       state: needsYouDependencies,
@@ -151,9 +166,9 @@ export function deriveProjectTodoNavigationProjection(
       row,
     ),
     runs: {
-      state: facts.sessionsState,
+      state: runsDependencies,
       current: runsCurrent,
-      ...(facts.sessionsState === "ready" ? { count: facts.sessions.length } : {}),
+      ...(activeSessionCount === undefined ? {} : { count: activeSessionCount }),
     },
     schedules: {
       state: facts.automationsState,

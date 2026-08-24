@@ -47,7 +47,7 @@ import { RelativeTime, useElapsedTime } from "../primitives/TemporalText";
 import { AttachmentChip } from "../primitives/AttachmentChip";
 import { CompressionBlock } from "./CompressionBlock";
 import { DelegationCard } from "./DelegationCard";
-import { ReasoningBlock, ReasoningUsageSummary } from "./ReasoningBlock";
+import { ReasoningBlock } from "./ReasoningBlock";
 import { RecoveryNotice } from "./RecoveryNotice";
 import { ToolCard } from "./ToolCard";
 import { ToolRunCard } from "./ToolRunCard";
@@ -203,6 +203,10 @@ function selectionLabel(selection: {
     : selection.model;
 }
 
+function isDisplayablePart(part: SessionPart): boolean {
+  return part.type !== "reasoning" || part.text.trim().length > 0;
+}
+
 export function MsgUser({
   message,
   parts = message.parts,
@@ -219,13 +223,16 @@ export function MsgUser({
   onInspectModelAudit?: (messageId: string) => void;
 }) {
   const modelChanged = message.modelAudit?.reason === "config_invalidated";
+  const displayableParts = parts.filter(isDisplayablePart);
+
+  if (displayableParts.length === 0) return null;
 
   return (
     <div
       className="flex w-full min-w-0 flex-col"
       data-message-kind="canonical-user"
     >
-      {parts.map((part) => {
+      {displayableParts.map((part) => {
         if (part.type === "text") {
           return (
             <div
@@ -234,7 +241,7 @@ export function MsgUser({
               data-user-message-row=""
             >
               <div
-                className="min-w-0 max-w-[640px] whitespace-pre-wrap break-words rounded-[10px] border-0 bg-[color-mix(in_srgb,var(--bg-muted)_84%,var(--bg-base))] px-[17px] py-[15px] text-[15px] leading-6 text-text-primary"
+                className="min-w-0 max-w-[640px] whitespace-pre-wrap break-words rounded-[10px] border border-border-subtle bg-[color-mix(in_srgb,var(--bg-muted)_84%,var(--bg-base))] px-[17px] py-[15px] text-[15px] leading-6 text-text-primary shadow-[inset_0_1px_0_color-mix(in_srgb,var(--bg-base)_72%,transparent)]"
                 data-user-message-surface=""
               >
                 {part.text}
@@ -372,6 +379,7 @@ export function PartRenderer({
       );
     }
     case "reasoning": {
+      if (part.text.trim().length === 0) return null;
       const interrupted =
         (part.meta as Record<string, unknown> | undefined)?.interrupted ===
         true;
@@ -426,10 +434,13 @@ function MsgAgent({
   focusStoreSessionId: string;
   childSessionLinks: readonly ToolChildSessionLink[];
 }) {
+  const displayableParts = parts.filter(isDisplayablePart);
+  if (displayableParts.length === 0) return null;
+
   return (
     <div className="w-full min-w-0" data-message-kind="agent">
       <div className="msg-parts">
-        {parts.map((entry) => {
+        {displayableParts.map((entry) => {
           const partKind = entry.type === "tool" ? "tool" : "content";
           return (
             <div
@@ -514,6 +525,15 @@ function currentExecutionActivity(
     : `${latestActiveTool.toolName} ${summary.primary}`;
 }
 
+function settledSegmentToolCallCount(segment: ExecutionWorkstreamSegment): number {
+  return segment.workItems.reduce((count, item) => {
+    if (item.kind !== "message") return count;
+    return count + item.parts.filter((part) => (
+      part.type === "tool" && (part.state === "completed" || part.state === "error")
+    )).length;
+  }, 0);
+}
+
 function FinalAgentResponse({
   message,
   outputParts,
@@ -586,6 +606,10 @@ function WorkDisclosure({
       : current && execution.record.status === "suspended"
         ? `Paused · Worked for ${duration}`
         : `Worked for ${duration}`;
+  const settledToolCount = active ? 0 : settledSegmentToolCallCount(segment);
+  const settledToolLabel = settledToolCount === 0
+    ? undefined
+    : `${settledToolCount} ${settledToolCount === 1 ? "tool" : "tools"}`;
   const accessibleState =
     active ? "running" : current && execution.record.status === "suspended"
       ? "paused"
@@ -594,6 +618,7 @@ function WorkDisclosure({
     "Work segment",
     accessibleState,
     `worked for ${duration}`,
+    settledToolLabel,
     currentActivity,
   ]
     .filter(Boolean)
@@ -632,6 +657,9 @@ function WorkDisclosure({
         )}
         <strong className="shrink-0 text-[13px] font-semibold leading-5 text-inherit">
           <span className="tabular-nums">{primaryLabel}</span>
+          {settledToolLabel && (
+            <span className="tabular-nums [@media(max-width:560px)]:hidden"> · {settledToolLabel}</span>
+          )}
         </strong>
         {currentActivity && (
           <span className="min-w-0 truncate text-[12px] leading-4 text-text-tertiary">
@@ -669,7 +697,7 @@ function WorkDisclosure({
                 />
               </div>
             ) : entry.kind === "reasoning-usage" ? (
-              <ReasoningUsageSummary key={entry.id} tokens={entry.tokens} />
+              null
             ) : (
               <SessionMessageView
                 key={entry.id}

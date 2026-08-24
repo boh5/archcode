@@ -66,7 +66,7 @@ function composerStatus(
   terminalFailed: boolean,
 ): { label: string; kind: VisualStatusKind; tone?: StatusTone } {
   if (activity === undefined) return { label: "Connecting", kind: "running", tone: "neutral" };
-  if (!hitlReady) return { label: "Syncing", kind: "running", tone: "info" };
+  if (!hitlReady) return { label: "Syncing", kind: "running", tone: "neutral" };
   if (activity === "stopping") return { label: "Stopping", kind: "running", tone: "warning" };
   if (hasPendingHitl) return { label: "Needs you", kind: "needs_you" };
   if (activity === "running" || activity === "resuming") {
@@ -381,6 +381,7 @@ export function ChatInput({
   }, [modelSelection.revision, patchModelSelection, sessionId, slug]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (showSlashMenu && event.key === "Escape") {
       event.preventDefault();
       setShowSlashMenu(false);
@@ -399,7 +400,7 @@ export function ChatInput({
         setSlashActiveIndex((index) => nextSlashIndex(index, 1, slashOptionCount, filteredSkills, selectingSkill));
         return;
       }
-      if ((event.key === "Enter" || event.key === "Tab") && !event.nativeEvent.isComposing) {
+      if ((event.key === "Enter" || event.key === "Tab") && !composing) {
         const selectedSkill = skillUseInput === null ? undefined : filteredSkills[slashActiveIndex];
         if (selectedSkill !== undefined && !skillIsSelectable(selectedSkill)) {
           if (event.key === "Enter") event.preventDefault();
@@ -413,7 +414,14 @@ export function ChatInput({
       }
     }
 
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (
+      event.key === "Enter"
+      && !event.shiftKey
+      && !event.altKey
+      && !event.ctrlKey
+      && !event.metaKey
+      && !composing
+    ) {
       event.preventDefault();
       sendMessage();
       return;
@@ -489,7 +497,7 @@ export function ChatInput({
           id="composer-slash-menu"
           role={slashOptionCount === 0 ? "group" : "listbox"}
           aria-label={skillUseInput === null ? "Slash commands" : "Skills"}
-          className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20 max-h-[200px] overflow-y-auto rounded-lg border border-border-default bg-bg-overlay p-1 shadow-md"
+          className="absolute bottom-[calc(100%+8px)] left-0 right-0 z-20 max-h-[200px] overflow-y-auto rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay p-1 shadow-[var(--elevation-popover)]"
           data-testid="composer-slash-menu"
         >
           {skillUseInput !== null && skillInventoryState === "loading" && <p role="status" className="px-3 py-2 text-[12px] text-text-tertiary">Loading Skills…</p>}

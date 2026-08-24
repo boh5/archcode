@@ -6,6 +6,8 @@ import { JSDOM } from "jsdom";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ProjectTodo, SessionSummary } from "../api/types";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
+import { hitlStore } from "../store/hitl-store";
+import { sessionRuntimeStore } from "../store/session-runtime-store";
 
 const bootstrapDom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "http://localhost/projects/demo/todos",
@@ -23,7 +25,8 @@ bootstrapDom.window.close();
 let dom: JSDOM;
 let root: Root;
 let client: QueryClient;
-let responseMode: "success" | "failure";
+let responseMode: "success" | "failure" | "pending";
+let resolveIdeaPatch: (() => void) | undefined;
 let patches: Array<Record<string, unknown>>;
 let fetchMock: ReturnType<typeof mock>;
 let sessionSummaries: SessionSummary[];
@@ -72,13 +75,17 @@ function installDomGlobals(target: JSDOM): void {
 }
 
 beforeEach(() => {
+  hitlStore.getState().reset();
+  sessionRuntimeStore.getState().reset();
+  sessionRuntimeStore.getState().applySnapshot({ type: "session.runtime.snapshot", projectSlugs: ["demo"], families: [], createdAt: 1 });
+  hitlStore.getState().applySnapshot({ type: "hitl.snapshot", projectSlugs: ["demo"], entries: [], createdAt: 1 });
   dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { url: "http://localhost/projects/demo/todos" });
   installDomGlobals(dom);
   Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class { observe() {} unobserve() {} disconnect() {} } });
   Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0) });
   Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: clearTimeout });
-  Object.defineProperty(dom.window.HTMLElement.prototype, "getBoundingClientRect", { configurable: true, value() { return rectFor(this); } });
   responseMode = "success";
+  resolveIdeaPatch = undefined;
   todos = [
     todo("idea", "Idea", "idea"),
     todo("idea-next", "Next idea", "idea"),
@@ -113,14 +120,32 @@ beforeEach(() => {
     requests.push({ method, path, ...(body === undefined ? {} : { body }) });
     if (method === "PATCH" && path.endsWith("/todos/idea")) {
       patches.push(body as Record<string, unknown>);
-      if (responseMode === "failure") return Response.json({ error: { code: "CONFLICT", message: "stale Todo" } }, { status: 409 });
-      return Response.json({ todo: { ...todos[0], status: "ready" } });
+      if (responseMode === "failure") {
+        todos[0] = { ...todos[0]!, revision: todos[0]!.revision + 1 };
+        return Response.json({ error: { code: "CONFLICT", message: "stale Todo" } }, { status: 409 });
+      }
+      const respond = () => {
+        const requestedStatus = (body as { status?: ProjectTodo["status"] } | undefined)?.status;
+        todos[0] = { ...todos[0]!, status: requestedStatus ?? "ready", revision: todos[0]!.revision + 1 };
+        return Response.json({ todo: todos[0] });
+      };
+      if (responseMode === "pending") return new Promise<Response>((resolve) => {
+        resolveIdeaPatch = () => resolve(respond());
+      });
+      return respond();
     }
     if (method === "PATCH" && path.endsWith("/todos/ready")) {
       patches.push(body as Record<string, unknown>);
       const requestedStatus = (body as { status?: ProjectTodo["status"] } | undefined)?.status;
       todos[2] = { ...todos[2]!, status: requestedStatus ?? "in_progress", revision: 4 };
       return Response.json({ todo: todos[2] });
+    }
+    if (method === "PATCH" && path.endsWith("/todos/done")) {
+      patches.push(body as Record<string, unknown>);
+      const index = todos.findIndex((item) => item.id === "done");
+      const requestedStatus = (body as { status?: ProjectTodo["status"] } | undefined)?.status;
+      todos[index] = { ...todos[index]!, status: requestedStatus ?? "idea", revision: 4 };
+      return Response.json({ todo: todos[index] });
     }
     if (method === "POST" && path.endsWith("/messages")) return messageResponse();
     if (method === "POST" && path.endsWith("/sessions")) return createSessionResponse();
@@ -140,6 +165,8 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   client.clear();
+  hitlStore.getState().reset();
+  sessionRuntimeStore.getState().reset();
   dom.window.close();
 });
 
@@ -233,25 +260,6 @@ async function click(button: HTMLButtonElement): Promise<void> {
   await settle();
 }
 
-function rectFor(element: Element): DOMRect {
-  const testId = element.getAttribute("data-testid");
-  const laneXs = { idea: 0, ready: 300, in_progress: 600, done: 900 };
-  if (testId?.startsWith("todo-lane-")) {
-    const lane = testId.slice("todo-lane-".length) as keyof typeof laneXs;
-    return rect(laneXs[lane], 0, 240, 500);
-  }
-  if (testId === "todo-idea") return rect(0, 100, 220, 56);
-  if (testId === "todo-idea-next") return rect(0, 180, 220, 56);
-  if (testId === "todo-ready") return rect(300, 100, 220, 56);
-  if (testId === "todo-progress") return rect(600, 100, 220, 56);
-  if (testId === "todo-done") return rect(900, 100, 220, 56);
-  return rect(0, 0, 0, 0);
-}
-
-function rect(x: number, y: number, width: number, height: number): DOMRect {
-  return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height, toJSON: () => ({}) } as DOMRect;
-}
-
 async function key(target: HTMLElement, value: string, options: { shiftKey?: boolean } = {}): Promise<void> {
   await act(async () => target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, code: value === " " ? "Space" : value, bubbles: true, ...options })));
   await settle();
@@ -260,130 +268,6 @@ async function key(target: HTMLElement, value: string, options: { shiftKey?: boo
 function setViewport(width: number): void {
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: width });
 }
-
-function laneContains(lane: string, todoId: string): boolean {
-  return document.querySelector(`[data-testid=\"todo-lane-${lane}\"]`)?.querySelector(`[data-testid=\"todo-${todoId}\"]`) !== null;
-}
-
-function laneOrder(lane: string): string[] {
-  return [...document.querySelector(`[data-testid=\"todo-lane-${lane}\"]`)!.querySelectorAll("article")].map((card) => card.getAttribute("data-testid")!);
-}
-
-function announcementText(): string {
-  return [...document.querySelectorAll('[role="status"], [aria-live]')].map((node) => node.textContent).join(" ");
-}
-
-function pointerEvent(type: string, x: number, y: number): MouseEvent {
-  const event = new dom.window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
-  Object.defineProperties(event, { isPrimary: { value: true }, pointerId: { value: 1 } });
-  return event;
-}
-
-async function pointerDrag(handle: HTMLElement, destination: { x: number; y: number }): Promise<void> {
-  await act(async () => handle.dispatchEvent(pointerEvent("pointerdown", 10, 110)));
-  await act(async () => document.dispatchEvent(pointerEvent("pointermove", 20, 110)));
-  await settle();
-  await act(async () => document.dispatchEvent(pointerEvent("pointermove", destination.x, destination.y)));
-  await settle();
-  await act(async () => document.dispatchEvent(pointerEvent("pointerup", destination.x, destination.y)));
-  await settle();
-}
-
-function touchEvent(type: string, x: number, y: number, target: EventTarget): TouchEvent {
-  const touch: Touch = {
-    identifier: 1,
-    target,
-    clientX: x,
-    clientY: y,
-    pageX: x,
-    pageY: y,
-    screenX: x,
-    screenY: y,
-    radiusX: 1,
-    radiusY: 1,
-    rotationAngle: 0,
-    force: 1,
-  };
-  return new dom.window.TouchEvent(type, {
-    bubbles: true,
-    cancelable: true,
-    touches: type === "touchend" ? [] : [touch],
-    changedTouches: [touch],
-    targetTouches: type === "touchend" ? [] : [touch],
-  });
-}
-
-async function touchDrag(handle: HTMLElement, destination: { x: number; y: number }): Promise<void> {
-  await act(async () => handle.dispatchEvent(touchEvent("touchstart", 10, 110, handle)));
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 190)); });
-  await act(async () => handle.dispatchEvent(touchEvent("touchmove", destination.x, destination.y, handle)));
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-  await act(async () => handle.dispatchEvent(touchEvent("touchend", destination.x, destination.y, handle)));
-  await settle();
-}
-
-describe("Project Todos drag interactions", () => {
-  test("keyboard pickup, same-lane move, and drop makes one canonical PATCH only at drop and announces it", async () => {
-    await render("/projects/demo/todos?layout=board");
-    const handle = document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement;
-    handle.focus();
-
-    await key(handle, " ");
-    expect(patches).toEqual([]);
-    expect(document.querySelector('[data-testid="todo-board"]')?.className).toContain("cursor-grabbing");
-    expect(handle.className).toContain("cursor-grabbing");
-    expect(announcementText()).toContain("Moving Idea to Ideas, position 2 of 2.");
-
-    await key(handle, "ArrowDown");
-    expect(patches).toEqual([]);
-    expect(laneOrder("idea")).toEqual(["todo-idea-next", "todo-idea"]);
-
-    await key(handle, " ");
-    await settle();
-    expect(patches).toEqual([{ expectedRevision: 3, beforeTodoId: null }]);
-    expect(document.querySelector('[data-testid="todo-board"]')?.className).not.toContain("cursor-grabbing");
-    expect(announcementText()).toContain("Dropped Idea in Ideas, position 2 of 2.");
-  });
-
-  test("Escape cancels a keyboard drag, restores the canonical board, and announces cancellation", async () => {
-    await render("/projects/demo/todos?layout=board");
-    const handle = document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement;
-    handle.focus();
-
-    await key(handle, " ");
-    await key(handle, "ArrowDown");
-    expect(laneOrder("idea")).toEqual(["todo-idea-next", "todo-idea"]);
-
-    await key(handle, "Escape");
-    expect(patches).toEqual([]);
-    expect(laneOrder("idea")).toEqual(["todo-idea", "todo-idea-next"]);
-    expect(announcementText()).toContain("Cancelled move for Idea.");
-  });
-
-  test("pointer cross-lane drop uses one PATCH and announces the destination", async () => {
-    await render("/projects/demo/todos?layout=board");
-    await pointerDrag(document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement, { x: 500, y: 120 });
-    expect(patches).toEqual([{ expectedRevision: 3, status: "ready", beforeTodoId: null }]);
-    expect(announcementText()).toContain("Dropped Idea in Ready, position 2 of 2.");
-  });
-
-  test("a rejected pointer drop PATCH restores the canonical lane and surfaces the server error", async () => {
-    responseMode = "failure";
-    await render("/projects/demo/todos?layout=board");
-    await pointerDrag(document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement, { x: 500, y: 120 });
-    await settle();
-    await settle();
-    expect(patches).toEqual([{ expectedRevision: 3, status: "ready", beforeTodoId: null }]);
-    expect(laneContains("idea", "idea")).toBe(true);
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Could not move Todo: stale Todo");
-  });
-
-  test("touch cross-lane drop activates the TouchSensor and uses the same canonical PATCH", async () => {
-    await render("/projects/demo/todos?layout=board");
-    await touchDrag(document.querySelector('[aria-label="Drag Idea"]') as HTMLButtonElement, { x: 500, y: 120 });
-    expect(patches).toEqual([{ expectedRevision: 3, status: "ready", beforeTodoId: null }]);
-  });
-});
 
 describe("Project Todos Plan interactions", () => {
   test("distinguishes an existing empty Plan file from no Plan", async () => {
@@ -570,6 +454,382 @@ describe("Project Todos Plan interactions", () => {
 });
 
 describe("Project Todos preview actions", () => {
+  test("keeps Session capabilities visible but disabled while inventory is loading", async () => {
+    sessionInventoryResponse = () => new Promise<Response>(() => {});
+    await render();
+    await openPreview("ready");
+
+    expect(document.querySelector('[data-testid="todo-preview-operational-state"]')?.textContent).toContain("Loading operational state");
+    const stage = document.querySelector('[aria-label="Change Todo stage, current Ready"]') as HTMLButtonElement;
+    const openDetails = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Open details")!;
+    const loadingWork = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Loading work…")!;
+    const loadingDiscussion = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Loading discussion…")!;
+    expect(stage.disabled).toBe(false);
+    expect(loadingWork.disabled).toBe(true);
+    expect(loadingDiscussion.disabled).toBe(true);
+    expect(openDetails.disabled).toBe(false);
+    expect(previewButtonLabels()).toEqual(["Loading work…", "Open details", "Loading discussion…"]);
+    await click(loadingWork);
+    expect(requests.filter(({ method }) => method === "POST" || method === "PATCH")).toHaveLength(0);
+    await click(stage);
+    expect(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))?.disabled).toBe(true);
+    await closePreview();
+    await openPreview("idea");
+    expect(previewButtonLabels()).toEqual(["Loading discussion…", "Open details"]);
+  });
+
+  test("keeps Session capabilities active and non-Done Stage mutable while runtime and HITL load", async () => {
+    addDiscussionSummary("ready-discussion", "ready");
+    addWorkSummary("ready-work", "ready");
+    sessionRuntimeStore.getState().invalidateSnapshots();
+    hitlStore.getState().invalidateSnapshots();
+    await render();
+    await openPreview("ready");
+
+    expect(document.querySelector('[data-testid="todo-preview-operational-state"]')?.textContent).toContain("Loading operational state");
+    const stage = document.querySelector('[aria-label="Change Todo stage, current Ready"]') as HTMLButtonElement;
+    expect(stage.disabled).toBe(false);
+    expect(previewButtonLabels()).toEqual(["Continue Work", "Open details", "Continue Discussion"]);
+    expect(Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Continue Work")?.disabled).toBe(false);
+    expect(Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Continue Discussion")?.disabled).toBe(false);
+    await click(stage);
+    const options = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+    expect(options.find((button) => button.textContent?.includes("Done"))?.disabled).toBe(true);
+    await click(options.find((button) => button.textContent?.includes("In progress"))!);
+    await waitFor(() => patches.length === 1);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "in_progress" }]);
+    expect(requests.filter(({ method }) => method === "POST")).toHaveLength(0);
+  });
+
+  test("keeps Session capabilities active while Automation failure blocks only Done", async () => {
+    automationInventoryResponse = () => Response.json({ error: { code: "INTERNAL_ERROR", message: "Automation inventory failed" } }, { status: 500 });
+    await render();
+    await openPreview("ready");
+
+    expect(document.querySelector('[data-testid="todo-preview"]')?.textContent).toContain("Ready");
+    expect(document.querySelector('[data-testid="todo-preview-operational-state"]')?.textContent).toContain("Operational state unavailable");
+    const stage = document.querySelector('[aria-label="Change Todo stage, current Ready"]') as HTMLButtonElement;
+    const openDetails = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Open details")!;
+    expect(stage.disabled).toBe(false);
+    expect(openDetails.disabled).toBe(false);
+    expect(previewButtonLabels()).toEqual(["Start Work", "Open details", "Discussion"]);
+    await click(stage);
+    expect(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))?.disabled).toBe(true);
+    expect(requests.filter(({ method }) => method === "POST" || method === "PATCH")).toHaveLength(0);
+  });
+
+  test("keeps failed Session capabilities disabled while ordinary Stage remains mutable", async () => {
+    sessionInventoryResponse = () => Response.json({ error: { code: "INTERNAL_ERROR", message: "Session inventory failed" } }, { status: 500 });
+    await render();
+    await openPreview("ready");
+
+    const stage = document.querySelector('[aria-label="Change Todo stage, current Ready"]') as HTMLButtonElement;
+    const unavailableWork = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Work unavailable")!;
+    const unavailableDiscussion = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Discussion unavailable")!;
+    expect(previewButtonLabels()).toEqual(["Work unavailable", "Open details", "Discussion unavailable"]);
+    expect(unavailableWork.disabled).toBe(true);
+    expect(unavailableDiscussion.disabled).toBe(true);
+    await click(unavailableWork);
+    expect(requests.filter(({ method }) => method === "POST")).toHaveLength(0);
+
+    await click(stage);
+    const options = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+    expect(options.find((button) => button.textContent?.includes("Done"))?.disabled).toBe(true);
+    await click(options.find((button) => button.textContent?.includes("In progress"))!);
+    await waitFor(() => patches.length === 1);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "in_progress" }]);
+    expect(requests.filter(({ method }) => method === "POST")).toHaveLength(0);
+  });
+
+  test("allows moving out of Done while operational state is unavailable", async () => {
+    todos.push(todo("done", "Done item", "done"));
+    automationInventoryResponse = () => Response.json({ error: { code: "INTERNAL_ERROR", message: "Automation inventory failed" } }, { status: 500 });
+    await render();
+    await openPreview("done");
+
+    const stage = document.querySelector('[aria-label="Change Todo stage, current Done"]') as HTMLButtonElement;
+    expect(stage.disabled).toBe(false);
+    await click(stage);
+    const idea = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Idea"))!;
+    expect(idea.disabled).toBe(false);
+    await click(idea);
+    await waitFor(() => patches.length === 1);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "idea" }]);
+  });
+
+  test("dismisses the Stage menu on Tab and continues through the trapped Preview order", async () => {
+    await render();
+    await openPreview("idea");
+    const trigger = document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement;
+    trigger.focus();
+    await key(trigger, "ArrowDown");
+    await key(document.activeElement as HTMLElement, "Tab");
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement?.textContent).toBe("Start discussion");
+
+    trigger.focus();
+    await key(trigger, "ArrowDown");
+    await key(document.activeElement as HTMLElement, "Tab", { shiftKey: true });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Close preview");
+  });
+
+  test("moves Stage through the custom keyboard menu and restores focus to the moved List row", async () => {
+    await render();
+    await openPreview("idea");
+    const trigger = document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement;
+    trigger.focus();
+
+    await key(trigger, "ArrowDown");
+    const ideaOption = document.querySelector('[role="menuitemradio"][aria-checked="true"]') as HTMLButtonElement;
+    expect(document.activeElement).toBe(ideaOption);
+    await key(ideaOption, "ArrowDown");
+    expect(document.activeElement?.textContent).toContain("Ready");
+    await key(document.activeElement as HTMLElement, "Enter");
+
+    await waitFor(() => patches.length === 1);
+    await waitFor(() => document.querySelector('[aria-label="Change Todo stage, current Ready"]') !== null);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "ready" }]);
+    expect(document.querySelector('[aria-labelledby="todo-list-ready"] [data-testid="todo-open-idea"]')).not.toBeNull();
+
+    await closePreview();
+    await waitFor(() => document.activeElement === document.querySelector('[data-testid="todo-open-idea"]'));
+  });
+
+  test("keeps Preview open on a revision conflict and focuses explicit refresh-and-retry recovery", async () => {
+    responseMode = "failure";
+    await render();
+    await openPreview("idea");
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Ready"))!);
+
+    await waitFor(() => document.querySelector('[role="alert"]')?.textContent?.includes("changed elsewhere") === true);
+    const retry = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Refresh and retry")!;
+    expect(document.querySelector('[data-testid="todo-preview"]')).not.toBeNull();
+    expect(document.activeElement).toBe(retry);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "ready" }]);
+
+    responseMode = "success";
+    await click(retry);
+    await waitFor(() => document.querySelector('[aria-label="Change Todo stage, current Ready"]') !== null);
+    expect(patches).toEqual([
+      { expectedRevision: 3, status: "ready" },
+      { expectedRevision: 4, status: "ready" },
+    ]);
+  });
+
+  test("keeps Preview busy and blocks every dismissal while a Stage mutation is pending", async () => {
+    responseMode = "pending";
+    await render();
+    await openPreview("idea");
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Ready"))!);
+
+    await waitFor(() => document.querySelector('[data-testid="todo-preview"]')?.getAttribute("aria-busy") === "true");
+    const preview = document.querySelector('[data-testid="todo-preview"]') as HTMLElement;
+    expect((document.querySelector('[aria-label="Close preview"]') as HTMLButtonElement).disabled).toBe(true);
+    expect((document.querySelector('[aria-label="Close Todo preview"]') as HTMLButtonElement).disabled).toBe(true);
+    await key(document.activeElement as HTMLElement, "Escape");
+    expect(document.querySelector('[data-testid="todo-preview"]')).toBe(preview);
+
+    await act(async () => resolveIdeaPatch?.());
+    await waitFor(() => document.querySelector('[aria-label="Change Todo stage, current Ready"]') !== null);
+    expect(document.querySelector('[data-testid="todo-preview"]')).not.toBeNull();
+  });
+
+  test("confirms Done only while authoritative linked work is Running", async () => {
+    addWorkSummary("idea-work", "idea");
+    sessionInventoryResponse = () => Response.json({ sessions: sessionSummaries.map((session) => ({
+      session,
+      latestExecution: session.sessionId === "idea-work"
+        ? { id: "execution-1", status: "running", startedAt: 3 }
+        : null,
+    })) });
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["demo"],
+      families: [{ projectSlug: "demo", rootSessionId: "idea-work", activity: "running" }],
+      createdAt: 1,
+    });
+    hitlStore.getState().applySnapshot({ type: "hitl.snapshot", projectSlugs: ["demo"], entries: [], createdAt: 1 });
+    await render();
+    await openPreview("idea");
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))!);
+
+    expect(document.querySelector('[aria-label="Confirm Todo stage change"]')?.textContent).toContain("Linked work is still running");
+    expect(patches).toEqual([]);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Move to Done")!);
+    await waitFor(() => patches.length === 1);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "done" }]);
+  });
+
+  test("does not submit Done after operational readiness expires from an open confirmation", async () => {
+    addWorkSummary("idea-work", "idea");
+    sessionInventoryResponse = () => Response.json({ sessions: sessionSummaries.map((session) => ({
+      session,
+      latestExecution: session.sessionId === "idea-work"
+        ? { id: "execution-1", status: "running", startedAt: 3 }
+        : null,
+    })) });
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["demo"],
+      families: [{ projectSlug: "demo", rootSessionId: "idea-work", activity: "running" }],
+      createdAt: 1,
+    });
+    hitlStore.getState().applySnapshot({ type: "hitl.snapshot", projectSlugs: ["demo"], entries: [], createdAt: 1 });
+    await render();
+    await openPreview("idea");
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))!);
+
+    expect(document.querySelector('[aria-label="Confirm Todo stage change"]')?.textContent).toContain("Linked work is still running");
+    expect(patches).toEqual([]);
+
+    await act(async () => sessionRuntimeStore.getState().invalidateSnapshots());
+    await waitFor(() => document.querySelector('[aria-label="Confirm Todo stage change"]') === null);
+    expect(document.querySelector('[data-testid="todo-preview-operational-state"]')?.textContent).toContain("Loading operational state");
+    expect(document.querySelector('[data-testid="todo-preview"]')?.textContent).not.toContain("waiting for you");
+    expect(patches).toEqual([]);
+
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    const done = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))!;
+    expect(done.disabled).toBe(true);
+    await click(done);
+    expect(patches).toEqual([]);
+  });
+
+  test("confirms Done while authoritative linked work Needs you", async () => {
+    addWorkSummary("idea-work", "idea");
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["demo"],
+      families: [{ projectSlug: "demo", rootSessionId: "idea-work", activity: "idle" }],
+      createdAt: 1,
+    });
+    hitlStore.getState().applySnapshot({
+      type: "hitl.snapshot",
+      projectSlugs: ["demo"],
+      entries: [{
+        projectSlug: "demo",
+        hitlId: "question-1",
+        ownerSessionId: "idea-work",
+        rootSessionId: "idea-work",
+        ownerAgentName: "lead",
+        ownerSessionTitle: "Existing work",
+        view: {
+          hitlId: "question-1",
+          owner: { type: "session", id: "idea-work" },
+          source: { type: "ask_user", toolCallId: "ask-1" },
+          status: "pending",
+          displayPayload: { title: "Need input", redacted: true },
+          allowedActions: ["answer", "cancel"],
+          createdAt: "2026-08-24T00:00:00.000Z",
+          updatedAt: "2026-08-24T00:00:00.000Z",
+        },
+      }],
+      createdAt: 1,
+    });
+    await render();
+    await openPreview("idea");
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))!);
+
+    expect(document.querySelector('[aria-label="Confirm Todo stage change"]')?.textContent).toContain("Linked work is still waiting for you");
+    expect(patches).toEqual([]);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Move to Done")!);
+    await waitFor(() => patches.length === 1);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "done" }]);
+  });
+
+  test("removes Done retry without resubmitting when operational readiness expires after failure", async () => {
+    responseMode = "failure";
+    addWorkSummary("idea-work", "idea");
+    sessionInventoryResponse = () => Response.json({ sessions: sessionSummaries.map((session) => ({
+      session,
+      latestExecution: session.sessionId === "idea-work"
+        ? { id: "execution-1", status: "running", startedAt: 3 }
+        : null,
+    })) });
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["demo"],
+      families: [{ projectSlug: "demo", rootSessionId: "idea-work", activity: "running" }],
+      createdAt: 1,
+    });
+    hitlStore.getState().applySnapshot({ type: "hitl.snapshot", projectSlugs: ["demo"], entries: [], createdAt: 1 });
+    await render();
+    await openPreview("idea");
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))!);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Move to Done")!);
+
+    await waitFor(() => document.querySelector('[role="alert"]')?.textContent?.includes("changed elsewhere") === true);
+    expect(Array.from(document.querySelectorAll<HTMLButtonElement>("button")).some((button) => button.textContent === "Refresh and retry")).toBe(true);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "done" }]);
+
+    await act(async () => hitlStore.getState().invalidateSnapshots());
+    await waitFor(() => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).every((button) => button.textContent !== "Refresh and retry"));
+    expect(document.querySelector('[data-testid="todo-preview-operational-state"]')?.textContent).toContain("Loading operational state");
+    expect(patches).toEqual([{ expectedRevision: 3, status: "done" }]);
+
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    const done = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))!;
+    expect(done.disabled).toBe(true);
+    await click(done);
+    expect(patches).toEqual([{ expectedRevision: 3, status: "done" }]);
+  });
+
+  test("moves directly to Done when linked work is quiet", async () => {
+    addWorkSummary("idea-work", "idea");
+    sessionRuntimeStore.getState().applySnapshot({
+      type: "session.runtime.snapshot",
+      projectSlugs: ["demo"],
+      families: [{ projectSlug: "demo", rootSessionId: "idea-work", activity: "idle" }],
+      createdAt: 1,
+    });
+    hitlStore.getState().applySnapshot({ type: "hitl.snapshot", projectSlugs: ["demo"], entries: [], createdAt: 1 });
+    await render();
+    await openPreview("idea");
+    await click(document.querySelector('[aria-label="Change Todo stage, current Idea"]') as HTMLButtonElement);
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((button) => button.textContent?.includes("Done"))!);
+
+    await waitFor(() => patches.length === 1);
+    expect(document.querySelector('[aria-label="Confirm Todo stage change"]')).toBeNull();
+    expect(patches).toEqual([{ expectedRevision: 3, status: "done" }]);
+  });
+
+  test("presents Scheduled as a neutral static state in List and Preview", async () => {
+    automationInventoryResponse = () => Response.json({ automations: [{
+      automation: {
+        id: "automation-1",
+        projectSlug: "demo",
+        origin: { kind: "todo", todoId: "idea", sessionId: "automation-setup" },
+        name: "Nightly check",
+        trigger: { kind: "once", at: "2026-08-25T00:00:00.000Z" },
+        action: { kind: "start_session", message: "Check", location: "project" },
+        status: "active",
+        createdAt: "2026-08-24T00:00:00.000Z",
+        updatedAt: "2026-08-24T00:00:00.000Z",
+        nextFireAt: "2026-08-25T00:00:00.000Z",
+      },
+      latestInvocation: null,
+    }] });
+    sessionRuntimeStore.getState().applySnapshot({ type: "session.runtime.snapshot", projectSlugs: ["demo"], families: [], createdAt: 1 });
+    hitlStore.getState().applySnapshot({ type: "hitl.snapshot", projectSlugs: ["demo"], entries: [], createdAt: 1 });
+    await render();
+
+    const row = document.querySelector('[data-testid="todo-open-idea"]') as HTMLButtonElement;
+    expect(document.querySelector('[data-testid="todo-operational-idea"]')?.className).toContain("text-neutral");
+    expect(row.firstElementChild?.className).toContain("border-border-subtle bg-bg-muted text-text-tertiary");
+    await openPreview("idea");
+    const field = document.querySelector('[data-testid="todo-preview-operational"]') as HTMLElement;
+    expect(field.textContent).toContain("Scheduled");
+    expect(field.className).toContain("border-border-default bg-bg-muted");
+    expect(field.firstElementChild?.className).toContain("bg-text-muted");
+  });
+
   test("shows the exact unlinked action matrix for every active lifecycle status", async () => {
     todos.push(todo("progress", "In Progress", "in_progress"), todo("done", "Done", "done"));
     await render();

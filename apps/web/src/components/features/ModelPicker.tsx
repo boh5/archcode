@@ -192,7 +192,7 @@ export function ModelPicker({
       {showNextNotice && !open && (
         <span
           role="status"
-          className="pointer-events-none absolute bottom-[calc(100%+6px)] right-0 z-40 whitespace-nowrap rounded-sm border border-border-default bg-bg-overlay px-2 py-1 text-[11px] text-text-secondary shadow-md animate-overlay-enter motion-reduce:animate-none"
+          className="pointer-events-none absolute bottom-[calc(100%+6px)] right-0 z-40 whitespace-nowrap rounded-[var(--shape-popover)] border border-border-default bg-bg-overlay px-2 py-1 text-[11px] text-text-secondary shadow-[var(--elevation-popover)] animate-overlay-enter motion-reduce:animate-none"
           data-testid="model-picker-next-notice"
         >
           Applies to the next execution

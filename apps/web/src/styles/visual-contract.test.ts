@@ -71,7 +71,9 @@ describe("visual contract", () => {
     expect(todoSurfaceButton).toContain("h-[38px]");
     expect(todoSurfaceButton).toContain("min-[721px]:h-[30px]");
     expect(todoSurfaceButton).toContain("cursor-pointer");
-    expect(todos).toContain("h-8 w-8 min-w-8 cursor-pointer");
+    expect(todos).toContain('data-testid="todo-active-list"');
+    expect(todos).toContain("max-w-[980px]");
+    expect(todos).toContain('role="menuitemradio"');
 
     const automationSearch = classNameForTagContaining(automations, "label", ">Filter Automations<");
     expect(automationSearch).toContain("h-11");
@@ -97,19 +99,45 @@ describe("visual contract", () => {
     expect(sessionSearchInput).toContain("text-[16px]");
     expect(sessionSearchInput).toContain("min-[641px]:text-[12px]");
     expect(sessions).toContain('data-testid="session-source-picker"');
-    expect(sessions).toContain('<select aria-label="Session source"');
+    expect(sessions).toContain('aria-haspopup="listbox"');
+    expect(sessions).toContain('role="listbox"');
+    expect(sessions).toContain('role="option"');
     expect(sessions).toContain("h-11 w-[150px]");
     expect(sessions).toContain("min-[641px]:h-[38px] min-[641px]:w-[168px]");
     expect(sessions).toContain("border-border-default bg-bg-surface");
     expect(sessions).toContain("min-[641px]:h-[34px]");
-    expect(sessions).toContain('data-session-row-presentation={isRunning ? "featured" : "standard"}');
-    expect(sessions).toContain("my-[5px] rounded-[8px]");
-    expect(sessions).toContain("shadow-[inset_2px_0_0_var(--brand)]");
-    expect(sessions).toContain('<span aria-hidden="true"> · </span>{sourceContext}');
+    expect(sessions).toContain('data-session-row-presentation="flat"');
+    expect(sessions).toContain("min-h-[72px]");
+    expect(sessions).toContain('const sourceLabel = `${sourceType} · ${sourceContext}`');
     expect(primaryAction).toContain("primary-action-button");
     expect(primaryAction).toContain("h-11");
-    expect(primaryAction).toContain("min-[761px]:h-8");
+    expect(primaryAction).toContain("min-[761px]:h-[34px]");
     expect(primaryAction).toContain("[@media(pointer:coarse)]:h-11");
+  });
+
+  test("uses explicit shape and elevation roles for workbench surfaces", async () => {
+    const globals = await Bun.file(`${sourceRoot}/styles/globals.css`).text();
+    for (const token of [
+      "--shape-compact:",
+      "--shape-control:",
+      "--shape-card:",
+      "--shape-popover:",
+      "--shape-message:",
+      "--shape-dialog:",
+      "--elevation-popover:",
+      "--elevation-composer:",
+      "--elevation-drawer:",
+      "--elevation-drawer-start:",
+      "--elevation-modal:",
+    ]) expect(globals).toContain(token);
+
+    const dialog = await Bun.file(`${sourceRoot}/components/ui/Dialog.tsx`).text();
+    const dropdown = await Bun.file(`${sourceRoot}/components/ui/DropdownMenu.tsx`).text();
+    const project = await Bun.file(`${sourceRoot}/routes/project.tsx`).text();
+    expect(dialog).toContain("shadow-[var(--elevation-modal)]");
+    expect(dropdown).toContain("shadow-[var(--elevation-popover)]");
+    expect(project).toContain("shadow-[var(--elevation-drawer-start)]");
+    expect(project).toContain("shadow-[var(--elevation-drawer)]");
   });
 
   test("enforces the current motion and structural-surface safety rules", async () => {

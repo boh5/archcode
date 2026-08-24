@@ -46,7 +46,7 @@ export function WorkSearchDialog({ open, onOpenChange, returnFocusRef }: {
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-[70] bg-black/55" />
         <DialogPrimitive.Content
-          className="fixed left-1/2 top-14 z-[71] flex max-h-[min(680px,calc(100dvh-48px))] w-[min(640px,calc(100vw-32px))] -translate-x-1/2 flex-col overflow-hidden rounded-[10px] border border-border-strong bg-bg-overlay shadow-lg outline-none"
+          className="fixed left-1/2 top-14 z-[71] flex max-h-[min(680px,calc(100dvh-48px))] w-[min(640px,calc(100vw-32px))] -translate-x-1/2 flex-col overflow-hidden rounded-[var(--shape-dialog)] border border-border-strong bg-bg-overlay shadow-[var(--elevation-modal)] outline-none"
           onOpenAutoFocus={(event) => { event.preventDefault(); inputRef.current?.focus(); }}
           onCloseAutoFocus={(event) => { event.preventDefault(); returnFocusRef.current?.focus(); }}
         >

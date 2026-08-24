@@ -99,7 +99,7 @@ function selectedTodoStatus(todo: ProjectTodo): { label: string; tone: string } 
     return { label: "Ready", tone: "border-brand/25 bg-brand-field text-brand" };
   }
   if (todo.status === "in_progress") {
-    return { label: "In progress", tone: "border-signal/25 bg-signal-field text-signal-foreground" };
+    return { label: "In progress", tone: "border-border-default bg-bg-active text-text-primary" };
   }
   return { label: "Done", tone: "border-success/25 bg-success-field text-success" };
 }

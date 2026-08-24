@@ -25,8 +25,9 @@ export function Toast({ toast, onDismiss }: ToastProps) {
   const Icon = VARIANT_ICON[toast.variant];
   return (
     <div
-      role="alert"
-      className={`animate-overlay-enter flex items-center gap-2 rounded-lg border border-l-2 border-border-default bg-bg-overlay px-3 py-2 text-[13px] font-medium shadow-md ${VARIANT_CLASSES[toast.variant]}`}
+      role="status"
+      aria-live="polite"
+      className={`animate-overlay-enter flex items-center gap-2 rounded-[var(--shape-popover)] border border-l-2 border-border-default bg-bg-overlay px-3 py-2 text-[13px] font-medium shadow-[var(--elevation-popover)] ${VARIANT_CLASSES[toast.variant]}`}
     >
       <Icon size={16} className="shrink-0" />
       <span className="flex-1 min-w-0 break-words">{toast.message}</span>

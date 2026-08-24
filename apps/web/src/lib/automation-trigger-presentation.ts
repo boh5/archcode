@@ -1,9 +1,25 @@
 import type { AutomationTrigger } from "../api/types";
 
 export function formatAutomationTrigger(trigger: AutomationTrigger): string {
-  if (trigger.kind === "once") return `Once ${new Date(trigger.at).toLocaleString()}`;
-  if (trigger.kind === "interval") return `Every ${trigger.everyMs} ms`;
-  return `Cron ${trigger.expression} (${trigger.timezone})`;
+  if (trigger.kind === "once") {
+    return `Once · ${new Date(trigger.at).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })}`;
+  }
+  if (trigger.kind === "interval") {
+    const { value, unit } = readableInterval(trigger.everyMs);
+    return `Every ${value} ${unit}${value === 1 ? "" : "s"}`;
+  }
+  return `${trigger.expression} · ${trigger.timezone}`;
+}
+
+function readableInterval(everyMs: number): { value: number; unit: "second" | "minute" | "hour" } {
+  if (everyMs % 3_600_000 === 0) return { value: everyMs / 3_600_000, unit: "hour" };
+  if (everyMs % 60_000 === 0) return { value: everyMs / 60_000, unit: "minute" };
+  return { value: everyMs / 1_000, unit: "second" };
 }
 
 export function formatAutomationScheduleTime(timestamp: string, now = Date.now()): string {

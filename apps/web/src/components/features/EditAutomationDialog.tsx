@@ -22,7 +22,7 @@ import {
   DialogTitle,
 } from "../ui/Dialog";
 
-type IntervalUnit = "seconds" | "minutes" | "hours";
+export type IntervalUnit = "seconds" | "minutes" | "hours";
 
 const INTERVAL_UNIT_MS: Record<IntervalUnit, number> = {
   seconds: 1_000,
@@ -31,7 +31,11 @@ const INTERVAL_UNIT_MS: Record<IntervalUnit, number> = {
 };
 
 const INPUT_CLASS =
-  "w-full rounded-[6px] border border-border-control bg-bg-base px-2.5 text-[12px] text-text-primary placeholder:text-text-muted transition-colors duration-[var(--motion-fast)] hover:border-text-secondary focus:border-brand focus:outline-none focus:[box-shadow:0_0_0_3px_color-mix(in_srgb,var(--brand)_18%,transparent)] disabled:cursor-not-allowed disabled:opacity-50";
+  "w-full rounded-[6px] border border-border-control bg-bg-base px-2.5 text-[12px] text-text-primary placeholder:text-text-muted transition-colors duration-[var(--motion-fast)] hover:border-text-secondary focus:border-brand focus:outline-none focus:[box-shadow:var(--focus)] disabled:cursor-not-allowed disabled:opacity-50";
+
+export function minimumIntervalValue(unit: IntervalUnit): number {
+  return unit === "seconds" ? 30 : 1;
+}
 
 export function intervalToMilliseconds(value: number, unit: IntervalUnit): number {
   return value * INTERVAL_UNIT_MS[unit];
@@ -59,6 +63,7 @@ interface EditAutomationDialogProps {
   slug: string;
   automation?: Automation;
   lifecyclePending?: boolean;
+  lifecycleError?: unknown;
   onDeleted?: () => void;
   onPause?: () => void;
   onResume?: () => void;
@@ -70,6 +75,7 @@ export function EditAutomationDialog({
   slug,
   automation,
   lifecyclePending = false,
+  lifecycleError,
   onDeleted,
   onPause,
   onResume,
@@ -206,6 +212,11 @@ export function EditAutomationDialog({
       ? remove.error.message
       : "Failed to delete Automation"
     : null;
+  const lifecycleErrorMessage = lifecycleError
+    ? lifecycleError instanceof Error
+      ? lifecycleError.message
+      : "Failed to update Automation status"
+    : null;
 
   useEffect(() => {
     if (confirmation === null) return;
@@ -243,7 +254,7 @@ export function EditAutomationDialog({
               type="button"
               onClick={(event) => requestClose(event.currentTarget)}
               disabled={pending}
-              aria-label="Close"
+              aria-label="Close Automation editor"
               className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[6px] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-40 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
             >
               <X size={15} aria-hidden="true" />
@@ -320,10 +331,11 @@ export function EditAutomationDialog({
                         <input
                           id="automation-interval-value"
                           type="number"
-                          min={1}
+                          min={minimumIntervalValue(intervalUnit)}
                           step={1}
                           value={intervalValue}
                           onChange={(event) => setIntervalValue(Number(event.target.value))}
+                          onBlur={() => setIntervalValue((current) => Math.max(minimumIntervalValue(intervalUnit), Number.isFinite(current) ? current : minimumIntervalValue(intervalUnit)))}
                           disabled={pending}
                           className={`${INPUT_CLASS} h-9`}
                         />
@@ -332,7 +344,11 @@ export function EditAutomationDialog({
                         <select
                           aria-label="Interval unit"
                           value={intervalUnit}
-                          onChange={(event) => setIntervalUnit(event.target.value as IntervalUnit)}
+                          onChange={(event) => {
+                            const nextUnit = event.target.value as IntervalUnit;
+                            setIntervalUnit(nextUnit);
+                            setIntervalValue((current) => Math.max(minimumIntervalValue(nextUnit), current));
+                          }}
                           disabled={pending}
                           className={`${INPUT_CLASS} h-9`}
                         >
@@ -381,7 +397,7 @@ export function EditAutomationDialog({
                 <div className="grid grid-cols-1 gap-[7px] min-[761px]:grid-cols-2">
                   <ChoiceCard
                     checked={actionKind === "start_session"}
-                    description="Create a new Lead Session"
+                    description="Create a Lead Session"
                     disabled={pending}
                     id="automation-action-start"
                     label="New Session"
@@ -406,7 +422,7 @@ export function EditAutomationDialog({
                       <div className="grid grid-cols-1 gap-[7px] min-[761px]:grid-cols-2">
                         <CompactChoice
                           checked={location === "project"}
-                          description="Use the current checkout"
+                          description="Current checkout"
                           disabled={pending}
                           id="automation-location-project"
                           label="Project"
@@ -415,7 +431,7 @@ export function EditAutomationDialog({
                         />
                         <CompactChoice
                           checked={location === "worktree"}
-                          description="Create an isolated checkout"
+                          description="Isolated checkout"
                           disabled={pending}
                           id="automation-location-worktree"
                           label="Worktree"
@@ -447,7 +463,7 @@ export function EditAutomationDialog({
                   id="automation-message"
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
-                  placeholder="Describe the work to perform. You can use /skill use … just like in a normal Session."
+                  placeholder="What should the Session do?"
                   rows={6}
                   maxLength={AUTOMATION_MESSAGE_MAX_LENGTH}
                   disabled={pending}
@@ -462,6 +478,7 @@ export function EditAutomationDialog({
                     <button type="button" disabled={pending || automation.status === "disabled"} onClick={automation.status === "paused" ? onResume : onPause} className="inline-flex h-[34px] items-center rounded-[6px] border border-border-default px-3 text-[11.5px] font-semibold leading-[1.5] tracking-normal text-text-secondary hover:bg-bg-hover focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] disabled:opacity-40 [@media(pointer:coarse)]:h-11">{automation.status === "paused" ? "Resume Automation" : "Pause Automation"}</button>
                     <button ref={deleteButtonRef} type="button" disabled={pending} onClick={(event) => openConfirmation("delete", event.currentTarget)} className="inline-flex h-[34px] items-center rounded-[6px] border border-error/30 px-3 text-[11.5px] font-semibold leading-[1.5] tracking-normal text-error hover:bg-error-muted focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] disabled:opacity-40 [@media(pointer:coarse)]:h-11">Delete Automation</button>
                   </div>
+                  {lifecycleErrorMessage ? <p className="text-[11px] leading-[1.5] text-error" role="alert">{lifecycleErrorMessage}</p> : null}
                 </section>
               ) : null}
             </div>
@@ -556,7 +573,7 @@ function AutomationEditorConfirmation({
       onKeyDown={handleKeyDown}
       role="alertdialog"
     >
-      <section className="w-full max-w-[500px] overflow-hidden rounded-[10px] border border-border-default bg-bg-surface shadow-[var(--elevation-lg)]">
+      <section className="w-full max-w-[500px] overflow-hidden rounded-[var(--shape-dialog)] border border-border-default bg-bg-surface shadow-[var(--elevation-modal)]">
         <header className="border-b border-border-subtle px-5 py-4">
           <h2 id={titleId} className="text-[16px] font-semibold text-text-primary">
             {kind === "delete" ? "Delete Automation?" : "Discard unsaved changes?"}

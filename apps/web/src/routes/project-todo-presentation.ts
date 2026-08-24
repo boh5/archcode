@@ -14,6 +14,7 @@ import type {
   SessionFamilyActivity,
 } from "@archcode/protocol";
 import { rootSessionSourceTodoId } from "@archcode/protocol";
+import { sessionFamilyActivityLabel, sessionFamilyVisual } from "../lib/session-family-presentation";
 import type { StatusTone, VisualStatusKind } from "../lib/status-visuals";
 
 export type ProjectTodoLane = "idea" | "ready" | "in_progress" | "done";
@@ -27,17 +28,14 @@ export interface ProjectTodoCardPresentation {
 
 export interface ProjectTodoLanePresentation {
   readonly title: string;
-  readonly hint: string;
   readonly emptyTitle: string;
-  readonly emptyHint: string;
   readonly Icon: LucideIcon;
-  readonly tone: StatusTone;
 }
 
 export type ProjectTodoAttentionLabel = "Inspection" | "Permission" | "Question";
 
 export interface ProjectTodoOperationalState {
-  readonly label: "Needs you" | "Failed" | "Working" | "Ready to review" | "Scheduled" | "Idle";
+  readonly label: "Needs you" | "Failed" | "Waiting" | "Working" | "Ready to review" | "Scheduled";
   readonly detail?: string;
   readonly kind: VisualStatusKind;
 }
@@ -46,6 +44,11 @@ export interface ProjectTodoLinkedSessionPresentation {
   readonly context: string;
   readonly kind: VisualStatusKind;
   readonly label: string;
+}
+
+export interface ProjectTodoLinkedSessionFacts {
+  readonly activity?: SessionFamilyActivity;
+  readonly attention?: ProjectTodoAttentionLabel;
 }
 
 export interface ProjectTodoOperationalFacts {
@@ -78,17 +81,17 @@ export function deriveProjectTodoNeedsUser(
 const CARD_PRESENTATIONS: Readonly<Record<ProjectTodoCardPresentation["label"], ProjectTodoCardPresentation>> = {
   Idea: { label: "Idea", Icon: Sparkles, tone: "neutral" },
   Ready: { label: "Ready", Icon: Play, tone: "brand" },
-  "In Progress": { label: "In Progress", Icon: Activity, tone: "signal" },
+  "In Progress": { label: "In Progress", Icon: Activity, tone: "neutral" },
   Done: { label: "Done", Icon: Check, tone: "success" },
   Rejected: { label: "Rejected", Icon: CircleX, tone: "warning" },
   Archived: { label: "Archived", Icon: Archive, tone: "neutral" },
 };
 
 export const PROJECT_TODO_LANE_PRESENTATIONS: Readonly<Record<ProjectTodoLane, ProjectTodoLanePresentation>> = {
-  idea: { title: "Ideas", hint: "Captured, not committed", emptyTitle: "No ideas yet", emptyHint: "Capture an idea above.", Icon: Sparkles, tone: "neutral" },
-  ready: { title: "Ready", hint: "Clear enough to start", emptyTitle: "Nothing ready", emptyHint: "Move an idea here when it is ready.", Icon: Play, tone: "brand" },
-  in_progress: { title: "In Progress", hint: "Execution is attached here", emptyTitle: "No work in progress", emptyHint: "Start work or drag a Todo here.", Icon: Activity, tone: "signal" },
-  done: { title: "Done", hint: "Explicitly accepted", emptyTitle: "Nothing completed", emptyHint: "Completed Todos stay visible here.", Icon: Check, tone: "success" },
+  idea: { title: "Ideas", emptyTitle: "No ideas yet", Icon: Sparkles },
+  ready: { title: "Ready", emptyTitle: "Nothing ready", Icon: Play },
+  in_progress: { title: "In Progress", emptyTitle: "No work in progress", Icon: Activity },
+  done: { title: "Done", emptyTitle: "Nothing completed", Icon: Check },
 };
 
 const PROJECT_TODO_DISPLAY_LEAD_MAX_LENGTH = 80;
@@ -168,6 +171,7 @@ export function demoteEmbeddedMarkdownHeadings(markdown: string): string {
 /** Project Todo detail projection for one durable linked Session row. */
 export function presentProjectTodoLinkedSession(
   item: ProjectSessionInventoryItem,
+  facts: ProjectTodoLinkedSessionFacts = {},
 ): ProjectTodoLinkedSessionPresentation {
   const { session, latestExecution } = item;
   const agent = session.agentName.length > 0
@@ -183,10 +187,24 @@ export function presentProjectTodoLinkedSession(
       ? `${agent} · recurring execution attached to this Todo`
       : `${agent} · direct project execution`;
 
+  const workOrAutomation = session.source.kind === "automation"
+    || (session.source.kind === "todo" && (session.source.entry === "work" || session.source.entry === "automation"));
+  if (facts.attention !== undefined) return { context, kind: "needs_you", label: "Needs you" };
+  if (workOrAutomation && (session.goal?.status === "blocked" || session.goal?.status === "budget_limited")) {
+    return { context, kind: "needs_you", label: "Needs you" };
+  }
+  if (facts.activity === "waiting_for_human") {
+    return {
+      context,
+      kind: sessionFamilyVisual(facts.activity).kind,
+      label: sessionFamilyActivityLabel(facts.activity),
+    };
+  }
+  if (facts.activity !== undefined && facts.activity !== "idle") return { context, kind: "running", label: "Running" };
   if (latestExecution === null) return { context, kind: "idle", label: "Idle" };
   if (latestExecution.status === "running") return { context, kind: "running", label: "Running" };
   if (latestExecution.status === "completed") return { context, kind: "completed", label: "Done" };
-  if (latestExecution.status === "suspended") return { context, kind: "needs_you", label: "Needs you" };
+  if (latestExecution.status === "suspended") return { context, kind: "pending", label: "Waiting" };
   if (["failed", "timed_out", "max_steps"].includes(latestExecution.status)) {
     return { context, kind: "failed", label: "Failed" };
   }
@@ -213,7 +231,7 @@ export function presentProjectTodoCard(input: {
 export function deriveProjectTodoOperationalState(
   facts: ProjectTodoOperationalFacts,
 ): ProjectTodoOperationalState | undefined {
-  if (!facts.authoritative || facts.todo.archivedAt !== undefined || facts.todo.status !== "in_progress") {
+  if (!facts.authoritative || facts.todo.archivedAt !== undefined || facts.todo.status === "rejected") {
     return undefined;
   }
 
@@ -252,6 +270,13 @@ export function deriveProjectTodoOperationalState(
   }
   for (const { session } of workSessions) {
     const activity = facts.activityBySessionId.get(session.sessionId) ?? "idle";
+    if (activity === "waiting_for_human") {
+      return {
+        label: "Waiting",
+        detail: "Waiting for dependency",
+        kind: sessionFamilyVisual(activity).kind,
+      };
+    }
     if (activity !== "idle") {
       return { label: "Working", detail: activityDetail(activity), kind: "running" };
     }
@@ -271,7 +296,9 @@ export function deriveProjectTodoOperationalState(
       ? undefined
       : executionAttentionDetail(status);
     if (detail !== undefined) return { label: "Failed", detail, kind: "failed" };
-    if (status === "completed") return { label: "Ready to review", kind: "completed" };
+    if (status === "completed" && facts.todo.status !== "done") {
+      return { label: "Ready to review", kind: "completed" };
+    }
   } else if (latestInvocation?.status === "failed" || latestInvocation?.status === "missed") {
     return {
       label: "Failed",
@@ -283,7 +310,7 @@ export function deriveProjectTodoOperationalState(
   if (linkedAutomations.some(({ automation }) => automation.status === "active" && automation.nextFireAt !== undefined)) {
     return { label: "Scheduled", kind: "enabled" };
   }
-  return { label: "Idle", kind: "idle" };
+  return undefined;
 }
 
 function compareSessionRecency(left: ProjectSessionInventoryItem, right: ProjectSessionInventoryItem): number {
@@ -303,7 +330,7 @@ function invocationTime(invocation: NonNullable<ProjectAutomationInventoryItem["
 }
 
 function activityDetail(activity: Exclude<SessionFamilyActivity, "idle">): string {
-  if (activity === "waiting_for_human") return "Waiting for response";
+  if (activity === "waiting_for_human") return "Waiting for dependency";
   if (activity === "resuming") return "Resuming";
   if (activity === "stopping") return "Stopping";
   return "Running";

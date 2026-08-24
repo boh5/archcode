@@ -1,8 +1,8 @@
-import { StrictMode } from "react";
 import { QueryClient, QueryCache, MutationCache, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 import { ApiError } from "./api/client";
+import { AppRoot } from "./app-root";
 import { ErrorBoundary } from "./components/composite/ErrorBoundary";
 import { ToastContainer } from "./components/composite/Toast";
 import { BootstrapGate } from "./components/bootstrap/BootstrapGate";
@@ -67,7 +67,5 @@ function WorkbenchProviders() {
 }
 
 createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+  <AppRoot><App /></AppRoot>,
 );

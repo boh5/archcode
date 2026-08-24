@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { ProjectTodo, SessionSummary } from "../api/types";
 import { projectTodoRunNowRecovery } from "../components/features/ProjectTodoCaptureDialog";
-import { createDragAnnouncements, deriveProjectTodoGroups, moveTodoInBoard, pointerFirstCollisionDetection, ProjectTodosRoute, todoFlatListEmptyMessage } from "./project-todos";
+import { deriveProjectTodoGroups, ProjectTodosRoute, todoFlatListEmptyMessage } from "./project-todos";
 import { continueWorkUpdateInput, coordinateTodoPlanWork, planWorkCommand, TODO_PLAN_ACTION_LABEL } from "./project-todo-detail";
 import { ApiError } from "../api/client";
 import { WorkbenchLayoutProvider } from "../context/workbench-layout";
@@ -98,8 +98,8 @@ async function render(initialEntry = "/projects/demo/todos"): Promise<void> {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
-describe("Project Todos board", () => {
-  test("groups the four canonical board states and excludes rejected Todos", () => {
+describe("Project Todos List", () => {
+  test("groups the four canonical lifecycle states and excludes rejected Todos", () => {
     expect(deriveProjectTodoGroups(todos)).toMatchObject({ idea: [todos[0]], ready: [todos[1]], in_progress: [todos[2]], done: [todos[3]] });
   });
 
@@ -118,64 +118,19 @@ describe("Project Todos board", () => {
     expect(rejected.querySelector(".text-warning")).not.toBeNull();
   });
 
-  test("keeps a drag order local and computes cross-lane placement without a general board model", () => {
-    expect(moveTodoInBoard({ idea: ["idea"], ready: ["ready"], in_progress: ["progress"], done: ["done"] }, "ready", "in_progress", 0)).toEqual({ idea: ["idea"], ready: [], in_progress: ["ready", "progress"], done: ["done"] });
-  });
-
-  test("reorders in both same-lane directions at the hovered index", () => {
-    const order = { idea: ["a", "b", "c"], ready: [], in_progress: [], done: [] };
-    expect(moveTodoInBoard(order, "a", "idea", 1).idea).toEqual(["b", "a", "c"]);
-    expect(moveTodoInBoard(order, "c", "idea", 0).idea).toEqual(["c", "a", "b"]);
-  });
-
-  test("announces the Todo content excerpt, target lane, position, completion, and cancellation", () => {
-    const order = { idea: ["idea"], ready: ["ready"], in_progress: ["progress"], done: ["done"] };
-    const announcements = createDragAnnouncements(order, new Map(todos.map((todo) => [todo.id, todo])));
-    const active = { id: "ready" };
-    const over = { id: "progress" };
-    const dropped = createDragAnnouncements(
-      { idea: ["idea"], ready: [], in_progress: ["ready", "progress"], done: ["done"] },
-      new Map(todos.map((todo) => [todo.id, todo])),
-    );
-
-    expect(announcements.onDragStart({ active })).toBe("Picked up Ready.");
-    expect(announcements.onDragOver({ active, over })).toBe("Moving Ready to In Progress, position 1 of 1.");
-    expect(dropped.onDragEnd({ active, over })).toBe("Dropped Ready in In Progress, position 1 of 2.");
-    expect(announcements.onDragCancel({ active })).toBe("Cancelled move for Ready.");
-  });
-
   test("requires Ready to enter In Progress before continuing existing work", () => {
     expect(continueWorkUpdateInput(todos[1]!)).toEqual({ expectedRevision: 1, status: "in_progress" });
     expect(continueWorkUpdateInput(todos[2]!)).toBeUndefined();
     expect(continueWorkUpdateInput(todos[3]!)).toBeUndefined();
   });
 
-  test("renders four compact lanes with an accessible drag handle", async () => {
-    await render("/projects/demo/todos?layout=board");
-    expect(document.querySelector('[data-testid="todo-lane-idea"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="todo-lane-ready"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="todo-lane-in_progress"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="todo-lane-done"]')).not.toBeNull();
-    const handle = document.querySelector('[aria-label="Drag Ready"]') as HTMLButtonElement;
-    expect(handle).not.toBeNull();
-    expect(handle.className).toContain("min-h-full");
-    expect(handle.className).toContain("w-7");
-    expect(handle.className).toContain("border-r");
-    expect(handle.className).toContain("[@media(pointer:coarse)]:min-h-11");
-    expect(handle.className).toContain("[@media(pointer:coarse)]:w-11");
-    expect(handle.className).toContain("cursor-grab");
-    const card = document.querySelector('[data-testid="todo-ready"]') as HTMLElement;
-    expect(card.className).toContain("grid-cols-[28px_minmax(0,1fr)]");
-    expect(card.className).toContain("[@media(pointer:coarse)]:grid-cols-[44px_minmax(0,1fr)]");
-    expect(card.className).toContain("mx-2");
-    expect(card.className).toContain("mt-2.5");
-    expect(card.className).toContain("rounded-[6px]");
-    expect(card.className).toContain("bg-bg-elevated");
-    const open = document.querySelector('[data-testid="todo-open-ready"]');
-    expect(open?.className).toContain("cursor-pointer");
-    expect(open?.className).toContain("p-2.5");
-    expect(open?.querySelector("span")?.className).toContain("line-clamp-2");
-    expect(open?.querySelector("span")?.className).toContain("text-[12.5px]");
+  test("renders the four compact lifecycle groups and surface switcher", async () => {
+    await render();
+    expect(document.querySelector('[data-testid="todo-active-list"]')).not.toBeNull();
+    expect(document.querySelector('[aria-labelledby="todo-list-idea"]')).not.toBeNull();
+    expect(document.querySelector('[aria-labelledby="todo-list-ready"]')).not.toBeNull();
+    expect(document.querySelector('[aria-labelledby="todo-list-in_progress"]')).not.toBeNull();
+    expect(document.querySelector('[aria-labelledby="todo-list-done"]')).not.toBeNull();
     const viewButtons = document.querySelector('[aria-label="Todo surfaces"]')?.querySelectorAll("button") ?? [];
     expect(viewButtons).toHaveLength(3);
     expect(Array.from(viewButtons, (button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
@@ -211,89 +166,13 @@ describe("Project Todos board", () => {
       createdAt: 1,
     });
 
-    await render("/projects/demo/todos?layout=board");
+    await render();
 
     const state = document.querySelector('[data-testid="todo-operational-progress"]');
     expect(state?.textContent).toBe("Working· Running");
     expect(state?.querySelector("span")?.className).toContain("animate-activity-pulse");
     expect(document.querySelector('[data-testid="todo-open-progress"]')?.textContent).toContain("ProgressWorking· Running");
     expect(document.querySelector('[data-testid="todo-operational-ready"]')).toBeNull();
-  });
-
-  test("uses the pointer position to target another lane on a narrow board", () => {
-    const leftLane = rect(0, 0, 120, 500);
-    const leftCard = rect(0, 0, 120, 100);
-    const rightLane = rect(140, 0, 120, 500);
-    const rightCard = rect(140, 0, 120, 100);
-    const droppableRects = new Map([
-      ["idea", leftLane],
-      ["left-card", leftCard],
-      ["ready", rightLane],
-      ["right-card", rightCard],
-    ]);
-    const droppableContainers = Array.from(droppableRects, ([id, currentRect]) => ({
-      id,
-      key: id,
-      data: { current: {} },
-      disabled: false,
-      node: { current: null },
-      rect: { current: currentRect },
-    }));
-    const collisions = pointerFirstCollisionDetection({
-      active: {
-        id: "right-card",
-        data: { current: {} },
-        rect: { current: { initial: rightCard, translated: rightCard } },
-      },
-      collisionRect: rightCard,
-      droppableRects,
-      droppableContainers,
-      pointerCoordinates: { x: 60, y: 300 },
-    });
-
-    expect(collisions[0]?.id).toBe("idea");
-  });
-
-  test("does not infer a pointer target from the dragged card in a lane gap", () => {
-    const leftLane = rect(0, 0, 120, 500);
-    const rightLane = rect(140, 0, 120, 500);
-    const dragged = rect(140, 0, 120, 100);
-    const droppableRects = new Map([
-      ["idea", leftLane],
-      ["ready", rightLane],
-    ]);
-    const droppableContainers = Array.from(droppableRects, ([id, currentRect]) => ({
-      id,
-      key: id,
-      data: { current: {} },
-      disabled: false,
-      node: { current: null },
-      rect: { current: currentRect },
-    }));
-
-    expect(pointerFirstCollisionDetection({
-      active: {
-        id: "right-card",
-        data: { current: {} },
-        rect: { current: { initial: dragged, translated: dragged } },
-      },
-      collisionRect: dragged,
-      droppableRects,
-      droppableContainers,
-      pointerCoordinates: { x: 130, y: 300 },
-    })).toEqual([]);
-
-    expect(pointerFirstCollisionDetection({
-      active: {
-        id: "right-card",
-        data: { current: {} },
-        rect: { current: { initial: dragged, translated: dragged } },
-      },
-      collisionRect: dragged,
-      droppableRects,
-      droppableContainers,
-      pointerCoordinates: null,
-    })[0]?.id).toBe("ready");
   });
 
   test("builds one deterministic plan-work command for the Todo", () => {
@@ -453,14 +332,3 @@ describe("Project Todos board", () => {
   });
 
 });
-
-function rect(left: number, top: number, width: number, height: number) {
-  return {
-    left,
-    top,
-    right: left + width,
-    bottom: top + height,
-    width,
-    height,
-  };
-}

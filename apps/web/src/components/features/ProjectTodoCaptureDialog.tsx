@@ -240,7 +240,7 @@ export function ProjectTodoCaptureDialog({
           onEscapeKeyDown={(event) => { if (pending) event.preventDefault(); }}
           onPointerDownOutside={(event) => { if (pending) event.preventDefault(); }}
           onInteractOutside={(event) => { if (pending) event.preventDefault(); }}
-          className="animate-todo-dialog fixed inset-0 z-[71] m-auto flex h-fit max-h-[min(680px,calc(100dvh-32px))] w-[min(560px,calc(100vw-32px))] flex-col overflow-hidden rounded-[var(--shape-dialog)] border border-border-default bg-bg-overlay shadow-lg outline-none"
+          className="animate-todo-dialog fixed inset-0 z-[71] m-auto flex h-fit max-h-[min(680px,calc(100dvh-32px))] w-[min(560px,calc(100vw-32px))] flex-col overflow-hidden rounded-[var(--shape-dialog)] border border-border-default bg-bg-overlay shadow-[var(--elevation-modal)] outline-none"
         >
           <header className="flex min-h-[52px] shrink-0 items-center gap-3 border-b border-border-subtle py-0 pl-[18px] pr-1.5 min-[761px]:pr-2.5">
             <DialogPrimitive.Title className="flex-1 text-[15px] font-semibold text-text-primary">New Todo</DialogPrimitive.Title>

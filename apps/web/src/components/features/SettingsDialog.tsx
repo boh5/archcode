@@ -157,7 +157,7 @@ export function SettingsDialog({ open, section = "models", onClose, projectSlug 
 
 export function RuntimeRecoverySettings({ runtime, onRefreshRuntime }: { runtime: RuntimeStatus; onRefreshRuntime: () => Promise<void> }) {
   return <main className="min-h-dvh bg-bg-base p-0 text-text-primary min-[641px]:p-4">
-    <section aria-label="Runtime recovery settings" className="mx-auto h-dvh min-h-0 w-full overflow-hidden border-border-strong bg-bg-overlay min-[641px]:h-[calc(100dvh-32px)] min-[641px]:max-w-[1120px] min-[641px]:rounded-md min-[641px]:border min-[641px]:shadow-lg">
+    <section aria-label="Runtime recovery settings" className="mx-auto h-dvh min-h-0 w-full overflow-hidden border-border-strong bg-bg-overlay min-[641px]:h-[calc(100dvh-32px)] min-[641px]:max-w-[1120px] min-[641px]:rounded-[var(--shape-dialog)] min-[641px]:border">
       <SettingsWorkspace active section="runtime-data" runtime={runtime} onRefreshRuntime={onRefreshRuntime} />
     </section>
   </main>;

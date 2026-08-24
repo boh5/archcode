@@ -222,7 +222,8 @@ describe("ComposerQueueList", () => {
     expect(container.querySelector('[data-queue-visual="sending"] .lucide-loader-circle')?.classList.contains("animate-activity")).toBe(true);
     expect(container.querySelector('[data-queue-visual="retryable"] .lucide-triangle-alert')).not.toBeNull();
     expect(container.querySelector('[data-queue-visual="queued"]')?.className).not.toContain("uppercase");
-    expect(container.querySelector('[data-queue-visual="steering"]')?.className).not.toContain("text-text-muted");
+    expect(container.querySelector('[data-queue-visual="steering"]')?.className).toContain("text-signal-foreground");
+    expect(container.querySelector('[data-queue-visual="sending"]')?.className).toContain("text-signal-foreground");
     expect(container.textContent).not.toContain("Duplicate optimistic instruction");
     expect(container.querySelector('[data-testid="pending-model-invalidation-queued-row"]')?.textContent)
       .toBe("Model changed: test:removed → test:model");

@@ -77,8 +77,9 @@ describe("ContextInspector tabs", () => {
     expect(document.querySelector('[data-testid="inspector-count-agents"]')?.textContent).toBe("2");
     expect(document.querySelector('[data-testid="inspector-count-changes"]')?.textContent).toBe("0");
     expect(document.querySelector('[role="tablist"]')?.className).toContain("gap-[3px]");
-    expect(document.querySelector('[data-testid="inspector-count-agents"]')?.className).toContain("min-w-4");
-    expect(document.querySelector('[data-testid="inspector-count-agents"]')?.className).toContain("rounded-full");
+    expect(document.querySelector('[data-testid="inspector-count-agents"]')?.className).toContain("font-mono");
+    expect(document.querySelector('[data-testid="inspector-count-agents"]')?.className).toContain("text-[9.5px]");
+    expect(document.querySelector('[data-testid="inspector-count-agents"]')?.className).toContain("text-brand");
     expect(document.querySelector('[role="tab"]')?.className).toContain("after:left-[7px]");
 
     const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
