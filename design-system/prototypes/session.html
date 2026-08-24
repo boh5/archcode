@@ -355,18 +355,30 @@ Every project currently inherits all three global profiles. A full configuration
           const confirmation = document.createElement('div');
           confirmation.className = 'reference-remove-confirm';
           confirmation.dataset.referenceRemoveConfirmation = '';
-          confirmation.innerHTML = '<p>Remove this reference? It becomes unavailable to associated Sessions on their next model or tool call.</p><div><button type="button" data-reference-remove-cancel>Cancel</button><button type="button" data-reference-remove-confirm>Remove reference</button></div>';
+          const copy = document.createElement('p');
+          copy.textContent = 'Remove this reference? It becomes unavailable to associated Sessions on their next model or tool call.';
+          const actions = document.createElement('div');
+          const cancel = document.createElement('button');
+          cancel.type = 'button';
+          cancel.dataset.referenceRemoveCancel = '';
+          cancel.textContent = 'Cancel';
+          const confirm = document.createElement('button');
+          confirm.type = 'button';
+          confirm.dataset.referenceRemoveConfirm = '';
+          confirm.textContent = 'Remove reference';
+          actions.append(cancel, confirm);
+          confirmation.append(copy, actions);
           row.appendChild(confirmation);
-          confirmation.querySelector('[data-reference-remove-cancel]')?.addEventListener('click', () => {
+          cancel.addEventListener('click', () => {
             confirmation.remove();
             button.focus();
           });
-          confirmation.querySelector('[data-reference-remove-confirm]')?.addEventListener('click', () => {
+          confirm.addEventListener('click', () => {
             if (row.dataset.objectUrl) URL.revokeObjectURL(row.dataset.objectUrl);
             row.remove();
             notify(`${name} removed from this Todo.`);
           });
-          confirmation.querySelector('[data-reference-remove-cancel]')?.focus();
+          cancel.focus();
         });
         document.querySelectorAll('[data-todo-reference-remove]').forEach(bindRemove);
         referenceInput?.addEventListener('change', () => {
@@ -403,11 +415,13 @@ Every project currently inherits all three global profiles. A full configuration
             actions.append(open, remove);
             row.append(type, details, actions);
             open.addEventListener('click', () => {
-              if (openInline) window.open(objectUrl, '_blank', 'noopener,noreferrer');
+              const safeObjectUrl = encodeURI(objectUrl);
+              if (openInline) window.open(safeObjectUrl, '_blank', 'noopener,noreferrer');
               else {
                 const download = document.createElement('a');
-                download.href = objectUrl;
-                download.download = file.name;
+                const safeFilename = file.name.replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_').slice(0, 255) || 'reference';
+                download.download = safeFilename;
+                download.href = safeObjectUrl;
                 document.body.appendChild(download);
                 download.click();
                 download.remove();
