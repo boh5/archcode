@@ -133,7 +133,7 @@ describe("createTodoContinuationHook - afterLoopEnd (loop continuation)", () => 
     expect(store.getState().reminders).toHaveLength(0);
   });
 
-  test("updates stagnation count when pending todo count does not decrease", async () => {
+  test("updates stagnation count when pending todo count stays the same", async () => {
     const store = createHookStore();
     seedTodos(store, [{ id: "todo-1", content: "continue", status: "pending" }]);
     store.setState({
@@ -159,6 +159,25 @@ describe("createTodoContinuationHook - afterLoopEnd (loop continuation)", () => 
     await runLoopEnd(afterLoopEnd, store, "completed");
 
     expect(store.getState().todoContinuationStagnationCount).toBe(0);
+  });
+
+  test("resets stagnation count when pending todo count increases", async () => {
+    const store = createHookStore();
+    seedTodos(store, [
+      { id: "todo-1", content: "continue", status: "pending" },
+      { id: "todo-2", content: "new work", status: "pending" },
+    ]);
+    store.setState({
+      lastTodoContinuationPendingCount: 1,
+      todoContinuationStagnationCount: 2,
+    });
+    const { afterLoopEnd } = createTodoContinuationHook();
+
+    await runLoopEnd(afterLoopEnd, store, "completed");
+
+    expect(store.getState().todoContinuationStagnationCount).toBe(0);
+    expect(store.getState().lastTodoContinuationPendingCount).toBe(2);
+    expect(store.getState().reminders).toHaveLength(1);
   });
 
   test("blocks continuation when stagnation threshold reached", async () => {

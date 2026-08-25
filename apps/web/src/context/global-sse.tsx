@@ -20,6 +20,7 @@ import { queryKeys } from "../api/queries";
 import {
   isGlobalSSEHitlRealtimeEvent,
   isGlobalSSEHitlSnapshotEvent,
+  isGlobalSSEProjectCatalogChangedEvent,
   isGlobalSSEResourceChangedEvent,
   isGlobalSSEUpdateChangedEvent,
   isSessionEventPayload,
@@ -365,6 +366,15 @@ export function refreshProjectTodoQueriesAfterSSEOpen(
   });
 }
 
+export function refreshProjectCatalogAfterSSEOpen(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: queryKeys.projects,
+    refetchType: "active",
+  });
+}
+
 const GlobalSSEContext = createContext<GlobalSSEContextValue | null>(null);
 
 export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | null {
@@ -382,6 +392,8 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
       case "session.runtime.snapshot":
       case "session.runtime_changed":
         return parsed;
+      case "project.catalog_changed":
+        return isGlobalSSEProjectCatalogChangedEvent(parsed) ? parsed : null;
       case "update.changed":
         return isGlobalSSEUpdateChangedEvent(parsed) ? parsed : null;
       case "hitl.snapshot":
@@ -574,6 +586,10 @@ export function handleSSEEvent(
     }
     case "resource.changed": {
       invalidateResourceQueries(deps, parsed as GlobalSSEResourceChangedEvent);
+      break;
+    }
+    case "project.catalog_changed": {
+      deps.invalidateQueries({ queryKey: queryKeys.projects, exact: true });
       break;
     }
     case "session.runtime.snapshot": {
@@ -789,6 +805,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
         refreshSessionSnapshots();
         void queryClient.invalidateQueries({ queryKey: queryKeys.modelRuntime });
         void queryClient.invalidateQueries({ queryKey: queryKeys.update });
+        void refreshProjectCatalogAfterSSEOpen(queryClient);
         void refreshProjectTodoQueriesAfterSSEOpen(queryClient);
         setConnectionState("open");
       },

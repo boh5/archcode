@@ -1,6 +1,7 @@
 import type {
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEHitlSnapshotEvent,
+  GlobalSSEProjectCatalogChangedEvent,
   GlobalSSEResourceChangedEvent,
   FinalizedToolResult,
   SessionEventPayload,
@@ -586,6 +587,16 @@ export function isGlobalSSEResourceChangedEvent(value: unknown): value is Global
     && isString(event.projectSlug)
     && oneOf(event.resourceType, ["automation", "session", "todo"])
     && isString(event.resourceId)
+    && isFiniteNumber(event.createdAt);
+}
+
+export function isGlobalSSEProjectCatalogChangedEvent(
+  value: unknown,
+): value is GlobalSSEProjectCatalogChangedEvent {
+  const event = record(value);
+  return event !== undefined
+    && exact(event, ["type", "createdAt"])
+    && event.type === "project.catalog_changed"
     && isFiniteNumber(event.createdAt);
 }
 

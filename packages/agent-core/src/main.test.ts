@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type {
   GlobalSessionEventEnvelope,
+  GlobalSSEProjectCatalogChangedEvent,
   GlobalSSESessionRuntimeChangedEvent,
   RequestedModelSelection,
   ServerConfigUpdate,
@@ -1060,6 +1061,23 @@ describe("createRuntime", () => {
     expect(runtime.getMcpServerInventory()).toEqual({ servers: { docs: [] } });
   });
   test("exposes project registry and shared context resolver", async () => { const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpRuntimeFactory: () => makeFakeMcpRuntime() }); expect(runtime.projectRegistry).toBeDefined(); expect(runtime.contextResolver).toBeDefined(); });
+  test("publishes project catalog changes from the Runtime registry facade", async () => {
+    const workspaceRoot = await makeTempRoot();
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig()),
+      mcpRuntimeFactory: () => makeFakeMcpRuntime(),
+    });
+    const events: GlobalSSEProjectCatalogChangedEvent[] = [];
+    const unsubscribe = runtime.subscribeProjectCatalogChanges?.((event) => events.push(event));
+
+    await runtime.projectRegistry.add({ workspaceRoot, name: "Catalog event" });
+
+    expect(events).toEqual([{
+      type: "project.catalog_changed",
+      createdAt: expect.any(Number),
+    }]);
+    unsubscribe?.();
+  });
   test("emits runtime snapshot without idle families", async () => { const workspaceRoot = await makeTempRoot(); const runtime = await createRuntime({ configService: await writeConfig(makeConfig()), mcpRuntimeFactory: () => makeFakeMcpRuntime() }); const project = await runtime.projectRegistry.add({ workspaceRoot, name: "Runtime snapshot" }); const session = await runtime.createSession(workspaceRoot, { agentName: "lead", source: { kind: "direct" } }); const changes: GlobalSSESessionRuntimeChangedEvent[] = []; const unsubscribe = runtime.subscribeSessionRuntimeChanges((event) => changes.push(event)); const events = await runtime.listSessionRuntimeEvents(); expect(events[0]).toMatchObject({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }); await expect(runtime.stopSessionFamily(workspaceRoot, session.sessionId)).resolves.toBeUndefined(); expect(changes.map(({ activity }) => activity)).toEqual(["stopping", "idle"]); unsubscribe(); });
 
   test("startup continuation recovery preserves persisted Session recency and content", async () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll, beforeAll } from "bun:test";
+import { describe, it, expect, afterAll, afterEach, beforeAll, beforeEach } from "bun:test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { Disposable } from "vscode-jsonrpc";
@@ -68,53 +68,61 @@ interface RALWritable {
 
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let connection: ReturnType<typeof createMessageConnection> | undefined;
+let initializeResult: any;
 
-afterAll(async () => {
+beforeEach(async () => {
+  const serverPath = path.join(import.meta.dir, "fake-server.ts");
+  child = Bun.spawn(["bun", "run", serverPath], {
+    cwd: testTempRoot.path,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+    env: { ...process.env, FAKE_LSP_CONFIG: JSON.stringify(DEFAULT_FAKE_LSP_CONFIG) },
+  });
+
+  const outStream = child.stdout as ReadableStream<Uint8Array>;
+  const inSink = child.stdin as any;
+  const reader = new ReadableStreamMessageReader(adaptReader(outStream));
+  const writer = new WriteableStreamMessageWriter(adaptWriter(inSink));
+  connection = createMessageConnection(reader, writer);
+  connection.listen();
+  initializeResult = await connection.sendRequest("initialize", {
+    processId: null,
+    capabilities: {},
+    rootUri: null,
+  });
+});
+
+afterEach(async () => {
   if (connection) {
     try { connection.end(); } catch {}
+    connection = undefined;
   }
   if (child && child.exitCode === null) {
     child.kill();
-    child = undefined;
+    await child.exited;
   }
+  child = undefined;
+  initializeResult = undefined;
+});
+
+afterAll(async () => {
   await testTempRoot.cleanup();
 });
 
 describe("vscode-jsonrpc compatibility spike", () => {
   it("can spawn fake server, send initialize, and receive response", async () => {
-    const serverPath = path.join(import.meta.dir, "fake-server.ts");
-    child = Bun.spawn(["bun", "run", serverPath], {
-      cwd: testTempRoot.path,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "inherit",
-      env: { ...process.env, FAKE_LSP_CONFIG: JSON.stringify(DEFAULT_FAKE_LSP_CONFIG) },
-    });
-
-    const outStream = child.stdout as ReadableStream<Uint8Array>;
-    const inSink = child.stdin as any;
-    const reader = new ReadableStreamMessageReader(adaptReader(outStream));
-    const writer = new WriteableStreamMessageWriter(adaptWriter(inSink));
-    connection = createMessageConnection(reader, writer);
-    connection.listen();
-
-    const result: any = await connection.sendRequest("initialize", {
-      processId: null,
-      capabilities: {},
-      rootUri: null,
-    });
-
-    expect(result).toBeDefined();
-    expect(result).toHaveProperty("capabilities");
-    expect(result).toHaveProperty("serverInfo");
-    expect(result.serverInfo).toEqual({
+    expect(initializeResult).toBeDefined();
+    expect(initializeResult).toHaveProperty("capabilities");
+    expect(initializeResult).toHaveProperty("serverInfo");
+    expect(initializeResult.serverInfo).toEqual({
       name: "fake-lsp-server",
       version: "0.0.1",
     });
-    expect(result.capabilities).toHaveProperty("textDocumentSync", 1);
-    expect(result.capabilities).toHaveProperty("definitionProvider", true);
-    expect(result.capabilities).not.toHaveProperty("hoverProvider");
-    expect(result.capabilities).not.toHaveProperty("completionProvider");
+    expect(initializeResult.capabilities).toHaveProperty("textDocumentSync", 1);
+    expect(initializeResult.capabilities).toHaveProperty("definitionProvider", true);
+    expect(initializeResult.capabilities).not.toHaveProperty("hoverProvider");
+    expect(initializeResult.capabilities).not.toHaveProperty("completionProvider");
   });
 
   it("can send a notification", async () => {

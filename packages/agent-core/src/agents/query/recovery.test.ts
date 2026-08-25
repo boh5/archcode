@@ -374,6 +374,62 @@ describe("query loop LLM stream recovery", () => {
     expect(JSON.stringify(store.getState().messages)).not.toContain("recovery-notice");
   });
 
+  test("retryable fullStream error chunk enters recovery even when result promises resolve", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const streamFn = createMockStreamText([
+      {
+        chunks: [{ type: "error", error: retryableEof("unexpected EOF from error chunk") }],
+        finishReason: "stop",
+        text: "must not be accepted",
+      },
+      { text: "Recovered answer" },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Recover error chunk");
+
+    expect(result).toMatchObject({ status: "completed", text: "Recovered answer", steps: 1 });
+    expect(streamFn).toHaveBeenCalledTimes(2);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-retry",
+      scope: "short",
+      visibility: "internal",
+      profile: "zero-output-short",
+      attempt: 1,
+      errorKind: "eof",
+    }));
+    expect(store.getState().steps.map((step) => step.finishReason)).toEqual(["interrupted", "stop"]);
+    expect(textParts(store).map((part) => part.text)).toEqual(["Recovered answer"]);
+  });
+
+  test("non-retryable fullStream error chunk is terminal even when result promises resolve", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const streamFn = createMockStreamText([{
+      chunks: [{
+        type: "error",
+        error: Object.assign(new Error("Unauthorized error chunk"), { status: 401 }),
+      }],
+      finishReason: "stop",
+      text: "must not be accepted",
+    }]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Reject error chunk");
+
+    expect(result).toMatchObject({ status: "failed", text: "", steps: 0, error: "Unauthorized error chunk" });
+    expect(streamFn).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type === "llm-retry")).toHaveLength(0);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      profile: "post-stream-terminal",
+      errorKind: "auth",
+      statusCode: 401,
+      message: "Model stream failed: Unauthorized error chunk",
+    }));
+    expect(store.getState().steps.map((step) => step.finishReason)).toEqual(["error"]);
+    expect(textParts(store)).toHaveLength(0);
+  });
+
   test("strictly reloads persisted same-run retry attempts", async () => {
     sessionFileInternals.saveSessionTranscript = realSaveSessionTranscript;
     const store = createStore();
@@ -618,6 +674,40 @@ describe("query loop LLM stream recovery", () => {
       errorKind: "abort",
       message: expect.stringContaining("Recovery failed:"),
     }));
+  });
+
+  test("abort after a recovered model result closes the successful attempt Step", async () => {
+    const store = createStore();
+    const abort = new AbortController();
+    const append = store.getState().append;
+    store.setState({
+      append: (event) => {
+        append(event);
+        if (event.type === "llm-recovery") {
+          abort.abort(new DOMException("User cancelled after model result", "AbortError"));
+        }
+      },
+    });
+    createMockStreamText([
+      { throwBeforeOutput: retryableEof("first attempt failed") },
+      { text: "model result raced with cancellation" },
+    ]);
+
+    const result = await runQueryLoop(
+      makeOptions({ store, abort: abort.signal }),
+      "Cancel after recovered result",
+    );
+
+    expect(result).toMatchObject({ outcome: "terminal", status: "aborted", text: "", steps: 0 });
+    expect(store.getState().steps).toHaveLength(2);
+    expect(store.getState().steps.map((step) => step.finishReason)).toEqual(["interrupted", "interrupted"]);
+    expect(store.getState().steps.every((step) => step.completedAt !== undefined)).toBe(true);
+    expect(textParts(store)).toEqual([
+      expect.objectContaining({
+        text: "model result raced with cancellation",
+        meta: { interrupted: true, discardedFromContext: true },
+      }),
+    ]);
   });
 
   test("continuous session retry is uncapped while delay is capped and next retry time is emitted", async () => {

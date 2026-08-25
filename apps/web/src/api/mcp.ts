@@ -15,8 +15,12 @@ export async function getMcpStatus(): Promise<McpServerStatusMap> {
   return res.servers;
 }
 
-export async function getMcpInventory(): Promise<McpServerInventoryResponse["servers"]> {
-  const response = await apiFetch<McpServerInventoryResponse>("/api/mcp/inventory");
+export async function getMcpInventory(
+  options: { signal?: AbortSignal } = {},
+): Promise<McpServerInventoryResponse["servers"]> {
+  const response = await apiFetch<McpServerInventoryResponse>("/api/mcp/inventory", {
+    signal: options.signal,
+  });
   return response.servers ?? {};
 }
 

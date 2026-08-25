@@ -135,6 +135,34 @@ describe("ProjectRegistry", () => {
     await expect(registry.remove(projectA.slug)).resolves.toBeUndefined();
   });
 
+  test("publishes catalog changes only after durable add, rename, touch, and remove mutations", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
+    let changes = 0;
+    const unsubscribe = registry.subscribeCatalogChanges(() => { changes += 1; });
+
+    const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Original" });
+    expect(changes).toBe(1);
+    await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Ignored" });
+    expect(changes).toBe(1);
+    const sameName = await registry.updateName(project.slug, "Original");
+    expect(changes).toBe(1);
+    const persistedSameName = await registry.get(project.slug);
+    expect(persistedSameName).toBeDefined();
+    expect(persistedSameName!).toEqual(sameName);
+    await registry.updateName(project.slug, "Renamed");
+    expect(changes).toBe(2);
+    await registry.touch(project.slug);
+    expect(changes).toBe(3);
+    await registry.remove("missing");
+    expect(changes).toBe(3);
+    await registry.remove(project.slug);
+    expect(changes).toBe(4);
+
+    unsubscribe();
+    await registry.add({ workspaceRoot: tmpWorkspaceB, name: "Not observed" });
+    expect(changes).toBe(4);
+  });
+
   test("touch on missing slug returns undefined", async () => {
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 

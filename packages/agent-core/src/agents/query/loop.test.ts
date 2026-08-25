@@ -8,6 +8,7 @@ import { applySessionToolBatchResponse } from "../../execution/session-tool-batc
 import { HitlBoundaryCodec } from "../../hitl/boundary-codec";
 import { setLlmAdapterForTest } from "../../llm/adapter";
 import { silentLogger } from "../../logger";
+import { createMockLogger } from "../../logger.test-helper";
 import type { ExecutionModelBinding } from "../../models";
 import { SkillService } from "../../skills";
 import { SessionStoreManager } from "../../store/session-store-manager";
@@ -900,6 +901,8 @@ describe("QueryLoop Tool Output Plane", () => {
 
   test("fails closed before model execution and leaves no Step when context preparation fails", async () => {
     const harness = await createHarness();
+    const logger = createMockLogger();
+    harness.options.logger = logger;
     harness.appendUser("prepare");
     let modelCalls = 0;
     harness.options.prepareModelContext = async () => {
@@ -918,6 +921,9 @@ describe("QueryLoop Tool Output Plane", () => {
     expect(streamEvents(harness)).toContain("execution-error");
     expect(streamEvents(harness)).not.toContain("step-start");
     expect(streamEvents(harness)).not.toContain("step-end");
+    expect(logger.error).toHaveBeenCalledWith("query.loop.fatal", expect.objectContaining({
+      error: expect.objectContaining({ message: "goal notice persistence failed" }),
+    }));
   });
 
   test("projects provider-addressed text and reasoning blocks in their original order", async () => {
@@ -1488,11 +1494,13 @@ describe("QueryLoop Tool Output Plane", () => {
   test("aborts a hung fullStream without waiting for the next chunk", async () => {
     const harness = await createHarness();
     const controller = new AbortController();
+    const logger = createMockLogger();
     let signalStreamBlocked!: () => void;
     const streamBlocked = new Promise<void>((resolve) => {
       signalStreamBlocked = resolve;
     });
     harness.options.abort = controller.signal;
+    harness.options.logger = logger;
     harness.appendUser("run");
 
     setLlmAdapterForTest({
@@ -1519,6 +1527,10 @@ describe("QueryLoop Tool Output Plane", () => {
 
     await expect(running).resolves.toMatchObject({ status: "aborted" });
     expect(streamEvents(harness)).toContain("tool-input-start");
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith("query.loop.aborted", expect.objectContaining({
+      context: expect.objectContaining({ step: 0 }),
+    }));
   });
 
   test("aborts hung finalize promises after the stream ends", async () => {

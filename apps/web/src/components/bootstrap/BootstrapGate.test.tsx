@@ -163,6 +163,7 @@ describe("BootstrapGate", () => {
 
   test("opens Config Recovery inside the restricted Settings shell with a terminal grant", async () => {
     dom.reconfigure({ url: "http://localhost/config-recovery#token=recovery-token" });
+    window.localStorage.setItem("archcodeTheme", "dark");
     globalThis.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === "/api/bootstrap") return Response.json({
         mode: "config_error",
@@ -180,7 +181,7 @@ describe("BootstrapGate", () => {
     }) as unknown as typeof fetch;
 
     await act(async () => {
-      root.render(<BootstrapGate><p>Workbench mounted</p></BootstrapGate>);
+      root.render(<AppRoot><BootstrapGate><p>Workbench mounted</p></BootstrapGate></AppRoot>);
       await Promise.resolve();
     });
 

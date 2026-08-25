@@ -57,6 +57,7 @@ import type {
   GlobalSSEHitlEntry,
   GlobalSSEHitlSnapshotEvent,
   GlobalSSEModelRuntimeChangedEvent,
+  GlobalSSEProjectCatalogChangedEvent,
   GlobalSSEResourceChangedEvent,
   GlobalSessionEventEnvelope,
   GlobalSSESessionRuntimeChangedEvent,
@@ -393,6 +394,7 @@ export interface AgentRuntime {
   getMemorySnapshot(workspaceRoot: string): Promise<MemorySnapshot>;
   subscribeSessionRuntimeChanges(listener: (event: GlobalSSESessionRuntimeChangedEvent) => void): () => void;
   subscribeModelRuntimeChanges(listener: (event: GlobalSSEModelRuntimeChangedEvent) => void): () => void;
+  subscribeProjectCatalogChanges?(listener: (event: GlobalSSEProjectCatalogChangedEvent) => void): () => void;
   subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatus(): McpServerStatusResponse;
@@ -2429,6 +2431,10 @@ export async function createRuntime(
       subscribeModelRuntimeChanges: (listener) => modelRuntime.subscribe((snapshot) => listener({
         type: "model_runtime.changed",
         revision: snapshot.revision,
+        createdAt: Date.now(),
+      })),
+      subscribeProjectCatalogChanges: (listener) => projectRegistry.subscribeCatalogChanges(() => listener({
+        type: "project.catalog_changed",
         createdAt: Date.now(),
       })),
       subscribeResourceChanges: (listener) => {

@@ -484,6 +484,7 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
   const [pendingActions, setPendingActions] = useState<Set<string>>(() => new Set());
   const pendingActionsRef = useRef(new Set<string>());
   const draftTestControllersRef = useRef(new Map<string, AbortController>());
+  const mountedRef = useRef(true);
   const updateServer = useMcpStatusStore((state) => state.updateServer);
   const inventoryStatusKey = Object.entries(servers)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -492,14 +493,16 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
 
   useEffect(() => {
     if (!runtimeAvailable || !active) return;
-    let mounted = true;
+    const controller = new AbortController();
     setInventoryError(undefined);
-    void getMcpInventory().then((next) => {
-      if (mounted) setInventory(next);
+    void getMcpInventory({ signal: controller.signal }).then((next) => {
+      if (!controller.signal.aborted) setInventory(next);
     }).catch((cause) => {
-      if (mounted) setInventoryError(cause instanceof Error ? cause.message : "Unable to load MCP tool inventory");
+      if (!controller.signal.aborted) {
+        setInventoryError(cause instanceof Error ? cause.message : "Unable to load MCP tool inventory");
+      }
     });
-    return () => { mounted = false; };
+    return () => controller.abort();
   }, [active, expectedRevision, inventoryStatusKey, runtimeAvailable]);
 
   useEffect(() => {
@@ -508,9 +511,13 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
     draftTestControllersRef.current.clear();
   }, [active, runtimeAvailable]);
 
-  useEffect(() => () => {
-    for (const controller of draftTestControllersRef.current.values()) controller.abort();
-    draftTestControllersRef.current.clear();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      for (const controller of draftTestControllersRef.current.values()) controller.abort();
+      draftTestControllersRef.current.clear();
+    };
   }, []);
 
   useEffect(() => {
@@ -526,10 +533,16 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
     setPendingActions((current) => new Set(current).add(key));
     setActionErrors((current) => { const next = { ...current }; delete next[key]; return next; });
     try { await action(); }
-    catch (cause) { setActionErrors((current) => ({ ...current, [key]: cause instanceof Error ? cause.message : "Action failed" })); }
+    catch (cause) {
+      if (mountedRef.current) {
+        setActionErrors((current) => ({ ...current, [key]: cause instanceof Error ? cause.message : "Action failed" }));
+      }
+    }
     finally {
       pendingActionsRef.current.delete(key);
-      setPendingActions((current) => { const next = new Set(current); next.delete(key); return next; });
+      if (mountedRef.current) {
+        setPendingActions((current) => { const next = new Set(current); next.delete(key); return next; });
+      }
     }
   };
 
@@ -596,7 +609,8 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
           <button type="button" disabled={!runtimeAvailable || !reconnectSaved || !reconnectEnabled || pendingActions.has(reconnectKey)} title={!reconnectEnabled ? "Enable and save this server before reconnecting" : !reconnectSaved ? "Save this server before reconnecting" : undefined} onClick={() => void runAction(reconnectKey, async () => {
             const status = (await reconnectMcpServer(name))[name];
             if (status !== undefined) updateServer(name, status);
-            setInventory(await getMcpInventory());
+            const nextInventory = await getMcpInventory();
+            if (mountedRef.current) setInventory(nextInventory);
           })} className={secondaryActionClass}>{pendingActions.has(reconnectKey) ? <Loader2 size={13} className="animate-activity" aria-hidden="true" /> : <RefreshCw size={13} aria-hidden="true" />}Reconnect</button>
           {!reconnectEnabled
             ? <span className="text-[11px] text-text-tertiary">Enable and save before reconnecting.</span>

@@ -52,7 +52,10 @@ const MAX_PROJECT_NAME_LENGTH = 80;
 type MutationResult<T> = {
   result: T;
   updated: ProjectInfo[];
+  changed: boolean;
 };
+
+export type ProjectCatalogChangeListener = () => void;
 
 export interface ProjectRegistrationResult {
   readonly project: ProjectInfo;
@@ -105,6 +108,7 @@ export class ProjectRegistry {
   #cache: ProjectInfo[] | null = null;
   #writeQueue: Promise<void> = Promise.resolve();
   #logger: Logger;
+  #catalogChangeListeners = new Set<ProjectCatalogChangeListener>();
 
   constructor(options: ProjectRegistryOptions) {
     this.#indexFile = join(options.homeDir ?? homedir(), USER_DATA_DIR_NAME, "projects", "index.json");
@@ -113,6 +117,13 @@ export class ProjectRegistry {
 
   async list(): Promise<ProjectInfo[]> {
     return sortProjects(await this.#load());
+  }
+
+  subscribeCatalogChanges(listener: ProjectCatalogChangeListener): () => void {
+    this.#catalogChangeListeners.add(listener);
+    return () => {
+      this.#catalogChangeListeners.delete(listener);
+    };
   }
 
   async get(slug: string): Promise<ProjectInfo | undefined> {
@@ -155,6 +166,7 @@ export class ProjectRegistry {
         return {
           result: { project: cloneProject(existing), created: false },
           updated: current,
+          changed: false,
         };
       }
 
@@ -175,6 +187,7 @@ export class ProjectRegistry {
       return {
         result: { project: cloneProject(project), created: true },
         updated: [...current, project],
+        changed: true,
       };
     });
   }
@@ -187,6 +200,7 @@ export class ProjectRegistry {
         updated: removed === undefined
           ? current
           : current.filter((project) => project.slug !== slug),
+        changed: removed !== undefined,
       };
     });
   }
@@ -216,6 +230,7 @@ export class ProjectRegistry {
       return {
         result: cloneProject(updatedProject),
         updated,
+        changed: updatedProject.name !== current[index]!.name,
       };
     });
   }
@@ -224,7 +239,7 @@ export class ProjectRegistry {
     return await this.#mutate((current) => {
       const index = current.findIndex((project) => project.slug === slug);
       if (index === -1) {
-        return { result: undefined, updated: current };
+        return { result: undefined, updated: current, changed: false };
       }
 
       const updatedProject: ProjectInfo = {
@@ -237,6 +252,7 @@ export class ProjectRegistry {
       return {
         result: cloneProject(updatedProject),
         updated,
+        changed: true,
       };
     });
   }
@@ -278,7 +294,10 @@ export class ProjectRegistry {
     const operation = this.#writeQueue.then(async () => {
       const current = cloneProjects(await this.#load());
       const mutation = await fn(current);
-      await this.#persist(mutation.updated);
+      if (mutation.changed) {
+        await this.#persist(mutation.updated);
+        this.#publishCatalogChanged();
+      }
       result = mutation.result;
     });
 
@@ -289,5 +308,17 @@ export class ProjectRegistry {
     });
     await operation;
     return result as T;
+  }
+
+  #publishCatalogChanged(): void {
+    for (const listener of this.#catalogChangeListeners) {
+      try {
+        listener();
+      } catch (error) {
+        this.#logger.warn("project.registry.catalog_change.listener.failed", {
+          error,
+        });
+      }
+    }
   }
 }

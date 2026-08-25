@@ -16,6 +16,7 @@ import type {
   GlobalSSEEvent,
   GlobalSSEResourceChangedEvent,
   GlobalSSEHeartbeatEvent,
+  GlobalSSEProjectCatalogChangedEvent,
   GlobalSSELaggedEvent,
   GlobalSSEResetEvent,
   GlobalSSESessionRuntimeChangedEvent,
@@ -221,6 +222,15 @@ describe("global SSE wire protocol types", () => {
     }];
 
     expect(serializeRoundTrip(events)).toEqual(events);
+  });
+
+  test("uses one process-wide project catalog invalidation event", () => {
+    const event: GlobalSSEProjectCatalogChangedEvent = {
+      type: "project.catalog_changed",
+      createdAt: 4,
+    };
+
+    expect(serializeRoundTrip(event)).toEqual(event);
   });
 
   test("round-trips a global session event envelope", () => {

@@ -114,7 +114,7 @@ export type { ConsoleLike, LogEntry, LogFields, Logger, LogLevel } from "./logge
 
 export { ProjectContextResolver } from "./projects/context-resolver";
 export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
-export type { ProjectRegistrationResult } from "./projects/registry";
+export type { ProjectCatalogChangeListener, ProjectRegistrationResult } from "./projects/registry";
 export { SessionLifecycleService } from "./projects/session-lifecycle-service";
 export type { SessionLifecycleServiceOptions } from "./projects/session-lifecycle-service";
 export type { ProjectContext, ProjectInfo } from "./projects/types";

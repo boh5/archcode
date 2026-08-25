@@ -62,7 +62,6 @@ type ModelAttemptResult =
       stepId: string;
       finalized: FinalizedModelResult;
       tools: ResolvedToolSet;
-      streamError?: unknown;
     }
   | {
       outcome: "terminal";
@@ -88,7 +87,7 @@ interface FinalizedModelResult {
   toolCalls?: ToolCallArray;
 }
 
-type FinalizationKind = "result" | "toolCalls";
+type FinalizationKind = "stream" | "result" | "toolCalls";
 
 type RetryOrTerminalAttemptResult =
   | Omit<Extract<ModelAttemptResult, { outcome: "terminal" }>, "stepId">
@@ -230,19 +229,28 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       ...(systemPrompt ? { system: systemPrompt } : {}),
     });
 
-    const { streamError } = await consumeFullStream(
+    const { streamError, hasStreamError } = await consumeFullStream(
       result.fullStream as AsyncIterable<TextStreamPart>,
       store,
       binding,
       stepId,
       abort,
     );
-    const finalized = await finalizeModelResult(result, streamError, store, stepId, step, abort, redactProviderSecrets);
+    const finalized = await finalizeModelResult(
+      result,
+      streamError,
+      hasStreamError,
+      store,
+      stepId,
+      step,
+      abort,
+      redactProviderSecrets,
+    );
     if (finalized.outcome !== "success") {
       if (finalized.outcome === "retry") await settleUnfinalizedToolParts();
       return { ...finalized, stepId };
     }
-    return { outcome: "success", stepId, finalized: finalized.finalized, tools: resolvedTools, streamError };
+    return { outcome: "success", stepId, finalized: finalized.finalized, tools: resolvedTools };
   } catch (err) {
     await settleModelResultPromises(result, abort);
     if (classifyLlmError(err, { boundary: "provider-request" }).kind === "abort") {
@@ -652,6 +660,14 @@ export async function runQueryLoop(
       if (abort.aborted) {
         const err = abort.reason ?? new DOMException("Aborted", "AbortError");
         const classification = classifyLlmError(err);
+        if (isStepOpen(store, attempt.stepId)) {
+          store.getState().append({
+            type: "step-end",
+            stepId: attempt.stepId,
+            step: steps,
+            finishReason: "interrupted",
+          });
+        }
         appendTerminalLlmFailureNotice(store, err, classification.kind, {
           steps,
           stepId: attempt.stepId,
@@ -758,10 +774,16 @@ export async function runQueryLoop(
     failed = true;
     runEndStatus = abort.aborted ? "aborted" : "failed";
     runEndError = safeError.message;
-    logger.error("query.loop.fatal", {
-      error: safeError,
-      context: { step: steps, sessionId, agentName },
-    });
+    if (abort.aborted) {
+      logger.debug("query.loop.aborted", {
+        context: { step: steps, sessionId, agentName },
+      });
+    } else {
+      logger.error("query.loop.fatal", {
+        error: safeError,
+        context: { step: steps, sessionId, agentName },
+      });
+    }
     store.getState().append(preparationFailed
       ? {
           type: "execution-error",
@@ -857,8 +879,9 @@ async function consumeFullStream(
   binding: QueryLoopOptions["binding"],
   stepId: string,
   abort?: AbortSignal,
-): Promise<{ streamError?: unknown }> {
+): Promise<{ streamError?: unknown; hasStreamError: boolean }> {
   let streamError: unknown;
+  let hasStreamError = false;
   type OpenProviderBlock = {
     redactor: ReturnType<typeof binding.modelInfo.createSensitiveTextStream>;
   };
@@ -881,6 +904,7 @@ async function consumeFullStream(
         if (abort?.aborted) break;
 
         if (chunk.type === "error") {
+          hasStreamError = true;
           streamError = chunk.error;
           continue;
         }
@@ -984,12 +1008,13 @@ async function consumeFullStream(
     }
   }
 
-  return { streamError };
+  return { streamError, hasStreamError };
 }
 
 async function finalizeModelResult(
   result: AnyStreamTextResult,
   streamError: unknown,
+  hasStreamError: boolean,
   store: StoreApi<SessionStoreState>,
   stepId: string,
   step: number,
@@ -1014,6 +1039,10 @@ async function finalizeModelResult(
     text = redactProviderSecrets(settled[2]);
   } catch (err) {
     return handleFinalizationFailure(preferStreamError(streamError, err), store, stepId, step, abort, "result", redactProviderSecrets);
+  }
+
+  if (hasStreamError) {
+    return handleFinalizationFailure(streamError, store, stepId, step, abort, "stream", redactProviderSecrets);
   }
 
   if (finishReason !== "tool-calls") {
@@ -1174,7 +1203,7 @@ function appendPostStreamTerminalFailure(
   err: unknown,
   stepId: string,
   step: number,
-  kind: "result" | "toolCalls",
+  kind: FinalizationKind,
 ): void {
   const message = errorMessage(err);
   const classification = classifyLlmError(err);
@@ -1200,7 +1229,9 @@ function appendPostStreamTerminalFailure(
   }, {
     terminalNoRetry: true,
     profile: "post-stream-terminal",
-    message: `${kind === "toolCalls" ? "Model tool call" : "Model result"} finalization failed: ${message}`,
+    message: kind === "stream"
+      ? `Model stream failed: ${message}`
+      : `${kind === "toolCalls" ? "Model tool call" : "Model result"} finalization failed: ${message}`,
   });
 }
 
