@@ -483,7 +483,7 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
   const [inventoryError, setInventoryError] = useState<string>();
   const [pendingActions, setPendingActions] = useState<Set<string>>(() => new Set());
   const pendingActionsRef = useRef(new Set<string>());
-  const draftTestControllersRef = useRef(new Map<string, AbortController>());
+  const actionControllersRef = useRef(new Map<string, AbortController>());
   const mountedRef = useRef(true);
   const updateServer = useMcpStatusStore((state) => state.updateServer);
   const inventoryStatusKey = Object.entries(servers)
@@ -507,22 +507,22 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
 
   useEffect(() => {
     if (active && runtimeAvailable) return;
-    for (const controller of draftTestControllersRef.current.values()) controller.abort();
-    draftTestControllersRef.current.clear();
+    for (const controller of actionControllersRef.current.values()) controller.abort();
+    actionControllersRef.current.clear();
   }, [active, runtimeAvailable]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      for (const controller of draftTestControllersRef.current.values()) controller.abort();
-      draftTestControllersRef.current.clear();
+      for (const controller of actionControllersRef.current.values()) controller.abort();
+      actionControllersRef.current.clear();
     };
   }, []);
 
   useEffect(() => {
-    for (const controller of draftTestControllersRef.current.values()) controller.abort();
-    draftTestControllersRef.current.clear();
+    for (const controller of actionControllersRef.current.values()) controller.abort();
+    actionControllersRef.current.clear();
     setTestResults({});
     setActionErrors({});
   }, [config]);
@@ -592,25 +592,36 @@ export function SettingsMcpPanel({ config, savedConfig = config, expectedRevisio
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button type="button" disabled={!runtimeAvailable || pendingActions.has(testKey)} title={!runtimeAvailable ? "Runtime is unavailable" : undefined} onClick={() => void runAction(testKey, async () => {
             const controller = new AbortController();
-            draftTestControllersRef.current.set(testKey, controller);
+            actionControllersRef.current.set(testKey, controller);
             try {
               const result = await testMcpDraft(name, { expectedRevision, config }, { signal: controller.signal });
-              if (draftTestControllersRef.current.get(testKey) !== controller) return;
+              if (actionControllersRef.current.get(testKey) !== controller) return;
               setTestResults((current) => ({ ...current, [name]: result.tools }));
               if (result.warnings.length > 0) setActionErrors((current) => ({ ...current, [testKey]: result.warnings.join(" ") }));
             } catch (cause) {
               if (!controller.signal.aborted) throw cause;
             } finally {
-              if (draftTestControllersRef.current.get(testKey) === controller) {
-                draftTestControllersRef.current.delete(testKey);
+              if (actionControllersRef.current.get(testKey) === controller) {
+                actionControllersRef.current.delete(testKey);
               }
             }
           })} className={secondaryActionClass}>{pendingActions.has(testKey) ? <Loader2 size={13} className="animate-activity" aria-hidden="true" /> : null}Test draft</button>
           <button type="button" disabled={!runtimeAvailable || !reconnectSaved || !reconnectEnabled || pendingActions.has(reconnectKey)} title={!reconnectEnabled ? "Enable and save this server before reconnecting" : !reconnectSaved ? "Save this server before reconnecting" : undefined} onClick={() => void runAction(reconnectKey, async () => {
-            const status = (await reconnectMcpServer(name))[name];
-            if (status !== undefined) updateServer(name, status);
-            const nextInventory = await getMcpInventory();
-            if (mountedRef.current) setInventory(nextInventory);
+            const controller = new AbortController();
+            actionControllersRef.current.set(reconnectKey, controller);
+            try {
+              const status = (await reconnectMcpServer(name))[name];
+              if (controller.signal.aborted) return;
+              if (status !== undefined) updateServer(name, status);
+              const nextInventory = await getMcpInventory({ signal: controller.signal });
+              if (!controller.signal.aborted && mountedRef.current) setInventory(nextInventory);
+            } catch (cause) {
+              if (!controller.signal.aborted) throw cause;
+            } finally {
+              if (actionControllersRef.current.get(reconnectKey) === controller) {
+                actionControllersRef.current.delete(reconnectKey);
+              }
+            }
           })} className={secondaryActionClass}>{pendingActions.has(reconnectKey) ? <Loader2 size={13} className="animate-activity" aria-hidden="true" /> : <RefreshCw size={13} aria-hidden="true" />}Reconnect</button>
           {!reconnectEnabled
             ? <span className="text-[11px] text-text-tertiary">Enable and save before reconnecting.</span>

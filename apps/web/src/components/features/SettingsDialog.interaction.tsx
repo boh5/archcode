@@ -873,6 +873,41 @@ describe("SettingsDialog interactions", () => {
     expect(inventorySignal?.aborted).toBe(true);
   });
 
+  test("aborts the inventory refresh started by MCP reconnect when leaving the panel", async () => {
+    let inventoryRequests = 0;
+    let reconnectInventorySignal: AbortSignal | undefined;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {
+      if (url === "/api/mcp/reconnect/custom") {
+        return Response.json({ servers: { custom: { state: "connecting", startedAt: 1 } } });
+      }
+      if (url === "/api/mcp/inventory") {
+        inventoryRequests += 1;
+        if (inventoryRequests === 1) return Response.json({ servers: {} });
+        reconnectInventorySignal = init?.signal ?? undefined;
+        return await new Promise<Response>((_resolve, reject) => {
+          reconnectInventorySignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+    await clickAndFlush("MCP");
+
+    const customRow = [...container.querySelectorAll("article")]
+      .find((article) => article.querySelector("h2")?.textContent === "custom");
+    const reconnectButton = [...(customRow?.querySelectorAll("button") ?? [])]
+      .find((button) => button.textContent === "Reconnect");
+    if (!reconnectButton) throw new Error("Missing custom MCP Reconnect button");
+    await act(async () => {
+      reconnectButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(reconnectInventorySignal?.aborted).toBe(false);
+
+    await clickAndFlush("Models");
+    expect(reconnectInventorySignal?.aborted).toBe(true);
+  });
+
   test("aborts an in-flight MCP draft test when leaving the panel", async () => {
     let draftSignal: AbortSignal | undefined;
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {

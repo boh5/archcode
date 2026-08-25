@@ -371,6 +371,7 @@ export function refreshProjectCatalogAfterSSEOpen(
 ): Promise<void> {
   return queryClient.invalidateQueries({
     queryKey: queryKeys.projects,
+    exact: true,
     refetchType: "active",
   });
 }

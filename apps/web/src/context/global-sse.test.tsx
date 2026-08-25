@@ -327,6 +327,7 @@ describe("SSE liveness watchdog", () => {
 
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: queryKeys.projects,
+      exact: true,
       refetchType: "active",
     });
   });
