@@ -52,6 +52,14 @@ function installDom() {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 }
 function click(label: string) { const element = [...container.querySelectorAll("button")].find((button) => button.textContent === label); if (!element) throw new Error(`Missing ${label}`); act(() => element.click()); }
+async function clickAndFlush(label: string) {
+  const element = [...container.querySelectorAll("button")].find((button) => button.textContent === label);
+  if (!element) throw new Error(`Missing ${label}`);
+  await act(async () => {
+    element.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
 function input(label: string, index = 0) {
   const fields = [...container.querySelectorAll("label")].filter((element) => !element.closest("[hidden]") && element.querySelector("span")?.textContent === label);
   const element = fields[index]?.querySelector("input, textarea, select") as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
@@ -381,7 +389,7 @@ describe("SettingsDialog interactions", () => {
     expect(input("Variants JSON")).not.toBeNull();
   });
 
-  test("never overwrites sparse generated provider, model, or MCP identifiers", () => {
+  test("never overwrites sparse generated provider, model, or MCP identifiers", async () => {
     const sparse = structuredClone(snapshot);
     sparse.config.provider["provider-3"] = {
       ...structuredClone(snapshot.config.provider.local),
@@ -394,7 +402,7 @@ describe("SettingsDialog interactions", () => {
     click("Add provider");
     click("Add model");
     expect(input("Display name", 1).value).toBe("Existing provider three");
-    click("MCP");
+    await clickAndFlush("MCP");
     click("Add MCP server");
 
     expect(container.textContent).toContain("provider-4");
@@ -677,10 +685,10 @@ describe("SettingsDialog interactions", () => {
     expect(input("Variant").value).toBe("fast");
   });
 
-  test("locks secret-bearing identities and still renames entries without preserved secrets", () => {
+  test("locks secret-bearing identities and still renames entries without preserved secrets", async () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
     expect((input("Provider ID") as HTMLInputElement).readOnly).toBe(true);
-    click("MCP");
+    await clickAndFlush("MCP");
     expect((input("Name") as HTMLInputElement).readOnly).toBe(true);
     expect((input("Transport") as HTMLSelectElement).disabled).toBe(true);
 
@@ -688,7 +696,7 @@ describe("SettingsDialog interactions", () => {
     const serverWithoutSecrets = withoutMcpSecrets.config.mcp!.servers.custom;
     if (serverWithoutSecrets.type === "http") delete serverWithoutSecrets.headers;
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={withoutMcpSecrets} servers={{}} onReload={async () => {}} /></DialogRoot>));
-    click("MCP");
+    await clickAndFlush("MCP");
     const name = input("Name");
     change(name, "renamed");
     expect(container.textContent).toContain("Delete custom");
@@ -803,9 +811,9 @@ describe("SettingsDialog interactions", () => {
   });
 
 
-  test("keeps built-in MCP rows locked in the rendered DOM", () => {
+  test("keeps built-in MCP rows locked in the rendered DOM", async () => {
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{ context7: { state: "ready", toolCount: 2, warningCount: 0, connectedAt: 1 } }} onReload={async () => {}} /></DialogRoot>));
-    click("MCP");
+    await clickAndFlush("MCP");
     expect(container.textContent).toContain("Built-in");
     expect(container.textContent).toContain("Ready");
     expect(container.textContent).toContain("Not reported");
@@ -815,11 +823,11 @@ describe("SettingsDialog interactions", () => {
     expect(container.textContent).not.toContain("Delete exa");
   });
 
-  test("offers draft Test for built-ins but blocks Reconnect while disabled", () => {
+  test("offers draft Test for built-ins but blocks Reconnect while disabled", async () => {
     const disabled = structuredClone(snapshot);
     disabled.config.mcp!.disabledBuiltins = ["context7"];
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={disabled} servers={{ context7: { state: "disabled", updatedAt: 1 } }} onReload={async () => {}} /></DialogRoot>));
-    click("MCP");
+    await clickAndFlush("MCP");
 
     const row = [...container.querySelectorAll("article")].find((article) => article.querySelector("h2")?.textContent === "context7");
     if (!row) throw new Error("Missing context7 MCP row");
@@ -831,7 +839,7 @@ describe("SettingsDialog interactions", () => {
     expect(reconnectButton.title).toContain("Enable and save");
   });
 
-  test("drops blank STDIO argument lines from the draft", () => {
+  test("drops blank STDIO argument lines from the draft", async () => {
     const stdio = structuredClone(snapshot);
     stdio.config.mcp!.servers.custom = {
       type: "stdio",
@@ -840,11 +848,64 @@ describe("SettingsDialog interactions", () => {
       args: [],
     };
     act(() => root.render(<DialogRoot open><SettingsBody snapshot={stdio} servers={{}} onReload={async () => {}} /></DialogRoot>));
-    click("MCP");
+    await clickAndFlush("MCP");
 
     const args = input("Arguments (one per line)");
     change(args, "--first\n\n   \n--second\n");
     expect(input("Arguments (one per line)").value).toBe("--first\n--second");
+  });
+
+  test("aborts an in-flight MCP inventory request when leaving the panel", async () => {
+    let inventorySignal: AbortSignal | undefined;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {
+      if (url !== "/api/mcp/inventory") throw new Error(`Unexpected request: ${url}`);
+      inventorySignal = init?.signal ?? undefined;
+      return await new Promise<Response>((_resolve, reject) => {
+        inventorySignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      });
+    }) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+
+    await clickAndFlush("MCP");
+    expect(inventorySignal?.aborted).toBe(false);
+
+    await clickAndFlush("Models");
+    expect(inventorySignal?.aborted).toBe(true);
+  });
+
+  test("aborts the inventory refresh started by MCP reconnect when leaving the panel", async () => {
+    let inventoryRequests = 0;
+    let reconnectInventorySignal: AbortSignal | undefined;
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: mock(async (url: string, init?: RequestInit) => {
+      if (url === "/api/mcp/reconnect/custom") {
+        return Response.json({ servers: { custom: { state: "connecting", startedAt: 1 } } });
+      }
+      if (url === "/api/mcp/inventory") {
+        inventoryRequests += 1;
+        if (inventoryRequests === 1) return Response.json({ servers: {} });
+        reconnectInventorySignal = init?.signal ?? undefined;
+        return await new Promise<Response>((_resolve, reject) => {
+          reconnectInventorySignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }) });
+    act(() => root.render(<DialogRoot open><SettingsBody snapshot={snapshot} servers={{}} onReload={async () => {}} /></DialogRoot>));
+    await clickAndFlush("MCP");
+
+    const customRow = [...container.querySelectorAll("article")]
+      .find((article) => article.querySelector("h2")?.textContent === "custom");
+    const reconnectButton = [...(customRow?.querySelectorAll("button") ?? [])]
+      .find((button) => button.textContent === "Reconnect");
+    if (!reconnectButton) throw new Error("Missing custom MCP Reconnect button");
+    await act(async () => {
+      reconnectButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(reconnectInventorySignal?.aborted).toBe(false);
+
+    await clickAndFlush("Models");
+    expect(reconnectInventorySignal?.aborted).toBe(true);
   });
 
   test("aborts an in-flight MCP draft test when leaving the panel", async () => {

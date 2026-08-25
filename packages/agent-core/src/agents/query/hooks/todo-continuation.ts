@@ -48,7 +48,7 @@ function createTodoLoopContinuationHook(
     const pendingCount = checkResult.pendingTodos.length;
     const lastPendingCount = state.lastTodoContinuationPendingCount;
     const newStagnationCount =
-      lastPendingCount !== null && pendingCount >= lastPendingCount
+      lastPendingCount !== null && pendingCount === lastPendingCount
         ? state.todoContinuationStagnationCount + 1
         : 0;
 

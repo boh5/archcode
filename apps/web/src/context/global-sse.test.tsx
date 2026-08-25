@@ -6,6 +6,7 @@ import type {
   GlobalSSEHeartbeatEvent,
   GlobalSSEHitlRealtimeEvent,
   GlobalSSEMcpStatusEvent,
+  GlobalSSEProjectCatalogChangedEvent,
   GlobalSSEModelRuntimeChangedEvent,
   GlobalSSEResourceChangedEvent,
   GlobalSSEResetEvent,
@@ -52,6 +53,7 @@ import {
   isSessionSnapshotQueryKey,
   parseSSEEvent,
   refreshProjectTodoQueriesAfterSSEOpen,
+  refreshProjectCatalogAfterSSEOpen,
   resolveHitlNoticeEntries,
   requestSSEReconnectOnce,
   requestSSEShutdownReconnectOnce,
@@ -315,9 +317,33 @@ describe("SSE liveness watchdog", () => {
     expect(isProjectTodoQueryKey(["projects", 1, "todos"])).toBe(false);
     expect(invalidateQueries).toHaveBeenCalledTimes(1);
   });
+
+  test("actively refreshes the project catalog after every SSE open", async () => {
+    const invalidateQueries = mock(async () => undefined);
+
+    await refreshProjectCatalogAfterSSEOpen({
+      invalidateQueries,
+    } as unknown as Pick<QueryClient, "invalidateQueries">);
+
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.projects,
+      exact: true,
+      refetchType: "active",
+    });
+  });
 });
 
 describe("parseSSEEvent", () => {
+  test("accepts only the exact project catalog event contract", () => {
+    const event: GlobalSSEProjectCatalogChangedEvent = {
+      type: "project.catalog_changed",
+      createdAt: 2,
+    };
+
+    expect(parseSSEEvent(event.type, JSON.stringify(event))).toEqual(event);
+    expect(parseSSEEvent(event.type, JSON.stringify({ ...event, projectSlug: "demo" }))).toBeNull();
+  });
+
   test("parses valid event type", () => {
     const data = JSON.stringify({
       type: "event",
@@ -1004,6 +1030,21 @@ describe("handleSSEEvent", () => {
       queryKeys.tree("proj", "root-session"),
       queryKeys.projectTodos("proj"),
     ]);
+  });
+
+  test("invalidates only the process-wide project catalog for a catalog change", () => {
+    const event: GlobalSSEProjectCatalogChangedEvent = {
+      type: "project.catalog_changed",
+      createdAt: 2,
+    };
+
+    handleSSEEvent({ event: event.type, data: JSON.stringify(event) }, deps);
+
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.projects,
+      exact: true,
+    });
   });
 
   test("stores the scoped hitl.event view", () => {

@@ -30,8 +30,12 @@ describe("MCP control actions", () => {
 
   test("loads inventory and reconnects only by saved server identity", async () => {
     globalThis.document = { cookie: "" } as Document;
+    const controller = new AbortController();
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === "/api/mcp/inventory") return jsonResponse({ servers: { local: [] } });
+      if (String(input) === "/api/mcp/inventory") {
+        expect(init?.signal).toBe(controller.signal);
+        return jsonResponse({ servers: { local: [] } });
+      }
       expect(String(input)).toBe("/api/mcp/reconnect/local");
       expect(init?.method).toBe("POST");
       expect(init?.body).toBeUndefined();
@@ -39,7 +43,7 @@ describe("MCP control actions", () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await expect(getMcpInventory()).resolves.toEqual({ local: [] });
+    await expect(getMcpInventory({ signal: controller.signal })).resolves.toEqual({ local: [] });
     await expect(reconnectMcpServer("local")).resolves.toEqual({ local: { state: "connecting", startedAt: 1 } });
   });
 });

@@ -181,42 +181,9 @@ jobs:
           "$binary" --help | grep -F "Usage: archcode [options]"
           "$binary" --help | grep -F -- "--port <port>"
 
-          smoke_home="$RUNNER_TEMP/archcode-home"
-          mkdir -p "$smoke_home/.archcode"
-          install -m 600 .github/fixtures/smoke-config.json "$smoke_home/.archcode/config.json"
-
-          HOME="$smoke_home" "$binary" --port 41967 > "$RUNNER_TEMP/archcode-smoke.log" 2>&1 &
-          server_pid=$!
-          cleanup() {
-            kill "$server_pid" 2>/dev/null || true
-            wait "$server_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          ready=0
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            if curl --silent --fail http://127.0.0.1:41967/api/health > "$RUNNER_TEMP/archcode-health.json"; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-
-          if [[ "$ready" -ne 1 ]]; then
-            sed -n '1,160p' "$RUNNER_TEMP/archcode-smoke.log"
-            exit 1
-          fi
-
-          bun -e '
-            const health = await Bun.file(process.argv[1]).json();
-            if (health.ok !== true || health.version !== process.argv[2]) process.exit(1);
-          ' "$RUNNER_TEMP/archcode-health.json" "$VERSION"
-
-          curl --silent --fail http://127.0.0.1:41967/ > "$RUNNER_TEMP/archcode-index.html"
-          bun -e '
-            const html = await Bun.file(process.argv[1]).text();
-            if (!html.includes("<div id=\"root\"></div>")) process.exit(1);
-          ' "$RUNNER_TEMP/archcode-index.html"
+          ARCHCODE_SMOKE_BINARY="$binary" \
+          ARCHCODE_SMOKE_EXPECTED_VERSION="$VERSION" \
+            bun .github/scripts/smoke-compiled-binary.ts
 
       - name: Upload target archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

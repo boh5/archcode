@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   isGlobalSSEHitlRealtimeEvent,
   isGlobalSSEHitlSnapshotEvent,
+  isGlobalSSEProjectCatalogChangedEvent,
   isGlobalSSEResourceChangedEvent,
   isGlobalSSEUpdateChangedEvent,
   isSessionEventPayload,
@@ -745,6 +746,16 @@ describe("protocol event guards", () => {
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, resourceType: "goal", resourceId: "goal-1" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ ...resourceEvent, reason: "created" })).toBe(false);
     expect(isGlobalSSEResourceChangedEvent({ type: "resource.changed" })).toBe(false);
+    expect(isGlobalSSEProjectCatalogChangedEvent({
+      type: "project.catalog_changed",
+      createdAt: 2,
+    })).toBe(true);
+    expect(isGlobalSSEProjectCatalogChangedEvent({
+      type: "project.catalog_changed",
+      projectSlug: "project",
+      createdAt: 2,
+    })).toBe(false);
+    expect(isGlobalSSEProjectCatalogChangedEvent({ type: "project.catalog_changed" })).toBe(false);
   });
 
   test("accepts only coherent update status change events", () => {

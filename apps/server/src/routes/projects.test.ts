@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import type { AgentRuntime } from "@archcode/agent-core";
 import { ProjectRegistry, ProjectRuntimeActiveError, silentLogger } from "@archcode/agent-core";
 import type { ProjectInfo } from "@archcode/agent-core";
-import type { GlobalSSEEvent } from "@archcode/protocol";
+import type { GlobalSSEEvent, GlobalSSEProjectCatalogChangedEvent } from "@archcode/protocol";
 import { createRuntimeApp } from "../app";
 import { globalEventBus } from "../events/global-event-bus";
 
@@ -76,6 +76,10 @@ function createTestRuntime(
     },
     subscribeHitlEvents: () => () => undefined,
     subscribeSessionRuntimeChanges: () => () => undefined,
+    subscribeProjectCatalogChanges: (listener: (event: GlobalSSEProjectCatalogChangedEvent) => void) => projectRegistry.subscribeCatalogChanges(() => listener({
+      type: "project.catalog_changed",
+      createdAt: Date.now(),
+    })),
     createSession: async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     getSessionFile: async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     listSessions: async () => [],
@@ -185,6 +189,10 @@ describe("projects routes", () => {
 
       expect(response.status).toBe(201);
       expect(observed).toEqual([
+        {
+          type: "project.catalog_changed",
+          createdAt: expect.any(Number),
+        },
         {
           type: "session.runtime.snapshot",
           projectSlugs: ["alpha"],
@@ -375,6 +383,7 @@ describe("projects routes", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(events).toEqual([
+      expect.objectContaining({ type: "project.catalog_changed" }),
       expect.objectContaining({ type: "session.runtime.snapshot", projectSlugs: [project.slug], families: [] }),
       expect.objectContaining({ type: "hitl.snapshot", projectSlugs: [project.slug], entries: [] }),
     ]);
@@ -428,15 +437,21 @@ describe("projects routes", () => {
     });
     const project = (await created.json()) as ProjectInfo;
 
+    const events: GlobalSSEEvent[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => events.push(event));
     const res = await app.request(`/api/projects/${project.slug}`, {
       method: "PATCH",
       body: JSON.stringify({ name: "Renamed" }),
       headers: { "content-type": "application/json" },
     });
+    unsubscribe();
     const body = (await res.json()) as ProjectInfo;
 
     expect(res.status).toBe(200);
     expect(body).toEqual({ ...project, name: "Renamed" });
+    expect(events).toEqual([
+      expect.objectContaining({ type: "project.catalog_changed" }),
+    ]);
   });
 
   test("PATCH /api/projects/:slug rejects unknown body fields", async () => {
@@ -544,13 +559,19 @@ describe("projects routes", () => {
     });
     const project = (await created.json()) as ProjectInfo;
 
+    const events: GlobalSSEEvent[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => events.push(event));
     const res = await app.request(`/api/projects/${project.slug}/touch`, { method: "POST" });
+    unsubscribe();
     const body = (await res.json()) as ProjectInfo;
 
     expect(res.status).toBe(200);
     expect(body.slug).toBe(project.slug);
     expect(typeof body.lastOpenedAt).toBe("string");
     expect(body.lastOpenedAt).not.toBe(project.lastOpenedAt);
+    expect(events).toEqual([
+      expect.objectContaining({ type: "project.catalog_changed" }),
+    ]);
   });
 
   test("POST /api/projects/:slug/touch for non-existent slug returns 404 ProjectNotFoundError", async () => {

@@ -22,6 +22,10 @@
       }
     }
   },
+  "mcp": {
+    "disabledBuiltins": ["context7", "grep.app", "exa"],
+    "servers": {}
+  },
   "profiles": {
     "principal": {
       "model": "smoke:test"

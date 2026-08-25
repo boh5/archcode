@@ -1208,6 +1208,12 @@ export type GlobalSSEResourceChangedEvent =
     createdAt: number;
   };
 
+/** The process-wide registered project catalog changed and must be re-read. */
+export interface GlobalSSEProjectCatalogChangedEvent {
+  type: "project.catalog_changed";
+  createdAt: number;
+}
+
 export type GlobalSSEEvent =
   | GlobalSessionEventEnvelope
   | GlobalSSEHeartbeatEvent
@@ -1220,6 +1226,7 @@ export type GlobalSSEEvent =
   | GlobalSSESessionRuntimeChangedEvent
   | GlobalSSEHitlSnapshotEvent
   | GlobalSSEHitlRealtimeEvent
+  | GlobalSSEProjectCatalogChangedEvent
   | GlobalSSEResourceChangedEvent
   | GlobalSSEUpdateChangedEvent;
 

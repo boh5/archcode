@@ -11,6 +11,7 @@ const mockRuntime = {
   subscribeSessionRuntimeChanges: mock(() => () => undefined),
   subscribeMcpStatusChanges: mock(() => () => undefined),
   subscribeModelRuntimeChanges: mock(() => () => undefined),
+  subscribeProjectCatalogChanges: mock(() => () => undefined),
   getMcpServerStatus: mock(() => ({ servers: {} })),
   getMcpServerInventory: mock(() => ({ servers: {} })),
 } as unknown as AgentRuntime;
@@ -93,6 +94,20 @@ describe("createRuntimeApp", () => {
     createRuntimeApp(runtime);
     listener!({ type: "model_runtime.changed", revision: "revision-2", createdAt: 2 });
     expect(observed[0]).toEqual({ type: "model_runtime.changed", revision: "revision-2", createdAt: 2 });
+    unsubscribe();
+  });
+
+  test("bridges project catalog changes", () => {
+    let listener: ((event: Extract<GlobalSSEEvent, { type: "project.catalog_changed" }>) => void) | undefined;
+    const runtime = {
+      ...mockRuntime,
+      subscribeProjectCatalogChanges: mock((next: typeof listener) => { listener = next; return () => undefined; }),
+    } as unknown as AgentRuntime;
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => observed.push(event));
+    createRuntimeApp(runtime);
+    listener!({ type: "project.catalog_changed", createdAt: 3 });
+    expect(observed[0]).toEqual({ type: "project.catalog_changed", createdAt: 3 });
     unsubscribe();
   });
 });

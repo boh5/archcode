@@ -16,18 +16,11 @@ type GateState = { kind: "loading" } | { kind: "error"; message: string } | { ki
 const primaryButton = "inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-brand px-4 text-[12px] font-semibold text-brand-ink transition-colors duration-[var(--motion-fast)] hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 const secondaryButton = "inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-bg-active px-4 text-[12px] font-semibold text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40";
 
-let terminalGrantFromFragment: string | undefined;
-
-function readTerminalGrant(): string | undefined {
-  if (terminalGrantFromFragment !== undefined) return terminalGrantFromFragment;
+function readTerminalGrantFromFragment(): string | undefined {
   if (typeof window === "undefined") return undefined;
   const params = new URLSearchParams(window.location.hash.slice(1));
   const token = params.get("token")?.trim();
-  if (token) {
-    terminalGrantFromFragment = token;
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-  }
-  return terminalGrantFromFragment;
+  return token || undefined;
 }
 
 function emptySetupConfig(): ServerConfigUpdate {
@@ -49,6 +42,7 @@ export function BootstrapGate({
   onAuthInvalidated?: () => void;
 }) {
   const [state, setState] = useState<GateState>({ kind: "loading" });
+  const [terminalGrant, setTerminalGrant] = useState(readTerminalGrantFromFragment);
   const reload = useCallback(async () => {
     setState({ kind: "loading" });
     try {
@@ -61,6 +55,10 @@ export function BootstrapGate({
   }, []);
 
   useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    if (terminalGrant === undefined || typeof window === "undefined" || window.location.hash === "") return;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  }, [terminalGrant]);
   useEffect(
     () => subscribeAuthInvalidation(() => {
       onAuthInvalidated?.();
@@ -79,16 +77,14 @@ export function BootstrapGate({
 
   const { status } = state;
   if (status.mode === "setup") {
-    const grant = readTerminalGrant();
-    return grant
-      ? <SetupPage grant={grant} onComplete={reload} />
+    return terminalGrant
+      ? <SetupPage grant={terminalGrant} onGrantConsumed={() => setTerminalGrant(undefined)} onComplete={reload} />
       : <SetupLinkRequiredPage onRetry={reload} />;
   }
   if (status.mode === "config_error") {
-    const grant = readTerminalGrant();
-    return grant
-      ? <ConfigRecoverySettings grant={grant} onTransition={(next) => {
-        if (next.mode === "ready") setTerminalGrantConsumed();
+    return terminalGrant
+      ? <ConfigRecoverySettings grant={terminalGrant} onTransition={(next) => {
+        if (next.mode === "ready") setTerminalGrant(undefined);
         normalizeBootstrapPath(next);
         setState({ kind: "status", status: next });
       }} />
@@ -178,7 +174,7 @@ function LoginPage({ onLoggedIn }: { onLoggedIn: () => Promise<void> }) {
   </BootstrapShell>;
 }
 
-function SetupPage({ grant, onComplete }: { grant: string; onComplete: () => Promise<void> }) {
+function SetupPage({ grant, onGrantConsumed, onComplete }: { grant: string; onGrantConsumed: () => void; onComplete: () => Promise<void> }) {
   const [config, setConfig] = useState<ServerConfigUpdate>(emptySetupConfig);
   const [adapterCatalog, setAdapterCatalog] = useState<ProviderAdapterCatalog>();
   const [loadingCatalog, setLoadingCatalog] = useState(true);
@@ -228,7 +224,7 @@ function SetupPage({ grant, onComplete }: { grant: string; onComplete: () => Pro
         ? { config, requireLogin: true, password }
         : { config, requireLogin: false };
       await completeSetup(grant, request);
-      setTerminalGrantConsumed();
+      onGrantConsumed();
       await onComplete();
     } catch (cause) {
       setFieldErrors(toFieldErrors(cause));
@@ -260,10 +256,6 @@ function SetupPage({ grant, onComplete }: { grant: string; onComplete: () => Pro
       <footer className="flex items-center justify-end border-t border-border-subtle bg-bg-surface px-5 py-4 sm:px-7"><button type="button" className={primaryButton} disabled={submitting || loadingCatalog || !adapterCatalog} onClick={() => { void submit(); }}>{submitting ? "Finishing setup…" : confirmNoLogin && !requireLogin ? "Confirm without login" : "Finish setup"}</button></footer>
     </section>
   </main>;
-}
-
-function setTerminalGrantConsumed() {
-  terminalGrantFromFragment = undefined;
 }
 
 function normalizeBootstrapPath(status: BootstrapStatus): void {
