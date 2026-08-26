@@ -3,9 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   AssistantSessionPart,
   ExecutionModelBindingSummary,
+  LoadedToolRef,
   SessionExecutionRecord,
   SessionMessage,
   SessionStep,
+  ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -37,6 +39,11 @@ const memoryPolicy = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const toolAuthorizationSnapshot: ToolAuthorizationSnapshot = {
+  extraTools: [],
+  toolProjection: null,
+};
+const loadedToolRefs: LoadedToolRef[] = [];
 const usage = {
   inputTokens: 0,
   outputTokens: 0,
@@ -53,6 +60,8 @@ function completed(id = "execution"): SessionExecutionRecord {
     origin: "user_message",
     maxSteps: 10,
     executionSkills: [],
+    toolAuthorizationSnapshot,
+    loadedToolRefs,
     durationMs: 100,
     status: "completed",
     endedAt: 100,
@@ -79,6 +88,8 @@ function running(id = "execution"): SessionExecutionRecord {
     origin: "user_message",
     maxSteps: 10,
     executionSkills: [],
+    toolAuthorizationSnapshot,
+    loadedToolRefs,
     durationMs: 0,
     status: "running",
     runs: [{ ordinal: 0, startedAt: 0, binding }],
@@ -107,6 +118,8 @@ function suspended(
     origin: "user_message",
     maxSteps: 10,
     executionSkills: [],
+    toolAuthorizationSnapshot,
+    loadedToolRefs,
     durationMs: 10,
     status: "suspended",
     suspension,

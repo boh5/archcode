@@ -1,4 +1,4 @@
-import type { AgentTreeProjection, BuiltinMcpServerName } from "@archcode/protocol";
+import type { AgentTreeProjection, BuiltinMcpServerName, ToolAuthorizationSnapshot } from "@archcode/protocol";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { scopedKey } from "../store/key";
@@ -10,6 +10,7 @@ import { createAgentFactory } from "./factory";
 import type { AgentFactory } from "./factory";
 import type { AgentDefinition, AgentMcpToolSnapshot } from "./factory-types";
 import type { Agent } from "./types";
+import { ConfiguredAgent } from "./configured-agent";
 import type { Logger } from "../logger";
 import type {
   CancelDescendantSession,
@@ -130,6 +131,18 @@ export class SessionAgentManager {
     const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key, token);
     this.#pendingAgents.set(key, { token, promise });
     return promise;
+  }
+
+  async validateToolAuthorization(
+    workspaceRoot: string,
+    sessionId: string,
+    authorization: ToolAuthorizationSnapshot,
+  ): Promise<void> {
+    const agent = await this.getOrCreate(workspaceRoot, sessionId);
+    if (!(agent instanceof ConfiguredAgent)) {
+      throw new Error(`Session "${sessionId}" does not own a ConfiguredAgent authorization boundary`);
+    }
+    await agent.validateToolAuthorization(authorization);
   }
 
   /** Read-only cache probe used to preserve pre-existing warm Agents on failed activation. */

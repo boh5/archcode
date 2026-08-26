@@ -9,6 +9,7 @@ export const TOOL_FILE_EDIT = "file_edit";
 // Search
 export const TOOL_GREP = "grep";
 export const TOOL_GLOB = "glob";
+export const TOOL_TOOL_SEARCH = "tool_search";
 
 // AST Grep
 export const TOOL_AST_GREP_SEARCH = "ast_grep_search";
@@ -85,6 +86,7 @@ export type BuiltinToolName =
   | typeof TOOL_FILE_EDIT
   | typeof TOOL_GREP
   | typeof TOOL_GLOB
+  | typeof TOOL_TOOL_SEARCH
   | typeof TOOL_AST_GREP_SEARCH
   | typeof TOOL_AST_GREP_REPLACE
   | typeof TOOL_GIT_STATUS
@@ -153,6 +155,7 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_FILE_EDIT]: "fileWrite",
   [TOOL_GREP]: "search",
   [TOOL_GLOB]: "search",
+  [TOOL_TOOL_SEARCH]: "search",
   [TOOL_AST_GREP_SEARCH]: "search",
   [TOOL_AST_GREP_REPLACE]: "fileWrite",
   [TOOL_GIT_STATUS]: "git",

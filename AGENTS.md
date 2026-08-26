@@ -254,7 +254,8 @@ packages/utils/src/
 ~/.archcode/config.json → startup activation or token-protected Setup
   → optional Session auth → providers → registerBuiltinTools → live MCP runtime activation
   → Hono Runtime routes → Session-scoped Lead / Automation / HITL routes
-  → SessionExecutionManager → ConfiguredAgent → query loop → store → SSE → Web UI
+  → SessionExecutionManager → ConfiguredAgent authorized catalog
+  → Core + State + Execution-loaded visibility → query loop → store → SSE → Web UI
 
 Delegation control is a fixed seven-tool package: `delegate`, `list_agents`, `send_message`, `background_output`, `wait_for_reminder`, `cancel_session`, and `resume_session`. `delegate(DelegationRequest)` creates a durable direct child; `list_agents` reads the caller's descendant subtree through the same backend Agent Tree projection used by the Web tree; and `send_message` is the only parent-to-child message path, with `delivery: "steer" | "queue"` selecting the current Execution's next model boundary or the next Execution. `background_output` reads a direct child's result, `wait_for_reminder` waits on direct children, `cancel_session` strongly cascades to any descendant subtree, and `resume_session` continues a stopped direct child while preserving its Agent, Profile, Skills, and responsibility. Every child finishes with a normal assistant response; synchronous delegation returns that final response directly, while background work is read through `background_output`. If a synchronous child suspends, its parent suspends on the original tool call; each resumes its own same logical Execution when ready. `SessionExecutionManager` is the sole owner of Execution lifecycle, admission, concurrency, live run resources, recovery, and terminal records. There is no Build owned-scope or lease subsystem.
 ```
@@ -310,6 +311,16 @@ partitionToolCalls → global permissions
 ```
 
 Every descriptor declares an explicit `outputPolicy`. Registry is the sole Raw-to-Finalized conversion boundary: blocked requests produce no settled result, while settled and synthetic results are finalized exactly once. `ToolOutputFinalizer` owns redaction of output/details and streaming capture redacts before artifact persistence; model, Session/SSE/UI, audit, and logger consume only finalized data. Large one-shot output is recovered through authorized, bounded `output_read` and `output_search` pages rather than a full-output escape hatch.
+
+Model-visible tools are a projection, never an authorization source. Each
+`AgentDefinition` declares `tools.authorized` and its strict `tools.core`
+subset. `ConfiguredAgent` rebuilds the live authorized catalog at every model
+boundary, then exposes Core, fixed runtime State activations, valid
+Execution-local loaded refs, and `tool_search` only while deferred candidates
+exist. Local long-tail and all ready MCP descriptors remain deferred until a
+deterministic local search loads their contract for the next model step. Search
+never calls another model, never grants permission, and never falls back to an
+eager or load-all surface.
 
 **Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.{disabledBuiltins,servers}`. Each MCP server entry strictly requires `type: "http" | "stdio"` and `enabled`; HTTP uses `url`/`headers`, while STDIO uses `command`/`args`/`env`. Optional `connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` default to 10,000/30,000/60,000 ms. Provider values are literal; MCP URL/header or STDIO env values and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 
@@ -403,13 +414,13 @@ Minimal example:
 All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) → AgentResult`; SessionExecutionManager commits input before invoking the Agent. Visual is documentation-only future scope and has no runtime identity.
 
 **Delegation + tool filtering:**
-- Tool sets are hardcoded by `AgentDefinition`; typed RoleContract and Prompt layers describe behavior but never change runtime permissions.
+- Role authorization and Core sets are hardcoded by `AgentDefinition`; typed RoleContract, Prompt, State activation, loaded refs, and search results never expand runtime permissions.
 - Profiles route model resources only; Skills provide guidance only. Neither changes tools, delegation targets, or completion authority.
 - `DELEGATION_CONTROL_TOOLS` is the fixed seven-tool package: `delegate`, `list_agents`, `send_message`, `background_output`, `wait_for_reminder`, `cancel_session`, and `resume_session`. Lead, Discussion, Analyst, and Build explicitly spread this package in their own `AgentDefinition`; Explore and Librarian do not configure it.
 - `lead` uses `childPolicy.maxDepth = 3`; `discussion`, `analyst`, and `build` use `maxDepth = 2`. Discussion may delegate Explore/Librarian.
 - Lead targets Analyst/Build/Explore/Librarian; Analyst targets Explore/Librarian; Build targets Explore.
 - `explore` and `librarian` have no `delegateTargets`; they are terminal read-only support agents.
-- `agents/factory.ts` owns one immutable current-Agent/depth delegation capability snapshot and only removes the explicitly configured delegation package at each definition's `childPolicy.maxDepth` or when no direct target exists; it never injects delegation tools. Prompt/Tool projection and SessionExecutionManager admission consume that same target/Profile/builtin-Skill authority; Provider-facing Tool schemas remain portable presentation contracts while strict internal schemas still validate execution input.
+- `agents/factory.ts` owns one immutable current-Agent/depth delegation capability snapshot and only removes the explicitly configured delegation package at each definition's `childPolicy.maxDepth` or when no direct target exists; it never injects delegation tools. `extraTools` cannot restore that removed package. Prompt/Tool projection and SessionExecutionManager admission consume that same target/Profile/builtin-Skill authority; Provider-facing Tool schemas remain portable presentation contracts while strict internal schemas still validate execution input.
 - `list_agents` and the Web Agent Tree use one backend projection of durable family topology plus live Execution/Link facts. `send_message` targets only a running direct child and uses `steer | queue`; `cancel_session` accepts any descendant and strongly cascades its subtree, while `wait_for_reminder` and `resume_session` remain direct-child operations. `delegate` persists Agent, Profile, Skills, title, objective, and background choice; `resume_session` preserves that identity. Multiple Builds share general Session concurrency; there is no owned-scope or Build lease subsystem.
 
 **Workflow Skills:**
@@ -422,11 +433,12 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) �
 - Invalid package candidates are surfaced as `SKILL_INVALID_PACKAGE` diagnostics. A winning invalid package fails closed; resolution never falls through to a lower-precedence package. The same winning package is claimed once for one explicit `/skill use` logical Execution; an in-process resume reuses that snapshot, while process-restart recovery revalidates its persisted source/digest and fails closed on change.
 - Skills remain guidance only: their package metadata and resources cannot grant tools or permissions, execute scripts automatically, change Agent/Profile/MCP/workspace scope/delegation, or grant completion authority. Scripts use only existing Bash permissions.
 
-**MCP visibility**: User MCP servers are process-global and visible to all six
-Agent identities from the current live runtime at the next model-call
-boundary. They are not filtered by Agent role and do not add an approval step.
-Built-in visibility remains the hardcoded role matrix in the MCP section below;
-it is independent of user-server visibility.
+**MCP visibility**: User MCP servers are process-global and authorized for all
+six Agent identities from the current live runtime at the next model-call
+boundary. Their full schemas are deferred behind `tool_search`; the bounded
+Prompt projection contains namespace/server summaries only. They do not add an
+approval step. Built-in authorization remains the hardcoded role matrix in the
+MCP section below and is independent of user-server authorization.
 
 **Query loop lifecycle:**
 ```

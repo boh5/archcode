@@ -4,6 +4,7 @@ import { reduceStreamEvent } from "./reduce";
 import { createEmptySessionStats } from "./usage";
 import type {
   ExecutionLifecycleEvent,
+  LoadedToolRef,
   SessionExecutionRecord,
   SessionProjection,
   StreamEvent,
@@ -23,6 +24,8 @@ const memoryPolicy = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const toolAuthorizationSnapshot = { extraTools: [], toolProjection: null };
+const loadedToolRefs: LoadedToolRef[] = [];
 
 function projection(): SessionProjection {
   return {
@@ -69,6 +72,8 @@ function start(): Extract<ExecutionLifecycleEvent, { type: "execution-start" }> 
     binding,
     executionSkills: [],
     memoryPolicy,
+    toolAuthorizationSnapshot,
+    loadedToolRefs,
   };
 }
 
@@ -120,6 +125,27 @@ function execution(state: SessionProjection): SessionExecutionRecord {
 }
 
 describe("logical Execution lifecycle", () => {
+  test("compares authorization and loaded-tool state when replaying execution-start", () => {
+    const state = apply(projection(), start(), 0);
+    const event = start();
+
+    expect(validateExecutionTransition(state.executions, event)).toEqual({ outcome: "duplicate" });
+    expect(validateExecutionTransition(state.executions, {
+      ...event,
+      toolAuthorizationSnapshot: { extraTools: ["bash"], toolProjection: null },
+    })).toEqual({
+      outcome: "invalid",
+      reason: "Execution execution-1 already exists with a conflicting start",
+    });
+    expect(validateExecutionTransition(state.executions, {
+      ...event,
+      loadedToolRefs: [{ name: "bash", descriptorDigest: "a".repeat(64) }],
+    })).toEqual({
+      outcome: "invalid",
+      reason: "Execution execution-1 already exists with a conflicting start",
+    });
+  });
+
   test("keeps two HITL suspensions and resumes inside one logical record", () => {
     let state = apply(projection(), {
       type: "execution-start",
@@ -129,6 +155,8 @@ describe("logical Execution lifecycle", () => {
       binding,
       executionSkills: [],
       memoryPolicy,
+      toolAuthorizationSnapshot,
+      loadedToolRefs,
     }, 0);
     state = apply(state, {
       type: "execution-suspended",
@@ -203,6 +231,8 @@ describe("logical Execution lifecycle", () => {
       binding,
       executionSkills: [],
       memoryPolicy,
+      toolAuthorizationSnapshot,
+      loadedToolRefs,
     }, 0);
     state = apply(state, {
       type: "step-start",

@@ -1,4 +1,4 @@
-import type { HitlResponse } from "@archcode/protocol";
+import { TOOL_TOOL_SEARCH, type HitlResponse } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { ChildExecutionOutcome } from "../delegation/types";
 
@@ -13,6 +13,11 @@ import type {
 } from "../store/types";
 import { partitionToolCalls } from "../tools/concurrency/partition";
 import { createToolErrorResult } from "../tools/errors";
+import {
+  createSensitiveToolSearchQueryResult,
+  isRejectedToolSearchInput,
+  sanitizeToolSearchInput,
+} from "../tools/builtins/tool-search";
 import type { ToolRegistry } from "../tools/registry";
 import type {
   RawToolResult,
@@ -88,6 +93,7 @@ export class SessionToolBatchScheduler {
     stepId: string,
     step: number,
     descriptors: readonly AnyToolDescriptor[] = [],
+    catalogDigest?: string,
   ): Promise<SessionToolBatch> {
     if (this.activeBatch() !== undefined) throw new Error("Session already has an active tool batch");
     this.#liveDescriptors = new Map(descriptors.map((descriptor) => [descriptor.name, descriptor]));
@@ -118,6 +124,16 @@ export class SessionToolBatchScheduler {
     if (assistant?.role !== "assistant" || assistant.stepId !== stepId) {
       throw new Error(`Tool batch step ${stepId} has no current model-step Assistant message`);
     }
+    const durableToolCalls = toolCalls.map((call) => call.toolName === TOOL_TOOL_SEARCH
+      ? { ...call, input: sanitizeToolSearchInput(call.input) }
+      : call);
+    const allowedTools = [...new Set(descriptors.length > 0
+      ? descriptors.map((descriptor) => descriptor.name)
+      : this.#options.allowedTools)];
+    const toolSearchAllowed = allowedTools.includes(TOOL_TOOL_SEARCH);
+    if (toolSearchAllowed && toolCalls.some((call) => call.toolName === TOOL_TOOL_SEARCH)) {
+      requiredCatalogDigest(catalogDigest);
+    }
     const batch: SessionToolBatch = {
       batchId: crypto.randomUUID(),
       executionId: this.#options.executionId,
@@ -126,20 +142,21 @@ export class SessionToolBatchScheduler {
       assistantMessageId,
       step,
       agentName: this.#options.agentName,
-      allowedTools: [...new Set(descriptors.length > 0
-        ? descriptors.map((descriptor) => descriptor.name)
-        : this.#options.allowedTools)],
+      allowedTools,
       agentSkills: [...this.#options.agentSkills],
       partitions: partitions.map((partition) => ({
         type: partition.type,
         callIds: (partition.type === "parallel" ? partition.calls : [partition.call]).map((call) => call.toolCallId),
       })),
-      calls: toolCalls.map((call, ordinal) => ({
+      calls: durableToolCalls.map((call, ordinal) => ({
         ordinal,
         partitionIndex: partitionIndexByCall.get(call.toolCallId) ?? ordinal,
         toolCallId: call.toolCallId,
         toolName: call.toolName,
         input: toDurableToolInput(call.input),
+        ...(call.toolName === TOOL_TOOL_SEARCH && toolSearchAllowed
+          ? { catalogDigest: requiredCatalogDigest(catalogDigest) }
+          : {}),
         traits: descriptorSource.get(call.toolName)?.traits
           ?? { readOnly: false, destructive: false, concurrencySafe: false },
         state: "queued",
@@ -161,7 +178,11 @@ export class SessionToolBatchScheduler {
     const batch = this.#requireActiveBatch();
     const call = requiredCall(batch, toolCallId);
     if (call.state !== "queued") throw new Error(`Tool call ${toolCallId} is not queued`);
-    const outcome = await this.#settleSystem(call, batch.step, raw);
+    const outcome = await this.#settleSystem(
+      call,
+      batch.step,
+      isRejectedToolSearchInput(call.input) ? createSensitiveToolSearchQueryResult() : raw,
+    );
     await this.#commitSettled(batch.batchId, call, outcome);
   }
 
@@ -405,7 +426,9 @@ export class SessionToolBatchScheduler {
     const context = await this.#createContext(toolCall, batch);
     const blocker = call.blocker;
     const dependency = call.childDependency;
-    const outcome = dependency?.kind === "child_dependency" && dependency.outcome !== undefined
+    const outcome = isRejectedToolSearchInput(call.input)
+      ? await this.#settleSystem(call, batch.step, createSensitiveToolSearchQueryResult())
+      : dependency?.kind === "child_dependency" && dependency.outcome !== undefined
       ? await this.#options.registry.resumeChildDependency({
           toolCall,
           dependency: {
@@ -645,11 +668,15 @@ export class SessionToolBatchScheduler {
     step: number = batch.step,
   ): Promise<ToolExecutionContext> {
     const context = await this.#options.createContext(toolCall, step);
+    const persistedCall = requiredCall(batch, toolCall.toolCallId);
     const currentlyAllowed = new Set(this.#options.allowedTools);
     for (const name of this.#liveDescriptors.keys()) currentlyAllowed.add(name);
     return {
       ...context,
       allowedTools: new Set(batch.allowedTools.filter((name) => currentlyAllowed.has(name))),
+      ...(persistedCall.toolName === TOOL_TOOL_SEARCH && batch.allowedTools.includes(TOOL_TOOL_SEARCH)
+        ? { toolSearchCatalogDigest: requiredCatalogDigest(persistedCall.catalogDigest) }
+        : {}),
     };
   }
 
@@ -1187,6 +1214,13 @@ function requiredCall(batch: SessionToolBatch, toolCallId: string): SessionToolB
   return call;
 }
 
+function requiredCatalogDigest(value: string | undefined): string {
+  if (value === undefined) {
+    throw new Error("tool_search requires the model-boundary catalog digest");
+  }
+  return value;
+}
+
 function toToolCall(call: Pick<SessionToolBatchCall, "toolCallId" | "toolName" | "input">): ToolCallLike {
   return { toolCallId: call.toolCallId, toolName: call.toolName, input: call.input };
 }
@@ -1238,7 +1272,7 @@ async function commitSessionToolResult(input: {
   readonly sessionId: string;
   readonly workspaceRoot: string;
   readonly batchId: string;
-  readonly call: Pick<SessionToolBatchCall, "toolCallId" | "toolName" | "state" | "checkpointAt" | "traits">;
+  readonly call: Pick<SessionToolBatchCall, "toolCallId" | "toolName" | "state" | "checkpointAt" | "traits" | "catalogDigest">;
   readonly outcome: Extract<RegistryExecutionOutcome, { kind: "settled" }>;
   readonly recoveryFailure?: SessionToolBatchCall["recoveryFailure"];
   readonly markBlockerApplied?: boolean;
@@ -1331,12 +1365,32 @@ async function commitSessionToolResult(input: {
                     manualInspectionReason,
                   }),
             });
+        const loadedToolRefs = !input.outcome.result.isError && manualInspectionReason === undefined
+          ? input.outcome.sidecar?.loadedToolRefs ?? []
+          : [];
+        let loadedOwnerFound = false;
+        const executions = loadedToolRefs.length === 0
+          ? state.executions
+          : state.executions.map((record) => {
+              if (record.id !== batch.executionId) return record;
+              loadedOwnerFound = true;
+              return {
+                ...record,
+                loadedToolRefs: mergeLoadedToolRefs(record.loadedToolRefs, loadedToolRefs),
+              };
+            });
+        if (loadedToolRefs.length > 0 && !loadedOwnerFound) {
+          throw new Error(`Tool search batch ${batch.batchId} has no owning Execution record`);
+        }
         return {
           result: {
             status: "committed",
             ...(manualInspectionReason === undefined ? {} : { manualInspectionReason }),
           },
-          patch: { toolBatches },
+          patch: {
+            toolBatches,
+            ...(executions === state.executions ? {} : { executions }),
+          },
           events: [{
             type: "tool-result",
             toolCallId: input.call.toolCallId,
@@ -1395,6 +1449,7 @@ async function commitSessionToolResult(input: {
         return {
           ...live,
           toolBatches,
+          executions: stateBeforeCommit.executions,
           events: stateBeforeCommit.events,
           eventOffset: stateBeforeCommit.eventOffset,
           nextEventId: stateBeforeCommit.nextEventId,
@@ -1417,6 +1472,30 @@ async function commitSessionToolResult(input: {
         expectedCheckpointAt: input.call.checkpointAt,
       },
     });
+  } else if (input.outcome.sidecar?.loadedToolRefs?.length) {
+    (input.logger ?? silentLogger).info("tool.search.loaded", {
+      context: {
+        sessionId: input.sessionId,
+        toolBatchId: input.batchId,
+        toolCallId: input.call.toolCallId,
+      },
+      meta: {
+        catalogDigest: input.call.catalogDigest,
+        loadedToolRefs: input.outcome.sidecar.loadedToolRefs.map((ref) => ({ ...ref })),
+      },
+    });
   }
   return commit;
+}
+
+function mergeLoadedToolRefs(
+  current: SessionStoreState["executions"][number]["loadedToolRefs"],
+  added: NonNullable<Extract<RegistryExecutionOutcome, { kind: "settled" }>["sidecar"]>["loadedToolRefs"],
+): SessionStoreState["executions"][number]["loadedToolRefs"] {
+  const byName = new Map(current.map((ref) => [ref.name, ref]));
+  for (const ref of added ?? []) byName.set(ref.name, { ...ref });
+  return [...byName.values()].sort((a, b) => (
+    (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+    || (a.descriptorDigest < b.descriptorDigest ? -1 : a.descriptorDigest > b.descriptorDigest ? 1 : 0)
+  ));
 }

@@ -24,6 +24,10 @@ import {
 import { SessionFileIdentityConflictError } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
+import {
+  testExecutionLoadedToolRefs,
+  testExecutionToolAuthorizationSnapshot,
+} from "../testing/test-execution-fixtures";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager", crypto.randomUUID());
 const TEST_REQUESTED_MODEL_SELECTION = { mode: "profile_default" as const, selection: { model: "test:model" } };
@@ -44,6 +48,8 @@ const executionStart = (executionId: string) => ({
   origin: "user_message" as const,
   maxSteps: 50,
   executionSkills: [],
+  toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+  loadedToolRefs: testExecutionLoadedToolRefs,
 });
 
 function executionEnd(
@@ -131,6 +137,8 @@ describe("SessionStoreManager", () => {
       origin: "user_message",
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
       durationMs: 0,
       runs: [{ ordinal: 0, startedAt, binding: TEST_BINDING }],
     };
@@ -150,6 +158,8 @@ describe("SessionStoreManager", () => {
       origin: "tool_call",
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
       endedAt,
       durationMs: endedAt - startedAt,
       runs: [{

@@ -30,6 +30,25 @@ import type { LiveToolOutputPublisher } from "../tool-output/live-publisher";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
 import type { SessionGoalService } from "../session-goal";
 
+export interface ToolSearchRequest {
+  readonly query: string;
+  readonly namespace?: string;
+  readonly limit: number;
+}
+
+export interface ToolSearchMatch {
+  readonly name: string;
+  readonly namespace: string;
+  readonly description: string;
+  readonly descriptorDigest: string;
+}
+
+export interface ToolSearchResolution {
+  readonly catalogDigest: string;
+  readonly namespaces: readonly string[];
+  readonly matches: readonly ToolSearchMatch[];
+}
+
 export type {
   ChildDeferredToolResult,
   ChildToolDependency,
@@ -98,6 +117,10 @@ export interface ToolExecutionContext {
   liveToolOutput?: LiveToolOutputPublisher;
   /** Scope-bound artifact accessor. Descriptors never receive project/root authorization fields. */
   outputArtifacts?: ToolOutputAccessService;
+  /** Digest persisted on this exact tool_search call's Tool Batch record. */
+  readonly toolSearchCatalogDigest?: string;
+  /** Rebuilds and searches the live authorized catalog at execution time. */
+  readonly resolveToolSearch?: (input: ToolSearchRequest) => Promise<ToolSearchResolution>;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelDescendantSession?: CancelDescendantSession;
   sendMessageToChild?: SendMessageToChild;

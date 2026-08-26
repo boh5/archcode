@@ -362,6 +362,11 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
               }],
             });
           case 4:
+            return toolStream("search-create-approved-goal", "tool_search", {
+              query: "create_goal",
+              limit: 1,
+            });
+          case 5:
             return toolStream("create-approved-goal", "create_goal", { objective });
           default:
             return textStream("The approved Goal is active and execution can proceed.");
@@ -400,9 +405,10 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       "skill_read",
       "file_read",
       "ask_user",
+      "tool_search",
       "create_goal",
     ]);
-    expect(rootCalls).toBe(5);
+    expect(rootCalls).toBe(6);
   });
 
   test("ordinary ask_user confirmation can precede Goal execution", async () => {
@@ -414,16 +420,23 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     setLlmAdapterForTest({
       streamText: mock((options: { tools?: Record<string, unknown> }) => {
         const tools = Object.keys(options.tools ?? {});
+        if (rootCalls === 0) {
+          rootCalls += 1;
+          return toolStream("search-create-goal", "tool_search", {
+            query: "create_goal",
+            limit: 1,
+          });
+        }
         if (tools.includes("create_goal")) {
           rootCalls += 1;
           switch (rootCalls) {
-            case 1:
+            case 2:
               return toolStream("authorize-goal", "ask_user", {
                 questions: [{ header: "Goal", question: "要开始这个长期任务吗？" }],
               });
-            case 2:
-              return toolStream("create-goal", "create_goal", { objective });
             case 3:
+              return toolStream("create-goal", "create_goal", { objective });
+            case 4:
               return toolStream("initial-build", "delegate", {
                 agent_type: "build",
                 profile: "deep",
@@ -432,7 +445,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
                 skills: ["safe-refactor"],
                 background: false,
               });
-            case 4:
+            case 5:
               return toolStream("first-review", "delegate", {
                 agent_type: "analyst",
                 profile: "deep",
@@ -441,7 +454,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
                 skills: ["goal-review"],
                 background: false,
               });
-            case 5:
+            case 6:
               return toolStream("remediation-build", "delegate", {
                 agent_type: "build",
                 profile: "deep",
@@ -450,7 +463,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
                 skills: ["safe-refactor"],
                 background: false,
               });
-            case 6:
+            case 7:
               return toolStream("fresh-review", "delegate", {
                 agent_type: "analyst",
                 profile: "deep",
@@ -459,7 +472,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
                 skills: ["goal-review"],
                 background: false,
               });
-            case 7:
+            case 8:
               return toolStream("complete-goal", "update_goal", {
                 status: "complete",
                 reason: "The remediated result passed a fresh independent Goal review.",

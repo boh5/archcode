@@ -4,7 +4,7 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import type { HitlView } from "@archcode/protocol";
+import type { HitlView, LoadedToolRef, ToolAuthorizationSnapshot } from "@archcode/protocol";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
@@ -33,6 +33,12 @@ import { SessionComposerDock } from "./SessionComposerDock";
 import { SettingsModalProvider } from "../../context/settings-modal";
 import type { SessionGoalView } from "../../api/types";
 import { queryKeys } from "../../api/queries";
+
+const toolAuthorizationSnapshot: ToolAuthorizationSnapshot = {
+  extraTools: [],
+  toolProjection: null,
+};
+const loadedToolRefs: LoadedToolRef[] = [];
 
 let dom: JSDOM;
 let root: Root;
@@ -425,6 +431,8 @@ describe("SessionComposerDock", () => {
         status: "failed",
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
         memoryPolicy: {
           policy: { useMemory: true, autoLearning: true },
           epoch: { bootId: "test-memory-boot", generation: 0 },

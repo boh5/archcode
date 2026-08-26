@@ -76,7 +76,8 @@ describe("multi-Agent delegation control plane", () => {
     setLlmAdapterForTest({
       streamText: mock((options: LlmOptions) => {
         const tools = Object.keys(options.tools ?? {});
-        if (tools.includes("create_goal")) {
+        const modelInput = JSON.stringify(options.messages ?? []);
+        if (modelInput.includes("Run the complete background Analyst and Build control-plane scenario.")) {
           leadCalls += 1;
           switch (leadCalls) {
             case 1:
@@ -149,16 +150,15 @@ describe("multi-Agent delegation control plane", () => {
 
         analystCalls += 1;
         if (analystCalls === 1) {
-          const currentModelInput = JSON.stringify(options.messages ?? []);
-          if (currentModelInput.includes("STEER: inspect the admission boundary")) {
-            analystSteerModelInput = currentModelInput;
-            return toolStream("analyst-list-tree", "list_agents", { page_size: 100 });
+          if (modelInput.includes("STEER: inspect the admission boundary")) {
+            analystSteerModelInput = modelInput;
+            return toolStream("analyst-list-skills", "skill_list", {});
           }
           return deferredToolStream(
             async () => await steerClaimed,
-            "analyst-list-tree",
-            "list_agents",
-            { page_size: 100 },
+            "analyst-list-skills",
+            "skill_list",
+            {},
           );
         }
         if (analystCalls === 2) {
@@ -336,7 +336,8 @@ describe("multi-Agent delegation control plane", () => {
     setLlmAdapterForTest({
       streamText: mock((options: LlmOptions) => {
         const tools = Object.keys(options.tools ?? {});
-        if (tools.includes("create_goal")) {
+        const modelInput = JSON.stringify(options.messages ?? []);
+        if (modelInput.includes("Exercise cancellation and restart recovery for the nested Explore child.")) {
           leadCalls += 1;
           if (leadCalls === 1) {
             return toolStream("delegate-build", "delegate", {
@@ -509,7 +510,8 @@ describe("multi-Agent delegation control plane", () => {
       setLlmAdapterForTest({
         streamText: mock((options: LlmOptions) => {
           const tools = Object.keys(options.tools ?? {});
-          if (tools.includes("create_goal")) {
+          const modelInput = JSON.stringify(options.messages ?? []);
+          if (modelInput.includes("Exercise cancellation and restart recovery for the nested Explore child.")) {
             restartedLeadCalls += 1;
             if (restartedLeadCalls === 1) {
               return toolStream("resume-build", "resume_session", {

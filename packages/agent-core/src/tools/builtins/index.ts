@@ -1,6 +1,7 @@
 import type { AnyToolDescriptor } from "../types";
 
 export { fileReadTool } from "./file-read";
+export { toolSearchTool, ToolSearchInputSchema } from "./tool-search";
 export { pdfReadTool, PdfReadInputSchema } from "./pdf-read";
 export { fileWriteTool } from "./file-write";
 export { fileEditTool } from "./file-edit";
@@ -32,6 +33,7 @@ export { createGoalTool, getGoalTool, updateGoalTool } from "./session-goal";
 export { projectTodoUpdateTool, ProjectTodoUpdateInputSchema } from "./project-todo-update";
 
 import { fileReadTool } from "./file-read";
+import { toolSearchTool } from "./tool-search";
 import { pdfReadTool } from "./pdf-read";
 import { fileWriteTool } from "./file-write";
 import { fileEditTool } from "./file-edit";
@@ -61,6 +63,7 @@ import { projectTodoUpdateTool } from "./project-todo-update";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
+    toolSearchTool,
     fileReadTool,
     pdfReadTool,
     fileWriteTool,

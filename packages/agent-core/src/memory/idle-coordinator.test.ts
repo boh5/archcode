@@ -34,6 +34,10 @@ import { createToolExecutionContext } from "../tools/types";
 import { ToolOutputArtifactStore } from "../tool-output/artifact-store";
 import { ToolOutputFinalizer } from "../tool-output/finalizer";
 import { LlmSchemaValidationError } from "../llm";
+import {
+	testExecutionLoadedToolRefs,
+	testExecutionToolAuthorizationSnapshot,
+} from "../testing/test-execution-fixtures";
 
 const WORKSPACE = "/workspace";
 const SESSION = "00000000-0000-4000-8000-000000000001";
@@ -302,6 +306,8 @@ function execution(id: string): SessionExecutionRecord {
 			policy: { useMemory: true, autoLearning: true },
 			epoch: { bootId: "boot-test", generation: 0 },
 		},
+		toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+		loadedToolRefs: testExecutionLoadedToolRefs,
 		origin: "user_message",
 		maxSteps: 50,
 		durationMs: 1,
@@ -668,6 +674,8 @@ async function createPersistentLearningSession(
 		executionId,
 		binding: execution(executionId).runs[0]!.binding,
 		executionSkills: [],
+		toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+		loadedToolRefs: testExecutionLoadedToolRefs,
 		memoryPolicy: {
 			policy: { useMemory: true, autoLearning: true },
 			epoch: { bootId: "fixture-boot", generation: 0 },
@@ -1982,8 +1990,10 @@ describe("MemoryIdleCoordinator", () => {
 				type: "execution-start",
 				executionId: "tool-execution",
 				binding: executionBinding,
-				executionSkills: [],
-				memoryPolicy: {
+			executionSkills: [],
+			toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+			loadedToolRefs: testExecutionLoadedToolRefs,
+			memoryPolicy: {
 					policy: { useMemory: true, autoLearning: true },
 					epoch: { bootId: "tool-boot", generation: 0 },
 				},

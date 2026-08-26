@@ -22,7 +22,11 @@ import type { AgentDefinition } from "./factory-types";
 import type { ToolExecutionContext } from "../tools/types";
 import type { DelegationRequest } from "@archcode/protocol";
 import { MemoryPolicyRuntime } from "../memory";
-import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
+import {
+  testExecutionLoadedToolRefs,
+  testExecutionMemoryPolicy,
+  testExecutionToolAuthorizationSnapshot,
+} from "../testing/test-execution-fixtures";
 import {
   EMPTY_ATTACHMENT_MODEL_PROJECTOR,
   resolveEmptyAttachmentReadPaths,
@@ -121,7 +125,8 @@ const identityLeadDefinition = {
     delegateTargets: ["explore"],
   },
   tools: {
-    tools: ["file_read", "identity_probe", ...DELEGATION_CONTROL_TOOLS],
+    authorized: ["file_read", "identity_probe", ...DELEGATION_CONTROL_TOOLS],
+    core: ["file_read", "identity_probe"],
     delegateTargets: ["explore"],
   },
   hooks: {
@@ -138,7 +143,8 @@ const identityLeadDefinition = {
 const identityExploreDefinition = {
   ...exploreAgentDefinition,
   tools: {
-    tools: ["file_read", "identity_probe"],
+    authorized: ["file_read", "identity_probe"],
+    core: ["file_read", "identity_probe"],
   },
   hooks: identityLeadDefinition.hooks,
   includeMemoryInPrompt: false,
@@ -401,6 +407,8 @@ describe("SessionAgentManager", () => {
         origin: "user_message",
         maxSteps: 1,
         executionSkills: [],
+        toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+        loadedToolRefs: testExecutionLoadedToolRefs,
       });
       agent.store.getState().append({
         type: "session.messages_committed",
@@ -425,6 +433,9 @@ describe("SessionAgentManager", () => {
         runOrdinal: 0,
         initialStep: 0,
         maxSteps: 1,
+        toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+        loadedToolRefs: testExecutionLoadedToolRefs,
+        reconcileExecutionToolLoads: async () => {},
         memoryPolicy: new MemoryPolicyRuntime().claim(),
       });
       const endedAt = Date.now();
@@ -467,9 +478,7 @@ describe("SessionAgentManager", () => {
 
       expect(warmIdentity).toEqual({
         depth: expectedDepth,
-        allowedTools: expectedDepth === 0
-          ? ["file_read", ...DELEGATION_CONTROL_TOOLS, "identity_probe"].sort()
-          : ["file_read", "identity_probe"].sort(),
+        allowedTools: ["file_read", "identity_probe"].sort(),
         delegateTargets: expectedDepth === 0 ? ["explore"] : [],
         activeSkillNames: [IDENTITY_SKILL_NAME],
         hasActiveSkillBody: true,

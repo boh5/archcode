@@ -6,6 +6,7 @@ import {
   TOOL_FILE_EDIT,
   TOOL_GREP,
   TOOL_GLOB,
+  TOOL_TOOL_SEARCH,
   TOOL_AST_GREP_SEARCH,
   TOOL_AST_GREP_REPLACE,
   TOOL_GIT_STATUS,
@@ -58,6 +59,7 @@ const ALL_BUILTIN_NAMES = [
   TOOL_FILE_EDIT,
   TOOL_GREP,
   TOOL_GLOB,
+  TOOL_TOOL_SEARCH,
   TOOL_AST_GREP_SEARCH,
   TOOL_AST_GREP_REPLACE,
   TOOL_GIT_STATUS,
@@ -108,6 +110,7 @@ describe("tool name constants", () => {
     expect(TOOL_FILE_EDIT).toBe("file_edit");
     expect(TOOL_GREP).toBe("grep");
     expect(TOOL_GLOB).toBe("glob");
+    expect(TOOL_TOOL_SEARCH).toBe("tool_search");
     expect(TOOL_AST_GREP_SEARCH).toBe("ast_grep_search");
     expect(TOOL_AST_GREP_REPLACE).toBe("ast_grep_replace");
     expect(TOOL_GIT_STATUS).toBe("git_status");
@@ -174,6 +177,7 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_FILE_EDIT]).toBe("fileWrite");
     expect(TOOL_CATEGORY_MAP[TOOL_GREP]).toBe("search");
     expect(TOOL_CATEGORY_MAP[TOOL_GLOB]).toBe("search");
+    expect(TOOL_CATEGORY_MAP[TOOL_TOOL_SEARCH]).toBe("search");
     expect(TOOL_CATEGORY_MAP[TOOL_AST_GREP_SEARCH]).toBe("search");
     expect(TOOL_CATEGORY_MAP[TOOL_AST_GREP_REPLACE]).toBe("fileWrite");
     expect(TOOL_CATEGORY_MAP[TOOL_WORKTREE_ENTER]).toBe("git");
@@ -217,6 +221,7 @@ describe("getToolCategory()", () => {
   test("known builtin returns correct category", () => {
     expect(getToolCategory("file_read")).toBe("fileRead");
     expect(getToolCategory("grep")).toBe("search");
+    expect(getToolCategory("tool_search")).toBe("search");
     expect(getToolCategory("bash")).toBe("shell");
     expect(getToolCategory("worktree_enter")).toBe("git");
     expect(getToolCategory("worktree_exit")).toBe("git");
@@ -236,6 +241,7 @@ describe("isBuiltinToolName()", () => {
   test("returns true for known builtin names", () => {
     expect(isBuiltinToolName("file_read")).toBe(true);
     expect(isBuiltinToolName("grep")).toBe(true);
+    expect(isBuiltinToolName("tool_search")).toBe(true);
     expect(isBuiltinToolName("ast_grep_replace")).toBe(true);
     expect(isBuiltinToolName("github_get_pull_request")).toBe(true);
     expect(isBuiltinToolName("github_create_issue_comment")).toBe(true);

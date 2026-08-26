@@ -9,6 +9,7 @@ import type {
   SessionEventPayload,
   SessionStats,
   SessionExecutionRecord,
+  LoadedToolRef,
   PendingSessionMessage,
   SessionInputReceipt,
   ToolChildSessionLink,
@@ -17,6 +18,7 @@ import type {
   FinalizedToolResult,
   SessionGoal,
   RootSessionSource,
+  ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
 import type { AgentName } from "../agents/names";
@@ -176,6 +178,8 @@ export interface SessionToolBatchCall {
   /** Canonical time of the latest execution-relevant call state transition. Metadata-only repair preserves it. */
   readonly checkpointAt: number;
   readonly result?: FinalizedToolResult;
+  /** Required for model-visible tool_search calls; absent for hidden forged calls and every other tool. */
+  readonly catalogDigest?: string;
   /** Required exactly when result is present; shared with the terminal tool-result event. */
   readonly settledAt?: number;
   /** Durable marker that this successful call ended its owning Execution. */

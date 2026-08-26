@@ -233,9 +233,14 @@ describe("PromptContractCompiler", () => {
 });
 
 describe("lintRoleContract", () => {
-  test("enforces typed capabilities and delegation targets", () => {
+  test("allows required capabilities to be deferred while enforcing delegation targets", () => {
     expect(() => lintRoleContract(leadRoleContract, runtime(), ["file_read", "delegate"]))
       .not.toThrow();
+    expect(() => lintRoleContract(
+      leadRoleContract,
+      runtime({ allowedDelegateTargets: [] }),
+      ["file_read"],
+    )).not.toThrow();
     expect(() => lintRoleContract(leadRoleContract, runtime({ allowedDelegateTargets: ["lead"] }), ["file_read", "delegate"]))
       .toThrow(PromptContractLintError);
     expect(() => lintRoleContract(leadRoleContract, runtime({ allowedDelegateTargets: ["explore"] }), ["file_read"]))

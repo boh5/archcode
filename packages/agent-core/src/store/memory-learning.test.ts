@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { PendingSessionMessage, SessionMessage } from "@archcode/protocol";
 import { createSessionStore, storeManager } from "./store";
-import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
+import {
+  testExecutionLoadedToolRefs,
+  testExecutionMemoryPolicy,
+  testExecutionToolAuthorizationSnapshot,
+} from "../testing/test-execution-fixtures";
 
 const binding = {
   selection: { model: "test:model" },
@@ -55,6 +59,8 @@ function appendSuccessfulRootExecution(
     binding,
     executionSkills: [],
     memoryPolicy: testExecutionMemoryPolicy,
+    toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+    loadedToolRefs: testExecutionLoadedToolRefs,
     origin: "user_message",
     maxSteps: 50,
   });
@@ -121,6 +127,8 @@ describe("Memory learning cursor lifecycle", () => {
       binding,
       executionSkills: [],
       memoryPolicy: testExecutionMemoryPolicy,
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
       origin: "user_message",
       maxSteps: 50,
     });

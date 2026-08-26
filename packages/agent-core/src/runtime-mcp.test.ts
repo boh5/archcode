@@ -127,6 +127,20 @@ function toolCallStream(toolName: string, toolCallId: string): unknown {
   };
 }
 
+function toolSearchStream(query: string, toolCallId: string, namespace: string): unknown {
+  const input = { query, namespace, limit: 1 };
+  return {
+    fullStream: (async function* () {
+      yield { type: "tool-input-start", id: toolCallId, toolName: "tool_search" };
+      yield { type: "tool-call", toolCallId, toolName: "tool_search", input };
+    })(),
+    finishReason: Promise.resolve("tool-calls"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve(""),
+    toolCalls: Promise.resolve([{ toolCallId, toolName: "tool_search", input }]),
+  };
+}
+
 function stoppedStream(): unknown {
   return {
     fullStream: (async function* () {})(),
@@ -196,7 +210,7 @@ describe("createRuntime MCP facade", () => {
       statuses: { servers: { docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 4 } } },
     });
     const snapshot = mcpRuntime.snapshotTools({ builtinServerNames: [] });
-    expect(snapshot.descriptors.get(descriptor.name)).toBe(descriptor);
+    expect(snapshot.tools.get(descriptor.name)?.descriptor).toBe(descriptor);
     expect(snapshot.statuses).toEqual({
       servers: { docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 4 } },
     });
@@ -304,8 +318,10 @@ describe("createRuntime MCP facade", () => {
         const round = (rounds.get(project) ?? 0) + 1;
         rounds.set(project, round);
         boundaries.push({ project, round, tools: Object.keys(options.tools ?? {}) });
-        if (round === 1) return toolCallStream(initialAlias, `${project}-before`);
-        if (round === 2) return toolCallStream(replacementAlias, `${project}-after`);
+        if (round === 1) return toolSearchStream(initialAlias, `${project}-search-before`, "shared");
+        if (round === 2) return toolCallStream(initialAlias, `${project}-before`);
+        if (round === 3) return toolSearchStream(replacementAlias, `${project}-search-after`, "shared");
+        if (round === 4) return toolCallStream(replacementAlias, `${project}-after`);
         return stoppedStream();
       }) as never,
       generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
@@ -367,13 +383,18 @@ describe("createRuntime MCP facade", () => {
 
     for (const project of ["A", "B"]) {
       const projectBoundaries = boundaries.filter((entry) => entry.project === project);
-      expect(projectBoundaries).toHaveLength(3);
-      expect(projectBoundaries[0]!.tools).toContain(initialAlias);
-      expect(projectBoundaries[0]!.tools).not.toContain(replacementAlias);
-      expect(projectBoundaries[1]!.tools).toContain(replacementAlias);
-      expect(projectBoundaries[1]!.tools).not.toContain(initialAlias);
+      expect(projectBoundaries).toHaveLength(5);
+      expect(projectBoundaries[0]!.tools).toContain("tool_search");
+      expect(projectBoundaries[0]!.tools).not.toContain(initialAlias);
+      expect(projectBoundaries[1]!.tools).toContain(initialAlias);
+      expect(projectBoundaries[1]!.tools).not.toContain(replacementAlias);
+      expect(projectBoundaries[2]!.tools).toContain("tool_search");
       expect(projectBoundaries[2]!.tools).not.toContain(initialAlias);
       expect(projectBoundaries[2]!.tools).not.toContain(replacementAlias);
+      expect(projectBoundaries[3]!.tools).toContain(replacementAlias);
+      expect(projectBoundaries[3]!.tools).not.toContain(initialAlias);
+      expect(projectBoundaries[4]!.tools).not.toContain(initialAlias);
+      expect(projectBoundaries[4]!.tools).not.toContain(replacementAlias);
     }
     const finalA = await runtime.getSessionFile(workspaceA, sessionA.sessionId);
     const finalB = await runtime.getSessionFile(workspaceB, sessionB.sessionId);

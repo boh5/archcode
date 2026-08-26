@@ -22,9 +22,6 @@ export function lintRoleContract(
 
   if (role.name !== runtime.agentName) violations.push("role identity conflicts with runtime agent");
 
-  for (const capability of role.requiredCapabilities) {
-    if (!visible.has(capability)) violations.push(`required capability is not visible: ${capability}`);
-  }
   for (const capability of role.forbiddenCapabilities) {
     if (visible.has(capability)) violations.push(`forbidden capability is visible: ${capability}`);
   }

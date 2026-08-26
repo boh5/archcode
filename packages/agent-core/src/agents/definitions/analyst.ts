@@ -5,12 +5,15 @@ import {
   SKILL_ACCESS_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
+import { defineAgentDefinition } from "../tool-filter";
 import { analystRoleContract } from "./role-contracts";
+import { TOOL_TOOL_SEARCH } from "@archcode/protocol";
 import {
   TOOL_ASK_USER,
   TOOL_AST_GREP_SEARCH,
   TOOL_BASH,
   TOOL_COMPRESS,
+  TOOL_DELEGATE,
   TOOL_FILE_READ,
   TOOL_PDF_READ,
   TOOL_GIT_DIFF,
@@ -28,13 +31,13 @@ import {
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
-export const analystAgentDefinition = {
+export const analystAgentDefinition = defineAgentDefinition({
   name: "analyst",
   displayName: "Analyst",
   profiles: ["deep"],
   roleContract: analystRoleContract,
   tools: {
-    tools: [
+    authorized: [
       TOOL_FILE_READ,
       TOOL_PDF_READ,
       TOOL_GREP,
@@ -56,6 +59,19 @@ export const analystAgentDefinition = {
       TOOL_OUTPUT_SEARCH,
       TOOL_COMPRESS,
       ...SKILL_ACCESS_TOOLS,
+      TOOL_TOOL_SEARCH,
+    ],
+    core: [
+      TOOL_FILE_READ,
+      TOOL_GREP,
+      TOOL_GLOB,
+      TOOL_GIT_STATUS,
+      TOOL_GIT_DIFF,
+      TOOL_BASH,
+      TOOL_TODO_WRITE,
+      TOOL_ASK_USER,
+      TOOL_DELEGATE,
+      ...SKILL_ACCESS_TOOLS,
     ],
     delegateTargets: ["explore", "librarian"],
   },
@@ -76,4 +92,4 @@ export const analystAgentDefinition = {
   },
   includeMemoryInPrompt: true,
   skills: ["analyze-work", "review-change", "goal-review", "plan-work", "codemap", "research-docs"],
-} as const satisfies AgentDefinition;
+} as const satisfies AgentDefinition);

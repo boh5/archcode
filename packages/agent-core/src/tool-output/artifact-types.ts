@@ -7,6 +7,7 @@ export interface ArtifactAuthorizationScope {
 
 export interface ArtifactOwner extends ArtifactAuthorizationScope {
   readonly producerSessionId: string;
+  readonly executionId: string;
 }
 
 export type ArtifactCompleteness = "complete" | "partial";
@@ -22,7 +23,7 @@ export interface ArtifactSegmentMetadata {
 }
 
 export interface ArtifactMetadata {
-  readonly version: 1;
+  readonly version: 2;
   readonly outputRef: OutputRef;
   readonly owner: ArtifactOwner;
   readonly createdAt: number;
@@ -148,7 +149,7 @@ export interface OutputSearchMatch extends ArtifactSearchRunnerMatch {
 export type ArtifactTombstoneReason = "expired" | "evicted";
 
 export interface ArtifactTombstone {
-  readonly version: 1;
+  readonly version: 2;
   readonly outputRef: OutputRef;
   readonly owner: ArtifactOwner;
   readonly deletedAt: number;

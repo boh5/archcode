@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type {
   ExecutionModelBindingSummary,
+  LoadedToolRef,
   SessionExecutionRecord,
+  ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import {
   childExecutionVisualKind,
@@ -23,6 +25,11 @@ const memoryPolicy = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const toolAuthorizationSnapshot: ToolAuthorizationSnapshot = {
+  extraTools: [],
+  toolProjection: null,
+};
+const loadedToolRefs: LoadedToolRef[] = [];
 function record(
   status: SessionExecutionRecord["status"],
   suspension?: Extract<
@@ -37,6 +44,8 @@ function record(
     maxSteps: 10,
     executionSkills: [],
     memoryPolicy,
+    toolAuthorizationSnapshot,
+    loadedToolRefs,
     durationMs: 0,
     runs: status === "running" ? [{ ordinal: 0, startedAt: 0, binding }] : [],
   };

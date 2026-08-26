@@ -5,13 +5,16 @@ import {
   SKILL_ACCESS_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
+import { defineAgentDefinition } from "../tool-filter";
 import { buildRoleContract } from "./role-contracts";
+import { TOOL_TOOL_SEARCH } from "@archcode/protocol";
 import {
   TOOL_ASK_USER,
   TOOL_AST_GREP_REPLACE,
   TOOL_AST_GREP_SEARCH,
   TOOL_BASH,
   TOOL_COMPRESS,
+  TOOL_DELEGATE,
   TOOL_FILE_EDIT,
   TOOL_FILE_READ,
   TOOL_PDF_READ,
@@ -32,14 +35,14 @@ import {
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
-export const buildAgentDefinition = {
+export const buildAgentDefinition = defineAgentDefinition({
   name: "build",
   displayName: "Build",
   builtinMcpServers: [],
   profiles: ["deep", "fast"],
   roleContract: buildRoleContract,
   tools: {
-    tools: [
+    authorized: [
       TOOL_FILE_READ,
       TOOL_PDF_READ,
       TOOL_FILE_WRITE,
@@ -65,6 +68,21 @@ export const buildAgentDefinition = {
       TOOL_MEMORY_READ,
       TOOL_MEMORY_WRITE,
       ...SKILL_ACCESS_TOOLS,
+      TOOL_TOOL_SEARCH,
+    ],
+    core: [
+      TOOL_FILE_READ,
+      TOOL_FILE_WRITE,
+      TOOL_FILE_EDIT,
+      TOOL_GREP,
+      TOOL_GLOB,
+      TOOL_GIT_STATUS,
+      TOOL_GIT_DIFF,
+      TOOL_BASH,
+      TOOL_TODO_WRITE,
+      TOOL_ASK_USER,
+      TOOL_DELEGATE,
+      ...SKILL_ACCESS_TOOLS,
     ],
     delegateTargets: ["explore"],
   },
@@ -84,4 +102,4 @@ export const buildAgentDefinition = {
   },
   includeMemoryInPrompt: true,
   skills: ["git-master", "safe-refactor", "codemap", "research-docs"],
-} as const satisfies AgentDefinition;
+} as const satisfies AgentDefinition);

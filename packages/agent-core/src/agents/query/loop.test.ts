@@ -16,6 +16,7 @@ import { ToolOutputArtifactStore } from "../../tool-output/artifact-store";
 import { ToolOutputFinalizer } from "../../tool-output/finalizer";
 import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import { askUserTool } from "../../tools/builtins/ask-user";
+import { toolSearchTool, TOOL_SEARCH_REDACTED_QUERY, TOOL_SEARCH_SENSITIVE_QUERY_CODE } from "../../tools/builtins/tool-search";
 import { defineTool } from "../../tools/define-tool";
 import { ToolRegistry } from "../../tools/registry";
 import { createTextToolResult } from "../../tools/results";
@@ -25,7 +26,7 @@ import { deferTestApprovalReviewer } from "../../tools/test-approval-reviewer";
 import type { ToolExecutionContext } from "../../tools/types";
 import { runQueryLoop } from "./loop";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
-import { createTestModelInfo, testExecutionMemoryPolicy } from "../../testing/test-execution-fixtures";
+import { createTestModelInfo, testExecutionStart } from "../../testing/test-execution-fixtures";
 import { SessionGoalService } from "../../session-goal";
 import type { SessionToolBatch } from "../../store/types";
 import type { AttachmentDescriptor } from "@archcode/protocol";
@@ -182,6 +183,7 @@ async function createHarness() {
   });
   const toolOutputAccess: ToolOutputAccessService = {
     countRecoverable: async () => 0,
+    countRecoverableForExecution: async () => 0,
     async read() { return { outputRef: "unused" as never, completeness: "complete", records: [] }; },
     async search() { return { matches: [], searchCompleteness: "complete" }; },
   };
@@ -205,13 +207,8 @@ async function createHarness() {
     agentName: "lead",
   };
   store.getState().append({
-    type: "execution-start",
-    executionId: options.executionId,
+    ...testExecutionStart(options.executionId),
     binding: dummyBinding.summary,
-    memoryPolicy: testExecutionMemoryPolicy,
-    origin: "tool_call",
-    maxSteps: 50,
-    executionSkills: [],
   });
   const appendUser = (text: string) => {
     const id = crypto.randomUUID();
@@ -342,6 +339,61 @@ function stageQueuedBatch(
 }
 
 describe("QueryLoop Tool Output Plane", () => {
+  test("rejects secret-like tool_search input before it reaches durable events or execution", async () => {
+    const harness = await createHarness();
+    harness.registry.register(toolSearchTool);
+    harness.options.allowedTools = ["tool_search"];
+    const catalogDigest = "a".repeat(64);
+    harness.options.resolveModelBoundary = async () => ({
+      tools: harness.registry.resolveForAgent(["tool_search"]),
+      catalogDigest,
+    });
+    harness.options.resolveToolSearch = async () => {
+      throw new Error("tool_search resolver must not run for a rejected query");
+    };
+    harness.appendUser("run");
+    const secret = "api_key=sk_test_1234567890abcdef";
+    installRounds([
+      {
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: "search-secret", toolName: "tool_search", input: { query: secret } }],
+        chunks: [{ type: "tool-call", toolCallId: "search-secret", toolName: "tool_search", input: { query: secret } } as StreamPart],
+      },
+      { finishReason: "stop", text: "done" },
+    ]);
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed", text: "done" });
+    const toolCall = harness.store.getState().events.find((event) => event.payload.type === "tool-call");
+    expect(toolCall?.payload).toMatchObject({
+      type: "tool-call",
+      input: { query: TOOL_SEARCH_REDACTED_QUERY },
+    });
+    expect(JSON.stringify(harness.store.getState())).not.toContain(secret);
+    expect(toolEvents(harness)[0]?.result).toMatchObject({
+      isError: true,
+      details: { error: { code: TOOL_SEARCH_SENSITIVE_QUERY_CODE } },
+    });
+  });
+
+  test("does not apply the tool_search secret gate to another tool's query field", async () => {
+    const harness = await createHarness();
+    registerInline(harness, "echo", async (input) => createTextToolResult(input.value ?? "ok"));
+    harness.appendUser("run");
+    const secret = "api_key=sk_test_1234567890abcdef";
+    installRounds([
+      {
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: "echo-secret", toolName: "echo", input: { value: secret } }],
+        chunks: [{ type: "tool-call", toolCallId: "echo-secret", toolName: "echo", input: { value: secret } } as StreamPart],
+      },
+      { finishReason: "stop", text: "done" },
+    ]);
+
+    await runQueryLoop(harness.options);
+    const toolCall = harness.store.getState().events.find((event) => event.payload.type === "tool-call");
+    expect(toolCall?.payload).toMatchObject({ type: "tool-call", input: { value: secret } });
+  });
+
   test("executes a model tool batch and appends nested finalized results", async () => {
     const harness = await createHarness();
     registerInline(harness, "echo", async (input) => createTextToolResult(input.value ?? "ok"));
@@ -482,7 +534,12 @@ describe("QueryLoop Tool Output Plane", () => {
     ]);
     await runQueryLoop(harness.options);
     expect(received).toBe(harness.toolOutputAccess);
-    expect(Object.keys(received!)).toEqual(["countRecoverable", "read", "search"]);
+    expect(Object.keys(received!)).toEqual([
+      "countRecoverable",
+      "countRecoverableForExecution",
+      "read",
+      "search",
+    ]);
   });
 
   test("resolves and injects the current attachment read paths for each tool execution", async () => {

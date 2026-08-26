@@ -4,6 +4,11 @@ import type { ExecutionModelBinding } from "../models";
 import type { QueryLoopResult } from "./query";
 import type { SkillPackageSnapshot } from "../skills";
 import type { MemoryPolicySnapshot } from "../memory";
+import type { LoadedToolRef, ToolAuthorizationSnapshot } from "@archcode/protocol";
+
+export interface InvalidExecutionLoadedToolRef extends LoadedToolRef {
+  readonly reason: "missing" | "digest_changed" | "tool_search_excluded";
+}
 
 export interface AgentCommand {
   readonly name: string;
@@ -27,9 +32,12 @@ export interface AgentRunOptions {
   /** First canonical step index available to this run. */
   initialStep: number;
   maxSteps?: number;
-  extraTools?: readonly string[];
-  /** Runtime-owned strict subset of the role's normal tool projection. */
-  toolProjection?: readonly string[];
+  /** Immutable authorization inputs captured by the owning logical Execution. */
+  toolAuthorizationSnapshot: ToolAuthorizationSnapshot;
+  /** Initial loaded contracts for the owning logical Execution. */
+  loadedToolRefs: readonly LoadedToolRef[];
+  /** Execution-owner mutation boundary for removing stale loaded contracts. */
+  reconcileExecutionToolLoads: (invalidRefs: readonly InvalidExecutionLoadedToolRef[]) => Promise<void>;
   /** Commits any steering messages to the canonical transcript before a model build. */
   consumeSteers?: () => Promise<void>;
   /** Immutable one-shot Skill packages owned by this logical Execution. */

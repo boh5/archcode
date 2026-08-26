@@ -22,9 +22,18 @@ import { toMcpToolRegistryName } from "./naming";
 
 export type McpStatusListener = (serverName: string, status: McpServerStatus) => void;
 
+export interface McpToolSnapshotEntry {
+  /** Run-local descriptor. Keep this exact value for every call from the model step. */
+  readonly descriptor: AnyToolDescriptor;
+  /** Stable MCP namespace used by visibility projection and search. */
+  readonly serverName: string;
+  /** Authorization source; builtin servers remain subject to the Agent role matrix. */
+  readonly source: "builtin" | "user";
+}
+
 export interface McpToolSnapshot {
-  /** Run-local map. Keep this exact map for every tool call from the model step. */
-  readonly descriptors: ReadonlyMap<string, AnyToolDescriptor>;
+  /** Single run-local source of MCP descriptor and namespace metadata. */
+  readonly tools: ReadonlyMap<string, McpToolSnapshotEntry>;
   /** Status projection captured in the same synchronous snapshot as descriptors. */
   readonly statuses: McpServerStatusResponse;
 }
@@ -257,7 +266,7 @@ export class McpRuntimeService implements McpRuntime {
 
   snapshotTools(options: { builtinServerNames: readonly BuiltinMcpServerName[] }): McpToolSnapshot {
     const allowedBuiltins = new Set(options.builtinServerNames);
-    const descriptors = new Map<string, AnyToolDescriptor>();
+    const tools = new Map<string, McpToolSnapshotEntry>();
     const statuses: Record<string, McpServerStatus> = {};
 
     for (const [serverName, status] of this.#statuses) {
@@ -272,10 +281,12 @@ export class McpRuntimeService implements McpRuntime {
       if (!status || status.state !== "ready") continue;
       const handle = this.#handles.get(serverName);
       if (!handle) continue;
-      for (const [alias, descriptor] of handle.descriptors) descriptors.set(alias, descriptor);
+      for (const [alias, descriptor] of handle.descriptors) {
+        tools.set(alias, { descriptor, serverName, source: desired.source });
+      }
     }
 
-    return { descriptors, statuses: { servers: statuses } };
+    return { tools, statuses: { servers: statuses } };
   }
 
   onStatusChange(listener: McpStatusListener): () => void {

@@ -14,7 +14,8 @@
     "test:unit": "bun test --parallel=4 --path-ignore-patterns='**/*.integration.test.ts' --path-ignore-patterns='**/__arch__/**'",
     "test:integration": "bun test --isolate .integration.test.ts",
     "test:arch": "bun test --isolate ./src/__arch__",
-    "tool-contract:measure": "bun run scripts/tool-contract-measure.ts"
+    "tool-contract:measure": "bun run scripts/tool-contract-measure.ts",
+    "tool-search:benchmark": "bun run scripts/tool-search-benchmark.ts"
   },
   "dependencies": {
     "@ai-sdk/alibaba": "^1.0.0",

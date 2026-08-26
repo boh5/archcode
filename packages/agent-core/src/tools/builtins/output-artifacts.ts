@@ -70,7 +70,7 @@ export const outputReadTool = defineTool({
 
 export const outputSearchTool = defineTool({
   name: "output_search",
-  description: "Search one recoverable output artifact by outputRef, or omit outputRef to search this Session family. The result explicitly labels searchCompleteness and every match's full/head/tail segment and canonical range; partial_artifact means omitted bytes were not searched, including when matches is empty. Continue only with the returned opaque cursor.",
+  description: "Find or locate text inside a captured command-result artifact by outputRef, or omit outputRef to search this Session family. The result explicitly labels searchCompleteness and every match's full/head/tail segment and canonical range; partial_artifact means omitted bytes were not searched, including when matches is empty. Continue only with the returned opaque cursor.",
   inputSchema: OutputSearchInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   outputPolicy: { kind: "source", previewDirection: "head" },

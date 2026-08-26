@@ -20,7 +20,7 @@ import {
 } from "./factory";
 import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition, AgentName } from "./factory-types";
-import { leadRoleContract } from "./definitions/role-contracts";
+import { exploreRoleContract, leadRoleContract } from "./definitions/role-contracts";
 import { defaultAgentDefinitions, discussionAgentDefinition } from "./definitions";
 import { projectModelToolDescriptors } from "./model-tool-projection";
 import { silentLogger } from "../logger";
@@ -78,7 +78,11 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   displayName: "Lead Lead",
   profiles: ["principal"],
   roleContract: leadRoleContract,
-  tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
+  tools: {
+    authorized: ["unknown_tool", ...explorerTools],
+    core: ["grep"],
+    delegateTargets: ["explore"],
+  },
   builtinMcpServers: [],
   hooks: {
     autoCompact: true,
@@ -189,7 +193,11 @@ describe("createAgentFactory", () => {
   test("rejects an Agent definition that conflicts with persisted Session identity", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({
+        name: "explore",
+        roleContract: exploreRoleContract,
+        tools: { authorized: nonDelegatingExplorerTools, core: ["file_read"] },
+      }),
     ]);
     const parentSessionId = crypto.randomUUID();
     storeManager.create(parentSessionId, TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead" });
@@ -248,7 +256,11 @@ describe("createAgentFactory", () => {
   test("preserves the canonical title from the supplied Session store", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({
+        name: "explore",
+        roleContract: exploreRoleContract,
+        tools: { authorized: nonDelegatingExplorerTools, core: ["file_read"] },
+      }),
     ]);
 
     const rootStore = storeManager.create(crypto.randomUUID(), TEST_WORKSPACE_ROOT, { source: { kind: "direct" }, agentName: "lead", title: "Root Title" });
@@ -268,7 +280,11 @@ describe("createAgentFactory", () => {
   test("preserves parent session id from canonical store identity", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({
+        name: "explore",
+        roleContract: exploreRoleContract,
+        tools: { authorized: nonDelegatingExplorerTools, core: ["file_read"] },
+      }),
     ]);
 
     const parentSessionId = "parent-session";
@@ -285,7 +301,12 @@ describe("createAgentFactory", () => {
   test("resolves explicit tool lists and strips delegation at the definition boundary", () => {
     const factory = makeFactory();
     const customDefinition = definition({
-      tools: { tools: ["grep", "missing", "delegate"], delegateTargets: ["explore"] },
+      roleContract: { ...leadRoleContract, requiredCapabilities: [] },
+      tools: {
+        authorized: ["grep", "missing", "delegate"],
+        core: ["grep"],
+        delegateTargets: ["explore"],
+      },
       childPolicy: {
         maxDepth: 2,
         maxConcurrent: 10,
@@ -296,7 +317,11 @@ describe("createAgentFactory", () => {
     });
     const delegatingDefinition = definition({
       name: "lead",
-      tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
+      tools: {
+        authorized: ["unknown_tool", ...explorerTools],
+        core: ["grep"],
+        delegateTargets: ["explore"],
+      },
     });
 
     expect(factory.resolveAllowedTools(definition(), 0)).toEqual([
@@ -325,7 +350,8 @@ describe("createAgentFactory", () => {
       ...READ_ONLY_FIXTURE_TOOLS,
     ]);
     expect(factory.resolveAllowedTools(definition({
-      tools: { tools: ["grep", "delegate"] },
+      roleContract: { ...leadRoleContract, requiredCapabilities: [] },
+      tools: { authorized: ["grep", "delegate"], core: ["grep"] },
     }), 0)).toEqual(["grep"]);
   });
 
@@ -385,8 +411,16 @@ describe("createAgentFactory", () => {
   });
 
   test("validates and deduplicates delegated Skill names before persistence", async () => {
-    const target = definition({ name: "explore", tools: { tools: nonDelegatingExplorerTools }, skills: ["codemap", "git-master"], childPolicy: undefined });
-    const parent = definition({ tools: { tools: explorerTools, delegateTargets: ["explore"] } });
+    const target = definition({
+      name: "explore",
+      roleContract: exploreRoleContract,
+      tools: { authorized: nonDelegatingExplorerTools, core: ["file_read"] },
+      skills: ["codemap", "git-master"],
+      childPolicy: undefined,
+    });
+    const parent = definition({
+      tools: { authorized: explorerTools, core: ["grep"], delegateTargets: ["explore"] },
+    });
     const factory = makeFactory([parent, target], { skillService: createSkillServiceWithBuiltins() });
     const targetCapability = factory.resolveDelegationCapabilities("lead", 0).targets[0]!;
 
@@ -449,14 +483,22 @@ describe("factoryResolveAllowedTools static base-tool projection", () => {
   }
 
   test("resolves only the definition's static base tools", () => {
-    const def = definition({ builtinMcpServers: ["context7"], tools: { tools: ["grep", "missing"] } });
+    const def = definition({
+      roleContract: { ...leadRoleContract, requiredCapabilities: [] },
+      builtinMcpServers: ["context7"],
+      tools: { authorized: ["grep", "missing"], core: ["grep"] },
+    });
     const factory = makeStaticFactory(def, [makeTool("mcp__context7__search")]);
 
     expect(factory.resolveAllowedTools(def, 0)).toEqual(["grep"]);
   });
 
   test("does not change the static projection when MCP descriptors load later", () => {
-    const def = definition({ builtinMcpServers: ["context7"], tools: { tools: ["grep"] } });
+    const def = definition({
+      roleContract: { ...leadRoleContract, requiredCapabilities: [] },
+      builtinMcpServers: ["context7"],
+      tools: { authorized: ["grep"], core: ["grep"] },
+    });
     const registry = createTestRegistry([
       makeTool("unknown_tool"),
       ...READ_ONLY_FIXTURE_TOOLS.map(makeTool),

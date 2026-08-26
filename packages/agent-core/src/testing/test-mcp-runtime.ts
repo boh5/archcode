@@ -12,8 +12,10 @@ import type {
   McpStatusListener,
   McpTestResult,
   McpToolSnapshot,
+  McpToolSnapshotEntry,
 } from "../mcp";
 import type { AnyToolDescriptor } from "../tools/types";
+import { parseMcpToolRegistryName } from "../mcp/naming";
 
 export interface TestMcpRuntime extends McpRuntime {
   /** Replace the live status projection used by getStatus and snapshotTools. */
@@ -66,14 +68,20 @@ export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestM
     getInventory: () => cloneInventory(inventorySnapshot),
     snapshotTools: ({ builtinServerNames }): McpToolSnapshot => {
       const allowedBuiltins = new Set<BuiltinMcpServerName>(builtinServerNames);
-      const snapshotDescriptors = new Map(descriptors);
+      const tools = new Map<string, McpToolSnapshotEntry>([...descriptors]
+        .filter(([name]) => isReadyOrUnreported(statusSnapshot.servers[inferUserServerName(name)]))
+        .map(([name, descriptor]) => [
+        name,
+        { descriptor, serverName: inferUserServerName(name), source: "user" as const },
+        ]));
       for (const serverName of allowedBuiltins) {
+        if (!isReadyOrUnreported(statusSnapshot.servers[serverName])) continue;
         for (const [name, descriptor] of builtinDescriptors.get(serverName) ?? []) {
-          snapshotDescriptors.set(name, descriptor);
+          tools.set(name, { descriptor, serverName, source: "builtin" });
         }
       }
       return {
-        descriptors: snapshotDescriptors,
+        tools,
         statuses: {
           servers: Object.fromEntries(Object.entries(statusSnapshot.servers).filter(([name]) =>
             !builtinNames.has(name) || allowedBuiltins.has(name as BuiltinMcpServerName)
@@ -96,6 +104,14 @@ export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestM
     },
   };
   return runtime;
+}
+
+function inferUserServerName(registryName: string): string {
+  return parseMcpToolRegistryName(registryName)?.serverName ?? "user";
+}
+
+function isReadyOrUnreported(status: McpServerStatus | undefined): boolean {
+  return status === undefined || status.state === "ready";
 }
 
 function cloneStatus(snapshot: McpServerStatusResponse): McpServerStatusResponse {

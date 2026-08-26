@@ -36,6 +36,8 @@ const TEST_MEMORY_POLICY = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const TEST_TOOL_AUTHORIZATION_SNAPSHOT = { extraTools: [], toolProjection: null };
+const TEST_LOADED_TOOL_REFS: Array<{ name: string; descriptorDigest: string }> = [];
 const TEST_MODEL_AUDIT = {
   requested: {
     mode: "profile_default" as const,
@@ -62,6 +64,8 @@ const executionStart = (executionId: string) => ({
   origin: "user_message" as const,
   maxSteps: 50,
   executionSkills: [],
+  toolAuthorizationSnapshot: TEST_TOOL_AUTHORIZATION_SNAPSHOT,
+  loadedToolRefs: TEST_LOADED_TOOL_REFS,
 });
 const sessionIds = new Set<string>();
 
@@ -360,6 +364,8 @@ function persistedState(
         origin: "user_message",
         maxSteps: 50,
         executionSkills: [],
+        toolAuthorizationSnapshot: TEST_TOOL_AUTHORIZATION_SNAPSHOT,
+        loadedToolRefs: TEST_LOADED_TOOL_REFS,
         durationMs: runs.length * 100,
         runs,
         status: "completed",
@@ -590,6 +596,38 @@ describe("session transcript serialization", () => {
     };
     const parse = (batch: SessionToolBatch) => SessionFileSchema.safeParse({ ...base, toolBatches: [batch] }).success;
 
+    const queuedBatch = persistedToolBatch("queued");
+    const searchDigest = "a".repeat(64);
+    expect(parse({
+      ...queuedBatch,
+      allowedTools: ["tool_search"],
+      calls: [
+        {
+          ...queuedBatch.calls[0]!,
+          toolName: "tool_search",
+          catalogDigest: searchDigest,
+        },
+      ],
+    })).toBe(true);
+    expect(parse({
+      ...queuedBatch,
+      allowedTools: ["tool_search"],
+      calls: [{ ...queuedBatch.calls[0]!, toolName: "tool_search" }],
+    })).toBe(false);
+    expect(parse({
+      ...queuedBatch,
+      calls: [{ ...queuedBatch.calls[0]!, catalogDigest: searchDigest }],
+    })).toBe(false);
+    expect(parse({
+      ...queuedBatch,
+      calls: [{ ...queuedBatch.calls[0]!, catalogDigest: undefined }],
+    })).toBe(false);
+    expect(parse({
+      ...queuedBatch,
+      allowedTools: ["tool_search"],
+      calls: [{ ...queuedBatch.calls[0]!, toolName: "tool_search", catalogDigest: "not-a-digest" }],
+    })).toBe(false);
+
     expect(parse(persistedToolBatch("queued"))).toBe(true);
     const withoutCheckpoint = persistedToolBatch("queued");
     expect(SessionFileSchema.safeParse({
@@ -660,6 +698,60 @@ describe("session transcript serialization", () => {
       permission: oversizedBlockedRequest.permission,
     })).byteLength).toBeGreaterThan(48 * 1024);
     expect(parse(persistedToolBatch("blocked", oversizedBlockedRequest))).toBe(false);
+  });
+
+  test("SessionFileSchema requires canonical tool authorization and loaded ref state", () => {
+    const sessionId = uniqueSessionId("tool-search-execution-state");
+    const base = persistedFile(persistedState(sessionId));
+    const execution = base.executions[0];
+    expect(execution).toBeDefined();
+    if (execution === undefined) return;
+
+    const validSnapshot = {
+      extraTools: ["bash", "github_get_pull_request"],
+      toolProjection: ["bash", "grep"],
+    };
+    const validRefs = [{ name: "grep", descriptorDigest: "b".repeat(64) }];
+    const withToolState = {
+      ...base,
+      executions: [{
+        ...execution,
+        toolAuthorizationSnapshot: validSnapshot,
+        loadedToolRefs: validRefs,
+      }],
+    };
+    expect(SessionFileSchema.safeParse(withToolState).success).toBe(true);
+    expect(SessionFileSchema.safeParse({
+      ...withToolState,
+      executions: [{
+        ...withToolState.executions[0]!,
+        toolAuthorizationSnapshot: { extraTools: ["grep", "bash"], toolProjection: null },
+      }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...withToolState,
+      executions: [{
+        ...withToolState.executions[0]!,
+        loadedToolRefs: [
+          ...validRefs,
+          { name: "grep", descriptorDigest: "c".repeat(64) },
+        ],
+      }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...withToolState,
+      executions: [{
+        ...withToolState.executions[0]!,
+        loadedToolRefs: [{ name: "grep", descriptorDigest: "not-a-digest" }],
+      }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...withToolState,
+      executions: [{
+        ...withToolState.executions[0]!,
+        toolAuthorizationSnapshot: { extraTools: [" "], toolProjection: null },
+      }],
+    }).success).toBe(false);
   });
 
   test("SessionFileSchema rejects corrupt cross-run cursors and Tool Batch step links", () => {
@@ -746,6 +838,8 @@ describe("session transcript serialization", () => {
       origin: "user_message",
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: TEST_TOOL_AUTHORIZATION_SNAPSHOT,
+      loadedToolRefs: TEST_LOADED_TOOL_REFS,
       durationMs: 40,
       runs: [{
         ordinal: 0,
@@ -891,6 +985,8 @@ describe("session transcript serialization", () => {
       durationMs: 2,
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: TEST_TOOL_AUTHORIZATION_SNAPSHOT,
+      loadedToolRefs: TEST_LOADED_TOOL_REFS,
       origin: "user_message",
       runs: [{
         ordinal: 0,

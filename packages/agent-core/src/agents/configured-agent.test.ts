@@ -12,16 +12,21 @@ import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { createTextToolResult } from "../tools/results";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
+import { registerBuiltinTools } from "../core/register-tools";
 import { worktreeEnterTool, worktreeExitTool } from "../tools/builtins/worktree";
 import { DELEGATION_CONTROL_TOOLS } from "./constants";
 import {
   ConfiguredAgent,
   IneligibleSessionWorktreeToolError,
   UnknownExtraToolError,
+  projectStateActivatedTools,
+  type ConfiguredAgentOptions,
+  type ToolVisibilityFacts,
 } from "./configured-agent";
 import { defaultAgentDefinitions, discussionAgentDefinition, exploreAgentDefinition, leadAgentDefinition } from "./definitions";
 import { isRootAgentName } from "./root-session-identity";
 import type { AgentDefinition } from "./factory-types";
+import type { AgentMcpToolSnapshot } from "./factory-types";
 import type { VersionControl } from "../version-control/detector";
 import { setLlmAdapterForTest } from "../llm/adapter";
 import { MemoryPolicyRuntime } from "../memory";
@@ -30,16 +35,26 @@ import { createTestProjectContextResolver } from "./test-project-context-resolve
 import type { AgentRunOptions } from "./types";
 import { SessionGoalService } from "../session-goal";
 import type { ProjectContextResolver } from "../projects/context-resolver";
-import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
+import {
+  testExecutionLoadedToolRefs,
+  testExecutionMemoryPolicy,
+  testExecutionToolAuthorizationSnapshot,
+} from "../testing/test-execution-fixtures";
 import {
   EMPTY_ATTACHMENT_MODEL_PROJECTOR,
   resolveEmptyAttachmentReadPaths,
 } from "../attachments/test-helpers";
+import { projectVisibleTools } from "./tool-visibility";
+import { NO_STATE_DEFERRED_BUILTINS } from "./tool-visibility/search-eval-cases";
+import { TOOL_TOOL_SEARCH } from "@archcode/protocol";
 
 const tmpRoot = join(tmpdir(), "archcode-configured-agent", crypto.randomUUID());
 const worktreeRoot = join(tmpdir(), "archcode-configured-agent-worktree", crypto.randomUUID());
 const registryFixtures: TestToolRegistryFixture[] = [];
 const outputAccessFixture = createTestToolRegistryFixture();
+const productionBuiltinRegistryFixture = createTestToolRegistryFixture();
+registerBuiltinTools(productionBuiltinRegistryFixture.registry, silentLogger, { github: { enabled: false } });
+registryFixtures.push(productionBuiltinRegistryFixture);
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 const sessions = new Map<string, { sessionId: string; workspaceRoot: string }>();
 
@@ -234,6 +249,9 @@ function createAgent(options: {
   projectContextResolver?: ProjectContextResolver;
   versionControl?: VersionControl;
   sessionGoalService?: SessionGoalService;
+  resolveMcpToolSnapshot?: () => AgentMcpToolSnapshot;
+  getAgentTreeProjection?: ConfiguredAgentOptions["getAgentTreeProjection"];
+  toolOutputAccess?: ConfiguredAgentOptions["toolOutputAccess"];
   logger?: Logger;
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
@@ -272,7 +290,7 @@ function createAgent(options: {
   }
   const depth = options.depth ?? 0;
   const resolveAllowedTools = (definition: AgentDefinition, agentDepth: number) => {
-    const requested = [...definition.tools.tools, ...definition.roleContract.requiredCapabilities];
+    const requested = [...definition.tools.authorized, ...definition.roleContract.requiredCapabilities];
     const resolved = toolRegistry.resolveForAgent(requested).descriptors.map((tool) => tool.name);
     if (
       definition.childPolicy === undefined
@@ -308,7 +326,8 @@ function createAgent(options: {
     cwd,
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
-    toolOutputAccess: outputAccessFixture.createToolOutputAccess(projectRoot, store.getState().rootSessionId),
+    toolOutputAccess: options.toolOutputAccess
+      ?? outputAccessFixture.createToolOutputAccess(projectRoot, store.getState().rootSessionId),
     attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
     resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
     logger: options.logger ?? silentLogger,
@@ -318,21 +337,40 @@ function createAgent(options: {
       targets: Object.freeze(delegationTargets),
     }),
     resolveAllowedTools,
+    resolveMcpToolSnapshot: options.resolveMcpToolSnapshot,
+    getAgentTreeProjection: options.getAgentTreeProjection,
   });
 }
 
 async function runAgent(
   agent: ConfiguredAgent,
   message: string,
-  options: Partial<AgentRunOptions> = {},
+  options: Partial<AgentRunOptions> & {
+    readonly extraTools?: readonly string[];
+    readonly toolProjection?: readonly string[];
+  } = {},
 ) {
   const id = crypto.randomUUID();
+  const {
+    extraTools = [],
+    toolProjection,
+    toolAuthorizationSnapshot = {
+      extraTools: [...extraTools],
+      toolProjection: toolProjection === undefined ? null : [...toolProjection],
+    },
+    loadedToolRefs = [],
+    reconcileExecutionToolLoads = async () => {},
+    ...rest
+  } = options;
   const runOptions: AgentRunOptions = {
     executionId: `test-${id}`,
     runOrdinal: 0,
     initialStep: 0,
     memoryPolicy: new MemoryPolicyRuntime().claim(),
-    ...options,
+    toolAuthorizationSnapshot,
+    loadedToolRefs,
+    reconcileExecutionToolLoads,
+    ...rest,
   };
   const executionId = runOptions.executionId;
   const binding = makeBinding();
@@ -344,6 +382,8 @@ async function runAgent(
     origin: "tool_call",
     maxSteps: runOptions.maxSteps ?? 50,
     executionSkills: [],
+    toolAuthorizationSnapshot: runOptions.toolAuthorizationSnapshot,
+    loadedToolRefs: [...runOptions.loadedToolRefs],
   });
   agent.store.getState().append({
     type: "session.messages_committed",
@@ -645,13 +685,21 @@ describe("ConfiguredAgent", () => {
       },
     });
     const streamFn = setupToolCallStreamText("edit_goal_fixture");
+    const definition = {
+      ...leadAgentDefinition,
+      tools: {
+        ...leadAgentDefinition.tools,
+        authorized: [...leadAgentDefinition.tools.authorized, "edit_goal_fixture"],
+        core: [...leadAgentDefinition.tools.core, "edit_goal_fixture"],
+      },
+    } satisfies AgentDefinition;
 
     await runAgent(createAgent({
-      definition: leadAgentDefinition,
+      definition,
       store,
       sessionGoalService,
       toolRegistry,
-    }), "continue across the edit", { extraTools: ["edit_goal_fixture"] });
+    }), "continue across the edit");
 
     expect(streamFn).toHaveBeenCalledTimes(2);
     const first = streamFn.mock.calls[0]![0] as { system: string; messages: unknown[] };
@@ -835,13 +883,21 @@ describe("ConfiguredAgent", () => {
       },
     });
     const streamFn = setupToolCallStreamText("create_plan_fixture");
+    const definition = {
+      ...leadAgentDefinition,
+      tools: {
+        ...leadAgentDefinition.tools,
+        authorized: [...leadAgentDefinition.tools.authorized, "create_plan_fixture"],
+        core: [...leadAgentDefinition.tools.core, "create_plan_fixture"],
+      },
+    } satisfies AgentDefinition;
 
     await runAgent(createAgent({
-      definition: leadAgentDefinition,
+      definition,
       store,
       projectContextResolver,
       toolRegistry,
-    }), "create the Plan", { extraTools: ["create_plan_fixture"] });
+    }), "create the Plan");
 
     expect(streamFn).toHaveBeenCalledTimes(2);
     const firstSystem = (streamFn.mock.calls[0]![0] as { system: string }).system;
@@ -890,6 +946,8 @@ describe("ConfiguredAgent", () => {
       origin: "tool_call",
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
     });
     agent.store.getState().append({
       type: "session.messages_committed",
@@ -909,6 +967,9 @@ describe("ConfiguredAgent", () => {
       runOrdinal: 0,
       initialStep: 0,
       memoryPolicy: new MemoryPolicyRuntime().claim(),
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
+      reconcileExecutionToolLoads: async () => {},
     })).resolves.toEqual({
       outcome: "terminal",
       text: "explicit model ok",
@@ -948,7 +1009,7 @@ describe("ConfiguredAgent", () => {
     setupToolCallStreamText("capture_context", { agentSkills: ["input-must-not-win"] });
     const agentSkills = ["git-master", "review-work"];
     const agent = createAgent({
-      definition: definitionWith({ tools: { tools: ["capture_context"] }, skills: agentSkills }),
+      definition: definitionWith({ tools: { authorized: ["capture_context"], core: ["capture_context"] }, skills: agentSkills }),
       toolRegistry,
       skillService,
     });
@@ -995,7 +1056,7 @@ describe("ConfiguredAgent", () => {
     ]);
     const streamFn = setupToolCallStreamText("capture_workspace");
     const agent = createAgent({
-      definition: definitionWith({ tools: { tools: ["capture_workspace"] } }),
+      definition: definitionWith({ tools: { authorized: ["capture_workspace"], core: ["capture_workspace"] } }),
       toolRegistry,
       projectRoot: tmpRoot,
       cwd: worktreeRoot,
@@ -1165,7 +1226,7 @@ describe("ConfiguredAgent", () => {
 
   test("non-loop runs keep definition tools unchanged and do not expose profile-only GitHub tools", async () => {
     const streamFn = setupMockStreamText("default tools ok");
-    const toolRegistry = createTestRegistry(leadAgentDefinition.tools.tools.map(makeTool));
+    const toolRegistry = createTestRegistry(leadAgentDefinition.tools.authorized.map(makeTool));
     const agent = createAgent({ definition: leadAgentDefinition, toolRegistry });
 
     await runAgent(agent, "default run");
@@ -1180,7 +1241,7 @@ describe("ConfiguredAgent", () => {
 
   test("exposes exactly one cwd transition to eligible interactive root Sessions", async () => {
     const toolRegistry = createTestRegistry([
-      ...leadAgentDefinition.tools.tools.map(makeTool),
+      ...leadAgentDefinition.tools.authorized.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
     ]);
@@ -1211,7 +1272,7 @@ describe("ConfiguredAgent", () => {
   test("extraTools cannot grant cwd transitions to an ineligible Session", async () => {
     const streamFn = setupMockStreamText("should not run");
     const toolRegistry = createTestRegistry([
-      ...leadAgentDefinition.tools.tools.map(makeTool),
+      ...leadAgentDefinition.tools.authorized.map(makeTool),
       worktreeEnterTool,
       worktreeExitTool,
     ]);
@@ -1236,34 +1297,41 @@ describe("ConfiguredAgent", () => {
     expect(streamFn).not.toHaveBeenCalled();
   });
 
-  test("extraTools add registered tools without narrowing baseline prompt tools", async () => {
+  test("extraTools enter the searchable catalog without becoming initially visible", async () => {
     const streamFn = setupMockStreamText("extra tools ok");
     const toolRegistry = createTestRegistry([
-      ...leadAgentDefinition.tools.tools.map(makeTool),
+      ...leadAgentDefinition.tools.authorized.map(makeTool),
       makeTool("github_get_pull_request"),
       makeTool("github_create_issue_comment"),
     ]);
     const agent = createAgent({ definition: leadAgentDefinition, toolRegistry });
+    const authorization = {
+      extraTools: ["github_get_pull_request", "github_create_issue_comment"],
+      toolProjection: null,
+    };
+    const live = await agent.resolveLiveAuthorizedToolCatalog(authorization);
+    expect(live.catalog.entries.find((entry) => entry.registryName === "file_read")?.sourceKind).toBe("builtin");
+    expect(live.catalog.entries.find((entry) => entry.registryName === "github_get_pull_request")?.sourceKind).toBe("overlay");
 
     await runAgent(agent, "extra tools run", {
-      extraTools: ["github_get_pull_request", "github_create_issue_comment", "github_get_pull_request"],
+      toolAuthorizationSnapshot: authorization,
     });
 
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).toContain("- file_read");
     expect(callArgs.system).toContain("- file_write");
     expect(callArgs.system).toContain("- bash");
-    expect(callArgs.system).toContain("- github_get_pull_request");
-    expect(callArgs.system).toContain("- github_create_issue_comment");
+    expect(callArgs.system).toContain("- tool_search");
+    expect(callArgs.system).not.toContain("- github_get_pull_request");
+    expect(callArgs.system).not.toContain("- github_create_issue_comment");
     expect(callArgs.system).not.toContain("github_rerun_workflow_run");
-    expect(callArgs.system.match(/- github_get_pull_request/g)).toHaveLength(1);
   });
 
   test("extraTools effective tools are enforced in tool execution context", async () => {
     setupToolCallStreamText("github_create_issue_comment");
     let capturedAllowedTools: string[] = [];
     const toolRegistry = createTestRegistry([
-      ...leadAgentDefinition.tools.tools.map(makeTool),
+      ...leadAgentDefinition.tools.authorized.map(makeTool),
     ]);
     toolRegistry.register({
       name: "github_create_issue_comment",
@@ -1281,10 +1349,19 @@ describe("ConfiguredAgent", () => {
     // production createSessionFile barrier instead of racing the queued write.
     await storeManager.flushSession(store.getState().sessionId, tmpRoot);
     const agent = createAgent({ definition: leadAgentDefinition, toolRegistry, store });
+    const toolAuthorizationSnapshot = {
+      extraTools: ["github_create_issue_comment"],
+      toolProjection: null,
+    };
+    const catalog = await agent.resolveLiveAuthorizedToolCatalog(toolAuthorizationSnapshot);
+    const loaded = catalog.catalog.entries.find(
+      (entry) => entry.registryName === "github_create_issue_comment",
+    )!;
 
     await runAgent(agent, "comment on PR", {
       maxSteps: 1,
-      extraTools: ["github_create_issue_comment"],
+      toolAuthorizationSnapshot,
+      loadedToolRefs: [{ name: loaded.registryName, descriptorDigest: loaded.descriptorDigest }],
     });
 
     expect(capturedAllowedTools).toContain("file_read");
@@ -1364,7 +1441,7 @@ describe("ConfiguredAgent", () => {
     expect(errorIndex).toBeGreaterThan(traceIndex);
     expect(streamFn).not.toHaveBeenCalled();
   });
-  test("injects complete prompt Memory only when enabled without changing explicit Memory tools", async () => {
+  test("injects complete prompt Memory only when enabled without state-activating Memory tools", async () => {
     const preferences = "# Preferences\n\nKeep conclusions concise and evidence-backed.";
     const index = "- [Build Tooling](build_tools) — Bun commands and repository conventions\n";
     const topicBody = "PRIVATE TOPIC BODY MUST REQUIRE memory_read";
@@ -1386,7 +1463,8 @@ describe("ConfiguredAgent", () => {
     expect(enabled.system).toContain(`Preferences:\n${preferences}`);
     expect(enabled.system).toContain(`Index:\n${index}`);
     expect(enabled.system).not.toContain(topicBody);
-    expect(Object.keys(enabled.tools ?? {})).toEqual(expect.arrayContaining(["memory_read", "memory_write"]));
+    expect(Object.keys(enabled.tools ?? {})).not.toContain("memory_read");
+    expect(Object.keys(enabled.tools ?? {})).not.toContain("memory_write");
 
     const disabledStream = setupMockStreamText("memory disabled");
     await runAgent(createAgent({ definition: leadAgentDefinition, projectContextResolver, toolRegistry }), "without memory", {
@@ -1396,7 +1474,8 @@ describe("ConfiguredAgent", () => {
     expect(disabled.system).toContain("Status: absent. Memory is non-authoritative historical context.");
     expect(disabled.system).not.toContain(preferences);
     expect(disabled.system).not.toContain(index);
-    expect(Object.keys(disabled.tools ?? {})).toEqual(expect.arrayContaining(["memory_read", "memory_write"]));
+    expect(Object.keys(disabled.tools ?? {})).not.toContain("memory_read");
+    expect(Object.keys(disabled.tools ?? {})).not.toContain("memory_write");
     expect(readPromptManifest).toHaveBeenCalledTimes(1);
   });
 
@@ -1499,7 +1578,18 @@ describe("ConfiguredAgent", () => {
     expect(durableSession).not.toContain(secret);
 
     const serializedLogs = JSON.stringify(entries);
-    expect(entries.some((entry) => entry.event === "prompt.compiled")).toBe(true);
+    const compiledLog = entries.find((entry) => entry.event === "prompt.compiled");
+    expect(compiledLog).toBeDefined();
+    expect(compiledLog?.meta?.toolVisibility).toMatchObject({
+      catalogDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      core: expect.arrayContaining(["file_read", "grep", "glob"]),
+      state: [],
+      loaded: [],
+      deferredCount: expect.any(Number),
+    });
+    expect(prompt).toMatch(/toolCatalogDigest=[0-9a-f]{64}/);
+    expect(prompt).toMatch(/toolDeferredCount=\d+/);
+    expect(trace?.visibleTools).toEqual(expect.arrayContaining(["file_read", "grep", "glob"]));
     expect(serializedLogs).toContain(expectedWarning);
     expect(serializedLogs).not.toContain(privatePath);
     expect(serializedLogs).not.toContain(secret);
@@ -1527,7 +1617,7 @@ describe("ConfiguredAgent", () => {
       ...leadAgentDefinition,
       tools: {
         ...leadAgentDefinition.tools,
-        tools: [...leadAgentDefinition.tools.tools, "mutate_memory_fixture"],
+        authorized: [...leadAgentDefinition.tools.authorized, "mutate_memory_fixture"],
       },
     } satisfies AgentDefinition;
     const stream = setupToolCallStreamText("mutate_memory_fixture");
@@ -1566,7 +1656,7 @@ describe("ConfiguredAgent", () => {
     await runAgent(createAgent({
       definition: {
         ...leadAgentDefinition,
-        tools: { ...leadAgentDefinition.tools, tools: ["capture_context"] },
+        tools: { ...leadAgentDefinition.tools, authorized: ["capture_context"], core: ["capture_context"] },
       },
       toolRegistry,
     }), "root context");
@@ -1594,12 +1684,194 @@ describe("ConfiguredAgent", () => {
     });
 
     await runAgent(createAgent({
-      definition: { ...exploreAgentDefinition, tools: { tools: ["capture_context"] } },
+      definition: { ...exploreAgentDefinition, tools: { authorized: ["capture_context"], core: ["capture_context"] } },
       depth: 1,
       toolRegistry,
     }), "explorer context");
 
     expect(capturedAgentName).toBe("explore");
     expect(capturedDepth).toBe(1);
+  });
+
+  test("production no-state deferred builtins match the locked search corpus", async () => {
+    for (const definition of defaultAgentDefinitions) {
+      const store = definition.name === "discussion"
+        ? createStore(crypto.randomUUID(), tmpRoot, {
+            agentName: "discussion",
+            source: { kind: "todo", todoId: crypto.randomUUID(), entry: "discussion" },
+          })
+        : undefined;
+      const agent = createAgent({ definition, toolRegistry: productionBuiltinRegistryFixture.registry, store });
+      const live = await agent.resolveLiveAuthorizedToolCatalog({
+        extraTools: [],
+        toolProjection: [...definition.tools.authorized],
+      });
+      const projected = projectVisibleTools({
+        catalog: live.catalog,
+        core: definition.tools.core,
+        state: [],
+        loaded: [],
+      });
+      expect(
+        projected.deferred.map((entry) => entry.registryName).sort(),
+        definition.name,
+      ).toEqual([...NO_STATE_DEFERRED_BUILTINS[definition.name]].sort());
+    }
+  });
+
+  test("keeps MCP deferred until its exact descriptor digest is loaded", async () => {
+    const remote = makeTool("mcp__docs__lookup");
+    const resolveMcpToolSnapshot = () => ({
+      tools: new Map([[remote.name, { descriptor: remote, serverName: "docs", source: "user" as const }]]),
+      statuses: {
+        servers: {
+          docs: { state: "ready" as const, toolCount: 1, warningCount: 0, connectedAt: 1 },
+        },
+      },
+    });
+    const toolRegistry = createTestRegistry(leadAgentDefinition.tools.authorized.map(makeTool));
+    const agent = createAgent({ definition: leadAgentDefinition, toolRegistry, resolveMcpToolSnapshot });
+    const live = await agent.resolveLiveAuthorizedToolCatalog({ extraTools: [], toolProjection: null });
+    const remoteEntry = live.catalog.entries.find((entry) => entry.registryName === remote.name)!;
+    const initial = projectVisibleTools({
+      catalog: live.catalog,
+      core: leadAgentDefinition.tools.core,
+      state: [],
+      loaded: [],
+    });
+    expect(initial.deferred.map((entry) => entry.registryName)).toContain(remote.name);
+    expect(initial.visible.map((entry) => entry.registryName)).not.toContain(remote.name);
+    expect(initial.visible.map((entry) => entry.registryName)).toContain(TOOL_TOOL_SEARCH);
+
+    const loaded = projectVisibleTools({
+      catalog: live.catalog,
+      core: leadAgentDefinition.tools.core,
+      state: [],
+      loaded: [{ name: remote.name, descriptorDigest: remoteEntry.descriptorDigest }],
+    });
+    expect(loaded.visible.map((entry) => entry.registryName)).toContain(remote.name);
+    expect(loaded.deferred.map((entry) => entry.registryName)).not.toContain(remote.name);
+    expect(live.namespaceSummary).toContain("docs: user MCP server (1)");
+    expect(live.namespaceSummary).not.toContain(remote.name);
+  });
+
+  test("projects only the fixed state activation table", () => {
+    const facts: ToolVisibilityFacts = {
+      activeRootGoal: true,
+      boundRootDiscussionTodo: true,
+      currentExecutionHasPdf: true,
+      hasRecoverableOutput: true,
+      hasDescendant: true,
+      hasRunningDirectChild: true,
+      hasBackgroundDirectChild: true,
+      hasNonterminalDirectChild: true,
+      hasNonterminalDescendant: true,
+      hasResumableDirectChild: true,
+      worktreeTool: "worktree_enter",
+    };
+    expect(projectStateActivatedTools(facts)).toEqual([
+      "get_goal", "update_goal", "project_todo_update", "pdf_read",
+      "output_read", "output_search", "list_agents", "send_message",
+      "background_output", "wait_for_reminder", "cancel_session",
+      "resume_session", "worktree_enter",
+    ]);
+    expect(projectStateActivatedTools({
+      ...facts,
+      activeRootGoal: false,
+      boundRootDiscussionTodo: false,
+      currentExecutionHasPdf: false,
+      hasRecoverableOutput: false,
+      hasDescendant: false,
+      hasRunningDirectChild: false,
+      hasBackgroundDirectChild: false,
+      hasNonterminalDirectChild: false,
+      hasNonterminalDescendant: false,
+      hasResumableDirectChild: false,
+      worktreeTool: null,
+    })).toEqual([]);
+  });
+
+  test("activates output recovery only for artifacts owned by the current logical Execution", async () => {
+    setupMockStreamText("done");
+    const countRecoverableForExecution = mock(async (executionId: string) => (
+      executionId === "current-execution" ? 1 : 0
+    ));
+    const toolOutputAccess: ConfiguredAgentOptions["toolOutputAccess"] = {
+      countRecoverable: async () => 7,
+      countRecoverableForExecution,
+      read: async () => { throw new Error("not used"); },
+      search: async () => { throw new Error("not used"); },
+    };
+    const toolRegistry = createTestRegistry(leadAgentDefinition.tools.authorized.map(makeTool));
+    const agent = createAgent({ definition: leadAgentDefinition, toolRegistry, toolOutputAccess });
+
+    await runAgent(agent, "old family artifacts only", { executionId: "new-execution" });
+    expect(agent.store.getState().promptTraces.at(-1)?.visibleTools).not.toContain("output_read");
+    expect(agent.store.getState().promptTraces.at(-1)?.visibleTools).not.toContain("output_search");
+
+    await runAgent(agent, "current artifact", { executionId: "current-execution" });
+    expect(agent.store.getState().promptTraces.at(-1)?.visibleTools).toEqual(
+      expect.arrayContaining(["output_read", "output_search"]),
+    );
+    expect(countRecoverableForExecution.mock.calls.map((call) => call[0])).toEqual(
+      expect.arrayContaining(["new-execution", "current-execution"]),
+    );
+  });
+
+  test("does not take a family-tree snapshot when direct live links already determine visibility", async () => {
+    const stream = setupMockStreamText("direct child facts are sufficient");
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    store.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        parentSessionId: store.getState().sessionId,
+        parentToolCallId: "delegate-live-child",
+        toolName: "delegate",
+        childSessionId: crypto.randomUUID(),
+        childExecutionId: crypto.randomUUID(),
+        childAgentName: "analyst",
+        childProfile: "deep",
+        childSkillNames: [],
+        title: "Live child",
+        depth: 1,
+        background: true,
+        status: "running",
+        createdAt: 1,
+        startedAt: 1,
+      },
+    });
+    const getAgentTreeProjection = mock(async () => {
+      throw new Error("family tree should not be resolved for a known live direct child");
+    });
+
+    await runAgent(createAgent({
+      definition: leadAgentDefinition,
+      store,
+      getAgentTreeProjection,
+    }), "continue while the child is running");
+
+    expect(getAgentTreeProjection).not.toHaveBeenCalled();
+    const system = (stream.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain("- list_agents");
+    expect(system).toContain("- send_message");
+    expect(system).toContain("- background_output");
+    expect(system).toContain("- wait_for_reminder");
+    expect(system).toContain("- cancel_session");
+  });
+
+  test("toolProjection cannot grant a registered tool and depth-filtered delegation cannot be restored", async () => {
+    const toolRegistry = createTestRegistry([
+      ...leadAgentDefinition.tools.authorized.map(makeTool),
+      makeTool("registered_but_unauthorized"),
+    ]);
+    const agent = createAgent({ definition: leadAgentDefinition, toolRegistry, depth: 3 });
+    await expect(agent.resolveLiveAuthorizedToolCatalog({
+      extraTools: [],
+      toolProjection: ["registered_but_unauthorized"],
+    })).rejects.toThrow(UnknownExtraToolError);
+    await expect(agent.resolveLiveAuthorizedToolCatalog({
+      extraTools: ["delegate"],
+      toolProjection: null,
+    })).rejects.toThrow(UnknownExtraToolError);
   });
 });

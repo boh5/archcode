@@ -9,6 +9,7 @@ import {
   isSessionEventPayload,
   isValidAttachmentMediaType,
   isValidAttachmentName,
+  TOOL_TOOL_SEARCH,
   validateExecutionFinalOutputSelection,
   type FinalizedToolResult,
   type JsonObject,
@@ -50,6 +51,36 @@ const ToolNameSchema = z.string().min(1).refine(
   (value) => new TextEncoder().encode(value).byteLength <= 128,
   "Tool name exceeds 128 UTF-8 bytes",
 );
+const CanonicalToolNameSchema = ToolNameSchema.refine(
+  (value) => value.trim().length > 0,
+  "Tool name must not be blank",
+);
+const ToolDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const SortedUniqueToolNamesSchema = z.array(CanonicalToolNameSchema).superRefine((names, ctx) => {
+  if (new Set(names).size !== names.length) {
+    ctx.addIssue({ code: "custom", message: "Tool names must be unique" });
+  }
+  if (names.some((name, index) => index > 0 && names[index - 1]! >= name)) {
+    ctx.addIssue({ code: "custom", message: "Tool names must be sorted" });
+  }
+});
+const ToolAuthorizationSnapshotSchema = z.strictObject({
+  extraTools: SortedUniqueToolNamesSchema,
+  toolProjection: SortedUniqueToolNamesSchema.nullable(),
+});
+const LoadedToolRefSchema = z.strictObject({
+  name: CanonicalToolNameSchema,
+  descriptorDigest: ToolDigestSchema,
+});
+const LoadedToolRefsSchema = z.array(LoadedToolRefSchema).superRefine((refs, ctx) => {
+  const names = refs.map((ref) => ref.name);
+  if (new Set(names).size !== names.length) {
+    ctx.addIssue({ code: "custom", message: "Loaded tool refs must have unique names" });
+  }
+  if (names.some((name, index) => index > 0 && names[index - 1]! >= name)) {
+    ctx.addIssue({ code: "custom", message: "Loaded tool refs must be sorted by name" });
+  }
+});
 const ToolLifecycleTimestampSchema = z.number().finite().nonnegative();
 const ToolOutputCountSchema = z.strictObject({
   bytes: z.number().int().nonnegative().safe(),
@@ -296,6 +327,8 @@ const SessionExecutionRecordBaseShape = {
       generation: z.number().int().nonnegative(),
     }),
   }),
+  toolAuthorizationSnapshot: ToolAuthorizationSnapshotSchema,
+  loadedToolRefs: LoadedToolRefsSchema,
 };
 
 const SessionExecutionRecordSchema = z.discriminatedUnion("status", [
@@ -1067,6 +1100,7 @@ const SessionToolBatchCallSchema = z.strictObject({
   state: z.enum(["queued", "running", "blocked", "child_launch", "child_dependency", "completed", "failed", "manual_inspection_required"]),
   attempt: z.number().int().nonnegative(),
   checkpointAt: z.number().int().nonnegative(),
+  catalogDigest: ToolDigestSchema.optional(),
   result: FinalizedToolResultSchema.optional(),
   settledAt: ToolLifecycleTimestampSchema.optional(),
   executionCompleted: z.literal(true).optional(),
@@ -1074,6 +1108,10 @@ const SessionToolBatchCallSchema = z.strictObject({
   childDependency: SessionToolChildDependencySchema.optional(),
   recoveryFailure: SessionToolRecoveryFailureSchema.optional(),
 }).superRefine((call, ctx) => {
+  const hasCatalogDigest = Object.prototype.hasOwnProperty.call(call, "catalogDigest");
+  if (call.toolName !== TOOL_TOOL_SEARCH && hasCatalogDigest) {
+    ctx.addIssue({ code: "custom", path: ["catalogDigest"], message: "Only tool_search may have catalogDigest" });
+  }
   const terminalResult = call.state === "completed" || call.state === "failed";
   const inspectedUnknownResult = call.state === "manual_inspection_required" && call.result !== undefined;
   if ((terminalResult || inspectedUnknownResult) !== (call.result !== undefined)) {
@@ -1140,6 +1178,17 @@ const SessionToolBatchSchema = z.strictObject({
 }).superRefine((batch, ctx) => {
   const ids = batch.calls.map((call) => call.toolCallId);
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", path: ["calls"], message: "Duplicate toolCallId in batch" });
+  const toolSearchAllowed = batch.allowedTools.includes(TOOL_TOOL_SEARCH);
+  batch.calls.forEach((call, callIndex) => {
+    if (call.toolName !== TOOL_TOOL_SEARCH) return;
+    const hasCatalogDigest = call.catalogDigest !== undefined;
+    if (toolSearchAllowed && !hasCatalogDigest) {
+      ctx.addIssue({ code: "custom", path: ["calls", callIndex, "catalogDigest"], message: "Allowed tool_search requires catalogDigest" });
+    }
+    if (!toolSearchAllowed && hasCatalogDigest) {
+      ctx.addIssue({ code: "custom", path: ["calls", callIndex, "catalogDigest"], message: "Hidden tool_search cannot persist catalogDigest" });
+    }
+  });
   const partitionIds = batch.partitions.flatMap((partition) => partition.callIds);
   if (JSON.stringify(partitionIds) !== JSON.stringify(ids)) {
     ctx.addIssue({ code: "custom", path: ["partitions"], message: "Partitions must cover calls exactly once in model order" });

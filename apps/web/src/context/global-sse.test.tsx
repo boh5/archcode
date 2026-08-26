@@ -16,8 +16,10 @@ import type {
   GlobalSSEShutdownEvent,
   GlobalSSEUpdateChangedEvent,
   HitlView,
+  LoadedToolRef,
   McpServerStatus,
   SessionGoal,
+  ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import {
   __resetWebSessionStoresForTest,
@@ -70,6 +72,11 @@ const binding = {
   resolution: "profile_default" as const,
   modelRuntimeRevision: "m1",
 };
+const toolAuthorizationSnapshot: ToolAuthorizationSnapshot = {
+  extraTools: [],
+  toolProjection: null,
+};
+const loadedToolRefs: LoadedToolRef[] = [];
 const sessionGoal: SessionGoal = {
   instanceId: "00000000-0000-4000-8000-000000000001",
   settlementReceipts: [],
@@ -985,6 +992,8 @@ describe("handleSSEEvent", () => {
         },
         maxSteps: 50,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
       },
     };
 

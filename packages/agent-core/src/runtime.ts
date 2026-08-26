@@ -945,6 +945,9 @@ export async function createRuntime(
 
     executionManager = new SessionExecutionManager({
       sessionAgentManager,
+      validateToolAuthorization: ({ workspaceRoot, sessionId, authorization }) => (
+        sessionAgentManager.validateToolAuthorization(workspaceRoot, sessionId, authorization)
+      ),
       modelRuntime,
       memoryPolicyRuntime: configService.memoryPolicyRuntime,
       modelSelectionResolver,
@@ -952,6 +955,9 @@ export async function createRuntime(
       flushSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.flushSession(sessionId, workspaceRoot),
       getSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.get(sessionId, workspaceRoot),
       loadSessionStore: (sessionId, workspaceRoot) => sessionStoreManager.getOrLoad(sessionId, workspaceRoot),
+      commitDurableSessionMutation: (sessionId, workspaceRoot, mutate) => (
+        sessionStoreManager.commitDurableSessionMutation(sessionId, workspaceRoot, mutate)
+      ),
       deleteSessionStore: (sessionId, workspaceRoot, deleteOptions) => sessionStoreManager.delete(sessionId, workspaceRoot, deleteOptions),
       resolveRootSessionId: (sessionId, workspaceRoot) => sessionStoreManager.resolveRootSessionId(sessionId, workspaceRoot),
       resolveSessionDepth: (workspaceRoot, sessionId) => sessionStoreManager.resolveSessionDepth(workspaceRoot, sessionId),

@@ -36,15 +36,59 @@ describe("createTestMcpRuntime", () => {
       },
     });
 
-    expect([...runtime.snapshotTools({ builtinServerNames: [] }).descriptors.keys()]).toEqual([user.name]);
+    expect([...runtime.snapshotTools({ builtinServerNames: [] }).tools.keys()]).toEqual([user.name]);
     expect(Object.keys(runtime.snapshotTools({ builtinServerNames: [] }).statuses.servers)).toEqual(["user"]);
-    expect([...runtime.snapshotTools({ builtinServerNames: ["context7"] }).descriptors.keys()]).toEqual([
+    expect([...runtime.snapshotTools({ builtinServerNames: ["context7"] }).tools.keys()]).toEqual([
       user.name,
       context7.name,
     ]);
+    expect(runtime.snapshotTools({ builtinServerNames: ["context7"] }).tools.get(context7.name)).toMatchObject({
+      descriptor: context7,
+      serverName: "context7",
+      source: "builtin",
+    });
     expect(Object.keys(runtime.snapshotTools({ builtinServerNames: ["context7"] }).statuses.servers).sort()).toEqual([
       "context7",
       "user",
     ]);
+  });
+
+  test("derives user MCP namespaces from the formal registry alias parser", () => {
+    const docs = descriptor("mcp__docs__lookup");
+    const runtime = createTestMcpRuntime({
+      descriptors: new Map([[docs.name, docs]]),
+      statuses: {
+        servers: {
+          docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 1 },
+        },
+      },
+    });
+
+    expect(runtime.snapshotTools({ builtinServerNames: [] }).tools.get(docs.name)).toMatchObject({
+      serverName: "docs",
+      source: "user",
+    });
+  });
+
+  test("does not project descriptors from disabled, connecting, or failed servers", () => {
+    const disabled = descriptor("mcp__disabled__lookup");
+    const connecting = descriptor("mcp__connecting__lookup");
+    const failed = descriptor("mcp__failed__lookup");
+    const runtime = createTestMcpRuntime({
+      descriptors: new Map([
+        [disabled.name, disabled],
+        [connecting.name, connecting],
+        [failed.name, failed],
+      ]),
+      statuses: {
+        servers: {
+          disabled: { state: "disabled", updatedAt: 1 },
+          connecting: { state: "connecting", startedAt: 1 },
+          failed: { state: "failed", error: "offline", failedAt: 1 },
+        },
+      },
+    });
+
+    expect([...runtime.snapshotTools({ builtinServerNames: [] }).tools.keys()]).toEqual([]);
   });
 });

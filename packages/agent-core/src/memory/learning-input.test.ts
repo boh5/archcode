@@ -19,6 +19,10 @@ import {
   type MemoryExtractionCandidate,
 } from "./learning-state";
 import { MemoryExtractionResultSchema } from "./learning-schemas";
+import {
+  testExecutionLoadedToolRefs,
+  testExecutionToolAuthorizationSnapshot,
+} from "../testing/test-execution-fixtures";
 
 const BINDING = {
   selection: { model: "test:model" },
@@ -110,6 +114,8 @@ function execution(
       origin: "user_message",
       maxSteps: 50,
       durationMs: 0,
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
       runs: [{ ordinal: 0, startedAt: 1, binding: BINDING }],
     };
   }
@@ -123,6 +129,8 @@ function execution(
       origin: "user_message",
       maxSteps: 50,
       durationMs: 1,
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
       runs: [{ ...run }],
       suspension: { kind: "resume_pending", toolBatchId: "batch", readyAt: 4 },
     };
@@ -138,6 +146,8 @@ function execution(
     durationMs: 1,
     endedAt: 2,
     finalOutputStepId,
+    toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+    loadedToolRefs: testExecutionLoadedToolRefs,
     runs: [{ ...run }],
     terminalSettlement: { key: `terminal:session:${id}`, goalInstanceId: null },
   };

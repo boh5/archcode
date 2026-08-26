@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { reduceStreamEvent, type ReduceContext } from "./reduce";
 import { createEmptySessionStats } from "./usage";
-import type { SessionProjection, StreamEvent } from "./types";
+import type { LoadedToolRef, SessionProjection, StreamEvent } from "./types";
 
 const BINDING = {
   selection: { model: "test:model" },
@@ -16,6 +16,8 @@ const MEMORY_POLICY = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const TOOL_AUTHORIZATION_SNAPSHOT = { extraTools: [], toolProjection: null };
+const LOADED_TOOL_REFS: LoadedToolRef[] = [];
 
 function projection(): SessionProjection {
   return {
@@ -59,6 +61,8 @@ function start(executionId = "execution"): StreamEvent {
     binding: BINDING,
     executionSkills: [],
     memoryPolicy: MEMORY_POLICY,
+    toolAuthorizationSnapshot: TOOL_AUTHORIZATION_SNAPSHOT,
+    loadedToolRefs: LOADED_TOOL_REFS,
   };
 }
 

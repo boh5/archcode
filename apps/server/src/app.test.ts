@@ -48,6 +48,8 @@ describe("createRuntimeApp", () => {
           origin: "user_message",
           maxSteps: 50,
           executionSkills: [],
+          toolAuthorizationSnapshot: { extraTools: [], toolProjection: null },
+          loadedToolRefs: [],
         } });
         listener({ type: "event", slug: "proj", sessionId: "session-1", eventId: 2, createdAt: 2, agentName: "lead", payload: {
           type: "execution-end",

@@ -16,10 +16,10 @@ describe("Session Goal boundaries", () => {
   test("Lead owns conversational Goal control and other agents cannot mutate it", () => {
     const lead = agentDefinitions.find((definition) => definition.name === "lead");
     if (lead === undefined) throw new Error("Missing Lead definition");
-    expect(lead.tools.tools).toEqual(expect.arrayContaining([TOOL_CREATE_GOAL, TOOL_GET_GOAL, TOOL_UPDATE_GOAL]));
+    expect(lead.tools.authorized).toEqual(expect.arrayContaining([TOOL_CREATE_GOAL, TOOL_GET_GOAL, TOOL_UPDATE_GOAL]));
     for (const definition of agentDefinitions.filter((candidate) => candidate.name !== "lead")) {
-      expect(definition.tools.tools).not.toContain(TOOL_CREATE_GOAL);
-      expect(definition.tools.tools).not.toContain(TOOL_UPDATE_GOAL);
+      expect(definition.tools.authorized).not.toContain(TOOL_CREATE_GOAL);
+      expect(definition.tools.authorized).not.toContain(TOOL_UPDATE_GOAL);
     }
   });
 

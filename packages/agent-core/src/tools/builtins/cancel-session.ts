@@ -72,7 +72,7 @@ export async function executeCancelSession(
 export const cancelSessionTool = defineTool({
   name: "cancel_session",
   description:
-    "Cancel a running sub-agent session. Only descendant sessions of the calling session can be cancelled. Cascades to all child sessions of the target. Use this to interrupt a sub-agent that is going in the wrong direction or taking too long.",
+    "Cancel or abort a running child worker sub-agent session. Only descendant sessions of the calling session can be cancelled. Cascades to all child sessions of the target. Use this to interrupt a sub-agent that is going in the wrong direction or taking too long.",
   inputSchema: CancelSessionInputSchema,
   traits: { readOnly: false, destructive: true, concurrencySafe: false },
   outputPolicy: { kind: "inline", previewDirection: "head" },

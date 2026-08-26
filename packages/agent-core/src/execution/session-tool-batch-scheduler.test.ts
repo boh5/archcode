@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
-import { silentLogger, type Logger } from "../logger";
+import { createInMemoryLogger, silentLogger, type Logger } from "../logger";
 import { sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionToolBatchCall } from "../store/types";
@@ -21,6 +21,11 @@ import { SkillService } from "../skills";
 import { createTestProjectContext } from "../tools/test-project-context";
 import { deferTestApprovalReviewer } from "../tools/test-approval-reviewer";
 import type { AnyToolDescriptor, RawToolResult, ToolCallLike, ToolExecutionContext } from "../tools/types";
+import { createAuditHook, type AuditEvent } from "../tools/hooks/audit";
+import {
+  TOOL_SEARCH_REDACTED_QUERY,
+  TOOL_SEARCH_SENSITIVE_QUERY_CODE,
+} from "../tools/builtins/tool-search";
 import { testExecutionStart } from "../testing/test-execution-fixtures";
 import { adaptMcpTool } from "../mcp/tool-adapter";
 import {
@@ -274,6 +279,143 @@ function deferredResult() {
 }
 
 describe("SessionToolBatchScheduler output ownership", () => {
+  test("settles a hidden provider-forged tool_search as TOOL_NOT_ALLOWED without inventing a digest", async () => {
+    const harness = await createHarness();
+    const execute = mock(async () => createTextToolResult("must not run"));
+    harness.registry.register(defineTool({
+      name: "tool_search",
+      description: "search authorized deferred tools",
+      inputSchema: z.object({ query: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute,
+    }));
+
+    const batch = await harness.scheduler.createBatch([{
+      toolCallId: "forged-search",
+      toolName: "tool_search",
+      input: { query: "hidden capability" },
+    }], "step-0", 0);
+    expect(batch.allowedTools).not.toContain("tool_search");
+    expect(batch.calls[0]?.catalogDigest).toBeUndefined();
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(harness.scheduler.activeBatch()?.calls[0]).toMatchObject({
+      state: "failed",
+      result: { isError: true, details: { error: { code: "TOOL_NOT_ALLOWED" } } },
+    });
+  });
+
+  test("rejects a secret-like tool_search query before durable batch, audit, or execution", async () => {
+    const { logger, entries } = createInMemoryLogger();
+    const harness = await createHarness(logger);
+    const audits: AuditEvent[] = [];
+    harness.registry.globalHooks.finalized.push(createAuditHook({ sink: (event) => { audits.push(event); } }));
+    const execute = mock(async () => createTextToolResult("must not run"));
+    const descriptor = defineTool({
+      name: "tool_search",
+      description: "search authorized deferred tools",
+      inputSchema: z.object({ query: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute,
+    });
+    harness.registry.register(descriptor);
+    const secret = "api_key=sk_test_1234567890abcdef";
+    const batch = await harness.scheduler.createBatch([{
+      toolCallId: "sensitive-search",
+      toolName: "tool_search",
+      input: { query: secret },
+    }], "step-0", 0, [descriptor], "a".repeat(64));
+
+    expect(JSON.stringify(batch)).not.toContain(secret);
+    expect(batch.calls[0]?.input).toEqual({ query: TOOL_SEARCH_REDACTED_QUERY });
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(harness.store.getState().toolBatches[0]?.calls[0]).toMatchObject({
+      state: "failed",
+      result: { isError: true, details: { error: { code: TOOL_SEARCH_SENSITIVE_QUERY_CODE } } },
+    });
+    expect(audits[0]?.input).toEqual({ query: TOOL_SEARCH_REDACTED_QUERY });
+    expect(JSON.stringify(harness.store.getState())).not.toContain(secret);
+    expect(JSON.stringify(audits)).not.toContain(secret);
+    expect(JSON.stringify(entries)).not.toContain(secret);
+  });
+
+  test("atomically settles tool_search and persists loaded refs without exposing its sidecar", async () => {
+    const harness = await createHarness();
+    const descriptorDigest = "b".repeat(64);
+    const catalogDigest = "a".repeat(64);
+    const descriptor = defineTool({
+      name: "tool_search",
+      description: "search authorized deferred tools",
+      inputSchema: z.object({ query: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => ({
+        ...createTextToolResult("loaded"),
+        sidecar: { loadedToolRefs: [{ name: "ast_grep_search", descriptorDigest }] },
+      }),
+    });
+    harness.registry.register(descriptor);
+
+    const batch = await harness.scheduler.createBatch([{
+      toolCallId: "search-1",
+      toolName: "tool_search",
+      input: { query: "syntax tree search" },
+    }], "step-0", 0, [descriptor], catalogDigest);
+    expect(batch.calls[0]).toMatchObject({ toolName: "tool_search", catalogDigest });
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+
+    expect(harness.store.getState().executions[0]?.loadedToolRefs).toEqual([{
+      name: "ast_grep_search",
+      descriptorDigest,
+    }]);
+    expect(JSON.stringify(eventResults(harness))).not.toContain("loadedToolRefs");
+  });
+
+  test("rolls back both search result and loaded refs when the durable mutation fails", async () => {
+    const harness = await createHarness();
+    const descriptorDigest = "d".repeat(64);
+    const descriptor = defineTool({
+      name: "tool_search",
+      description: "search authorized deferred tools",
+      inputSchema: z.object({ query: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => ({
+        ...createTextToolResult("loaded"),
+        sidecar: { loadedToolRefs: [{ name: "web_fetch", descriptorDigest }] },
+      }),
+    });
+    harness.registry.register(descriptor);
+    await harness.scheduler.createBatch([{
+      toolCallId: "search-failure",
+      toolName: "tool_search",
+      input: { query: "fetch web page" },
+    }], "step-0", 0, [descriptor], "c".repeat(64));
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const failure = new Error("simulated search settlement failure");
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      if (state.executions[0]?.loadedToolRefs.length) throw failure;
+      await originalSave(state, workspaceRoot);
+    };
+    try {
+      await expect(harness.scheduler.advance()).rejects.toBe(failure);
+      expect(harness.store.getState().executions[0]?.loadedToolRefs).toEqual([]);
+      expect(harness.scheduler.activeBatch()?.calls[0]).toMatchObject({
+        toolCallId: "search-failure",
+        state: "running",
+      });
+      expect(harness.scheduler.activeBatch()?.calls[0]?.result).toBeUndefined();
+      expect(eventResults(harness)).toEqual([]);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
   test("executes the exact run-local MCP descriptor even when Registry has a same-name replacement", async () => {
     const harness = await createHarness();
     const resolved = makeMcpDescriptor("mcp__docs__lookup");

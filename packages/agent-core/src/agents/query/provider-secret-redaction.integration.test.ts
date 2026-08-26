@@ -7,7 +7,11 @@ import { storeManager } from "../../store/store";
 import { createTestProjectContext } from "../../tools/test-project-context";
 import { createTestToolRegistryFixture } from "../../tools/test-registry";
 import { createTestTempRoot } from "../../testing/test-temp-root";
-import { testExecutionMemoryPolicy } from "../../testing/test-execution-fixtures";
+import {
+  testExecutionLoadedToolRefs,
+  testExecutionMemoryPolicy,
+  testExecutionToolAuthorizationSnapshot,
+} from "../../testing/test-execution-fixtures";
 import type { ExecutionModelBinding } from "../../models";
 import { runQueryLoop } from "./loop";
 
@@ -88,6 +92,8 @@ describe("Provider secret redaction integration", () => {
         origin: "tool_call",
         maxSteps: 50,
         executionSkills: [],
+        toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+        loadedToolRefs: testExecutionLoadedToolRefs,
       });
       store.getState().append({
         type: "session.messages_committed",

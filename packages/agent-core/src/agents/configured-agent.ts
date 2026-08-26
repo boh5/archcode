@@ -2,9 +2,26 @@ import { join } from "node:path";
 import { lstat } from "node:fs/promises";
 import {
   PROJECT_STATE_DIR_NAME,
+  TOOL_BACKGROUND_OUTPUT,
+  TOOL_CANCEL_SESSION,
+  TOOL_GET_GOAL,
+  TOOL_LIST_AGENTS,
+  TOOL_OUTPUT_READ,
+  TOOL_OUTPUT_SEARCH,
+  TOOL_PDF_READ,
+  TOOL_PROJECT_TODO_UPDATE,
+  TOOL_RESUME_SESSION,
+  TOOL_SEND_MESSAGE,
+  TOOL_TOOL_SEARCH,
+  TOOL_UPDATE_GOAL,
+  TOOL_WAIT_FOR_REMINDER,
+  type AgentTreeNode,
+  type LoadedToolRef,
   type McpServerStatus,
   type ProjectTodo,
   type PromptTraceSnapshot,
+  type ToolChildSessionLink,
+  type ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import type { AgentTreeProjection } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
@@ -40,6 +57,17 @@ import type {
 import type { VersionControl, VersionControlDetector } from "../version-control/detector";
 import type { AgentDefinition, AgentMcpToolSnapshot, DelegationCapabilitySnapshot } from "./factory-types";
 import { projectModelToolDescriptors } from "./model-tool-projection";
+import { isDelegationControlTool } from "./tool-filter";
+import {
+  buildToolCatalog,
+  buildToolNamespaceSummary,
+  buildToolSearchIndex,
+  projectVisibleTools,
+  searchToolCatalog,
+  type ToolCatalog,
+  type ToolCatalogInput,
+  type ToolSearchQuery,
+} from "./tool-visibility";
 import {
   createAutoInjectReminderHook,
   createHybridCompressionHook,
@@ -65,6 +93,51 @@ export class IneligibleSessionWorktreeToolError extends Error {
     super(`Session worktree tool "${toolName}" is not eligible for this Agent context.`);
     this.name = "IneligibleSessionWorktreeToolError";
   }
+}
+
+export interface ToolVisibilityFacts {
+  readonly activeRootGoal: boolean;
+  readonly boundRootDiscussionTodo: boolean;
+  readonly currentExecutionHasPdf: boolean;
+  readonly hasRecoverableOutput: boolean;
+  readonly hasDescendant: boolean;
+  readonly hasRunningDirectChild: boolean;
+  readonly hasBackgroundDirectChild: boolean;
+  readonly hasNonterminalDirectChild: boolean;
+  readonly hasNonterminalDescendant: boolean;
+  readonly hasResumableDirectChild: boolean;
+  readonly worktreeTool: typeof TOOL_WORKTREE_ENTER | typeof TOOL_WORKTREE_EXIT | null;
+}
+
+export interface LiveAuthorizedToolCatalog {
+  readonly catalog: ToolCatalog;
+  readonly localAuthorizedTools: readonly string[];
+  readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
+  readonly namespaceSummary: string;
+}
+
+interface ToolVisibilityAudit {
+  readonly catalogDigest: string;
+  readonly core: readonly string[];
+  readonly state: readonly string[];
+  readonly loaded: readonly string[];
+  readonly deferredCount: number;
+}
+
+export function projectStateActivatedTools(facts: ToolVisibilityFacts): string[] {
+  return [
+    ...(facts.activeRootGoal ? [TOOL_GET_GOAL, TOOL_UPDATE_GOAL] : []),
+    ...(facts.boundRootDiscussionTodo ? [TOOL_PROJECT_TODO_UPDATE] : []),
+    ...(facts.currentExecutionHasPdf ? [TOOL_PDF_READ] : []),
+    ...(facts.hasRecoverableOutput ? [TOOL_OUTPUT_READ, TOOL_OUTPUT_SEARCH] : []),
+    ...(facts.hasDescendant ? [TOOL_LIST_AGENTS] : []),
+    ...(facts.hasRunningDirectChild ? [TOOL_SEND_MESSAGE] : []),
+    ...(facts.hasBackgroundDirectChild ? [TOOL_BACKGROUND_OUTPUT] : []),
+    ...(facts.hasNonterminalDirectChild ? [TOOL_WAIT_FOR_REMINDER] : []),
+    ...(facts.hasNonterminalDescendant ? [TOOL_CANCEL_SESSION] : []),
+    ...(facts.hasResumableDirectChild ? [TOOL_RESUME_SESSION] : []),
+    ...(facts.worktreeTool === null ? [] : [facts.worktreeTool]),
+  ];
 }
 
 export interface ConfiguredAgentOptions {
@@ -249,6 +322,11 @@ export class ConfiguredAgent implements Agent {
     );
   }
 
+  /** Semantic admission for a new logical Execution; shares the live catalog composition path. */
+  async validateToolAuthorization(authorization: ToolAuthorizationSnapshot): Promise<void> {
+    await this.resolveLiveAuthorizedToolCatalog(authorization);
+  }
+
   classifyCommand(input: string): AgentCommand | null {
     const parsed = this.commandRegistry.parse(input);
     if (parsed === null) return null;
@@ -312,8 +390,9 @@ export class ConfiguredAgent implements Agent {
       runOrdinal,
       initialStep,
       maxSteps,
-      extraTools,
-      toolProjection,
+      toolAuthorizationSnapshot,
+      loadedToolRefs,
+      reconcileExecutionToolLoads,
       consumeSteers,
       executionSkillSnapshots,
       memoryPolicy,
@@ -326,17 +405,9 @@ export class ConfiguredAgent implements Agent {
       await this.refreshAgentsMd();
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.projectRoot);
       const state = this.store.getState();
-      const baseAllowedTools = this.resolveAllowedTools(this.definition, this.depth);
-      const definitionAllowedTools = [
-        ...baseAllowedTools,
-        ...this.resolveSessionWorktreeTools(),
-      ];
-      const allowedTools = this.resolveEffectiveTools(
-        definitionAllowedTools,
-        extraTools,
-        toolProjection,
-        this.definition.name === "discussion",
-      );
+      this.assertExecutionToolState(executionId, toolAuthorizationSnapshot, loadedToolRefs);
+      const initialCatalog = await this.resolveLiveAuthorizedToolCatalog(toolAuthorizationSnapshot);
+      const allowedTools = initialCatalog.localAuthorizedTools;
       const agentSkills = this.definition.skills;
       const memory = await this.resolveMemorySnapshot(projectContext, memoryPolicy);
       const env = buildEnv(
@@ -360,7 +431,11 @@ export class ConfiguredAgent implements Agent {
           activeSkills.push(skill);
         }
       } catch (error) {
-        const modelTools = this.resolveModelTools(allowedTools);
+        const modelTools = await this.resolveVisibleModelTools({
+          executionId,
+          toolAuthorizationSnapshot,
+          reconcileExecutionToolLoads,
+        });
         const contract = await this.buildPromptContract({
           allowedTools: modelTools.tools.descriptors.map((descriptor) => descriptor.name),
           availableSkills,
@@ -369,6 +444,8 @@ export class ConfiguredAgent implements Agent {
           projectContext,
           memory,
           mcpStatuses: modelTools.mcpStatuses,
+          toolNamespaceSummary: modelTools.namespaceSummary,
+          toolVisibilityAudit: modelTools.audit,
           binding,
         });
         const trace = durablePromptTrace(createFailedPromptTrace(contract, error, {
@@ -382,7 +459,11 @@ export class ConfiguredAgent implements Agent {
       }
       const compiler = new PromptContractCompiler();
       const resolveModelBoundary = async () => {
-        const modelTools = this.resolveModelTools(allowedTools);
+        const modelTools = await this.resolveVisibleModelTools({
+          executionId,
+          toolAuthorizationSnapshot,
+          reconcileExecutionToolLoads,
+        });
         const contract = await this.buildPromptContract({
           allowedTools: modelTools.tools.descriptors.map((descriptor) => descriptor.name),
           availableSkills,
@@ -391,6 +472,8 @@ export class ConfiguredAgent implements Agent {
           projectContext,
           memory,
           mcpStatuses: modelTools.mcpStatuses,
+          toolNamespaceSummary: modelTools.namespaceSummary,
+          toolVisibilityAudit: modelTools.audit,
           binding,
         });
         try {
@@ -398,8 +481,14 @@ export class ConfiguredAgent implements Agent {
           const trace = durablePromptTrace(compiled.trace);
           this.store.getState().append({ type: "prompt-trace", trace });
           await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
-          this.logger.debug("prompt.compiled", { meta: { ...compiled.trace } });
-          return { systemPrompt: compiled.prompt, tools: modelTools.tools };
+          this.logger.debug("prompt.compiled", {
+            meta: { ...compiled.trace, toolVisibility: modelTools.audit },
+          });
+          return {
+            systemPrompt: compiled.prompt,
+            tools: modelTools.tools,
+            ...(modelTools.toolSearchVisible ? { catalogDigest: modelTools.catalog.digest } : {}),
+          };
         } catch (error) {
           const trace = durablePromptTrace(createFailedPromptTrace(contract, error));
           this.store.getState().append({ type: "prompt-trace", trace });
@@ -445,6 +534,12 @@ export class ConfiguredAgent implements Agent {
             ),
             abort,
             resolveModelBoundary,
+            resolveToolSearch: async (input) => this.resolveToolSearch({
+              executionId,
+              toolAuthorizationSnapshot,
+              reconcileExecutionToolLoads,
+              input,
+            }),
             store: this.store,
             consumeSteers,
             ...(prepareModelContext === undefined ? {} : { prepareModelContext }),
@@ -524,6 +619,8 @@ export class ConfiguredAgent implements Agent {
     readonly projectContext: ProjectContext;
     readonly memory: PromptSource<PromptMemorySnapshot>;
     readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
+    readonly toolNamespaceSummary: string;
+    readonly toolVisibilityAudit: ToolVisibilityAudit;
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
     const state = this.store.getState();
@@ -592,7 +689,12 @@ export class ConfiguredAgent implements Agent {
       },
       agentsMd: this.agentsMd,
       memory: input.memory,
-      currentContext: buildLifecycleCurrentContext(todo, plan),
+      currentContext: [
+        ...buildLifecycleCurrentContext(todo, plan),
+        `toolNamespaces=${JSON.stringify(input.toolNamespaceSummary)}`,
+        `toolCatalogDigest=${input.toolVisibilityAudit.catalogDigest}`,
+        `toolDeferredCount=${input.toolVisibilityAudit.deferredCount}`,
+      ],
       delegationRequest: state.delegationRequest ?? "none",
       env: input.env,
     };
@@ -668,75 +770,256 @@ export class ConfiguredAgent implements Agent {
     return hooks;
   }
 
-  private resolveModelTools(baseAllowedTools: readonly string[]): {
+  private async resolveVisibleModelTools(input: {
+    readonly executionId: string;
+    readonly toolAuthorizationSnapshot: ToolAuthorizationSnapshot;
+    readonly reconcileExecutionToolLoads: AgentRunOptions["reconcileExecutionToolLoads"];
+  }): Promise<{
+    readonly catalog: ToolCatalog;
     readonly tools: ResolvedToolSet;
     readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
-  } {
-    const base = projectModelToolDescriptors(
-      this.toolRegistry.resolveForAgent(baseAllowedTools).descriptors,
-      this.delegationCapabilities,
-    );
-    const mcp = this.resolveMcpToolSnapshot?.(this.definition.builtinMcpServers);
-    const descriptors = [...base];
-    const names = new Set(base.map((descriptor) => descriptor.name));
-    for (const descriptor of mcp?.descriptors.values() ?? []) {
-      if (names.has(descriptor.name)) {
-        throw new Error(`MCP tool alias "${descriptor.name}" collides with an existing visible tool`);
-      }
-      names.add(descriptor.name);
-      descriptors.push(descriptor);
+    readonly namespaceSummary: string;
+    readonly toolSearchVisible: boolean;
+    readonly audit: ToolVisibilityAudit;
+  }> {
+    const [live, facts] = await Promise.all([
+      this.resolveLiveAuthorizedToolCatalog(input.toolAuthorizationSnapshot),
+      this.collectToolVisibilityFacts(input.executionId),
+    ]);
+    const loaded = this.resolveExecutionLoadedToolRefs(input.executionId);
+    const stateTools = projectStateActivatedTools(facts);
+    const projection = projectVisibleTools({
+      catalog: live.catalog,
+      core: this.definition.tools.core,
+      state: stateTools,
+      loaded,
+    });
+    if (projection.invalidLoadedRefs.length > 0) {
+      await input.reconcileExecutionToolLoads(projection.invalidLoadedRefs);
     }
     return {
-      tools: new ResolvedToolSet(descriptors),
-      mcpStatuses: new Map(Object.entries(mcp?.statuses.servers ?? {})),
+      catalog: live.catalog,
+      tools: new ResolvedToolSet(projection.visible.map((entry) => entry.descriptor)),
+      mcpStatuses: live.mcpStatuses,
+      namespaceSummary: live.namespaceSummary,
+      toolSearchVisible: projection.toolSearchVisible,
+      audit: {
+        catalogDigest: live.catalog.digest,
+        core: visibleNamesFrom(this.definition.tools.core, projection.visible),
+        state: visibleNamesFrom(stateTools, projection.visible),
+        loaded: projection.loaded.map((entry) => entry.registryName),
+        deferredCount: projection.deferred.length,
+      },
     };
   }
 
-  private resolveEffectiveTools(
-    definitionAllowedTools: readonly string[],
-    extraTools: readonly string[] | undefined,
-    toolProjection: readonly string[] | undefined,
-    contextLocked = false,
-  ): string[] {
-    const seen = new Set<string>();
-    const eligible = new Set(definitionAllowedTools);
+  /** The only async composition boundary for an Agent's live authorized catalog. */
+  async resolveLiveAuthorizedToolCatalog(
+    authorization: ToolAuthorizationSnapshot,
+  ): Promise<LiveAuthorizedToolCatalog> {
+    const depthAuthorized = this.resolveAllowedTools(this.definition, this.depth);
+    const depthAuthorizedSet = new Set(depthAuthorized);
+    const eligibleWorktree = this.resolveSessionWorktreeTools();
+    const eligibleLocal = new Set<string>();
+    const localSourceKinds = new Map<string, "builtin" | "worktree" | "overlay">();
     const merged: string[] = [];
-
-    for (const toolName of definitionAllowedTools) {
-      if (seen.has(toolName)) continue;
-      seen.add(toolName);
+    for (const toolName of depthAuthorized) {
+      if (eligibleLocal.has(toolName)) continue;
+      eligibleLocal.add(toolName);
+      localSourceKinds.set(toolName, "builtin");
+      merged.push(toolName);
+    }
+    for (const toolName of eligibleWorktree) {
+      if (eligibleLocal.has(toolName)) continue;
+      eligibleLocal.add(toolName);
+      localSourceKinds.set(toolName, "worktree");
       merged.push(toolName);
     }
 
-    for (const toolName of extraTools ?? []) {
-      if (contextLocked && !eligible.has(toolName)) {
+    for (const toolName of authorization.extraTools) {
+      if (
+        (this.definition.name === "discussion" || isDelegationControlTool(toolName))
+        && !depthAuthorizedSet.has(toolName)
+      ) {
         throw new UnknownExtraToolError(toolName);
       }
       if (
         (toolName === TOOL_WORKTREE_ENTER || toolName === TOOL_WORKTREE_EXIT)
-        && !eligible.has(toolName)
+        && !eligibleLocal.has(toolName)
       ) {
         throw new IneligibleSessionWorktreeToolError(toolName);
       }
-      if (this.toolRegistry.get(toolName) === undefined) {
-        throw new UnknownExtraToolError(toolName);
+      if (this.toolRegistry.get(toolName) === undefined) throw new UnknownExtraToolError(toolName);
+      if (!eligibleLocal.has(toolName)) {
+        eligibleLocal.add(toolName);
+        localSourceKinds.set(toolName, "overlay");
+        merged.push(toolName);
       }
-      if (seen.has(toolName)) continue;
-      seen.add(toolName);
-      merged.push(toolName);
     }
 
-    if (toolProjection === undefined) return merged;
-    const allowed = new Set(merged);
-    for (const toolName of toolProjection) {
-      if (!allowed.has(toolName)) {
-        throw new UnknownExtraToolError(toolName);
+    const localNames = authorization.toolProjection === null
+      ? merged
+      : authorization.toolProjection.map((toolName) => {
+          if (!eligibleLocal.has(toolName)) throw new UnknownExtraToolError(toolName);
+          return toolName;
+        });
+    const localDescriptors = projectModelToolDescriptors(
+      this.toolRegistry.resolveForAgent(localNames).descriptors,
+      this.delegationCapabilities,
+    );
+    const catalogInputs: ToolCatalogInput[] = localDescriptors.map((descriptor) => ({
+      sourceKind: localSourceKinds.get(descriptor.name)!,
+      namespace: "builtin",
+      registryName: descriptor.name,
+      descriptor,
+    }));
+    const mcp = this.resolveMcpToolSnapshot?.(this.definition.builtinMcpServers);
+    const names = new Set(localDescriptors.map((descriptor) => descriptor.name));
+    for (const [registryName, entry] of mcp?.tools ?? []) {
+      if (names.has(registryName)) {
+        throw new Error(`MCP tool alias "${registryName}" collides with an existing authorized tool`);
       }
+      names.add(registryName);
+      catalogInputs.push({
+        sourceKind: "mcp",
+        namespace: entry.serverName,
+        registryName,
+        descriptor: entry.descriptor,
+      });
     }
-    return [...new Set(toolProjection)];
+    const catalog = await buildToolCatalog(catalogInputs);
+    const namespaceDescriptions = Object.fromEntries(
+      [...new Set(catalog.entries.map((entry) => entry.namespace))].map((namespace) => {
+        const first = catalog.entries.find((entry) => entry.namespace === namespace)!;
+        if (first.sourceKind !== "mcp") return [namespace, "local capabilities"];
+        const mcpEntry = mcp?.tools.get(first.registryName);
+        return [namespace, mcpEntry?.source === "builtin" ? "built-in MCP server" : "user MCP server"];
+      }),
+    );
+    return {
+      catalog,
+      localAuthorizedTools: localDescriptors.map((descriptor) => descriptor.name),
+      mcpStatuses: new Map(Object.entries(mcp?.statuses.servers ?? {})),
+      namespaceSummary: buildToolNamespaceSummary({
+        catalog: {
+          digest: catalog.digest,
+          entries: catalog.entries.filter((entry) => entry.registryName !== TOOL_TOOL_SEARCH),
+        },
+        descriptions: namespaceDescriptions,
+      }),
+    };
   }
 
-  private resolveSessionWorktreeTools(): string[] {
+  private async resolveToolSearch(input: {
+    readonly executionId: string;
+    readonly toolAuthorizationSnapshot: ToolAuthorizationSnapshot;
+    readonly reconcileExecutionToolLoads: AgentRunOptions["reconcileExecutionToolLoads"];
+    readonly input: ToolSearchQuery;
+  }) {
+    const [live, facts] = await Promise.all([
+      this.resolveLiveAuthorizedToolCatalog(input.toolAuthorizationSnapshot),
+      this.collectToolVisibilityFacts(input.executionId),
+    ]);
+    const projection = projectVisibleTools({
+      catalog: live.catalog,
+      core: this.definition.tools.core,
+      state: projectStateActivatedTools(facts),
+      loaded: this.resolveExecutionLoadedToolRefs(input.executionId),
+    });
+    if (projection.invalidLoadedRefs.length > 0) {
+      await input.reconcileExecutionToolLoads(projection.invalidLoadedRefs);
+    }
+    const results = searchToolCatalog(buildToolSearchIndex({
+      digest: live.catalog.digest,
+      entries: projection.deferred,
+    }), input.input);
+    return {
+      catalogDigest: live.catalog.digest,
+      namespaces: [...new Set(projection.deferred.map((entry) => entry.namespace))].sort(),
+      matches: results.map(({ name, namespace, description, descriptorDigest }) => ({
+        name,
+        namespace,
+        description,
+        descriptorDigest,
+      })),
+    };
+  }
+
+  private async collectToolVisibilityFacts(executionId: string): Promise<ToolVisibilityFacts> {
+    const state = this.store.getState();
+    const directLinks = latestDirectChildLinks(state.childSessionLinks);
+    const nonterminalDirectStatuses = new Set(["linked", "running", "waiting_for_human", "cancelling"]);
+    const resumableDirectStatuses = new Set(["completed", "failed", "timed_out", "cancelled", "interrupted"]);
+    const hasNonterminalDirectChild = directLinks.some((link) => nonterminalDirectStatuses.has(link.status));
+    // Direct links answer every direct-child visibility fact. Only resolve the
+    // family tree when all direct children are terminal and a deeper running
+    // descendant could still require cancel_session. This avoids taking the
+    // stable family-snapshot path while an already-known direct child is live.
+    const tree = this.getAgentTreeProjection === undefined
+      || directLinks.length === 0
+      || hasNonterminalDirectChild
+      ? undefined
+      : await this.getAgentTreeProjection(this.projectRoot, state.rootSessionId);
+    const currentNode = tree === undefined ? undefined : findAgentTreeNode(tree.root, state.sessionId);
+    const descendants = currentNode === undefined ? [] : flattenAgentTreeChildren(currentNode);
+    const currentExecutionHasPdf = state.messages.some((message) => (
+      message.role === "user"
+      && message.executionId === executionId
+      && message.parts.some((part) => (
+        part.type === "attachment"
+        && part.completedAt !== undefined
+        && part.attachment.mediaType === "application/pdf"
+      ))
+    ));
+    return {
+      activeRootGoal: this.definition.name === "lead"
+        && state.parentSessionId === undefined
+        && state.sessionId === state.rootSessionId
+        && state.goal?.status === "active",
+      boundRootDiscussionTodo: this.definition.name === "discussion"
+        && state.parentSessionId === undefined
+        && state.sessionId === state.rootSessionId
+        && state.source?.kind === "todo",
+      currentExecutionHasPdf,
+      hasRecoverableOutput: await this.toolOutputAccess.countRecoverableForExecution(executionId) > 0,
+      hasDescendant: directLinks.length > 0,
+      hasRunningDirectChild: directLinks.some((link) => link.status === "running"),
+      hasBackgroundDirectChild: directLinks.some((link) => link.background),
+      hasNonterminalDirectChild,
+      hasNonterminalDescendant: descendants.some((node) => (
+        node.latestExecutionStatus === "running" || node.latestExecutionStatus === "suspended"
+      )) || directLinks.some((link) => nonterminalDirectStatuses.has(link.status)),
+      hasResumableDirectChild: (currentNode?.children ?? []).some((node) => (
+        node.latestExecutionStatus !== null
+        && node.latestExecutionStatus !== "running"
+        && node.latestExecutionStatus !== "suspended"
+      )) || directLinks.some((link) => resumableDirectStatuses.has(link.status)),
+      worktreeTool: this.resolveSessionWorktreeTools()[0] ?? null,
+    };
+  }
+
+  private resolveExecutionLoadedToolRefs(executionId: string): readonly LoadedToolRef[] {
+    const record = this.store.getState().executions.find((execution) => execution.id === executionId);
+    if (record === undefined) throw new Error(`Execution "${executionId}" is unavailable while resolving loaded tools`);
+    return record.loadedToolRefs;
+  }
+
+  private assertExecutionToolState(
+    executionId: string,
+    authorization: ToolAuthorizationSnapshot,
+    loadedToolRefs: readonly LoadedToolRef[],
+  ): void {
+    const record = this.store.getState().executions.find((execution) => execution.id === executionId);
+    if (record === undefined) throw new Error(`Execution "${executionId}" is unavailable while starting Agent.run`);
+    if (JSON.stringify(record.toolAuthorizationSnapshot) !== JSON.stringify(authorization)) {
+      throw new Error(`Execution "${executionId}" tool authorization snapshot does not match Agent.run`);
+    }
+    if (JSON.stringify(record.loadedToolRefs) !== JSON.stringify(loadedToolRefs)) {
+      throw new Error(`Execution "${executionId}" loaded tool refs do not match Agent.run`);
+    }
+  }
+
+  private resolveSessionWorktreeTools(): Array<typeof TOOL_WORKTREE_ENTER | typeof TOOL_WORKTREE_EXIT> {
     const state = this.store.getState();
     if (
       this.depth !== 0
@@ -744,7 +1027,8 @@ export class ConfiguredAgent implements Agent {
       || state.parentSessionId !== undefined
     ) return [];
 
-    const toolName = this.cwd === this.projectRoot ? TOOL_WORKTREE_ENTER : TOOL_WORKTREE_EXIT;
+    const toolName: typeof TOOL_WORKTREE_ENTER | typeof TOOL_WORKTREE_EXIT =
+      this.cwd === this.projectRoot ? TOOL_WORKTREE_ENTER : TOOL_WORKTREE_EXIT;
     return this.toolRegistry.get(toolName) === undefined ? [] : [toolName];
   }
 
@@ -789,4 +1073,40 @@ async function isRegularFile(path: string): Promise<boolean> {
     if (typeof error === "object" && error !== null && Reflect.get(error, "code") === "ENOENT") return false;
     throw error;
   }
+}
+
+function latestDirectChildLinks(links: readonly ToolChildSessionLink[]): ToolChildSessionLink[] {
+  const latest = new Map<string, ToolChildSessionLink>();
+  for (const link of links) {
+    const current = latest.get(link.childSessionId);
+    if (
+      current === undefined
+      || link.createdAt > current.createdAt
+      || (link.createdAt === current.createdAt && link.parentToolCallId.localeCompare(current.parentToolCallId) > 0)
+    ) {
+      latest.set(link.childSessionId, link);
+    }
+  }
+  return [...latest.values()].sort((a, b) => a.childSessionId.localeCompare(b.childSessionId));
+}
+
+function findAgentTreeNode(root: AgentTreeNode, sessionId: string): AgentTreeNode | undefined {
+  if (root.session.sessionId === sessionId) return root;
+  for (const child of root.children) {
+    const match = findAgentTreeNode(child, sessionId);
+    if (match !== undefined) return match;
+  }
+  return undefined;
+}
+
+function flattenAgentTreeChildren(node: AgentTreeNode): AgentTreeNode[] {
+  return node.children.flatMap((child) => [child, ...flattenAgentTreeChildren(child)]);
+}
+
+function visibleNamesFrom(
+  candidates: readonly string[],
+  visible: readonly { readonly registryName: string }[],
+): string[] {
+  const visibleNames = new Set(visible.map((entry) => entry.registryName));
+  return [...new Set(candidates)].filter((name) => visibleNames.has(name));
 }

@@ -8,6 +8,7 @@ import type { ExecutionModelBinding } from "../../models";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { SessionStoreState } from "../../store/types";
 import type { ResolvedToolSet, ToolRegistry } from "../../tools/registry";
+import type { ToolExecutionContext } from "../../tools/types";
 import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import type { ProjectContext } from "../../projects/types";
 import type {
@@ -55,7 +56,11 @@ export interface QueryLoopOptions {
   resolveModelBoundary?: () => Promise<{
     readonly systemPrompt?: string;
     readonly tools: ResolvedToolSet;
+    /** Digest of the authorized catalog used to expose tool_search on this model step. */
+    readonly catalogDigest?: string;
   }>;
+  /** Searches a freshly rebuilt authorized catalog for normal execution and cold recovery. */
+  resolveToolSearch?: ToolExecutionContext["resolveToolSearch"];
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;
   /** Moves this Execution's accepted steer snapshots into the canonical transcript. */

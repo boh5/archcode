@@ -99,13 +99,20 @@ describe("McpRuntimeService", () => {
     await runtime.apply(CONFIG({ external: HTTP("https://user.test") }));
 
     const withoutBuiltin = runtime.snapshotTools({ builtinServerNames: [] });
-    expect([...withoutBuiltin.descriptors.values()].map((tool) => tool.description)).toEqual([
+    expect([...withoutBuiltin.tools.values()].map(({ descriptor }) => descriptor.description)).toEqual([
       'MCP tool "user-write" from server "external".',
+    ]);
+    expect([...withoutBuiltin.tools.values()].map(({ serverName, source }) => ({ serverName, source }))).toEqual([
+      { serverName: "external", source: "user" },
     ]);
     expect(Object.keys(withoutBuiltin.statuses.servers)).toEqual(["external"]);
 
     const withBuiltin = runtime.snapshotTools({ builtinServerNames: ["context7"] });
-    expect(withBuiltin.descriptors.size).toBe(2);
+    expect(withBuiltin.tools.size).toBe(2);
+    expect([...withBuiltin.tools.values()].map(({ serverName, source }) => ({ serverName, source }))).toContainEqual({
+      serverName: "context7",
+      source: "builtin",
+    });
     expect(Object.keys(withBuiltin.statuses.servers).sort()).toEqual(["context7", "external"]);
     expect(withBuiltin.statuses.servers.context7?.state).toBe("ready");
   });
@@ -114,7 +121,7 @@ describe("McpRuntimeService", () => {
     const runtime = serviceWith([], { builtins: { context7: HTTP("https://builtin.test") } });
     await runtime.apply(CONFIG({ external: { ...HTTP("https://user.test"), enabled: false } }, ["context7"]));
     const snapshot = runtime.snapshotTools({ builtinServerNames: ["context7"] });
-    expect(snapshot.descriptors.size).toBe(0);
+    expect(snapshot.tools.size).toBe(0);
     expect(snapshot.statuses.servers.external?.state).toBe("disabled");
     expect(snapshot.statuses.servers.context7?.state).toBe("disabled");
   });
@@ -136,7 +143,7 @@ describe("McpRuntimeService", () => {
     const second = sdk({ connect: () => nextConnect.promise, tools: [{ name: "lookup-new" }] });
     const runtime = serviceWith([first, second]);
     await runtime.apply(CONFIG({ docs: HTTP("https://one.test") }));
-    const old = [...runtime.snapshotTools({ builtinServerNames: [] }).descriptors.values()][0]!;
+    const old = [...runtime.snapshotTools({ builtinServerNames: [] }).tools.values()][0]!.descriptor;
 
     const applying = runtime.apply(CONFIG({ docs: HTTP("https://two.test") }));
     const result = await execute(old);
@@ -153,7 +160,7 @@ describe("McpRuntimeService", () => {
     const second = sdk({ connect: () => nextConnect.promise, tools: [{ name: "new-tool" }] });
     const runtime = serviceWith([first, second]);
     await runtime.apply(CONFIG({ docs: HTTP("https://one.test", { Authorization: "old-secret-value" }) }));
-    const old = [...runtime.snapshotTools({ builtinServerNames: [] }).descriptors.values()][0]!;
+    const old = [...runtime.snapshotTools({ builtinServerNames: [] }).tools.values()][0]!.descriptor;
     const running = execute(old);
     expect(first.callTool).toHaveBeenCalledTimes(1);
 
@@ -219,7 +226,7 @@ describe("McpRuntimeService", () => {
 
     await runtime.apply(CONFIG({ docs: HTTP("https://docs.test", { Authorization: secret }) }));
 
-    const descriptor = [...runtime.snapshotTools({ builtinServerNames: [] }).descriptors.values()][0];
+    const descriptor = [...runtime.snapshotTools({ builtinServerNames: [] }).tools.values()][0]?.descriptor;
     expect(descriptor?.description).toContain("[REDACTED:SECRET]");
     expect(JSON.stringify(runtime.getInventory())).not.toContain(secret);
   });
@@ -243,7 +250,7 @@ describe("McpRuntimeService", () => {
     await runtime.apply(CONFIG({ docs: HTTP("https://docs.test", { Authorization: secret }) }));
 
     const inventory = runtime.getInventory();
-    const descriptor = [...runtime.snapshotTools({ builtinServerNames: [] }).descriptors.values()][0]!;
+    const descriptor = [...runtime.snapshotTools({ builtinServerNames: [] }).tools.values()][0]!.descriptor;
     expect(JSON.stringify(inventory)).not.toContain(secret);
     expect(descriptor.name).not.toContain(secret);
     expect(descriptor.description).not.toContain(secret);
@@ -260,13 +267,13 @@ describe("McpRuntimeService", () => {
     const client = sdk({ tools: [{ name: "lookup" }] });
     const runtime = serviceWith([client]);
     await runtime.apply(CONFIG({ docs: HTTP("https://docs.test") }));
-    const old = [...runtime.snapshotTools({ builtinServerNames: [] }).descriptors.values()][0]!;
+    const old = [...runtime.snapshotTools({ builtinServerNames: [] }).tools.values()][0]!.descriptor;
 
     client.onclose?.();
 
     expect(runtime.getStatus().servers.docs?.state).toBe("failed");
     expect(runtime.getInventory().servers.docs).toBeUndefined();
-    expect(runtime.snapshotTools({ builtinServerNames: [] }).descriptors.size).toBe(0);
+    expect(runtime.snapshotTools({ builtinServerNames: [] }).tools.size).toBe(0);
     expect((await execute(old)).details?.error?.code).toBe("TOOL_MCP_NOT_AVAILABLE");
     expect(client.close).toHaveBeenCalledTimes(1);
   });

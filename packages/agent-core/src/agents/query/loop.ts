@@ -1,5 +1,5 @@
 import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
-import { interruptIncompleteToolParts } from "@archcode/protocol";
+import { interruptIncompleteToolParts, TOOL_TOOL_SEARCH } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionExecutionTerminalStatus } from "@archcode/protocol";
 import type { Logger } from "../../logger";
@@ -18,6 +18,7 @@ import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 import { SessionToolBatchScheduler, type SessionToolBatchAdvanceResult } from "../../execution/session-tool-batch-scheduler";
 import { LiveToolOutputPublisher } from "../../tool-output/live-publisher";
+import { sanitizeToolSearchInput } from "../../tools/builtins/tool-search";
 
 export const DEFAULT_QUERY_MAX_STEPS = 50;
 const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
@@ -62,6 +63,7 @@ type ModelAttemptResult =
       stepId: string;
       finalized: FinalizedModelResult;
       tools: ResolvedToolSet;
+      catalogDigest?: string;
     }
   | {
       outcome: "terminal";
@@ -184,6 +186,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
   let messages: ModelMessage[];
   let tools: ToolSet | undefined;
   let resolvedTools: ResolvedToolSet;
+  let catalogDigest: string | undefined;
   let systemPrompt = staticSystemPrompt;
   let stepStarted = false;
 
@@ -194,6 +197,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     systemPrompt = modelBoundary?.systemPrompt
       ?? (resolveSystemPrompt === undefined ? staticSystemPrompt : await resolveSystemPrompt());
     resolvedTools = modelBoundary?.tools ?? toolRegistry.resolveForAgent(allowedTools);
+    catalogDigest = modelBoundary?.catalogDigest;
     await runHooks("beforeModelBuild", beforeModelBuild, { store, binding, logger, abort, systemPrompt }, logger, { sessionId, agentName });
     await prepareModelContext?.();
     const projection = store.getState().toModelMessagesProjection();
@@ -250,7 +254,13 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       if (finalized.outcome === "retry") await settleUnfinalizedToolParts();
       return { ...finalized, stepId };
     }
-    return { outcome: "success", stepId, finalized: finalized.finalized, tools: resolvedTools };
+    return {
+      outcome: "success",
+      stepId,
+      finalized: finalized.finalized,
+      tools: resolvedTools,
+      ...(catalogDigest === undefined ? {} : { catalogDigest }),
+    };
   } catch (err) {
     await settleModelResultPromises(result, abort);
     if (classifyLlmError(err, { boundary: "provider-request" }).kind === "abort") {
@@ -400,6 +410,7 @@ export async function runQueryLoop(
         : { executionSkillSnapshots: options.executionSkillSnapshots }),
       storeManager: options.storeManager,
       outputArtifacts: options.toolOutputAccess,
+      ...(options.resolveToolSearch === undefined ? {} : { resolveToolSearch: options.resolveToolSearch }),
       ...(liveToolOutput === undefined ? {} : { liveToolOutput }),
       ...(options.startChildExecution === undefined ? {} : {
         startChildExecution: async (request) => {
@@ -711,6 +722,7 @@ export async function runQueryLoop(
         completedStep,
         doomTracker,
         attempt.tools,
+        attempt.catalogDigest,
       );
 
       if (toolExecution.sessionCwdChanged) {
@@ -989,7 +1001,9 @@ async function consumeFullStream(
             type: "tool-call",
             toolCallId: chunk.toolCallId,
             toolName: chunk.toolName,
-            input: binding.modelInfo.redactSensitiveValue(chunk.input),
+            input: chunk.toolName === TOOL_TOOL_SEARCH
+              ? sanitizeToolSearchInput(binding.modelInfo.redactSensitiveValue(chunk.input))
+              : binding.modelInfo.redactSensitiveValue(chunk.input),
           });
         }
       }
@@ -1057,7 +1071,9 @@ async function finalizeModelResult(
       return {
         toolCallId: toolCall.toolCallId,
         toolName: toolCall.toolName,
-        input: redactSensitiveValue(toolCall.input, redactProviderSecrets),
+        input: toolCall.toolName === TOOL_TOOL_SEARCH
+          ? sanitizeToolSearchInput(redactSensitiveValue(toolCall.input, redactProviderSecrets))
+          : redactSensitiveValue(toolCall.input, redactProviderSecrets),
       };
     });
     return { outcome: "success", finalized: { finishReason, usage, text, toolCalls } };
@@ -1309,13 +1325,14 @@ async function executeToolCalls(
   step: number,
   doomTracker?: DoomTracker,
   resolvedTools?: ResolvedToolSet,
+  catalogDigest?: string,
 ): Promise<ToolBatchExecutionResult> {
   const doomCallIds = new Set<string>();
   for (const toolCall of toolCalls) {
     if (doomTracker?.check(toolCall)) doomCallIds.add(toolCall.toolCallId);
   }
   if (toolCalls.length === 0) return { sessionCwdChanged: false };
-  await scheduler.createBatch(toolCalls, stepId, step, resolvedTools?.descriptors);
+  await scheduler.createBatch(toolCalls, stepId, step, resolvedTools?.descriptors, catalogDigest);
   for (const toolCallId of doomCallIds) {
     await scheduler.settleQueuedCall(toolCallId, createToolErrorResult({
       kind: "execution",

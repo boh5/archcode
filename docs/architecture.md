@@ -184,13 +184,15 @@ durable project data.
 
 Each model-call boundary asks the live runtime for the current user-server
 descriptors and the built-ins allowed by that Agent's fixed role matrix. The
-result is a transient descriptor/status projection for that model call; tool
-execution uses the exact descriptors returned with it. A later reconnect,
-disable, or discovery change takes effect at the next model-call boundary and
-does not mutate a call already handed to the model.
+result is a transient descriptor/namespace/status projection for the live
+authorized catalog. MCP schemas are deferred behind `tool_search`; only a
+bounded namespace summary enters the initial Prompt. Once loaded, tool
+execution uses the exact run-local descriptor selected at that model boundary.
+A later reconnect, disable, or discovery change takes effect at the next
+boundary and does not mutate a call already handed to the model.
 
-User MCP servers are visible to all six Agent identities and do not receive an
-additional approval layer. This is separate from the built-in matrix:
+User MCP servers are authorized for all six Agent identities and do not receive
+an additional approval layer. This is separate from the built-in matrix:
 
 | Agent | Built-in MCP servers |
 | --- | --- |
@@ -203,6 +205,30 @@ additional approval layer. This is separate from the built-in matrix:
 
 The local read-only designation therefore does not make a user MCP call
 read-only; an external MCP tool may still write to its remote system.
+
+## Tool Authorization and Visibility
+
+Tool permission and model visibility are separate. `AgentDefinition` owns a
+role's `authorized` local names and a strict `core` subset. Execution overlays,
+worktree eligibility, depth filtering, and the live MCP role projection produce
+one authorized catalog. A pure visibility projection may only subtract from
+that catalog:
+
+```text
+authorized local + eligible overlay/worktree + ready MCP
+  -> live catalog
+  -> Core + fixed runtime State + valid Execution-loaded refs
+  -> model-visible ResolvedToolSet
+```
+
+When deferred entries remain, the model also receives `tool_search`. Search is
+deterministic local BM25/trigram ranking over the current authorized catalog;
+it does not call a model, connect MCP, grant permission, or execute the hit.
+Successful hits persist only `{name, descriptorDigest}` on the owning logical
+Execution and expose full schemas on the next model step. The Tool Batch stores
+the catalog digest that the model saw, so normal execution and cold recovery
+reject changed catalogs rather than silently binding a different contract.
+Registry, permission, finalization, and MCP call ownership remain unchanged.
 
 Configuration requires `type` + `enabled` for every user server. HTTP uses
 `url`/`headers`; STDIO uses `command`/`args`/`env`. The independent
