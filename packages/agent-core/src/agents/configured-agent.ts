@@ -59,11 +59,12 @@ import type { AgentDefinition, AgentMcpToolSnapshot, DelegationCapabilitySnapsho
 import { projectModelToolDescriptors } from "./model-tool-projection";
 import { isDelegationControlTool } from "./tool-filter";
 import {
+  buildDeferredToolDirectory,
   buildToolCatalog,
-  buildToolNamespaceSummary,
   buildToolSearchIndex,
   projectVisibleTools,
   searchToolCatalog,
+  selectExactToolCatalogEntry,
   type ToolCatalog,
   type ToolCatalogInput,
   type ToolSearchQuery,
@@ -113,7 +114,6 @@ export interface LiveAuthorizedToolCatalog {
   readonly catalog: ToolCatalog;
   readonly localAuthorizedTools: readonly string[];
   readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
-  readonly namespaceSummary: string;
 }
 
 interface ToolVisibilityAudit {
@@ -444,7 +444,7 @@ export class ConfiguredAgent implements Agent {
           projectContext,
           memory,
           mcpStatuses: modelTools.mcpStatuses,
-          toolNamespaceSummary: modelTools.namespaceSummary,
+          deferredToolDirectory: modelTools.deferredToolDirectory,
           toolVisibilityAudit: modelTools.audit,
           binding,
         });
@@ -472,7 +472,7 @@ export class ConfiguredAgent implements Agent {
           projectContext,
           memory,
           mcpStatuses: modelTools.mcpStatuses,
-          toolNamespaceSummary: modelTools.namespaceSummary,
+          deferredToolDirectory: modelTools.deferredToolDirectory,
           toolVisibilityAudit: modelTools.audit,
           binding,
         });
@@ -619,7 +619,7 @@ export class ConfiguredAgent implements Agent {
     readonly projectContext: ProjectContext;
     readonly memory: PromptSource<PromptMemorySnapshot>;
     readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
-    readonly toolNamespaceSummary: string;
+    readonly deferredToolDirectory: string | null;
     readonly toolVisibilityAudit: ToolVisibilityAudit;
     readonly binding: ExecutionModelBinding;
   }): Promise<PromptContractV2> {
@@ -681,6 +681,7 @@ export class ConfiguredAgent implements Agent {
       role: this.definition.roleContract,
       runtime,
       allowedTools: input.allowedTools,
+      deferredToolDirectory: input.deferredToolDirectory,
       availableSkills: input.availableSkills,
       activeSkills: input.activeSkills,
       guidanceAuthority: {
@@ -691,7 +692,6 @@ export class ConfiguredAgent implements Agent {
       memory: input.memory,
       currentContext: [
         ...buildLifecycleCurrentContext(todo, plan),
-        `toolNamespaces=${JSON.stringify(input.toolNamespaceSummary)}`,
         `toolCatalogDigest=${input.toolVisibilityAudit.catalogDigest}`,
         `toolDeferredCount=${input.toolVisibilityAudit.deferredCount}`,
       ],
@@ -778,7 +778,7 @@ export class ConfiguredAgent implements Agent {
     readonly catalog: ToolCatalog;
     readonly tools: ResolvedToolSet;
     readonly mcpStatuses: ReadonlyMap<string, McpServerStatus>;
-    readonly namespaceSummary: string;
+    readonly deferredToolDirectory: string | null;
     readonly toolSearchVisible: boolean;
     readonly audit: ToolVisibilityAudit;
   }> {
@@ -801,7 +801,9 @@ export class ConfiguredAgent implements Agent {
       catalog: live.catalog,
       tools: new ResolvedToolSet(projection.visible.map((entry) => entry.descriptor)),
       mcpStatuses: live.mcpStatuses,
-      namespaceSummary: live.namespaceSummary,
+      deferredToolDirectory: projection.toolSearchVisible
+        ? buildDeferredToolDirectory(projection.deferred)
+        : null,
       toolSearchVisible: projection.toolSearchVisible,
       audit: {
         catalogDigest: live.catalog.digest,
@@ -888,25 +890,10 @@ export class ConfiguredAgent implements Agent {
       });
     }
     const catalog = await buildToolCatalog(catalogInputs);
-    const namespaceDescriptions = Object.fromEntries(
-      [...new Set(catalog.entries.map((entry) => entry.namespace))].map((namespace) => {
-        const first = catalog.entries.find((entry) => entry.namespace === namespace)!;
-        if (first.sourceKind !== "mcp") return [namespace, "local capabilities"];
-        const mcpEntry = mcp?.tools.get(first.registryName);
-        return [namespace, mcpEntry?.source === "builtin" ? "built-in MCP server" : "user MCP server"];
-      }),
-    );
     return {
       catalog,
       localAuthorizedTools: localDescriptors.map((descriptor) => descriptor.name),
       mcpStatuses: new Map(Object.entries(mcp?.statuses.servers ?? {})),
-      namespaceSummary: buildToolNamespaceSummary({
-        catalog: {
-          digest: catalog.digest,
-          entries: catalog.entries.filter((entry) => entry.registryName !== TOOL_TOOL_SEARCH),
-        },
-        descriptions: namespaceDescriptions,
-      }),
     };
   }
 
@@ -929,7 +916,8 @@ export class ConfiguredAgent implements Agent {
     if (projection.invalidLoadedRefs.length > 0) {
       await input.reconcileExecutionToolLoads(projection.invalidLoadedRefs);
     }
-    const results = searchToolCatalog(buildToolSearchIndex({
+    const selected = selectExactToolCatalogEntry(projection.deferred, input.input);
+    const results = selected ?? searchToolCatalog(buildToolSearchIndex({
       digest: live.catalog.digest,
       entries: projection.deferred,
     }), input.input);

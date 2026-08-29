@@ -10,6 +10,7 @@ export const TOOL_FILE_EDIT = "file_edit";
 export const TOOL_GREP = "grep";
 export const TOOL_GLOB = "glob";
 export const TOOL_TOOL_SEARCH = "tool_search";
+export const TOOL_SEARCH_SELECT_PREFIX = "select:";
 
 // AST Grep
 export const TOOL_AST_GREP_SEARCH = "ast_grep_search";

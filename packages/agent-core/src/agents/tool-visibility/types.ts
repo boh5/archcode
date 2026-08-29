@@ -38,6 +38,7 @@ export interface InvalidLoadedToolRef extends LoadedToolRef {
 }
 
 export interface ToolSearchQuery {
+  /** A select:<registryName> query bypasses ranking and loads one exact deferred entry. */
   readonly query: string;
   readonly namespace?: string;
   readonly limit?: number;

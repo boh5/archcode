@@ -11,8 +11,10 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Project each Agent's model-visible tools from a small role Core, current
   runtime state, and Execution-local loaded contracts. Local long-tail and MCP
-  tools are now discovered through deterministic `tool_search`; MCP schemas no
-  longer expand the initial model request.
+  tools now start in a compact namespace/server directory: `tool_search` loads
+  a visible canonical name through exact `select:<name>`, while deterministic
+  keyword ranking remains an auxiliary path. MCP schemas no longer expand the
+  initial model request.
 
 ### Breaking Changes
 

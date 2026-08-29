@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { TOOL_CREATE_GOAL } from "@archcode/protocol";
 
 import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { setLlmAdapterForTest } from "./llm";
@@ -344,8 +345,10 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     await writeFile(join(fixture.workspaceRoot, planPath), executablePlan());
 
     let rootCalls = 0;
+    const modelToolBoundaries: Array<Record<string, unknown>> = [];
     setLlmAdapterForTest({
-      streamText: mock(() => {
+      streamText: mock((options: { tools?: Record<string, unknown> }) => {
+        modelToolBoundaries.push(options.tools ?? {});
         rootCalls += 1;
         switch (rootCalls) {
           case 1:
@@ -363,7 +366,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
             });
           case 4:
             return toolStream("search-create-approved-goal", "tool_search", {
-              query: "create_goal",
+              query: `select:${TOOL_CREATE_GOAL}`,
               limit: 1,
             });
           case 5:
@@ -401,6 +404,17 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, work.sessionId);
     expect(session.agentName).toBe("lead");
     expect(session.goal).toMatchObject({ status: "active", objective });
+    expect(modelToolBoundaries[3]?.[TOOL_CREATE_GOAL]).toBeUndefined();
+    const loadedCreateGoal = modelToolBoundaries[4]?.[TOOL_CREATE_GOAL] as {
+      readonly inputSchema?: unknown;
+    } | undefined;
+    expect(loadedCreateGoal?.inputSchema).toBeDefined();
+    const reusedCreateGoal = modelToolBoundaries[5]?.[TOOL_CREATE_GOAL] as {
+      readonly inputSchema?: unknown;
+    } | undefined;
+    expect(reusedCreateGoal?.inputSchema).toBeDefined();
+    expect(toolInputs(session).find(({ toolName }) => toolName === "tool_search")?.input)
+      .toMatchObject({ query: `select:${TOOL_CREATE_GOAL}` });
     expect(toolTrace(session)).toEqual([
       "skill_read",
       "file_read",
@@ -408,6 +422,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       "tool_search",
       "create_goal",
     ]);
+    expect(toolTrace(session).filter((toolName) => toolName === "tool_search")).toHaveLength(1);
     expect(rootCalls).toBe(6);
   });
 
@@ -417,10 +432,12 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     let rootCalls = 0;
     let buildCalls = 0;
     let analystCalls = 0;
+    const rootToolBoundaries: Array<Record<string, unknown>> = [];
     setLlmAdapterForTest({
       streamText: mock((options: { tools?: Record<string, unknown> }) => {
         const tools = Object.keys(options.tools ?? {});
         if (rootCalls === 0) {
+          rootToolBoundaries.push(options.tools ?? {});
           rootCalls += 1;
           return toolStream("search-create-goal", "tool_search", {
             query: "create_goal",
@@ -428,6 +445,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
           });
         }
         if (tools.includes("create_goal")) {
+          rootToolBoundaries.push(options.tools ?? {});
           rootCalls += 1;
           switch (rootCalls) {
             case 2:
@@ -610,6 +628,13 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       expect(analystSessionIds).toHaveLength(2);
       expect(buildCalls).toBe(5);
       expect(analystCalls).toBe(2);
+      expect(rootToolBoundaries[0]?.create_goal).toBeUndefined();
+      const naturalLoadedCreateGoal = rootToolBoundaries[1]?.create_goal as {
+        readonly inputSchema?: unknown;
+      } | undefined;
+      expect(naturalLoadedCreateGoal?.inputSchema).toBeDefined();
+      expect(toolInputs(session).find(({ toolName }) => toolName === "tool_search")?.input)
+        .toMatchObject({ query: "create_goal" });
       expect(await readFile(join(fixture.workspaceRoot, "migration-result.txt"), "utf8")).toBe("remediated\n");
     } finally {
       unsubscribe();
@@ -784,6 +809,17 @@ function toolTrace(session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>)
   return session.messages.flatMap((message) => message.role === "assistant" ? message.parts : [])
     .filter((part) => part.type === "tool")
     .map((part) => part.toolName);
+}
+
+function toolInputs(session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>): Array<{
+  readonly toolName: string;
+  readonly input: unknown;
+}> {
+  return session.messages.flatMap((message) => message.role === "assistant" ? message.parts : [])
+    .flatMap((part) => {
+      if (part.type !== "tool" || !("input" in part)) return [];
+      return [{ toolName: part.toolName, input: part.input }];
+    });
 }
 
 function userTextInputs(session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>): string[] {

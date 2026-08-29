@@ -1,4 +1,4 @@
-import { TOOL_TOOL_SEARCH } from "@archcode/protocol";
+import { TOOL_SEARCH_SELECT_PREFIX, TOOL_TOOL_SEARCH } from "@archcode/protocol";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool";
@@ -48,16 +48,16 @@ export const ToolSearchInputSchema = z.strictObject({
   query: z.string().trim().min(1).refine(
     (value) => new TextEncoder().encode(value).byteLength <= MAX_QUERY_BYTES,
     "query must be at most 2 KiB UTF-8",
-  ).describe("Natural-language description of the capability to load."),
+  ).describe(`Use ${TOOL_SEARCH_SELECT_PREFIX}<exact tool name> when the deferred directory provides a name; otherwise use a natural-language capability query.`),
   namespace: z.string().trim().min(1).max(160).optional()
     .describe("Optional namespace or MCP server id to restrict the search."),
   limit: z.number().int().min(1).max(5).default(5)
-    .describe("Number of matching tools to load (1-5, default 5)."),
+    .describe("Number of keyword matches to load (1-5, default 5); ignored for exact select queries."),
 });
 
 export const toolSearchTool = defineTool({
   name: TOOL_TOOL_SEARCH,
-  description: "Search the current Agent's authorized deferred tool catalog by capability. Matching full tool schemas become available on the next model step of this Execution.",
+  description: `Load tools from the current Agent's authorized deferred catalog. Prefer ${TOOL_SEARCH_SELECT_PREFIX}<exact tool name> from the deferred directory; use a natural-language query only when no exact name can be chosen. Matching full tool schemas become available on the next model step of this Execution.`,
   inputSchema: ToolSearchInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: false },
   outputPolicy: { kind: "inline", previewDirection: "head" },

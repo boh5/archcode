@@ -92,7 +92,7 @@ export class SessionToolBatchScheduler {
     toolCalls: readonly ToolCallLike[],
     stepId: string,
     step: number,
-    descriptors: readonly AnyToolDescriptor[] = [],
+    descriptors: readonly AnyToolDescriptor[],
     catalogDigest?: string,
   ): Promise<SessionToolBatch> {
     if (this.activeBatch() !== undefined) throw new Error("Session already has an active tool batch");
@@ -127,9 +127,7 @@ export class SessionToolBatchScheduler {
     const durableToolCalls = toolCalls.map((call) => call.toolName === TOOL_TOOL_SEARCH
       ? { ...call, input: sanitizeToolSearchInput(call.input) }
       : call);
-    const allowedTools = [...new Set(descriptors.length > 0
-      ? descriptors.map((descriptor) => descriptor.name)
-      : this.#options.allowedTools)];
+    const allowedTools = [...new Set(descriptors.map((descriptor) => descriptor.name))];
     const toolSearchAllowed = allowedTools.includes(TOOL_TOOL_SEARCH);
     if (toolSearchAllowed && toolCalls.some((call) => call.toolName === TOOL_TOOL_SEARCH)) {
       requiredCatalogDigest(catalogDigest);

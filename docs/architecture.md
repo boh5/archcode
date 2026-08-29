@@ -186,10 +186,12 @@ Each model-call boundary asks the live runtime for the current user-server
 descriptors and the built-ins allowed by that Agent's fixed role matrix. The
 result is a transient descriptor/namespace/status projection for the live
 authorized catalog. MCP schemas are deferred behind `tool_search`; only a
-bounded namespace summary enters the initial Prompt. Once loaded, tool
-execution uses the exact run-local descriptor selected at that model boundary.
-A later reconnect, disable, or discovery change takes effect at the next
-boundary and does not mutate a call already handed to the model.
+compact directory enters the Prompt, grouped by server and containing each
+canonical tool name plus only the first description line, capped at 160
+characters. Once loaded, tool execution uses the exact run-local descriptor selected
+at that model boundary. A later reconnect, disable, or discovery change takes
+effect at the next boundary and does not mutate a call already handed to the
+model.
 
 User MCP servers are authorized for all six Agent identities and do not receive
 an additional approval layer. This is separate from the built-in matrix:
@@ -222,13 +224,16 @@ authorized local + eligible overlay/worktree + ready MCP
 ```
 
 When deferred entries remain, the model also receives `tool_search`. Search is
-deterministic local BM25/trigram ranking over the current authorized catalog;
-it does not call a model, connect MCP, grant permission, or execute the hit.
-Successful hits persist only `{name, descriptorDigest}` on the owning logical
-Execution and expose full schemas on the next model step. The Tool Batch stores
-the catalog digest that the model saw, so normal execution and cold recovery
-reject changed catalogs rather than silently binding a different contract.
-Registry, permission, finalization, and MCP call ownership remain unchanged.
+fed by a Prompt directory containing every current deferred canonical name and
+a bounded first-line description. `select:<exact-name>` performs one exact
+lookup and never falls back to ranking; only other queries use deterministic
+local BM25/trigram ranking. Neither path calls a model, connects MCP, grants
+permission, or executes the hit. Successful hits persist only
+`{name, descriptorDigest}` on the owning logical Execution and expose full
+schemas on the next model step. The Tool Batch stores the catalog digest that
+the model saw, so normal execution and cold recovery reject changed catalogs
+rather than silently binding a different contract. Registry, permission,
+finalization, and MCP call ownership remain unchanged.
 
 Configuration requires `type` + `enabled` for every user server. HTTP uses
 `url`/`headers`; STDIO uses `command`/`args`/`env`. The independent

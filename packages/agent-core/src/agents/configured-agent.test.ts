@@ -11,6 +11,8 @@ import { __setSessionsDirForTest } from "../store/sessions-dir";
 import type { ToolRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { createTextToolResult } from "../tools/results";
+import { toolSearchTool } from "../tools/builtins/tool-search";
+import { createAuditHook, type AuditEvent } from "../tools/hooks/audit";
 import { createTestToolRegistryFixture, type TestToolRegistryFixture } from "../tools/test-registry";
 import { registerBuiltinTools } from "../core/register-tools";
 import { worktreeEnterTool, worktreeExitTool } from "../tools/builtins/worktree";
@@ -44,9 +46,15 @@ import {
   EMPTY_ATTACHMENT_MODEL_PROJECTOR,
   resolveEmptyAttachmentReadPaths,
 } from "../attachments/test-helpers";
-import { projectVisibleTools } from "./tool-visibility";
+import { buildDeferredToolDirectory, projectVisibleTools } from "./tool-visibility";
 import { NO_STATE_DEFERRED_BUILTINS } from "./tool-visibility/search-eval-cases";
-import { TOOL_TOOL_SEARCH } from "@archcode/protocol";
+import {
+  TOOL_TOOL_SEARCH,
+  type AgentTreeNode,
+  type AgentTreeProjection,
+  type ToolChildSessionLink,
+  type UserSessionPart,
+} from "@archcode/protocol";
 
 const tmpRoot = join(tmpdir(), "archcode-configured-agent", crypto.randomUUID());
 const worktreeRoot = join(tmpdir(), "archcode-configured-agent-worktree", crypto.randomUUID());
@@ -348,12 +356,14 @@ async function runAgent(
   options: Partial<AgentRunOptions> & {
     readonly extraTools?: readonly string[];
     readonly toolProjection?: readonly string[];
+    readonly userMessageParts?: readonly UserSessionPart[];
   } = {},
 ) {
   const id = crypto.randomUUID();
   const {
     extraTools = [],
     toolProjection,
+    userMessageParts = [],
     toolAuthorizationSnapshot = {
       extraTools: [...extraTools],
       toolProjection: toolProjection === undefined ? null : [...toolProjection],
@@ -391,7 +401,10 @@ async function runAgent(
     messages: [{
       id,
       role: "user",
-      parts: [{ type: "text", id: `${id}:text`, text: message, createdAt: 1, completedAt: 1 }],
+      parts: [
+        { type: "text", id: `${id}:text`, text: message, createdAt: 1, completedAt: 1 },
+        ...userMessageParts,
+      ],
       createdAt: 1,
       completedAt: 1,
       executionId,
@@ -449,6 +462,14 @@ async function runAgent(
     });
     throw error;
   }
+}
+
+function providerToolsAt(
+  streamFn: ReturnType<typeof setupMockStreamText> | ReturnType<typeof setupToolCallStreamText>,
+  callIndex = 0,
+): Record<string, unknown> {
+  const call = streamFn.mock.calls[callIndex]?.[0] as { tools?: Record<string, unknown> } | undefined;
+  return call?.tools ?? {};
 }
 
 describe("ConfiguredAgent", () => {
@@ -1231,7 +1252,7 @@ describe("ConfiguredAgent", () => {
 
     await runAgent(agent, "default run");
 
-    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string; tools: Record<string, unknown> };
     expect(callArgs.system).toContain("- file_read");
     expect(callArgs.system).toContain("- file_write");
     expect(callArgs.system).toContain("- bash");
@@ -1317,14 +1338,167 @@ describe("ConfiguredAgent", () => {
       toolAuthorizationSnapshot: authorization,
     });
 
-    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string; tools: Record<string, unknown> };
     expect(callArgs.system).toContain("- file_read");
     expect(callArgs.system).toContain("- file_write");
     expect(callArgs.system).toContain("- bash");
     expect(callArgs.system).toContain("- tool_search");
     expect(callArgs.system).not.toContain("- github_get_pull_request");
     expect(callArgs.system).not.toContain("- github_create_issue_comment");
+    expect(callArgs.system).toContain('"name":"github_get_pull_request"');
+    expect(callArgs.system).toContain('"name":"github_create_issue_comment"');
+    expect(callArgs.system).toContain("select:<exact-name>");
     expect(callArgs.system).not.toContain("github_rerun_workflow_run");
+    expect(Object.keys(callArgs.tools)).not.toContain("github_get_pull_request");
+    expect(Object.keys(callArgs.tools)).not.toContain("github_create_issue_comment");
+  });
+
+  test("does not advertise an unreachable deferred directory when tool_search is projected out", async () => {
+    const streamFn = setupMockStreamText("restricted tools ok");
+    const toolRegistry = createTestRegistry(leadAgentDefinition.tools.authorized.map(makeTool));
+    const agent = createAgent({ definition: leadAgentDefinition, toolRegistry });
+    const authorization = {
+      extraTools: [],
+      toolProjection: [...leadAgentDefinition.tools.core, "compress"],
+    };
+
+    await runAgent(agent, "restricted tools run", { toolAuthorizationSnapshot: authorization });
+
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string; tools: Record<string, unknown> };
+    expect(callArgs.system).toContain("Deferred tool directory:\n- none");
+    expect(callArgs.system).not.toContain('"name":"compress"');
+    expect(Object.keys(callArgs.tools)).not.toContain("tool_search");
+    expect(Object.keys(callArgs.tools)).not.toContain("compress");
+  });
+
+  test("rejects a provider-forged deferred tool from an empty model boundary", async () => {
+    const streamFn = setupToolCallStreamText("compress");
+    const execute = mock(async () => createTextToolResult("must not run"));
+    const compressTool: AnyToolDescriptor = {
+      ...makeTool("compress"),
+      execute,
+    };
+    const toolRegistry = createTestRegistry(leadAgentDefinition.tools.authorized.map((name) =>
+      name === "compress" ? compressTool : makeTool(name)
+    ));
+    const agent = createAgent({ definition: leadAgentDefinition, toolRegistry });
+
+    await runAgent(agent, "forge a hidden deferred tool", {
+      maxSteps: 2,
+      toolAuthorizationSnapshot: {
+        extraTools: [],
+        toolProjection: ["compress"],
+      },
+    });
+
+    const firstBoundary = streamFn.mock.calls[0]![0] as { tools?: Record<string, unknown> };
+    expect(Object.keys(firstBoundary.tools ?? {})).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+    const result = agent.store.getState().events.find((event) =>
+      event.payload.type === "tool-result" && event.payload.toolCallId === "tool-call-1"
+    );
+    expect(result?.payload).toMatchObject({
+      type: "tool-result",
+      result: { isError: true, details: { error: { code: "TOOL_NOT_ALLOWED" } } },
+    });
+  });
+
+  test("observes one exact search, loaded reuse, and target execution across the real tool pipeline", async () => {
+    const { logger, entries } = createInMemoryLogger();
+    const audits: AuditEvent[] = [];
+    const execute = mock(async () => createTextToolResult("compressed"));
+    const compressTool: AnyToolDescriptor = {
+      ...makeTool("compress"),
+      execute,
+    };
+    const fixture = createTestToolRegistryFixture({
+      logger,
+      descriptors: leadAgentDefinition.tools.authorized.map((name) => {
+        if (name === TOOL_TOOL_SEARCH) return toolSearchTool;
+        if (name === "compress") return compressTool;
+        return makeTool(name);
+      }),
+    });
+    registryFixtures.push(fixture);
+    fixture.registry.globalHooks.finalized.push(createAuditHook({
+      sink: (event) => { audits.push(event); },
+    }));
+    const modelBoundaries: Array<Record<string, unknown>> = [];
+    let round = 0;
+    const streamFn = mock((options: { tools?: Record<string, unknown> }) => {
+      modelBoundaries.push(options.tools ?? {});
+      round += 1;
+      if (round <= 2) {
+        const toolName = round === 1 ? TOOL_TOOL_SEARCH : "compress";
+        const input = round === 1 ? { query: "select:compress" } : {};
+        const toolCallId = `observed-tool-${round}`;
+        return {
+          fullStream: (async function* () {
+            yield { type: "tool-call", toolCallId, toolName, input };
+          })(),
+          finishReason: Promise.resolve("tool-calls"),
+          text: Promise.resolve(""),
+          toolCalls: Promise.resolve([{ toolCallId, toolName, input }]),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        };
+      }
+      return {
+        fullStream: (async function* () {
+          yield { type: "text-start", id: "output" };
+          yield { type: "text-delta", id: "output", text: "done" };
+          yield { type: "text-end", id: "output" };
+        })(),
+        finishReason: Promise.resolve("stop"),
+        text: Promise.resolve("done"),
+        toolCalls: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      };
+    });
+    setLlmAdapterForTest({ streamText: streamFn as unknown as typeof import("ai").streamText });
+    const agent = createAgent({
+      definition: leadAgentDefinition,
+      toolRegistry: fixture.registry,
+      logger,
+    });
+
+    await runAgent(agent, "load and reuse one deferred tool", { maxSteps: 3 });
+
+    expect(Object.keys(modelBoundaries[0]!)).not.toContain("compress");
+    expect(Object.keys(modelBoundaries[1]!)).toContain("compress");
+    expect(Object.keys(modelBoundaries[2]!)).toContain("compress");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(audits).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toolName: TOOL_TOOL_SEARCH,
+        input: { query: "select:compress", limit: 5 },
+        status: "success",
+      }),
+      expect.objectContaining({ toolName: "compress", input: {}, status: "success" }),
+    ]));
+    const promptLogs = entries.filter((entry) => entry.event === "prompt.compiled");
+    expect(promptLogs).toHaveLength(3);
+    expect(promptLogs[0]?.meta?.toolVisibility).toMatchObject({
+      catalogDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      state: [],
+      loaded: [],
+      deferredCount: expect.any(Number),
+    });
+    expect(promptLogs[1]?.meta?.toolVisibility).toMatchObject({ loaded: ["compress"] });
+    expect(promptLogs[2]?.meta?.toolVisibility).toMatchObject({ loaded: ["compress"] });
+    const loadedLog = entries.find((entry) => entry.event === "tool.search.loaded");
+    expect(loadedLog).toMatchObject({
+      meta: {
+        catalogDigest: promptLogs[0]?.meta?.toolVisibility
+          && (promptLogs[0]!.meta!.toolVisibility as { catalogDigest: string }).catalogDigest,
+        loadedToolRefs: [{
+          name: "compress",
+          descriptorDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+        }],
+      },
+    });
+    expect(agent.store.getState().messages.filter((message) => message.role === "assistant")
+      .flatMap((message) => message.parts)
+      .filter((part) => part.type === "tool" && part.toolName === TOOL_TOOL_SEARCH)).toHaveLength(1);
   });
 
   test("extraTools effective tools are enforced in tool execution context", async () => {
@@ -1742,6 +1916,7 @@ describe("ConfiguredAgent", () => {
     expect(initial.deferred.map((entry) => entry.registryName)).toContain(remote.name);
     expect(initial.visible.map((entry) => entry.registryName)).not.toContain(remote.name);
     expect(initial.visible.map((entry) => entry.registryName)).toContain(TOOL_TOOL_SEARCH);
+    expect(buildDeferredToolDirectory(initial.deferred)).toContain(remote.name);
 
     const loaded = projectVisibleTools({
       catalog: live.catalog,
@@ -1751,8 +1926,7 @@ describe("ConfiguredAgent", () => {
     });
     expect(loaded.visible.map((entry) => entry.registryName)).toContain(remote.name);
     expect(loaded.deferred.map((entry) => entry.registryName)).not.toContain(remote.name);
-    expect(live.namespaceSummary).toContain("docs: user MCP server (1)");
-    expect(live.namespaceSummary).not.toContain(remote.name);
+    expect(buildDeferredToolDirectory(loaded.deferred)).not.toContain(remote.name);
   });
 
   test("projects only the fixed state activation table", () => {
@@ -1873,5 +2047,348 @@ describe("ConfiguredAgent", () => {
       extraTools: ["delegate"],
       toolProjection: null,
     })).rejects.toThrow(UnknownExtraToolError);
+  });
+
+  test("projects each Agent's minimal legal runtime identity at the provider boundary", async () => {
+    // The pure projection coverage above retains the no-State Discussion evidence.
+    // A real Discussion root must remain Todo-bound, so its legal provider
+    // surface includes the identity-required project_todo_update activation.
+    const remote = makeTool("mcp__ac02__lookup");
+    const resolveMcpToolSnapshot = () => ({
+      tools: new Map([[remote.name, { descriptor: remote, serverName: "ac02", source: "user" as const }]]),
+      statuses: {
+        servers: {
+          ac02: { state: "ready" as const, toolCount: 1, warningCount: 0, connectedAt: 1 },
+        },
+      },
+    });
+    const discussionResolver = createTestProjectContextResolver(storeManager);
+    const discussionContext = await discussionResolver.resolve(tmpRoot);
+    const discussionTodo = await discussionContext.todos.createTodo({ content: "AC-02 Discussion identity fixture" });
+
+    for (const definition of defaultAgentDefinitions) {
+      const streamFn = setupMockStreamText(`${definition.name} no state`);
+      const toolRegistry = createTestRegistry(definition.tools.authorized.map(makeTool));
+      const store = definition.name === "discussion"
+        ? createStore(crypto.randomUUID(), tmpRoot, {
+            agentName: "discussion",
+            source: { kind: "todo", todoId: discussionTodo.id, entry: "discussion" },
+          })
+        : undefined;
+      const authorization = {
+        extraTools: [],
+        toolProjection: null,
+      };
+      const agent = createAgent({
+        definition,
+        toolRegistry,
+        resolveMcpToolSnapshot,
+        store,
+        ...(definition.name === "discussion" ? { projectContextResolver: discussionResolver } : {}),
+      });
+      const expectedVisible = definition.name === "discussion"
+        ? [...definition.tools.core, "project_todo_update", TOOL_TOOL_SEARCH]
+        : [...definition.tools.core, TOOL_TOOL_SEARCH];
+      const live = await agent.resolveLiveAuthorizedToolCatalog(authorization);
+      const deferredNames = live.catalog.entries
+        .filter((entry) => !expectedVisible.includes(entry.registryName))
+        .map((entry) => entry.registryName);
+
+      expect(deferredNames.length, definition.name).toBeGreaterThan(0);
+      expect(deferredNames, definition.name).toContain(remote.name);
+
+      await runAgent(agent, `${definition.name} no-state boundary`, { toolAuthorizationSnapshot: authorization });
+
+      const tools = providerToolsAt(streamFn);
+      expect(Object.keys(tools).sort(), definition.name).toEqual(expectedVisible.sort());
+      for (const deferredName of deferredNames) {
+        expect(tools[deferredName], `${definition.name} leaked deferred schema ${deferredName}`).toBeUndefined();
+      }
+      expect(JSON.stringify(tools), definition.name).not.toContain(remote.name);
+    }
+  });
+
+  test("removes Goal State activation at the next real model boundary", async () => {
+    const goalStream = setupMockStreamText("goal state");
+    const goalSessionId = crypto.randomUUID();
+    const goalStore = createStore(goalSessionId, tmpRoot, { agentName: "lead" });
+    const goalService = new SessionGoalService(storeManager);
+    const goal = await goalService.create({
+      workspaceRoot: tmpRoot,
+      sessionId: goalSessionId,
+      authority: { kind: "user_control" },
+      objective: "AC-02 Goal state fixture",
+    });
+    const goalAgent = createAgent({
+      definition: leadAgentDefinition,
+      store: goalStore,
+      sessionGoalService: goalService,
+      toolRegistry: createTestRegistry(leadAgentDefinition.tools.authorized.map(makeTool)),
+    });
+
+    await runAgent(goalAgent, "Goal active", { executionId: "ac02-goal-active" });
+    expect(Object.keys(providerToolsAt(goalStream, 0))).toEqual(expect.arrayContaining(["get_goal", "update_goal"]));
+
+    await goalService.complete({
+      workspaceRoot: tmpRoot,
+      sessionId: goalSessionId,
+      authority: { kind: "agent" },
+      reason: "AC-02 state transition",
+      expectedInstanceId: goal.instanceId,
+      expectedGeneration: goal.generation,
+    });
+    await runAgent(goalAgent, "Goal completed", { executionId: "ac02-goal-complete" });
+    expect(Object.keys(providerToolsAt(goalStream, 1))).not.toContain("get_goal");
+    expect(Object.keys(providerToolsAt(goalStream, 1))).not.toContain("update_goal");
+  });
+
+  test("removes PDF State activation when the next Execution has no PDF attachment", async () => {
+    const streamFn = setupMockStreamText("pdf state");
+    const toolRegistry = createTestRegistry(leadAgentDefinition.tools.authorized.map(makeTool));
+    const agent = createAgent({ definition: leadAgentDefinition, toolRegistry });
+    const pdfAttachment: UserSessionPart = {
+      type: "attachment",
+      id: "ac02-pdf-part",
+      attachment: {
+        id: "ac02-pdf",
+        name: "ac02.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: 1,
+        kind: "file",
+      },
+      createdAt: 1,
+      completedAt: 1,
+    };
+
+    await runAgent(agent, "PDF attached", {
+      executionId: "ac02-pdf-present",
+      userMessageParts: [pdfAttachment],
+    });
+    expect(Object.keys(providerToolsAt(streamFn, 0))).toContain("pdf_read");
+
+    await runAgent(agent, "No PDF attached", { executionId: "ac02-pdf-absent" });
+    expect(Object.keys(providerToolsAt(streamFn, 1))).not.toContain("pdf_read");
+  });
+
+  test("keeps an Execution loaded ref after its State activation disappears", async () => {
+    let outputAvailable = true;
+    const toolOutputAccess: ConfiguredAgentOptions["toolOutputAccess"] = {
+      countRecoverable: async () => outputAvailable ? 1 : 0,
+      countRecoverableForExecution: async () => outputAvailable ? 1 : 0,
+      read: async () => { throw new Error("not used"); },
+      search: async () => { throw new Error("not used"); },
+    };
+    const clearOutputToolName = "ac02_clear_output_state";
+    const definition = {
+      ...leadAgentDefinition,
+      tools: {
+        ...leadAgentDefinition.tools,
+        authorized: [...leadAgentDefinition.tools.authorized, clearOutputToolName],
+        core: [...leadAgentDefinition.tools.core, clearOutputToolName],
+      },
+    } satisfies AgentDefinition;
+    const clearOutputTool: AnyToolDescriptor = {
+      ...makeTool(clearOutputToolName),
+      execute: async () => {
+        outputAvailable = false;
+        return createTextToolResult("output state cleared");
+      },
+    };
+    const toolRegistry = createTestRegistry(definition.tools.authorized.map((name) =>
+      name === clearOutputToolName ? clearOutputTool : makeTool(name)
+    ));
+    const agent = createAgent({ definition, toolRegistry, toolOutputAccess });
+    const live = await agent.resolveLiveAuthorizedToolCatalog({ extraTools: [], toolProjection: null });
+    const outputRead = live.catalog.entries.find((entry) => entry.registryName === "output_read");
+    if (outputRead === undefined) throw new Error("AC-02 fixture could not resolve output_read");
+
+    const streamFn = setupToolCallStreamText(clearOutputToolName);
+    await runAgent(agent, "clear output state", {
+      executionId: "ac02-output-state",
+      maxSteps: 2,
+      loadedToolRefs: [{ name: outputRead.registryName, descriptorDigest: outputRead.descriptorDigest }],
+    });
+
+    const firstTools = providerToolsAt(streamFn, 0);
+    const secondTools = providerToolsAt(streamFn, 1);
+    expect(firstTools).toHaveProperty("output_read");
+    expect(firstTools).toHaveProperty("output_search");
+    expect(secondTools).toHaveProperty("output_read");
+    expect(secondTools).not.toHaveProperty("output_search");
+    expect(agent.store.getState().executions.find((execution) => execution.id === "ac02-output-state")?.loadedToolRefs)
+      .toEqual([{ name: outputRead.registryName, descriptorDigest: outputRead.descriptorDigest }]);
+  });
+
+  test("removes every child State activation at the next model boundary", async () => {
+    const childCases = [
+      {
+        name: "descendant",
+        status: "completed" as const,
+        background: false,
+        expected: ["list_agents", "resume_session"],
+      },
+      {
+        name: "running-direct-child",
+        status: "running" as const,
+        background: false,
+        expected: ["list_agents", "send_message", "wait_for_reminder", "cancel_session"],
+      },
+      {
+        name: "background-direct-child",
+        status: "completed" as const,
+        background: true,
+        expected: ["list_agents", "background_output", "resume_session"],
+      },
+      {
+        name: "nonterminal-direct-child",
+        status: "waiting_for_human" as const,
+        background: false,
+        expected: ["list_agents", "wait_for_reminder", "cancel_session"],
+      },
+      {
+        name: "nonterminal-descendant",
+        status: "completed" as const,
+        background: false,
+        expected: ["list_agents", "cancel_session", "resume_session"],
+        deeper: true,
+      },
+      {
+        name: "resumable-direct-child",
+        status: "failed" as const,
+        background: false,
+        expected: ["list_agents", "resume_session"],
+      },
+    ] as const;
+    const childTools = [
+      "list_agents",
+      "send_message",
+      "background_output",
+      "wait_for_reminder",
+      "cancel_session",
+      "resume_session",
+    ];
+
+    for (const scenario of childCases) {
+      const streamFn = setupMockStreamText(`${scenario.name} state`);
+      const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+      const rootSessionId = store.getState().rootSessionId;
+      const childSessionId = `ac02-${scenario.name}-child`;
+      const childExecutionId = `ac02-${scenario.name}-execution`;
+      const link = {
+        parentSessionId: rootSessionId,
+        parentToolCallId: `ac02-${scenario.name}-call`,
+        toolName: "delegate",
+        childSessionId,
+        childExecutionId,
+        childAgentName: "analyst",
+        childProfile: "deep" as const,
+        childSkillNames: [],
+        title: `AC-02 ${scenario.name}`,
+        depth: 1,
+        background: scenario.background,
+        status: scenario.status,
+        createdAt: 1,
+        startedAt: 1,
+      } satisfies ToolChildSessionLink;
+      store.getState().append({ type: "tool-child-session-link", link });
+
+      let getAgentTreeProjection: ConfiguredAgentOptions["getAgentTreeProjection"];
+      if ("deeper" in scenario && scenario.deeper) {
+        const summary = (
+          sessionId: string,
+          agentName: "lead" | "analyst" | "explore",
+          profile: "principal" | "deep" | "fast",
+          parentSessionId?: string,
+        ): AgentTreeNode["session"] => ({
+          sessionId,
+          cwd: tmpRoot,
+          rootSessionId,
+          ...(parentSessionId === undefined ? {} : { parentSessionId }),
+          agentName,
+          profile,
+          activeSkillNames: [],
+          modelSelection: { revision: 0 },
+          title: null,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const grandchild: AgentTreeNode = {
+          session: summary("ac02-grandchild", "explore", "fast", childSessionId),
+          depth: 2,
+          latestExecutionStatus: "running",
+          activeExecutionId: "ac02-grandchild-execution",
+          linkStatus: "running",
+          children: [],
+        };
+        getAgentTreeProjection = async (): Promise<AgentTreeProjection> => ({
+          root: {
+            session: summary(rootSessionId, "lead", "principal"),
+            depth: 0,
+            latestExecutionStatus: "completed",
+            activeExecutionId: null,
+            linkStatus: null,
+            children: [{
+              session: summary(childSessionId, "analyst", "deep", rootSessionId),
+              depth: 1,
+              latestExecutionStatus: "completed",
+              activeExecutionId: null,
+              linkStatus: "completed",
+              children: [grandchild],
+            }],
+          },
+          diagnostics: [],
+        });
+      }
+
+      const agent = createAgent({
+        definition: leadAgentDefinition,
+        store,
+        getAgentTreeProjection,
+        toolRegistry: createTestRegistry(leadAgentDefinition.tools.authorized.map(makeTool)),
+      });
+      await runAgent(agent, `${scenario.name} active`, { executionId: `ac02-${scenario.name}-active` });
+      const activeTools = providerToolsAt(streamFn, 0);
+      for (const expected of scenario.expected) expect(activeTools).toHaveProperty(expected);
+
+      store.setState({ childSessionLinks: [] });
+      await runAgent(agent, `${scenario.name} cleared`, { executionId: `ac02-${scenario.name}-cleared` });
+      const clearedTools = providerToolsAt(streamFn, 1);
+      for (const childTool of childTools) expect(clearedTools).not.toHaveProperty(childTool);
+    }
+  });
+
+  test("recomputes provider worktree tools when the root Session changes cwd", async () => {
+    const toolRegistry = createTestRegistry([
+      ...leadAgentDefinition.tools.authorized.map(makeTool),
+      worktreeEnterTool,
+      worktreeExitTool,
+    ]);
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead", cwd: tmpRoot });
+    const rootStream = setupMockStreamText("canonical cwd");
+    const rootAgent = createAgent({
+      definition: leadAgentDefinition,
+      store,
+      toolRegistry,
+      projectRoot: tmpRoot,
+      cwd: tmpRoot,
+    });
+
+    await runAgent(rootAgent, "canonical checkout", { executionId: "ac02-canonical-cwd" });
+    expect(providerToolsAt(rootStream, 0)).toHaveProperty("worktree_enter");
+    expect(providerToolsAt(rootStream, 0)).not.toHaveProperty("worktree_exit");
+
+    store.setState({ cwd: worktreeRoot });
+    const worktreeStream = setupMockStreamText("worktree cwd");
+    const worktreeAgent = createAgent({
+      definition: leadAgentDefinition,
+      store,
+      toolRegistry,
+      projectRoot: tmpRoot,
+      cwd: worktreeRoot,
+    });
+    await runAgent(worktreeAgent, "worktree checkout", { executionId: "ac02-worktree-cwd" });
+    expect(providerToolsAt(worktreeStream, 0)).not.toHaveProperty("worktree_enter");
+    expect(providerToolsAt(worktreeStream, 0)).toHaveProperty("worktree_exit");
+    store.setState({ cwd: tmpRoot });
   });
 });

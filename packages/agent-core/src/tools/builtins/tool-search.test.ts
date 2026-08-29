@@ -91,6 +91,8 @@ describe("tool_search", () => {
 
   test("is read-only, non-destructive, and serial", () => {
     expect(toolSearchTool.traits).toEqual({ readOnly: true, destructive: false, concurrencySafe: false });
+    expect(toolSearchTool.description).toContain("select:<exact tool name>");
+    expect(toolSearchTool.description).toContain("natural-language query only when no exact name can be chosen");
     expect(toolSearchTool.inputSchema.parse({ query: "web lookup" })).toEqual({ query: "web lookup", limit: 5 });
     expect(() => toolSearchTool.inputSchema.parse({ query: "web lookup", limit: 6 })).toThrow();
   });

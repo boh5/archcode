@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod/v4";
 
+import { toMcpToolRegistryName } from "../mcp/naming";
 import { defineTool } from "../tools/define-tool";
 import { createTextToolResult } from "../tools/results";
 import { createTestMcpRuntime } from "./test-mcp-runtime";
@@ -22,11 +23,11 @@ describe("createTestMcpRuntime", () => {
     const context7 = descriptor("mcp__context7__read");
     const exa = descriptor("mcp__exa__read");
     const runtime = createTestMcpRuntime({
-      descriptors: new Map([[user.name, user]]),
-      builtinDescriptors: {
-        context7: new Map([[context7.name, context7]]),
-        exa: new Map([[exa.name, exa]]),
-      },
+      tools: new Map([
+        [user.name, { descriptor: user, serverName: "user", source: "user" }],
+        [context7.name, { descriptor: context7, serverName: "context7", source: "builtin" }],
+        [exa.name, { descriptor: exa, serverName: "exa", source: "builtin" }],
+      ]),
       statuses: {
         servers: {
           user: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 1 },
@@ -53,38 +54,42 @@ describe("createTestMcpRuntime", () => {
     ]);
   });
 
-  test("derives user MCP namespaces from the formal registry alias parser", () => {
-    const docs = descriptor("mcp__docs__lookup");
+  test("preserves an explicit user MCP server identity instead of parsing the provider alias", () => {
+    const docs = descriptor(toMcpToolRegistryName("grep.app", "lookup"));
     const runtime = createTestMcpRuntime({
-      descriptors: new Map([[docs.name, docs]]),
+      tools: new Map([[
+        docs.name,
+        { descriptor: docs, serverName: "grep.app", source: "user" },
+      ]]),
       statuses: {
         servers: {
-          docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 1 },
+          "grep.app": { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 1 },
         },
       },
     });
 
     expect(runtime.snapshotTools({ builtinServerNames: [] }).tools.get(docs.name)).toMatchObject({
-      serverName: "docs",
+      serverName: "grep.app",
       source: "user",
     });
   });
 
-  test("does not project descriptors from disabled, connecting, or failed servers", () => {
-    const disabled = descriptor("mcp__disabled__lookup");
+  test("does not project explicit dotted, long, connecting, or failed server identities", () => {
+    const longServerName = "long-server-name-that-provider-aliases-must-truncate";
+    const disabled = descriptor(toMcpToolRegistryName("grep.app", "lookup"));
     const connecting = descriptor("mcp__connecting__lookup");
-    const failed = descriptor("mcp__failed__lookup");
+    const failed = descriptor(toMcpToolRegistryName(longServerName, "lookup"));
     const runtime = createTestMcpRuntime({
-      descriptors: new Map([
-        [disabled.name, disabled],
-        [connecting.name, connecting],
-        [failed.name, failed],
+      tools: new Map([
+        [disabled.name, { descriptor: disabled, serverName: "grep.app", source: "user" }],
+        [connecting.name, { descriptor: connecting, serverName: "connecting", source: "user" }],
+        [failed.name, { descriptor: failed, serverName: longServerName, source: "user" }],
       ]),
       statuses: {
         servers: {
-          disabled: { state: "disabled", updatedAt: 1 },
+          "grep.app": { state: "disabled", updatedAt: 1 },
           connecting: { state: "connecting", startedAt: 1 },
-          failed: { state: "failed", error: "offline", failedAt: 1 },
+          [longServerName]: { state: "failed", error: "offline", failedAt: 1 },
         },
       },
     });

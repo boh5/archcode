@@ -7,6 +7,7 @@ import {
   TOOL_GREP,
   TOOL_GLOB,
   TOOL_TOOL_SEARCH,
+  TOOL_SEARCH_SELECT_PREFIX,
   TOOL_AST_GREP_SEARCH,
   TOOL_AST_GREP_REPLACE,
   TOOL_GIT_STATUS,
@@ -111,6 +112,7 @@ describe("tool name constants", () => {
     expect(TOOL_GREP).toBe("grep");
     expect(TOOL_GLOB).toBe("glob");
     expect(TOOL_TOOL_SEARCH).toBe("tool_search");
+    expect(TOOL_SEARCH_SELECT_PREFIX).toBe("select:");
     expect(TOOL_AST_GREP_SEARCH).toBe("ast_grep_search");
     expect(TOOL_AST_GREP_REPLACE).toBe("ast_grep_replace");
     expect(TOOL_GIT_STATUS).toBe("git_status");

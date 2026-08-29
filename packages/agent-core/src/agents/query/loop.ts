@@ -1323,8 +1323,8 @@ async function executeToolCalls(
   scheduler: SessionToolBatchScheduler,
   stepId: string,
   step: number,
-  doomTracker?: DoomTracker,
-  resolvedTools?: ResolvedToolSet,
+  doomTracker: DoomTracker | undefined,
+  resolvedTools: ResolvedToolSet,
   catalogDigest?: string,
 ): Promise<ToolBatchExecutionResult> {
   const doomCallIds = new Set<string>();
@@ -1332,7 +1332,7 @@ async function executeToolCalls(
     if (doomTracker?.check(toolCall)) doomCallIds.add(toolCall.toolCallId);
   }
   if (toolCalls.length === 0) return { sessionCwdChanged: false };
-  await scheduler.createBatch(toolCalls, stepId, step, resolvedTools?.descriptors, catalogDigest);
+  await scheduler.createBatch(toolCalls, stepId, step, resolvedTools.descriptors, catalogDigest);
   for (const toolCallId of doomCallIds) {
     await scheduler.settleQueuedCall(toolCallId, createToolErrorResult({
       kind: "execution",

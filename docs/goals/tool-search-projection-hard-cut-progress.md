@@ -5,7 +5,7 @@
 - Plan Goal：`docs/goals/tool-search-projection-hard-cut-plan-goal.md`
 - 分支：`codex/tool-search-projection-hard-cut`
 - 基线：`544aeaed`
-- 状态：完成；AC-01 至 AC-08 全部验收通过
+- 状态：重新开启；原 AC-01 至 AC-08 的结论仅对应旧方案，需按新决定重新执行和验收
 
 ## 已锁定执行边界
 
@@ -45,7 +45,24 @@
 - Catalog、search tie-break、namespace summary 和 loaded refs 排序改为 code-point 比较，不再依赖宿主 ICU locale。
 - 固定 corpus 已作为独立先行提交 `fd5d2476 test(tool-search): lock retrieval corpus`；实现留在后续提交，满足 fixture-first review 顺序。
 
-## 验证记录
+### 2026-08-29：重新开启和新决策
+
+- 原实现的 Core + State Projection 继续保留；这次重新开启只调整 deferred 工具的发现和加载契约，不改变授权、权限、Tool Batch、MCP 执行或 finalized output 边界。
+- 首轮 Prompt 改为按 namespace/MCP server 分组的 deferred 紧凑目录：每个候选输出 canonical `registryName` 和原始 description 第一行，首行最多 160 个 Unicode 字符；不输出完整 description、参数或 schema，且不能静默省略候选名称。
+- `tool_search` 仍是唯一入口，但 query 分两条确定性路径：`select:<exact registryName>` 是主路径，精确失败直接 no-match、不得回落 BM25；其他自然语言 query 才使用现有 BM25/trigram 排序。
+- 成功命中仍由同一次 `tool_search` settlement 写入 loaded refs，下一模型 step 才暴露完整 schema；不增加第二个加载工具，不引入 embedding、翻译、LLM query rewrite 或 eager/load-all fallback。
+- 因为方案契约已改变，既有 Recall、token、加载、恢复和独立 review 证据不再宣称新方案完成；代码实现、AC 和 QA 需按上述目录与 `select:` 语义重新核验。
+
+### 2026-08-29：实现
+
+- 删除旧 namespace-only summary，新增独立 deferred directory renderer；它在 State/loaded Projection 完成后只渲染当前仍 deferred 的候选，按 namespace/MCP server 与 canonical name 做 code-point 稳定排序。
+- 每项目录数据使用 JSON 编码，只含 canonical name 和可选 description 首行；首行归一化空白并限制为 160 个 Unicode code point。无 description 仍保留名称，参数和 schema 不进入目录。
+- Prompt Contract 新增显式 `deferredToolDirectory` 字段，在 Tool Visibility 区域标记 description 为不可信 metadata，并要求已知名称优先调用 `select:<exact-name>`；`tool_search` 被 Projection 排除时不渲染不可达目录。
+- Protocol 固定共享 `select:` 前缀；本地 resolver 在关键词评分前识别该前缀，按完整 `registryName` 与可选 namespace 精确命中一个当前 deferred 项。空名称、错名、错 namespace 均返回空结果且不回落 BM25；无前缀 query 保留现有 Top-5 BM25/trigram 路径。
+- 成功 exact/keyword 查询继续复用原 Tool Batch settlement、loaded refs、下一 step schema 投影和 catalog digest 边界；没有第二 loader、embedding、翻译、LLM rewrite、eager/load-all 或旧 namespace summary compatibility path。
+- 从生产不变量纠正 AC-02：六角色改用最小合法 runtime identity；Discussion 必须且始终 Todo-bound，因此包含并保持身份必需的 `project_todo_update`，只要求 Goal/PDF/output/child/worktree 等真正可消失的 State 做撤销测试。非法 direct Discussion fixture 已删除，用户已明确同意本次验收纠正。
+
+## 2026-08-27 旧方案验证记录（历史）
 
 - Catalog/Search/Projection focused tests：8 passed，固定 corpus `Recall@5 = 100%`。
 - `bun run tool-search:benchmark`：1,000 entries / 100 queries / 20 warmup / 10 runs，最终 p50 74.19 ms、p95 81.47 ms，低于 1 秒门槛。
@@ -62,9 +79,26 @@
 - `bun run build`：typecheck、Web production build、308-asset production entrypoint 生成均通过。
 - `git diff --check 544aeaed`：通过；生产与当前架构文档无旧 `.tools.tools`、eager MCP append reader 或兼容 alias。
 
-## 独立 Review
+## 2026-08-27 旧方案独立 Review（历史）
 
 - Reviewer：独立 `gpt-5.6-sol` / `xhigh` 子 Agent。
 - 第一轮：0 P0；发现的 P1/P2 已进入上述 fix 循环。
 - 第二轮：按 AC-01 至 AC-08 逐项复核源码、测试、命令和测量证据；最终 **0 P0 / 0 P1 / 0 P2，全部 PASS**。
 - Reviewer 保留的可接受风险只有三类：第三方 MCP 描述质量可能要求模型改写 query；v1 Execution/artifact 数据按本 Goal 的 hard cut 拒绝或清理；深层 descendant 状态查询在超时下 bounded fail-closed。三者都不会扩大授权或触发 eager/load-all fallback。
+
+## 2026-08-29 新方案验证记录
+
+- Deferred directory / exact select / Prompt / Protocol focused tests：85 passed；固定自然语言 corpus 仍为 `Recall@5 = 100%`。中文 MCP description、首行截断、JSON 边界、空 description、State/loaded 排除和 exact miss 不回落均有独立断言。这些测试证明确定性渲染与匹配，不冒充真实模型的多语言任务成功率。
+- 真实 Lead Goal 流程和真实 `McpRuntimeService` 流程：14 passed。两条路径都证明搜索前 provider 无目标 schema、exact 或自然语言搜索后下一模型 step 才有完整 schema；MCP fixture 另证明首轮 Prompt 有 alias + 首行 description，加载后目录移除 alias，disable 后目录、provider tools 和 loaded refs 均无该 alias，exact select 返回 `TOOL_SEARCH_NO_MATCH`。
+- Agent Core unit lane：3,058 passed；integration lane：145 passed；architecture lane：83 passed。
+- `bun run tool-contract:measure`：Lead initial tool wire 为 5,136 tokens；30 项 deferred directory body 为 1,188 tokens；两者合计 6,324 tokens，相对锁定的 11,845-token 基线下降 46.61%。ready synthetic MCP 只增加 6 个目录项 / 255 directory-body tokens，完整 initial tool wire 增量仍为 0。
+- `bun run tool-search:benchmark`：1,000 entries / 100 queries / 20 warmup / 10 runs；2026-08-29 收口复跑为 p50 125.53 ms、p95 141.62 ms，低于 1 秒门槛。
+- `bun run typecheck`：5/5 workspace tasks passed；`bun run test`：8/8 workspace tasks passed；`bun run build`：typecheck、Web production build 和 308-asset production entrypoint 均通过；`git diff --check` 通过。
+- 最终修正非法 Discussion fixture 后再次复跑：`configured-agent.test.ts` 55 passed；Tool Search/Prompt/Protocol/Scheduler/Recovery/MCP/Lead/Live Bash 聚焦组合 245 passed；root `typecheck` 5/5、root `test` 8/8、root `build` 308 assets、`git diff --check` 全部退出码为 0。
+
+## 2026-08-29 新方案独立 Review
+
+- 独立 `gpt-5.6-sol` / `xhigh` Reviewer 第一轮结论为 `NOT_DONE`：0 P0 / 0 P1 / 1 P2。唯一 P2 是旧 AC-02 的无状态 Discussion 与 Todo 消失要求违反生产身份不变量；其余已确认产品缺陷已进入 fix 循环并修复。
+- Reviewer 确认 Unicode 行分隔注入、MCP fixture server identity 和显式空 provider boundary 的授权回落已修复；AC-04/05/06/07 的真实链聚焦测试通过。AC-02 已按生产不变量纠正，当前最终 diff 必须再做一轮独立验收，不能沿用第一轮 `NOT_DONE`。
+- 第二轮 Reviewer 对修订后的 AC-01 至 AC-08 逐项复核，最终 **PASS：P0=0、P1=0、P2=0**。独立复跑 focused 339/339、unit 3,070/3,070、integration 145/145、architecture 83/83；root typecheck 5/5、root test 8/8、build、measurement、benchmark 和 `git diff --check` 全部通过。
+- 第二轮实测保持目标：Lead initial wire 5,136 tokens，含 1,188-token deferred directory 后相对 11,845 基线下降 46.61%；1,000-entry benchmark p50 93.54 ms、p95 96.06 ms。Reviewer 未发现 eager/load-all、第二 loader、兼容 reader、deprecated fallback 或墓碑测试。

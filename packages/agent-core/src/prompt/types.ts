@@ -78,6 +78,7 @@ export interface PromptContractV2 {
   readonly role: RoleContract;
   readonly runtime: RuntimePromptEnvelope;
   readonly allowedTools: readonly string[];
+  readonly deferredToolDirectory: string | null;
   readonly availableSkills: SkillPromptProjection;
   readonly activeSkills: readonly ResolvedSkill[];
   readonly guidanceAuthority: {

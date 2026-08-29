@@ -1,3 +1,4 @@
+import { TOOL_SEARCH_SELECT_PREFIX } from "@archcode/protocol";
 import { searchableCatalogEntries } from "./catalog";
 import type { ToolCatalog, ToolCatalogEntry, ToolSearchQuery, ToolSearchResult } from "./types";
 import { MAX_TOOL_SEARCH_RESULTS } from "./types";
@@ -52,13 +53,15 @@ export function searchToolCatalog(
 ): readonly ToolSearchResult[] {
   const query = input.query.trim();
   if (query.length === 0) return [];
+  const selected = selectExactToolCatalogEntry(index.entries.map(({ entry }) => entry), input);
+  if (selected !== undefined) return selected;
+  const namespace = input.namespace?.trim();
   const limit = Math.min(MAX_TOOL_SEARCH_RESULTS, Math.max(1, Math.trunc(input.limit ?? MAX_TOOL_SEARCH_RESULTS)));
   const queryTokens = tokenize(query);
   const queryTerms = frequencies(queryTokens);
   const queryCharacters = normalizeCharacters(query);
   const queryTrigrams = trigrams(queryCharacters);
   const normalizedQuery = normalizeName(query);
-  const namespace = input.namespace?.trim();
 
   return index.entries
     .filter(({ entry }) => namespace === undefined || entry.namespace === namespace)
@@ -66,13 +69,37 @@ export function searchToolCatalog(
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || compareIdentity(a.entry.entry, b.entry.entry))
     .slice(0, limit)
-    .map(({ entry, score }) => ({
-      name: entry.entry.registryName,
-      namespace: entry.entry.namespace,
-      description: shortSummary(entry.entry.description),
-      descriptorDigest: entry.entry.descriptorDigest,
-      score,
-    }));
+    .map(({ entry, score }) => toSearchResult(entry.entry, score));
+}
+
+/**
+ * Resolves the deterministic primary path without constructing the BM25 index.
+ * `undefined` means the query is natural language; an empty array is an exact miss.
+ */
+export function selectExactToolCatalogEntry(
+  entries: readonly ToolCatalogEntry[],
+  input: ToolSearchQuery,
+): readonly ToolSearchResult[] | undefined {
+  const query = input.query.trim();
+  if (!query.startsWith(TOOL_SEARCH_SELECT_PREFIX)) return undefined;
+  const registryName = query.slice(TOOL_SEARCH_SELECT_PREFIX.length).trim();
+  if (registryName.length === 0) return [];
+  const namespace = input.namespace?.trim();
+  const match = entries.find((entry) => (
+    entry.registryName === registryName
+    && (namespace === undefined || entry.namespace === namespace)
+  ));
+  return match === undefined ? [] : [toSearchResult(match, Number.MAX_SAFE_INTEGER)];
+}
+
+function toSearchResult(entry: ToolCatalogEntry, score: number): ToolSearchResult {
+  return {
+    name: entry.registryName,
+    namespace: entry.namespace,
+    description: shortSummary(entry.description),
+    descriptorDigest: entry.descriptorDigest,
+    score,
+  };
 }
 
 function scoreEntry(

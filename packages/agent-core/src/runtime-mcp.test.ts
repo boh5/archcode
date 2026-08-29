@@ -206,7 +206,10 @@ describe("createRuntime MCP facade", () => {
   test("snapshotTools returns a run-local descriptor map and status projection", () => {
     const descriptor = makeMcpDescriptor();
     const mcpRuntime = createTestMcpRuntime({
-      descriptors: new Map([[descriptor.name, descriptor]]),
+      tools: new Map([[
+        descriptor.name,
+        { descriptor, serverName: "docs", source: "user" },
+      ]]),
       statuses: { servers: { docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 4 } } },
     });
     const snapshot = mcpRuntime.snapshotTools({ builtinServerNames: [] });
@@ -214,6 +217,149 @@ describe("createRuntime MCP facade", () => {
     expect(snapshot.statuses).toEqual({
       servers: { docs: { state: "ready", toolCount: 1, warningCount: 0, connectedAt: 4 } },
     });
+  });
+
+  test("loads a ready MCP tool by exact registry alias and rejects it after disable", async () => {
+    const context7Config = {
+      type: "http" as const,
+      enabled: true,
+      url: "https://context7.test/mcp",
+      connectTimeoutMs: 1_000,
+      discoveryTimeoutMs: 1_000,
+      callTimeoutMs: 1_000,
+    };
+    let closeCalls = 0;
+    const client: McpSdkClientLike = {
+      connect: async () => undefined,
+      listTools: async () => ({
+        tools: [{
+          name: "lookup",
+          description: "Look up documentation by query.",
+          inputSchema: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+          annotations: { readOnlyHint: true },
+        }],
+      }),
+      callTool: async (): Promise<CallToolResultLike> => ({
+        content: [{ type: "text", text: "lookup result" }],
+      }),
+      close: async () => { closeCalls += 1; },
+    };
+    const mcpRuntime = new McpRuntimeService({
+      builtinServers: { context7: context7Config },
+      clientFactories: {
+        createClient: () => client,
+        createTransport: () => ({} as McpTransportLike),
+      },
+      logger: silentLogger,
+    });
+    const runtime = await createRuntime({
+      configService: await writeConfig(makeConfig({ disabledBuiltins: ["context7"], servers: {} })),
+      mcpRuntimeFactory: () => mcpRuntime,
+      logger: silentLogger,
+    });
+    try {
+      await runtime.applyMcpConfig({ disabledBuiltins: [], servers: {} });
+      const alias = runtime.getMcpServerInventory().servers.context7?.[0]?.registryName;
+      if (alias === undefined) throw new Error("Expected the ready MCP tool to have a registry alias");
+
+      const workspaceRoot = await makeTempRoot();
+      const project = await runtime.projectRegistry.add({ workspaceRoot, name: "MCP exact loading" });
+      const leadSession = await runtime.createSession(workspaceRoot, {
+        agentName: "lead",
+        source: { kind: "direct" },
+      });
+      const nonReadySession = await runtime.createSession(workspaceRoot, {
+        agentName: "lead",
+        source: { kind: "direct" },
+      });
+      const rounds = new Map<string, number>();
+      const boundaries = new Map<string, Array<Record<string, unknown>>>();
+      const systemPrompts = new Map<string, string[]>();
+      setLlmAdapterForTest({
+        streamText: mock((options: {
+          messages: unknown;
+          system?: string;
+          tools?: Record<string, unknown>;
+        }) => {
+          const serialized = JSON.stringify(options.messages);
+          const lane = serialized.includes("MCP_EXACT_READY")
+            ? "ready"
+            : "non-ready";
+          const round = (rounds.get(lane) ?? 0) + 1;
+          rounds.set(lane, round);
+          const tools = options.tools ?? {};
+          const laneBoundaries = boundaries.get(lane) ?? [];
+          laneBoundaries.push(tools);
+          boundaries.set(lane, laneBoundaries);
+          const lanePrompts = systemPrompts.get(lane) ?? [];
+          lanePrompts.push(options.system ?? "");
+          systemPrompts.set(lane, lanePrompts);
+          if (round === 1) return toolSearchStream(`select:${alias}`, `${lane}-search`, "context7");
+          return stoppedStream();
+        }) as never,
+        generateText: mock(async () => ({ text: "MCP exact loading" })) as never,
+      });
+
+      const run = async (sessionId: string, text: string): Promise<void> => {
+        const completed = waitForExecutionEnd(runtime, project.slug, sessionId);
+        await runtime.acceptSessionMessage({
+          slug: project.slug,
+          workspaceRoot,
+          sessionId,
+          text,
+          attachmentIds: [],
+          clientRequestId: crypto.randomUUID(),
+          source: "user",
+          requestedModelSelection: { mode: "profile_default", selection: { model: "local:test-model" } },
+        });
+        await completed;
+      };
+
+      await run(leadSession.sessionId, "MCP_EXACT_READY");
+      const readyBoundaries = boundaries.get("ready") ?? [];
+      const readyPrompts = systemPrompts.get("ready") ?? [];
+      expect(readyBoundaries).toHaveLength(2);
+      expect(readyPrompts).toHaveLength(2);
+      expect(readyBoundaries[0]?.[alias]).toBeUndefined();
+      expect(readyPrompts[0]).toContain(`"name":"${alias}"`);
+      expect(readyPrompts[0]).toContain('"description":"Look up documentation by query."');
+      const loaded = readyBoundaries[1]?.[alias] as {
+        readonly description?: unknown;
+        readonly inputSchema?: unknown;
+      } | undefined;
+      expect(loaded?.description).toBe("Look up documentation by query.");
+      expect(loaded?.inputSchema).toBeDefined();
+      expect(readyPrompts[1]).not.toContain(`"name":"${alias}"`);
+
+      expect(mcpRuntime.snapshotTools({ builtinServerNames: [] }).tools.has(alias)).toBeFalse();
+
+      await runtime.applyMcpConfig({ disabledBuiltins: ["context7"], servers: {} });
+      expect(runtime.getMcpServerStatus().servers.context7?.state).toBe("disabled");
+      await run(nonReadySession.sessionId, "MCP_EXACT_NON_READY");
+      const nonReadyBoundaries = boundaries.get("non-ready") ?? [];
+      const nonReadyPrompts = systemPrompts.get("non-ready") ?? [];
+      expect(nonReadyBoundaries).toHaveLength(2);
+      expect(nonReadyBoundaries.every((tools) => tools[alias] === undefined)).toBeTrue();
+      expect(nonReadyPrompts.every((prompt) => !prompt.includes(`"name":"${alias}"`))).toBeTrue();
+      const nonReadyFile = await runtime.getSessionFile(workspaceRoot, nonReadySession.sessionId);
+      const nonReadySearch = nonReadyFile.toolBatches
+        .flatMap((batch) => batch.calls)
+        .find((call) => call.toolName === "tool_search");
+      expect(nonReadySearch).toMatchObject({
+        state: "failed",
+        result: { isError: true, details: { error: { code: "TOOL_SEARCH_NO_MATCH" } } },
+      });
+      expect(nonReadyFile.executions.at(-1)?.loadedToolRefs.some((ref) => ref.name === alias)).toBeFalse();
+      expect(nonReadyFile.executions.at(-1)?.loadedToolRefs).toEqual([]);
+    } finally {
+      await runtime.abortAllSessionExecutions();
+      await runtime.shutdown();
+    }
+    expect(closeCalls).toBe(1);
   });
 
   test("runtime shutdown closes the MCP facade exactly once", async () => {

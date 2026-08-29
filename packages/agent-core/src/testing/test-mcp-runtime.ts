@@ -14,8 +14,6 @@ import type {
   McpToolSnapshot,
   McpToolSnapshotEntry,
 } from "../mcp";
-import type { AnyToolDescriptor } from "../tools/types";
-import { parseMcpToolRegistryName } from "../mcp/naming";
 
 export interface TestMcpRuntime extends McpRuntime {
   /** Replace the live status projection used by getStatus and snapshotTools. */
@@ -27,11 +25,8 @@ export interface TestMcpRuntime extends McpRuntime {
 export interface TestMcpRuntimeOptions {
   readonly statuses?: McpServerStatusResponse;
   readonly inventory?: McpServerInventoryResponse;
-  readonly descriptors?: ReadonlyMap<string, AnyToolDescriptor>;
-  readonly builtinDescriptors?: Readonly<Partial<Record<
-    BuiltinMcpServerName,
-    ReadonlyMap<string, AnyToolDescriptor>
-  >>>;
+  /** Explicit production-shaped identities; never infer an MCP server from a provider alias. */
+  readonly tools?: ReadonlyMap<string, McpToolSnapshotEntry>;
   readonly apply?: (config: ResolvedMcpConfig) => Promise<void>;
   readonly reconnect?: (serverName: string) => Promise<void>;
   readonly testServer?: (
@@ -50,13 +45,7 @@ export interface TestMcpRuntimeOptions {
 export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestMcpRuntime {
   let statusSnapshot: McpServerStatusResponse = cloneStatus(options.statuses ?? { servers: {} });
   const inventorySnapshot = cloneInventory(options.inventory ?? { servers: {} });
-  const descriptors = new Map(options.descriptors ?? []);
-  const builtinDescriptors = new Map(
-    Object.entries(options.builtinDescriptors ?? {}).map(([name, entries]) => [
-      name as BuiltinMcpServerName,
-      new Map(entries ?? []),
-    ]),
-  );
+  const configuredTools = new Map(options.tools ?? []);
   const listeners = new Set<McpStatusListener>();
   const builtinNames = new Set<string>(BUILTIN_MCP_SERVER_NAMES);
 
@@ -68,17 +57,14 @@ export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestM
     getInventory: () => cloneInventory(inventorySnapshot),
     snapshotTools: ({ builtinServerNames }): McpToolSnapshot => {
       const allowedBuiltins = new Set<BuiltinMcpServerName>(builtinServerNames);
-      const tools = new Map<string, McpToolSnapshotEntry>([...descriptors]
-        .filter(([name]) => isReadyOrUnreported(statusSnapshot.servers[inferUserServerName(name)]))
-        .map(([name, descriptor]) => [
-        name,
-        { descriptor, serverName: inferUserServerName(name), source: "user" as const },
-        ]));
-      for (const serverName of allowedBuiltins) {
-        if (!isReadyOrUnreported(statusSnapshot.servers[serverName])) continue;
-        for (const [name, descriptor] of builtinDescriptors.get(serverName) ?? []) {
-          tools.set(name, { descriptor, serverName, source: "builtin" });
-        }
+      const tools = new Map<string, McpToolSnapshotEntry>();
+      for (const [name, entry] of configuredTools) {
+        if (
+          entry.source === "builtin"
+          && !allowedBuiltins.has(entry.serverName as BuiltinMcpServerName)
+        ) continue;
+        if (!isReadyOrUnreported(statusSnapshot.servers[entry.serverName])) continue;
+        tools.set(name, { ...entry });
       }
       return {
         tools,
@@ -104,10 +90,6 @@ export function createTestMcpRuntime(options: TestMcpRuntimeOptions = {}): TestM
     },
   };
   return runtime;
-}
-
-function inferUserServerName(registryName: string): string {
-  return parseMcpToolRegistryName(registryName)?.serverName ?? "user";
 }
 
 function isReadyOrUnreported(status: McpServerStatus | undefined): boolean {

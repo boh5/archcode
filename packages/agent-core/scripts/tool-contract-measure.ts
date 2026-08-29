@@ -10,6 +10,7 @@ import { ConfiguredAgent } from "../src/agents/configured-agent";
 import { AGENT_NAMES, type AgentName } from "../src/agents/names";
 import { resolveDefinitionAllowedTools } from "../src/agents/tool-filter";
 import {
+  buildDeferredToolDirectory,
   projectVisibleTools,
   type ToolCatalog,
   type ToolCatalogEntry,
@@ -58,6 +59,13 @@ interface TokenMetrics {
     readonly parameters: number;
     readonly skeleton: number;
   };
+}
+
+interface DirectoryMetrics {
+  readonly toolCount: number;
+  readonly characters: number;
+  readonly utf8Bytes: number;
+  readonly tokens: number;
 }
 
 const tokenizer = new Tiktoken(o200kBase);
@@ -111,6 +119,8 @@ async function measureAllAgents(): Promise<unknown> {
       const stateMetrics = measureEntries(state.visible);
       const loadedMetrics = measureEntries(loaded.visible);
       const mcpInitialMetrics = measureEntries(base.visible);
+      const initialDirectoryMetrics = measureDirectory(base.deferred);
+      const localDirectoryMetrics = measureDirectory(localBase.deferred);
       const mcpEntries = live.catalog.entries.filter((entry) => entry.sourceKind === "mcp");
       agents.push({
         agent: agentName,
@@ -120,16 +130,19 @@ async function measureAllAgents(): Promise<unknown> {
           ...initialMetrics,
           names: base.visible.map((entry) => entry.registryName),
           deferredCount: base.deferred.length,
+          deferredDirectory: initialDirectoryMetrics,
         },
         stateFixture: {
           activatedNames: stateNames,
           visible: stateMetrics,
           delta: metricDelta(initialMetrics, stateMetrics),
+          deferredDirectory: measureDirectory(state.deferred),
         },
         loadedFixture: {
           loadedNames: loadedEntries.map((entry) => entry.registryName),
           visible: loadedMetrics,
           delta: metricDelta(initialMetrics, loadedMetrics),
+          deferredDirectory: measureDirectory(loaded.deferred),
         },
         mcpDeferredFixture: {
           builtinServerIds: definition.builtinMcpServers,
@@ -141,6 +154,7 @@ async function measureAllAgents(): Promise<unknown> {
           deferredDelta: base.deferred.length - localBase.deferred.length,
           initialCountDelta: mcpInitialMetrics.count - localInitialMetrics.count,
           initialFullTokenDelta: mcpInitialMetrics.tokens.full - localInitialMetrics.tokens.full,
+          deferredDirectoryTokenDelta: initialDirectoryMetrics.tokens - localDirectoryMetrics.tokens,
         },
         ...(agentName === "lead" ? {
           leadBaseline: {
@@ -148,6 +162,11 @@ async function measureAllAgents(): Promise<unknown> {
             initialFullTokensAfter: initialMetrics.tokens.full,
             reductionPercent: round(
               (LEAD_AUTHORIZED_BASELINE_TOKENS - initialMetrics.tokens.full)
+                / LEAD_AUTHORIZED_BASELINE_TOKENS * 100,
+            ),
+            initialToolAndDirectoryTokensAfter: initialMetrics.tokens.full + initialDirectoryMetrics.tokens,
+            reductionIncludingDirectoryPercent: round(
+              (LEAD_AUTHORIZED_BASELINE_TOKENS - initialMetrics.tokens.full - initialDirectoryMetrics.tokens)
                 / LEAD_AUTHORIZED_BASELINE_TOKENS * 100,
             ),
           },
@@ -158,7 +177,7 @@ async function measureAllAgents(): Promise<unknown> {
 
     return {
       tokenizer: "js-tiktoken@1.0.21/o200k_base",
-      measurement: "ConfiguredAgent live Authorized Catalog -> production visibility projection -> ResolvedToolSet.toAITools -> OpenAI-compatible function wire",
+      measurement: "ConfiguredAgent live Authorized Catalog -> production visibility projection -> OpenAI-compatible function wire plus compact deferred Prompt directory",
       fixtures: {
         state: "all currently authorized fixed state-activation tools",
         loaded: `up to the first ${LOADED_FIXTURE_LIMIT} stable deferred catalog entries`,
@@ -342,6 +361,16 @@ function measureEntries(entries: readonly ToolCatalogEntry[]): TokenMetrics {
       parameters: countTokens(wire.map((tool) => tool.function.parameters)),
       skeleton: countTokens(skeleton),
     },
+  };
+}
+
+function measureDirectory(entries: readonly ToolCatalogEntry[]): DirectoryMetrics {
+  const rendered = buildDeferredToolDirectory(entries) ?? "";
+  return {
+    toolCount: entries.length,
+    characters: [...rendered].length,
+    utf8Bytes: new TextEncoder().encode(rendered).byteLength,
+    tokens: tokenizer.encode(rendered).length,
   };
 }
 

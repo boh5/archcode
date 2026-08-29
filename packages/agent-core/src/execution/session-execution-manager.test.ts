@@ -2,9 +2,11 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { z } from "zod";
 import {
   createEmptySessionStats,
   isTerminalChildSessionStatus,
+  TOOL_TOOL_SEARCH,
   type AttachmentDescriptor,
   type DelegationRequest,
   type SessionExecutionSuspension,
@@ -25,6 +27,10 @@ import { ModelInfo } from "../provider/model";
 import { SkillNotFoundError, SkillService, SkillValidationError } from "../skills";
 import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
 import { createTestToolRegistryFixture } from "../tools/test-registry";
+import { toolSearchTool, ToolSearchInputSchema } from "../tools/builtins/tool-search";
+import { defineTool } from "../tools/define-tool";
+import { createTextToolResult } from "../tools/results";
+import type { ToolExecutionContext } from "../tools/types";
 import { testExecutionEnd, testExecutionRecord, testExecutionStart, testExecutionSuspended } from "../testing/test-execution-fixtures";
 import { applySessionToolBatchChildOutcome } from "./session-tool-batch-scheduler";
 import { setLlmAdapterForTest } from "../llm/adapter";
@@ -5050,6 +5056,252 @@ describe("SessionExecutionManager", () => {
     expect(cancelSessionToolBatch).not.toHaveBeenCalled();
     expect(restartedStore.getState().events.some((event) => event.payload.type === "execution-resumed")).toBe(false);
     expect(restartedStore.getState().executions).toHaveLength(1);
+  });
+
+  test("cold recovery replays exact tool_search through ConfiguredAgent and the durable Scheduler", async () => {
+    const targetName = "recovery_deferred_target";
+    const targetTool = defineTool({
+      name: targetName,
+      description: "Recover one deferred contract after a process restart.",
+      inputSchema: z.object({ value: z.string().optional() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => createTextToolResult("target executed"),
+    });
+    const registryFixture = createTestToolRegistryFixture({
+      descriptors: [toolSearchTool, targetTool],
+    });
+    const definition: AgentDefinition = {
+      ...leadAgentDefinition,
+      roleContract: {
+        ...leadAgentDefinition.roleContract,
+        requiredCapabilities: [],
+        delegateTargets: [],
+      },
+      tools: { authorized: [TOOL_TOOL_SEARCH, targetName], core: [] },
+      builtinMcpServers: [],
+      childPolicy: undefined,
+      includeMemoryInPrompt: false,
+      skills: ["orchestrate-work"],
+      hooks: {
+        autoCompact: false,
+        autoInjectReminder: false,
+        todoStepReminder: false,
+        todoQueryLoopContinuation: false,
+        titleGeneration: "disabled",
+      },
+    };
+    const failurePoints = [
+      { name: "queued", state: "queued" as const, attempt: 0, descriptorReturned: false },
+      { name: "running", state: "running" as const, attempt: 1, descriptorReturned: false },
+      {
+        name: "descriptor-returned-before-commit",
+        state: "running" as const,
+        attempt: 1,
+        descriptorReturned: true,
+      },
+    ];
+    const digestModes = ["same", "changed"] as const;
+
+    try {
+      for (const failurePoint of failurePoints) {
+        for (const digestMode of digestModes) {
+          const sessionId = crypto.randomUUID();
+          const executionId = `execution-${failurePoint.name}-${digestMode}`;
+          const stepId = `step-${failurePoint.name}-${digestMode}`;
+          const toolCallId = `search-${failurePoint.name}-${digestMode}`;
+          const checkpointAt = Date.now();
+          const timestamp = new Date(checkpointAt).toISOString();
+          const executionRecord = testExecutionRecord(executionId, "running");
+          const batch: SessionToolBatch = {
+            batchId: `batch-${failurePoint.name}-${digestMode}`,
+            executionId,
+            runOrdinal: 0,
+            step: 0,
+            stepId,
+            assistantMessageId: `assistant-${failurePoint.name}-${digestMode}`,
+            agentName: "lead",
+            allowedTools: [TOOL_TOOL_SEARCH],
+            agentSkills: [],
+            partitions: [{ type: "serial", callIds: [toolCallId] }],
+            calls: [{
+              ordinal: 0,
+              partitionIndex: 0,
+              toolCallId,
+              toolName: TOOL_TOOL_SEARCH,
+              input: { query: `select:${targetName}` },
+              catalogDigest: "0".repeat(64),
+              traits: { readOnly: true, destructive: false, concurrencySafe: false },
+              state: failurePoint.state,
+              attempt: failurePoint.attempt,
+              checkpointAt,
+            }],
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+          await writeSessionFile({
+            sessionId,
+            messages: [{
+              id: batch.assistantMessageId,
+              role: "assistant",
+              executionId,
+              runOrdinal: 0,
+              stepId,
+              outputPhase: "commentary",
+              parts: [{
+                type: "tool",
+                id: `tool-part-${toolCallId}`,
+                state: "running",
+                toolCallId,
+                toolName: TOOL_TOOL_SEARCH,
+                input: { query: `select:${targetName}` },
+                createdAt: checkpointAt,
+                startedAt: checkpointAt,
+              }],
+              createdAt: checkpointAt,
+            }],
+            executions: [executionRecord],
+            steps: [{ id: stepId, executionId, runOrdinal: 0, step: 0, startedAt: checkpointAt }],
+            toolBatches: [batch],
+          });
+
+          const restarted = new SessionStoreManager({ logger: silentLogger });
+          const store = await restarted.getOrLoad(sessionId, workspaceRoot);
+          const configuredAgent = new ConfiguredAgent({
+            definition,
+            toolRegistry: registryFixture.registry,
+            skillService: new SkillService(),
+            storeManager: restarted,
+            store,
+            toolOutputAccess: registryFixture.createToolOutputAccess(workspaceRoot, sessionId),
+            attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+            resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
+            projectRoot: workspaceRoot,
+            cwd: workspaceRoot,
+            projectContextResolver: createTestProjectContextResolver(restarted),
+            resolveVersionControl: async () => "git",
+            resolveAllowedTools: (agentDefinition) => agentDefinition.tools.authorized,
+            delegationCapabilities: { parentAgentName: "lead", depth: 0, targets: [] },
+            logger: silentLogger,
+          });
+          const live = await configuredAgent.resolveLiveAuthorizedToolCatalog(
+            executionRecord.toolAuthorizationSnapshot,
+          );
+          const targetEntry = live.catalog.entries.find((entry) => entry.registryName === targetName)!;
+          const changedDigest = live.catalog.digest === "f".repeat(64)
+            ? "e".repeat(64)
+            : "f".repeat(64);
+          const persistedDigest = digestMode === "same" ? live.catalog.digest : changedDigest;
+          await restarted.updateToolBatches(sessionId, workspaceRoot, (batches) => batches.map((candidate) => ({
+            ...candidate,
+            calls: candidate.calls.map((call) => ({ ...call, catalogDigest: persistedDigest })),
+          })));
+
+          if (failurePoint.descriptorReturned) {
+            const raw = await toolSearchTool.execute(
+              ToolSearchInputSchema.parse({ query: `select:${targetName}` }),
+              {
+                toolSearchCatalogDigest: persistedDigest,
+                resolveToolSearch: async () => ({
+                  catalogDigest: live.catalog.digest,
+                  namespaces: [targetEntry.namespace],
+                  matches: [{
+                    name: targetEntry.registryName,
+                    namespace: targetEntry.namespace,
+                    description: targetEntry.description,
+                    descriptorDigest: targetEntry.descriptorDigest,
+                  }],
+                }),
+              } as unknown as ToolExecutionContext,
+            );
+            expect(raw).toMatchObject(digestMode === "same"
+              ? { isError: false, sidecar: { loadedToolRefs: [{ name: targetName }] } }
+              : { isError: true, details: { error: { code: "TOOL_SEARCH_CATALOG_CHANGED" } } });
+            expect(store.getState().toolBatches[0]?.calls[0]).toMatchObject({
+              state: "running",
+            });
+            expect(store.getState().toolBatches[0]?.calls[0]?.result).toBeUndefined();
+            expect(store.getState().executions[0]?.loadedToolRefs).toEqual([]);
+          }
+
+          const originalResolve = configuredAgent.resolveLiveAuthorizedToolCatalog.bind(configuredAgent);
+          const resolveCatalog = mock(originalResolve);
+          Object.defineProperty(configuredAgent, "resolveLiveAuthorizedToolCatalog", {
+            configurable: true,
+            value: resolveCatalog,
+          });
+          const modelCalls: Array<{ readonly tools?: Record<string, unknown> }> = [];
+          setLlmAdapterForTest({
+            streamText: mock((options: { tools?: Record<string, unknown> }) => {
+              modelCalls.push(options);
+              return {
+                fullStream: (async function* () {
+                  yield { type: "text-start", id: "output" };
+                  yield { type: "text-delta", id: "output", text: "recovery complete" };
+                  yield { type: "text-end", id: "output" };
+                })(),
+                finishReason: Promise.resolve("stop"),
+                text: Promise.resolve("recovery complete"),
+                toolCalls: Promise.resolve([]),
+                usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+              };
+            }) as unknown as typeof import("ai").streamText,
+          });
+          const { manager } = createManager({ [sessionId]: configuredAgent as unknown as MockAgent }, {
+            storeManager: restarted,
+            getAgent: () => configuredAgent,
+          });
+
+          const recovered = await manager.reconcileDurableSession({
+            slug: "project",
+            workspaceRoot,
+            sessionId,
+          });
+          expect(recovered?.executionId).toBe(executionId);
+          await recovered?.promise;
+
+          const recoveredCall = store.getState().toolBatches[0]!.calls[0]!;
+          expect({
+            failurePoint: failurePoint.name,
+            digestMode,
+            callState: recoveredCall.state,
+            execution: store.getState().executions[0],
+            modelCallCount: modelCalls.length,
+            resolveCatalogCallCount: resolveCatalog.mock.calls.length,
+          }).toMatchObject({
+            failurePoint: failurePoint.name,
+            digestMode,
+            callState: digestMode === "same" ? "completed" : "failed",
+          });
+          expect(recoveredCall.attempt).toBe(failurePoint.state === "queued" ? 1 : 2);
+          expect(store.getState().toolBatches[0]?.manualInspectionReason).toBeUndefined();
+          expect(resolveCatalog.mock.calls.length).toBeGreaterThanOrEqual(2);
+          expect(modelCalls).toHaveLength(1);
+          if (digestMode === "same") {
+            expect(store.getState().executions[0]?.loadedToolRefs).toEqual([{
+              name: targetName,
+              descriptorDigest: targetEntry.descriptorDigest,
+            }]);
+            expect(Object.keys(modelCalls[0]?.tools ?? {})).toContain(targetName);
+            expect(recoveredCall.result?.isError).toBe(false);
+          } else {
+            expect(store.getState().executions[0]?.loadedToolRefs).toEqual([]);
+            expect(Object.keys(modelCalls[0]?.tools ?? {})).not.toContain(targetName);
+            expect(recoveredCall.result).toMatchObject({
+              isError: true,
+              details: { error: { code: "TOOL_SEARCH_CATALOG_CHANGED" } },
+            });
+          }
+
+          configuredAgent.dispose();
+          restarted.clearAll();
+          setLlmAdapterForTest(undefined);
+        }
+      }
+    } finally {
+      setLlmAdapterForTest(undefined);
+      await registryFixture.dispose();
+    }
   });
 
   test("restart reconciliation keeps manual-inspection semantics for a mixed search and effectful active Tool Batch", async () => {

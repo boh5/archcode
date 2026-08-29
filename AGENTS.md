@@ -318,9 +318,13 @@ subset. `ConfiguredAgent` rebuilds the live authorized catalog at every model
 boundary, then exposes Core, fixed runtime State activations, valid
 Execution-local loaded refs, and `tool_search` only while deferred candidates
 exist. Local long-tail and all ready MCP descriptors remain deferred until a
-deterministic local search loads their contract for the next model step. Search
-never calls another model, never grants permission, and never falls back to an
-eager or load-all surface.
+deterministic local search loads their contract for the next model step. The
+Prompt lists every deferred canonical name with only the first description
+line, capped at 160 characters, grouped by local namespace or MCP server. Models
+prefer `select:<exact-name>`; only a query without that prefix uses the local
+BM25/trigram ranking. Search never calls another model, never grants permission,
+and never falls back from an exact miss to ranking or to an eager/load-all
+surface.
 
 **Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.{disabledBuiltins,servers}`. Each MCP server entry strictly requires `type: "http" | "stdio"` and `enabled`; HTTP uses `url`/`headers`, while STDIO uses `command`/`args`/`env`. Optional `connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` default to 10,000/30,000/60,000 ms. Provider values are literal; MCP URL/header or STDIO env values and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 
@@ -436,9 +440,11 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) â
 **MCP visibility**: User MCP servers are process-global and authorized for all
 six Agent identities from the current live runtime at the next model-call
 boundary. Their full schemas are deferred behind `tool_search`; the bounded
-Prompt projection contains namespace/server summaries only. They do not add an
-approval step. Built-in authorization remains the hardcoded role matrix in the
-MCP section below and is independent of user-server authorization.
+per-tool Prompt projection contains each canonical name and only the first
+description line, capped at 160 characters, grouped by server. It contains no
+parameter schema and does not add an approval step. Built-in authorization
+remains the hardcoded role matrix in the MCP section below and is independent
+of user-server authorization.
 
 **Query loop lifecycle:**
 ```
