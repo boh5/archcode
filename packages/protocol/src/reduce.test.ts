@@ -9,6 +9,7 @@ import {
 import type {
   CompressionBlockSnapshot,
   CompressionRefMapSnapshot,
+  LoadedToolRef,
   Reminder,
   SessionMessage,
   SessionPart,
@@ -49,9 +50,21 @@ const TEST_MEMORY_POLICY = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const TEST_TOOL_AUTHORIZATION_SNAPSHOT = { extraTools: [], toolProjection: null };
+const TEST_LOADED_TOOL_REFS: LoadedToolRef[] = [];
 
-function executionStart(executionId: string): StreamEvent {
-  return { type: "execution-start", executionId, binding: TEST_BINDING, executionSkills: [], memoryPolicy: TEST_MEMORY_POLICY, origin: "user_message", maxSteps: 50 };
+function executionStart(executionId: string): Extract<StreamEvent, { type: "execution-start" }> {
+  return {
+    type: "execution-start",
+    executionId,
+    binding: TEST_BINDING,
+    executionSkills: [],
+    memoryPolicy: TEST_MEMORY_POLICY,
+    toolAuthorizationSnapshot: TEST_TOOL_AUTHORIZATION_SNAPSHOT,
+    loadedToolRefs: TEST_LOADED_TOOL_REFS,
+    origin: "user_message",
+    maxSteps: 50,
+  };
 }
 
 function executionEnd(
@@ -248,6 +261,27 @@ function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {})
 }
 
 describe("reduceStreamEvent", () => {
+  test("initializes and preserves Execution tool authorization and loaded refs", () => {
+    const event = {
+      ...executionStart("tool-state"),
+      toolAuthorizationSnapshot: {
+        extraTools: ["bash", "grep"],
+        toolProjection: ["bash"],
+      },
+      loadedToolRefs: [{ name: "grep", descriptorDigest: "a".repeat(64) }],
+    } satisfies StreamEvent;
+    const state = applyEvents(createProjection(), [event]);
+
+    expect(state.executions[0]).toMatchObject({
+      toolAuthorizationSnapshot: {
+        extraTools: ["bash", "grep"],
+        toolProjection: ["bash"],
+      },
+      loadedToolRefs: [{ name: "grep", descriptorDigest: "a".repeat(64) }],
+    });
+    expect(state.executions[0]?.toolAuthorizationSnapshot).not.toBe(event.toolAuthorizationSnapshot);
+    expect(state.executions[0]?.loadedToolRefs).not.toBe(event.loadedToolRefs);
+  });
   test("interruptIncompleteToolParts is a pure, idempotent projection with no synthetic results", () => {
     const messages: SessionMessage[] = [{
       id: "message-tools",
@@ -1333,6 +1367,8 @@ describe("reduceStreamEvent", () => {
           maxSteps: 50,
           executionSkills: [],
           memoryPolicy: TEST_MEMORY_POLICY,
+          toolAuthorizationSnapshot: TEST_TOOL_AUTHORIZATION_SNAPSHOT,
+          loadedToolRefs: TEST_LOADED_TOOL_REFS,
           runs: [{
             ordinal: 0,
             startedAt: 1,

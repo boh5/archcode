@@ -26,6 +26,7 @@ describe("ScopeBoundToolOutputAccess", () => {
         projectIdentity: await computeProjectIdentity(workspaceRoot),
         rootSessionId: "family-a",
         producerSessionId: "child-a",
+        executionId: "execution-a",
       },
       canonical: "recoverable output",
     });
@@ -36,6 +37,8 @@ describe("ScopeBoundToolOutputAccess", () => {
     });
     expect((await allowed.read({ outputRef: created.outputRef })).records[0]?.text).toBe("recoverable output");
     expect(await allowed.countRecoverable()).toBe(1);
+    expect(await allowed.countRecoverableForExecution("execution-a")).toBe(1);
+    expect(await allowed.countRecoverableForExecution("sibling-execution")).toBe(0);
 
     const denied = createScopeBoundToolOutputAccess(store, {
       workspaceRoot,
@@ -49,7 +52,7 @@ describe("ScopeBoundToolOutputAccess", () => {
 
   test("service contract exposes only bounded read and search", () => {
     type Keys = keyof ToolOutputAccessService;
-    const keys: Record<Keys, true> = { countRecoverable: true, read: true, search: true };
-    expect(Object.keys(keys).sort()).toEqual(["countRecoverable", "read", "search"]);
+    const keys: Record<Keys, true> = { countRecoverable: true, countRecoverableForExecution: true, read: true, search: true };
+    expect(Object.keys(keys).sort()).toEqual(["countRecoverable", "countRecoverableForExecution", "read", "search"]);
   });
 });

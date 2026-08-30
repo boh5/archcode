@@ -145,6 +145,24 @@ function createGoalActivationStream(
   };
 }
 
+function createToolSearchStream(
+  query: string,
+  toolCallId = `tool-search-${crypto.randomUUID()}`,
+  namespace = "builtin",
+): unknown {
+  const input = { query, namespace, limit: 1 };
+  return {
+    fullStream: (async function* () {
+      yield { type: "tool-input-start", id: toolCallId, toolName: "tool_search" };
+      yield { type: "tool-call", toolCallId, toolName: "tool_search", input };
+    })(),
+    finishReason: Promise.resolve("tool-calls"),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+    text: Promise.resolve(""),
+    toolCalls: Promise.resolve([{ toolCallId, toolName: "tool_search", input }]),
+  };
+}
+
 function createAbortableStream(abortSignal: AbortSignal): unknown {
   return {
     fullStream: (async function* () {
@@ -442,7 +460,7 @@ describe("createRuntime", () => {
     let delegateIssued = false;
     setLlmAdapterForTest({
       streamText: mock((options: { tools?: Record<string, unknown> }) => {
-        const isRoot = options.tools?.create_goal !== undefined;
+        const isRoot = options.tools?.delegate !== undefined;
         if (isRoot && !delegateIssued) {
           delegateIssued = true;
           return createBackgroundDelegateStream("delegate-held-child");
@@ -862,7 +880,8 @@ describe("createRuntime", () => {
       streamText: mock((options: { tools?: Record<string, unknown>; messages?: unknown[] }) => {
         const tools = Object.keys(options.tools ?? {});
         seenToolSets.push(tools);
-        if (tools.includes("create_goal")) {
+        const serializedMessages = JSON.stringify(options.messages ?? []);
+        if (serializedMessages.includes("Analyze and implement the requested change.")) {
           rootCalls += 1;
           if (rootCalls === 1) {
             return {
@@ -900,7 +919,8 @@ describe("createRuntime", () => {
       await familyIdle;
 
       const tree = await runtime.listSessionTree(workspaceRoot, session.sessionId);
-      expect(seenToolSets).toContainEqual(expect.arrayContaining(["create_goal", "delegate"]));
+      expect(seenToolSets).toContainEqual(expect.arrayContaining(["delegate", "tool_search"]));
+      expect(seenToolSets[0]).not.toContain("create_goal");
       expect(integratedMessages).toContain("Analysis evidence complete.");
       expect(integratedMessages).toContain("Build verification complete.");
       expect(tree.diagnostics).toEqual([]);
@@ -1335,9 +1355,11 @@ describe("createRuntime", () => {
     setLlmAdapterForTest({
       streamText: mock(() => {
         firstRuntimeStreams += 1;
-        return firstRuntimeStreams === 1
-          ? createGoalActivationStream("Keep working through the authentication migration until every test passes.")
-          : createStoppedStream();
+        if (firstRuntimeStreams === 1) return createToolSearchStream("create_goal", "search-create-goal-restart");
+        if (firstRuntimeStreams === 2) {
+          return createGoalActivationStream("Keep working through the authentication migration until every test passes.");
+        }
+        return createStoppedStream();
       }) as never,
       generateText: mock(async () => ({
         text: "",
@@ -1491,8 +1513,9 @@ describe("createRuntime", () => {
     setLlmAdapterForTest({
       streamText: mock((options: { abortSignal: AbortSignal }) => {
         streams += 1;
-        if (streams === 1) return createGoalActivationStream("Keep working until the migration is complete.");
-        if (streams === 2) return createStoppedStream();
+        if (streams === 1) return createToolSearchStream("create_goal", "search-create-goal-continuation");
+        if (streams === 2) return createGoalActivationStream("Keep working until the migration is complete.");
+        if (streams === 3) return createStoppedStream();
         markContinuationStarted();
         return createAbortableStream(options.abortSignal);
       }) as never,
@@ -1518,7 +1541,7 @@ describe("createRuntime", () => {
     });
 
     await continuationStarted;
-    expect(streams).toBe(3);
+    expect(streams).toBe(4);
     expect(runtime.getSessionFamilyActivity(workspaceRoot, session.sessionId)).toBe("running");
     const file = await runtime.getSessionFile(workspaceRoot, session.sessionId);
     expect(file.goal?.status).toBe("active");
@@ -1536,7 +1559,8 @@ describe("createRuntime", () => {
     setLlmAdapterForTest({
       streamText: mock(() => {
         streams += 1;
-        if (streams === 1) return createGoalActivationStream("Keep working until the migration is complete.");
+        if (streams === 1) return createToolSearchStream("create_goal", "search-create-goal-failure");
+        if (streams === 2) return createGoalActivationStream("Keep working until the migration is complete.");
         throw Object.assign(new Error("provider failed after Goal activation"), { status: 400 });
       }) as never,
       generateText: mock(async () => ({ text: "", toolCalls: [] })) as never,
@@ -2333,7 +2357,7 @@ describe("createRuntime", () => {
     let childMessages = "";
     setLlmAdapterForTest({
       streamText: mock((input: { tools?: Record<string, unknown>; messages?: unknown[] }) => {
-        if (input.tools?.create_goal !== undefined) {
+        if (input.tools?.delegate !== undefined) {
           rootCalls += 1;
           return rootCalls === 1
             ? createBackgroundDelegateStream("delegate-live-references")

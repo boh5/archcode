@@ -19,6 +19,7 @@ const OWNER: ArtifactOwner = {
   projectIdentity: createHash("sha256").update("capture-project").digest("hex"),
   rootSessionId: "root",
   producerSessionId: "producer",
+  executionId: "execution",
 };
 
 function fakeCreated(draft: CapturedArtifactDraft): CreatedArtifact {

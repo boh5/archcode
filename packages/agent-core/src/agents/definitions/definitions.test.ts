@@ -18,8 +18,9 @@ import {
   TOOL_COMPRESS,
 } from "../../tools/names";
 import { BUILTIN_SKILL_PACKAGES } from "../../skills";
+import { TOOL_TOOL_SEARCH } from "@archcode/protocol";
 
-const EXPECTED_TOOL_MATRIX = {
+const EXPECTED_AUTHORIZED_TOOL_MATRIX = {
   lead: [
     "file_read",
     "pdf_read",
@@ -57,6 +58,7 @@ const EXPECTED_TOOL_MATRIX = {
     "automation_create",
     "skill_list",
     "skill_read",
+    TOOL_TOOL_SEARCH,
   ],
   discussion: [
     "file_read",
@@ -91,6 +93,7 @@ const EXPECTED_TOOL_MATRIX = {
     "compress",
     "skill_list",
     "skill_read",
+    TOOL_TOOL_SEARCH,
   ],
   analyst: [
     "file_read",
@@ -121,6 +124,7 @@ const EXPECTED_TOOL_MATRIX = {
     "compress",
     "skill_list",
     "skill_read",
+    TOOL_TOOL_SEARCH,
   ],
   build: [
     "file_read",
@@ -155,6 +159,7 @@ const EXPECTED_TOOL_MATRIX = {
     "memory_write",
     "skill_list",
     "skill_read",
+    TOOL_TOOL_SEARCH,
   ],
   explore: [
     "file_read",
@@ -174,6 +179,7 @@ const EXPECTED_TOOL_MATRIX = {
     "compress",
     "skill_list",
     "skill_read",
+    TOOL_TOOL_SEARCH,
   ],
   librarian: [
     "file_read",
@@ -186,6 +192,88 @@ const EXPECTED_TOOL_MATRIX = {
     "output_search",
     "todo_write",
     "compress",
+    "skill_list",
+    "skill_read",
+    TOOL_TOOL_SEARCH,
+  ],
+} as const;
+
+const EXPECTED_CORE_TOOL_MATRIX = {
+  lead: [
+    "file_read",
+    "file_write",
+    "file_edit",
+    "grep",
+    "glob",
+    "git_status",
+    "git_diff",
+    "bash",
+    "todo_write",
+    "ask_user",
+    "delegate",
+    "skill_list",
+    "skill_read",
+  ],
+  discussion: [
+    "file_read",
+    "file_write",
+    "file_edit",
+    "grep",
+    "glob",
+    "git_status",
+    "git_diff",
+    "bash",
+    "todo_write",
+    "ask_user",
+    "delegate",
+    "skill_list",
+    "skill_read",
+  ],
+  analyst: [
+    "file_read",
+    "grep",
+    "glob",
+    "git_status",
+    "git_diff",
+    "bash",
+    "todo_write",
+    "ask_user",
+    "delegate",
+    "skill_list",
+    "skill_read",
+  ],
+  build: [
+    "file_read",
+    "file_write",
+    "file_edit",
+    "grep",
+    "glob",
+    "git_status",
+    "git_diff",
+    "bash",
+    "todo_write",
+    "ask_user",
+    "delegate",
+    "skill_list",
+    "skill_read",
+  ],
+  explore: [
+    "file_read",
+    "grep",
+    "glob",
+    "git_status",
+    "git_diff",
+    "todo_write",
+    "skill_list",
+    "skill_read",
+  ],
+  librarian: [
+    "file_read",
+    "grep",
+    "glob",
+    "web_fetch",
+    "memory_read",
+    "todo_write",
     "skill_list",
     "skill_read",
   ],
@@ -254,8 +342,24 @@ describe("Agent catalog", () => {
 
   test("locks the exact ordered tool authority matrix for every Agent", () => {
     expect(Object.fromEntries(
-      agentDefinitions.map((definition) => [definition.name, [...definition.tools.tools]]),
-    ) as unknown).toEqual(EXPECTED_TOOL_MATRIX);
+      agentDefinitions.map((definition) => [definition.name, [...definition.tools.authorized]]),
+    ) as unknown).toEqual(EXPECTED_AUTHORIZED_TOOL_MATRIX);
+  });
+
+  test("locks the exact ordered Core tool matrix and its authority boundary", () => {
+    expect(Object.fromEntries(
+      agentDefinitions.map((definition) => [definition.name, [...definition.tools.core]]),
+    ) as unknown).toEqual(EXPECTED_CORE_TOOL_MATRIX);
+
+    for (const definition of agentDefinitions) {
+      expect(new Set(definition.tools.authorized).size).toBe(definition.tools.authorized.length);
+      expect(new Set(definition.tools.core).size).toBe(definition.tools.core.length);
+      const authorized = new Set<string>(definition.tools.authorized);
+      expect(definition.tools.core.every((tool) => authorized.has(tool))).toBe(true);
+      expect(definition.tools.authorized).toContain(TOOL_TOOL_SEARCH);
+      expect(definition.tools.core).not.toContain(TOOL_TOOL_SEARCH);
+      expect("tools" in definition.tools).toBe(false);
+    }
   });
 
   test("shares one explicit seven-tool delegation control package", () => {
@@ -265,17 +369,17 @@ describe("Agent catalog", () => {
       analystAgentDefinition,
       buildAgentDefinition,
     ]) {
-      expect(definition.tools.tools).toEqual(expect.arrayContaining([...DELEGATION_CONTROL_TOOLS]));
+      expect(definition.tools.authorized).toEqual(expect.arrayContaining([...DELEGATION_CONTROL_TOOLS]));
     }
     for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
-      for (const tool of DELEGATION_CONTROL_TOOLS) expect(definition.tools.tools).not.toContain(tool);
+      for (const tool of DELEGATION_CONTROL_TOOLS) expect(definition.tools.authorized).not.toContain(tool);
     }
   });
 
   test("keeps Skills guidance-only and core lifecycle manuals available", () => {
     for (const definition of agentDefinitions) {
-      expect(definition.tools.tools).toContain(TOOL_COMPRESS);
-      for (const tool of SKILL_ACCESS_TOOLS) expect(definition.tools.tools).toContain(tool);
+      expect(definition.tools.authorized).toContain(TOOL_COMPRESS);
+      for (const tool of SKILL_ACCESS_TOOLS) expect(definition.tools.authorized).toContain(tool);
       expect("allowedTools" in definition).toBe(false);
     }
 

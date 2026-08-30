@@ -133,6 +133,7 @@ function buildCtx(store: ReturnType<typeof createStore>, inputTokens: number): B
 describe("createAutoCompactHook", () => {
   const toolOutputAccess = {
     countRecoverable: async () => 0,
+    countRecoverableForExecution: async () => 0,
     read: async () => { throw new Error("not used"); },
     search: async () => { throw new Error("not used"); },
   } satisfies ToolOutputAccessService;

@@ -46,10 +46,15 @@ export function isSessionEventPayload(value: unknown): value is SessionEventPayl
     case "shutdown":
       return exact(event, ["type"], ["reason"]) && optionalString(event.reason);
     case "execution-start":
-      return exact(event, ["type", "executionId", "origin", "maxSteps", "binding", "executionSkills", "memoryPolicy"], ["activeTimeoutMs"])
+      return exact(event, [
+        "type", "executionId", "origin", "maxSteps", "binding", "executionSkills", "memoryPolicy",
+        "toolAuthorizationSnapshot", "loadedToolRefs",
+      ], ["activeTimeoutMs"])
         && isString(event.executionId) && isExecutionModelBinding(event.binding)
         && arrayOf(event.executionSkills, isExecutionSkillBinding)
         && isMemoryPolicySnapshot(event.memoryPolicy)
+        && isToolAuthorizationSnapshot(event.toolAuthorizationSnapshot)
+        && isLoadedToolRefs(event.loadedToolRefs)
         && oneOf(event.origin, ["user_message", "tool_call", "goal_continuation"])
         && isPositiveSafeInteger(event.maxSteps)
         && (event.activeTimeoutMs === undefined || isPositiveSafeInteger(event.activeTimeoutMs));
@@ -227,6 +232,41 @@ function isExecutionSkillBinding(value: unknown): boolean {
     && oneOf(binding.source, ["project-archcode", "project-agents", "user-archcode", "user-agents", "builtin"])
     && isString(binding.digest) && /^[a-f0-9]{64}$/.test(binding.digest)
     && isString(binding.resolutionRoot);
+}
+
+function isToolAuthorizationSnapshot(value: unknown): boolean {
+  const snapshot = record(value);
+  return snapshot !== undefined
+    && exact(snapshot, ["extraTools", "toolProjection"])
+    && isSortedUniqueToolNames(snapshot.extraTools)
+    && (snapshot.toolProjection === null || isSortedUniqueToolNames(snapshot.toolProjection));
+}
+
+function isLoadedToolRef(value: unknown): boolean {
+  const ref = record(value);
+  return ref !== undefined
+    && exact(ref, ["name", "descriptorDigest"])
+    && isNonBlankString(ref.name)
+    && isString(ref.descriptorDigest)
+    && /^[a-f0-9]{64}$/.test(ref.descriptorDigest);
+}
+
+function isLoadedToolRefs(value: unknown): boolean {
+  if (!Array.isArray(value) || !arrayOf(value, isLoadedToolRef)) return false;
+  const refs = value as Array<{ name: string; descriptorDigest: string }>;
+  const names = refs.map((ref) => ref.name);
+  return isSortedUniqueStrings(names);
+}
+
+function isSortedUniqueToolNames(value: unknown): boolean {
+  return Array.isArray(value)
+    && arrayOf(value, isNonBlankString)
+    && isSortedUniqueStrings(value as string[]);
+}
+
+function isSortedUniqueStrings(values: readonly string[]): boolean {
+  return new Set(values).size === values.length
+    && values.every((value, index) => index === 0 || values[index - 1]! < value);
 }
 
 function isPromptTrace(value: unknown): boolean {

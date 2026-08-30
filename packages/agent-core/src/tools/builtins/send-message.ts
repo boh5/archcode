@@ -88,7 +88,7 @@ export async function executeSendMessage(
 export const sendMessageTool = defineTool({
   name: "send_message",
   description: [
-    "Send one message to a currently running direct child Agent Session.",
+    "Communicate with a delegated child task by sending one message to a currently running direct child Agent Session.",
     "Use delivery=steer for its current Execution's next model attempt, or delivery=queue for a following Execution after normal completion.",
     "The exact expected_execution_id prevents delivery to a later generation. A stopped child is rejected; use resume_session instead.",
   ].join("\n"),

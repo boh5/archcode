@@ -4,10 +4,10 @@ import type { AgentName } from "./names";
 import type { RoleContract } from "../prompt/types";
 import type { ProfileName } from "../config";
 import type { BuiltinMcpServerName, McpServerStatusResponse } from "@archcode/protocol";
-import type { AnyToolDescriptor } from "../tools/types";
+import type { McpToolSnapshotEntry } from "../mcp";
 
 export interface AgentMcpToolSnapshot {
-  readonly descriptors: ReadonlyMap<string, AnyToolDescriptor>;
+  readonly tools: ReadonlyMap<string, McpToolSnapshotEntry>;
   readonly statuses: McpServerStatusResponse;
 }
 
@@ -25,7 +25,10 @@ export interface AgentDefinition {
 }
 
 export interface AgentToolPolicy {
-  readonly tools: readonly string[];
+  /** Role-level tools that may enter the Authorized Catalog for this Agent. */
+  readonly authorized: readonly string[];
+  /** Ordered high-frequency subset projected into the initial model boundary. */
+  readonly core: readonly string[];
   readonly delegateTargets?: readonly AgentName[];
 }
 

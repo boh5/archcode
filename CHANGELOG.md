@@ -7,6 +7,29 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- Project each Agent's model-visible tools from a small role Core, current
+  runtime state, and Execution-local loaded contracts. Local long-tail and MCP
+  tools now start in a compact namespace/server directory: `tool_search` loads
+  a visible canonical name through exact `select:<name>`, while deterministic
+  keyword ranking remains an auxiliary path. MCP schemas no longer expand the
+  initial model request.
+- New Execution writes include an immutable tool-authorization snapshot and
+  loaded tool-contract refs. Existing Session records that predate those fields
+  read with the canonical empty authorization overlay and no loaded refs;
+  explicitly malformed values remain invalid.
+
+### Breaking Changes
+
+- `tool_search` Tool Batch calls require the catalog digest captured at their
+  model boundary. There is no eager-tool or load-all fallback when search
+  fails.
+- Tool-output artifact and tombstone metadata is hard-cut to version 2 because
+  artifact ownership now includes the producing Execution. Version 1 recovery
+  artifacts are rejected and removed during startup cleanup; they are not
+  migrated or exposed through a compatibility reader.
+
 ## [0.0.10] - 2026-08-21
 
 ### Added

@@ -15,6 +15,7 @@ const TEST_WORKSPACE_ROOT = `/tmp/archcode-agent-core-hybrid-compression-${crypt
 const countRecoverable = mock(async () => 3);
 const toolOutputAccess = {
   countRecoverable,
+  countRecoverableForExecution: async () => 0,
   read: async () => { throw new Error("not used"); },
   search: async () => { throw new Error("not used"); },
 } satisfies ToolOutputAccessService;

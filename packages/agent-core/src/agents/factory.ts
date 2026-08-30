@@ -25,7 +25,10 @@ import type {
   DelegationCapabilitySnapshot,
   DelegationTargetCapability,
 } from "./factory-types";
-import { DELEGATION_CONTROL_TOOLS } from "./constants";
+import {
+  resolveDefinitionAllowedTools,
+  validateAgentDefinition,
+} from "./tool-filter";
 import type { Agent } from "./types";
 import { detectVersionControl, type VersionControlDetector } from "../version-control/detector";
 import type { ToolOutputAccessService } from "../tool-output/access-service";
@@ -33,6 +36,7 @@ import type { SessionGoalService } from "../session-goal";
 import type { AttachmentModelProjector } from "../attachments";
 
 export type { ChildExecutionHandle, ChildExecutionRequest } from "./factory-types";
+export { AgentDefinitionValidationError } from "./tool-filter";
 
 export interface AgentFactoryConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -110,6 +114,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
     if (definitions.has(definition.name)) {
       throw new DuplicateAgentDefinitionError(definition.name);
     }
+    validateAgentDefinition(definition);
     definitions.set(definition.name, definition);
   }
 
@@ -255,17 +260,7 @@ function factoryResolveAllowedTools(
   definition: AgentDefinition,
   depth: number,
 ): string[] {
-  const all = config.toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
-
-  if (
-    definition.childPolicy === undefined
-    || (definition.tools.delegateTargets?.length ?? 0) === 0
-    || depth >= definition.childPolicy.maxDepth
-  ) {
-    return all.filter((name) => !(DELEGATION_CONTROL_TOOLS as readonly string[]).includes(name));
-  }
-
-  return all;
+  return resolveDefinitionAllowedTools(config.toolRegistry, definition, depth);
 }
 
 function freezeDelegationCapabilities(

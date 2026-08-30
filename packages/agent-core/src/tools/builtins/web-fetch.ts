@@ -424,7 +424,7 @@ function formatResult(result: FetchResult): RawToolResult {
 export const webFetchTool = defineTool({
   name: "web_fetch",
   description:
-    "Fetch an unauthenticated HTTP(S) URL and return markdown, text, or HTML. Prefer a specialized MCP tool for authenticated, private, or task-specific resources; this tool does not use browser cookies or login state. Response headers and all redirects share a fixed 30-second deadline; reading the response body is not covered by that timer. Initial HTTP URLs are upgraded to HTTPS, up to 5 redirects are followed, and response bodies over 5MB are rejected. HTML may be extracted and converted; output recovery is provided by the Tool Output Plane when needed.",
+    "Download and read an unauthenticated internet page at an HTTP(S) URL, returning markdown, text, or HTML. Prefer a specialized MCP tool for authenticated, private, or task-specific resources; this tool does not use browser cookies or login state. Response headers and all redirects share a fixed 30-second deadline; reading the response body is not covered by that timer. Initial HTTP URLs are upgraded to HTTPS, up to 5 redirects are followed, and response bodies over 5MB are rejected. HTML may be extracted and converted; output recovery is provided by the Tool Output Plane when needed.",
   inputSchema: WebFetchInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   outputPolicy: { kind: "artifact", previewDirection: "head-tail" },

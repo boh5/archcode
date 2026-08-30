@@ -43,6 +43,7 @@ interface LiveBashHarness {
   readonly stepId: string;
   readonly storeManager: SessionStoreManager;
   readonly store: ReturnType<SessionStoreManager["create"]>;
+  readonly descriptor: AnyToolDescriptor;
   readonly scheduler: SessionToolBatchScheduler;
   readonly abortController: AbortController;
   readonly artifactStore: ToolOutputArtifactStore;
@@ -518,12 +519,13 @@ async function createHarness(options: {
   await artifactStore.ready();
   const finalizer = new ToolOutputFinalizer({ artifactStore });
   options.configureFinalizer?.(finalizer);
+  const descriptor = options.descriptorFactory?.(artifactRoot) ?? bashTool;
   const registry = createRegistry({
     finalizer,
     hitlCodec: new HitlBoundaryCodec(new SecretRedactionPolicy([])),
     approvalReviewer: deferTestApprovalReviewer,
     logger: silentLogger,
-  }, [options.descriptorFactory?.(artifactRoot) ?? bashTool]);
+  }, [descriptor]);
   const finalizedObservations = new Map<string, {
     readonly publisherStopped: boolean;
     readonly deltaCount: number;
@@ -588,6 +590,7 @@ async function createHarness(options: {
     stepId,
     storeManager,
     store,
+    descriptor,
     scheduler,
     abortController,
     artifactStore,
@@ -617,6 +620,7 @@ async function startBash(input: {
     [{ toolCallId, toolName: "bash", input }],
     harness.stepId,
     0,
+    [harness.descriptor],
   );
 
   let didFinish = false;

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   MCP_ALIAS_MAX_LENGTH,
+  parseMcpToolRegistryName,
   sanitizeMcpServerNameForRegistry,
   toMcpToolRegistryName,
   validateMcpNameSegment,
@@ -14,6 +15,18 @@ describe("MCP aliases", () => {
     expect(first).toMatch(/^mcp__context7__resolve-library-id__[a-f0-9]{20}$/);
     expect(first.length).toBeLessThanOrEqual(MCP_ALIAS_MAX_LENGTH);
     expect(first).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  test("parses the server namespace from generated and fixture aliases", () => {
+    expect(parseMcpToolRegistryName(toMcpToolRegistryName("context7", "resolve-library-id"))).toEqual({
+      serverName: "context7",
+      toolName: "resolve-library-id",
+    });
+    expect(parseMcpToolRegistryName("mcp__docs__lookup")).toEqual({
+      serverName: "docs",
+      toolName: "lookup",
+    });
+    expect(parseMcpToolRegistryName("file_read")).toBeUndefined();
   });
 
   test("disambiguates identities that sanitize to the same visible text", () => {

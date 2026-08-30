@@ -4,6 +4,7 @@ import type {
   HitlSource,
   JsonObject,
   ToolResultDetails,
+  LoadedToolRef,
 } from "@archcode/protocol";
 
 export type OutputPreviewDirection = "head" | "head-tail";
@@ -39,6 +40,8 @@ export interface ToolExecutionSidecar {
   readonly sessionCwdChanged?: true;
   /** Successful tool result is a terminal control boundary for the current Execution. */
   readonly executionCompleted?: true;
+  /** Tool contracts loaded into the owning logical Execution after this result settles. */
+  readonly loadedToolRefs?: readonly LoadedToolRef[];
 }
 
 export interface RawToolResult {

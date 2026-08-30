@@ -17,6 +17,8 @@ import { deferTestApprovalReviewer } from "./test-approval-reviewer";
 import { expectBlockedOutcome, expectBlockedRequest, expectSettledResult } from "./test-results";
 import { createTextToolResult } from "./results";
 import { askUserTool } from "./builtins/ask-user";
+import { TOOL_SEARCH_REDACTED_QUERY, toolSearchTool } from "./builtins/tool-search";
+import { createAuditHook, type AuditEvent } from "./hooks/audit";
 import { createRegistry, ResolvedToolSet } from "./registry";
 import {
   createToolExecutionContext,
@@ -162,6 +164,27 @@ describe("ToolRegistry lifecycle", () => {
     expect(outcome.kind).toBe("settled");
     expect(outcome.kind === "settled" ? outcome.result.output.preview : "").toBe("ok");
     expect(finalized).toHaveBeenCalledTimes(1);
+  });
+
+  test("audits prepared safe input when a registered tool is disallowed", async () => {
+    const events: AuditEvent[] = [];
+    const created = fixture({ descriptors: [toolSearchTool] });
+    created.registry.globalHooks.finalized.push(createAuditHook({
+      sink: (event) => { events.push(event); },
+    }));
+    const ctx = context("tool_search");
+    ctx.allowedTools = new Set();
+    const secret = "api_key=sk_test_1234567890abcdef";
+
+    const outcome = await created.registry.execute(
+      { toolName: "tool_search", toolCallId: ctx.toolCallId, input: { query: secret } },
+      ctx,
+    );
+
+    expect(expectSettledResult(outcome).details?.error?.code).toBe("TOOL_NOT_ALLOWED");
+    expect(events).toHaveLength(1);
+    expect(events[0]?.input).toEqual({ query: TOOL_SEARCH_REDACTED_QUERY, limit: 5 });
+    expect(JSON.stringify(events)).not.toContain(secret);
   });
 
   test("creates artifact capture before effectful execute", async () => {

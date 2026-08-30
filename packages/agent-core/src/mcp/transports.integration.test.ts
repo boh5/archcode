@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 async function execute(runtime: McpRuntimeService, input: Record<string, unknown>): Promise<RawToolResult> {
-  const descriptor = [...runtime.snapshotTools({ builtinServerNames: [] }).descriptors.values()][0]!;
+  const descriptor = [...runtime.snapshotTools({ builtinServerNames: [] }).tools.values()][0]!.descriptor;
   return await descriptor.execute(input, { abort: new AbortController().signal } as ToolExecutionContext) as RawToolResult;
 }
 
@@ -194,7 +194,7 @@ describe("official MCP transports", () => {
     expect(second.sessionCloseCount).toBe(secondCloseCountBeforeRemoval + 1);
     expect(runtime.getStatus().servers.local).toBeUndefined();
     expect(runtime.getInventory().servers.local).toBeUndefined();
-    expect(runtime.snapshotTools({ builtinServerNames: [] }).descriptors.size).toBe(0);
+    expect(runtime.snapshotTools({ builtinServerNames: [] }).tools.size).toBe(0);
 
     const secondEnabled: ResolvedMcpConfig = {
       disabledBuiltins: [],
@@ -212,7 +212,7 @@ describe("official MCP transports", () => {
     expect(second.sessionCloseCount).toBe(secondCloseCountBeforeDisable + 1);
     expect(runtime.getStatus().servers.local?.state).toBe("disabled");
     expect(runtime.getInventory().servers.local).toBeUndefined();
-    expect(runtime.snapshotTools({ builtinServerNames: [] }).descriptors.size).toBe(0);
+    expect(runtime.snapshotTools({ builtinServerNames: [] }).tools.size).toBe(0);
 
     await runtime.apply(secondEnabled);
     expect(runtime.getStatus().servers.local?.state).toBe("ready");

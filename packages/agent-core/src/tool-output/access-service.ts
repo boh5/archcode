@@ -15,6 +15,7 @@ export interface ToolOutputAccessService {
   read(input: ScopedOutputReadInput): Promise<OutputReadPage>;
   search(input: ScopedOutputSearchInput): Promise<OutputSearchPage>;
   countRecoverable(): Promise<number>;
+  countRecoverableForExecution(executionId: string): Promise<number>;
 }
 
 export interface ScopeBoundToolOutputAccessOptions {
@@ -47,6 +48,10 @@ export class ScopeBoundToolOutputAccess implements ToolOutputAccessService {
 
   async countRecoverable(): Promise<number> {
     return await this.#store.countRecoverable(await this.#scope);
+  }
+
+  async countRecoverableForExecution(executionId: string): Promise<number> {
+    return await this.#store.countRecoverableForExecution(await this.#scope, executionId);
   }
 }
 

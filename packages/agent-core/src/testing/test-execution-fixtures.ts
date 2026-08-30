@@ -9,6 +9,8 @@ import type {
   SessionExecutionRecord,
   SessionExecutionSuspension,
   SessionExecutionTerminalStatus,
+  LoadedToolRef,
+  ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import { ModelInfo } from "../provider/model";
 
@@ -63,6 +65,13 @@ export const testExecutionMemoryPolicy = {
   epoch: { bootId: "test-memory-boot", generation: 0 },
 } as const;
 
+export const testExecutionToolAuthorizationSnapshot: ToolAuthorizationSnapshot = {
+  extraTools: [],
+  toolProjection: null,
+};
+
+export const testExecutionLoadedToolRefs: LoadedToolRef[] = [];
+
 export function testExecutionStart(
   executionId: string,
   origin: SessionExecutionOrigin = "tool_call",
@@ -75,6 +84,13 @@ export function testExecutionStart(
     origin,
     maxSteps: 50,
     executionSkills: [],
+    toolAuthorizationSnapshot: {
+      extraTools: [...testExecutionToolAuthorizationSnapshot.extraTools],
+      toolProjection: testExecutionToolAuthorizationSnapshot.toolProjection === null
+        ? null
+        : [...testExecutionToolAuthorizationSnapshot.toolProjection],
+    },
+    loadedToolRefs: testExecutionLoadedToolRefs.map((ref) => ({ ...ref })),
   };
 }
 
@@ -134,6 +150,13 @@ export function testExecutionRecord(
       origin: "tool_call",
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: {
+        extraTools: [...testExecutionToolAuthorizationSnapshot.extraTools],
+        toolProjection: testExecutionToolAuthorizationSnapshot.toolProjection === null
+          ? null
+          : [...testExecutionToolAuthorizationSnapshot.toolProjection],
+      },
+      loadedToolRefs: testExecutionLoadedToolRefs.map((ref) => ({ ...ref })),
       durationMs: 0,
       runs: [run],
     };
@@ -147,6 +170,13 @@ export function testExecutionRecord(
       origin: "tool_call",
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: {
+        extraTools: [...testExecutionToolAuthorizationSnapshot.extraTools],
+        toolProjection: testExecutionToolAuthorizationSnapshot.toolProjection === null
+          ? null
+          : [...testExecutionToolAuthorizationSnapshot.toolProjection],
+      },
+      loadedToolRefs: testExecutionLoadedToolRefs.map((ref) => ({ ...ref })),
       durationMs: 0,
       runs: [{ ...run, endedAt: 1, durationMs: 0, usageDelta: testExecutionUsage, settlement }],
       suspension: { kind: "hitl", toolBatchId: `batch:${id}`, blockerIds: [`blocker:${id}`] },
@@ -160,6 +190,13 @@ export function testExecutionRecord(
     origin: "tool_call",
     maxSteps: 50,
     executionSkills: [],
+    toolAuthorizationSnapshot: {
+      extraTools: [...testExecutionToolAuthorizationSnapshot.extraTools],
+      toolProjection: testExecutionToolAuthorizationSnapshot.toolProjection === null
+        ? null
+        : [...testExecutionToolAuthorizationSnapshot.toolProjection],
+    },
+    loadedToolRefs: testExecutionLoadedToolRefs.map((ref) => ({ ...ref })),
     durationMs: 0,
     endedAt: 1,
     runs: [{ ...run, endedAt: 1, durationMs: 0, usageDelta: testExecutionUsage, settlement }],

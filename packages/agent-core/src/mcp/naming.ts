@@ -5,6 +5,11 @@ export const MCP_ALIAS_MAX_LENGTH = 64;
 export const MCP_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
 export const MCP_DOUBLE_UNDERSCORE = /__/;
 
+export interface ParsedMcpToolRegistryName {
+  readonly serverName: string;
+  readonly toolName: string;
+}
+
 /** Config server names keep the strict hard-cut schema contract. */
 export function validateMcpNameSegment(
   value: string,
@@ -50,6 +55,20 @@ export function toMcpToolRegistryName(
     throw new Error("MCP alias generation exceeded the provider name limit");
   }
   return alias;
+}
+
+/** Parse the stable MCP alias prefix used by test seams and diagnostics. */
+export function parseMcpToolRegistryName(
+  registryName: string,
+): ParsedMcpToolRegistryName | undefined {
+  if (!registryName.startsWith("mcp__")) return undefined;
+  const segments = registryName.slice("mcp__".length).split("__");
+  if (segments.length < 2 || segments[0]!.length === 0) return undefined;
+  const last = segments.at(-1)!;
+  const hasDigest = segments.length >= 3 && /^[a-f0-9]{20}$/.test(last);
+  const toolSegments = hasDigest ? segments.slice(1, -1) : segments.slice(1);
+  if (toolSegments.length === 0 || toolSegments.some((segment) => segment.length === 0)) return undefined;
+  return { serverName: segments[0]!, toolName: toolSegments.join("__") };
 }
 
 function sanitizeAliasSegment(value: string): string {

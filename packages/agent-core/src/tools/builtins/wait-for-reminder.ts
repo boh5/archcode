@@ -404,7 +404,7 @@ async function tryConsumeSatisfiedReminders(
 export const waitForReminderTool = defineTool({
   name: "wait_for_reminder",
   description: [
-    "Wait once for unconsumed on-demand terminal reminders already queued or arriving for specified background child Session IDs. Use it after launching all independent background children, not as a polling loop.",
+    "Wait once for delegated task completion by consuming unconsumed on-demand terminal reminders already queued or arriving for specified background child Session IDs. Use it after launching all independent background children, not as a polling loop.",
     "",
     "Example: `wait_for_reminder({\"session_ids\":[\"<session-a>\",\"<session-b>\"],\"condition\":\"all\",\"timeout_ms\":1800000})`. Use `any` when the first completed child unblocks work, `all` when every child is required, or `{\"count\":2}` for the first two distinct Sessions.",
     "",

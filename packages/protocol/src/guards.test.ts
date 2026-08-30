@@ -13,7 +13,7 @@ import {
   COMPRESSION_SUMMARY_SECTION_NAMES,
   type CompressionSummarySnapshot,
 } from "./compression";
-import type { SessionEventPayload } from "./types";
+import type { LoadedToolRef, SessionEventPayload } from "./types";
 
 function compressionSummary(currentObjective: string): CompressionSummarySnapshot {
   return {
@@ -44,6 +44,8 @@ const memoryPolicy = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const toolAuthorizationSnapshot = { extraTools: [], toolProjection: null };
+const loadedToolRefs: LoadedToolRef[] = [];
 const refMap = {
   messageRefsById: { message: "m0001" as const },
   messageIdsByRef: { m0001: "message" },
@@ -134,7 +136,17 @@ const finalizedResult = {
 };
 const validPayloads = [
   { type: "shutdown", reason: "restart" },
-  { type: "execution-start", executionId: "execution-1", binding, executionSkills: [], memoryPolicy, origin: "user_message", maxSteps: 50 },
+  {
+    type: "execution-start",
+    executionId: "execution-1",
+    binding,
+    executionSkills: [],
+    memoryPolicy,
+    toolAuthorizationSnapshot,
+    loadedToolRefs,
+    origin: "user_message",
+    maxSteps: 50,
+  },
   {
     type: "execution-suspended",
     executionId: "execution-1",
@@ -427,6 +439,8 @@ describe("protocol event guards", () => {
       binding,
       origin: "user_message",
       maxSteps: 50,
+      toolAuthorizationSnapshot,
+      loadedToolRefs,
     })).toBe(false);
     expect(validPayloads.every(isSessionEventPayload)).toBe(true);
     const goalReminderEvent = validPayloads.find((event) =>
@@ -665,6 +679,8 @@ describe("protocol event guards", () => {
         digest: "a".repeat(64),
         resolutionRoot: "/workspace/.worktrees/session",
       }],
+      toolAuthorizationSnapshot,
+      loadedToolRefs,
     } as const;
 
     expect(isSessionEventPayload(event)).toBe(true);
@@ -679,6 +695,50 @@ describe("protocol event guards", () => {
     expect(isSessionEventPayload({
       ...event,
       executionSkills: [{ ...event.executionSkills[0], digest: "not-a-sha256-digest" }],
+    })).toBe(false);
+  });
+
+  test("requires canonical authorization names, loaded refs, and digests", () => {
+    const event = {
+      ...validPayloads[1]!,
+      toolAuthorizationSnapshot: {
+        extraTools: ["bash", "grep"],
+        toolProjection: ["bash"],
+      },
+      loadedToolRefs: [{ name: "grep", descriptorDigest: "a".repeat(64) }],
+    };
+
+    expect(isSessionEventPayload(event)).toBe(true);
+    expect(isSessionEventPayload({
+      ...event,
+      toolAuthorizationSnapshot: { extraTools: ["grep", "bash"], toolProjection: null },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...event,
+      toolAuthorizationSnapshot: { extraTools: ["bash", "bash"], toolProjection: null },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...event,
+      toolAuthorizationSnapshot: { extraTools: ["bash"], toolProjection: ["grep", "bash"] },
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...event,
+      loadedToolRefs: [
+        ...event.loadedToolRefs,
+        { name: "grep", descriptorDigest: "b".repeat(64) },
+      ],
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...event,
+      loadedToolRefs: [{ name: "grep", descriptorDigest: "A".repeat(64) }],
+    })).toBe(false);
+    expect(isSessionEventPayload({
+      ...event,
+      toolAuthorizationSnapshot: {
+        extraTools: ["bash"],
+        toolProjection: null,
+        unexpected: true,
+      },
     })).toBe(false);
   });
 

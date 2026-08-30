@@ -19,6 +19,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "tool-contract:measure": "bun run --cwd packages/agent-core tool-contract:measure",
+    "tool-search:benchmark": "bun run --cwd packages/agent-core tool-search:benchmark",
     "prompt:live-eval": "bun run packages/agent-core/scripts/prompt-live-eval.ts"
   },
   "dependencies": {

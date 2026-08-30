@@ -21,6 +21,7 @@ import type { ProjectInfo } from "../projects/types";
 import { createRuntime } from "../runtime";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { createTestMcpRuntime } from "../testing/test-mcp-runtime";
+import { testExecutionEnd, testExecutionStart } from "../testing/test-execution-fixtures";
 import {
   RuntimeDataRequestError,
   RuntimeDataService,
@@ -111,6 +112,51 @@ describe("RuntimeDataService inspection", () => {
         expect(JSON.stringify(response)).not.toContain(SECRET);
       }
     }
+  });
+
+  test("accepts a legacy Session whose Executions predate tool authorization state", async () => {
+    const project = await createProject("legacy-execution-tool-state");
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const store = await manager.getOrLoad(SESSION_ID, project.workspaceRoot);
+    const executionId = "legacy-execution";
+    store.getState().append(testExecutionStart(executionId, "user_message"));
+    const startedAt = store.getState().executions[0]!.startedAt;
+    store.getState().append(testExecutionEnd(executionId, "completed", {
+      endedAt: startedAt,
+      runEndedAt: startedAt,
+      runSettlement: {
+        key: `run:${SESSION_ID}:${executionId}:0`,
+        goalInstanceId: null,
+      },
+      terminalSettlement: {
+        key: `terminal:${SESSION_ID}:${executionId}`,
+        goalInstanceId: null,
+      },
+    }));
+    await manager.flushSession(SESSION_ID, project.workspaceRoot);
+
+    const sessionPath = join(
+      projectRuntimePath(project.workspaceRoot),
+      "sessions",
+      SESSION_ID,
+      "session.json",
+    );
+    const persisted = JSON.parse(await readFile(sessionPath, "utf8")) as {
+      executions: Array<Record<string, unknown>>;
+    };
+    const execution = persisted.executions[0];
+    expect(execution).toBeDefined();
+    if (execution === undefined) return;
+    delete execution.toolAuthorizationSnapshot;
+    delete execution.loadedToolRefs;
+    await writeFile(sessionPath, JSON.stringify(persisted));
+    expect(execution).not.toHaveProperty("toolAuthorizationSnapshot");
+    expect(execution).not.toHaveProperty("loadedToolRefs");
+
+    registry.projects = [project];
+    const response = await service.inspect();
+
+    expect(response.projects[0]?.issues).toEqual([]);
   });
 
   test("isolates unreadable projects and preserves complete reports and stats for others", async () => {

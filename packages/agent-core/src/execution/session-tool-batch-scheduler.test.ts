@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
-import { silentLogger, type Logger } from "../logger";
+import { createInMemoryLogger, silentLogger, type Logger } from "../logger";
 import { sessionFileInternals } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionToolBatchCall } from "../store/types";
@@ -21,6 +21,11 @@ import { SkillService } from "../skills";
 import { createTestProjectContext } from "../tools/test-project-context";
 import { deferTestApprovalReviewer } from "../tools/test-approval-reviewer";
 import type { AnyToolDescriptor, RawToolResult, ToolCallLike, ToolExecutionContext } from "../tools/types";
+import { createAuditHook, type AuditEvent } from "../tools/hooks/audit";
+import {
+  TOOL_SEARCH_REDACTED_QUERY,
+  TOOL_SEARCH_SENSITIVE_QUERY_CODE,
+} from "../tools/builtins/tool-search";
 import { testExecutionStart } from "../testing/test-execution-fixtures";
 import { adaptMcpTool } from "../mcp/tool-adapter";
 import {
@@ -232,6 +237,27 @@ function eventResults(harness: Awaited<ReturnType<typeof createHarness>>) {
   return harness.store.getState().events.filter((event) => event.payload.type === "tool-result");
 }
 
+async function createVisibleBatch(
+  harness: Awaited<ReturnType<typeof createHarness>>,
+  toolCalls: readonly ToolCallLike[],
+  stepId: string,
+  step: number,
+  descriptors?: readonly AnyToolDescriptor[],
+  catalogDigest?: string,
+) {
+  const visibleDescriptors = descriptors ?? toolCalls.flatMap((call) => {
+    const descriptor = harness.registry.get(call.toolName);
+    return descriptor === undefined ? [] : [descriptor];
+  });
+  return await harness.scheduler.createBatch(
+    toolCalls,
+    stepId,
+    step,
+    visibleDescriptors,
+    catalogDigest,
+  );
+}
+
 async function markRunning(
   harness: Awaited<ReturnType<typeof createHarness>>,
   call: SessionToolBatchCall,
@@ -274,6 +300,143 @@ function deferredResult() {
 }
 
 describe("SessionToolBatchScheduler output ownership", () => {
+  test("settles a hidden provider-forged tool_search as TOOL_NOT_ALLOWED without inventing a digest", async () => {
+    const harness = await createHarness();
+    const execute = mock(async () => createTextToolResult("must not run"));
+    harness.registry.register(defineTool({
+      name: "tool_search",
+      description: "search authorized deferred tools",
+      inputSchema: z.object({ query: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute,
+    }));
+
+    const batch = await createVisibleBatch(harness, [{
+      toolCallId: "forged-search",
+      toolName: "tool_search",
+      input: { query: "hidden capability" },
+    }], "step-0", 0, []);
+    expect(batch.allowedTools).not.toContain("tool_search");
+    expect(batch.calls[0]?.catalogDigest).toBeUndefined();
+
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(harness.scheduler.activeBatch()?.calls[0]).toMatchObject({
+      state: "failed",
+      result: { isError: true, details: { error: { code: "TOOL_NOT_ALLOWED" } } },
+    });
+  });
+
+  test("rejects a secret-like tool_search query before durable batch, audit, or execution", async () => {
+    const { logger, entries } = createInMemoryLogger();
+    const harness = await createHarness(logger);
+    const audits: AuditEvent[] = [];
+    harness.registry.globalHooks.finalized.push(createAuditHook({ sink: (event) => { audits.push(event); } }));
+    const execute = mock(async () => createTextToolResult("must not run"));
+    const descriptor = defineTool({
+      name: "tool_search",
+      description: "search authorized deferred tools",
+      inputSchema: z.object({ query: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute,
+    });
+    harness.registry.register(descriptor);
+    const secret = "api_key=sk_test_1234567890abcdef";
+    const batch = await createVisibleBatch(harness, [{
+      toolCallId: "sensitive-search",
+      toolName: "tool_search",
+      input: { query: secret },
+    }], "step-0", 0, [descriptor], "a".repeat(64));
+
+    expect(JSON.stringify(batch)).not.toContain(secret);
+    expect(batch.calls[0]?.input).toEqual({ query: TOOL_SEARCH_REDACTED_QUERY });
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(harness.store.getState().toolBatches[0]?.calls[0]).toMatchObject({
+      state: "failed",
+      result: { isError: true, details: { error: { code: TOOL_SEARCH_SENSITIVE_QUERY_CODE } } },
+    });
+    expect(audits[0]?.input).toEqual({ query: TOOL_SEARCH_REDACTED_QUERY });
+    expect(JSON.stringify(harness.store.getState())).not.toContain(secret);
+    expect(JSON.stringify(audits)).not.toContain(secret);
+    expect(JSON.stringify(entries)).not.toContain(secret);
+  });
+
+  test("atomically settles tool_search and persists loaded refs without exposing its sidecar", async () => {
+    const harness = await createHarness();
+    const descriptorDigest = "b".repeat(64);
+    const catalogDigest = "a".repeat(64);
+    const descriptor = defineTool({
+      name: "tool_search",
+      description: "search authorized deferred tools",
+      inputSchema: z.object({ query: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => ({
+        ...createTextToolResult("loaded"),
+        sidecar: { loadedToolRefs: [{ name: "ast_grep_search", descriptorDigest }] },
+      }),
+    });
+    harness.registry.register(descriptor);
+
+    const batch = await createVisibleBatch(harness, [{
+      toolCallId: "search-1",
+      toolName: "tool_search",
+      input: { query: "syntax tree search" },
+    }], "step-0", 0, [descriptor], catalogDigest);
+    expect(batch.calls[0]).toMatchObject({ toolName: "tool_search", catalogDigest });
+    expect(await harness.scheduler.advance()).toMatchObject({ status: "ready_for_continuation" });
+
+    expect(harness.store.getState().executions[0]?.loadedToolRefs).toEqual([{
+      name: "ast_grep_search",
+      descriptorDigest,
+    }]);
+    expect(JSON.stringify(eventResults(harness))).not.toContain("loadedToolRefs");
+  });
+
+  test("rolls back both search result and loaded refs when the durable mutation fails", async () => {
+    const harness = await createHarness();
+    const descriptorDigest = "d".repeat(64);
+    const descriptor = defineTool({
+      name: "tool_search",
+      description: "search authorized deferred tools",
+      inputSchema: z.object({ query: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => ({
+        ...createTextToolResult("loaded"),
+        sidecar: { loadedToolRefs: [{ name: "web_fetch", descriptorDigest }] },
+      }),
+    });
+    harness.registry.register(descriptor);
+    await createVisibleBatch(harness, [{
+      toolCallId: "search-failure",
+      toolName: "tool_search",
+      input: { query: "fetch web page" },
+    }], "step-0", 0, [descriptor], "c".repeat(64));
+
+    const originalSave = sessionFileInternals.saveSessionTranscript;
+    const failure = new Error("simulated search settlement failure");
+    sessionFileInternals.saveSessionTranscript = async (state, workspaceRoot) => {
+      if (state.executions[0]?.loadedToolRefs.length) throw failure;
+      await originalSave(state, workspaceRoot);
+    };
+    try {
+      await expect(harness.scheduler.advance()).rejects.toBe(failure);
+      expect(harness.store.getState().executions[0]?.loadedToolRefs).toEqual([]);
+      expect(harness.scheduler.activeBatch()?.calls[0]).toMatchObject({
+        toolCallId: "search-failure",
+        state: "running",
+      });
+      expect(harness.scheduler.activeBatch()?.calls[0]?.result).toBeUndefined();
+      expect(eventResults(harness)).toEqual([]);
+    } finally {
+      sessionFileInternals.saveSessionTranscript = originalSave;
+    }
+  });
+
   test("executes the exact run-local MCP descriptor even when Registry has a same-name replacement", async () => {
     const harness = await createHarness();
     const resolved = makeMcpDescriptor("mcp__docs__lookup");
@@ -282,7 +445,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
     });
     harness.registry.register(replacement.descriptor);
 
-    const batch = await harness.scheduler.createBatch([
+    const batch = await createVisibleBatch(harness, [
       { toolCallId: "mcp-resolved", toolName: resolved.descriptor.name, input: {} },
     ], "step-0", 0, [resolved.descriptor]);
 
@@ -301,7 +464,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       new SecretRedactionPolicy([]),
     );
 
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "mcp-retired", toolName: retired.name, input: {} },
     ], "step-0", 0, [retired]);
 
@@ -312,7 +475,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("settles an MCP call with no run-local descriptor as TOOL_MCP_INTERRUPTED", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "mcp-missing", toolName: "mcp__docs__missing", input: {} },
     ], "step-0", 0);
 
@@ -324,7 +487,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
   test("finalizes queued MCP calls as interrupted behind an ask_user blocker", async () => {
     const harness = await createHarness();
     const mcp = makeMcpDescriptor("mcp__docs__queued-ask");
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       {
         toolCallId: "ask-before-mcp",
         toolName: "ask_user",
@@ -346,7 +509,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
   test("finalizes queued MCP calls as interrupted behind a permission blocker", async () => {
     const harness = await createHarness();
     const mcp = makeMcpDescriptor("mcp__docs__queued-permission");
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "permission-before-mcp", toolName: "permission_serial_tool", input: {} },
       { toolCallId: "mcp-after-permission", toolName: mcp.descriptor.name, input: {} },
     ], "step-0", 0, [harness.registry.get("permission_serial_tool")!, mcp.descriptor]);
@@ -364,7 +527,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
   test("finalizes queued MCP calls as interrupted when a synchronous child suspends the batch", async () => {
     const harness = await createHarness();
     const mcp = makeMcpDescriptor("mcp__docs__queued-child");
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "delegate-before-mcp", toolName: "delegate", input: {} },
       { toolCallId: "mcp-after-child", toolName: mcp.descriptor.name, input: {} },
     ], "step-0", 0, [harness.registry.get("delegate")!, mcp.descriptor]);
@@ -384,7 +547,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
     const effectful = makeMcpDescriptor("mcp__docs__effectful-running", { readOnly: false });
     const readOnly = makeMcpDescriptor("mcp__docs__readonly-running");
     const queued = makeMcpDescriptor("mcp__docs__queued");
-    const batch = await harness.scheduler.createBatch([
+    const batch = await createVisibleBatch(harness, [
       { toolCallId: "mcp-effectful-running", toolName: effectful.descriptor.name, input: {} },
       { toolCallId: "mcp-readonly-running", toolName: readOnly.descriptor.name, input: {} },
       { toolCallId: "mcp-queued", toolName: queued.descriptor.name, input: {} },
@@ -415,7 +578,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
   test("startup recovery preserves a previously checkpointed manual MCP outcome", async () => {
     const harness = await createHarness();
     const effectful = makeMcpDescriptor("mcp__docs__effectful-manual", { readOnly: false });
-    const batch = await harness.scheduler.createBatch([
+    const batch = await createVisibleBatch(harness, [
       { toolCallId: "mcp-effectful-manual", toolName: effectful.descriptor.name, input: {} },
     ], "step-0", 0, [effectful.descriptor]);
     await harness.storeManager.updateToolBatches(harness.sessionId, TMP_DIR, (batches) => batches.map((candidate) =>
@@ -460,7 +623,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       readOnly: false,
       result: { ...raw, details: { ...raw.details, unknownResult: true } },
     });
-    const batch = await harness.scheduler.createBatch([
+    const batch = await createVisibleBatch(harness, [
       { toolCallId: "mcp-unknown", toolName: mcp.descriptor.name, input: {} },
     ], "step-0", 0, [mcp.descriptor]);
 
@@ -489,7 +652,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
   test("response-first effectful MCP settlement remains the single durable result", async () => {
     const harness = await createHarness();
     const mcp = makeMcpDescriptor("mcp__write__response-first", { readOnly: false });
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "mcp-response-first", toolName: mcp.descriptor.name, input: {} },
     ], "step-0", 0, [mcp.descriptor]);
 
@@ -528,7 +691,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       outputPolicy: { kind: "inline", previewDirection: "head" },
       execute,
     });
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "mcp-cancellation-first", toolName: descriptor.name, input: {} },
     ], "step-0", 0, [descriptor]);
     const advancing = harness.scheduler.advance();
@@ -581,7 +744,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       outputPolicy: { kind: "inline", previewDirection: "head" },
       execute,
     });
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "mcp-read-late", toolName: descriptor.name, input: {} },
     ], "step-0", 0, [descriptor]);
     const advancing = harness.scheduler.advance();
@@ -601,7 +764,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("persists and appends only nested FinalizedToolResult", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([
+    const batch = await createVisibleBatch(harness, [
       { toolCallId: "read-1", toolName: "read_tool", input: { value: "hello" } },
     ], "step-0", 0);
     const queuedCheckpointAt = batch.calls[0]!.checkpointAt;
@@ -617,7 +780,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("does not append or publish a tool result when its durable checkpoint fails", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([
+    const batch = await createVisibleBatch(harness, [
       {
         toolCallId: "read-checkpoint-failure",
         toolName: "read_tool",
@@ -676,7 +839,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("blocked calls emit zero tool results, then answers resume the same descriptor", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{
+    await createVisibleBatch(harness, [{
       toolCallId: "ask-1",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
@@ -702,7 +865,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("missing HITL link repair preserves the blocked call checkpoint", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{
+    const batch = await createVisibleBatch(harness, [{
       toolCallId: "ask-repair",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
@@ -741,7 +904,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("accepted HITL redelivery stays idempotent after its batch is archived", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{
+    await createVisibleBatch(harness, [{
       toolCallId: "ask-archived",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
@@ -785,7 +948,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("redelivery recovers an answered read-only call left running without duplicating its result", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{
+    await createVisibleBatch(harness, [{
       toolCallId: "ask-recovery",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
@@ -825,7 +988,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("defers approved parallel permission until the final blocker resumes the same Execution", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       {
         toolCallId: "permission-1",
         toolName: "permission_tool",
@@ -875,7 +1038,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("accepts reverse-order HITL answers exactly once before resuming the batch", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "permission-first", toolName: "permission_tool", input: {} },
       { toolCallId: "permission-second", toolName: "permission_tool", input: {} },
     ], "step-0", 0);
@@ -952,7 +1115,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("requires the exact HITL id and requestKey pair", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{
+    await createVisibleBatch(harness, [{
       toolCallId: "ask-1",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
@@ -972,7 +1135,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("cancel is finalized only by Registry.resumeBlocked", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{
+    await createVisibleBatch(harness, [{
       toolCallId: "ask-1",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
@@ -995,7 +1158,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("response-first HITL cancellation claims the answered call and settles it once", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{
+    await createVisibleBatch(harness, [{
       toolCallId: "ask-response-first",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
@@ -1034,7 +1197,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       child() { return logger; },
     };
     const harness = await createHarness(logger);
-    await harness.scheduler.createBatch([{
+    await createVisibleBatch(harness, [{
       toolCallId: "ask-cancellation-first",
       toolName: "ask_user",
       input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
@@ -1066,7 +1229,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("permission approval resumes the exact call and performs the effect once", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "permission-1", toolName: "permission_tool", input: {} }], "step-0", 0);
+    await createVisibleBatch(harness, [{ toolCallId: "permission-1", toolName: "permission_tool", input: {} }], "step-0", 0);
     await harness.scheduler.advance();
     expect(harness.permissionExecutions()).toBe(0);
     expect(eventResults(harness)).toHaveLength(0);
@@ -1105,7 +1268,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
         return createTextToolResult("terminal child completed");
       },
     });
-    await harness.scheduler.createBatch([{
+    await createVisibleBatch(harness, [{
       toolCallId: "terminal-child-call",
       toolName: descriptor.name,
       input: {},
@@ -1123,7 +1286,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
   for (const executionStatus of ["completed", "failed"] as const) {
     test(`settles a ${executionStatus} child dependency once and clears correlation from the terminal call`, async () => {
       const harness = await createHarness();
-      const batch = await harness.scheduler.createBatch([{
+      const batch = await createVisibleBatch(harness, [{
         toolCallId: "child-1",
         toolName: "delegate",
         input: {},
@@ -1172,7 +1335,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("retries a read-only running call once after restart", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
+    const batch = await createVisibleBatch(harness, [{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
     await markRunning(harness, batch.calls[0]!, 1);
     expect(await harness.scheduler.recoverInterruptedBatch()).toMatchObject({ status: "ready_for_continuation" });
     expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({ state: "completed", attempt: 2 });
@@ -1213,7 +1376,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "skill-list-target",
       toolName: "skill_list",
       input: { agent_type: "explore" },
-    }], "step-0", 0);
+    }], "step-0", 0, [skillListTool]);
     await markRunning(harness, batch.calls[0]!, 1);
 
     const restartedScheduler = new SessionToolBatchScheduler(schedulerOptions);
@@ -1271,7 +1434,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
       toolCallId: "skill-list-revoked-target",
       toolName: "skill_list",
       input: { agent_type: "explore" },
-    }], "step-0", 0);
+    }], "step-0", 0, [skillListTool]);
     await markRunning(harness, batch.calls[0]!, 1);
 
     const restartedScheduler = new SessionToolBatchScheduler({
@@ -1297,7 +1460,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("finalizes an exhausted read-only recovery through the Registry system lane", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
+    const batch = await createVisibleBatch(harness, [{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
     await markRunning(harness, batch.calls[0]!, 2);
     await harness.scheduler.recoverInterruptedBatch();
     expect(harness.scheduler.activeBatch()!.calls[0]).toMatchObject({
@@ -1310,7 +1473,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("effectful running recovery becomes strict manual inspection without a fabricated result", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], "step-0", 0);
+    const batch = await createVisibleBatch(harness, [{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], "step-0", 0);
     await markRunning(harness, batch.calls[0]!, 1);
     const runningCheckpointAt = harness.scheduler.activeBatch()!.calls[0]!.checkpointAt;
     expect(await harness.scheduler.recoverInterruptedBatch()).toEqual({
@@ -1330,7 +1493,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("control-boundary skipped calls are finalized through the system lane", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "cwd-1", toolName: "cwd_tool", input: {} },
       { toolCallId: "read-2", toolName: "read_tool", input: {} },
     ], "step-0", 0);
@@ -1341,7 +1504,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("execution completion archives the batch and rejects every later call", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([
+    await createVisibleBatch(harness, [
       { toolCallId: "complete-1", toolName: "completion_tool", input: {} },
       { toolCallId: "effect-2", toolName: "effect_tool", input: {} },
     ], "step-0", 0);
@@ -1364,7 +1527,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("external cancellation uses an injected Registry system lane", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
+    await createVisibleBatch(harness, [{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
     const result = await cancelSessionToolBatch({
       storeManager: harness.storeManager,
       hitlQueue: harness.hitlQueue,
@@ -1385,7 +1548,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("external cancellation settles an attempted effectful call as an unknown result", async () => {
     const harness = await createHarness();
-    const batch = await harness.scheduler.createBatch([{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], "step-0", 0);
+    const batch = await createVisibleBatch(harness, [{ toolCallId: "effect-1", toolName: "effect_tool", input: {} }], "step-0", 0);
     await markRunning(harness, batch.calls[0]!, 1);
 
     const result = await cancelSessionToolBatch({
@@ -1430,7 +1593,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("external cancellation clears child dependency correlation from the failed call", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "child-1", toolName: "delegate", input: {} }], "step-0", 0);
+    await createVisibleBatch(harness, [{ toolCallId: "child-1", toolName: "delegate", input: {} }], "step-0", 0);
     expect(await harness.scheduler.advance()).toMatchObject({ status: "waiting_for_child" });
 
     await cancelSessionToolBatch({
@@ -1456,7 +1619,7 @@ describe("SessionToolBatchScheduler output ownership", () => {
 
   test("settleQueuedCall rejects non-text system drafts via the bounded system lane", async () => {
     const harness = await createHarness();
-    await harness.scheduler.createBatch([{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
+    await createVisibleBatch(harness, [{ toolCallId: "read-1", toolName: "read_tool", input: {} }], "step-0", 0);
     await harness.scheduler.settleQueuedCall("read-1", {
       ...createToolErrorResult({ kind: "execution", message: "bad" }),
       draft: { kind: "source", text: "bad" },

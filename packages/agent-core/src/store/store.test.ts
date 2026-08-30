@@ -9,7 +9,11 @@ import { silentLogger } from "../logger";
 import { __setSessionsDirForTest } from "./sessions-dir";
 import { COMPRESSION_SUMMARY_SECTION_NAMES } from "../compression";
 import { sessionFileInternals } from "./helpers";
-import { testExecutionMemoryPolicy } from "../testing/test-execution-fixtures";
+import {
+  testExecutionLoadedToolRefs,
+  testExecutionMemoryPolicy,
+  testExecutionToolAuthorizationSnapshot,
+} from "../testing/test-execution-fixtures";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "store", crypto.randomUUID());
 const sessionIds = new Set<string>();
@@ -49,6 +53,8 @@ function executionStart(executionId: string = crypto.randomUUID()) {
     origin: "user_message" as const,
     maxSteps: 50,
     executionSkills: [],
+    toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+    loadedToolRefs: testExecutionLoadedToolRefs,
   };
 }
 

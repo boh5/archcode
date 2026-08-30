@@ -8,8 +8,10 @@ import { SessionStoreManager } from "../store/session-store-manager";
 import { SessionInputConflictError, SessionInputService } from "./service";
 import {
   testExecutionEnd,
+  testExecutionLoadedToolRefs,
   testExecutionMemoryPolicy,
   testExecutionStart,
+  testExecutionToolAuthorizationSnapshot,
 } from "../testing/test-execution-fixtures";
 
 const WORKSPACE = join(import.meta.dir, "__test_tmp__", crypto.randomUUID());
@@ -30,6 +32,8 @@ const executionStart = (executionId: string, origin: "user_message" | "tool_call
   origin,
   maxSteps: 50,
   executionSkills: [],
+  toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+  loadedToolRefs: testExecutionLoadedToolRefs,
 });
 const ATTACHMENT_A: AttachmentDescriptor = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -285,6 +289,8 @@ describe("SessionInputService", () => {
       origin: "user_message",
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
     });
     const batch = await service.beginQueueExecution({
       sessionId: ROOT_SESSION_ID,

@@ -427,13 +427,12 @@ const registryFixture = createTestToolRegistryFixture();
 const registry = registryFixture.registry;
 registerBuiltinTools(registry, silentLogger, { github: { enabled: false } });
 afterAll(() => registryFixture.dispose());
-const resolved = registry.resolveForAgent(leadAgentDefinition.tools.tools);
+const resolved = registry.resolveForAgent(leadAgentDefinition.tools.authorized);
 const aiTools = resolved.toAITools();
 
 describe("Lead model-visible Tool Contract", () => {
-  it("preserves the exact 36-tool Lead definition order", () => {
-    const expected = [...leadAgentDefinition.tools.tools];
-    expect(expected).toHaveLength(36);
+  it("preserves the exact Lead authorized definition order", () => {
+    const expected = [...leadAgentDefinition.tools.authorized];
     expect(resolved.descriptors.map((descriptor) => descriptor.name)).toEqual(expected);
     expect(Object.keys(aiTools)).toEqual(expected);
   });

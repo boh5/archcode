@@ -105,6 +105,13 @@ export function reduceStreamEvent(
           executionSkills: event.executionSkills.map((skill) => ({ ...skill })),
           ...(event.activeTimeoutMs === undefined ? {} : { activeTimeoutMs: event.activeTimeoutMs }),
           memoryPolicy: event.memoryPolicy,
+          toolAuthorizationSnapshot: {
+            extraTools: [...event.toolAuthorizationSnapshot.extraTools],
+            toolProjection: event.toolAuthorizationSnapshot.toolProjection === null
+              ? null
+              : [...event.toolAuthorizationSnapshot.toolProjection],
+          },
+          loadedToolRefs: event.loadedToolRefs.map((ref) => ({ ...ref })),
           durationMs: 0,
           runs: [{ ordinal: 0, startedAt: timestamp, binding: event.binding }],
         },

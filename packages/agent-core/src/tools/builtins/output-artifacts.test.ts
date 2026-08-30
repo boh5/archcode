@@ -24,6 +24,7 @@ describe("tool output recovery descriptors", () => {
     let readInput: Parameters<ToolOutputAccessService["read"]>[0] | undefined;
     const service = {
       countRecoverable: mock(async () => 1),
+      countRecoverableForExecution: mock(async () => 1),
       read: mock(async (input: Parameters<ToolOutputAccessService["read"]>[0]) => {
         readInput = input;
         return {
@@ -51,6 +52,7 @@ describe("tool output recovery descriptors", () => {
   test("output_search supports family search and preserves ref-bearing matches", async () => {
     const service = {
       countRecoverable: mock(async () => 1),
+      countRecoverableForExecution: mock(async () => 1),
       read: mock(async () => { throw new Error("unused"); }),
       search: mock(async () => ({
         matches: [{ outputRef: "family-ref" as any, segment: "full" as const, canonicalStart: 10, canonicalEnd: 13, snippet: "hit" }],
@@ -71,6 +73,7 @@ describe("tool output recovery descriptors", () => {
 
     const service = {
       countRecoverable: mock(async () => 1),
+      countRecoverableForExecution: mock(async () => 1),
       read: mock(async () => { throw new ToolOutputError("TOOL_OUTPUT_EXPIRED"); }),
       search: mock(async () => { throw new Error("unused"); }),
     } satisfies ToolOutputAccessService;
@@ -81,6 +84,7 @@ describe("tool output recovery descriptors", () => {
   test("makes partial gaps and empty partial searches explicit", async () => {
     const service = {
       countRecoverable: mock(async () => 1),
+      countRecoverableForExecution: mock(async () => 1),
       read: mock(async () => ({
         outputRef: "partial-ref" as any,
         completeness: "partial" as const,

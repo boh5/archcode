@@ -102,6 +102,7 @@ export {
   type McpStatusListener,
   type McpTestResult,
   type McpToolSnapshot,
+  type McpToolSnapshotEntry,
 } from "./mcp/index";
 
 export {

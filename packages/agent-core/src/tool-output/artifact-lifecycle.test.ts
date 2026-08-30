@@ -44,6 +44,7 @@ function owner(
     projectIdentity: identity("project-a"),
     rootSessionId,
     producerSessionId,
+    executionId: `execution-${producerSessionId}`,
   };
 }
 
@@ -191,6 +192,7 @@ describe("Tool Output AC-05 lifecycle acceptance", () => {
           projectIdentity: identityBefore,
           rootSessionId: session.sessionId,
           producerSessionId: session.sessionId,
+          executionId: "execution-retained",
         },
         canonical: "retained artifact body",
       });

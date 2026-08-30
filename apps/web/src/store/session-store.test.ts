@@ -5,9 +5,11 @@ import {
   type CompressionStateSnapshot,
   type CompressionSummarySnapshot,
   type GlobalSessionEventEnvelope,
+  type LoadedToolRef,
   type SessionGoal,
   type SessionEventPayload,
   type SessionMessage,
+  type ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import {
   beginSessionSnapshotRecovery,
@@ -66,6 +68,11 @@ const memoryPolicy = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const toolAuthorizationSnapshot: ToolAuthorizationSnapshot = {
+  extraTools: [],
+  toolProjection: null,
+};
+const loadedToolRefs: LoadedToolRef[] = [];
 const executionUsage = {
   inputTokens: 0,
   outputTokens: 0,
@@ -227,6 +234,8 @@ describe("web session store registry", () => {
         origin: "user_message",
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
       }),
       sessionId: "model-state",
     });
@@ -271,6 +280,8 @@ describe("web session store registry", () => {
         origin: "user_message",
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
       }),
       sessionId: "resumed-model-state",
     });
@@ -484,6 +495,8 @@ describe("applyRemoteEnvelope", () => {
       origin: "user_message",
       maxSteps: 10,
       executionSkills: [],
+      toolAuthorizationSnapshot,
+      loadedToolRefs,
     }));
     store.getState().applyRemoteEnvelope(event(1, {
       type: "step-start",
@@ -539,6 +552,8 @@ describe("applyRemoteEnvelope", () => {
       origin: "user_message" as const,
       maxSteps: 10,
       executionSkills: [],
+      toolAuthorizationSnapshot,
+      loadedToolRefs,
     };
 
     expect(store.getState().applyRemoteEnvelope({
@@ -567,6 +582,8 @@ describe("applyRemoteEnvelope", () => {
       origin: "user_message" as const,
       maxSteps: 10,
       executionSkills: [],
+      toolAuthorizationSnapshot,
+      loadedToolRefs,
     };
     store.getState().applyRemoteEnvelope({
       ...event(0, start),
@@ -964,6 +981,8 @@ describe("authoritative snapshot", () => {
         origin: "user_message",
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
       }),
       sessionId: "stale-guard",
     });
@@ -993,6 +1012,8 @@ describe("authoritative snapshot", () => {
         origin: "user_message",
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
       }),
       sessionId: "stale-guard",
     });
@@ -1074,6 +1095,8 @@ describe("authoritative snapshot", () => {
         origin: "user_message",
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
       }),
       sessionId: "stale-active-binding",
     });
@@ -1096,6 +1119,8 @@ describe("authoritative snapshot", () => {
         type: "execution-start",
         memoryPolicy,
         executionId: "run-1",
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
       } as SessionEventPayload),
       sessionId: "fresh-snapshot",
     });
@@ -1143,6 +1168,8 @@ describe("authoritative snapshot", () => {
         {
           id: "recorded-running-execution",
           memoryPolicy,
+          toolAuthorizationSnapshot,
+          loadedToolRefs,
           startedAt: 1,
           status: "running",
           origin: "user_message",
@@ -1201,6 +1228,8 @@ describe("authoritative snapshot", () => {
         {
           id: executionId,
           memoryPolicy,
+          toolAuthorizationSnapshot,
+          loadedToolRefs,
           startedAt: 1,
           status: "running",
           origin: "user_message",
@@ -1280,6 +1309,8 @@ describe("authoritative snapshot", () => {
         {
           id: executionId,
           memoryPolicy,
+          toolAuthorizationSnapshot,
+          loadedToolRefs,
           startedAt: 1,
           status: "running",
           origin: "user_message",
@@ -1353,6 +1384,8 @@ describe("authoritative snapshot", () => {
         {
           id: executionId,
           memoryPolicy,
+          toolAuthorizationSnapshot,
+          loadedToolRefs,
           startedAt: 1,
           status: "running",
           origin: "user_message",
@@ -1449,6 +1482,8 @@ describe("authoritative snapshot", () => {
         {
           id: executionId,
           memoryPolicy,
+          toolAuthorizationSnapshot,
+          loadedToolRefs,
           startedAt: 2,
           status: "running",
           origin: "user_message",
@@ -1491,6 +1526,8 @@ describe("authoritative snapshot", () => {
         type: "execution-start",
         memoryPolicy,
         executionId: "run-1",
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
       } as SessionEventPayload),
       sessionId: "stale-metadata",
     });

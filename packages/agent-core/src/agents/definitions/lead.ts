@@ -5,7 +5,9 @@ import {
   SKILL_ACCESS_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
+import { defineAgentDefinition } from "../tool-filter";
 import { leadRoleContract } from "./role-contracts";
+import { TOOL_TOOL_SEARCH } from "@archcode/protocol";
 import {
   TOOL_ASK_USER,
   TOOL_AUTOMATION_CREATE,
@@ -14,6 +16,7 @@ import {
   TOOL_BASH,
   TOOL_COMPRESS,
   TOOL_CREATE_GOAL,
+  TOOL_DELEGATE,
   TOOL_FILE_EDIT,
   TOOL_FILE_READ,
   TOOL_PDF_READ,
@@ -36,13 +39,13 @@ import {
   TOOL_WEB_FETCH,
 } from "../../tools/names";
 
-export const leadAgentDefinition = {
+export const leadAgentDefinition = defineAgentDefinition({
   name: "lead",
   displayName: "Lead",
   profiles: ["principal"],
   roleContract: leadRoleContract,
   tools: {
-    tools: [
+    authorized: [
       TOOL_FILE_READ,
       TOOL_PDF_READ,
       TOOL_FILE_WRITE,
@@ -71,6 +74,21 @@ export const leadAgentDefinition = {
       TOOL_GET_GOAL,
       TOOL_UPDATE_GOAL,
       TOOL_AUTOMATION_CREATE,
+      ...SKILL_ACCESS_TOOLS,
+      TOOL_TOOL_SEARCH,
+    ],
+    core: [
+      TOOL_FILE_READ,
+      TOOL_FILE_WRITE,
+      TOOL_FILE_EDIT,
+      TOOL_GREP,
+      TOOL_GLOB,
+      TOOL_GIT_STATUS,
+      TOOL_GIT_DIFF,
+      TOOL_BASH,
+      TOOL_TODO_WRITE,
+      TOOL_ASK_USER,
+      TOOL_DELEGATE,
       ...SKILL_ACCESS_TOOLS,
     ],
     delegateTargets: ["analyst", "build", "explore", "librarian"],
@@ -103,4 +121,4 @@ export const leadAgentDefinition = {
     "research-docs",
     "automation-create",
   ],
-} as const satisfies AgentDefinition;
+} as const satisfies AgentDefinition);

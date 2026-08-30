@@ -65,6 +65,7 @@ export class ToolOutputFinalizer {
           projectIdentity: await this.#projectIdentity(context.projectContext.project.workspaceRoot),
           rootSessionId: state.rootSessionId,
           producerSessionId: state.sessionId,
+          executionId: context.executionId,
         },
         previewDirection: descriptor.outputPolicy.previewDirection,
       },

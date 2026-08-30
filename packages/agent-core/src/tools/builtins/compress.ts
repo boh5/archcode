@@ -46,7 +46,7 @@ export type CompressInput = z.infer<typeof CompressInputSchema>;
 export const compressTool = defineTool({
   name: TOOL_COMPRESS,
   description:
-    "Compresses a visible transcript range by projection refs. Previously compressed blocks inside the range are materialized into the new summary before commit, while canonical transcript text remains unchanged.",
+    "Reduce conversation context by compacting an earlier visible model history range through projection refs. Previously compressed blocks inside the range are materialized into the new summary before commit, while canonical transcript text remains unchanged.",
   inputSchema: CompressInputSchema,
   traits: COMPRESS_TOOL_TRAITS,
   outputPolicy: { kind: "inline", previewDirection: "head" },

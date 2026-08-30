@@ -248,7 +248,8 @@ function isOwner(value: unknown): value is ArtifactOwner {
     /^[a-f0-9]{64}$/.test(value.projectIdentity) &&
     isBoundedIdentifier(value.rootSessionId) &&
     isBoundedIdentifier(value.producerSessionId) &&
-    Object.keys(value).length === 3
+    isBoundedIdentifier(value.executionId) &&
+    Object.keys(value).length === 4
   );
 }
 
@@ -284,7 +285,7 @@ function isSegment(value: unknown): value is ArtifactSegmentMetadata {
 function parseMetadata(value: unknown): ArtifactMetadata | undefined {
   if (!isPlainObject(value) || Object.keys(value).length !== 12) return undefined;
   if (
-    value.version !== 1 ||
+    value.version !== 2 ||
     !isOutputRef(value.outputRef) ||
     !isOwner(value.owner) ||
     !Number.isSafeInteger(value.createdAt) ||
@@ -354,7 +355,7 @@ function parseMetadata(value: unknown): ArtifactMetadata | undefined {
 function parseTombstone(value: unknown): ArtifactTombstone | undefined {
   if (!isPlainObject(value) || Object.keys(value).length !== 6) return undefined;
   if (
-    value.version !== 1 ||
+    value.version !== 2 ||
     !isOutputRef(value.outputRef) ||
     !isOwner(value.owner) ||
     !Number.isSafeInteger(value.deletedAt) ||
@@ -552,7 +553,7 @@ export class ToolOutputArtifactStore {
             canonical.bytes.subarray(segments[0]!.bytes.byteLength, segments.at(-1)!.start),
           );
       const metadata: ArtifactMetadata = {
-        version: 1,
+        version: 2,
         outputRef,
         owner: input.owner,
         createdAt,
@@ -1094,6 +1095,26 @@ export class ToolOutputArtifactStore {
     });
   }
 
+  async countRecoverableForExecution(
+    scope: ArtifactAuthorizationScope,
+    executionId: string,
+  ): Promise<number> {
+    await this.assertReady();
+    assertScope(scope);
+    if (!isBoundedIdentifier(executionId)) throw new ToolOutputError("TOOL_OUTPUT_POLICY_VIOLATION");
+    return this.mutex.withLock(async () => {
+      await this.cleanupLocked();
+      let count = 0;
+      for (const entry of this.artifacts.values()) {
+        if (
+          ownersMatch(entry.metadata.owner, scope)
+          && entry.metadata.owner.executionId === executionId
+        ) count += 1;
+      }
+      return count;
+    });
+  }
+
   async cleanup(): Promise<void> {
     await this.assertReady();
     await this.mutex.withLock(async () => {
@@ -1171,7 +1192,7 @@ export class ToolOutputArtifactStore {
       const outputRef = await this.allocateOutputRef();
       const createdAt = this.now();
       const metadata: ArtifactMetadata = {
-        version: 1,
+        version: 2,
         outputRef,
         owner: draft.owner,
         createdAt,
@@ -1642,7 +1663,7 @@ export class ToolOutputArtifactStore {
     if (reason === undefined) return;
     const deletedAt = this.now();
     const tombstone: ArtifactTombstone = {
-      version: 1,
+      version: 2,
       outputRef,
       owner: entry.metadata.owner,
       deletedAt,

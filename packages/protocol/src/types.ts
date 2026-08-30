@@ -20,6 +20,18 @@ export interface JsonObject {
   readonly [key: string]: JsonValue;
 }
 
+/** The Execution-owned tool authorization inputs used to rebuild its catalog. */
+export interface ToolAuthorizationSnapshot {
+  extraTools: string[];
+  toolProjection: string[] | null;
+}
+
+/** Identity of one tool contract loaded into an Execution's model projection. */
+export interface LoadedToolRef {
+  name: string;
+  descriptorDigest: string;
+}
+
 export interface ExecutionStartEvent {
   type: "execution-start";
   executionId: string;
@@ -29,6 +41,8 @@ export interface ExecutionStartEvent {
   binding: ExecutionModelBindingSummary;
   executionSkills: ExecutionSkillBinding[];
   memoryPolicy: MemoryPolicySnapshot;
+  toolAuthorizationSnapshot: ToolAuthorizationSnapshot;
+  loadedToolRefs: LoadedToolRef[];
 }
 
 export const SKILL_SOURCE_TIERS = [
@@ -183,6 +197,8 @@ export interface SessionExecutionRecordBase {
   runs: SessionExecutionRun[];
   executionSkills: ExecutionSkillBinding[];
   memoryPolicy: MemoryPolicySnapshot;
+  toolAuthorizationSnapshot: ToolAuthorizationSnapshot;
+  loadedToolRefs: LoadedToolRef[];
 }
 
 export interface SessionExecutionSettlement {

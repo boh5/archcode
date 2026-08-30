@@ -288,9 +288,10 @@ export class ToolRegistry {
     const prepared = await this.#prepareInput(descriptor, toolCall.input, context);
     if (prepared.kind === "error") return this.settleSystem(toolCall, context, prepared.raw);
     let currentInput = prepared.input;
+    context.input = currentInput;
 
     if (!context.allowedTools.has(toolCall.toolName)) {
-      return this.settleSystem(toolCall, context, createToolErrorResult({
+      return this.settleSystem({ ...toolCall, input: currentInput }, context, createToolErrorResult({
         kind: "not-allowed",
         code: "TOOL_NOT_ALLOWED",
         message: `Tool "${toolCall.toolName}" is not allowed for this execution context`,

@@ -7,7 +7,12 @@ import { createMockLogger } from "../../logger.test-helper";
 import { setLlmAdapterForTest } from "../../llm";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 import { createFakeRetryScheduler } from "../../testing/fake-retry-scheduler";
-import { createTestModelInfo, testExecutionMemoryPolicy } from "../../testing/test-execution-fixtures";
+import {
+  createTestModelInfo,
+  testExecutionLoadedToolRefs,
+  testExecutionMemoryPolicy,
+  testExecutionToolAuthorizationSnapshot,
+} from "../../testing/test-execution-fixtures";
 
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation", crypto.randomUUID());
 const WORKSPACE_ROOT = join(TEST_TMP, "workspace");
@@ -142,6 +147,8 @@ describe("createTitleGenerationTask", () => {
       origin: "user_message",
       maxSteps: 50,
       executionSkills: [],
+      toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+      loadedToolRefs: testExecutionLoadedToolRefs,
     });
     store.getState().append({
       type: "session.messages_committed",

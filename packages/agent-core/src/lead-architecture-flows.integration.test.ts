@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { TOOL_CREATE_GOAL } from "@archcode/protocol";
 
 import { ServerConfigService, resolveServerConfigPath } from "./config";
 import { setLlmAdapterForTest } from "./llm";
@@ -344,8 +345,10 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     await writeFile(join(fixture.workspaceRoot, planPath), executablePlan());
 
     let rootCalls = 0;
+    const modelToolBoundaries: Array<Record<string, unknown>> = [];
     setLlmAdapterForTest({
-      streamText: mock(() => {
+      streamText: mock((options: { tools?: Record<string, unknown> }) => {
+        modelToolBoundaries.push(options.tools ?? {});
         rootCalls += 1;
         switch (rootCalls) {
           case 1:
@@ -362,6 +365,11 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
               }],
             });
           case 4:
+            return toolStream("search-create-approved-goal", "tool_search", {
+              query: `select:${TOOL_CREATE_GOAL}`,
+              limit: 1,
+            });
+          case 5:
             return toolStream("create-approved-goal", "create_goal", { objective });
           default:
             return textStream("The approved Goal is active and execution can proceed.");
@@ -396,13 +404,26 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     const session = await fixture.runtime.getSessionFile(fixture.workspaceRoot, work.sessionId);
     expect(session.agentName).toBe("lead");
     expect(session.goal).toMatchObject({ status: "active", objective });
+    expect(modelToolBoundaries[3]?.[TOOL_CREATE_GOAL]).toBeUndefined();
+    const loadedCreateGoal = modelToolBoundaries[4]?.[TOOL_CREATE_GOAL] as {
+      readonly inputSchema?: unknown;
+    } | undefined;
+    expect(loadedCreateGoal?.inputSchema).toBeDefined();
+    const reusedCreateGoal = modelToolBoundaries[5]?.[TOOL_CREATE_GOAL] as {
+      readonly inputSchema?: unknown;
+    } | undefined;
+    expect(reusedCreateGoal?.inputSchema).toBeDefined();
+    expect(toolInputs(session).find(({ toolName }) => toolName === "tool_search")?.input)
+      .toMatchObject({ query: `select:${TOOL_CREATE_GOAL}` });
     expect(toolTrace(session)).toEqual([
       "skill_read",
       "file_read",
       "ask_user",
+      "tool_search",
       "create_goal",
     ]);
-    expect(rootCalls).toBe(5);
+    expect(toolTrace(session).filter((toolName) => toolName === "tool_search")).toHaveLength(1);
+    expect(rootCalls).toBe(6);
   });
 
   test("ordinary ask_user confirmation can precede Goal execution", async () => {
@@ -411,19 +432,29 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
     let rootCalls = 0;
     let buildCalls = 0;
     let analystCalls = 0;
+    const rootToolBoundaries: Array<Record<string, unknown>> = [];
     setLlmAdapterForTest({
       streamText: mock((options: { tools?: Record<string, unknown> }) => {
         const tools = Object.keys(options.tools ?? {});
+        if (rootCalls === 0) {
+          rootToolBoundaries.push(options.tools ?? {});
+          rootCalls += 1;
+          return toolStream("search-create-goal", "tool_search", {
+            query: "create_goal",
+            limit: 1,
+          });
+        }
         if (tools.includes("create_goal")) {
+          rootToolBoundaries.push(options.tools ?? {});
           rootCalls += 1;
           switch (rootCalls) {
-            case 1:
+            case 2:
               return toolStream("authorize-goal", "ask_user", {
                 questions: [{ header: "Goal", question: "要开始这个长期任务吗？" }],
               });
-            case 2:
-              return toolStream("create-goal", "create_goal", { objective });
             case 3:
+              return toolStream("create-goal", "create_goal", { objective });
+            case 4:
               return toolStream("initial-build", "delegate", {
                 agent_type: "build",
                 profile: "deep",
@@ -432,7 +463,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
                 skills: ["safe-refactor"],
                 background: false,
               });
-            case 4:
+            case 5:
               return toolStream("first-review", "delegate", {
                 agent_type: "analyst",
                 profile: "deep",
@@ -441,7 +472,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
                 skills: ["goal-review"],
                 background: false,
               });
-            case 5:
+            case 6:
               return toolStream("remediation-build", "delegate", {
                 agent_type: "build",
                 profile: "deep",
@@ -450,7 +481,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
                 skills: ["safe-refactor"],
                 background: false,
               });
-            case 6:
+            case 7:
               return toolStream("fresh-review", "delegate", {
                 agent_type: "analyst",
                 profile: "deep",
@@ -459,7 +490,7 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
                 skills: ["goal-review"],
                 background: false,
               });
-            case 7:
+            case 8:
               return toolStream("complete-goal", "update_goal", {
                 status: "complete",
                 reason: "The remediated result passed a fresh independent Goal review.",
@@ -597,6 +628,13 @@ Run the focused protocol, Todo route, and Web Todo tests; then inspect the rende
       expect(analystSessionIds).toHaveLength(2);
       expect(buildCalls).toBe(5);
       expect(analystCalls).toBe(2);
+      expect(rootToolBoundaries[0]?.create_goal).toBeUndefined();
+      const naturalLoadedCreateGoal = rootToolBoundaries[1]?.create_goal as {
+        readonly inputSchema?: unknown;
+      } | undefined;
+      expect(naturalLoadedCreateGoal?.inputSchema).toBeDefined();
+      expect(toolInputs(session).find(({ toolName }) => toolName === "tool_search")?.input)
+        .toMatchObject({ query: "create_goal" });
       expect(await readFile(join(fixture.workspaceRoot, "migration-result.txt"), "utf8")).toBe("remediated\n");
     } finally {
       unsubscribe();
@@ -771,6 +809,17 @@ function toolTrace(session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>)
   return session.messages.flatMap((message) => message.role === "assistant" ? message.parts : [])
     .filter((part) => part.type === "tool")
     .map((part) => part.toolName);
+}
+
+function toolInputs(session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>): Array<{
+  readonly toolName: string;
+  readonly input: unknown;
+}> {
+  return session.messages.flatMap((message) => message.role === "assistant" ? message.parts : [])
+    .flatMap((part) => {
+      if (part.type !== "tool" || !("input" in part)) return [];
+      return [{ toolName: part.toolName, input: part.input }];
+    });
 }
 
 function userTextInputs(session: Awaited<ReturnType<AgentRuntime["getSessionFile"]>>): string[] {

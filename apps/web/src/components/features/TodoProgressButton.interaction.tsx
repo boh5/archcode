@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { LoadedToolRef, ToolAuthorizationSnapshot } from "@archcode/protocol";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
@@ -29,6 +30,11 @@ const memoryPolicy = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const toolAuthorizationSnapshot: ToolAuthorizationSnapshot = {
+  extraTools: [],
+  toolProjection: null,
+};
+const loadedToolRefs: LoadedToolRef[] = [];
 
 beforeEach(() => {
   dom = new JSDOM(
@@ -271,6 +277,8 @@ describe("TodoProgressButton interactions", () => {
           origin: "user_message",
           maxSteps: 10,
           executionSkills: [],
+          toolAuthorizationSnapshot,
+          loadedToolRefs,
           durationMs: 1,
           runs: [],
           terminalSettlement: { key: "terminal:e1", goalInstanceId: null },
@@ -295,6 +303,8 @@ describe("TodoProgressButton interactions", () => {
             origin: "user_message",
             maxSteps: 10,
             executionSkills: [],
+            toolAuthorizationSnapshot,
+            loadedToolRefs,
             durationMs: 1,
             runs: [],
             terminalSettlement: { key: "terminal:e2", goalInstanceId: null },

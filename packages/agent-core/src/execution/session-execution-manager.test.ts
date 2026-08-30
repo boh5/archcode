@@ -2,9 +2,11 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { z } from "zod";
 import {
   createEmptySessionStats,
   isTerminalChildSessionStatus,
+  TOOL_TOOL_SEARCH,
   type AttachmentDescriptor,
   type DelegationRequest,
   type SessionExecutionSuspension,
@@ -14,7 +16,7 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { StoreApi } from "zustand";
 import type { Agent, AgentCommand, AgentCommandResult, AgentResult, AgentRunOptions } from "../agents/types";
 import type { AgentName } from "../agents/names";
-import { ConfiguredAgent } from "../agents/configured-agent";
+import { ConfiguredAgent, UnknownExtraToolError } from "../agents/configured-agent";
 import {
   EMPTY_ATTACHMENT_MODEL_PROJECTOR,
   resolveEmptyAttachmentReadPaths,
@@ -25,6 +27,10 @@ import { ModelInfo } from "../provider/model";
 import { SkillNotFoundError, SkillService, SkillValidationError } from "../skills";
 import { createTestProjectContextResolver } from "../agents/test-project-context-resolver";
 import { createTestToolRegistryFixture } from "../tools/test-registry";
+import { toolSearchTool, ToolSearchInputSchema } from "../tools/builtins/tool-search";
+import { defineTool } from "../tools/define-tool";
+import { createTextToolResult } from "../tools/results";
+import type { ToolExecutionContext } from "../tools/types";
 import { testExecutionEnd, testExecutionRecord, testExecutionStart, testExecutionSuspended } from "../testing/test-execution-fixtures";
 import { applySessionToolBatchChildOutcome } from "./session-tool-batch-scheduler";
 import { setLlmAdapterForTest } from "../llm/adapter";
@@ -325,6 +331,7 @@ interface FakeManagerOptions {
   onExecutionSettlement?: ConstructorParameters<typeof SessionExecutionManager>[0]["onExecutionSettlement"];
   onSessionInputMutationReleased?: ConstructorParameters<typeof SessionExecutionManager>[0]["onSessionInputMutationReleased"];
   onContinuationAdmissionReleased?: ConstructorParameters<typeof SessionExecutionManager>[0]["onContinuationAdmissionReleased"];
+  validateToolAuthorization?: ConstructorParameters<typeof SessionExecutionManager>[0]["validateToolAuthorization"];
   /**
    * Lets the small execution harness use a real ConfiguredAgent for a child
    * while retaining the rest of its intentionally narrow fake runtime.
@@ -404,13 +411,14 @@ function testManagerFacade(raw: SessionExecutionManager): TestSessionExecutionMa
 
 function storeCallbacks(manager: SessionStoreManager): Pick<
   SessionExecutionManagerConfigForTest,
-  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "resolveSessionDepth" | "buildSessionTree" | "listSessionFamilyToolBatchHitlIds"
+  "createSessionStore" | "flushSessionStore" | "getSessionStore" | "loadSessionStore" | "commitDurableSessionMutation" | "deleteSessionStore" | "resolveRootSessionId" | "resolveSessionDepth" | "buildSessionTree" | "listSessionFamilyToolBatchHitlIds"
 > {
   return {
     createSessionStore: (sessionId, root, createOptions) => createTestSession(manager, sessionId, root, createOptions),
     flushSessionStore: (sessionId, root) => manager.flushSession(sessionId, root),
     getSessionStore: (sessionId, root) => manager.get(sessionId, root),
     loadSessionStore: (sessionId, root) => manager.getOrLoad(sessionId, root),
+    commitDurableSessionMutation: (sessionId, root, mutate) => manager.commitDurableSessionMutation(sessionId, root, mutate),
     deleteSessionStore: (sessionId, root, deleteOptions) => manager.delete(sessionId, root, deleteOptions),
     resolveRootSessionId: (sessionId, root) => manager.resolveRootSessionId(sessionId, root),
     resolveSessionDepth: async (root, sessionId) => {
@@ -540,7 +548,7 @@ function sequencedChildAgentFactory(
 function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
   const parentDefinition: AgentDefinition = {
     ...leadAgentDefinition,
-    tools: { tools: ["delegate"], delegateTargets: ["explore"] },
+    tools: { authorized: ["delegate"], core: ["delegate"], delegateTargets: ["explore"] },
     hooks: { autoCompact: false, autoInjectReminder: false, todoStepReminder: false, todoQueryLoopContinuation: false, titleGeneration: "disabled" },
     childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
     includeMemoryInPrompt: false,
@@ -551,7 +559,7 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
     name: "explore",
     displayName: "Explore",
     profiles: ["fast"],
-    tools: { tools: [] },
+    tools: { authorized: [], core: [] },
     childPolicy: undefined,
   };
   const factory = {
@@ -563,12 +571,12 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
       throw new Error(`Unknown agent definition: ${name}`);
     }),
     listAgentNames: mock(() => ["lead", "explore"]),
-    resolveAllowedTools: mock((definition: AgentDefinition) => definition.tools.tools),
+    resolveAllowedTools: mock((definition: AgentDefinition) => definition.tools.authorized),
     resolveDelegationCapabilities: mock((parentAgentName: AgentName, depth: number) => {
       const definition = factory.getDefinition(parentAgentName);
       const targetNames = definition.childPolicy !== undefined
         && depth < definition.childPolicy.maxDepth
-        && definition.tools.tools.includes("delegate")
+        && definition.tools.authorized.includes("delegate")
         ? definition.tools.delegateTargets ?? []
         : [];
       return {
@@ -612,7 +620,7 @@ function makeDeepExploreFactory(): AgentFactory {
     displayName: "Explore",
     profiles: ["fast"],
     roleContract: exploreAgentDefinition.roleContract,
-    tools: { tools: ["delegate"], delegateTargets: ["explore"] },
+    tools: { authorized: ["delegate"], core: ["delegate"], delegateTargets: ["explore"] },
   };
   return makeFactory({
     getDefinition: mock((name: string) => (
@@ -627,7 +635,7 @@ function makeBuildFactory(
   const base = makeFactory();
   const parentDefinition: AgentDefinition = {
     ...base.getDefinition("lead"),
-    tools: { tools: ["delegate"], delegateTargets: ["build"] },
+    tools: { authorized: ["delegate"], core: ["delegate"], delegateTargets: ["build"] },
     childPolicy: {
       maxDepth: 2,
       maxConcurrent: 2,
@@ -717,6 +725,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
   const deadlineScheduler = options.deadlineScheduler ?? createTestDeadlineScheduler();
   const rawManager = new SessionExecutionManager({
     sessionAgentManager,
+    validateToolAuthorization: options.validateToolAuthorization ?? (async () => undefined),
     skillService: options.skillService ?? skillServiceFixture,
     modelRuntime,
     memoryPolicyRuntime: options.memoryPolicyRuntime ?? new MemoryPolicyRuntime(),
@@ -2458,7 +2467,7 @@ describe("SessionExecutionManager", () => {
         requiredCapabilities: [],
         delegateTargets: [],
       },
-      tools: { tools: [] },
+      tools: { authorized: [], core: [] },
       skills: leadAgentDefinition.skills,
       hooks: {
         ...leadAgentDefinition.hooks,
@@ -2505,7 +2514,7 @@ describe("SessionExecutionManager", () => {
       cwd: workspaceRoot,
       projectContextResolver: createTestProjectContextResolver(storeManager),
       resolveVersionControl: async () => "git",
-      resolveAllowedTools: (agentDefinition) => agentDefinition.tools.tools,
+      resolveAllowedTools: (agentDefinition) => agentDefinition.tools.authorized,
       delegationCapabilities: {
         parentAgentName: "lead",
         depth: 0,
@@ -2713,6 +2722,23 @@ describe("SessionExecutionManager", () => {
         calls: batch.calls.map((call) => ({ ...call, state: "completed" as const, blocker: undefined })),
       })),
     }));
+    const suspended = store.getState().executions[0];
+    if (suspended?.status !== "suspended") throw new Error("Expected HITL suspension");
+    store.getState().append({
+      type: "execution-suspension-updated",
+      executionId: suspended.id,
+      suspension: {
+        kind: "resume_pending",
+        toolBatchId: suspended.suspension.toolBatchId,
+        readyAt: Date.now(),
+      },
+    });
+    await expect(manager.resumeSessionExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      extraTools: ["github_get_pull_request"],
+    })).rejects.toThrow("cannot replace its tool authorization snapshot");
     const resumed = await manager.reconcileDurableSession({
       slug: "project", workspaceRoot, sessionId,
     });
@@ -3414,7 +3440,7 @@ describe("SessionExecutionManager", () => {
     expect(agent.runMock).toHaveBeenCalledWith(expect.objectContaining({ maxSteps: 1 }));
   });
 
-  test("checked execution forwards extraTools to agent.run", async () => {
+  test("checked execution persists one normalized tool authorization snapshot and forwards only that snapshot", async () => {
     const sessionId = crypto.randomUUID();
     const agent = new MockAgent(sessionId, Promise.resolve({ text: "done", steps: 1 }));
     const { manager } = createManager({ [sessionId]: agent });
@@ -3424,11 +3450,96 @@ describe("SessionExecutionManager", () => {
       workspaceRoot,
       sessionId,
       input: { kind: "direct", text: "work" },
-      extraTools: ["github_get_pull_request"],
+      extraTools: ["github_get_pull_request", "bash", "github_get_pull_request"],
     });
     await execution.promise;
 
-    expect(agent.runMock).toHaveBeenCalledWith(expect.objectContaining({ extraTools: ["github_get_pull_request"] }));
+    const expected = {
+      extraTools: ["bash", "github_get_pull_request"],
+      toolProjection: null,
+    };
+    expect(agent.store.getState().executions[0]).toMatchObject({
+      toolAuthorizationSnapshot: expected,
+      loadedToolRefs: [],
+    });
+    expect(agent.runMock).toHaveBeenCalledWith(expect.objectContaining({
+      toolAuthorizationSnapshot: expected,
+      loadedToolRefs: [],
+    }));
+  });
+
+  test("rejects semantic tool authorization before input or Execution durability", async () => {
+    const sessionId = crypto.randomUUID();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "must not run", steps: 1 }));
+    const failure = new UnknownExtraToolError("missing_extra_tool");
+    const validateToolAuthorization = mock(async () => { throw failure; });
+    const { manager } = createManager({ [sessionId]: agent }, { validateToolAuthorization });
+
+    await expect(manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "must not persist" },
+      extraTools: ["missing_extra_tool", "missing_extra_tool"],
+    })).rejects.toBe(failure);
+
+    expect(validateToolAuthorization).toHaveBeenCalledWith({
+      workspaceRoot,
+      sessionId,
+      authorization: { extraTools: ["missing_extra_tool"], toolProjection: null },
+    });
+    expect(agent.store.getState().executions).toEqual([]);
+    expect(agent.store.getState().messages).toEqual([]);
+    expect(agent.runMock).not.toHaveBeenCalled();
+  });
+
+  test("invalid loaded contracts are removed with one durable bounded notice", async () => {
+    const sessionId = crypto.randomUUID();
+    const invalidRef = {
+      name: "mcp__docs__lookup",
+      descriptorDigest: "a".repeat(64),
+      reason: "digest_changed" as const,
+    };
+    const runEntered = deferred<void>();
+    const allowReconcile = deferred<void>();
+    const agent = new MockAgent(sessionId, Promise.resolve({ text: "unused", steps: 1 }));
+    agent.runMock.mockImplementation(async (options) => {
+      runEntered.resolve(undefined);
+      await allowReconcile.promise;
+      await options.reconcileExecutionToolLoads([invalidRef]);
+      await options.reconcileExecutionToolLoads([invalidRef]);
+      return { outcome: "terminal", text: "done", steps: 0, status: "completed" };
+    });
+    const { manager } = createManager({ [sessionId]: agent });
+
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId,
+      input: { kind: "direct", text: "load a tool" },
+    });
+    await runEntered.promise;
+    await storeManager.commitDurableSessionMutation(sessionId, workspaceRoot, (state) => ({
+      result: undefined,
+      patch: {
+        executions: state.executions.map((record) => record.id === execution.executionId
+          ? { ...record, loadedToolRefs: [{ name: invalidRef.name, descriptorDigest: invalidRef.descriptorDigest }] }
+          : record),
+      },
+    }));
+    allowReconcile.resolve(undefined);
+    await execution.promise;
+
+    const state = agent.store.getState();
+    expect(state.executions[0]?.loadedToolRefs).toEqual([]);
+    const notices = state.events.filter((event) => event.payload.type === "system-notice");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.payload).toMatchObject({
+      type: "system-notice",
+      message: expect.stringContaining(invalidRef.name),
+    });
+    const message = notices[0]?.payload.type === "system-notice" ? notices[0].payload.message : "";
+    expect(new TextEncoder().encode(message).byteLength).toBeLessThanOrEqual(512);
   });
 
   test("checked execution uses the persisted Session agent identity", async () => {
@@ -3452,6 +3563,7 @@ describe("SessionExecutionManager", () => {
         ...sessionAgentManager,
         getOrCreate: mock(async () => await new Promise<Agent>(() => undefined)),
       } as unknown as SessionAgentManager,
+      validateToolAuthorization: async () => undefined,
       skillService: skillServiceFixture,
       modelRuntime: makeModelRuntime(),
       memoryPolicyRuntime: new MemoryPolicyRuntime(),
@@ -3514,6 +3626,7 @@ describe("SessionExecutionManager", () => {
     const sessionAgentManager = createFakeManager({ [sessionId]: agentB });
     const managerB = new SessionExecutionManager({
       sessionAgentManager,
+      validateToolAuthorization: async () => undefined,
       skillService: skillServiceFixture,
       modelRuntime: makeModelRuntime(),
       memoryPolicyRuntime: new MemoryPolicyRuntime(),
@@ -4839,7 +4952,359 @@ describe("SessionExecutionManager", () => {
     expect(file.childSessionLinks.at(-1)?.status).toBe("cancelling");
   });
 
-  test("restart reconciliation archives an orphaned active Tool Batch before terminalizing its Execution", async () => {
+  test("restart reconciliation re-enters the exact open run for a search-only active Tool Batch", async () => {
+    const rootId = crypto.randomUUID();
+    const executionId = "execution-search-recovery";
+    const stepId = "step-search-recovery";
+    const checkpointAt = Date.now();
+    const timestamp = new Date(checkpointAt).toISOString();
+    const batch: SessionToolBatch = {
+      batchId: "batch-search-recovery",
+      executionId,
+      runOrdinal: 0,
+      step: 0,
+      stepId,
+      assistantMessageId: "assistant-search-recovery",
+      agentName: "lead",
+      allowedTools: ["tool_search"],
+      agentSkills: [],
+      partitions: [{ type: "serial", callIds: ["tool-search-recovery"] }],
+      calls: [{
+        ordinal: 0,
+        partitionIndex: 0,
+        toolCallId: "tool-search-recovery",
+        toolName: "tool_search",
+        input: { query: "syntax tree" },
+        catalogDigest: "b".repeat(64),
+        traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        state: "running",
+        attempt: 1,
+        checkpointAt,
+      }],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    await writeSessionFile({
+      sessionId: rootId,
+      messages: [{
+        id: batch.assistantMessageId,
+        role: "assistant",
+        executionId,
+        runOrdinal: 0,
+        stepId,
+        outputPhase: "commentary",
+        parts: [{
+          type: "tool",
+          id: "tool-part-search-recovery",
+          state: "running",
+          toolCallId: "tool-search-recovery",
+          toolName: "tool_search",
+          input: { query: "syntax tree" },
+          createdAt: checkpointAt,
+          startedAt: checkpointAt,
+        }],
+        createdAt: checkpointAt,
+      }],
+      executions: [testExecutionRecord(executionId, "running")],
+      steps: [{ id: stepId, executionId, runOrdinal: 0, step: 0, startedAt: checkpointAt }],
+      toolBatches: [batch],
+    });
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const restartedStore = await restarted.getOrLoad(rootId, workspaceRoot);
+    const observedOptions = deferred<AgentRunOptions>();
+    const agent: Agent = {
+      store: restartedStore,
+      cwd: workspaceRoot,
+      classifyCommand: () => null,
+      executeCommand: async () => ({ kind: "handled" }),
+      run: async (_binding, options) => {
+        if (options === undefined) throw new Error("Expected recovery identity");
+        observedOptions.resolve(options);
+        restartedStore.getState().append({
+          type: "step-end",
+          stepId,
+          step: 0,
+          finishReason: "tool-calls",
+        });
+        await restarted.updateToolBatches(rootId, workspaceRoot, (batches) => batches.map((candidate) => (
+          candidate.batchId === batch.batchId
+            ? { ...candidate, archivedAt: new Date().toISOString() }
+            : candidate
+        )));
+        return { outcome: "terminal", text: "recovered", steps: 0, status: "completed" };
+      },
+      dispose: () => undefined,
+    };
+    const cancelSessionToolBatch = mock(async () => undefined);
+    const { manager } = createManager({ [rootId]: agent as unknown as MockAgent }, {
+      storeManager: restarted,
+      cancelSessionToolBatch,
+    });
+
+    const recovered = await manager.reconcileDurableSession({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+    });
+    const options = await observedOptions.promise;
+    expect(recovered?.executionId).toBe(executionId);
+    expect(options).toMatchObject({ executionId, runOrdinal: 0 });
+    expect(options.toolAuthorizationSnapshot).toEqual(
+      testExecutionRecord(executionId, "running").toolAuthorizationSnapshot,
+    );
+    await recovered?.promise;
+    expect(cancelSessionToolBatch).not.toHaveBeenCalled();
+    expect(restartedStore.getState().events.some((event) => event.payload.type === "execution-resumed")).toBe(false);
+    expect(restartedStore.getState().executions).toHaveLength(1);
+  });
+
+  test("cold recovery replays exact tool_search through ConfiguredAgent and the durable Scheduler", async () => {
+    const targetName = "recovery_deferred_target";
+    const targetTool = defineTool({
+      name: targetName,
+      description: "Recover one deferred contract after a process restart.",
+      inputSchema: z.object({ value: z.string().optional() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => createTextToolResult("target executed"),
+    });
+    const registryFixture = createTestToolRegistryFixture({
+      descriptors: [toolSearchTool, targetTool],
+    });
+    const definition: AgentDefinition = {
+      ...leadAgentDefinition,
+      roleContract: {
+        ...leadAgentDefinition.roleContract,
+        requiredCapabilities: [],
+        delegateTargets: [],
+      },
+      tools: { authorized: [TOOL_TOOL_SEARCH, targetName], core: [] },
+      builtinMcpServers: [],
+      childPolicy: undefined,
+      includeMemoryInPrompt: false,
+      skills: ["orchestrate-work"],
+      hooks: {
+        autoCompact: false,
+        autoInjectReminder: false,
+        todoStepReminder: false,
+        todoQueryLoopContinuation: false,
+        titleGeneration: "disabled",
+      },
+    };
+    const failurePoints = [
+      { name: "queued", state: "queued" as const, attempt: 0, descriptorReturned: false },
+      { name: "running", state: "running" as const, attempt: 1, descriptorReturned: false },
+      {
+        name: "descriptor-returned-before-commit",
+        state: "running" as const,
+        attempt: 1,
+        descriptorReturned: true,
+      },
+    ];
+    const digestModes = ["same", "changed"] as const;
+
+    try {
+      for (const failurePoint of failurePoints) {
+        for (const digestMode of digestModes) {
+          const sessionId = crypto.randomUUID();
+          const executionId = `execution-${failurePoint.name}-${digestMode}`;
+          const stepId = `step-${failurePoint.name}-${digestMode}`;
+          const toolCallId = `search-${failurePoint.name}-${digestMode}`;
+          const checkpointAt = Date.now();
+          const timestamp = new Date(checkpointAt).toISOString();
+          const executionRecord = testExecutionRecord(executionId, "running");
+          const batch: SessionToolBatch = {
+            batchId: `batch-${failurePoint.name}-${digestMode}`,
+            executionId,
+            runOrdinal: 0,
+            step: 0,
+            stepId,
+            assistantMessageId: `assistant-${failurePoint.name}-${digestMode}`,
+            agentName: "lead",
+            allowedTools: [TOOL_TOOL_SEARCH],
+            agentSkills: [],
+            partitions: [{ type: "serial", callIds: [toolCallId] }],
+            calls: [{
+              ordinal: 0,
+              partitionIndex: 0,
+              toolCallId,
+              toolName: TOOL_TOOL_SEARCH,
+              input: { query: `select:${targetName}` },
+              catalogDigest: "0".repeat(64),
+              traits: { readOnly: true, destructive: false, concurrencySafe: false },
+              state: failurePoint.state,
+              attempt: failurePoint.attempt,
+              checkpointAt,
+            }],
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+          await writeSessionFile({
+            sessionId,
+            messages: [{
+              id: batch.assistantMessageId,
+              role: "assistant",
+              executionId,
+              runOrdinal: 0,
+              stepId,
+              outputPhase: "commentary",
+              parts: [{
+                type: "tool",
+                id: `tool-part-${toolCallId}`,
+                state: "running",
+                toolCallId,
+                toolName: TOOL_TOOL_SEARCH,
+                input: { query: `select:${targetName}` },
+                createdAt: checkpointAt,
+                startedAt: checkpointAt,
+              }],
+              createdAt: checkpointAt,
+            }],
+            executions: [executionRecord],
+            steps: [{ id: stepId, executionId, runOrdinal: 0, step: 0, startedAt: checkpointAt }],
+            toolBatches: [batch],
+          });
+
+          const restarted = new SessionStoreManager({ logger: silentLogger });
+          const store = await restarted.getOrLoad(sessionId, workspaceRoot);
+          const configuredAgent = new ConfiguredAgent({
+            definition,
+            toolRegistry: registryFixture.registry,
+            skillService: new SkillService(),
+            storeManager: restarted,
+            store,
+            toolOutputAccess: registryFixture.createToolOutputAccess(workspaceRoot, sessionId),
+            attachmentProjector: EMPTY_ATTACHMENT_MODEL_PROJECTOR,
+            resolveAttachmentReadPaths: resolveEmptyAttachmentReadPaths,
+            projectRoot: workspaceRoot,
+            cwd: workspaceRoot,
+            projectContextResolver: createTestProjectContextResolver(restarted),
+            resolveVersionControl: async () => "git",
+            resolveAllowedTools: (agentDefinition) => agentDefinition.tools.authorized,
+            delegationCapabilities: { parentAgentName: "lead", depth: 0, targets: [] },
+            logger: silentLogger,
+          });
+          const live = await configuredAgent.resolveLiveAuthorizedToolCatalog(
+            executionRecord.toolAuthorizationSnapshot,
+          );
+          const targetEntry = live.catalog.entries.find((entry) => entry.registryName === targetName)!;
+          const changedDigest = live.catalog.digest === "f".repeat(64)
+            ? "e".repeat(64)
+            : "f".repeat(64);
+          const persistedDigest = digestMode === "same" ? live.catalog.digest : changedDigest;
+          await restarted.updateToolBatches(sessionId, workspaceRoot, (batches) => batches.map((candidate) => ({
+            ...candidate,
+            calls: candidate.calls.map((call) => ({ ...call, catalogDigest: persistedDigest })),
+          })));
+
+          if (failurePoint.descriptorReturned) {
+            const raw = await toolSearchTool.execute(
+              ToolSearchInputSchema.parse({ query: `select:${targetName}` }),
+              {
+                toolSearchCatalogDigest: persistedDigest,
+                resolveToolSearch: async () => ({
+                  catalogDigest: live.catalog.digest,
+                  namespaces: [targetEntry.namespace],
+                  matches: [{
+                    name: targetEntry.registryName,
+                    namespace: targetEntry.namespace,
+                    description: targetEntry.description,
+                    descriptorDigest: targetEntry.descriptorDigest,
+                  }],
+                }),
+              } as unknown as ToolExecutionContext,
+            );
+            expect(raw).toMatchObject(digestMode === "same"
+              ? { isError: false, sidecar: { loadedToolRefs: [{ name: targetName }] } }
+              : { isError: true, details: { error: { code: "TOOL_SEARCH_CATALOG_CHANGED" } } });
+            expect(store.getState().toolBatches[0]?.calls[0]).toMatchObject({
+              state: "running",
+            });
+            expect(store.getState().toolBatches[0]?.calls[0]?.result).toBeUndefined();
+            expect(store.getState().executions[0]?.loadedToolRefs).toEqual([]);
+          }
+
+          const originalResolve = configuredAgent.resolveLiveAuthorizedToolCatalog.bind(configuredAgent);
+          const resolveCatalog = mock(originalResolve);
+          Object.defineProperty(configuredAgent, "resolveLiveAuthorizedToolCatalog", {
+            configurable: true,
+            value: resolveCatalog,
+          });
+          const modelCalls: Array<{ readonly tools?: Record<string, unknown> }> = [];
+          setLlmAdapterForTest({
+            streamText: mock((options: { tools?: Record<string, unknown> }) => {
+              modelCalls.push(options);
+              return {
+                fullStream: (async function* () {
+                  yield { type: "text-start", id: "output" };
+                  yield { type: "text-delta", id: "output", text: "recovery complete" };
+                  yield { type: "text-end", id: "output" };
+                })(),
+                finishReason: Promise.resolve("stop"),
+                text: Promise.resolve("recovery complete"),
+                toolCalls: Promise.resolve([]),
+                usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+              };
+            }) as unknown as typeof import("ai").streamText,
+          });
+          const { manager } = createManager({ [sessionId]: configuredAgent as unknown as MockAgent }, {
+            storeManager: restarted,
+            getAgent: () => configuredAgent,
+          });
+
+          const recovered = await manager.reconcileDurableSession({
+            slug: "project",
+            workspaceRoot,
+            sessionId,
+          });
+          expect(recovered?.executionId).toBe(executionId);
+          await recovered?.promise;
+
+          const recoveredCall = store.getState().toolBatches[0]!.calls[0]!;
+          expect({
+            failurePoint: failurePoint.name,
+            digestMode,
+            callState: recoveredCall.state,
+            execution: store.getState().executions[0],
+            modelCallCount: modelCalls.length,
+            resolveCatalogCallCount: resolveCatalog.mock.calls.length,
+          }).toMatchObject({
+            failurePoint: failurePoint.name,
+            digestMode,
+            callState: digestMode === "same" ? "completed" : "failed",
+          });
+          expect(recoveredCall.attempt).toBe(failurePoint.state === "queued" ? 1 : 2);
+          expect(store.getState().toolBatches[0]?.manualInspectionReason).toBeUndefined();
+          expect(resolveCatalog.mock.calls.length).toBeGreaterThanOrEqual(2);
+          expect(modelCalls).toHaveLength(1);
+          if (digestMode === "same") {
+            expect(store.getState().executions[0]?.loadedToolRefs).toEqual([{
+              name: targetName,
+              descriptorDigest: targetEntry.descriptorDigest,
+            }]);
+            expect(Object.keys(modelCalls[0]?.tools ?? {})).toContain(targetName);
+            expect(recoveredCall.result?.isError).toBe(false);
+          } else {
+            expect(store.getState().executions[0]?.loadedToolRefs).toEqual([]);
+            expect(Object.keys(modelCalls[0]?.tools ?? {})).not.toContain(targetName);
+            expect(recoveredCall.result).toMatchObject({
+              isError: true,
+              details: { error: { code: "TOOL_SEARCH_CATALOG_CHANGED" } },
+            });
+          }
+
+          configuredAgent.dispose();
+          restarted.clearAll();
+          setLlmAdapterForTest(undefined);
+        }
+      }
+    } finally {
+      setLlmAdapterForTest(undefined);
+      await registryFixture.dispose();
+    }
+  });
+
+  test("restart reconciliation keeps manual-inspection semantics for a mixed search and effectful active Tool Batch", async () => {
     const rootId = crypto.randomUUID();
     const runningCheckpointAt = Date.now();
     const now = new Date(runningCheckpointAt).toISOString();
@@ -4851,20 +5316,37 @@ describe("SessionExecutionManager", () => {
       stepId: "step-orphaned",
       assistantMessageId: "assistant-orphaned",
       agentName: "lead",
-      allowedTools: ["effect_tool"],
+      allowedTools: ["effect_tool", "tool_search"],
       agentSkills: [],
-      partitions: [{ type: "serial", callIds: ["effect-1"] }],
-      calls: [{
-        ordinal: 0,
-        partitionIndex: 0,
-        toolCallId: "effect-1",
-        toolName: "effect_tool",
-        input: {},
-        traits: { readOnly: false, destructive: false, concurrencySafe: false },
-        state: "running",
-        attempt: 1,
-        checkpointAt: runningCheckpointAt,
-      }],
+      partitions: [
+        { type: "serial", callIds: ["effect-1"] },
+        { type: "serial", callIds: ["search-1"] },
+      ],
+      calls: [
+        {
+          ordinal: 0,
+          partitionIndex: 0,
+          toolCallId: "effect-1",
+          toolName: "effect_tool",
+          input: {},
+          traits: { readOnly: false, destructive: false, concurrencySafe: false },
+          state: "running",
+          attempt: 1,
+          checkpointAt: runningCheckpointAt,
+        },
+        {
+          ordinal: 1,
+          partitionIndex: 1,
+          toolCallId: "search-1",
+          toolName: "tool_search",
+          input: { query: "repository structure" },
+          catalogDigest: "c".repeat(64),
+          traits: { readOnly: true, destructive: false, concurrencySafe: false },
+          state: "queued",
+          attempt: 0,
+          checkpointAt: runningCheckpointAt,
+        },
+      ],
       createdAt: now,
       updatedAt: now,
     };
@@ -5944,6 +6426,7 @@ describe("SessionExecutionManager", () => {
     const callbacks = storeCallbacks(storeManager);
     const manager = new SessionExecutionManager({
       sessionAgentManager: createFakeManager({}, { factory: makeFactory() }),
+      validateToolAuthorization: async () => undefined,
       skillService: skillServiceFixture,
       modelRuntime: makeModelRuntime(),
       memoryPolicyRuntime: new MemoryPolicyRuntime(),

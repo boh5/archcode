@@ -13,8 +13,10 @@ import { JSDOM } from "jsdom";
 import { TOOL_DELEGATE, createEmptySessionStats } from "@archcode/protocol";
 import type {
   GlobalSSEHitlRealtimeEvent,
+  LoadedToolRef,
   RootSessionSource,
   ToolChildSessionLink,
+  ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import type { HitlView, ProjectTodo, Session } from "../api/types";
 import {
@@ -34,6 +36,11 @@ const memoryPolicy = {
   policy: { useMemory: true, autoLearning: true },
   epoch: { bootId: "test-memory-boot", generation: 0 },
 };
+const toolAuthorizationSnapshot: ToolAuthorizationSnapshot = {
+  extraTools: [],
+  toolProjection: null,
+};
+const loadedToolRefs: LoadedToolRef[] = [];
 import { hitlStore } from "../store/hitl-store";
 import {
   diffQueryOptions,
@@ -732,6 +739,8 @@ describe("SessionRoute focused view store behavior", () => {
         endedAt: 2,
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
         durationMs: 1,
         runs: [],
         terminalSettlement: {
@@ -914,6 +923,8 @@ describe("SessionRoute focused view store behavior", () => {
         durationMs: 1,
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
         runs: [],
         terminalSettlement: {
           key: "terminal:root-execution",
@@ -968,6 +979,8 @@ describe("SessionRoute focused view store behavior", () => {
         durationMs: 1,
         maxSteps: 10,
         executionSkills: [],
+        toolAuthorizationSnapshot,
+        loadedToolRefs,
         runs: [],
         terminalSettlement: {
           key: "terminal:child-execution",

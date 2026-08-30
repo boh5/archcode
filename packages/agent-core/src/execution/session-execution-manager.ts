@@ -1,10 +1,12 @@
 import { rm } from "node:fs/promises";
 import {
   isTerminalChildSessionStatus,
+  TOOL_TOOL_SEARCH,
   type DelegationRequest,
   type ExecutionStartEvent,
   type MessageModelAudit,
   type ModelSelectionRef,
+  type LoadedToolRef,
   type PendingSessionMessage,
   type ParentAgentMessageProvenance,
   type RequestedModelSelection,
@@ -18,6 +20,7 @@ import {
   type NormalizedUsage,
   type SessionTreeNode,
   type SessionTreeResponse,
+  type ToolAuthorizationSnapshot,
   type ToolChildSessionLink,
   type ToolChildSessionLinkStatus,
 } from "@archcode/protocol";
@@ -60,6 +63,7 @@ import { getSessionDir } from "../store/sessions-dir";
 import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { Reminder, SessionStoreState, SessionToolBatch } from "../store/types";
+import type { DurableSessionMutation } from "../store/session-store-manager";
 import type { AgentName } from "../agents/names";
 import { resolveSessionProfile } from "../agents/session-profile";
 import type { Logger } from "../logger";
@@ -99,6 +103,7 @@ import { collectSessionTreeIds } from "./session-tree";
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 const MAX_CWD_TRANSITIONS_PER_EXECUTION = 4;
 const DEFAULT_EXECUTION_MAX_STEPS = 50;
+const TOOL_LOAD_NOTICE_MAX_BYTES = 512;
 export interface ActiveSessionExecution {
   readonly sessionId: string;
   readonly rootSessionId: string;
@@ -117,6 +122,8 @@ export interface ActiveSessionExecution {
   readonly binding: ExecutionModelBinding;
   /** Immutable Memory policy captured at the same claim boundary. */
   readonly memoryPolicy: MemoryPolicySnapshot;
+  /** Immutable tool authorization inputs captured at the same claim boundary. */
+  readonly toolAuthorizationSnapshot: ToolAuthorizationSnapshot;
   /** Settles once input plus execution-start are durable, before model work. */
   readonly started: Promise<void>;
 }
@@ -163,6 +170,8 @@ export interface StartSessionExecutionInput {
 interface InternalStartSessionExecutionInput extends StartSessionExecutionInput {
   readonly toolProjection?: readonly string[];
   readonly admissionSignal?: AbortSignal;
+  /** Cold recovery of the exact open run; never exposed as a caller-owned continuation input. */
+  readonly recoveryExecutionId?: string;
 }
 
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
@@ -306,6 +315,11 @@ const systemExecutionDeadlineScheduler: SessionExecutionDeadlineScheduler = {
 
 interface SessionExecutionManagerConfig {
   readonly sessionAgentManager: SessionAgentManager;
+  readonly validateToolAuthorization: (input: {
+    readonly workspaceRoot: string;
+    readonly sessionId: string;
+    readonly authorization: ToolAuthorizationSnapshot;
+  }) => Promise<void>;
   readonly modelRuntime: ModelRuntime;
   readonly memoryPolicyRuntime: MemoryPolicyRuntime;
   readonly modelSelectionResolver: ModelSelectionResolver;
@@ -326,6 +340,11 @@ interface SessionExecutionManagerConfig {
   readonly flushSessionStore: (sessionId: string, workspaceRoot: string) => Promise<void>;
   readonly getSessionStore: (sessionId: string, workspaceRoot: string) => StoreApi<SessionStoreState> | undefined;
   readonly loadSessionStore: (sessionId: string, workspaceRoot: string) => Promise<StoreApi<SessionStoreState>>;
+  readonly commitDurableSessionMutation: <T>(
+    sessionId: string,
+    workspaceRoot: string,
+    mutate: (state: Readonly<SessionStoreState>) => DurableSessionMutation<T>,
+  ) => Promise<T>;
   readonly deleteSessionStore: (
     sessionId: string,
     workspaceRoot: string,
@@ -518,12 +537,25 @@ export class SessionExecutionManager {
       ? sessionState.executions.find((candidate) => candidate.id === input.executionId)
       : undefined;
     if (input.input.kind === "resume") {
-      if (
+      if (input.recoveryExecutionId !== undefined) {
+        const openRun = resumedRecord?.runs.at(-1);
+        if (
+          input.executionId !== input.recoveryExecutionId
+          || resumedRecord?.status !== "running"
+          || openRun === undefined
+          || openRun.endedAt !== undefined
+        ) {
+          throw new Error(`Session "${input.sessionId}" has no recoverable running Execution "${input.recoveryExecutionId}"`);
+        }
+      } else if (
         input.executionId === undefined
         || resumedRecord?.status !== "suspended"
         || resumedRecord.suspension.kind !== "resume_pending"
       ) {
         throw new Error(`Session "${input.sessionId}" has no resume-pending Execution "${input.executionId ?? "none"}"`);
+      }
+      if (input.extraTools !== undefined || input.toolProjection !== undefined) {
+        throw new Error(`Continuation of Execution "${input.executionId}" cannot replace its tool authorization snapshot`);
       }
     }
     this.#assertSessionStartAllowed(
@@ -558,6 +590,9 @@ export class SessionExecutionManager {
     const memoryPolicy = resumedRecord === undefined
       ? this.#config.memoryPolicyRuntime.claim()
       : resumedRecord.memoryPolicy;
+    const toolAuthorizationSnapshot = resumedRecord === undefined
+      ? normalizeToolAuthorizationSnapshot(input.extraTools, input.toolProjection)
+      : cloneToolAuthorizationSnapshot(resumedRecord.toolAuthorizationSnapshot);
     const profile = resolveSessionProfile(sessionState);
     const sessionOverride = resolveDurableSessionModelOverride(sessionState);
     const resolved = (input.input.kind === "queue" || input.input.kind === "child_resume")
@@ -592,6 +627,9 @@ export class SessionExecutionManager {
       rejectStarted = reject;
     });
     void started.catch(() => undefined);
+    const recoveredOpenRun = input.recoveryExecutionId === undefined
+      ? undefined
+      : resumedRecord?.runs.at(-1);
     const pending: PendingSessionExecution = {
       sessionId: input.sessionId,
       rootSessionId,
@@ -601,12 +639,15 @@ export class SessionExecutionManager {
       abortController,
       executionToken,
       executionId: resumedRecord?.id ?? input.executionId ?? crypto.randomUUID(),
-      runOrdinal: resumedRecord?.runs.length ?? 0,
+      runOrdinal: recoveredOpenRun?.ordinal ?? resumedRecord?.runs.length ?? 0,
       initialStep: nextExecutionStep(sessionState, resumedRecord?.id),
       maxSteps: resumedRecord?.maxSteps ?? input.maxSteps ?? DEFAULT_EXECUTION_MAX_STEPS,
       binding: resolved.binding,
       memoryPolicy,
-      initialUsage: { ...sessionState.stats.usage },
+      toolAuthorizationSnapshot,
+      initialUsage: input.recoveryExecutionId === undefined || resumedRecord === undefined
+        ? { ...sessionState.stats.usage }
+        : subtractUsage(sessionState.stats.usage, recoveredRunUsage(sessionState, resumedRecord)),
       skillResolutionRoot: sessionState.cwd,
       ...(input.input.kind === "queue" || input.input.kind === "child_resume"
         ? { queueSnapshots: resolved.snapshots ?? [] }
@@ -1047,6 +1088,24 @@ export class SessionExecutionManager {
       && exactLive?.executionId === record.id
       && exactLive.promise !== undefined
     ) return exactLive as ActiveSessionExecution;
+    if (
+      record.status === "running"
+      && this.#active.get(key)?.executionId !== record.id
+      && activeBatch !== undefined
+      && hasRecoverableToolSearchCalls(activeBatch)
+      && isCompleteToolAuthorizationSnapshot(record.toolAuthorizationSnapshot)
+    ) {
+      const execution = await this.#startCheckedExecution({
+        slug: input.slug,
+        workspaceRoot: input.workspaceRoot,
+        sessionId: input.sessionId,
+        executionId: record.id,
+        recoveryExecutionId: record.id,
+        input: { kind: "resume" },
+      });
+      await execution.started;
+      return execution;
+    }
     if (record.status === "running" && this.#active.get(key)?.executionId !== record.id) {
       const run = record.runs.at(-1);
       if (run === undefined || run.endedAt !== undefined) {
@@ -1587,6 +1646,14 @@ export class SessionExecutionManager {
       this.#assertExecutionOriginReady(input, loadedState);
       if (loadedState.parentSessionId !== undefined) {
         await this.#validateExistingChildActivation(input.workspaceRoot, store);
+        input.admissionSignal?.throwIfAborted();
+      }
+      if (input.input.kind !== "resume") {
+        await this.#config.validateToolAuthorization({
+          workspaceRoot: input.workspaceRoot,
+          sessionId: input.sessionId,
+          authorization: normalizeToolAuthorizationSnapshot(input.extraTools, input.toolProjection),
+        });
         input.admissionSignal?.throwIfAborted();
       }
       const claimedScope = executionScopeSnapshot(store.getState());
@@ -2512,6 +2579,13 @@ export class SessionExecutionManager {
       const activatedAgent = this.#config.sessionAgentManager.get(workspaceRoot, childSessionId);
       if (cachedAgent !== activatedAgent) newlyActivatedAgent = activatedAgent;
 
+      await this.#config.validateToolAuthorization({
+        workspaceRoot,
+        sessionId: childSessionId,
+        authorization: normalizeToolAuthorizationSnapshot(undefined, undefined),
+      });
+      childLaunch.signal.throwIfAborted();
+
       execution = this.#claimExecution({
         slug: "",
         workspaceRoot,
@@ -3366,6 +3440,12 @@ export class SessionExecutionManager {
         const activatedAgent = await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
         childLaunch.signal.throwIfAborted();
         if (cachedAgent !== activatedAgent) newlyActivatedAgent = activatedAgent;
+        await this.#config.validateToolAuthorization({
+          workspaceRoot,
+          sessionId: request.sessionId,
+          authorization: normalizeToolAuthorizationSnapshot(undefined, undefined),
+        });
+        childLaunch.signal.throwIfAborted();
         execution = this.#claimExecution({
           slug: "",
           workspaceRoot,
@@ -3602,7 +3682,7 @@ export class SessionExecutionManager {
     let runEndedAt: number | undefined;
     try {
       if (store === undefined) throw new SessionFamilyIdentityUnavailableError(input.sessionId);
-      if (input.input.kind === "resume") {
+      if (input.input.kind === "resume" && input.recoveryExecutionId === undefined) {
         store.getState().append({
           type: "execution-resumed",
           executionId: execution.executionId,
@@ -3630,6 +3710,8 @@ export class SessionExecutionManager {
           binding: execution.binding.summary,
           executionSkills,
           memoryPolicy: execution.memoryPolicy,
+          toolAuthorizationSnapshot: cloneToolAuthorizationSnapshot(execution.toolAuthorizationSnapshot),
+          loadedToolRefs: [],
           origin: execution.origin,
           maxSteps: execution.maxSteps,
           ...(input.activeTimeoutMs === undefined ? {} : { activeTimeoutMs: input.activeTimeoutMs }),
@@ -3732,14 +3814,28 @@ export class SessionExecutionManager {
         execution.runAgent = agent;
         let result: AgentResult;
         try {
+          const executionRecord = agent.store.getState().executions.find((candidate) =>
+            candidate.id === execution.executionId
+          );
+          if (executionRecord === undefined) {
+            throw new Error(`Execution ${execution.executionId} lost its durable tool state before Agent activation`);
+          }
           result = await agent.run(execution.binding, {
             abort: execution.abortController.signal,
             executionId: execution.executionId,
             runOrdinal: execution.runOrdinal,
             initialStep: execution.initialStep,
             maxSteps: execution.maxSteps,
-            ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
-            ...(input.toolProjection === undefined ? {} : { toolProjection: input.toolProjection }),
+            toolAuthorizationSnapshot: cloneToolAuthorizationSnapshot(executionRecord.toolAuthorizationSnapshot),
+            loadedToolRefs: cloneLoadedToolRefs(executionRecord.loadedToolRefs),
+            reconcileExecutionToolLoads: async (invalidRefs) => {
+              await this.#reconcileExecutionToolLoads(
+                input.workspaceRoot,
+                input.sessionId,
+                execution.executionId,
+                invalidRefs,
+              );
+            },
             consumeSteers: async () => await this.#consumeSteers(execution),
             ...(execution.executionSkillSnapshots.size === 0
               ? {}
@@ -3959,6 +4055,39 @@ export class SessionExecutionManager {
     }
     if (snapshots.size > 0) this.#executionSkillSnapshots.set(key, snapshots);
     return snapshots;
+  }
+
+  async #reconcileExecutionToolLoads(
+    workspaceRoot: string,
+    sessionId: string,
+    executionId: string,
+    invalidRefs: readonly LoadedToolRef[],
+  ): Promise<void> {
+    const invalidKeys = new Set(invalidRefs.map(toolRefKey));
+    if (invalidKeys.size === 0) return;
+    await this.#config.commitDurableSessionMutation(
+      sessionId,
+      workspaceRoot,
+      (state) => {
+        const owner = state.executions.find((candidate) => candidate.id === executionId);
+        if (owner === undefined) throw new Error(`Execution ${executionId} has no durable tool-load owner`);
+        const removed = owner.loadedToolRefs.filter((ref) => invalidKeys.has(toolRefKey(ref)));
+        if (removed.length === 0) return { result: undefined };
+        const loadedToolRefs = owner.loadedToolRefs.filter((ref) => !invalidKeys.has(toolRefKey(ref)));
+        return {
+          result: undefined,
+          patch: {
+            executions: state.executions.map((record) => record.id === executionId
+              ? { ...record, loadedToolRefs }
+              : record),
+          },
+          events: [{
+            type: "system-notice",
+            message: boundedToolLoadInvalidationNotice(removed),
+          }],
+        };
+      },
+    );
   }
 
   async #consumeSteers(execution: PendingSessionExecution): Promise<void> {
@@ -5467,6 +5596,78 @@ function recoveredRunUsage(
     usage = addUsage(usage, normalizedStepUsage(step.usage));
   }
   return usage;
+}
+
+function normalizeToolAuthorizationSnapshot(
+  extraTools: readonly string[] | undefined,
+  toolProjection: readonly string[] | undefined,
+): ToolAuthorizationSnapshot {
+  return {
+    extraTools: normalizeToolNames(extraTools ?? []),
+    toolProjection: toolProjection === undefined ? null : normalizeToolNames(toolProjection),
+  };
+}
+
+function cloneToolAuthorizationSnapshot(snapshot: ToolAuthorizationSnapshot): ToolAuthorizationSnapshot {
+  return {
+    extraTools: [...snapshot.extraTools],
+    toolProjection: snapshot.toolProjection === null ? null : [...snapshot.toolProjection],
+  };
+}
+
+function cloneLoadedToolRefs(refs: readonly LoadedToolRef[]): LoadedToolRef[] {
+  return refs.map((ref) => ({ ...ref }));
+}
+
+function normalizeToolNames(names: readonly string[]): string[] {
+  for (const name of names) {
+    if (name.trim().length === 0 || new TextEncoder().encode(name).byteLength > 128) {
+      throw new Error("Tool authorization names must be non-blank and at most 128 UTF-8 bytes");
+    }
+  }
+  return [...new Set(names)].sort();
+}
+
+function isCompleteToolAuthorizationSnapshot(snapshot: ToolAuthorizationSnapshot): boolean {
+  return isSortedUniqueToolNames(snapshot.extraTools)
+    && (snapshot.toolProjection === null || isSortedUniqueToolNames(snapshot.toolProjection));
+}
+
+function isSortedUniqueToolNames(names: readonly string[]): boolean {
+  return names.every((name, index) => (
+    name.trim().length > 0
+    && new TextEncoder().encode(name).byteLength <= 128
+    && (index === 0 || names[index - 1]! < name)
+  ));
+}
+
+function hasRecoverableToolSearchCalls(batch: SessionToolBatch): boolean {
+  const nonterminal = batch.calls.filter((call) => call.state !== "completed" && call.state !== "failed");
+  return nonterminal.length > 0 && nonterminal.every((call) => (
+    call.toolName === TOOL_TOOL_SEARCH
+    && typeof call.catalogDigest === "string"
+    && /^[a-f0-9]{64}$/.test(call.catalogDigest)
+  ));
+}
+
+function toolRefKey(ref: LoadedToolRef): string {
+  return `${ref.name}\u0000${ref.descriptorDigest}`;
+}
+
+function boundedToolLoadInvalidationNotice(refs: readonly LoadedToolRef[]): string {
+  const names = [...new Set(refs.map((ref) => ref.name))].sort();
+  const prefix = "Tool contracts changed or became unavailable and were unloaded: ";
+  const suffix = ". Run tool_search again before using them.";
+  let notice = prefix;
+  let included = 0;
+  for (const name of names) {
+    const candidate = `${notice}${included === 0 ? "" : ", "}${name}${suffix}`;
+    if (new TextEncoder().encode(candidate).byteLength > TOOL_LOAD_NOTICE_MAX_BYTES) break;
+    notice += `${included === 0 ? "" : ", "}${name}`;
+    included += 1;
+  }
+  if (included < names.length) notice += `${included === 0 ? "" : ", "}and ${names.length - included} more`;
+  return `${notice}${suffix}`;
 }
 
 function normalizedStepUsage(value: unknown): NormalizedUsage {

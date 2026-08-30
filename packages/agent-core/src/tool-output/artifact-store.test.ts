@@ -22,6 +22,7 @@ const OWNER: ArtifactOwner = {
   projectIdentity: identity("project-a"),
   rootSessionId: "root-a",
   producerSessionId: "child-a",
+  executionId: "execution-a",
 };
 
 function makeStore(
@@ -86,12 +87,17 @@ afterEach(async () => {
 
 describe("ToolOutputArtifactStore", () => {
   test("commits strict metadata and reads complete UTF-8 content without gaps", async () => {
-    const store = makeStore(join(TEST_ROOT, "complete"));
+    const rootDir = join(TEST_ROOT, "complete");
+    const store = makeStore(rootDir);
     const content = "HEAD😀\nsecond line\nTAIL";
     const created = await createTestArtifact(store, { owner: OWNER, canonical: content });
     expect(created.outputRef).toHaveLength(22);
     expect(created.metadata.completeness).toBe("complete");
     expect(created.metadata.omitted.bytes).toBe(0);
+    expect(JSON.parse(await readFile(
+      join(rootDir, "artifacts", created.outputRef, "metadata.json"),
+      "utf8",
+    )).version).toBe(2);
     expect(await readAll(store, created.outputRef)).toBe(content);
     await store.dispose();
   });

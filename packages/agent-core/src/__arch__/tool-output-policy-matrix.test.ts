@@ -22,6 +22,7 @@ const SOURCE = [
 
 const INLINE = [
   "todo_write",
+  "tool_search",
   "wait_for_reminder",
   "cancel_session",
   "list_agents",
@@ -103,8 +104,8 @@ describe("Tool Output Plane architecture matrix", () => {
   test("every formal Agent exposes both bounded recovery tools", () => {
     expect(defaultAgentDefinitions).toHaveLength(6);
     for (const definition of defaultAgentDefinitions) {
-      expect(definition.tools.tools).toContain("output_read");
-      expect(definition.tools.tools).toContain("output_search");
+      expect(definition.tools.authorized).toContain("output_read");
+      expect(definition.tools.authorized).toContain("output_search");
     }
   });
 });

@@ -10,6 +10,10 @@ import {
   projectAgentTree,
   type AgentTreeDurableSnapshot,
 } from "./projection";
+import {
+  testExecutionLoadedToolRefs,
+  testExecutionToolAuthorizationSnapshot,
+} from "../testing/test-execution-fixtures";
 
 const memoryPolicy = {
   policy: { useMemory: true, autoLearning: true },
@@ -46,6 +50,8 @@ function execution(id: string, status: SessionExecutionRecord["status"]): Sessio
     runs: [],
     executionSkills: [],
     memoryPolicy,
+    toolAuthorizationSnapshot: testExecutionToolAuthorizationSnapshot,
+    loadedToolRefs: testExecutionLoadedToolRefs,
   };
   if (status === "running") return { ...base, status };
   if (status === "suspended") {

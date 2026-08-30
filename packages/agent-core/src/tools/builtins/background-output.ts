@@ -464,7 +464,7 @@ function lineCount(value: string): number {
 export const backgroundOutputTool = defineTool({
   name: "background_output",
   description: [
-    "Read a bounded status/output page for one direct child Session.",
+    "Collect a delegated worker's answer by reading a bounded status/output page for one direct child Session.",
     "The latest completed execution's final assistant response is the child result. Failed, cancelled, timed-out, and interrupted executions expose status/error but no final output.",
     "Use block=true after a terminal reminder when the final output is required; do not poll.",
     "",
