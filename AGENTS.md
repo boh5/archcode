@@ -324,7 +324,11 @@ line, capped at 160 characters, grouped by local namespace or MCP server. Models
 prefer `select:<exact-name>`; only a query without that prefix uses the local
 BM25/trigram ranking. Search never calls another model, never grants permission,
 and never falls back from an exact miss to ranking or to an eager/load-all
-surface.
+surface. New Execution writes always include their tool-authorization snapshot
+and loaded refs. Persisted records that predate those fields read with
+`{ extraTools: [], toolProjection: null }` and `[]`; values that are present but
+malformed remain invalid. No data-format version or migration framework is
+introduced for this additive read boundary.
 
 **Config** (`~/.archcode/config.json`): server-wide `provider.<id>.{npm, name, options, models}` + strict `profiles.{principal,deep,fast}.{model,variant,options}` + optional `memory`, `integrations.github`, and `mcp.{disabledBuiltins,servers}`. Each MCP server entry strictly requires `type: "http" | "stdio"` and `enabled`; HTTP uses `url`/`headers`, while STDIO uses `command`/`args`/`env`. Optional `connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` default to 10,000/30,000/60,000 ms. Provider values are literal; MCP URL/header or STDIO env values and GitHub token resolution retain their environment-variable behavior. Project directories are never searched for configuration.
 

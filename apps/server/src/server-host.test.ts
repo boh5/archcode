@@ -214,6 +214,102 @@ function setupRequest(
   };
 }
 
+async function seedLegalSession(
+  configService: ServerConfigService,
+  projectRegistry: ProjectRegistry,
+  runtimeStorageHomeDir: string,
+  workspaceRoot: string,
+): Promise<string> {
+  const activation = await configService.activateForStartup();
+  if (activation.status !== "ready") throw new Error("Expected a valid test Config");
+  const runtime = await createRuntime({
+    configService,
+    activation: activation.activation,
+    projectRegistry,
+    runtimeStorageHomeDir,
+  });
+  let sessionId: string;
+  try {
+    const session = await runtime.createSession(workspaceRoot, {
+      agentName: "lead",
+      source: { kind: "direct" },
+    });
+    sessionId = session.sessionId;
+  } finally {
+    await runtime.shutdown();
+  }
+  return sessionId;
+}
+
+async function removeExecutionToolState(
+  workspaceRoot: string,
+  sessionId: string,
+): Promise<void> {
+  const sessionPath = join(
+    workspaceRoot,
+    ".archcode",
+    "runtime",
+    "sessions",
+    sessionId,
+    "session.json",
+  );
+  const persisted = JSON.parse(await readFile(sessionPath, "utf8")) as {
+    executions: Array<Record<string, unknown>>;
+  };
+  const executionId = "legacy-execution";
+  const startedAt = Date.now();
+  const binding = {
+    selection: { model: "local:test-model" },
+    providerId: "local",
+    modelId: "test-model",
+    providerDisplayName: "Local",
+    modelDisplayName: "Test model",
+    resolution: "profile_default",
+    modelRuntimeRevision: "legacy-fixture",
+  };
+  const zeroUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    reasoningTokens: 0,
+    cachedInputTokens: 0,
+  };
+  persisted.executions = [{
+    id: executionId,
+    startedAt,
+    origin: "user_message",
+    maxSteps: 50,
+    durationMs: 0,
+    executionSkills: [],
+    memoryPolicy: {
+      policy: { useMemory: true, autoLearning: true },
+      epoch: { bootId: "legacy-fixture", generation: 0 },
+    },
+    runs: [{
+      ordinal: 0,
+      startedAt,
+      endedAt: startedAt,
+      durationMs: 0,
+      binding,
+      usageDelta: zeroUsage,
+      settlement: {
+        key: `run:${sessionId}:${executionId}:0`,
+        goalInstanceId: null,
+      },
+    }],
+    status: "completed",
+    endedAt: startedAt,
+    terminalSettlement: {
+      key: `terminal:${sessionId}:${executionId}`,
+      goalInstanceId: null,
+    },
+  }];
+  const execution = persisted.executions[0]!;
+  await writeFile(sessionPath, JSON.stringify(persisted));
+  expect(execution).not.toHaveProperty("toolAuthorizationSnapshot");
+  expect(execution).not.toHaveProperty("loadedToolRefs");
+}
+
 describe("ArchCodeServerHost", () => {
   test("publishes the listener and control plane before a deferred Runtime settles", async () => {
     const home = await createHome();
@@ -1597,6 +1693,62 @@ describe("ArchCodeServerHost", () => {
       },
     });
     expect(attempts).toBe(2);
+  });
+
+  test("starts the production Runtime with a legacy Execution and serves the Session API", async () => {
+    const home = await createHome();
+    await mkdir(join(home, ".archcode"), { recursive: true });
+    await writeFile(
+      resolveServerConfigPath(home),
+      `${JSON.stringify(diskConfig())}\n`,
+      { mode: 0o600 },
+    );
+    const workspaceRoot = join(home, "legacy-session-project");
+    await mkdir(workspaceRoot, { recursive: true });
+    const projectRegistry = new ProjectRegistry({ homeDir: home, logger: silentLogger });
+    const project = await projectRegistry.add({
+      workspaceRoot,
+      name: "Legacy Session Project",
+    });
+    const configService = new ServerConfigService({ homeDir: home });
+    const sessionId = await seedLegalSession(configService, projectRegistry, home, workspaceRoot);
+    await removeExecutionToolState(workspaceRoot, sessionId);
+    const runtimeDataService = new RuntimeDataService({ projectRegistry });
+    const host = await ArchCodeServerHost.create({
+      configService,
+      createRuntime: async (options) => await createRuntime({
+        ...options,
+        runtimeStorageHomeDir: home,
+      }),
+      ...hostInfrastructure(home),
+      projectRegistry,
+      runtimeDataService,
+      logger: silentLogger,
+    });
+
+    try {
+      host.startRuntimeActivation();
+      await waitForRuntimeState(host, "ready");
+      expect(host.getRuntimeStatus()).toEqual({ state: "ready" });
+
+      const inspection = await host.app.request("/api/runtime-data");
+      expect(inspection.status).toBe(200);
+      const inspectionBody = await inspection.json() as {
+        projects: Array<{ projectSlug: string; issues: unknown[] }>;
+      };
+      expect(inspectionBody.projects.find((candidate) => candidate.projectSlug === project.slug)?.issues)
+        .toEqual([]);
+
+      const sessions = await host.app.request(`/api/projects/${project.slug}/sessions`);
+      expect(sessions.status).toBe(200);
+      expect(await sessions.json()).toMatchObject({
+        sessions: expect.arrayContaining([
+          expect.objectContaining({ session: expect.objectContaining({ sessionId }) }),
+        ]),
+      });
+    } finally {
+      await host.shutdown();
+    }
   });
 
   test("recovers in process with the real Runtime data service while preserving healthy project data", async () => {

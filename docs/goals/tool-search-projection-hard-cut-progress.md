@@ -102,3 +102,13 @@
 - Reviewer 确认 Unicode 行分隔注入、MCP fixture server identity 和显式空 provider boundary 的授权回落已修复；AC-04/05/06/07 的真实链聚焦测试通过。AC-02 已按生产不变量纠正，当前最终 diff 必须再做一轮独立验收，不能沿用第一轮 `NOT_DONE`。
 - 第二轮 Reviewer 对修订后的 AC-01 至 AC-08 逐项复核，最终 **PASS：P0=0、P1=0、P2=0**。独立复跑 focused 339/339、unit 3,070/3,070、integration 145/145、architecture 83/83；root typecheck 5/5、root test 8/8、build、measurement、benchmark 和 `git diff --check` 全部通过。
 - 第二轮实测保持目标：Lead initial wire 5,136 tokens，含 1,188-token deferred directory 后相对 11,845 基线下降 46.61%；1,000-entry benchmark p50 93.54 ms、p95 96.06 ms。Reviewer 未发现 eager/load-all、第二 loader、兼容 reader、deprecated fallback 或墓碑测试。
+
+### 2026-08-29：持久化读取边界第一性原理纠正（完成）
+
+- 用户明确纠正旧决定：不增加任何 Version 字段。新 Execution 写入仍要求 `toolAuthorizationSnapshot` 与 `loadedToolRefs`；读取旧 Session/Execution 时，缺少前者补 `{ extraTools: [], toolProjection: null }`，缺少后者补 `[]`。
+- 上述缺字段是可恢复的旧 shape，不是损坏数据：不得因此阻断 HTTP/Runtime 正常启动，也不得强制用户删除 Session。只有字段存在但内容非法时才严格报错，并继续由 Settings 的 Runtime Data 诊断与项目级移除入口处理。
+- 已在 Session 持久化 Schema 为两个缺失字段补上述确定性默认值；completed/running/suspended、缺一/缺二、显式非法值、磁盘冷加载再持久化均有回归。Runtime Data 证明同一旧 shape 不再报告 `invalid_current_schema`，真实 ServerHost + production `createRuntime` 回归证明旧 Session 存在时 Runtime 进入 `ready` 且 Session API 返回 200；原有真正损坏数据的 Settings 恢复测试保持通过。
+- 本轮 `bun run typecheck` 5/5、`bun run test` 8/8、`bun run build`、binary smoke 与 `git diff --check` 均通过。独立 Sol(xhigh) review 结论为 PASS，P0/P1/P2=0；Reviewer 唯一的 P3 是进度状态未同步，已在本条修正。
+- 真实人工 QA 使用 `/Users/bo/Developer/AI/specra-test-projects` 的隔离副本：真实数据含 7 个 Session、14 个缺少上述两字段的旧 Execution。服务经 production `createRuntime` 正常进入 `ready`，Runtime Data 为 0 issue，Sessions API 返回 200，页面正常列出并打开旧 Session，没有进入 Settings 恢复页。
+- 在浏览器中从该旧 Session 使用真实 `GPT-5.6 Luna · deep` 继续执行，发送“只回复 `LEGACY_SESSION_QA_OK`、不调用工具”的消息；9 秒后 Execution 正常 `completed`，页面收到精确回复，Tool Batch 为 0，浏览器 warning/error 日志为 0。
+- 同一次正常持久化后，该 Session 的 7 个 Execution（含 6 个旧 Execution）均已落盘 `toolAuthorizationSnapshot` 与 `loadedToolRefs`，缺失计数为 0；最新值分别为 `{ extraTools: [], toolProjection: null }` 与 `[]`。原项目 `.archcode/runtime` 的 12 个文件在 QA 前后 SHA-256 清单逐项一致，未被修改。

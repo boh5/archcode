@@ -235,6 +235,12 @@ the model saw, so normal execution and cold recovery reject changed catalogs
 rather than silently binding a different contract. Registry, permission,
 finalization, and MCP call ownership remain unchanged.
 
+New Execution records always write their tool-authorization snapshot and loaded
+refs. A persisted record that predates these fields is read as
+`{ extraTools: [], toolProjection: null }` with no loaded refs; malformed values
+that are present remain invalid. This additive read boundary uses no data-format
+version or migration framework.
+
 Configuration requires `type` + `enabled` for every user server. HTTP uses
 `url`/`headers`; STDIO uses `command`/`args`/`env`. The independent
 `connectTimeoutMs`, `discoveryTimeoutMs`, and `callTimeoutMs` deadlines default

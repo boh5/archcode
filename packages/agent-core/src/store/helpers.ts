@@ -67,7 +67,7 @@ const SortedUniqueToolNamesSchema = z.array(CanonicalToolNameSchema).superRefine
 const ToolAuthorizationSnapshotSchema = z.strictObject({
   extraTools: SortedUniqueToolNamesSchema,
   toolProjection: SortedUniqueToolNamesSchema.nullable(),
-});
+}).default(() => ({ extraTools: [], toolProjection: null }));
 const LoadedToolRefSchema = z.strictObject({
   name: CanonicalToolNameSchema,
   descriptorDigest: ToolDigestSchema,
@@ -80,7 +80,7 @@ const LoadedToolRefsSchema = z.array(LoadedToolRefSchema).superRefine((refs, ctx
   if (names.some((name, index) => index > 0 && names[index - 1]! >= name)) {
     ctx.addIssue({ code: "custom", message: "Loaded tool refs must be sorted by name" });
   }
-});
+}).default(() => []);
 const ToolLifecycleTimestampSchema = z.number().finite().nonnegative();
 const ToolOutputCountSchema = z.strictObject({
   bytes: z.number().int().nonnegative().safe(),

@@ -700,7 +700,7 @@ describe("session transcript serialization", () => {
     expect(parse(persistedToolBatch("blocked", oversizedBlockedRequest))).toBe(false);
   });
 
-  test("SessionFileSchema requires canonical tool authorization and loaded ref state", () => {
+  test("SessionFileSchema validates canonical tool authorization and loaded ref state when present", () => {
     const sessionId = uniqueSessionId("tool-search-execution-state");
     const base = persistedFile(persistedState(sessionId));
     const execution = base.executions[0];
@@ -752,6 +752,89 @@ describe("session transcript serialization", () => {
         toolAuthorizationSnapshot: { extraTools: [" "], toolProjection: null },
       }],
     }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...withToolState,
+      executions: [{
+        ...withToolState.executions[0]!,
+        toolAuthorizationSnapshot: null,
+      }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...withToolState,
+      executions: [{
+        ...withToolState.executions[0]!,
+        toolAuthorizationSnapshot: {},
+      }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...withToolState,
+      executions: [{
+        ...withToolState.executions[0]!,
+        loadedToolRefs: null,
+      }],
+    }).success).toBe(false);
+    expect(SessionFileSchema.safeParse({
+      ...withToolState,
+      executions: [{
+        ...withToolState.executions[0]!,
+        loadedToolRefs: [{}],
+      }],
+    }).success).toBe(false);
+  });
+
+  test("SessionFileSchema hydrates missing tool state for completed, running, and suspended Executions", () => {
+    const sessionId = uniqueSessionId("missing-tool-state-defaults");
+    const base = persistedFile(persistedState(sessionId));
+    const completed = base.executions[0];
+    expect(completed).toBeDefined();
+    if (completed === undefined) return;
+
+    const nonterminalBase = { ...completed } as Record<string, unknown>;
+    delete nonterminalBase.endedAt;
+    delete nonterminalBase.finalOutputStepId;
+    delete nonterminalBase.error;
+    delete nonterminalBase.terminalSettlement;
+
+    const executions: Array<{ status: string; execution: Record<string, unknown> }> = [
+      { status: "completed", execution: { ...completed } },
+      {
+        status: "running",
+        execution: {
+          ...nonterminalBase,
+          status: "running",
+          durationMs: 0,
+          runs: [{ ordinal: 0, startedAt: 100, binding: TEST_BINDING }],
+        },
+      },
+      {
+        status: "suspended",
+        execution: {
+          ...nonterminalBase,
+          status: "suspended",
+          suspension: { kind: "resume_pending", toolBatchId: "batch-1", readyAt: 300 },
+        },
+      },
+    ];
+    const omissionCases: Array<{ fields: Array<"toolAuthorizationSnapshot" | "loadedToolRefs"> }> = [
+      { fields: ["toolAuthorizationSnapshot"] },
+      { fields: ["loadedToolRefs"] },
+      { fields: ["toolAuthorizationSnapshot", "loadedToolRefs"] },
+    ];
+
+    for (const { status, execution } of executions) {
+      for (const { fields } of omissionCases) {
+        const withoutToolState = { ...execution };
+        for (const field of fields) delete withoutToolState[field];
+
+        const parsed = SessionFileSchema.safeParse({ ...base, executions: [withoutToolState] });
+        expect(parsed.success, `${status} Execution missing ${fields.join(" and ")}`).toBe(true);
+        if (!parsed.success) continue;
+
+        const hydrated = parsed.data.executions[0];
+        expect(hydrated?.toolAuthorizationSnapshot).toEqual({ extraTools: [], toolProjection: null });
+        expect(hydrated?.loadedToolRefs).toEqual([]);
+      }
+    }
   });
 
   test("SessionFileSchema rejects corrupt cross-run cursors and Tool Batch step links", () => {
@@ -1014,6 +1097,41 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().executionCount).toBe(state.executions.length);
     expect(loaded.getState().todos).toEqual(state.todos);
     expect(loaded.getState().childSessionLinks).toEqual([]);
+  });
+
+  test("cold-loads missing execution tool state and re-persists hydrated defaults", async () => {
+    const sessionId = uniqueSessionId("missing-tool-state-cold-load");
+    const persisted = persistedFile(persistedState(sessionId));
+    const execution = persisted.executions[0];
+    expect(execution).toBeDefined();
+    if (execution === undefined) return;
+
+    const withoutToolState = { ...execution } as Record<string, unknown>;
+    delete withoutToolState.toolAuthorizationSnapshot;
+    delete withoutToolState.loadedToolRefs;
+    await writeSessionFile(sessionId, {
+      ...persisted,
+      executions: [withoutToolState],
+    });
+
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+    expect(loaded.getState().executions[0]?.toolAuthorizationSnapshot).toEqual({
+      extraTools: [],
+      toolProjection: null,
+    });
+    expect(loaded.getState().executions[0]?.loadedToolRefs).toEqual([]);
+
+    loaded.getState().setTitle("rehydrated and persisted");
+    await storeManager.flushSession(sessionId, TMP_DIR);
+
+    const repersisted = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as {
+      executions: Array<Record<string, unknown>>;
+    };
+    expect(repersisted.executions[0]?.toolAuthorizationSnapshot).toEqual({
+      extraTools: [],
+      toolProjection: null,
+    });
+    expect(repersisted.executions[0]?.loadedToolRefs).toEqual([]);
   });
 
   test("save/load roundtrips child session links", async () => {

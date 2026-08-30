@@ -18,6 +18,7 @@
 - **MCP 默认全部 deferred**：已启用用户 MCP 仍对六种 Agent 全局授权，产品内置 MCP 仍保留现有角色矩阵，但完整工具 schema 只经 `tool_search` 加载。v1 不增加 `alwaysLoad`、用户级工具分配或 eager 开关。
 - **加载状态属于一次逻辑 Execution**：同一次 Execution 内跨 step、HITL、子 Agent 同步暂停、resume、compact 和进程恢复保留；新 Execution 从 Core + 当前 State 重新开始，不把历史加载无限带入 Session。
 - **硬切，不兜底**：删除当前 eager MCP 拼接和旧 `tools.tools` 合约。`select:` 精确失败不得回落 BM25；自然语言搜索空结果、MCP 暂不可用或 provider 不支持厂商原生 Tool Search 时，都不得回退为全量 schema。
+- **持久化读取的窄兼容边界**：不增加任何 Version 字段。新 Execution 写入时 `toolAuthorizationSnapshot` 与 `loadedToolRefs` 仍为 required；读取旧 Session/Execution 时，若仅缺少 `toolAuthorizationSnapshot`，补 `{ extraTools: [], toolProjection: null }`，若仅缺少 `loadedToolRefs`，补 `[]`。缺字段不算损坏，不得阻止服务正常启动或强制进入删除流程；字段存在但内容非法仍严格报错，并交给现有 Settings 的诊断/移除流程。
 
 ## 为什么现在做
 
@@ -140,7 +141,7 @@ System Prompt 增加一个紧凑 deferred 目录：按 namespace/MCP server 分�
 
 同一 record 还新增 required `toolAuthorizationSnapshot: { extraTools: string[]; toolProjection: string[] | null }`。`SessionExecutionManager` 在 Execution admission 时先按现有规则验证输入，再与 execution-start 原子持久化；同一逻辑 Execution 的 HITL/child resume、cwd transition 和进程冷恢复只从该 snapshot 重建，不接受调用方重新传值。角色 definition、depth、worktree 与 live MCP 仍由当前 runtime 确定性重建，不复制进 snapshot。新 Execution 从本次已验证输入创建新 snapshot。
 
-`tool_search` 的成功结果与 loaded refs 必须由现有 Tool Batch settlement 在同一次 durable store mutation 中提交；ToolRegistry 只传递 Sidecar，不拥有持久化。冷启动时，`SessionExecutionManager` 新增一个窄恢复分类：只有 active Tool Batch 的全部非终态 calls 都是 `tool_search`，且 Execution authorization snapshot 完整时，才恢复同一逻辑 Execution；ConfiguredAgent 先按 snapshot 建立 live-catalog resolver，QueryLoop 再把原 Batch 交回 Scheduler。存在任一其他非终态 call 时继续走当前 interrupted/manual-inspection 规则，不扩大通用恢复范围。Scheduler 随后按现有 read-only 预算恢复一次并通过该 resolver 取执行瞬间 catalog：digest 相同则确定性重跑，不同则结算 `TOOL_SEARCH_CATALOG_CHANGED`，两种情况都不会进入 effectful manual inspection。暂停、resume、compact 和进程恢复都从当前 Execution record 重建可见投影。旧 Session/Execution shape 不迁移、不兼容读取，并在 breaking release note 中明确。
+`tool_search` 的成功结果与 loaded refs 必须由现有 Tool Batch settlement 在同一次 durable store mutation 中提交；ToolRegistry 只传递 Sidecar，不拥有持久化。冷启动时，`SessionExecutionManager` 新增一个窄恢复分类：只有 active Tool Batch 的全部非终态 calls 都是 `tool_search`，且 Execution authorization snapshot 完整时，才恢复同一逻辑 Execution；ConfiguredAgent 先按 snapshot 建立 live-catalog resolver，QueryLoop 再把原 Batch 交回 Scheduler。存在任一其他非终态 call 时继续走当前 interrupted/manual-inspection 规则，不扩大通用恢复范围。Scheduler 随后按现有 read-only 预算恢复一次并通过该 resolver 取执行瞬间 catalog：digest 相同则确定性重跑，不同则结算 `TOOL_SEARCH_CATALOG_CHANGED`，两种情况都不会进入 effectful manual inspection。暂停、resume、compact 和进程恢复都从当前 Execution record 重建可见投影。新写入字段保持 required；读取时仅按上方窄边界为缺失字段补确定性默认值，不增加 Version、不做迁移。字段存在但非法时保持严格 schema failure；Server 控制面和 Settings 继续可用，AgentRuntime 进入现有错误状态，并由 Runtime Data 显示受影响记录、按既有项目级删除契约恢复。
 
 ### 6. State facts 的收集顺序
 
@@ -193,7 +194,7 @@ State Projection 保持纯函数，但 facts 不是假设全在 Zustand Store。
 | MCP 热更新后误用旧工具 | loaded ref 绑定 model-facing contract digest；变化/消失立即失效，同 digest 的透明 reconnect 延续现有下一边界绑定语义，实际调用始终用当前模型边界的 run-local descriptor |
 | State Activation 逐渐变成规则平台 | v1 条件只限本 Goal 的固定事实表，放在一个纯函数模块；新增状态类型必须修改该表和测试，不提供 DSL/配置接口 |
 | 初始提示目录变大 | 每项只保留 canonical name 和首行摘要，首行最多 160 个 Unicode 字符，不放 schema；完整目录名称不静默省略，measurement 单独报告其 token 成本 |
-| 新 Execution 字段破坏旧持久数据 | 这是明确 hard cut：启动/载入给出可诊断 schema failure 和 breaking note，不迁移、不默认空数组兼容 |
+| 新 Execution 字段破坏旧持久数据 | 新写入仍 required；读取旧记录时仅为缺失的 `toolAuthorizationSnapshot` / `loadedToolRefs` 补确定性默认值，不增加 Version 或迁移；字段存在但非法时给出可诊断 schema failure，Server 控制面保持可用并交由 Settings Runtime Data 按既有项目级恢复契约处理 |
 
 ## 验收标准
 
@@ -203,7 +204,7 @@ State Projection 保持纯函数，但 facts 不是假设全在 Zustand Store。
 
 - 六个 AgentDefinition 只有 `authorized/core` 新契约；`tool_search` 在六者 `authorized` 中但不在 `core`，其余 Core 名称与上表逐项一致。
 - 有效本地授权精确等于 `definition authorized + extraTools + eligible worktree tools` 再由可选 `toolProjection` 做交集；注册工具不会自动进入 catalog，`toolProjection` 不能授予工具。GitHub 只有经 `extraTools` 明确授予时才可搜索，测试覆盖已授予/未授予两种情况。
-- Execution admission 将验证后的 `extraTools/toolProjection` 原子固化为 required authorization snapshot；同一逻辑 Execution 的 HITL/child resume、cwd transition 和 cold recovery 从 snapshot 重建且拒绝调用方替换。新 Execution 使用新 snapshot，旧 shape 不默认补空值。
+- Execution admission 将验证后的 `extraTools/toolProjection` 原子固化为 required authorization snapshot；同一逻辑 Execution 的 HITL/child resume、cwd transition 和 cold recovery 从 snapshot 重建且拒绝调用方替换。新 Execution 使用新 snapshot；旧记录缺少 `toolAuthorizationSnapshot` / `loadedToolRefs` 时分别按 `{ extraTools: [], toolProjection: null }` / `[]` 读取，不增加 Version，字段存在但非法仍严格失败。
 - 现有每个角色基础能力、Execution overlay、delegation depth、Skill allow-list、用户 MCP 全局授权和 builtin MCP 角色矩阵均有 before/after 集合相等测试；Visibility Projection 只能减少有效授权，不能扩大授权。
 - 生产代码、fixture 和文档中不存在旧 `tools.tools`、第二个授权合并器、deprecated alias 或兼容分支。
 
@@ -259,7 +260,7 @@ State Projection 保持纯函数，但 facts 不是假设全在 Zustand Store。
 
 ### AC-08：硬切、验证和独立验收完成
 
-- 当前 eager MCP append 路径、旧固定 tool-count 断言和所有被替换实现已删除；无 feature flag、旧行为 fallback、兼容 reader、deprecated export 或墓碑测试。`select:` 精确失败不得回落 BM25。
+- 当前 eager MCP append 路径、旧固定 tool-count 断言和所有被替换实现已删除；无 feature flag、旧行为 fallback、旧 `tools.tools` reader、deprecated export 或墓碑测试。仅保留对 `toolAuthorizationSnapshot` / `loadedToolRefs` 缺失字段的上述确定性默认读取；不增加 Version 或迁移，`select:` 精确失败不得回落 BM25。
 - Focused unit/integration/architecture tests、`bun run typecheck`、`bun run test`、`bun run build`、`git diff --check` 全部退出码为 0。
-- 更新后的 AGENTS/架构文档/breaking release note 与 runtime 一致，明确旧持久 Execution shape 不兼容、MCP 改为 deferred、搜索失败不回退。
+- 更新后的 AGENTS/架构文档/breaking release note 与 runtime 一致，明确新写入字段 required、旧记录缺字段按确定性默认值读取且不影响 Runtime 激活、非法字段交由 Settings Runtime Data 按既有项目级恢复契约处理（不增加 Version 或迁移）、MCP 改为 deferred、搜索失败不回退。
 - 独立 Reviewer 必须按 AC-01 至 AC-08 给出源码、测试、命令和测量证据；只说“测试通过”或“token 下降”不能判定完成。
