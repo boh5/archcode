@@ -7,8 +7,14 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-08-30
+
 ### Changed
 
+- Hard-cut the production Web workbench to the approved list-only Todo workflow
+  and align Runs, Schedules, Session, Root, Settings, global theme, responsive
+  behavior, and keyboard focus with the current design contracts. The replaced
+  Board, drag-and-drop, and unmounted UI paths are removed.
 - Project each Agent's model-visible tools from a small role Core, current
   runtime state, and Execution-local loaded contracts. Local long-tail and MCP
   tools now start in a compact namespace/server directory: `tool_search` loads
@@ -19,6 +25,15 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   loaded tool-contract refs. Existing Session records that predate those fields
   read with the canonical empty authorization overlay and no loaded refs;
   explicitly malformed values remain invalid.
+
+### Fixed
+
+- Prevent streamed model errors and abort races from reporting false success or
+  leaving Steps open, and reset Todo continuation stagnation when progress
+  resumes.
+- Synchronize project catalog changes across tabs and reconnects, and cancel
+  stale MCP Settings refreshes when the panel closes or its configuration
+  changes.
 
 ### Breaking Changes
 
