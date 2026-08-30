@@ -232,7 +232,7 @@ describe("release metadata", () => {
   test("compares complete release asset directories by content", async () => {
     const expectedDir = await mkdtemp(join(tmpdir(), "archcode-release-expected-"));
     const actualDir = await mkdtemp(join(tmpdir(), "archcode-release-actual-"));
-    const releaseAssetNames = releaseAssetNamesForVersion("0.0.10");
+    const releaseAssetNames = releaseAssetNamesForVersion("0.0.11");
     try {
       for (const name of releaseAssetNames) {
         await Promise.all([
@@ -258,14 +258,14 @@ describe("release metadata", () => {
     try {
       for (const target of releaseTargets) {
         await writeTestArchive(
-          join(assetDir, releaseArchiveAssetName(target, "0.0.10")),
-          "0.0.10",
+          join(assetDir, releaseArchiveAssetName(target, "0.0.11")),
+          "0.0.11",
         );
       }
       const template = await Bun.file(join(import.meta.dir, "install.sh")).text();
       await Bun.write(
         join(assetDir, "install.sh"),
-        renderReleaseInstaller(template, "0.0.10"),
+        renderReleaseInstaller(template, "0.0.11"),
       );
 
       await writeBundleMetadata(assetDir);
