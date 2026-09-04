@@ -24,8 +24,6 @@ import type { Logger } from "../../logger";
 import type { SessionGoalService } from "../../session-goal";
 import type { AttachmentModelProjector } from "../../attachments";
 
-export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
-
 export interface QueryLoopOptions {
   executionId: string;
   runOrdinal: number;
@@ -100,8 +98,3 @@ export type QueryLoopResult =
       readonly status: SessionExecutionTerminalStatus;
       readonly error?: string;
     };
-
-export interface NormalizedToolCall {
-  toolName: string;
-  canonicalInput: string;
-}

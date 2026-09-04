@@ -1,5 +1,5 @@
 import { useMemo, useState, type KeyboardEvent } from "react";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, CircleQuestionMark, Loader2 } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, CircleQuestionMark, Loader2, MessageCircleQuestion, ShieldAlert } from "lucide-react";
 import { useCancelHitl, useRespondHitl } from "../../api/mutations";
 import type { ScopedHitlView } from "../../store/hitl-store";
 import type { HitlDisplayPayload, HitlQuestionDisplayItem, HitlResponse, HitlSource } from "../../api/types";
@@ -28,12 +28,16 @@ export function responseFor(source: HitlSource, answers: string[], decision: "ap
 /** The only HITL mutation surface: rendered in the owning root Session composer. */
 export function HitlDecisionCard({
   entry,
+  expanded = true,
+  onExpandedChange,
   requestPosition = 1,
   requestCount = 1,
   onPreviousRequest,
   onNextRequest,
 }: {
   entry: ScopedHitlView;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
   requestPosition?: number;
   requestCount?: number;
   onPreviousRequest?: () => void;
@@ -64,6 +68,11 @@ export function HitlDecisionCard({
   const allAnswered = resolvedAnswers.every((answer) => answer.length > 0);
   const showSummary = view.displayPayload.summary !== undefined
     && (view.source.type !== "ask_user" || !items.some((item) => item.question === view.displayPayload.summary));
+  const requestKind = view.source.type === "ask_user" ? "Question" : "Permission";
+  const requestSummary = view.source.type === "ask_user"
+    ? items[0]?.question ?? view.displayPayload.summary ?? view.displayPayload.title
+    : view.displayPayload.title;
+  const bodyId = `hitl-decision-body-${view.hitlId}`;
 
   const submit = (decision: Parameters<typeof responseFor>[2]) => {
     if (view.source.type === "ask_user" && !allAnswered) return;
@@ -207,11 +216,45 @@ export function HitlDecisionCard({
   return (
     <article
       id={`hitl-decision-${view.hitlId}`}
-      className="min-w-0 rounded-sm border-y border-r border-border-subtle border-l-[3px] border-l-warning bg-bg-elevated outline-none transition-colors focus-visible:bg-warning-muted"
+      className="min-w-0 overflow-hidden rounded-xl border border-warning/30 bg-bg-elevated outline-none transition-colors focus-visible:bg-warning-muted"
       data-testid="hitl-decision-card"
       data-hitl-id={view.hitlId}
     >
-      <div className="min-w-0 px-3 py-2" data-testid="hitl-decision-body">
+      <button
+        type="button"
+        className="grid min-h-11 w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 border-0 bg-bg-surface px-3 py-1.5 text-left text-text-secondary transition-colors duration-[var(--motion-fast)] hover:bg-bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        onClick={() => onExpandedChange?.(!expanded)}
+        data-testid="hitl-card-toggle"
+      >
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.045em] text-warning">
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-warning-muted">
+            {view.source.type === "ask_user"
+              ? <MessageCircleQuestion size={12} aria-hidden="true" />
+              : <ShieldAlert size={12} aria-hidden="true" />}
+          </span>
+          {requestKind}
+        </span>
+        <strong className="min-w-0 truncate text-[12px] font-semibold leading-5 text-text-primary">
+          {requestSummary}
+        </strong>
+        <span className="shrink-0 text-[10px] font-semibold text-warning">Pending</span>
+        <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] tabular-nums text-text-tertiary">
+          {requestCount > 1 ? `${requestPosition}/${requestCount}` : null}
+          <ChevronDown
+            size={13}
+            className={`transition-transform duration-[var(--motion-fast)] ${expanded ? "" : "-rotate-90"}`}
+            aria-hidden="true"
+          />
+        </span>
+      </button>
+      <div
+        id={bodyId}
+        className="min-w-0 border-t border-border-subtle px-3 py-2"
+        data-testid="hitl-decision-body"
+        hidden={!expanded}
+      >
         {view.source.type === "tool_permission" && (
           <h4 className="mb-1 break-words text-[13px] font-medium leading-5 text-text-primary">{view.displayPayload.title}</h4>
         )}
@@ -341,7 +384,11 @@ export function HitlDecisionCard({
       </div>
 
       {(actionable || requestCount > 1) && (
-        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle bg-bg-surface px-3 py-2" data-testid="hitl-decision-actions">
+        <footer
+          className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle bg-bg-surface px-3 py-2"
+          data-testid="hitl-decision-actions"
+          hidden={!expanded}
+        >
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {requestCount > 1 && (
               <div className="flex items-center gap-1" data-testid="hitl-request-navigator">

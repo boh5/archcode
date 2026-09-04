@@ -36,9 +36,11 @@ describe("ProjectTodoNavigator", () => {
     const dom = installDom();
     const root = createRoot(document.getElementById("root")!);
     const todo = { id: "active", content: "# Active work", attachmentIds: [], status: "in_progress" as const, revision: 1, createdAt: 1, updatedAt: 1 };
+    const runningTodo = { ...todo, id: "running", content: "# Running work", status: "idea" as const };
     const projection: ProjectTodoNavigationProjection = {
-      allTodos: { count: 1, current: false, state: "ready" },
+      allTodos: { count: 2, current: false, state: "ready" },
       needsYou: { count: 1, state: "ready", rows: [{ todo, label: "Active work", current: true, attentionCount: 3 }] },
+      running: { count: 1, state: "ready", rows: [{ todo: runningTodo, label: "Running work", current: false, targetSessionId: "work-1" }] },
       inProgress: { count: 1, state: "ready", rows: [{ todo, label: "Active work", current: false, operationalState: { label: "Ready to review", kind: "completed" } }] },
       ready: { count: 0, state: "ready", rows: [] },
       runs: { count: 2, current: false, state: "ready" },
@@ -57,6 +59,7 @@ describe("ProjectTodoNavigator", () => {
     const needsLink = document.querySelector('a[href="/projects/demo/todos/active/work"]');
     expect(needsLink).not.toBeNull();
     expect(needsLink?.querySelector('[aria-label="3 actions need you"]')?.textContent).toBe("3");
+    expect(document.querySelector('a[href="/projects/demo/sessions/work-1"]')?.querySelector('[data-navigator-status="live"]')).not.toBeNull();
     const lifecycleLink = document.querySelector('a[href="/projects/demo/todos/active"]');
     expect(lifecycleLink?.querySelector('[data-navigator-status="review"]')?.className).toContain("bg-brand");
     expect(lifecycleLink?.textContent).toContain("Ready to review");
@@ -71,6 +74,7 @@ describe("ProjectTodoNavigator", () => {
     const loadingProjection: ProjectTodoNavigationProjection = {
       allTodos: { current: true, state: "loading" },
       needsYou: { count: 0, state: "ready", rows: [] },
+      running: { state: "loading", rows: [] },
       inProgress: { count: 0, state: "ready", rows: [] },
       ready: { count: 0, state: "ready", rows: [] },
       runs: { current: false, state: "loading" },
@@ -120,6 +124,7 @@ describe("ProjectTodoNavigator", () => {
     const projection: ProjectTodoNavigationProjection = {
       allTodos: { count: 0, current: true, state: "ready" },
       needsYou: { count: 0, state: "ready", rows: [] },
+      running: { count: 0, state: "ready", rows: [] },
       inProgress: { count: 0, state: "ready", rows: [] },
       ready: { count: 0, state: "ready", rows: [] },
       runs: { count: 0, current: false, state: "ready" },

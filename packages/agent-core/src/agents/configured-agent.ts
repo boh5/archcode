@@ -421,14 +421,14 @@ export class ConfiguredAgent implements Agent {
         renderedText: "- none",
         byteLength: 6,
       };
-      const activeSkills: ResolvedSkill[] = [];
+      const staticActiveSkills: ResolvedSkill[] = [];
       try {
         availableSkills = await this.skillService.projectPromptCatalog(this.cwd, agentSkills);
-        for (const name of await this.resolveActiveSkillNames(projectContext, executionSkillSnapshots)) {
+        for (const name of await this.resolveStaticActiveSkillNames(executionSkillSnapshots)) {
           const skill = executionSkillSnapshots?.get(name)?.readEntry()
             ?? await this.skillService.readForAgent(this.cwd, name, this.definition.skills);
           if (skill === null) throw new SkillNotFoundError(name);
-          activeSkills.push(skill);
+          staticActiveSkills.push(skill);
         }
       } catch (error) {
         const modelTools = await this.resolveVisibleModelTools({
@@ -439,7 +439,7 @@ export class ConfiguredAgent implements Agent {
         const contract = await this.buildPromptContract({
           allowedTools: modelTools.tools.descriptors.map((descriptor) => descriptor.name),
           availableSkills,
-          activeSkills,
+          activeSkills: staticActiveSkills,
           env,
           projectContext,
           memory,
@@ -451,7 +451,7 @@ export class ConfiguredAgent implements Agent {
         const trace = durablePromptTrace(createFailedPromptTrace(contract, error, {
           status: "error",
           available: availableSkills,
-          active: activeSkills.map((skill) => ({ name: skill.metadata.name, source: skill.sourceLabel })),
+          active: staticActiveSkills.map((skill) => ({ name: skill.metadata.name, source: skill.sourceLabel })),
         }));
         this.store.getState().append({ type: "prompt-trace", trace });
         await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
@@ -464,19 +464,21 @@ export class ConfiguredAgent implements Agent {
           toolAuthorizationSnapshot,
           reconcileExecutionToolLoads,
         });
-        const contract = await this.buildPromptContract({
-          allowedTools: modelTools.tools.descriptors.map((descriptor) => descriptor.name),
-          availableSkills,
-          activeSkills,
-          env,
-          projectContext,
-          memory,
-          mcpStatuses: modelTools.mcpStatuses,
-          deferredToolDirectory: modelTools.deferredToolDirectory,
-          toolVisibilityAudit: modelTools.audit,
-          binding,
-        });
+        let activeSkills: readonly ResolvedSkill[] = staticActiveSkills;
         try {
+          activeSkills = await this.resolveBoundaryActiveSkills(staticActiveSkills);
+          const contract = await this.buildPromptContract({
+            allowedTools: modelTools.tools.descriptors.map((descriptor) => descriptor.name),
+            availableSkills,
+            activeSkills,
+            env,
+            projectContext,
+            memory,
+            mcpStatuses: modelTools.mcpStatuses,
+            deferredToolDirectory: modelTools.deferredToolDirectory,
+            toolVisibilityAudit: modelTools.audit,
+            binding,
+          });
           const compiled = await compiler.compile(contract);
           const trace = durablePromptTrace(compiled.trace);
           this.store.getState().append({ type: "prompt-trace", trace });
@@ -490,6 +492,18 @@ export class ConfiguredAgent implements Agent {
             ...(modelTools.toolSearchVisible ? { catalogDigest: modelTools.catalog.digest } : {}),
           };
         } catch (error) {
+          const contract = await this.buildPromptContract({
+            allowedTools: modelTools.tools.descriptors.map((descriptor) => descriptor.name),
+            availableSkills,
+            activeSkills,
+            env,
+            projectContext,
+            memory,
+            mcpStatuses: modelTools.mcpStatuses,
+            deferredToolDirectory: modelTools.deferredToolDirectory,
+            toolVisibilityAudit: modelTools.audit,
+            binding,
+          });
           const trace = durablePromptTrace(createFailedPromptTrace(contract, error));
           this.store.getState().append({ type: "prompt-trace", trace });
           await this.storeManager.flushSession(this.store.getState().sessionId, this.projectRoot);
@@ -691,13 +705,58 @@ export class ConfiguredAgent implements Agent {
       agentsMd: this.agentsMd,
       memory: input.memory,
       currentContext: [
-        ...buildLifecycleCurrentContext(todo, plan),
+        ...await this.buildCurrentContext(todo, plan),
         `toolCatalogDigest=${input.toolVisibilityAudit.catalogDigest}`,
         `toolDeferredCount=${input.toolVisibilityAudit.deferredCount}`,
       ],
       delegationRequest: state.delegationRequest ?? "none",
       env: input.env,
     };
+  }
+
+  private async buildCurrentContext(
+    todo: ProjectTodo | undefined,
+    plan: {
+      readonly path: string;
+      readonly state: "present" | "absent";
+    } | undefined,
+  ): Promise<readonly string[]> {
+    const state = this.store.getState();
+    const sessionTodos = [...state.todos]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((sessionTodo) => ({
+        id: sessionTodo.id,
+        content: sessionTodo.content,
+        status: sessionTodo.status,
+        ...(sessionTodo.createdAt === undefined ? {} : { createdAt: sessionTodo.createdAt }),
+        ...(sessionTodo.updatedAt === undefined ? {} : { updatedAt: sessionTodo.updatedAt }),
+      }));
+    const directChildren = this.resolveCurrentDirectChildren(state.childSessionLinks);
+    return [
+      ...buildLifecycleCurrentContext(todo, plan),
+      `sessionTodos=${JSON.stringify(sessionTodos)}`,
+      `directChildren=${JSON.stringify(directChildren)}`,
+    ];
+  }
+
+  private resolveCurrentDirectChildren(
+    childSessionLinks: readonly ToolChildSessionLink[],
+  ): readonly {
+    readonly sessionId: string;
+    readonly agentName: string;
+    readonly profile: string;
+    readonly title: string | null;
+    readonly executionId: string | null;
+    readonly status: string;
+  }[] {
+    return latestDirectChildLinks(childSessionLinks).map((link) => ({
+      sessionId: link.childSessionId,
+      agentName: link.childAgentName,
+      profile: link.childProfile,
+      title: link.title,
+      executionId: link.childExecutionId,
+      status: link.status,
+    }));
   }
 
   private async resolveMemorySnapshot(
@@ -1031,8 +1090,7 @@ export class ConfiguredAgent implements Agent {
       );
   }
 
-  private async resolveActiveSkillNames(
-    _projectContext: ProjectContext,
+  private async resolveStaticActiveSkillNames(
     executionSkillSnapshots?: ReadonlyMap<string, import("../skills").SkillPackageSnapshot>,
   ): Promise<readonly string[]> {
     const state = this.store.getState();
@@ -1045,10 +1103,38 @@ export class ConfiguredAgent implements Agent {
     }
     if (this.definition.name !== "lead") return [...new Set(names)];
 
-    const lifecycleSkill = state.goal?.status === "active"
-        ? "run-goal"
-        : "orchestrate-work";
-    return [...new Set([lifecycleSkill, ...names])];
+    // Root Lead lifecycle Skills are selected at each model boundary below.
+    // They are a runtime slot, never part of the immutable ordinary/explicit
+    // Skill package loaded for this Execution.
+    return [...new Set(names)].filter((name) => name !== "orchestrate-work" && name !== "run-goal");
+  }
+
+  private async resolveBoundaryActiveSkills(
+    staticActiveSkills: readonly ResolvedSkill[],
+  ): Promise<readonly ResolvedSkill[]> {
+    const lifecycleSkillName = this.resolveRootLeadLifecycleSkillName();
+    if (lifecycleSkillName === undefined) return [...staticActiveSkills];
+
+    const lifecycleSkill = await this.skillService.readForAgent(
+      this.cwd,
+      lifecycleSkillName,
+      this.definition.skills,
+    );
+    if (lifecycleSkill === null) throw new SkillNotFoundError(lifecycleSkillName);
+    return [
+      lifecycleSkill,
+      ...staticActiveSkills.filter((skill) => skill.metadata.name !== lifecycleSkillName),
+    ];
+  }
+
+  private resolveRootLeadLifecycleSkillName(): "orchestrate-work" | "run-goal" | undefined {
+    const state = this.store.getState();
+    if (
+      this.definition.name !== "lead"
+      || state.parentSessionId !== undefined
+      || state.sessionId !== state.rootSessionId
+    ) return undefined;
+    return state.goal?.status === "active" ? "run-goal" : "orchestrate-work";
   }
 
 }

@@ -97,13 +97,46 @@ export const PROJECT_TODO_LANE_PRESENTATIONS: Readonly<Record<ProjectTodoLane, P
 const PROJECT_TODO_DISPLAY_LEAD_MAX_LENGTH = 80;
 const PROJECT_TODO_PREVIEW_EXCERPT_MAX_LENGTH = 180;
 
-/** Display-only lead used by the current prototype; it never creates a Todo title field. */
+const PROJECT_TODO_NON_CONTENT_LINES = new Set([
+  "todo shaping template",
+  "todo title",
+  "<todo title>",
+  "outcome",
+  "evidence",
+  "scope and non-goals",
+  "decisions",
+  "dependencies and risks",
+  "acceptance",
+  "given <starting state>, when <action/event>, then <observable result>.",
+  "failure/edge case: <decidable behavior>.",
+  "verification or inspection:",
+]);
+
+const PROJECT_TODO_FIELD_PREFIXES = [
+  "problem observed:",
+  "intended user-visible result:",
+  "repository/runtime fact:",
+  "existing behavior or constraint:",
+  "assumption still needing evidence:",
+  "included owner/flow/interface:",
+  "explicitly excluded:",
+  "confirmed direction and rationale:",
+  "remaining product choice for the user:",
+  "prerequisite, external authority, migration, or sequencing risk:",
+  "control or decision required:",
+] as const;
+
+/** Canonical display-only lead. It never creates a persisted Todo title field. */
 export function projectTodoDisplayLead(content: string): string {
-  const lines = content.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-  const heading = lines.find((line) => /^#{1,6}\s+/u.test(line));
-  const source = heading !== undefined
-    ? heading.replace(/^#{1,6}\s+/u, "")
-    : normalizeTodoDisplayLine(lines[0] ?? "");
+  const lines = nonFencedTodoLines(content);
+  const concreteH1 = lines
+    .map((line) => line.match(/^#\s+(.+?)\s*#*\s*$/u)?.[1])
+    .map((candidate) => candidate === undefined ? undefined : normalizeTodoDisplayLine(candidate))
+    .find((candidate): candidate is string => candidate !== undefined && isConcreteTodoDisplayLine(candidate));
+  const concreteBody = lines
+    .map(normalizeTodoDisplayLine)
+    .find(isConcreteTodoDisplayLine);
+  const source = concreteH1 ?? concreteBody ?? "Untitled Todo";
   return truncateTodoDisplayText(source.replace(/\s+/gu, " ").trim(), PROJECT_TODO_DISPLAY_LEAD_MAX_LENGTH);
 }
 
@@ -124,9 +157,58 @@ export function projectTodoPreviewExcerpt(content: string): string {
 }
 
 function normalizeTodoDisplayLine(line: string): string {
-  return line
+  const plain = line
     .replace(/^(?:#{1,6}|>|[-+*]|\d+[.)])\s+/u, "")
-    .replace(/^\[[ xX]\]\s*/u, "");
+    .replace(/^\[[ xX]\]\s*/u, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/gu, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
+    .replace(/<((?:https?):\/\/[^>]+)>/giu, "$1")
+    .replace(/(\*\*|__)(.+?)\1/gu, "$2")
+    .replace(/~~(.+?)~~/gu, "$1")
+    .replace(/`+([^`]+)`+/gu, "$1")
+    .replace(/(^|\s)\*([^*]+)\*(?=\s|$)/gu, "$1$2")
+    .replace(/(^|\s)_([^_]+)_(?=\s|$)/gu, "$1$2")
+    .trim();
+  const lower = plain.toLocaleLowerCase("en-US");
+  const prefix = PROJECT_TODO_FIELD_PREFIXES.find((candidate) => lower.startsWith(candidate));
+  return prefix === undefined ? plain : plain.slice(prefix.length).trim();
+}
+
+function nonFencedTodoLines(content: string): string[] {
+  const lines: string[] = [];
+  let fence: { readonly kind: "`" | "~"; readonly length: number } | undefined;
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const marker = rawLine.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+    if (fence !== undefined) {
+      if (marker?.[1]?.[0] === fence.kind && marker[1].length >= fence.length && marker[2]?.trim().length === 0) {
+        fence = undefined;
+      }
+      continue;
+    }
+    if (marker?.[1] !== undefined) {
+      fence = { kind: marker[1][0] as "`" | "~", length: marker[1].length };
+      continue;
+    }
+    const line = rawLine.trim();
+    if (line.length > 0) lines.push(line);
+  }
+  return lines;
+}
+
+function isConcreteTodoDisplayLine(line: string): boolean {
+  const candidate = line.trim();
+  if (
+    candidate.length === 0
+    || /^<[^>\n]+>$/u.test(candidate)
+    || PROJECT_TODO_NON_CONTENT_LINES.has(candidate.toLocaleLowerCase("en-US"))
+  ) return false;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return false;
+  } catch {
+    // A non-URL candidate can be concrete Todo content.
+  }
+  return true;
 }
 
 function truncateTodoDisplayText(text: string, maxLength: number): string {

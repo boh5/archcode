@@ -393,6 +393,13 @@ describe("SessionComposerDock", () => {
     expect(
       attention?.querySelector('[data-testid="hitl-decision-actions"]'),
     ).not.toBeNull();
+    const hitlToggle = attention?.querySelector<HTMLButtonElement>(
+      '[data-testid="hitl-card-toggle"]',
+    );
+    expect(hitlToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(hitlToggle?.textContent).toContain("Question");
+    expect(hitlToggle?.textContent).toContain("Continue?");
+    expect(hitlToggle?.textContent).toContain("Pending");
     expect(container.querySelector("progress, [role=progressbar]")).toBeNull();
     expect(
       container.querySelector('[data-testid="hitl-owner-link"]'),
@@ -766,6 +773,46 @@ describe("SessionComposerDock", () => {
         ?.textContent,
     ).toContain("1/2");
 
+    const firstToggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="hitl-card-toggle"]',
+    );
+    const composerInput = container.querySelector(
+      '[data-testid="composer-input-slot"] textarea',
+    );
+    if (!firstToggle) throw new Error("Missing first HITL disclosure");
+    firstToggle.focus();
+    await act(async () => firstToggle.click());
+    expect(firstToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(firstToggle);
+    expect(firstToggle.textContent).toContain("Question");
+    expect(firstToggle.textContent).toContain("First request?");
+    expect(firstToggle.textContent).toContain("Pending");
+    expect(firstToggle.textContent).toContain("1/2");
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="hitl-decision-body"]')?.hidden,
+    ).toBe(true);
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="hitl-decision-actions"]')?.hidden,
+    ).toBe(true);
+    expect(composerInput).not.toBeNull();
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <SettingsModalProvider>
+            <SessionComposerDock key="same-route-remount" slug="project-1" sessionId="session-3" />
+          </SettingsModalProvider>
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+    });
+    const remountedFirstToggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="hitl-card-toggle"]',
+    );
+    expect(remountedFirstToggle?.getAttribute("aria-expanded")).toBe("false");
+    if (!remountedFirstToggle) throw new Error("Missing remounted HITL disclosure");
+    await act(async () => remountedFirstToggle.click());
+
     const next = container.querySelector('button[aria-label="Next request"]');
     if (!(next instanceof dom.window.HTMLButtonElement))
       throw new Error("Missing next request control");
@@ -790,5 +837,67 @@ describe("SessionComposerDock", () => {
         .querySelector('button[aria-label="Next request"]')
         ?.hasAttribute("disabled"),
     ).toBe(true);
+    const secondToggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="hitl-card-toggle"]',
+    );
+    expect(secondToggle?.getAttribute("aria-expanded")).toBe("true");
+    if (!secondToggle) throw new Error("Missing second HITL disclosure");
+    await act(async () => secondToggle.click());
+    expect(secondToggle.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => {
+      hitlStore.getState().applySnapshot({
+        type: "hitl.snapshot",
+        projectSlugs: ["project-1"],
+        entries: [{
+          projectSlug: "project-1",
+          hitlId: first.hitlId,
+          ownerSessionId: "session-3",
+          rootSessionId: "session-3",
+          ownerAgentName: "lead",
+          ownerSessionTitle: "Session 3",
+          view: first,
+        }],
+        createdAt: 2,
+      });
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("First request");
+
+    await act(async () => {
+      hitlStore.getState().applySnapshot({
+        type: "hitl.snapshot",
+        projectSlugs: ["project-1"],
+        entries: [
+          {
+            projectSlug: "project-1",
+            hitlId: first.hitlId,
+            ownerSessionId: "session-3",
+            rootSessionId: "session-3",
+            ownerAgentName: "lead",
+            ownerSessionTitle: "Session 3",
+            view: first,
+          },
+          {
+            projectSlug: "project-1",
+            hitlId: second.hitlId,
+            ownerSessionId: "session-3",
+            rootSessionId: "session-3",
+            ownerAgentName: "build",
+            ownerSessionTitle: "Session 3",
+            view: second,
+          },
+        ],
+        createdAt: 3,
+      });
+      await Promise.resolve();
+    });
+    const nextAfterReappearing = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Next request"]',
+    );
+    if (!nextAfterReappearing) throw new Error("Missing next request after refresh");
+    await act(async () => nextAfterReappearing.click());
+    expect(container.querySelector('[data-testid="hitl-card-toggle"]')
+      ?.getAttribute("aria-expanded")).toBe("true");
   });
 });

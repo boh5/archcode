@@ -1539,7 +1539,8 @@ describe("compression events", () => {
     expect(compression.activeBlockRefs).toEqual(["b1"]);
     expect(compression.blocksByRef.b1?.summary.sections["Current Objective"]).toBe("Current objective");
     expect(compression.blocksByRef.b1?.tokenEstimate?.savedTokens).toBe(80);
-    expect(compression.protectedRefs[0]?.ref).toBe("m0002");
+    expect(compression.blocksByRef.b1?.protectedRefs).toEqual([]);
+    expect(compression.protectedRefs).toEqual([]);
     expect(state.messages.some((message) => message.compacted === true)).toBe(false);
   });
 

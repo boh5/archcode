@@ -36,6 +36,7 @@ mock.module("./use-project-todo-navigation", () => ({
     projection: {
       allTodos: { count: 0, current: true, state: "ready" },
       needsYou: { count: 0, rows: [], state: "ready" },
+      running: { count: 0, rows: [], state: "ready" },
       inProgress: { count: 0, rows: [], state: "ready" },
       ready: { count: 0, rows: [], state: "ready" },
       runs: { count: 0, current: false, state: "ready" },

@@ -18,14 +18,8 @@ export const PROTECTED_CONTENT_KINDS = [
   "latest_tail",
   "pending_tool",
   "running_tool",
-  "active_permission",
-  "active_question",
   "protect_tag",
   "unknown_result",
-  "todo",
-  "reminder",
-  "subagent_link",
-  "user_constraint",
 ] as const;
 
 export const DCP_PARITY_ITEMS = [

@@ -22,6 +22,8 @@ export interface ProjectTodoNavigationRow {
   /** Exact request + Goal-gate count. Present only in the Needs-you group. */
   readonly attentionCount?: number;
   readonly operationalState?: ProjectTodoOperationalState;
+  /** Exact live linked root Session selected for a Running row. */
+  readonly targetSessionId?: string;
 }
 
 export interface ProjectTodoNavigationGroup {
@@ -37,6 +39,7 @@ export interface ProjectTodoNavigationProjection {
     readonly state: ProjectNavigationDependencyState;
   };
   readonly needsYou: ProjectTodoNavigationGroup;
+  readonly running: ProjectTodoNavigationGroup;
   readonly inProgress: ProjectTodoNavigationGroup;
   readonly ready: ProjectTodoNavigationGroup;
   readonly runs: {
@@ -121,6 +124,16 @@ export function deriveProjectTodoNavigationProjection(
     ? facts.todos.filter((todo) => deriveProjectTodoNeedsUser(todo, facts.sessions, facts.attentionBySessionId))
     : [];
   const needsYouIds = new Set(needsYouTodos.map((todo) => todo.id));
+  const runningDependencies = combineDependencyStates([
+    facts.todosState,
+    facts.sessionsState,
+    facts.hitlState,
+    facts.runtimeState,
+  ]);
+  const runningTargets = runningDependencies === "ready"
+    ? deriveRunningTodoTargets(facts, needsYouIds)
+    : [];
+  const runningTargetByTodoId = new Map(runningTargets.map((target) => [target.todo.id, target.sessionId]));
   const activeSessionCount = runsDependencies === "ready"
     ? facts.sessions.filter((item) => sessionInventoryIsActive(
       item,
@@ -130,13 +143,16 @@ export function deriveProjectTodoNavigationProjection(
     : undefined;
   const selectedTodoUsesWorkSurface = facts.selectedTodoId !== undefined
     && facts.pathname === `/projects/${encodeURIComponent(facts.slug)}/todos/${encodeURIComponent(facts.selectedTodoId)}/work`;
-  const row = (todo: ProjectTodo, group: "needs" | "lifecycle"): ProjectTodoNavigationRow => ({
+  const row = (todo: ProjectTodo, group: "needs" | "running" | "lifecycle"): ProjectTodoNavigationRow => ({
     todo,
-    label: projectTodoDisplayLead(todo.content) || "Untitled Todo",
-    current: activeTodoId === todo.id && (facts.selectedTodoId !== undefined
-      ? group === (selectedTodoUsesWorkSurface && needsYouIds.has(todo.id) ? "needs" : "lifecycle")
-      : group === (needsYouIds.has(todo.id) ? "needs" : "lifecycle")),
+    label: projectTodoDisplayLead(todo.content),
+    current: activeTodoId === todo.id && group === (facts.selectedTodoId !== undefined
+      ? selectedTodoUsesWorkSurface && needsYouIds.has(todo.id) ? "needs" : "lifecycle"
+      : needsYouIds.has(todo.id)
+        ? "needs"
+        : facts.selectedSessionId === runningTargetByTodoId.get(todo.id) ? "running" : "lifecycle"),
     ...(group === "needs" ? { attentionCount: todoAttentionCount(todo, facts) } : {}),
+    ...(group === "running" ? { targetSessionId: runningTargetByTodoId.get(todo.id) } : {}),
     ...(operationalStateByTodoId.has(todo.id)
       ? { operationalState: operationalStateByTodoId.get(todo.id)! }
       : {}),
@@ -154,6 +170,11 @@ export function deriveProjectTodoNavigationProjection(
       state: needsYouDependencies,
       rows: needsYouTodos.map((todo) => row(todo, "needs")),
       ...(needsYouDependencies === "ready" ? { count: needsYouTodos.length } : {}),
+    },
+    running: {
+      state: runningDependencies,
+      rows: runningTargets.map(({ todo }) => row(todo, "running")),
+      ...(runningDependencies === "ready" ? { count: runningTargets.length } : {}),
     },
     inProgress: lifecycleGroup(
       facts.todosState,
@@ -194,13 +215,34 @@ function todoAttentionCount(todo: ProjectTodo, facts: ProjectTodoNavigationFacts
 function lifecycleGroup(
   state: ProjectNavigationDependencyState,
   todos: readonly ProjectTodo[],
-  row: (todo: ProjectTodo, group: "needs" | "lifecycle") => ProjectTodoNavigationRow,
+  row: (todo: ProjectTodo, group: "needs" | "running" | "lifecycle") => ProjectTodoNavigationRow,
 ): ProjectTodoNavigationGroup {
   return {
     state,
     rows: state === "ready" ? todos.map((todo) => row(todo, "lifecycle")) : [],
     ...(state === "ready" ? { count: todos.length } : {}),
   };
+}
+
+const RUNNING_TODO_ACTIVITIES: ReadonlySet<SessionFamilyActivity> = new Set([
+  "running",
+  "resuming",
+  "stopping",
+]);
+
+function deriveRunningTodoTargets(
+  facts: ProjectTodoNavigationFacts,
+  needsYouIds: ReadonlySet<string>,
+): Array<{ readonly todo: ProjectTodo; readonly sessionId: string }> {
+  return facts.todos.flatMap((todo) => {
+    if (todo.archivedAt !== undefined || todo.status === "rejected" || needsYouIds.has(todo.id)) return [];
+    const target = facts.sessions
+      .filter(({ session }) => rootSessionSourceTodoId(session.source) === todo.id
+        && RUNNING_TODO_ACTIVITIES.has(facts.activityBySessionId.get(session.sessionId) ?? "idle"))
+      .sort((left, right) => right.session.updatedAt - left.session.updatedAt
+        || left.session.sessionId.localeCompare(right.session.sessionId))[0];
+    return target === undefined ? [] : [{ todo, sessionId: target.session.sessionId }];
+  });
 }
 
 function combineDependencyStates(

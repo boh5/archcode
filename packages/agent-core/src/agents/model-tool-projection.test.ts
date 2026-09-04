@@ -79,6 +79,15 @@ describe("projectModelToolDescriptors", () => {
     expect((aiTools.delegate?.description ?? "")).toContain(
       "analyst=deep, build=deep|fast, explore=fast",
     );
+    expect(aiTools.skill_list?.description).toContain("skill_list({})");
+    expect(aiTools.skill_list?.description).toContain('skill_list({"agent_type":"build"})');
+    expect(aiTools.skill_list?.description).toContain("nextCursor");
+    expect(aiTools.skill_list?.description).toContain("preserving agent_type");
+    expect(aiTools.skill_list?.description).toContain("PLACEHOLDER");
+    expect(jsonSchema(aiTools.skill_list!.inputSchema).properties).toMatchObject({
+      cursor: { description: expect.stringContaining("nextCursor") },
+      agent_type: { description: expect.stringContaining('skill_list({"agent_type":"build"})') },
+    });
     const repeatedAiTools = new ResolvedToolSet(
       projectModelToolDescriptors(originals, snapshot),
     ).toAITools();

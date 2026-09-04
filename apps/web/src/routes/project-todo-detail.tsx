@@ -594,7 +594,7 @@ function TodoAttentionSection({ slug, todo, hitl, goalGates, returnState }: {
         mechanism="Goal"
       />)}
     </div>
-    <p className="sr-only">{count} {count === 1 ? "action" : "actions"} need you for {projectTodoDisplayLead(todo.content) || "this Todo"}.</p>
+    <p className="sr-only">{count} {count === 1 ? "action" : "actions"} need you for {projectTodoDisplayLead(todo.content)}.</p>
   </section>;
 }
 

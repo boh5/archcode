@@ -25,11 +25,22 @@ describe("HITL card response contract", () => {
 
   test("uses the workbench surface, focus, warning, and control contracts", () => {
     const source = readFileSync(new URL("./HitlCard.tsx", import.meta.url), "utf8");
-    expect(source).toContain("rounded-sm border-y border-r border-border-subtle");
-    expect(source).toContain("border-l-[3px] border-l-warning bg-bg-elevated");
+    expect(source).toContain("rounded-xl border border-warning/30 bg-bg-elevated");
+    expect(source).not.toContain("border-l-[3px]");
     expect(source).toContain("outline-none transition-colors focus-visible:bg-warning-muted");
     expect(source).toContain('PRIMARY_ACTION_CLASS = "h-8 rounded-sm');
     expect(source).toContain('SECONDARY_ACTION_CLASS = "h-8 rounded-sm');
+  });
+
+  test("keeps each pending request as an accessible independent disclosure", () => {
+    const source = readFileSync(new URL("./HitlCard.tsx", import.meta.url), "utf8");
+    expect(source).toContain('data-testid="hitl-card-toggle"');
+    expect(source).toContain("aria-expanded={expanded}");
+    expect(source).toContain("aria-controls={bodyId}");
+    expect(source).toContain("hidden={!expanded}");
+    expect(source).toContain('"Question" : "Permission"');
+    expect(source).toContain(">Pending<");
+    expect(source).toContain("`${requestPosition}/${requestCount}`");
   });
 
   test("uses natural-height content with a vertical option list", () => {

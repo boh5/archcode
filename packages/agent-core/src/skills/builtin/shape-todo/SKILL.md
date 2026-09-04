@@ -50,6 +50,10 @@ Run a short converge-and-confirm loop rather than a one-shot guess:
 
 ### Capture and ready gate
 
+- Write the shaped Todo as a readable Markdown document whose first line is a
+  concrete `# <Todo title>` describing this specific work. `Outcome`,
+  `Evidence`, and the other template labels are section structure, never the
+  Todo title. Do not leave `<Todo title>` or another placeholder in the result.
 - Update the bound Todo with the agreed objective, background, scope, non-goals,
   constraints, dependencies, risks, validation approach, acceptance criteria, and
   explicit product choices. Make acceptance criteria observable and decidable.

@@ -1,55 +1,70 @@
 # <Plan title>
 
-## Goal and background
+## Goal, evidence, and scope
 
-State the intended observable result, why it matters, and the evidence-backed current mechanism. Link the governing Todo or request when one exists; do not invent a Plan ID or runtime state.
+- **Result and why:** <observable result and reason>
+- **Verified mechanism:** <only facts that determine the design>
+- **In scope / owners:** <changed responsibilities and interfaces>
+- **Non-goals:** <explicit exclusions or deliberately unbuilt machinery>
 
-## Scope and non-goals
+Do not reproduce the request, Todo, research log, or source excerpts. Separate a
+verified fact from any assumption that would change the design if false.
 
-State the ownership boundary, user-visible behavior, data or interfaces that change, and explicit exclusions. Distinguish a deliberate non-goal from deferred required work.
+## Design and constraints
 
-## Current mechanism and constraints
-
-- Entry points and current owner:
-- Data/state/event flow:
-- Invariants and architecture boundaries:
-- Repository conventions and required checks:
-- External/version constraints:
-- Confirmed user decisions:
-
-Separate verified facts from assumptions. Mark any assumption that would change the design if false.
-
-## Chosen direction
-
-Explain the smallest coherent design, where each responsibility will live, and why it fits existing ownership. Record rejected alternatives only when they expose a real tradeoff. State what this direction deliberately does not build.
+State the smallest coherent direction, state flow, architecture invariants,
+confirmed decisions, and stopping rule. Each fact belongs here or in one step,
+not both. Record a rejected alternative only when it exposes a material tradeoff.
+For multi-issue work, keep this to a few compact bullets or paragraphs and let
+the matrices carry issue-specific detail.
 
 ## Ordered implementation
 
-For each step include:
+| Step | Owner / location | Change and produced interface | Dependency / material failure control | Decisive check |
+| --- | --- | --- | --- | --- |
+| S1 | <file, symbol, owner> | <concrete behavior or contract> | <prerequisite and edge control> | <command or observable signal> |
 
-1. **Deliverable:** observable result of this step.
-2. **Location and owner:** relevant files/symbols and the responsibility being changed.
-3. **Concrete change:** types, control flow, state, errors, tests, docs, or cleanup.
-4. **Prerequisite / produced interface:** what must exist before and what later steps consume.
-5. **Failure and edge paths:** only those material to this boundary.
-6. **Decisive verification:** command or inspection, expected signal, and what it does not prove.
+Use the fewest coherent rows. Keep tightly coupled changes in one row and split
+only at a real dependency or review boundary. Use one row per issue when IDs are
+given, keep every cell to one sentence or compact clause, and do not repeat a row
+as prose.
 
 ## Dependencies and parallel boundaries
 
-State ordering constraints and only genuinely independent work. Shared mutable state, the same interface, overlapping files, or one step consuming another step's output makes work sequential unless an explicit seam removes that dependency.
+List only cross-step ordering and genuinely independent work by step ID. Shared
+state, interfaces, files, fixtures, or validation resources imply sequential work
+unless the Plan names a real seam.
 
 ## Acceptance and validation
 
-| Acceptance condition | Evidence / command | Expected result | Failure or edge case |
+| ID | Starting state and action | Pass / fail boundary | Decisive evidence |
 | --- | --- | --- | --- |
-| <decidable outcome> | <fresh check> | <observable signal> | <case that could falsify it> |
+| A1 | <observable setup and action> | <exact result; falsifying edge> | <fresh test, command, or inspection> |
 
-Include repository-required typecheck, unit, integration, architecture, and build lanes only when relevant; do not claim behavioral proof from typecheck alone.
+Group repository-wide typecheck, unit, integration, architecture, and build
+commands once after the behavioral rows. Do not claim behavioral proof from
+typecheck or file presence alone. Use step/acceptance IDs instead of restating
+implementation details, exclusions, or controls.
 
-## Risks and decisions
+## Risks, decisions, and completion report
 
-Record likelihood/impact, control, rollback or recovery boundary, and the user decision required. If no decision is required, say why evidence already determines the direction.
+- **Risk / control:** <likelihood or impact, prevention, rollback boundary>
+- **Decision or assumption:** <only unresolved material choice; say why none remain>
+- **Completion report:** <changed artifacts, deviations, skipped checks, results,
+  and residual risk that the executor must report>
 
-## Completion report requirements
+Replace every angle-bracket field. Leave no TODO, TBD, unresolved product choice,
+full Todo restatement, large source excerpt, or speculative code block.
 
-Name the artifacts, behavior changes, Plan deviations, verification results, skipped checks, and residual risks the executor must report. Completion means every acceptance row is supported or an explicit unresolved item is returned to the user; file presence or implementation intent is not enough.
+When the governing request specifies a document budget, allocate it before
+drafting. If exact counting is unavailable, target at most one third of that budget.
+Perform one no-write compression review before the final write: every
+fact has one home, and IDs carry cross-references. The 12,000-Unicode-character
+figure, when recorded, is evidence for the current incident fixture only; it is
+not a universal Plan limit or a runtime rejection rule.
+
+The owning Lead or Discussion performs one final atomic write to the one Plan
+path after discovery and convergence. Delegated research may supply evidence,
+but it must not create competing Plan files or write the final Plan in parallel.
+That final write is the last Plan-related Tool action; do not validate an
+oversized draft after writing it.

@@ -48,7 +48,7 @@ import {
   SessionCwdTransitionInProgressError,
   SessionToolBatchActiveError,
 } from "../agents/errors";
-import { finalOutputForExecution } from "../delegation/final-output";
+import { classifyChildFinalOutput, finalOutputForExecution } from "../delegation/final-output";
 import { DelegationRequestSchema } from "../delegation/schema";
 import type {
   ChildExecutionHandle,
@@ -1308,6 +1308,7 @@ export class SessionExecutionManager {
               input.sessionId,
               record.id,
               childStatus,
+              record.error,
             );
             await this.#config.flushSessionStore(
               queuedLinkRecovery.parentSessionId,
@@ -2692,7 +2693,7 @@ export class SessionExecutionManager {
         );
         if (await this.#continueQueuedChildChain(workspaceRoot, childStore, settledExecution)) return;
         if (background && childPolicy.terminalReminders && status !== "waiting_for_human") {
-          appendTerminalReminder(request.parentStore, childSessionId, request.childExecutionId, status);
+          appendTerminalReminder(request.parentStore, childSessionId, request.childExecutionId, status, settledExecution?.error);
         }
       });
 
@@ -2958,7 +2959,7 @@ export class SessionExecutionManager {
       if (await this.#continueQueuedChildChain(workspaceRoot, childStore, record)) return;
 
       if (admission.childPolicy.terminalReminders && status !== "waiting_for_human") {
-        appendTerminalReminder(admission.parentStore, execution.sessionId, execution.executionId, status);
+        appendTerminalReminder(admission.parentStore, execution.sessionId, execution.executionId, status, record?.error);
         await this.#config.flushSessionStore(admission.parentState.sessionId, workspaceRoot);
       }
     } catch (error) {
@@ -3042,7 +3043,7 @@ export class SessionExecutionManager {
           parentDefinition.childPolicy?.terminalReminders
           && !(await this.#continueQueuedChildChain(workspaceRoot, childStore, currentExecution))
         ) {
-          appendTerminalReminder(parentStore, childSessionId, currentExecution.id, status);
+          appendTerminalReminder(parentStore, childSessionId, currentExecution.id, status, currentExecution.error);
           await this.#config.flushSessionStore(parentSessionId, workspaceRoot);
         }
       }
@@ -3167,7 +3168,7 @@ export class SessionExecutionManager {
         parentDefinition.childPolicy?.terminalReminders
         && !(await this.#continueQueuedChildChain(workspaceRoot, childStore, currentExecution))
       ) {
-        appendTerminalReminder(parentStore, childSessionId, currentExecution.id, status);
+        appendTerminalReminder(parentStore, childSessionId, currentExecution.id, status, currentExecution.error);
       }
     }
     await this.#config.flushSessionStore(parentSessionId, workspaceRoot);
@@ -3331,7 +3332,7 @@ export class SessionExecutionManager {
             .getFactory(workspaceRoot)
             .getDefinition(parentStore.getState().agentName);
           if (hasBackgroundLink && parentDefinition.childPolicy?.terminalReminders) {
-            appendTerminalReminder(parentStore, sessionId, latest.id, linkStatus);
+            appendTerminalReminder(parentStore, sessionId, latest.id, linkStatus, latest.error);
             await this.#config.flushSessionStore(state.parentSessionId, workspaceRoot);
           }
         }
@@ -3567,7 +3568,7 @@ export class SessionExecutionManager {
         );
         if (await this.#continueQueuedChildChain(workspaceRoot, childStore, settledExecution)) return;
         if (background && childPolicy.terminalReminders && status !== "waiting_for_human") {
-          appendTerminalReminder(request.parentStore, request.sessionId, request.childExecutionId, status);
+          appendTerminalReminder(request.parentStore, request.sessionId, request.childExecutionId, status, settledExecution?.error);
         }
       });
 
@@ -3858,6 +3859,18 @@ export class SessionExecutionManager {
             terminalError = result.error === undefined
               ? undefined
               : execution.binding.modelInfo.redactSensitiveText(result.error);
+            if (terminalStatus === "completed" && agent.store.getState().parentSessionId !== undefined) {
+              const classification = classifyChildFinalOutput(
+                agent.store.getState(),
+                execution.executionId,
+                finalOutputStepId,
+              );
+              if (!classification.accepted) {
+                terminalStatus = "failed";
+                finalOutputStepId = undefined;
+                terminalError = classification.error;
+              }
+            }
           }
           return;
         }
@@ -4586,7 +4599,7 @@ export class SessionExecutionManager {
     });
 
     if (link.background) {
-      appendTerminalReminder(parentStore, execution.sessionId, execution.executionId, status);
+      appendTerminalReminder(parentStore, execution.sessionId, execution.executionId, status, run?.error ?? reason);
     }
 
     await this.#config.flushSessionStore(parentSessionId, execution.workspaceRoot);
@@ -5845,6 +5858,7 @@ function appendTerminalReminder(
   sessionId: string,
   childExecutionId: string,
   status: SubAgentTerminalStatus,
+  error?: string,
 ): void {
   if (parentStore.getState().reminders.some((reminder) =>
     reminder.sessionId === sessionId
@@ -5864,7 +5878,7 @@ function appendTerminalReminder(
     delivery: "on_demand",
     sessionId,
     terminalState: status,
-    content: `Sub-agent ${sessionId} ${formatStatus(status)}. Use background_output(session_id="${sessionId}") to read the result.`,
+    content: error ?? `Sub-agent ${sessionId} ${formatStatus(status)}. Use background_output(session_id="${sessionId}") to read the result.`,
     createdAt: Date.now(),
     consumedAt: null,
     targetSessionId: parentStore.getState().sessionId,

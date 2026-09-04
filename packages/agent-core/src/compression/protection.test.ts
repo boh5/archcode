@@ -73,9 +73,6 @@ describe("collectProtectedRefsForRange", () => {
         userMessage("tail-a", "Tail A"),
         userMessage("tail-b", "Tail B"),
       ],
-      reminders: [],
-      todos: [],
-      childSessionLinks: [],
     }, range);
 
     expect(result.ok).toBe(false);

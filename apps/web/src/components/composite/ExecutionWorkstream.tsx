@@ -106,6 +106,21 @@ function createWorkstreamUiSnapshot(): WorkstreamUiSnapshot {
   };
 }
 
+function isHitlSuspended(
+  execution: ExecutionWorkstreamExecution,
+): boolean {
+  return execution.record.status === "suspended"
+    && execution.record.suspension.kind === "hitl";
+}
+
+function shouldAutomaticallyExpandLatestSegment(
+  execution: ExecutionWorkstreamExecution,
+  latestExecutionId: string | undefined,
+): boolean {
+  return execution.record.status === "running"
+    || (execution.id === latestExecutionId && isHitlSuspended(execution));
+}
+
 function distanceFromBottom(element: HTMLElement): number {
   return Math.max(
     0,
@@ -947,12 +962,13 @@ export function ExecutionWorkstream({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
     const snapshot = uiSnapshotRef.current;
     const initial = new Set(snapshot.expandedIds);
+    const latestExecutionId = projection.executions.at(-1)?.id;
     for (const execution of projection.executions) {
       const segment = execution.segments.at(-1);
       if (
         segment &&
         !snapshot.manualOverrideIds.has(segment.id) &&
-        execution.record.status === "running"
+        shouldAutomaticallyExpandLatestSegment(execution, latestExecutionId)
       ) {
         initial.add(segment.id);
       }
@@ -1204,13 +1220,21 @@ export function ExecutionWorkstream({
       "[data-session-thread-column]",
     );
     if (!scroller) return;
-    syncExecutionNavigation();
+    const syncTranscriptViewport = () => {
+      if (followLatestRef.current) {
+        scrollElementTo(scroller, scroller.scrollHeight);
+        lastScrollTopRef.current = scroller.scrollTop;
+      }
+      syncScrollGeometry(scroller);
+      syncExecutionNavigation();
+    };
+    syncTranscriptViewport();
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(syncExecutionNavigation);
+    const observer = new ResizeObserver(syncTranscriptViewport);
     observer.observe(scroller);
     if (thread) observer.observe(thread);
     return () => observer.disconnect();
-  }, [segments, syncExecutionNavigation]);
+  }, [segments, syncExecutionNavigation, syncScrollGeometry]);
 
   useEffect(
     () => () => {
@@ -1233,6 +1257,7 @@ export function ExecutionWorkstream({
     const currentExecutionIds = new Set(
       projection.executions.map((execution) => execution.id),
     );
+    const latestExecutionId = projection.executions.at(-1)?.id;
 
     for (const id of next) {
       if (!currentIds.has(id)) {
@@ -1248,7 +1273,7 @@ export function ExecutionWorkstream({
       const manuallyOverridden = snapshot.manualOverrideIds.has(segment.id);
 
       if (
-        execution.record.status === "running" &&
+        shouldAutomaticallyExpandLatestSegment(execution, latestExecutionId) &&
         !manuallyOverridden
       ) {
         if (!next.has(segment.id)) {

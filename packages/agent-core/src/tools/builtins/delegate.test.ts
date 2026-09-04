@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { DelegationRequest } from "@archcode/protocol";
 import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
+import { CHILD_FINAL_PROTOCOL_ONLY_MESSAGE } from "../../delegation/final-output";
 import {
   AgentChildPolicyMissingError,
   DelegateTargetNotAllowedError,
@@ -128,7 +129,7 @@ describe("delegate request", () => {
           outcome: "terminal",
           executionId: handle.executionId,
           executionStatus: "failed",
-          terminalError: "boom",
+          terminalError: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
         }),
       }),
     });
@@ -136,7 +137,7 @@ describe("delegate request", () => {
       session_id: handle.sessionId,
       agent_type: "explore",
       execution_status: "failed",
-      error: "boom",
+      error: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
     });
   });
 

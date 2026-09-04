@@ -9,6 +9,7 @@ import {
   createToolErrorResult,
   formatToolError,
   inferToolErrorKindFromResult,
+  isDeterministicRepeatedToolErrorCode,
   isStructuredToolError,
   kindFromCode,
   normalizeToolErrorResult,
@@ -109,5 +110,45 @@ describe("tool error formatter", () => {
       expect(code).toBeDefined();
       expect(kindFromCode(code ?? "")).toBe(kind);
     }
+  });
+
+  test("uses the exact closed deterministic repeated-error allowlist", () => {
+    for (const code of [
+      "TOOL_UNKNOWN",
+      "TOOL_SCHEMA_INVALID_INPUT",
+      "TOOL_BEFORE_HOOK_INVALID_INPUT",
+      "TOOL_NOT_ALLOWED",
+      "TOOL_FILE_OUTSIDE_WORKSPACE",
+      "PATH_OUTSIDE_WORKSPACE",
+      "TOOL_WEBFETCH_INVALID_URL",
+      "TOOL_SKILL_NOT_FOUND",
+      "TOOL_SKILL_RESOURCE_NOT_FOUND",
+      "TOOL_SKILL_RESOURCE_PATH_INVALID",
+      "TOOL_SKILL_INVALID_NAME",
+      "TOOL_SKILL_CATALOG_CHANGED",
+      "TOOL_SKILL_TARGET_NOT_ALLOWED",
+      "TOOL_SKILL_RESOURCE_BINARY_UNSUPPORTED",
+    ]) expect(isDeterministicRepeatedToolErrorCode(code), code).toBe(true);
+
+    for (const code of [
+      undefined,
+      "TOOL_PREPARE_INPUT_FAILED",
+      "TOOL_SKILL_INVALID",
+      "TOOL_EXECUTION_FAILED",
+      "TOOL_PERMISSION_DENIED",
+      "TOOL_PERMISSION_CONFIRMATION_DENIED",
+      "TOOL_PERMISSION_CONFIRMATION_TIMEOUT",
+      "TOOL_BASH_TIMEOUT",
+      "TOOL_BASH_ABORTED",
+      "TOOL_PROCESS_TIMEOUT",
+      "TOOL_PROCESS_ABORTED",
+      "TOOL_CANCELLED",
+      "TOOL_MCP_CALL_TIMEOUT",
+      "TOOL_MCP_CALL_ABORTED",
+      "TOOL_LSP_TIMEOUT",
+      "TOOL_WEBFETCH_TIMEOUT",
+      "TOOL_WEBFETCH_HTTP_ERROR",
+      "TOOL_UNKNOWN_NEW_CODE",
+    ]) expect(isDeterministicRepeatedToolErrorCode(code), String(code)).toBe(false);
   });
 });
