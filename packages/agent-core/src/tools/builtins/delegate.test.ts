@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { DelegationRequest } from "@archcode/protocol";
 import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
+import { CHILD_FINAL_PROTOCOL_ONLY_MESSAGE } from "../../delegation/final-output";
 import {
   AgentChildPolicyMissingError,
   DelegateTargetNotAllowedError,
@@ -128,7 +129,7 @@ describe("delegate request", () => {
           outcome: "terminal",
           executionId: handle.executionId,
           executionStatus: "failed",
-          terminalError: "boom",
+          terminalError: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
         }),
       }),
     });
@@ -136,7 +137,7 @@ describe("delegate request", () => {
       session_id: handle.sessionId,
       agent_type: "explore",
       execution_status: "failed",
-      error: "boom",
+      error: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
     });
   });
 
@@ -145,11 +146,16 @@ describe("delegate request", () => {
       code: "DELEGATION_PROFILE_NOT_ALLOWED",
       name: "DelegationExecutionAdmissionError",
     });
+    const capacityError = Object.assign(new Error("Direct child capacity reached"), {
+      code: "DELEGATION_SESSION_CAPACITY_REACHED",
+      name: "DelegationExecutionAdmissionError",
+    });
     const cases: readonly [string, Error, string][] = [
       ["delegate target", new DelegateTargetNotAllowedError("lead", "build", 3), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
       ["missing child policy", new AgentChildPolicyMissingError("lead"), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
       ["depth limit", new DepthLimitError(3), "TOOL_DELEGATE_TARGET_NOT_ALLOWED"],
       ["profile", profileError, "TOOL_DELEGATE_PROFILE_NOT_ALLOWED"],
+      ["capacity", capacityError, "TOOL_DELEGATE_SESSION_CAPACITY_REACHED"],
       ["missing Skill", new SkillNotFoundError("research-docs"), "TOOL_DELEGATE_SKILL_NOT_FOUND"],
       ["invalid Skill", new SkillValidationError("research-docs", "project-archcode", "missing SKILL.md"), "TOOL_DELEGATE_SKILL_INVALID"],
       ["disallowed Skill", new SkillNotAllowedError("explore", "research-docs", ["codemap"]), "TOOL_DELEGATE_SKILL_NOT_ALLOWED"],

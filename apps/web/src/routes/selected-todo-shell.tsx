@@ -19,7 +19,7 @@ export function SelectedTodoShell({
 }) {
   const detailHref = `/projects/${encodeURIComponent(slug)}/todos/${encodeURIComponent(todo.id)}`;
   const status = selectedTodoStatus(todo);
-  const lead = projectTodoDisplayLead(todo.content) || "Untitled Todo";
+  const lead = projectTodoDisplayLead(todo.content);
 
   return (
     <header

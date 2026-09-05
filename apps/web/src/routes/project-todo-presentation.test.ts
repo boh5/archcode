@@ -24,10 +24,38 @@ describe("Project Todo presentation", () => {
     expect(PROJECT_TODO_LANE_PRESENTATIONS.done).toEqual({ title: "Done", emptyTitle: "Nothing completed", Icon: Check });
   });
 
-  test("derives the prototype display lead without creating a Todo title", () => {
+  test("prefers a concrete H1 without creating a persisted Todo title", () => {
     expect(projectTodoDisplayLead("Intro\n\n# Visible lead\n\nBody stays canonical")).toBe("Visible lead");
     expect(projectTodoDisplayLead("- [x] First line\nMore detail")).toBe("First line");
     expect(Array.from(projectTodoDisplayLead("界".repeat(90)))).toHaveLength(80);
+  });
+
+  test("skips the shaping template structure, standalone URLs, and fenced examples", () => {
+    expect(projectTodoDisplayLead("## Outcome\nProblem observed:\nThe recovery loop does not stop.")).toBe("The recovery loop does not stop.");
+    expect(projectTodoDisplayLead("# C#")).toBe("C#");
+    expect(projectTodoDisplayLead("# <Todo title> #\nConcrete body")).toBe("Concrete body");
+    expect(projectTodoDisplayLead("## Outcome ##\nConcrete body")).toBe("Concrete body");
+    expect(projectTodoDisplayLead("## Evidence ###\nRepository/runtime fact: Closing hashes stay structural")).toBe("Closing hashes stay structural");
+    expect(projectTodoDisplayLead("**Problem observed:** 左侧导航显示了结构字段\nMore context")).toBe("左侧导航显示了结构字段");
+    expect(projectTodoDisplayLead("## Evidence\n- **Repository/runtime fact:** the loop retries forever")).toBe("the loop retries forever");
+    expect(projectTodoDisplayLead("https://localhost:4096/todos/1\nShow the current recovery state")).toBe("Show the current recovery state");
+    expect(projectTodoDisplayLead("<https://localhost:4096/todos/1>\n[Show current recovery](https://example.test/details)")).toBe("Show current recovery");
+    expect(projectTodoDisplayLead("```md\n# Not the title\n```\n# Concrete Todo title\nBody")).toBe("Concrete Todo title");
+    expect(projectTodoDisplayLead("# Outcome\nConcrete body")).toBe("Concrete body");
+    expect(projectTodoDisplayLead("# **Concrete Todo title**\nBody")).toBe("Concrete Todo title");
+    expect(projectTodoDisplayLead("# Concrete Todo title ###\nBody")).toBe("Concrete Todo title");
+    expect(projectTodoDisplayLead("Keep `skill_list` exact")).toBe("Keep skill_list exact");
+  });
+
+  test("uses one canonical fallback when no concrete content exists", () => {
+    for (const content of [
+      "",
+      "<Todo title>",
+      "Todo title",
+      "## Evidence\nRepository/runtime fact: <source>",
+      "https://localhost:4096/todos/1",
+      "```md\n# Only an example\n```",
+    ]) expect(projectTodoDisplayLead(content)).toBe("Untitled Todo");
   });
 
   test("renders the prototype preview body as bounded plain text below the lead", () => {

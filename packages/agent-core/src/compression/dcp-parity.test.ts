@@ -75,8 +75,8 @@ const EXECUTABLE_DCP_PARITY_COVERAGE = {
     },
     {
       file: "packages/agent-core/src/compression/dynamic-range.test.ts",
-      testName: "protects pending and running tools, unknown results, protect tags, child links, todos, and reminders",
-      anchors: ["pending_tool", "running_tool", "unknown_result", "subagent_link", "todo", "reminder"],
+      testName: "protects pending and running tools, unknown results, and protect tags",
+      anchors: ["pending_tool", "running_tool", "unknown_result", "protect_tag"],
     },
   ],
   user_messages_preserve_canonical_originals: [

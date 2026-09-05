@@ -3424,7 +3424,11 @@
 
     const displayLead = todoLead?.textContent.trim();
     const navRows = [...document.querySelectorAll('.todo-nav .nav-row')];
-    const row = navRows.find((item) => item.querySelector('span:nth-child(2)')?.textContent.trim() === displayLead);
+    const row = navRows.find((item) => {
+      const group = item.closest('.nav-section')?.querySelector('.nav-section-title span')?.textContent.trim();
+      return (group === 'In progress' || group === 'Ready')
+        && item.querySelector('span:nth-child(2)')?.textContent.trim() === displayLead;
+    });
     navRows.forEach((item) => item.classList.remove('active'));
     if (!row) return;
     const sourceSection = row.closest('.nav-section');
@@ -3617,7 +3621,6 @@
     syncSourceFixtureVisuals(sampleName);
     if (todoShellHeader) todoShellHeader.hidden = !sample.todo;
     applyTodoFixture(sample);
-    sessionSampleLinks.forEach((link) => link.classList.toggle('active', link.dataset.sessionSample === sampleName));
     const todoRouteParams = new URLSearchParams(location.search);
     const requestedLifecycle = todoRouteParams.get('lane');
     const requestedTodoState = todoRouteParams.get('state');
@@ -3747,32 +3750,63 @@
   });
 
   const permissionRequests = [
-    { title: 'Run focused recovery verification', summary: 'The Agent wants to run one scoped check before moving the stale worktree to Trash.', command: 'bun run test recovery-policy.test.ts', cwd: '/workspace/archcode', persistentApprovalEligible: true },
-    { title: 'Move the stale worktree to Trash', summary: 'The verified managed worktree can now be moved to Trash without touching the project root or active Sessions.', command: 'trash /workspace/.worktrees/recovery-policy-old', cwd: '/workspace/archcode', persistentApprovalEligible: false },
+    { id: 'permission-recovery-check', title: 'Run focused recovery verification', summary: 'The Agent wants to run one scoped check before moving the stale worktree to Trash.', command: 'bun run test recovery-policy.test.ts', cwd: '/workspace/archcode', persistentApprovalEligible: true },
+    { id: 'permission-trash-worktree', title: 'Move the stale worktree to Trash', summary: 'The verified managed worktree can now be moved to Trash without touching the project root or active Sessions.', command: 'trash /workspace/.worktrees/recovery-policy-old', cwd: '/workspace/archcode', persistentApprovalEligible: false },
   ];
   let permissionRequestIndex = 0;
+  const hitlCardExpandedById = new Map();
+  const permissionCard = document.querySelector('[data-hitl-card="permission"]');
   const hitlRequestIndex = document.querySelector('[data-hitl-request-index]');
   const hitlPrevious = document.querySelector('[data-hitl-request-previous]');
   const hitlNext = document.querySelector('[data-hitl-request-next]');
   const permissionTitle = document.querySelector('[data-permission-title]');
+  const permissionSummaryTitle = document.querySelector('[data-permission-summary-title]');
   const permissionSummary = document.querySelector('[data-permission-summary]');
   const permissionCommand = document.querySelector('[data-permission-command]');
   const permissionCwd = document.querySelector('[data-permission-cwd]');
   const persistentAllow = document.querySelector('[data-hitl-persistent-allow]');
+  const hitlSummaryIndex = document.querySelector('[data-hitl-summary-index]');
   function renderPermissionRequest() {
     const request = permissionRequests[permissionRequestIndex];
     if (permissionTitle) permissionTitle.textContent = request.title;
+    if (permissionSummaryTitle) permissionSummaryTitle.textContent = request.title;
     if (permissionSummary) permissionSummary.textContent = request.summary;
     if (permissionCommand) permissionCommand.textContent = request.command;
     if (permissionCwd) permissionCwd.textContent = request.cwd;
     if (persistentAllow) persistentAllow.hidden = !request.persistentApprovalEligible;
     if (hitlRequestIndex) hitlRequestIndex.textContent = `${permissionRequestIndex + 1}/${permissionRequests.length}`;
+    if (hitlSummaryIndex) hitlSummaryIndex.textContent = `${permissionRequestIndex + 1}/${permissionRequests.length}`;
     if (hitlPrevious) hitlPrevious.disabled = permissionRequestIndex === 0;
     if (hitlNext) hitlNext.disabled = permissionRequestIndex === permissionRequests.length - 1;
+    if (permissionCard) setHitlCardExpanded(permissionCard, hitlCardExpandedById.get(request.id) ?? true);
   }
   hitlPrevious?.addEventListener('click', () => { permissionRequestIndex = Math.max(0, permissionRequestIndex - 1); renderPermissionRequest(); });
   hitlNext?.addEventListener('click', () => { permissionRequestIndex = Math.min(permissionRequests.length - 1, permissionRequestIndex + 1); renderPermissionRequest(); });
   renderPermissionRequest();
+
+  function hitlCardStateKey(card) {
+    return card.dataset.hitlCard === 'permission'
+      ? permissionRequests[permissionRequestIndex]?.id
+      : 'question-primary';
+  }
+  function setHitlCardExpanded(card, open) {
+    const button = card.querySelector('[data-hitl-card-toggle]');
+    if (!button) return;
+    button.setAttribute('aria-expanded', String(open));
+    card.querySelectorAll('[data-hitl-expanded-section]').forEach((section) => {
+      section.hidden = !open;
+    });
+  }
+  document.querySelectorAll('[data-hitl-card-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const card = button.closest('[data-hitl-card]');
+      if (!card) return;
+      const open = button.getAttribute('aria-expanded') !== 'true';
+      const stateKey = hitlCardStateKey(card);
+      if (stateKey) hitlCardExpandedById.set(stateKey, open);
+      setHitlCardExpanded(card, open);
+    });
+  });
 
   const hitlDetailsToggle = document.querySelector('[data-hitl-details-toggle]');
   const hitlDetails = document.querySelector('[data-hitl-details]');
@@ -3818,6 +3852,7 @@
     const sampleName = document.body.dataset.sessionSample;
     const sample = sessionSamples[sampleName];
     if (!sample || !['permission', 'question'].includes(sampleName)) return;
+    if (sampleName === 'question') hitlCardExpandedById.delete('question-primary');
     resolvedHitlSamples.add(sampleName);
     Object.assign(sample, {
       status: 'Running', tone: 'live', composer: 'Running', composerTone: 'running',
@@ -3830,7 +3865,8 @@
   function resolveCurrentHitl(action) {
     const sampleName = document.body.dataset.sessionSample;
     if (sampleName === 'permission' && permissionRequests.length > 1) {
-      permissionRequests.splice(permissionRequestIndex, 1);
+      const [resolvedRequest] = permissionRequests.splice(permissionRequestIndex, 1);
+      if (resolvedRequest) hitlCardExpandedById.delete(resolvedRequest.id);
       permissionRequestIndex = Math.min(permissionRequestIndex, permissionRequests.length - 1);
       renderPermissionRequest();
       showToast(`${action}. ${permissionRequests.length} permission request remains.`);

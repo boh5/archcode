@@ -1,6 +1,8 @@
 # Todo shaping template
 
 ```markdown
+# <Concrete title for this specific Todo>
+
 ## Outcome
 Problem observed:
 Intended user-visible result:
@@ -27,6 +29,9 @@ Intended user-visible result:
 - Failure/edge case: <decidable behavior>.
 - Verification or inspection:
 ```
+
+Replace the first-line placeholder with a concrete H1 before updating the
+Todo. Never use `Outcome`, another section label, or a standalone URL as the H1.
 
 Keep repository facts separate from product choices. “The current API has no batch endpoint” can be established from code; “users should see partial success” is a product decision unless already specified.
 

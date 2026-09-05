@@ -266,6 +266,7 @@ describe("SessionGoalService", () => {
       agentName: "explore",
       rootSessionId,
       parentSessionId: rootSessionId,
+      title: "Inspect descendant",
       delegationRequest: {
         agent_type: "explore",
         profile: "fast",

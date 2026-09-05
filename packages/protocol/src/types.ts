@@ -14,6 +14,28 @@ import type { RootSessionSource } from "./project-todos";
 import type { AttachmentDescriptor } from "./attachments";
 import type { MemoryPolicySnapshot } from "./memory";
 
+/** Stable Agent identities shared by persisted Session links and the runtime. */
+export const AGENT_NAMES = [
+  "lead",
+  "discussion",
+  "analyst",
+  "build",
+  "explore",
+  "librarian",
+] as const;
+
+export type AgentName = (typeof AGENT_NAMES)[number];
+
+/** Agent identities that can exist as durable delegated child Sessions. */
+export const DELEGATED_AGENT_NAMES = [
+  "analyst",
+  "build",
+  "explore",
+  "librarian",
+] as const;
+
+export type DelegatedAgentName = (typeof DELEGATED_AGENT_NAMES)[number];
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export interface JsonObject {
@@ -600,16 +622,21 @@ export interface ToolOutputDeltaEvent {
   liveLimitReached: boolean;
 }
 
-export type ToolChildSessionLinkStatus =
-  | "linked"
-  | "running"
-  | "waiting_for_human"
-  | "cancelling"
-  | "completed"
-  | "failed"
-  | "timed_out"
-  | "cancelled"
-  | "interrupted";
+export const DIRECT_CHILD_AGENT_PROFILES = ["deep", "fast"] as const;
+
+export const TOOL_CHILD_SESSION_LINK_STATUSES = [
+  "linked",
+  "running",
+  "waiting_for_human",
+  "cancelling",
+  "completed",
+  "failed",
+  "timed_out",
+  "cancelled",
+  "interrupted",
+] as const;
+
+export type ToolChildSessionLinkStatus = (typeof TOOL_CHILD_SESSION_LINK_STATUSES)[number];
 
 export interface ToolChildSessionLink {
   parentSessionId: string;
@@ -617,9 +644,9 @@ export interface ToolChildSessionLink {
   toolName: string;
   childSessionId: string;
   childExecutionId: string;
-  childAgentName: string;
+  childAgentName: DelegatedAgentName;
   /** Immutable Profile selected when the child was delegated. */
-  childProfile: Exclude<ProfileName, "principal">;
+  childProfile: (typeof DIRECT_CHILD_AGENT_PROFILES)[number];
   /** Immutable Skill identities selected when the child was delegated. */
   childSkillNames: string[];
   title: string;

@@ -9,6 +9,7 @@ import {
   type SessionGoal,
   type SessionEventPayload,
   type SessionMessage,
+  type ToolChildSessionLink,
   type ToolAuthorizationSnapshot,
 } from "@archcode/protocol";
 import {
@@ -375,19 +376,19 @@ describe("web session store registry", () => {
 
   test("projects child session links from remote events and snapshots", () => {
     const store = createWebSessionStore("session-1", "demo");
-    const link = {
+    const link: ToolChildSessionLink = {
       parentSessionId: "session-1",
       parentToolCallId: "tool-call-1",
       toolName: "delegate",
       childSessionId: "child-1",
       childExecutionId: "child-execution-1",
       childAgentName: "explore",
-      childProfile: "fast" as const,
+      childProfile: "fast",
       childSkillNames: [],
       title: "Explore child",
       depth: 1,
       background: true,
-      status: "linked" as const,
+      status: "linked",
       createdAt: 100,
     };
     const completed = {

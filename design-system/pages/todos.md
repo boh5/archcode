@@ -22,6 +22,18 @@ They are project-owned lifecycle entities, not Session-local checklists.
   the exact number of unresolved requests plus blocked/budget-limited Work or
   Automation Goals for that Todo. Activating that row opens the Todo's canonical
   Work destination, where the individual actions are expanded.
+- Add one derived `Running` group immediately after `Needs you`. It is a live
+  navigation view, never a Todo lifecycle: include only non-archived,
+  non-rejected Todos whose linked root Session family activity is exactly
+  `running`, `resuming`, or `stopping`. Exclude Direct Sessions and every idle,
+  waiting, failed, cancelled, timed-out, max-steps, or completed family. A Todo
+  already present in `Needs you` is omitted from `Running`.
+- Render at most one `Running` row per Todo. When several live linked Sessions
+  exist, target the one with the newest `session.updatedAt`, breaking equal
+  timestamps by `sessionId` ascending. Hide the whole group when it is empty or
+  while Todo, Session, HITL, or runtime facts are not authoritative; do not show
+  a provisional count or empty state. Activating its keyboard-accessible row
+  opens the selected Session's canonical Session route.
 - The compact canvas header shows the `WORK` eyebrow, `All todos`, and the
   canonical Active Todo total. The command
   row below owns `Filter todos` and the `Active / Rejected / Archived` surface
@@ -95,9 +107,14 @@ They are project-owned lifecycle entities, not Session-local checklists.
   Active groups use a 26px vertical gap. Group headers have a 29px minimum
   height, `0 7px 8px` padding, 11px/700 uppercase titles, and 10.5px tabular
   counts.
-- Each row shows the prototype's display-only lead: the first Markdown heading
-  when present, otherwise the first normalized content, capped at 80
-  characters. This never adds a persisted Todo title. Quiet relative update
+- Each row shows one Markdown-aware display-only lead, capped at 80 Unicode
+  characters. Ignore fenced code; prefer a concrete H1, then the first concrete
+  body line after skipping the builtin shaping template's exact structural
+  labels, the `Todo shaping template` label, `Todo title` / `<Todo title>`
+  placeholders, and standalone parseable HTTP(S) URLs. Matching of the finite
+  label set is case-insensitive. When no concrete candidate exists, show the
+  single fallback `Untitled Todo`. This never adds a persisted Todo title or a
+  second renderer. Quiet relative update
   metadata remains `Updated {relative time}`. A row may replace that quiet line
   with one authoritative derived operational line when linked work materially
   needs attention or reports active/review/error state. In particular, an Idea

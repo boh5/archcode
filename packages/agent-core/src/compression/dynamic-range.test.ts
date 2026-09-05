@@ -346,16 +346,76 @@ describe("dynamic range compression", () => {
     expect(partial.state.activeBlockRefs).toEqual(["b1"]);
   });
 
-  test("protects pending and running tools, unknown results, protect tags, child links, todos, and reminders", () => {
+  test("ignores settled child links, Todos, and Reminders when compressing an old range", () => {
+    const state = baseState([
+      message("msg-1", "user", [text("t1", "one")]),
+      message("msg-2", "assistant", [{
+        type: "tool",
+        id: "tool-completed",
+        state: "completed",
+        toolCallId: "call-completed",
+        toolName: "delegate",
+        input: { agent: "explore" },
+        result: finalizedResult("completed"),
+        createdAt: 1,
+        startedAt: 2,
+        endedAt: 3,
+      }]),
+      message("msg-3", "user", [text("t3", "three")]),
+      message("msg-4", "assistant", [output("t4", "four")]),
+      message("msg-5", "user", [text("t5", "five")]),
+      message("msg-6", "assistant", [output("t6", "six")]),
+    ]);
+    state.todos = [{ id: "todo-1", content: "finish", status: "pending" }];
+    state.reminders = [{
+      id: "r1",
+      source: { type: "todo_step_reminder", pendingTodos: [] },
+      delivery: "auto_inject",
+      content: "remember",
+      createdAt: 1,
+      consumedAt: null,
+    }];
+    state.childSessionLinks = [{
+      parentSessionId: "session-1",
+      parentToolCallId: "call-completed",
+      toolName: "delegate",
+      childSessionId: "child",
+      childExecutionId: "execution-child",
+      childAgentName: "explore",
+      childProfile: "fast",
+      childSkillNames: [],
+      title: "Explore child",
+      depth: 1,
+      background: false,
+      status: "completed",
+      createdAt: 1,
+      startedAt: 2,
+      endedAt: 3,
+    }];
+    const originalMessages = structuredClone(state.messages);
+    const originalTodos = structuredClone(state.todos);
+    const originalReminders = structuredClone(state.reminders);
+    const originalChildSessionLinks = structuredClone(state.childSessionLinks);
+
+    const result = prepareDynamicRangeCompression(state, { startId: "m0001", endId: "m0004", summary: summary() }, 1000);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected compression to commit");
+    expect(result.event.type).toBe("compression.block_committed");
+    expect(result.block.protectedRefs).toEqual([]);
+    expect(state.messages).toEqual(originalMessages);
+    expect(state.todos).toEqual(originalTodos);
+    expect(state.reminders).toEqual(originalReminders);
+    expect(state.childSessionLinks).toEqual(originalChildSessionLinks);
+  });
+
+  test("protects pending and running tools, unknown results, and protect tags", () => {
     const state = baseState([
       message("msg-1", "assistant", [output("t1", "<protect>keep this</protect>")]),
       message("msg-2", "assistant", [{ type: "tool", id: "tool-pending", state: "pending", toolCallId: "call-pending", toolName: "file_read", createdAt: 1 }]),
       message("msg-3", "assistant", [{ type: "tool", id: "tool-1", state: "running", toolCallId: "call-1", toolName: "bash", input: {}, createdAt: 1, startedAt: 2 }]),
       message("msg-4", "assistant", [{ type: "tool", id: "tool-2", state: "error", toolCallId: "call-2", toolName: "file_write", input: {}, result: finalizedResult("unknown", true, true), createdAt: 1, startedAt: 2, endedAt: 3 }]),
     ]);
-    state.todos = [{ id: "todo-1", content: "finish", status: "pending" }];
-    state.reminders = [{ id: "r1", source: { type: "todo_step_reminder", pendingTodos: [] }, delivery: "auto_inject", content: "remember", createdAt: 1, consumedAt: null }];
-    state.childSessionLinks = [{ parentSessionId: "session-1", parentToolCallId: "call-1", toolName: "delegate", childSessionId: "child", childExecutionId: "execution-child", childAgentName: "explore", childProfile: "fast", childSkillNames: [], title: "Explore child", depth: 1, background: false, status: "running", createdAt: 1 }];
     const result = prepareDynamicRangeCompression(state, { startId: "m0001", endId: "m0004", summary: summary() }, 1000);
 
     expect(result.ok).toBe(false);
@@ -366,9 +426,6 @@ describe("dynamic range compression", () => {
       "pending_tool",
       "running_tool",
       "unknown_result",
-      "subagent_link",
-      "todo",
-      "reminder",
     ]));
   });
 

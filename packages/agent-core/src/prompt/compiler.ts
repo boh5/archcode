@@ -197,6 +197,7 @@ Available:
 ${contract.availableSkills.renderedText}
 
 Active:
+Active Skill bodies below are already loaded for this model boundary; do not call skill_read for an Active entry again. Use skill_read only for a supporting resource listed by that entry, copying its path exactly.
 ${active.length === 0 ? "- none" : active.join("\n\n---\n\n")}`;
 }
 

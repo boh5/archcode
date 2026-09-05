@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { silentLogger } from "../../logger";
+import { CHILD_FINAL_MISSING_MESSAGE } from "../../delegation/final-output";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 import { createTestProjectContext } from "../test-project-context";
@@ -331,12 +332,12 @@ describe("background_output source pages", () => {
       endExecution("old", "completed", undefined, "step:old"),
     );
     store.getState().append(testExecutionStart("latest"));
-    store.getState().append(endExecution("latest", "failed", "boom"));
+    store.getState().append(endExecution("latest", "failed", CHILD_FINAL_MISSING_MESSAGE));
 
     const result = await executeBackgroundOutput(input(store.getState().sessionId), ctx);
     expect(sourceDraftText(result)).not.toContain("final review complete");
     expect(sourceDraftText(result)).toContain("No final output is available");
-    expect(sourceDraftText(result)).toContain("Execution error: boom");
+    expect(sourceDraftText(result)).toContain(`Execution error: ${CHILD_FINAL_MISSING_MESSAGE}`);
   });
 
   test("rejects unknown input fields", () => {

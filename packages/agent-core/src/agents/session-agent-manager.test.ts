@@ -382,6 +382,7 @@ describe("SessionAgentManager", () => {
         ...(depth === 0 ? { source: { kind: "direct" as const } } : {}),
         ...(depth === 0 ? {} : {
           parentSessionId: rootSessionId,
+          title: childRequest.title,
           delegationRequest: childRequest,
         }),
       });

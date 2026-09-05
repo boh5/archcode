@@ -3,6 +3,12 @@ import { interruptIncompleteToolParts, reduceStreamEvent } from "./reduce";
 import type { ReduceContext } from "./reduce";
 import { createEmptySessionStats } from "./usage";
 import {
+  MAX_DIRECT_CHILD_SESSIONS,
+  MAX_DELEGATED_SESSION_TITLE_LENGTH,
+  MAX_SESSION_TODOS_SERIALIZED_BYTES,
+  utf8ByteLength,
+} from "./session-capacity";
+import {
   COMPRESSION_SUMMARY_SECTION_NAMES,
   type CompressionSummarySnapshot,
 } from "./compression";
@@ -223,6 +229,17 @@ function makeChildSessionLink(overrides: Partial<ToolChildSessionLink> = {}): To
     createdAt: 100,
     ...overrides,
   };
+}
+
+function todosAtAggregateLimit(): SessionTodo[] {
+  const todos: SessionTodo[] = [{
+    id: "todo",
+    content: "",
+    status: "pending",
+  }];
+  const remaining = MAX_SESSION_TODOS_SERIALIZED_BYTES - utf8ByteLength(JSON.stringify(todos));
+  todos[0]!.content = "x".repeat(remaining);
+  return todos;
 }
 
 function makeCompressionRefMap(): CompressionRefMapSnapshot {
@@ -1117,6 +1134,108 @@ describe("reduceStreamEvent", () => {
     expect(state.childSessionLinks).toEqual([link]);
   });
 
+  test("accepts the exact direct-child title limit", () => {
+    const exactTitle = makeChildSessionLink({
+      title: "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH),
+    });
+
+    const state = applyEvents(createProjection(), [
+      { type: "tool-child-session-link", link: exactTitle },
+    ]);
+
+    expect(state.childSessionLinks).toEqual([exactTitle]);
+  });
+
+  test("ignores malformed direct-child projection fields without mutation", () => {
+    const state = createProjection({ childSessionLinks: [makeChildSessionLink()] });
+    const base = makeChildSessionLink({
+      parentToolCallId: "invalid-call",
+      childSessionId: "invalid-child",
+      childExecutionId: "invalid-execution",
+    });
+    const invalidLinks = [
+      { ...base, childAgentName: "lead" },
+      { ...base, childProfile: "principal" },
+      { ...base, status: "unknown" },
+      { ...base, title: " " },
+      { ...base, title: "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1) },
+    ] as unknown as ToolChildSessionLink[];
+
+    for (const link of invalidLinks) {
+      expect(reduceStreamEvent(
+        state,
+        { type: "tool-child-session-link", link },
+        createDeterministicContext(),
+      )).toEqual({});
+      expect(state.childSessionLinks).toHaveLength(1);
+    }
+  });
+
+  test("rejects an invalid stale link even when a newer valid link owns the child projection", () => {
+    const current = makeChildSessionLink({
+      childSessionId: "shared-child",
+      childExecutionId: "current-execution",
+      createdAt: 100,
+    });
+    const state = createProjection({ childSessionLinks: [current] });
+    const stale = makeChildSessionLink({
+      parentToolCallId: "stale-call",
+      childSessionId: current.childSessionId,
+      childExecutionId: "stale-execution",
+      createdAt: 1,
+    });
+    for (const link of [
+      { ...stale, childAgentName: "lead" },
+      { ...stale, title: " " },
+    ] as unknown as ToolChildSessionLink[]) {
+      expect(reduceStreamEvent(
+        state,
+        { type: "tool-child-session-link", link },
+        createDeterministicContext(),
+      )).toEqual({});
+      expect(state.childSessionLinks).toEqual([current]);
+    }
+  });
+
+  test("accepts the 64th unique child, rejects the 65th, and still updates an existing child", () => {
+    const links = Array.from({ length: MAX_DIRECT_CHILD_SESSIONS }, (_, index) => makeChildSessionLink({
+      parentToolCallId: `tool-call-${index}`,
+      childSessionId: `child-${index}`,
+      childExecutionId: `execution-${index}`,
+      createdAt: index,
+    }));
+    const beforeLimit = createProjection({ childSessionLinks: links.slice(0, -1) });
+    const limitPatch = reduceStreamEvent(
+      beforeLimit,
+      { type: "tool-child-session-link", link: links.at(-1)! },
+      createDeterministicContext(),
+    );
+    expect(limitPatch.childSessionLinks).toEqual(links);
+    if (limitPatch.childSessionLinks === undefined) throw new Error("Expected 64th child link");
+
+    const fullState = createProjection({ childSessionLinks: limitPatch.childSessionLinks });
+    const overflow = makeChildSessionLink({
+      parentToolCallId: "tool-call-overflow",
+      childSessionId: "child-overflow",
+      childExecutionId: "execution-overflow",
+    });
+    expect(reduceStreamEvent(
+      fullState,
+      { type: "tool-child-session-link", link: overflow },
+      createDeterministicContext(),
+    )).toEqual({});
+
+    const updated = { ...links[0]!, status: "running" as const, createdAt: 1_000 };
+    const update = reduceStreamEvent(
+      fullState,
+      { type: "tool-child-session-link", link: updated },
+      createDeterministicContext(),
+    );
+    expect(update.childSessionLinks).toHaveLength(MAX_DIRECT_CHILD_SESSIONS);
+    expect(update.childSessionLinks?.find((link) => link.childSessionId === updated.childSessionId))
+      .toEqual(updated);
+  });
+
   test("preserves nested diff metadata on completed tool parts", () => {
     const diffs: ToolDiffMetadata = {
       files: [
@@ -1181,6 +1300,23 @@ describe("reduceStreamEvent", () => {
 
     expect(state.todos).toEqual(todos);
     expect(state.todos).not.toBe(todos);
+  });
+
+  test("accepts the exact Todo aggregate limit and ignores the first byte beyond it", () => {
+    const exact = todosAtAggregateLimit();
+    expect(utf8ByteLength(JSON.stringify(exact))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES);
+    const accepted = applyEvents(createProjection(), [{ type: "todo-write", todos: exact }]);
+    expect(accepted.todos).toEqual(exact);
+
+    const over = exact.map((todo, index) => index === exact.length - 1
+      ? { ...todo, content: `${todo.content}x` }
+      : todo);
+    expect(utf8ByteLength(JSON.stringify(over))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES + 1);
+    expect(reduceStreamEvent(
+      accepted,
+      { type: "todo-write", todos: over },
+      createDeterministicContext(),
+    )).toEqual({});
   });
 
   test("ignores todo-write with multiple in_progress todos without throwing", () => {

@@ -117,6 +117,9 @@ export function ProjectTodoNavigator({
           retrying={retrying}
           onRetry={onRetry}
         />
+        {projection.running.state === "ready" && projection.running.rows.length > 0 ? (
+          <TodoGroup label="Running" running count={projection.running.count} rows={projection.running.rows} root={root} state="ready" />
+        ) : null}
         <TodoGroup label="In progress" count={projection.inProgress.count} rows={projection.inProgress.rows} root={root} state={projection.inProgress.state} retrying={retrying} onRetry={onRetry} />
         <TodoGroup label="Ready" count={projection.ready.count} rows={projection.ready.rows} root={root} state={projection.ready.state} retrying={retrying} onRetry={onRetry} />
 
@@ -167,6 +170,7 @@ function NavigationSection({ label, children }: { label: string; children: React
 function TodoGroup({
   label,
   attention = false,
+  running = false,
   count,
   rows,
   root,
@@ -176,6 +180,7 @@ function TodoGroup({
 }: {
   label: string;
   attention?: boolean;
+  running?: boolean;
   count?: number;
   rows: readonly ProjectTodoNavigationRow[];
   root: string;
@@ -197,16 +202,20 @@ function TodoGroup({
         </div>
       ) : null}
       {state === "ready" ? <div className="grid gap-0.5">{rows.map((row) => {
-        const visualKind = row.operationalState?.kind ?? (attention ? "needs_you" : label === "Ready" ? "enabled" : "idle");
+        const visualKind = running ? "running" : row.operationalState?.kind ?? (attention ? "needs_you" : label === "Ready" ? "enabled" : "idle");
+        const announcedState = running ? "Working" : row.operationalState?.label;
+        const destination = running && row.targetSessionId !== undefined
+          ? `${root}/sessions/${encodeURIComponent(row.targetSessionId)}`
+          : `${root}/todos/${encodeURIComponent(row.todo.id)}${attention ? "/work" : ""}`;
         return <Link
           key={`${label}:${row.todo.id}`}
-          to={`${root}/todos/${encodeURIComponent(row.todo.id)}${attention ? "/work" : ""}`}
+          to={destination}
           aria-current={row.current ? "page" : undefined}
           className={`group flex h-[38px] min-w-0 items-center gap-2 rounded-[7px] border-l-2 px-2 text-[12px] transition-[background-color,color,border-color] duration-[var(--motion-fast)] focus-visible:outline-none focus-visible:[box-shadow:var(--focus)] ${row.current ? "border-brand bg-selection-field text-text-primary shadow-[inset_0_0_0_1px_var(--border-default)]" : "border-transparent text-text-secondary hover:bg-bg-hover hover:text-text-primary"}`}
         >
           <TodoNavigatorStatusMarker kind={visualKind} />
           <span className="min-w-0 flex-1 truncate">{row.label}</span>
-          {row.operationalState ? <span className="sr-only">{row.operationalState.label}</span> : null}
+          {announcedState ? <span className="sr-only" data-testid="todo-navigator-row-status">{announcedState}</span> : null}
           {attention && row.attentionCount !== undefined ? <span className="min-w-[18px] text-right font-mono text-[10.5px] tabular-nums text-warning" aria-label={`${row.attentionCount} ${row.attentionCount === 1 ? "action" : "actions"} need you`}>{row.attentionCount}</span> : null}
         </Link>
       })}</div> : null}

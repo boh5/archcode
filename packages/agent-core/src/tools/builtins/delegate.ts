@@ -98,6 +98,9 @@ function delegateStartErrorCode(error: unknown): string {
   if (hasErrorCode(error, "DELEGATION_PROFILE_NOT_ALLOWED")) {
     return "TOOL_DELEGATE_PROFILE_NOT_ALLOWED";
   }
+  if (hasErrorCode(error, "DELEGATION_SESSION_CAPACITY_REACHED")) {
+    return "TOOL_DELEGATE_SESSION_CAPACITY_REACHED";
+  }
 
   if (error instanceof SkillNotFoundError) return "TOOL_DELEGATE_SKILL_NOT_FOUND";
   if (error instanceof SkillValidationError) return "TOOL_DELEGATE_SKILL_INVALID";

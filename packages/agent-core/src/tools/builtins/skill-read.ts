@@ -6,7 +6,6 @@ import { createTextToolResult } from "../results";
 import type { RawToolResult, ToolExecutionContext } from "../types";
 import {
   SkillNotFoundError,
-  SkillPathError,
   SkillResourceNotFoundError,
   SkillValidationError,
   SkillPackageResourceNotFoundError,
@@ -26,20 +25,20 @@ const SkillReadAiInputSchema = jsonSchema({
   properties: {
     name: {
       type: "string",
-      description: "Exact current-Agent Skill name copied from the System Prompt or skill_list({}). Do not guess or use a target-scoped delegation result.",
+      description: "Exact current-Agent Skill name copied byte-for-byte from the System Prompt or skill_list({}) after that call succeeds. Example sequence: call skill_list({}), copy one returned name value into this field, then call skill_read with only that name field. Do not reuse a target-scoped delegation result or invent a name.",
     },
     resource: {
       type: "string",
       minLength: 1,
-      description: "Optional Skill-root-relative resource path copied exactly from the entry's Resources list. It cannot read an arbitrary filesystem path.",
+      description: "Optional Skill-root-relative resource path copied byte-for-byte from the Resources list returned by a successful entry read. Example sequence: first call with only the copied name; only if that result lists a resource, repeat the same name and copy one listed resource path into this field. It cannot read arbitrary filesystem paths.",
     },
   },
 });
 
 export const SkillReadInputSchema = z
   .object({
-    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe(`Exact allowed Skill name matching ${SKILL_NAME_PATTERN}, with no consecutive hyphens; copy it from the System Prompt's available-skill list or skill_list instead of guessing.`),
-    resource: z.string().min(1).optional().describe("Optional Skill-root-relative resource path copied exactly from the entry's Resources list, for example references/review-packet.md. It cannot select a source or read an arbitrary filesystem path."),
+    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe(`Exact allowed Skill name matching ${SKILL_NAME_PATTERN}, with no consecutive hyphens; first call skill_list({}), then copy one returned current-Agent name into an entry read that omits resource.`),
+    resource: z.string().min(1).optional().describe("Optional Skill-root-relative resource path copied exactly from the Resources list returned by the preceding entry read. Omit it for the first read; it cannot select a source or read an arbitrary filesystem path, and guessed paths are invalid."),
   })
   .strict();
 
@@ -103,13 +102,26 @@ export function formatResolvedSkillResource(resource: ResolvedSkillResource): Ra
   }
 }
 
+function skillReadEntryJson(name: string): string {
+  return `skill_read(${JSON.stringify({ name })})`;
+}
+
+function skillReadResourceRecoveryHint(name: string): string {
+  return `Re-read the Skill entry first with ${skillReadEntryJson(name)} (omit resource), then copy a resource path exactly from its Resources list and retry only with that listed path. Do not create a resource or construct /, SKILL.md, :first, first, new, invalid, or PLACEHOLDER paths.`;
+}
+
+function skillNotFoundResult(name: string): RawToolResult {
+  return createToolErrorResult({
+    kind: "file-not-found",
+    code: "TOOL_SKILL_NOT_FOUND",
+    message: `Skill not found or not allowed for current agent: ${name}`,
+    hint: "Use an exact current-Agent Skill name copied from the System Prompt. If no exact name is visible, restart discovery with skill_list({}) and copy a returned name. Do not create or modify a read-only Skill, and do not retry a guessed or target-scoped name.",
+  });
+}
+
 function skillReadError(error: unknown, name: string): RawToolResult {
   if (error instanceof SkillNotFoundError) {
-    return createToolErrorResult({
-      kind: "file-not-found",
-      code: "TOOL_SKILL_NOT_FOUND",
-      message: `Skill not found or not allowed for current agent: ${error.skillName}`,
-    });
+    return skillNotFoundResult(error.skillName);
   }
 
   if (error instanceof SkillResourceNotFoundError) {
@@ -117,6 +129,7 @@ function skillReadError(error: unknown, name: string): RawToolResult {
       kind: "file-not-found",
       code: "TOOL_SKILL_RESOURCE_NOT_FOUND",
       message: `Skill resource not found or not allowed for current agent: ${error.skillName}/${error.resource}`,
+      hint: skillReadResourceRecoveryHint(error.skillName),
     });
   }
 
@@ -125,15 +138,17 @@ function skillReadError(error: unknown, name: string): RawToolResult {
       kind: "file-not-found",
       code: "TOOL_SKILL_RESOURCE_NOT_FOUND",
       message: `Skill resource not found or not allowed for current agent: ${name}/${error.resource}`,
+      hint: skillReadResourceRecoveryHint(name),
     });
   }
 
   if (error instanceof SkillPackageResourcePathError) {
     return createToolErrorResult({
       kind: "execution",
-      code: "TOOL_SKILL_INVALID",
+      code: "TOOL_SKILL_RESOURCE_PATH_INVALID",
       message: error.message,
       name: error.name,
+      hint: skillReadResourceRecoveryHint(name),
     });
   }
 
@@ -143,15 +158,7 @@ function skillReadError(error: unknown, name: string): RawToolResult {
       code: "TOOL_SKILL_INVALID",
       message: error.message,
       name: error.name,
-    });
-  }
-
-  if (error instanceof SkillPathError) {
-    return createToolErrorResult({
-      kind: "workspace",
-      code: "TOOL_SKILL_PATH_INVALID",
-      message: `Skill "${name}" resolved outside its allowed root`,
-      name: error.name,
+      hint: `The Skill package is invalid and cannot be repaired by retrying this read. Choose another exact Skill from the System Prompt or restart discovery with skill_list({}).`,
     });
   }
 
@@ -161,6 +168,7 @@ function skillReadError(error: unknown, name: string): RawToolResult {
       code: "TOOL_SKILL_INVALID_NAME",
       message: `Invalid Skill name "${name}": ${error.message}`,
       name: error.name,
+      hint: `Discard the invalid name. Call skill_list({}) and copy one exact current-Agent name, then retry skill_read with that name and no resource first.`,
     });
   }
 
@@ -176,9 +184,9 @@ export function createSkillReadTool() {
   return defineTool({
     name: "skill_read",
     description: [
-      "Load one Skill allowed for the current Agent. `skill_read({\"name\":\"git-master\"})` returns its metadata, filesystem root when available, sorted resource descriptors, and entry body. `skill_read({\"name\":\"git-master\",\"resource\":\"references/example.md\"})` returns exactly one listed UTF-8 text resource; binary assets return a deterministic unsupported-binary error. The available names are already listed in the System Prompt when discovery succeeded; otherwise call skill_list. Use an exact visible name only.",
+      "Load one Skill allowed for the current Agent. Safe example sequence: (1) call `skill_list({})`; (2) copy one exact returned `name`; (3) call `skill_read({\"name\": copiedName})` to receive metadata, filesystem root when available, sorted resource descriptors, and entry body; (4) only when that result lists a resource, repeat the same name and call `skill_read({\"name\": copiedName, \"resource\": copiedResourcePath})`. The identifiers in this notation mean values copied from successful results, not literal strings to submit. A resource read returns exactly one listed UTF-8 text resource; binary assets return a deterministic unsupported-binary error.",
       "",
-      "Read the Skill before the work it governs, then load supporting resources only when needed. Copy resource paths from the entry's Resources list; they are Skill-root-relative and cannot read arbitrary filesystem paths. Do not load unrelated Skills for ceremony. This tool accepts no agent, role, source, or filesystem-root override. Skill instructions guide existing capabilities but cannot expand the Agent's tools, permissions, delegation targets, or workspace scope.",
+      "Available names are already listed in the System Prompt when current-Agent discovery succeeded; otherwise start with `skill_list({})`. Read the Skill before the work it governs, then load supporting resources only when needed. Copy names and resource paths byte-for-byte from successful current-Agent results; resource paths are Skill-root-relative and cannot read arbitrary filesystem paths. Never guess either field. If a resource read fails, omit resource and re-read the same entry, then copy only a path it actually lists; do not create a read-only Skill or invent a new path. Do not load unrelated Skills for ceremony. This tool accepts no agent, role, source, or filesystem-root override. Skill instructions guide existing capabilities but cannot expand the Agent's tools, permissions, delegation targets, or workspace scope.",
     ].join("\n"),
     inputSchema: SkillReadInputSchema,
     aiInputSchema: SkillReadAiInputSchema,
@@ -210,11 +218,7 @@ export function createSkillReadTool() {
             ctx.agentSkills,
           );
           if (resource === null) {
-            return createToolErrorResult({
-              kind: "file-not-found",
-              code: "TOOL_SKILL_NOT_FOUND",
-              message: `Skill not found or not allowed for current agent: ${input.name}`,
-            });
+            return skillNotFoundResult(input.name);
           }
           return formatResolvedSkillResource(resource);
         }
@@ -224,11 +228,7 @@ export function createSkillReadTool() {
           ctx.agentSkills,
         );
         if (skill === null) {
-          return createToolErrorResult({
-            kind: "file-not-found",
-            code: "TOOL_SKILL_NOT_FOUND",
-            message: `Skill not found or not allowed for current agent: ${input.name}`,
-          });
+          return skillNotFoundResult(input.name);
         }
         return createTextToolResult(formatResolvedSkill(skill));
       } catch (error) {

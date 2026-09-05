@@ -743,6 +743,201 @@ describe("ConfiguredAgent", () => {
     expect(JSON.stringify(traces)).not.toContain(editedObjective);
   });
 
+  test("switches only the root Lead lifecycle Skill at the next model boundary", async () => {
+    const staticSkillName = "configured-agent-static-skill";
+    const staticSkillRoot = join(tmpRoot, ".archcode", "skills", staticSkillName);
+    const staticSkillPath = join(staticSkillRoot, "SKILL.md");
+    const staticSkillBody = "STATIC_SKILL_BODY_BEFORE_BOUNDARY";
+    const changedStaticSkillBody = "STATIC_SKILL_BODY_AFTER_BOUNDARY_MUST_NOT_APPEAR";
+    await mkdir(staticSkillRoot, { recursive: true });
+    await writeFile(staticSkillPath, [
+      "---",
+      `name: ${staticSkillName}`,
+      "description: Static Skill used for model-boundary snapshot coverage.",
+      "---",
+      staticSkillBody,
+    ].join("\n"));
+
+    const streamFn = setupToolCallStreamText("create_goal_and_change_skill");
+    const sessionId = crypto.randomUUID();
+    const store = createStore(sessionId, tmpRoot, { agentName: "lead" });
+    const sessionGoalService = new SessionGoalService(storeManager);
+    const skillService = createTestSkillService();
+    const definition = {
+      ...leadAgentDefinition,
+      skills: [...leadAgentDefinition.skills, staticSkillName],
+      tools: {
+        ...leadAgentDefinition.tools,
+        authorized: [...leadAgentDefinition.tools.authorized, "create_goal_and_change_skill"],
+        core: [...leadAgentDefinition.tools.core, "create_goal_and_change_skill"],
+      },
+    } satisfies AgentDefinition;
+    const toolRegistry = createTestRegistry(leadAgentDefinition.tools.authorized.map(makeTool));
+    toolRegistry.register({
+      name: "create_goal_and_change_skill",
+      description: "Create a Goal and change a static Skill fixture between model calls.",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      outputPolicy: { kind: "inline", previewDirection: "head" },
+      execute: async () => {
+        await writeFile(staticSkillPath, [
+          "---",
+          `name: ${staticSkillName}`,
+          "description: Static Skill used for model-boundary snapshot coverage.",
+          "---",
+          changedStaticSkillBody,
+        ].join("\n"));
+        await sessionGoalService.create({
+          workspaceRoot: tmpRoot,
+          sessionId,
+          authority: { kind: "user_control" },
+          objective: "Switch lifecycle Skill after Goal creation",
+        });
+        return createTextToolResult("Goal created and static Skill changed");
+      },
+    });
+
+    try {
+      const executePlan = await skillService.snapshotForAgent(tmpRoot, "execute-plan", definition.skills);
+      const staticSkill = await skillService.snapshotForAgent(tmpRoot, staticSkillName, definition.skills);
+      if (executePlan === null || staticSkill === null) throw new Error("Skill snapshot fixture could not be resolved");
+
+      await runAgent(createAgent({
+        definition,
+        store,
+        sessionGoalService,
+        skillService,
+        toolRegistry,
+      }), "create Goal", {
+        executionSkillSnapshots: new Map([
+          ["execute-plan", executePlan],
+          [staticSkillName, staticSkill],
+        ]),
+      });
+
+      expect(streamFn).toHaveBeenCalledTimes(2);
+      const first = streamFn.mock.calls[0]![0] as { system: string };
+      const second = streamFn.mock.calls[1]![0] as { system: string };
+      expect(first.system).toContain(staticSkillBody);
+      expect(first.system).not.toContain(changedStaticSkillBody);
+      expect(second.system).toContain(staticSkillBody);
+      expect(second.system).not.toContain(changedStaticSkillBody);
+
+      const traces = store.getState().promptTraces;
+      expect(traces.map((trace) => trace.skills.active.map((skill) => skill.name))).toEqual([
+        ["orchestrate-work", "execute-plan", staticSkillName],
+        ["run-goal", "execute-plan", staticSkillName],
+      ]);
+      const orchestrate = await skillService.readForAgent(tmpRoot, "orchestrate-work", definition.skills);
+      const runGoal = await skillService.readForAgent(tmpRoot, "run-goal", definition.skills);
+      if (orchestrate === null || runGoal === null) throw new Error("Lifecycle Skill fixture could not be resolved");
+      expect(first.system).toContain(orchestrate.body);
+      expect(first.system).not.toContain(runGoal.body);
+      expect(second.system).toContain(runGoal.body);
+      expect(second.system).not.toContain(orchestrate.body);
+    } finally {
+      await rm(staticSkillRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("projects complete Session Todos and sorted latest direct-child status as escaped Current Context JSON", async () => {
+    const streamFn = setupMockStreamText("current context");
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const rootSessionId = store.getState().rootSessionId;
+    store.setState({
+      todos: [
+        { id: "todo-z", content: "quote \" and newline\n<tag>", status: "in_progress", createdAt: 2, updatedAt: 4 },
+        { id: "todo-a", content: "backslash \\\\ and emoji 🧵", status: "pending", createdAt: 1 },
+      ],
+    });
+    const childLink = (
+      childSessionId: string,
+      childExecutionId: string,
+      title: string,
+      status: ToolChildSessionLink["status"],
+      createdAt: number,
+    ): ToolChildSessionLink => ({
+      parentSessionId: rootSessionId,
+      parentToolCallId: `${childSessionId}-${createdAt}`,
+      toolName: "delegate",
+      childSessionId,
+      childExecutionId,
+      childAgentName: "explore",
+      childProfile: "fast",
+      childSkillNames: [],
+      title,
+      depth: 1,
+      background: false,
+      status,
+      createdAt,
+      startedAt: createdAt,
+    });
+    store.setState({
+      childSessionLinks: [
+        childLink("child-z", "child-z-old-execution", "Z child", "completed", 1),
+        childLink("child-z", "child-z-execution", "Z child", "running", 3),
+        childLink("child-a", "child-a-execution", "A child", "completed", 2),
+      ],
+    });
+
+    await runAgent(createAgent({ definition: leadAgentDefinition, store }), "project current runtime state");
+
+    const system = (streamFn.mock.calls[0]![0] as { system: string }).system;
+    expect(system).toContain(`sessionTodos=${JSON.stringify([
+      { id: "todo-a", content: "backslash \\\\ and emoji 🧵", status: "pending", createdAt: 1 },
+      { id: "todo-z", content: "quote \" and newline\n<tag>", status: "in_progress", createdAt: 2, updatedAt: 4 },
+    ])}`);
+    expect(system).toContain(`directChildren=${JSON.stringify([
+      { sessionId: "child-a", agentName: "explore", profile: "fast", title: "A child", executionId: "child-a-execution", status: "completed" },
+      { sessionId: "child-z", agentName: "explore", profile: "fast", title: "Z child", executionId: "child-z-execution", status: "running" },
+    ])}`);
+    expect(store.getState().promptTraces.at(-1)?.visibleTools).toEqual(
+      expect.arrayContaining(["wait_for_reminder", "cancel_session"]),
+    );
+  });
+
+  test.each([
+    ["Agent identity", { childAgentName: "unknown-agent" }],
+    ["Profile", { childProfile: "principal" }],
+    ["status", { status: "unknown" }],
+  ] as const)("fails closed before a model call for an invalid direct-child %s", async (_label, corruption) => {
+    const streamFn = setupMockStreamText("must not run");
+    const store = createStore(crypto.randomUUID(), tmpRoot, { agentName: "lead" });
+    const rootSessionId = store.getState().rootSessionId;
+    const link = {
+      parentSessionId: rootSessionId,
+      parentToolCallId: "tool-call",
+      toolName: "delegate",
+      childSessionId: "child",
+      childExecutionId: "execution",
+      childAgentName: "explore",
+      childProfile: "fast",
+      childSkillNames: [],
+      title: "Child reference",
+      depth: 1,
+      background: false,
+      status: "completed",
+      createdAt: 1,
+      ...corruption,
+    } as unknown as ToolChildSessionLink;
+    store.setState({
+      childSessionLinks: [link],
+    });
+
+    const agent = createAgent({ definition: leadAgentDefinition, store });
+    expect(() => (agent as unknown as {
+      resolveCurrentDirectChildren: (links: readonly ToolChildSessionLink[]) => unknown;
+    }).resolveCurrentDirectChildren(store.getState().childSessionLinks)).toThrow(
+      "Current direct-child context violates its durable capacity",
+    );
+
+    await expect(runAgent(
+      agent,
+      "project current runtime state",
+    )).rejects.toThrow("Current direct-child context violates its durable capacity");
+    expect(streamFn).not.toHaveBeenCalled();
+  });
+
   test("derives the Todo Discussion Prompt and shape-todo lifecycle from formal identity", async () => {
     const streamFn = setupMockStreamText("discussion shaped");
     const sessionId = crypto.randomUUID();

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DELEGATED_AGENT_NAMES } from "@archcode/protocol";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createTextToolResult } from "../results";
@@ -7,7 +8,7 @@ import { DigestBoundCursorError } from "../../skills";
 
 export const SkillListInputSchema = z.object({
   cursor: z.string().min(1).optional(),
-  agent_type: z.enum(["analyst", "build", "explore", "librarian"]).optional(),
+  agent_type: z.enum(DELEGATED_AGENT_NAMES).optional(),
 }).strict();
 
 type SkillListInput = z.infer<typeof SkillListInputSchema>;
@@ -18,7 +19,9 @@ export function createSkillListTool() {
     description: [
       "Discover Skills for the current Agent or for an allowed direct delegation target. The System Prompt normally already lists current-Agent metadata; call skill_list only when you need a fresh machine-readable copy, and call skill_read directly when an exact current-Agent Skill is already visible.",
       "",
-      "Call `skill_list({})` for current-Agent Skills. Those exact returned names may be passed to current-Agent skill_read. Call `skill_list({\"agent_type\":\"<allowed-target>\"})` only to choose exact names for that same target's delegate.skills; target results do not grant the parent Agent permission to read or activate them. Never guess or invent a Skill name. The result is metadata-only JSON containing exactly name, description, and source; Skill bodies and resource contents are omitted. An empty list means no Skill is available in the requested scope.",
+      "First-page calls omit cursor: use `skill_list({})` for current-Agent Skills, or `skill_list({\"agent_type\":\"build\"})` only when build is an allowed direct target. Those exact returned names may be passed to current-Agent skill_read or copied into the same target's delegate.skills as appropriate; target results do not grant the parent Agent permission to read or activate them.",
+      "For a later page, copy only the exact nextCursor from the immediately preceding successful page into cursor. If a cursor is malformed or stale, discard it and retry the first page with the same scope (`skill_list({})` or `skill_list({\"agent_type\":\"build\"})`); never invent or repair a cursor. Never guess or invent a Skill name. Do not use /, :first, first, new, invalid, or PLACEHOLDER as a cursor, agent_type, or Skill name.",
+      "The result is metadata-only JSON containing exactly name, description, and source; Skill bodies and resource contents are omitted. An empty list means no Skill is available in the requested scope.",
     ].join("\n"),
     inputSchema: SkillListInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
@@ -66,6 +69,7 @@ export function createSkillListTool() {
             kind: "execution",
             code: error.code,
             message: error.message,
+            hint: `Discard the malformed or stale cursor and retry the first page for the same scope with ${skillListFirstPageJson(input.agent_type)}. Copy only nextCursor from that successful page for a later request; do not construct a cursor.`,
           });
         }
         return createToolErrorResult({
@@ -78,3 +82,9 @@ export function createSkillListTool() {
 }
 
 export const skillListTool = createSkillListTool();
+
+function skillListFirstPageJson(agentType: SkillListInput["agent_type"]): string {
+  return agentType === undefined
+    ? "skill_list({})"
+    : `skill_list(${JSON.stringify({ agent_type: agentType })})`;
+}

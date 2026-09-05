@@ -57,6 +57,22 @@ Validation order: `typecheck` → `test` (enforced by Turborepo task graph).
 
 Agent Core test lanes are hard-separated by naming: `*.integration.test.ts` owns real subprocess, Git/worktree, and LSP process lifecycles; `src/__arch__/**/*.test.ts` owns architecture contracts; all remaining `*.test.ts` files are unit tests. Do not use `test.concurrent`, `--concurrent`, test-runner retries, or retry-based flaky-test mitigation.
 
+## AI Review Triage
+
+- Treat every AI Reviewer finding as a hypothesis, not as authority. Verify it
+  against the implementation, a concrete reproduction, and the authoritative
+  product/design contracts before changing code.
+- Fix only confirmed defects in repository-owned code. If a finding is a false
+  positive or conflicts with an explicit contract, reply with the evidence and
+  reject it instead of changing correct behavior merely to satisfy the Reviewer.
+- Do not modify installed third-party Skill packages under `.codex/skills/**`
+  in response to content-review findings. Preserve their installed upstream
+  contents and classify such findings as outside this repository's ownership.
+- A review finding does not authorize scope expansion, speculative hardening,
+  or a new compatibility path. Any materially different product decision must
+  return to the user; otherwise use the smallest fix that closes the reproduced
+  defect.
+
 ## UI/UX Pro Max Workflow
 
 Use the `ui-ux-pro-max` Skill for work that changes UI structure, visual
@@ -256,9 +272,9 @@ packages/utils/src/
   → Hono Runtime routes → Session-scoped Lead / Automation / HITL routes
   → SessionExecutionManager → ConfiguredAgent authorized catalog
   → Core + State + Execution-loaded visibility → query loop → store → SSE → Web UI
-
-Delegation control is a fixed seven-tool package: `delegate`, `list_agents`, `send_message`, `background_output`, `wait_for_reminder`, `cancel_session`, and `resume_session`. `delegate(DelegationRequest)` creates a durable direct child; `list_agents` reads the caller's descendant subtree through the same backend Agent Tree projection used by the Web tree; and `send_message` is the only parent-to-child message path, with `delivery: "steer" | "queue"` selecting the current Execution's next model boundary or the next Execution. `background_output` reads a direct child's result, `wait_for_reminder` waits on direct children, `cancel_session` strongly cascades to any descendant subtree, and `resume_session` continues a stopped direct child while preserving its Agent, Profile, Skills, and responsibility. Every child finishes with a normal assistant response; synchronous delegation returns that final response directly, while background work is read through `background_output`. If a synchronous child suspends, its parent suspends on the original tool call; each resumes its own same logical Execution when ready. `SessionExecutionManager` is the sole owner of Execution lifecycle, admission, concurrency, live run resources, recovery, and terminal records. There is no Build owned-scope or lease subsystem.
 ```
+
+Delegation control is a fixed seven-tool package: `delegate`, `list_agents`, `send_message`, `background_output`, `wait_for_reminder`, `cancel_session`, and `resume_session`. `delegate(DelegationRequest)` creates a durable direct child; `list_agents` reads the caller's descendant subtree through the same backend Agent Tree projection used by the Web tree; and `send_message` is the only parent-to-child message path, with `delivery: "steer" | "queue"` selecting the current Execution's next model boundary or the next Execution. `background_output` reads a direct child's result, `wait_for_reminder` waits on direct children, `cancel_session` strongly cascades to any descendant subtree, and `resume_session` continues a stopped direct child while preserving its Agent, Profile, Skills, and responsibility. A delegated child may publish `completed` only when its current Execution has a non-blank canonical `final_answer` that is not a whole-response Tool-control document; the centralized child-final gate runs before `execution-end`, and its stable missing/protocol-only failure is reused by the Execution, child link, parent Tool result, background output, and reminder. Synchronous delegation returns the accepted final response directly, while background work is read through `background_output`. If a synchronous child suspends, its parent suspends on the original tool call; each resumes its own same logical Execution when ready. `SessionExecutionManager` is the sole owner of Execution lifecycle, admission, concurrency, live run resources, recovery, terminal validation, and terminal records. There is no Build owned-scope or lease subsystem.
 
 **Server + Web UI:**
 - `apps/server/src/main.ts` creates `ServerConfigService`, classifies Config state, and creates `ArchCodeServerHost`. Missing Config enters token-protected Setup without constructing an `AgentRuntime`.
@@ -317,7 +333,19 @@ Model-visible tools are a projection, never an authorization source. Each
 subset. `ConfiguredAgent` rebuilds the live authorized catalog at every model
 boundary, then exposes Core, fixed runtime State activations, valid
 Execution-local loaded refs, and `tool_search` only while deferred candidates
-exist. Local long-tail and all ready MCP descriptors remain deferred until a
+exist. It also rebuilds Current Context from complete Session Todos plus latest
+direct-child facts as deterministic JSON. Completeness is enforced at writes,
+not by Prompt truncation: one Session holds at most 32 Todos and 24 KiB of
+serialized Todo JSON, while one parent owns at most 64 unique direct children.
+Direct-child IDs are Runtime-generated, Agent names use the four delegated
+identities, child Profiles and statuses use fixed enums, and titles are
+non-blank and at most 80 Unicode code points. These existing write domains give
+the projection a deterministic finite bound without extra per-field limits or
+a second aggregate admission state.
+Ordinary and explicit Skill packages
+remain immutable for the logical Execution, while only the root Lead lifecycle
+slot is reselected at each boundary (`orchestrate-work` without an active Goal,
+`run-goal` with one). Local long-tail and all ready MCP descriptors remain deferred until a
 deterministic local search loads their contract for the next model step. The
 Prompt lists every deferred canonical name with only the first description
 line, capped at 160 characters, grouped by local namespace or MCP server. Models
@@ -429,15 +457,15 @@ All six implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(options) �
 - Lead targets Analyst/Build/Explore/Librarian; Analyst targets Explore/Librarian; Build targets Explore.
 - `explore` and `librarian` have no `delegateTargets`; they are terminal read-only support agents.
 - `agents/factory.ts` owns one immutable current-Agent/depth delegation capability snapshot and only removes the explicitly configured delegation package at each definition's `childPolicy.maxDepth` or when no direct target exists; it never injects delegation tools. `extraTools` cannot restore that removed package. Prompt/Tool projection and SessionExecutionManager admission consume that same target/Profile/builtin-Skill authority; Provider-facing Tool schemas remain portable presentation contracts while strict internal schemas still validate execution input.
-- `list_agents` and the Web Agent Tree use one backend projection of durable family topology plus live Execution/Link facts. `send_message` targets only a running direct child and uses `steer | queue`; `cancel_session` accepts any descendant and strongly cascades its subtree, while `wait_for_reminder` and `resume_session` remain direct-child operations. `delegate` persists Agent, Profile, Skills, title, objective, and background choice; `resume_session` preserves that identity. Multiple Builds share general Session concurrency; there is no owned-scope or Build lease subsystem.
+- `list_agents` and the Web Agent Tree use one backend projection of durable family topology plus live Execution/Link facts. `send_message` targets only a running direct child and uses `steer | queue`; `cancel_session` accepts any descendant and strongly cascades its subtree, while `wait_for_reminder` and `resume_session` remain direct-child operations. `delegate` persists Agent, Profile, Skills, title, objective, and background choice; `resume_session` preserves that identity. A parent may own at most 64 unique direct children, while resuming an existing child consumes no new identity slot. Delegated titles are non-blank and at most 80 Unicode code points; direct-child Current Context accepts only delegated `analyst | build | explore | librarian`, `deep | fast`, and fixed link statuses. Session/Execution IDs remain Runtime-generated, and objective/Skills retain their existing Delegation contract rather than acquiring unrelated capacity rules. Execution admission and every model boundary fail closed on malformed projected state. Multiple Builds share general Session concurrency; there is no owned-scope or Build lease subsystem.
 
 **Workflow Skills:**
-- Ordinary root Lead activates `orchestrate-work`; active Goal activates `run-goal`; root Discussion activates `shape-todo`, derived from authoritative runtime facts on every Execution.
+- At every model boundary, an ordinary root Lead activates `orchestrate-work` and a root Lead with an active Goal activates `run-goal`; this reserved lifecycle slot is separate from immutable ordinary/explicit Execution Skill snapshots. Root Discussion activates `shape-todo` from its formal Session identity.
 - `plan-work` writes one ordinary Markdown Plan per Todo under `.archcode/plans/`. Plan has no service, state, ID, API, dedicated page, or Goal link. `execute-plan` is activated only by the Todo-to-work handoff when that file exists.
 - `review-work` guides Lead review orchestration. Analyst analysis/review Skills include `analyze-work`, `review-change`, and the reserved `goal-review` final gate.
 - A Skill is one package: required `SKILL.md`; optional `scripts/`, `references/`, `assets/`, and other contained resources. Its strict YAML frontmatter accepts `name`, `description`, optional `license`, `compatibility`, and `metadata`; `description` states both method and activation timing.
 - Skill precedence is whole-package and strict: project `.archcode/skills/<name>/` > project `.agents/skills/<name>/` > user `~/.archcode/skills/<name>/` > user `~/.agents/skills/<name>/` > embedded builtin. Bodies and resources never merge or fall through. Reserved lifecycle builtins remain unshadowable and Agent-gated.
-- Discovery (`skill_list` and available Prompt metadata) returns exactly name, description, and source. Prompt projection is bounded and reports omitted entries; `skill_list` returns digest-bound metadata pages with cursors for continuation. `skill_list({ agent_type })` may inspect one currently allowed direct child's catalog for exact `delegate.skills` names, but that target page grants no parent `skill_read` authority. Entry activation (`skill_read({ name })`) returns one current-Agent entry plus sorted resource descriptors; `skill_read({ name, resource })` reads exactly one listed UTF-8 text resource on demand. Binary assets are valid package resources but are not returned by the text-only tool.
+- Discovery (`skill_list` and available Prompt metadata) returns exactly name, description, and source. Prompt projection is bounded and reports omitted entries; the first page is `skill_list({})` or `skill_list({ agent_type })`, and continuation copies only the preceding successful page's digest-bound `nextCursor`. `skill_list({ agent_type })` may inspect one currently allowed direct child's catalog for exact `delegate.skills` names, but that target page grants no parent `skill_read` authority. Entry activation first copies an exact current-Agent name from the System Prompt or a successful `skill_list({})` result into `skill_read({ name })`; descriptions never assume one fixed Skill is valid in every runtime. That entry returns sorted resource descriptors, after which `skill_read({ name, resource })` may copy and read exactly one listed UTF-8 relative resource path. Guessed root, entry, resource, and cursor values are invalid and errors return scope-preserving retry instructions. Binary assets are valid package resources but are not returned by the text-only tool.
 - Invalid package candidates are surfaced as `SKILL_INVALID_PACKAGE` diagnostics. A winning invalid package fails closed; resolution never falls through to a lower-precedence package. The same winning package is claimed once for one explicit `/skill use` logical Execution; an in-process resume reuses that snapshot, while process-restart recovery revalidates its persisted source/digest and fails closed on change.
 - Skills remain guidance only: their package metadata and resources cannot grant tools or permissions, execute scripts automatically, change Agent/Profile/MCP/workspace scope/delegation, or grant completion authority. Scripts use only existing Bash permissions.
 
@@ -454,9 +482,17 @@ of user-server authorization.
 ```
 beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-inject-reminder)
   → runLlmStream → consumeFullStream → afterStepEnd (todo-continuation)
-  → executeToolCalls (doom detection → partition → guards → execute)
+  → executeToolCalls (partition → guards → execute → settle batch → repeated-failure gate)
 → afterLoopEnd (todo-continuation)
 ```
+
+The repeated-failure gate reconstructs one logical Execution from canonical
+Tool batches ordered by model step and call ordinal. It counts only a closed
+allowlist of deterministic Tool error codes for the same canonical Tool input,
+clears that input after success, and fails the Execution after the third real
+error only after every sibling call in the triggering batch settles. Timeout,
+network, process, permission, abort, unknown, and otherwise unlisted failures
+fail open. There is no pre-execution synthetic Doom result or continuation path.
 
 Successful root Lead/Discussion terminals update the durable Memory cursor;
 `MemoryIdleCoordinator` performs automatic learning outside the Query Loop after
@@ -492,11 +528,12 @@ Zustand vanilla store per Agent Session. `append(StreamEvent)` → `reduceStream
 
 Explicit `/skill use` claims the winning Skill package once for one logical
 Execution; `skill_read` uses that Execution snapshot and a resumed Execution
-revalidates its digest before continuing.
+revalidates its digest before continuing. The root Lead lifecycle Skill is not
+part of that snapshot and follows the latest Goal state at each model boundary.
 
 ## Context Compaction
 
-ArchCode has two intentionally separate context-reduction paths. Dynamic DCP-like compression lives in `packages/agent-core/src/compression/`: it is an agent conversation/tool behavior where the model may call `compress` on visible `mNNNN`/`bN` refs, with soft/strong nudges injected from 55% up to the hard threshold. Forced hard compact lives in `packages/agent-core/src/compact/`: every agent's query hook runs this path at `contextTokens ≥ limit × 0.85`, and `/compact` enters through the ordinary checked Session message path before QueryLoop command parsing. Hard compact is the last safety mechanism to avoid context collapse, not a model-selected tool action: `selectCompactablePrefix` preserves the current + last 2 rounds, `pruneToolOutputs` persists outputs, `summarizePrefix` produces the compact summary, `commitCompact` emits a `compact` event, and DCP compression projection state is cleared so the two mechanisms do not layer over each other. Hysteresis remains ≥ 5 new messages and the circuit breaker opens after 3 failures/skips.
+ArchCode has two intentionally separate context-reduction paths. Dynamic DCP-like compression lives in `packages/agent-core/src/compression/`: it is an agent conversation/tool behavior where the model may call `compress` on visible `mNNNN`/`bN` refs, with soft/strong nudges injected from 55% up to the hard threshold. Its only protected range facts are `latest_tail`, `pending_tool`, `running_tool`, `unknown_result`, and explicit `protect_tag`; settled child links, Session Todos, and Reminders remain canonical domain state but do not veto an unrelated old range. Current Todos/direct-child visibility is supplied by Current Context, the complete descendant tree remains in `list_agents`, and Reminder owners retain their own injection/consumption behavior. Forced hard compact lives in `packages/agent-core/src/compact/`: every agent's query hook runs this path at `contextTokens ≥ limit × 0.85`, and `/compact` enters through the ordinary checked Session message path before QueryLoop command parsing. Hard compact is the last safety mechanism to avoid context collapse, not a model-selected tool action: `selectCompactablePrefix` preserves the current + last 2 rounds, `pruneToolOutputs` persists outputs, `summarizePrefix` produces the compact summary, `commitCompact` emits a `compact` event, and DCP compression projection state is cleared so the two mechanisms do not layer over each other. Hysteresis remains ≥ 5 new messages and the circuit breaker opens after 3 failures/skips.
 
 ## Memory System
 
@@ -512,9 +549,21 @@ Project Todos are project-owned intent, separate from Session-local `todo_write`
 
 A Todo can have any number of root Sessions with immutable `{ kind: "todo", todoId, entry }` source. Each root family resolves the Todo's current attachment set at model and tool boundaries; references are never copied into Session messages or storage. `discussion` roots activate `shape-todo`, may update only their source Todo, and may delegate only Explore/Librarian. **Generate / Improve Plan** reuses the latest Discussion only when it is idle, then invokes `plan-work` for the unique `.archcode/plans/<todo-id>.md`. If no Discussion exists, the latest one is busy or suspended, it was deleted, or an idle reuse loses the acceptance race, the action creates a new Discussion whose first accepted message is the Plan request; it never races a generic Discussion start with a second command. Plan existence is not persisted; the Todo Plan endpoint only performs a fixed-path, bounded Markdown read. `work` and `automation` roots may start only from Ready or In Progress. At work creation only, `ProjectTodoService` checks that Plan path: an existing file starts with `execute-plan`, while no file preserves ordinary implementation behavior. Starting from Ready moves the Todo to In Progress, while starting from In Progress leaves it there. A Todo-created Automation stores immutable `{ kind: "todo", todoId, sessionId }` origin; every `start_session` Invocation persists `{ kind: "automation", automationId, invocationId, todoId }`. Direct-origin Invocations persist `todoId: null`. Todo moves never create, stop, rebind, or delete Sessions or Automations.
 
+Todo lifecycle does not encode live Session activity. The Web navigator derives
+a separate Running group only from eligible Todo-linked root family activity
+`running | resuming | stopping`; Needs-you wins, Direct Sessions and
+rejected/archived Todos are excluded, and the target is the newest
+`session.updatedAt` with `sessionId` as the stable tie break. Running rows expose
+`Working` to assistive technology instead of reusing a historical terminal
+Session state. Todo labels are presentation-only: ignore fenced code, prefer a
+concrete H1, then the first concrete line after the finite builtin-template or
+standalone HTTP(S) skip set. Legal ATX closing hashes require preceding
+whitespace, so a heading like `C#` keeps its content. `Untitled Todo` is the
+only fallback. No title field is persisted.
+
 ## HITL
 
-HITL is a durable project-scoped approval/question queue backed by `.archcode/runtime/hitl-queue.json`. Server and Web routes expose redacted `displayPayload` data for exact approval/question destinations and Todo navigator attention views; raw sensitive payloads must not be rendered or persisted in UI state. Deferred permission/question flows resolve safely on timeout, cancellation, or shutdown so long-running agent execution is not left hanging.
+HITL is a durable project-scoped approval/question queue backed by `.archcode/runtime/hitl-queue.json`. Server and Web routes expose redacted `displayPayload` data for exact approval/question destinations and Todo navigator attention views; raw sensitive payloads must not be rendered or persisted in UI state. Deferred permission/question flows resolve safely on timeout, cancellation, or shutdown so long-running agent execution is not left hanging. In the Session UI, the latest HITL-paused Work and the pending Question/Permission card are independent disclosures: paused Work defaults open unless the user already chose for that Segment, while each pending request defaults open and preserves a route-lifetime manual choice by `hitlId`. An answered request whose response could not be delivered remains visible as an expanded `Inspection · Manual inspection` card, but it is not pending: it does not retain collapsed state, advertise `Needs you`, or block ordinary Composer input and pickers. Composer input remains mounted; request removal clears obsolete disclosure state, and layout changes keep only an existing follow-latest transcript pinned rather than moving a historical reading position.
 
 ## Automation System
 

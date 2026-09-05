@@ -8,6 +8,49 @@ import { HitlDecisionCard } from "./HitlCard";
 import { SessionGoalSummaryRow } from "./SessionGoalSummaryRow";
 import { ComposerQueueList } from "./ComposerQueueList";
 
+interface ComposerDisclosureSnapshot {
+  collapsedHitlIds: Set<string>;
+  inspectionHitlIds: Set<string>;
+}
+
+const composerDisclosureByRoute = new Map<string, ComposerDisclosureSnapshot>();
+const composerRouteLifecycleGeneration = new Map<string, number>();
+
+function composerDisclosureKey(slug: string, sessionId: string): string {
+  return `${slug}\u0000${sessionId}`;
+}
+
+function getComposerDisclosureSnapshot(
+  slug: string,
+  sessionId: string,
+): ComposerDisclosureSnapshot {
+  const key = composerDisclosureKey(slug, sessionId);
+  const existing = composerDisclosureByRoute.get(key);
+  if (existing) return existing;
+  const created = {
+    collapsedHitlIds: new Set<string>(),
+    inspectionHitlIds: new Set<string>(),
+  };
+  composerDisclosureByRoute.set(key, created);
+  return created;
+}
+
+function retainComposerDisclosureState(
+  slug: string,
+  sessionId: string,
+): () => void {
+  const key = composerDisclosureKey(slug, sessionId);
+  const generation = (composerRouteLifecycleGeneration.get(key) ?? 0) + 1;
+  composerRouteLifecycleGeneration.set(key, generation);
+  return () => {
+    queueMicrotask(() => {
+      if (composerRouteLifecycleGeneration.get(key) !== generation) return;
+      composerRouteLifecycleGeneration.delete(key);
+      composerDisclosureByRoute.delete(key);
+    });
+  };
+}
+
 export function SessionComposerDock({
   slug,
   sessionId,
@@ -26,12 +69,33 @@ export function SessionComposerDock({
   const executions = useSessionStore(sessionId, (state) => state.executions, slug);
   const currentExecutionId = useSessionStore(sessionId, (state) => state.currentExecutionId, slug);
   const hitlReady = useHitlProjectInitialized(slug);
-  const attentionVisibleHitl = useAttentionVisibleScopedHitl([slug]);
+  const scopedProjectSlugs = useMemo(() => [slug], [slug]);
+  const attentionVisibleHitl = useAttentionVisibleScopedHitl(scopedProjectSlugs);
   const familyHitl = useMemo(
     () => selectSessionFamilyHitl(attentionVisibleHitl, slug, sessionId),
     [attentionVisibleHitl, sessionId, slug],
   );
-  const hasPendingHitl = familyHitl.length > 0;
+  const pendingHitlIds = useMemo(
+    () => new Set(
+      familyHitl
+        .filter((entry) => entry.view.status === "pending")
+        .map((entry) => entry.view.hitlId),
+    ),
+    [familyHitl],
+  );
+  const attentionHitlIds = useMemo(
+    () => new Set(familyHitl.map((entry) => entry.view.hitlId)),
+    [familyHitl],
+  );
+  const inspectionHitlIds = useMemo(
+    () => new Set(
+      familyHitl
+        .filter((entry) => entry.view.requiresInspection === true)
+        .map((entry) => entry.view.hitlId),
+    ),
+    [familyHitl],
+  );
+  const hasPendingHitl = pendingHitlIds.size > 0;
   const currentExecution = currentExecutionId === undefined
     ? executions.at(-1)
     : executions.find((execution) => execution.id === currentExecutionId) ?? executions.at(-1);
@@ -39,9 +103,43 @@ export function SessionComposerDock({
     || currentExecution?.status === "timed_out"
     || currentExecution?.status === "max_steps";
   const [activeHitlId, setActiveHitlId] = useState<string | null>(null);
+  const disclosureSnapshot = useMemo(
+    () => getComposerDisclosureSnapshot(slug, sessionId),
+    [sessionId, slug],
+  );
+  const [collapsedHitlIds, setCollapsedHitlIds] = useState<Set<string>>(
+    () => new Set(disclosureSnapshot.collapsedHitlIds),
+  );
   const focusApplied = useRef<string | null>(null);
   const activeHitlIndex = Math.max(0, familyHitl.findIndex((entry) => entry.view.hitlId === activeHitlId));
   const activeHitl = familyHitl[activeHitlIndex];
+
+  useEffect(
+    () => retainComposerDisclosureState(slug, sessionId),
+    [sessionId, slug],
+  );
+
+  useEffect(() => {
+    setCollapsedHitlIds(new Set(disclosureSnapshot.collapsedHitlIds));
+  }, [disclosureSnapshot]);
+
+  useEffect(() => {
+    const next = new Set(
+      [...disclosureSnapshot.collapsedHitlIds]
+        .filter((hitlId) => attentionHitlIds.has(hitlId)),
+    );
+    for (const hitlId of inspectionHitlIds) {
+      if (!disclosureSnapshot.inspectionHitlIds.has(hitlId)) next.delete(hitlId);
+    }
+    disclosureSnapshot.collapsedHitlIds = next;
+    disclosureSnapshot.inspectionHitlIds = new Set(inspectionHitlIds);
+    setCollapsedHitlIds((current) => {
+      if (current.size === next.size && [...current].every((id) => next.has(id))) {
+        return current;
+      }
+      return new Set(next);
+    });
+  }, [attentionHitlIds, disclosureSnapshot, inspectionHitlIds]);
 
   useEffect(() => {
     if (familyHitl.length === 0) {
@@ -94,6 +192,16 @@ export function SessionComposerDock({
                     <HitlDecisionCard
                       key={`${activeHitl.projectSlug}:${activeHitl.ownerSessionId}:${activeHitl.view.hitlId}`}
                       entry={activeHitl}
+                      expanded={!collapsedHitlIds.has(activeHitl.view.hitlId)}
+                      onExpandedChange={(expanded) => {
+                        const next = new Set(collapsedHitlIds);
+                        if (expanded) next.delete(activeHitl.view.hitlId);
+                        else next.add(activeHitl.view.hitlId);
+                        setCollapsedHitlIds(new Set(next));
+                        disclosureSnapshot.collapsedHitlIds = new Set(
+                          [...next].filter((hitlId) => attentionHitlIds.has(hitlId)),
+                        );
+                      }}
                       requestPosition={activeHitlIndex + 1}
                       requestCount={familyHitl.length}
                       onPreviousRequest={() => {

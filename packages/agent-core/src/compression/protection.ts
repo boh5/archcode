@@ -1,5 +1,5 @@
 import type { CompressionRange, MessageRef, ProtectedRef } from "./types";
-import type { SessionStoreState, StoredMessage, StoredPart, ToolChildSessionLink } from "../store/types";
+import type { SessionStoreState, StoredMessage, StoredPart } from "../store/types";
 
 export interface CompressionProtectionResult {
   readonly ok: boolean;
@@ -7,22 +7,19 @@ export interface CompressionProtectionResult {
 }
 
 export function collectProtectedRefsForRange(
-  state: Pick<SessionStoreState, "messages" | "reminders" | "todos" | "childSessionLinks">,
+  state: Pick<SessionStoreState, "messages">,
   range: CompressionRange,
 ): CompressionProtectionResult {
   const protectedRefs: ProtectedRef[] = [];
   const messages = state.messages.slice(range.startIndex, range.endIndex + 1);
-  const linksByToolCallId = childLinksByToolCallId(state.childSessionLinks);
 
   for (let offset = 0; offset < messages.length; offset += 1) {
     const message = messages[offset]!;
     const ref = messageRef(range.startIndex + offset);
-    collectMessageProtectedRefs(protectedRefs, message, ref, linksByToolCallId);
+    collectMessageProtectedRefs(protectedRefs, message, ref);
   }
 
   collectLatestTailRefs(protectedRefs, state.messages, range);
-  collectTodoRefs(protectedRefs, state, range.startRef);
-  collectReminderRefs(protectedRefs, state, range.startRef);
 
   return { ok: protectedRefs.length === 0, protectedRefs };
 }
@@ -31,7 +28,6 @@ function collectMessageProtectedRefs(
   protectedRefs: ProtectedRef[],
   message: StoredMessage,
   ref: MessageRef,
-  linksByToolCallId: ReadonlyMap<string, ToolChildSessionLink[]>,
 ): void {
   for (const part of message.parts) {
     if (part.type === "tool") {
@@ -43,9 +39,6 @@ function collectMessageProtectedRefs(
       }
       if (part.state === "error" && part.result.details?.unknownResult === true) {
         protectedRefs.push(protectedRef(ref, "unknown_result", "Unknown tool results must remain visible", message.id, part.id));
-      }
-      if (linksByToolCallId.has(part.toolCallId)) {
-        protectedRefs.push(protectedRef(ref, "subagent_link", "Delegated child-session links must remain visible", message.id, part.id));
       }
       continue;
     }
@@ -74,41 +67,9 @@ function collectLatestTailRefs(
   }
 }
 
-function collectTodoRefs(
-  protectedRefs: ProtectedRef[],
-  state: Pick<SessionStoreState, "todos">,
-  anchorRef: MessageRef,
-): void {
-  const activeTodos = state.todos.filter((todo) => todo.status === "pending" || todo.status === "in_progress");
-  if (activeTodos.length > 0) {
-    protectedRefs.push(protectedRef(anchorRef, "todo", `Active todos are pending: ${activeTodos.map((todo) => todo.id).join(", ")}`));
-  }
-}
-
-function collectReminderRefs(
-  protectedRefs: ProtectedRef[],
-  state: Pick<SessionStoreState, "reminders">,
-  anchorRef: MessageRef,
-): void {
-  const unconsumed = state.reminders.filter((reminder) => reminder.consumedAt === null);
-  if (unconsumed.length > 0) {
-    protectedRefs.push(protectedRef(anchorRef, "reminder", `Unconsumed reminders are pending: ${unconsumed.map((r) => r.id).join(", ")}`));
-  }
-}
-
 function partHasProtectTag(part: StoredPart): boolean {
   if (part.type !== "assistant-output" && part.type !== "reasoning") return false;
   return /<protect>[\s\S]*?<\/protect>/i.test(part.text) || /<protect\b/i.test(part.text);
-}
-
-function childLinksByToolCallId(links: readonly ToolChildSessionLink[]): Map<string, ToolChildSessionLink[]> {
-  const map = new Map<string, ToolChildSessionLink[]>();
-  for (const link of links) {
-    const existing = map.get(link.parentToolCallId) ?? [];
-    existing.push(link);
-    map.set(link.parentToolCallId, existing);
-  }
-  return map;
 }
 
 function protectedRef(

@@ -133,6 +133,8 @@ describe("PromptContractCompiler", () => {
       result.prompt.indexOf("references/z.md"),
     );
     expect(result.prompt).toContain("ENTRY_BODY");
+    expect(result.prompt).toContain("Active Skill bodies below are already loaded");
+    expect(result.prompt).toContain("do not call skill_read for an Active entry again");
     expect(result.trace.skills.active).toEqual([{
       name: "codemap",
       source: "/workspace/.archcode/skills/codemap",

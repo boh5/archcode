@@ -6,6 +6,7 @@ import {
   type StreamEvent,
 } from "./types";
 import {
+  sessionTodoCapacityViolation,
   validateExecutionTransition,
   validateExecutionFinalOutputSelection,
   type ExecutionLifecycleEvent,
@@ -24,7 +25,7 @@ import {
   assertValidCompressionSummary,
   createEmptyCompressionState,
 } from "../compression";
-import type { BlockRef, CompressionBlock, CompressionFailure, CompressionRefMap, CompressionState, CompressionSummary, MessageRef, ProtectedRef } from "../compression";
+import type { BlockRef, CompressionBlock, CompressionFailure, CompressionRefMap, CompressionState, CompressionSummary, MessageRef } from "../compression";
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
   "pending",
@@ -181,7 +182,7 @@ function commitCompressionBlockSnapshot(
     ...base,
     refMap: mergeCompressionRefMap(base.refMap, block),
     blocksByRef: { ...base.blocksByRef, [nextBlock.ref]: nextBlock },
-    protectedRefs: mergeProtectedRefs(base.protectedRefs, nextBlock.protectedRefs),
+    protectedRefs: base.protectedRefs,
     updatedAt: block.updatedAt,
   });
 }
@@ -210,19 +211,16 @@ function compressionStateFromSnapshot(snapshot: CompressionStateSnapshot): Compr
     activeBlockRefs: snapshot.activeBlockRefs as BlockRef[],
     inactiveBlockRefs: snapshot.inactiveBlockRefs as BlockRef[],
     supersededBlockRefs: snapshot.supersededBlockRefs as BlockRef[],
-    protectedRefs: Object.values(blocksByRef).flatMap((block) => block.protectedRefs),
+    // Protocol snapshots carry protected refs as bare projection refs. They do
+    // not carry a protection kind/reason, so they cannot be rehydrated into
+    // runtime ProtectedRef records without inventing a protection kind.
+    protectedRefs: [],
     failures: snapshot.failures.map(compressionFailureFromSnapshot),
     ...(snapshot.updatedAt === undefined ? {} : { updatedAt: snapshot.updatedAt }),
   });
 }
 
 function compressionBlockFromSnapshot(block: CompressionBlockSnapshot): CompressionBlock {
-  const protectedRefs = block.protectedRefs.map((ref): ProtectedRef => ({
-    ref: ref as MessageRef | BlockRef,
-    kind: "user_constraint",
-    reason: "Protected by compression snapshot",
-  }));
-
   return {
     id: block.id,
     ref: block.ref as BlockRef,
@@ -238,7 +236,9 @@ function compressionBlockFromSnapshot(block: CompressionBlockSnapshot): Compress
       endIndex: block.range.endIndex,
     },
     summary: summaryFromSnapshot(block.summary),
-    protectedRefs,
+    // Protocol snapshots intentionally expose only bare refs for projection;
+    // preserving them as a runtime record would require a fabricated kind.
+    protectedRefs: [],
     childBlockRefs: block.childBlockRefs as BlockRef[],
     ...(block.tokenEstimate === undefined ? {} : { tokenEstimate: block.tokenEstimate }),
     createdAt: block.createdAt,
@@ -306,15 +306,12 @@ function normalizeCompressionState(state: CompressionState): CompressionState {
   };
 }
 
-function mergeProtectedRefs(existing: readonly ProtectedRef[], next: readonly ProtectedRef[]): ProtectedRef[] {
-  const merged = new Map<string, ProtectedRef>();
-  for (const item of [...existing, ...next]) {
-    merged.set(`${item.ref}:${item.kind}:${item.messageId ?? ""}:${item.partId ?? ""}`, item);
-  }
-  return [...merged.values()];
-}
-
 function validateTodos(todos: readonly SessionTodo[]): void {
+  const capacityViolation = sessionTodoCapacityViolation(todos);
+  if (capacityViolation !== undefined) {
+    throw new InvalidTodoStateError(capacityViolation);
+  }
+
   let inProgressCount = 0;
 
   for (const todo of todos) {

@@ -848,6 +848,16 @@ svg { width: 1em; height: 1em; }
 .queue-actions { display:flex;flex:0 0 auto;align-items:center;gap:2px;margin-left:4px }.queue-actions button { display:inline-grid;width:28px;height:28px;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;color:var(--text-3);cursor:pointer;transition:background 150ms var(--ease),color 150ms var(--ease) }.queue-actions button > svg { width:14px;height:14px }.queue-actions button:hover { background:var(--hover);color:var(--text) }.queue-actions button:active { background:var(--surface-3) }.queue-actions button[data-icon="corner-down-right"] { color:var(--brand) }.queue-actions button[data-icon="corner-down-right"]:hover { background:color-mix(in srgb,var(--brand) 12%,var(--hover));color:var(--brand) }.queue-actions button[data-icon="trash"]:hover { background:color-mix(in srgb,var(--red) 10%,var(--hover));color:var(--red) }
 .hitl-meta-actions button { padding:0;border:0;background:transparent;color:var(--text-3);font-size:11px;font-weight:500;cursor:pointer }.hitl-meta-actions button:hover { color:var(--text) }.hitl-meta-actions .danger-text:hover { color:var(--red) }
 .hitl-card { display:flex;min-width:0;max-height:100%;flex:0 0 auto;flex-direction:column;overflow:hidden;border:1px solid color-mix(in srgb,var(--amber) 30%,var(--line));border-radius:12px;background:var(--elevated);box-shadow:var(--elevation-edge) }
+.hitl-summary-control { display:grid;min-width:0;min-height:42px;flex:0 0 auto;grid-template-columns:auto minmax(0,1fr) auto auto 14px;align-items:center;gap:9px;padding:6px 11px;border:0;background:color-mix(in srgb,var(--elevated) 84%,var(--surface-2));color:var(--text-2);text-align:left;cursor:pointer }
+.hitl-summary-control:hover { background:color-mix(in srgb,var(--elevated) 76%,var(--hover));color:var(--text) }
+.hitl-summary-control:focus-visible { outline:0;box-shadow:inset 0 0 0 2px var(--brand) }
+.hitl-summary-control > strong { min-width:0;overflow:hidden;color:var(--text);font-size:12px;font-weight:600;text-overflow:ellipsis;white-space:nowrap }
+.hitl-summary-kind { display:flex;align-items:center;gap:6px;color:var(--amber);font-size:10px;font-weight:700;letter-spacing:.045em;text-transform:uppercase }
+.hitl-summary-kind .hitl-kind-icon { width:20px;height:20px }
+.hitl-summary-state { color:var(--amber);font-size:10px;font-weight:600 }
+.hitl-summary-control > [data-icon="down"] { width:13px;height:13px;color:var(--text-3);transition:transform 160ms var(--ease) }
+.hitl-summary-control[aria-expanded="false"] > [data-icon="down"] { transform:rotate(-90deg) }
+[data-hitl-expanded-section][hidden] { display:none }
 .dock-priority:has(.hitl-card:not([hidden])) .hitl-card { max-height:calc(100% - 46px) }
 .dock-priority:has(.hitl-details-body:not([hidden])) .hitl-card,.dock-priority:has(.hitl-note:not([hidden])) .hitl-card { max-height:none }
 .hitl-body { min-height:0;padding:11px 14px 10px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent }.hitl-kind { display:flex;align-items:center;gap:7px;margin:0 0 6px;color:var(--amber);font-size:10.5px;font-weight:700;letter-spacing:.045em;text-transform:uppercase }.hitl-kind-icon { display:grid;width:22px;height:22px;place-items:center;border-radius:50%;background:var(--amber-field) }.hitl-kind-icon > svg { width:12px;height:12px }.hitl-body h2,.hitl-body legend { margin:0;color:var(--text);font-size:14px;font-weight:600;line-height:1.5 }.hitl-body p { margin:3px 0 0;color:var(--text-2);font-size:12px;line-height:1.55 }
@@ -999,6 +1009,7 @@ svg { width: 1em; height: 1em; }
   .document-meta { grid-template-columns:repeat(2,1fr) }.document-meta > div:nth-child(2) { border-right:0 }.document-meta > div:nth-child(-n+2) { border-bottom:1px solid var(--line) }
   .composer-model-picker { max-width:120px }.composer-model-sep,.composer-variant-label,.composer-hint { display:none }
   .hitl-footer { align-items:stretch;flex-direction:column }.hitl-meta-actions { flex-wrap:wrap;justify-content:space-between }.hitl-primary-actions { display:grid;grid-template-columns:1fr 1fr }.hitl-primary-actions .hitl-primary { grid-column:1 / -1 }.hitl-primary-actions > button,.hitl-footer > .hitl-primary { min-height:44px }.hitl-options { grid-template-columns:1fr }.hitl-option { min-height:48px }
+  .hitl-summary-control { grid-template-columns:auto minmax(0,1fr) auto auto 14px;min-height:44px;gap:6px;padding-inline:9px }
   .hitl-options { margin:6px 0 }.hitl-custom-answer { height:34px;margin-top:3px }
   .notification-popover { left:58px;bottom:8px;width:calc(100vw - 66px) }
   .agent-session-heading { grid-template-columns:28px minmax(0,1fr) auto }.agent-session-ownership { grid-column:2 / -1;grid-row:2 }

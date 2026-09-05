@@ -74,6 +74,7 @@ describe("Project Todo navigator projection", () => {
     }));
 
     expect(projection.needsYou.rows.map((row) => row.todo.id)).toEqual(["first"]);
+    expect(projection.running.rows).toEqual([]);
     expect(projection.inProgress.rows.map((row) => row.todo.id)).toEqual(["first", "second"]);
     expect(projection.ready.rows.map((row) => row.todo.id)).toEqual(["ready"]);
     expect(projection.needsYou.rows[0]?.current).toBe(true);
@@ -96,6 +97,7 @@ describe("Project Todo navigator projection", () => {
     expect(loading.allTodos.count).toBeUndefined();
     expect(loading.needsYou.count).toBeUndefined();
     expect(loading.needsYou.state).toBe("loading");
+    expect(loading.running).toEqual({ rows: [], state: "loading" });
     expect(loading.inProgress).toEqual({ rows: [], state: "loading" });
     expect(loading.ready).toEqual({ rows: [], state: "loading" });
 
@@ -108,6 +110,55 @@ describe("Project Todo navigator projection", () => {
     const todoFailed = deriveProjectTodoNavigationProjection(facts({ todosState: "error" }));
     expect(todoFailed.inProgress).toEqual({ rows: [], state: "error" });
     expect(todoFailed.ready).toEqual({ rows: [], state: "error" });
+  });
+
+  test("derives Running only from exact live Todo-linked family activity and selects one stable target", () => {
+    const idea = todo("idea", "idea");
+    const ready = todo("ready", "ready");
+    const done = todo("done", "done");
+    const inProgress = todo("in-progress", "in_progress");
+    const needs = todo("needs", "idea");
+    const rejected = todo("rejected", "rejected");
+    const archived = todo("archived", "done", { archivedAt: 20 });
+    const ideaOlder = session("idea-z", { kind: "todo", todoId: idea.id, entry: "discussion" });
+    const ideaTieWinner = { ...session("idea-a", { kind: "todo", todoId: idea.id, entry: "discussion" }), session: { ...session("idea-a", { kind: "todo", todoId: idea.id, entry: "discussion" }).session, updatedAt: 4 } };
+    const ideaTieLoser = { ...session("idea-b", { kind: "todo", todoId: idea.id, entry: "work" }), session: { ...session("idea-b", { kind: "todo", todoId: idea.id, entry: "work" }).session, updatedAt: 4 } };
+    const readySession = session("ready-live", { kind: "todo", todoId: ready.id, entry: "work" });
+    const doneSession = session("done-live", { kind: "automation", automationId: "a", invocationId: "i", todoId: done.id });
+    const waitingSession = session("waiting", { kind: "todo", todoId: inProgress.id, entry: "work" });
+    const needsSession = session("needs-live", { kind: "todo", todoId: needs.id, entry: "discussion" });
+    const rejectedSession = session("rejected-live", { kind: "todo", todoId: rejected.id, entry: "work" });
+    const archivedSession = session("archived-live", { kind: "todo", todoId: archived.id, entry: "work" });
+    const failedOnly = {
+      ...session("failed-only", { kind: "todo", todoId: inProgress.id, entry: "work" }),
+      latestExecution: { id: "failed", status: "failed" as const, startedAt: 1, endedAt: 2 },
+    };
+    const direct = session("direct-live", { kind: "direct" });
+    const sessions = [ideaOlder, ideaTieLoser, ideaTieWinner, readySession, doneSession, waitingSession, needsSession, rejectedSession, archivedSession, failedOnly, direct];
+    const projection = deriveProjectTodoNavigationProjection(facts({
+      pathname: "/projects/demo/sessions/ready-live",
+      selectedSessionId: "ready-live",
+      todos: [idea, ready, done, inProgress, needs, rejected, archived],
+      sessions,
+      activityBySessionId: new Map([
+        ["idea-z", "running"], ["idea-a", "running"], ["idea-b", "running"],
+        ["ready-live", "resuming"], ["done-live", "stopping"], ["waiting", "waiting_for_human"],
+        ["needs-live", "running"], ["rejected-live", "running"], ["archived-live", "running"],
+        ["failed-only", "idle"], ["direct-live", "running"],
+      ]),
+      attentionBySessionId: new Map([["needs-live", "Question"]]),
+    }));
+
+    expect(projection.running.rows.map((row) => [row.todo.id, row.targetSessionId, row.current])).toEqual([
+      ["idea", "idea-a", false],
+      ["ready", "ready-live", true],
+      ["done", "done-live", false],
+    ]);
+    expect(projection.running.count).toBe(3);
+    expect(projection.ready.rows.filter((row) => row.current)).toEqual([]);
+    expect(projection.needsYou.rows.map((row) => row.todo.id)).toEqual(["needs"]);
+    expect(projection.inProgress.rows.map((row) => row.todo.id)).toEqual(["in-progress"]);
+    expect(projection.ready.rows.map((row) => row.todo.id)).toEqual(["ready"]);
   });
 
   test("uses canonical Active Todos and active Session families for navigator counts", () => {

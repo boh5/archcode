@@ -248,6 +248,7 @@ The Session page uses progressive disclosure at the Execution boundary:
 ```text
 completed:  user message → collapsed Work → visible final response
 running:    user message → expanded Work
+HITL pause: user message → expanded paused Work + independent decision disclosure
 ```
 
 - `Work` is the visual disclosure for one Web-projected Work Segment inside one
@@ -276,6 +277,11 @@ running:    user message → expanded Work
 - Only the latest Segment of a running Execution may read `Working` and
   auto-expand. Earlier completed Segments in that same Execution read `Worked`
   and remain collapsed by default.
+- When a Question or Permission suspends the latest Execution, its latest Work
+  Segment also defaults open so the Agent commentary immediately before the
+  decision remains readable. This applies on live transition, refresh, route
+  re-entry, and owner deep links. A user's manual Work choice wins for the
+  current route lifecycle and is not overwritten by later snapshots.
 - When the latest Segment receives its final Agent response, it becomes
   completed and auto-collapses under the existing near-bottom/manual-override
   rules. The final response stays visible below the fold.
@@ -549,6 +555,20 @@ column rather than leaving an empty rail.
   applicable, and a clear action footer. Do not use a thick amber left rail.
   Question options remain vertical; selection uses border, radio mark, and a
   quiet brand field instead of an inset left color bar.
+- Every pending Permission or Question is itself an independent disclosure,
+  open by default. Its collapsed one-line summary retains the request family,
+  concise request summary, `Pending`, expand affordance, and `current/total`
+  position when several requests exist. Collapsing this sheet does not collapse
+  Work, alter the pending HITL state, hide the Composer input, or move to another
+  request. Manual sheet state is keyed by `hitlId` for the current route
+  lifecycle, survives remount/SSE updates, and is removed when that request is
+  no longer pending.
+- If an accepted answer or permission cannot be delivered back to its suspended
+  execution, keep the attention card visible but present it truthfully as
+  **Inspection · Manual inspection**, open it by default, and explain that it
+  can no longer accept actions. This inspection state does not retain the
+  request's pending disclosure state, expand the pending-only dock cap, show
+  Composer `Needs you`, or block ordinary Composer input.
 - **Next model picker** (prototype `composer-model-picker`):
   - Trigger shows `Model display name · effort` (effort omitted only when the
     catalog model has no variants).

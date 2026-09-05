@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod/v4";
+import {
+  MAX_DELEGATED_SESSION_TITLE_LENGTH,
+} from "@archcode/protocol";
 import { DelegationRequestSchema } from "./schema";
 
 function request(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -68,5 +71,20 @@ describe("DelegationRequestSchema", () => {
     expect(() => DelegationRequestSchema.parse(request({ objective: "" }))).toThrow();
     expect(() => DelegationRequestSchema.parse(request({ skills: ["Bad Skill"] }))).toThrow();
     expect(() => DelegationRequestSchema.parse(request({ background: "false" }))).toThrow();
+  });
+
+  test("accepts the exact title limit and rejects the first value beyond it", () => {
+    const exactCodePointTitle = "界".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH);
+    expect(Array.from(exactCodePointTitle)).toHaveLength(MAX_DELEGATED_SESSION_TITLE_LENGTH);
+    expect(DelegationRequestSchema.safeParse(request({ title: exactCodePointTitle })).success).toBe(true);
+    expect(DelegationRequestSchema.safeParse(request({ title: `${exactCodePointTitle}界` })).success)
+      .toBe(false);
+
+    expect(DelegationRequestSchema.safeParse(request({
+      title: "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1),
+    })).success).toBe(false);
+    expect(DelegationRequestSchema.safeParse(request({
+      title: `${"t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH)} `,
+    })).success).toBe(false);
   });
 });

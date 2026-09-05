@@ -1,7 +1,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot, type FinalizedToolResult } from "@archcode/protocol";
+import {
+  MAX_SESSION_TODOS_SERIALIZED_BYTES,
+  createEmptySessionStats,
+  utf8ByteLength,
+  type CompressionBlockSnapshot,
+  type FinalizedToolResult,
+} from "@archcode/protocol";
 import { InvalidExecutionTransitionError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
@@ -36,6 +42,17 @@ const TEST_MODEL_AUDIT = {
   requested: TEST_REQUESTED_MODEL_SELECTION,
   actual: TEST_BINDING.selection,
 };
+
+function todosAtAggregateLimit(): StoredTodo[] {
+  const todos: StoredTodo[] = [{
+    id: "todo",
+    content: "",
+    status: "pending",
+  }];
+  const remaining = MAX_SESSION_TODOS_SERIALIZED_BYTES - utf8ByteLength(JSON.stringify(todos));
+  todos[0]!.content = "x".repeat(remaining);
+  return todos;
+}
 
 function createSessionStore(sessionId: string, workspaceRoot: string) {
   return storeManager.create(sessionId, workspaceRoot, {
@@ -681,6 +698,26 @@ describe("todo-write events", () => {
 
     expect(store.getState().todos).toBe(previousReference);
     expect(store.getState().todos).toEqual(previousTodos);
+  });
+
+  test("accepts the exact aggregate capacity and rejects the first byte beyond it without mutation", () => {
+    const store = createFreshStore("todo-capacity");
+    const exact = todosAtAggregateLimit();
+    expect(utf8ByteLength(JSON.stringify(exact))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES);
+    store.getState().append({ type: "todo-write", todos: exact });
+    expect(store.getState().todos).toEqual(exact);
+    const previousReference = store.getState().todos;
+
+    const over = exact.map((todo, index) => index === exact.length - 1
+      ? { ...todo, content: `${todo.content}x` }
+      : todo);
+    expect(utf8ByteLength(JSON.stringify(over))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES + 1);
+    expect(() => store.getState().append({
+      type: "todo-write",
+      todos: over,
+    })).toThrow(InvalidTodoStateError);
+
+    expect(store.getState().todos).toBe(previousReference);
   });
 
   test("invalid todo event throws a named deterministic error", () => {
@@ -1539,7 +1576,8 @@ describe("compression events", () => {
     expect(compression.activeBlockRefs).toEqual(["b1"]);
     expect(compression.blocksByRef.b1?.summary.sections["Current Objective"]).toBe("Current objective");
     expect(compression.blocksByRef.b1?.tokenEstimate?.savedTokens).toBe(80);
-    expect(compression.protectedRefs[0]?.ref).toBe("m0002");
+    expect(compression.blocksByRef.b1?.protectedRefs).toEqual([]);
+    expect(compression.protectedRefs).toEqual([]);
     expect(state.messages.some((message) => message.compacted === true)).toBe(false);
   });
 

@@ -36,6 +36,7 @@ describe("SessionFamilyStopService", () => {
       agentName: "explore",
       rootSessionId,
       parentSessionId: rootSessionId,
+      title: delegationRequest.title,
       delegationRequest,
     });
     await Promise.all([

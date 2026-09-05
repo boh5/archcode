@@ -1,5 +1,6 @@
 import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
 import { interruptIncompleteToolParts, TOOL_TOOL_SEARCH } from "@archcode/protocol";
+import { sortJsonValue } from "@archcode/utils";
 import type { StoreApi } from "zustand";
 import type { SessionExecutionTerminalStatus } from "@archcode/protocol";
 import type { Logger } from "../../logger";
@@ -10,8 +11,8 @@ import type { SessionToolManualInspectionReason } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
 import type { RawToolResult, ToolCallLike, ToolExecutionContext } from "../../tools/index";
 import type { ResolvedToolSet, ToolRegistry } from "../../tools/registry";
-import { createToolErrorResult } from "../../tools/errors";
-import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
+import { isDeterministicRepeatedToolErrorCode } from "../../tools/errors";
+import { type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { classifyLlmError, runLlmStream } from "../../llm";
 import { redactSensitiveValue, sanitizeProviderError, type SensitiveTextRedactor } from "../../llm/provider-error-sanitizer";
 import { parseRetryAfter, realRetryScheduler, type RetryScheduler } from "../../llm/retry";
@@ -106,29 +107,69 @@ interface ToolBatchExecutionResult {
   readonly executionCompleted?: boolean;
   readonly suspension?: Extract<import("@archcode/protocol").SessionExecutionSuspension, { kind: "hitl" | "child_dependency" }>;
   readonly manualInspectionReason?: string;
+  readonly repeatedFailure?: RepeatedFailure;
 }
 
-class DoomTracker {
-  private previous?: NormalizedToolCall;
-  private count = 0;
+interface RepeatedFailure {
+  readonly toolName: string;
+  readonly errorCode: string;
+  readonly step: number;
+  readonly stepId: string;
+}
 
-  check(toolCall: ToolCallArray[number]): boolean {
-    const current: NormalizedToolCall = {
-      toolName: toolCall.toolName,
-      canonicalInput: canonicalizeToolInput(toolCall.input),
-    };
+class RepeatedFailureTracker {
+  constructor(
+    private readonly store: StoreApi<SessionStoreState>,
+    private readonly executionId: string,
+  ) {}
 
-    if (
-      this.previous?.toolName === current.toolName &&
-      this.previous.canonicalInput === current.canonicalInput
-    ) {
-      this.count += 1;
-    } else {
-      this.previous = current;
-      this.count = 1;
+  findThreshold(): RepeatedFailure | undefined {
+    const counts = new Map<string, Map<string, number>>();
+    const activeThresholds = new Map<string, {
+      readonly callKey: string;
+      readonly failure: RepeatedFailure;
+      readonly order: number;
+    }>();
+    const calls = this.store.getState().toolBatches
+      .filter((batch) => batch.executionId === this.executionId)
+      .flatMap((batch) => batch.calls.map((call) => ({ batch, call })))
+      .filter(({ call }) => call.result !== undefined)
+      .sort((left, right) => (
+        left.batch.step - right.batch.step
+        || left.call.ordinal - right.call.ordinal
+      ));
+
+    for (const [order, { batch, call }] of calls.entries()) {
+      const callKey = `${call.toolName}\0${canonicalizeToolInput(call.input)}`;
+      if (call.result!.isError === false) {
+        counts.delete(callKey);
+        for (const [signature, threshold] of activeThresholds) {
+          if (threshold.callKey === callKey) activeThresholds.delete(signature);
+        }
+        continue;
+      }
+      const errorCode = call.result!.details?.error?.code;
+      if (!isDeterministicRepeatedToolErrorCode(errorCode)) continue;
+      const errorCounts = counts.get(callKey) ?? new Map<string, number>();
+      const next = (errorCounts.get(errorCode!) ?? 0) + 1;
+      errorCounts.set(errorCode!, next);
+      counts.set(callKey, errorCounts);
+      const signature = `${callKey}\0${errorCode}`;
+      if (next >= 3 && !activeThresholds.has(signature)) {
+        activeThresholds.set(signature, {
+          callKey,
+          order,
+          failure: {
+            toolName: call.toolName,
+            errorCode: errorCode!,
+            step: batch.step,
+            stepId: batch.stepId,
+          },
+        });
+      }
     }
-
-    return this.count >= 3;
+    return [...activeThresholds.values()]
+      .sort((left, right) => left.order - right.order)[0]?.failure;
   }
 }
 
@@ -374,7 +415,7 @@ export async function runQueryLoop(
   let partialOutputRecoveryAttempt = 0;
   let lastRecoveryAttempt = 0;
   let recoveryNoticeStepId: string | undefined;
-  const doomTracker = new DoomTracker();
+  const repeatedFailureTracker = new RepeatedFailureTracker(store, executionId);
   const createContext = async (toolCall: ToolCallLike, step: number): Promise<ToolExecutionContext> => {
     const attachmentReadPaths = await options.resolveAttachmentReadPaths();
     const batch = toolBatchScheduler.activeBatch()
@@ -476,6 +517,14 @@ export async function runQueryLoop(
     if (toolBatchScheduler.activeBatch() !== undefined) {
       const startupBatch = await toolBatchScheduler.recoverInterruptedBatch();
       if (startupBatch === undefined) throw new Error("Active tool batch disappeared during recovery");
+      if (toolBatchIsFullySettled(startupBatch)) {
+        const repeatedFailure = repeatedFailureTracker.findThreshold();
+        if (repeatedFailure !== undefined) {
+          const terminal = finishRepeatedFailure(repeatedFailure, store, lastText, steps);
+          runEndStatus = terminal.runEndStatus;
+          return terminal.result;
+        }
+      }
       const startupResult = finishToolBatchAdvance(startupBatch, executionCwd, store, lastText, steps);
       if (startupResult !== undefined) {
         runEndStatus = startupResult.runEndStatus;
@@ -491,6 +540,12 @@ export async function runQueryLoop(
         options.projectContext.project.workspaceRoot,
       );
       await options.storeManager.flushSession(sessionId, options.projectContext.project.workspaceRoot);
+      const repeatedFailure = repeatedFailureTracker.findThreshold();
+      if (repeatedFailure !== undefined) {
+        const terminal = finishRepeatedFailure(repeatedFailure, store, lastText, steps);
+        runEndStatus = terminal.runEndStatus;
+        return terminal.result;
+      }
     }
 
     while (steps < maxSteps) {
@@ -720,11 +775,17 @@ export async function runQueryLoop(
         toolBatchScheduler,
         attempt.stepId,
         completedStep,
-        doomTracker,
+        repeatedFailureTracker,
         attempt.tools,
         attempt.catalogDigest,
       );
 
+      if (toolExecution.repeatedFailure !== undefined) {
+        const terminal = finishRepeatedFailure(toolExecution.repeatedFailure, store, lastText, steps);
+        runEndStatus = terminal.runEndStatus;
+        runEndError = terminal.result.error;
+        return terminal.result;
+      }
       if (toolExecution.sessionCwdChanged) {
         return {
           outcome: "terminal",
@@ -1323,24 +1384,42 @@ async function executeToolCalls(
   scheduler: SessionToolBatchScheduler,
   stepId: string,
   step: number,
-  doomTracker: DoomTracker | undefined,
+  repeatedFailureTracker: RepeatedFailureTracker,
   resolvedTools: ResolvedToolSet,
   catalogDigest?: string,
 ): Promise<ToolBatchExecutionResult> {
-  const doomCallIds = new Set<string>();
-  for (const toolCall of toolCalls) {
-    if (doomTracker?.check(toolCall)) doomCallIds.add(toolCall.toolCallId);
-  }
   if (toolCalls.length === 0) return { sessionCwdChanged: false };
   await scheduler.createBatch(toolCalls, stepId, step, resolvedTools.descriptors, catalogDigest);
-  for (const toolCallId of doomCallIds) {
-    await scheduler.settleQueuedCall(toolCallId, createToolErrorResult({
-      kind: "execution",
-      code: "TOOL_DOOM_LOOP",
-      message: DOOM_LOOP_MESSAGE,
-    }));
-  }
-  return toolBatchExecutionResult(await scheduler.advance());
+  const advance = await scheduler.advance();
+  const result = toolBatchExecutionResult(advance);
+  if (!toolBatchIsFullySettled(advance)) return result;
+  const repeatedFailure = repeatedFailureTracker.findThreshold();
+  return repeatedFailure === undefined ? result : { ...result, repeatedFailure };
+}
+
+function toolBatchIsFullySettled(result: SessionToolBatchAdvanceResult): boolean {
+  // A threshold cannot terminate the Execution until every sibling has its
+  // one real finalized result and the Scheduler has closed the batch.
+  return result.status === "ready_for_continuation" || result.status === "execution_completed";
+}
+
+function finishRepeatedFailure(
+  failure: RepeatedFailure,
+  store: StoreApi<SessionStoreState>,
+  text: string,
+  steps: number,
+): { runEndStatus: "failed"; result: Extract<QueryLoopResult, { outcome: "terminal" }> } {
+  const error = `Repeated deterministic tool failure: ${failure.toolName} returned ${failure.errorCode} 3 times for the same input`;
+  store.getState().append({
+    type: "execution-error",
+    step: failure.step,
+    stepId: failure.stepId,
+    error,
+  });
+  return {
+    runEndStatus: "failed",
+    result: { outcome: "terminal", text, steps, status: "failed", error },
+  };
 }
 
 function toolBatchExecutionResult(result: SessionToolBatchAdvanceResult): ToolBatchExecutionResult {
@@ -1445,39 +1524,5 @@ function errorMessage(err: unknown): string {
 }
 
 function canonicalizeToolInput(value: unknown): string {
-  return JSON.stringify(toCanonicalJsonValue(value));
-}
-
-function toCanonicalJsonValue(value: unknown): unknown {
-  if (value === undefined) return undefined;
-  if (value === null) return null;
-
-  const valueType = typeof value;
-  if (valueType === "string" || valueType === "number" || valueType === "boolean") {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => {
-      const canonicalItem = toCanonicalJsonValue(item);
-      return canonicalItem === undefined ? null : canonicalItem;
-    });
-  }
-
-  if (valueType === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right));
-    const canonicalObject: Record<string, unknown> = {};
-
-    for (const [key, objectValue] of entries) {
-      const canonicalObjectValue = toCanonicalJsonValue(objectValue);
-      if (canonicalObjectValue !== undefined) {
-        canonicalObject[key] = canonicalObjectValue;
-      }
-    }
-
-    return canonicalObject;
-  }
-
-  return value;
+  return JSON.stringify(sortJsonValue(value));
 }

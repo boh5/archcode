@@ -62,6 +62,29 @@ describe("builtin Skill package manifest", () => {
     expect(resource?.source).toBe("builtin");
     expect(new TextDecoder().decode(resource?.content)).toContain("Evidence map shape");
   });
+
+  test("plan-work keeps discovery and convergence short, complete, and single-writer", () => {
+    const planWork = BUILTIN_SKILL_PACKAGES["plan-work"];
+    expect(planWork.entry).toContain("discovery pass");
+    expect(planWork.entry).toContain("convergence pass");
+    expect(planWork.entry).toContain("shortest complete Plan");
+    expect(planWork.entry).toContain("12,000-Unicode-character");
+    expect(planWork.entry).toContain("never a product rejection threshold");
+    expect(planWork.entry).toContain("one final atomic write");
+    expect(planWork.entry).toContain("Do not stream fragments");
+    expect(planWork.entry).toContain("allocate the budget across the seven required content classes");
+    expect(planWork.entry).toContain("at most one third of the stated budget");
+    expect(planWork.entry).toContain("implementation rows near 3,000 total");
+    expect(planWork.entry).toContain("one implementation row and one acceptance row per issue");
+    expect(planWork.entry).toContain("State each fact once");
+    expect(planWork.entry).toContain("no-write compression review");
+    expect(planWork.resources["assets/plan-template.md"]).toContain("Change and produced interface");
+    expect(planWork.resources["assets/plan-template.md"]).toContain("Pass / fail boundary");
+    expect(planWork.resources["assets/plan-template.md"]).toContain("Replace every angle-bracket field");
+    expect(planWork.resources["assets/plan-template.md"]).toContain("not a universal Plan limit");
+    expect(planWork.resources["assets/plan-template.md"]).toContain("fact has one home");
+    expect(planWork.resources["assets/plan-template.md"]).toContain("last Plan-related Tool action");
+  });
 });
 
 async function listRelativeFiles(root: string): Promise<string[]> {

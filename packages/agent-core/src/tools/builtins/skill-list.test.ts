@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SkillService, type SkillIndexEntry } from "../../skills";
+import { DigestBoundCursorError, SkillService, type SkillIndexEntry } from "../../skills";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
@@ -147,6 +147,63 @@ describe("skill_list tool", () => {
     expect(listPageForAgent).not.toHaveBeenCalled();
   });
 
+  test("stale cursor hint retries the first page without losing current-Agent scope", async () => {
+    const ctx = makeContext(leadSkills);
+    const listPageForAgent = mock(async () => {
+      throw new DigestBoundCursorError(
+        "TOOL_SKILL_CATALOG_CHANGED",
+        "Catalog changed or cursor is invalid; restart from the first page",
+      );
+    });
+    Object.defineProperty(ctx.skillService!, "listPageForAgent", { value: listPageForAgent });
+
+    const result = await skillListTool.execute(
+      { cursor: "stale-cursor" },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.code).toBe("TOOL_SKILL_CATALOG_CHANGED");
+    expect(result.details?.error?.hint).toContain("skill_list({})");
+    expect(result.details?.error?.hint).not.toContain("skill_list({\"agent_type\":");
+  });
+
+  test("stale target cursor hint preserves agent_type in its first-page retry", async () => {
+    const resolveTarget = mock((agentType: string) => agentType === "build" ? ["safe-refactor"] : undefined);
+    const ctx = makeContext(leadSkills, projectRoot, resolveTarget);
+    const listPageForAgent = mock(async () => {
+      throw new DigestBoundCursorError(
+        "TOOL_SKILL_CATALOG_CHANGED",
+        "Catalog changed or cursor is invalid; restart from the first page",
+      );
+    });
+    Object.defineProperty(ctx.skillService!, "listPageForAgent", { value: listPageForAgent });
+
+    const result = await skillListTool.execute(
+      { agent_type: "build", cursor: "stale-cursor" },
+      ctx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error?.hint).toContain('skill_list({"agent_type":"build"})');
+    expect(result.details?.error?.hint).not.toContain("skill_list({})");
+  });
+
+  test("replays exact guessed cursor tokens through the public schema and real SkillService", async () => {
+    for (const cursor of [":first", "PLACEHOLDER"]) {
+      const parsed = SkillListInputSchema.safeParse({ cursor });
+      expect(parsed.success, cursor).toBe(true);
+      if (!parsed.success) throw new Error(`Expected ${cursor} to pass the public cursor schema`);
+
+      const result = await skillListTool.execute(parsed.data, makeContext(leadSkills));
+
+      expect(result.isError, cursor).toBe(true);
+      expect(result.details?.error, cursor).toMatchObject({ code: "TOOL_SKILL_CATALOG_CHANGED" });
+      expect(result.details?.error?.hint, cursor).toContain("skill_list({})");
+      expect(result.details?.error?.hint, cursor).toContain("Copy only nextCursor");
+    }
+  });
+
   test("resolves same-name project Skills from the Session cwd", async () => {
     const name = "worktree-catalog-skill";
     for (const [root, description] of [
@@ -230,6 +287,15 @@ describe("skill_list tool", () => {
     expect(SkillListInputSchema.safeParse({ agent_type: "discussion" }).success).toBe(false);
     expect(SkillListInputSchema.safeParse({ agentName: "lead" }).success).toBe(false);
     expect(SkillListInputSchema.safeParse({ source: "builtin" }).success).toBe(false);
+  });
+
+  test("description documents exact first-page and cursor recovery JSON", () => {
+    expect(skillListTool.description).toContain("skill_list({})");
+    expect(skillListTool.description).toContain('skill_list({"agent_type":"build"})');
+    expect(skillListTool.description).toContain("nextCursor");
+    for (const forbidden of ["/", ":first", "first", "new", "invalid", "PLACEHOLDER"]) {
+      expect(skillListTool.description).toContain(forbidden);
+    }
   });
 
   test("has correct read-only concurrency-safe traits and is registered", () => {

@@ -292,12 +292,21 @@ async function render(
   execution: SessionExecutionRecord,
   steps: SessionStep[] = [],
   focusClientRequestId?: string,
+  sessionFixture: {
+    sessionId: string;
+    rootSessionId: string;
+    routeScopeId: string;
+  } = {
+    sessionId: "session",
+    rootSessionId: "session",
+    routeScopeId: "session",
+  },
 ): Promise<void> {
   await act(async () => {
-    createWebSessionStore("session", "project")
+    createWebSessionStore(sessionFixture.sessionId, "project")
       .getState()
-      .applyAuthoritativeSnapshot(sessionAuthoritativeSnapshot("session", {
-        rootSessionId: "session",
+      .applyAuthoritativeSnapshot(sessionAuthoritativeSnapshot(sessionFixture.sessionId, {
+        rootSessionId: sessionFixture.rootSessionId,
         agentName: "lead",
         eventCursor: -1,
         messages,
@@ -313,7 +322,8 @@ async function render(
         >
           <ExecutionWorkstream
             slug="project"
-            sessionId="session"
+            sessionId={sessionFixture.sessionId}
+            routeScopeId={sessionFixture.routeScopeId}
             sessionIdentity={{ agentName: "lead", profile: "principal" }}
             agents={[]}
             focusClientRequestId={focusClientRequestId}
@@ -727,6 +737,52 @@ describe("ExecutionWorkstream", () => {
       .toContain("Paused · Worked for");
     expect(container.querySelector(`[data-testid="work-summary-${latest}"]`)?.textContent)
       .not.toContain("Needs you");
+    expect(container.querySelector(`[data-testid="work-disclosure-${latest}"]`)
+      ?.getAttribute("data-work-expanded")).toBe("true");
+  });
+
+  test("opens Work on a live HITL suspension without overriding a manual choice", async () => {
+    const input = message("input", "user", "Initial request", 10);
+    const segmentId = "work:execution:after:input";
+
+    await render([input], suspended("child_dependency"));
+    expect(container.querySelector(`[data-testid="work-disclosure-${segmentId}"]`)
+      ?.getAttribute("data-work-expanded")).toBe("false");
+
+    await render([input], suspended("hitl"));
+    const toggle = container.querySelector<HTMLButtonElement>(
+      `[data-testid="work-summary-${segmentId}"]`,
+    );
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    if (!toggle) throw new Error("Missing Work disclosure toggle");
+
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    await render([
+      input,
+      message("commentary", "assistant", "Waiting for your decision", 20),
+    ], suspended("hitl"));
+    expect(container.querySelector(`[data-testid="work-disclosure-${segmentId}"]`)
+      ?.getAttribute("data-work-expanded")).toBe("false");
+  });
+
+  test("defaults a child owner deep link's HITL-paused Work open", async () => {
+    const input = message("input", "user", "Inspect the child request", 10);
+    await render(
+      [input],
+      suspended("hitl"),
+      [],
+      undefined,
+      {
+        sessionId: "child-session",
+        rootSessionId: "root-session",
+        routeScopeId: "root-session",
+      },
+    );
+
+    expect(container.querySelector('[data-testid="work-disclosure-work:execution:after:input"]')
+      ?.getAttribute("data-work-expanded")).toBe("true");
   });
 
   test("moves automatic expansion from the initial implicit Segment to committed input, then folds after final output", async () => {

@@ -1,6 +1,6 @@
-import type { ProfileName } from "./types";
+import type { DelegatedAgentName, ProfileName } from "./types";
 
-export type DelegatedAgentType = "analyst" | "build" | "explore" | "librarian";
+export type DelegatedAgentType = DelegatedAgentName;
 
 /**
  * Durable parent-to-child handoff. The selected Profile and Skills are immutable

@@ -75,6 +75,28 @@ export interface FormatToolErrorOptions {
 
 const CODE_PATTERN = /\[(TOOL_[A-Z0-9_]+|PATH_[A-Z0-9_]+)\]/g;
 
+const DETERMINISTIC_REPEATED_ERROR_CODES = new Set([
+  "TOOL_UNKNOWN",
+  "TOOL_SCHEMA_INVALID_INPUT",
+  "TOOL_BEFORE_HOOK_INVALID_INPUT",
+  "TOOL_NOT_ALLOWED",
+  "TOOL_FILE_OUTSIDE_WORKSPACE",
+  "PATH_OUTSIDE_WORKSPACE",
+  "TOOL_WEBFETCH_INVALID_URL",
+  "TOOL_SKILL_NOT_FOUND",
+  "TOOL_SKILL_RESOURCE_NOT_FOUND",
+  "TOOL_SKILL_RESOURCE_PATH_INVALID",
+  "TOOL_SKILL_INVALID_NAME",
+  "TOOL_SKILL_CATALOG_CHANGED",
+  "TOOL_SKILL_TARGET_NOT_ALLOWED",
+  "TOOL_SKILL_RESOURCE_BINARY_UNSUPPORTED",
+]);
+
+/** Closed v1 allowlist. Unknown and transient error codes deliberately fail open. */
+export function isDeterministicRepeatedToolErrorCode(code: string | undefined): boolean {
+  return code !== undefined && DETERMINISTIC_REPEATED_ERROR_CODES.has(code);
+}
+
 const HINTS: Record<ToolErrorKind, string> = {
   "unknown-tool": "Use only tools currently registered and available in this execution context.",
   "prepare-input": "Check the tool input shape and retry with valid, non-secret-bearing arguments.",
@@ -287,10 +309,8 @@ export function kindFromCode(code: string): ToolErrorKind | undefined {
       return "unknown-tool";
     case "TOOL_PREPARE_INPUT_FAILED":
       return "prepare-input";
-    case "TOOL_INPUT_SCHEMA_INVALID":
     case "TOOL_SCHEMA_INVALID_INPUT":
       return "schema";
-    case "TOOL_BEFORE_HOOK_SCHEMA_INVALID":
     case "TOOL_BEFORE_HOOK_INVALID_INPUT":
       return "before-hook-schema";
     case "TOOL_NOT_ALLOWED":

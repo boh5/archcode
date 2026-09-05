@@ -32,6 +32,11 @@ import type { SessionGoalChangedEvent } from "./session-goal";
 import { renderCompressionSummarySnapshot } from "./compression";
 import { addUsage, createEmptySessionStats, normalizeUsage } from "./usage";
 import { validateExecutionTransition } from "./execution";
+import {
+  directChildContextCapacityViolation,
+  projectLatestDirectChildContext,
+  sessionTodoCapacityViolation,
+} from "./session-capacity";
 
 const LIVE_TOOL_OUTPUT_PREVIEW_MAX_BYTES = 50 * 1024;
 const UTF8_ENCODER = new TextEncoder();
@@ -594,8 +599,23 @@ export function reduceStreamEvent(
     }
 
     case "tool-child-session-link": {
+      if (
+        directChildContextCapacityViolation(
+          projectLatestDirectChildContext([event.link]),
+        ) !== undefined
+      ) {
+        return {};
+      }
+      const childSessionLinks = upsertChildSessionLink(state.childSessionLinks, event.link);
+      if (
+        directChildContextCapacityViolation(
+          projectLatestDirectChildContext(childSessionLinks),
+        ) !== undefined
+      ) {
+        return {};
+      }
       return {
-        childSessionLinks: upsertChildSessionLink(state.childSessionLinks, event.link),
+        childSessionLinks,
       };
     }
 
@@ -1085,6 +1105,7 @@ function upsertChildSessionLink(
 }
 
 function areTodosValid(todos: readonly SessionTodo[]): boolean {
+  if (sessionTodoCapacityViolation(todos) !== undefined) return false;
   let inProgressCount = 0;
 
   for (const todo of todos) {

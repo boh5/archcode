@@ -4,7 +4,17 @@ import { join } from "node:path";
 import { getAssistantText, SessionFileSchema, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { __setSessionsDirForTest } from "./sessions-dir";
-import { createEmptySessionStats, type FinalizedToolResult, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
+import {
+  MAX_DIRECT_CHILD_SESSIONS,
+  MAX_DELEGATED_SESSION_TITLE_LENGTH,
+  MAX_SESSION_TODOS_SERIALIZED_BYTES,
+  createEmptySessionStats,
+  utf8ByteLength,
+  type FinalizedToolResult,
+  type SessionExecutionRecord,
+  type SessionStats,
+  type ToolChildSessionLink,
+} from "@archcode/protocol";
 import type {
   CompactionPart,
   Reminder,
@@ -227,6 +237,17 @@ function sampleTodos(): StoredTodo[] {
   ];
 }
 
+function todosAtAggregateLimit(): StoredTodo[] {
+  const todos: StoredTodo[] = [{
+    id: "todo",
+    content: "",
+    status: "pending",
+  }];
+  const remaining = MAX_SESSION_TODOS_SERIALIZED_BYTES - utf8ByteLength(JSON.stringify(todos));
+  todos[0]!.content = "x".repeat(remaining);
+  return todos;
+}
+
 function sampleReminders(): Reminder[] {
   return [
     {
@@ -384,7 +405,7 @@ function persistedState(
     agentName: parentSessionId === undefined ? "lead" : "explore",
     activeSkillNames: [],
     modelSelection: { revision: 0 },
-    title: null,
+    title: parentSessionId === undefined ? null : delegationRequest.title,
     messages,
     pendingMessages: [],
     inputRequestReceipts: [],
@@ -1255,6 +1276,49 @@ describe("session transcript serialization", () => {
     }).success).toBe(true);
   });
 
+  test("child Session cold load enforces the canonical delegated title boundary", async () => {
+    const exactCodePointTitle = "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH);
+    const baseChild = persistedFile(persistedState(
+      uniqueSessionId("child-title-exact"),
+      sampleMessages(),
+      sampleSteps(),
+      sampleTodos(),
+      createEmptySessionStats(),
+      [],
+      [],
+      "root-session",
+      "parent-session",
+    ));
+    expect(SessionFileSchema.safeParse({ ...baseChild, title: exactCodePointTitle }).success).toBe(true);
+
+    for (const [suffix, title] of [
+      ["null", null],
+      ["blank", " "],
+      ["code-points", "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1)],
+    ] as const) {
+      storeManager.clearAll();
+      const sessionId = uniqueSessionId(`child-title-${suffix}`);
+      await writeSessionFile(sessionId, {
+        ...persistedFile(persistedState(
+          sessionId,
+          sampleMessages(),
+          sampleSteps(),
+          sampleTodos(),
+          createEmptySessionStats(),
+          [],
+          [],
+          "root-session",
+          "parent-session",
+        )),
+        title,
+      });
+
+      await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow(
+        "Child Session title must satisfy the canonical delegated title contract",
+      );
+    }
+  });
+
   test("root source enforces Lead and Discussion identity and feeds the batch inventory", async () => {
     const sessionId = uniqueSessionId("project-todo-source");
     const todoId = crypto.randomUUID();
@@ -1773,6 +1837,92 @@ describe("session transcript serialization", () => {
     });
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load accepts the exact Session todo aggregate limit and rejects the first byte beyond it", async () => {
+    const exact = todosAtAggregateLimit();
+    expect(utf8ByteLength(JSON.stringify(exact))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES);
+    const exactSessionId = uniqueSessionId("exact-todo-list");
+    await writeSessionFile(exactSessionId, persistedFile({
+      ...persistedState(exactSessionId, [], []),
+      todos: exact,
+    }));
+    expect((await storeManager.getOrLoad(exactSessionId, TMP_DIR)).getState().todos)
+      .toEqual(exact);
+
+    storeManager.clearAll();
+    const over = exact.map((todo, index) => index === exact.length - 1
+      ? { ...todo, content: `${todo.content}x` }
+      : todo);
+    expect(utf8ByteLength(JSON.stringify(over))).toBe(MAX_SESSION_TODOS_SERIALIZED_BYTES + 1);
+    const oversizedSessionId = uniqueSessionId("oversized-todo-list");
+    await writeSessionFile(oversizedSessionId, persistedFile({
+      ...persistedState(oversizedSessionId, [], []),
+      todos: over,
+    }));
+
+    await expect(storeManager.getOrLoad(oversizedSessionId, TMP_DIR)).rejects.toThrow(
+      "Session todo list exceeds its serialized capacity",
+    );
+  });
+
+  test("load accepts the direct-child limit and rejects the next unique child", async () => {
+    const links = Array.from({ length: MAX_DIRECT_CHILD_SESSIONS }, (_, index): ToolChildSessionLink => ({
+      ...sampleChildSessionLinks()[0]!,
+      parentToolCallId: `tool-call-${index}`,
+      childSessionId: `child-session-${index}`,
+      childExecutionId: `child-execution-${index}`,
+      title: index === 0 ? "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH) : `Child ${index}`,
+    }));
+    const exactSessionId = uniqueSessionId("child-capacity-exact");
+    await writeSessionFile(exactSessionId, persistedFile({
+      ...persistedState(exactSessionId, [], []),
+      childSessionLinks: links,
+    }));
+    expect((await storeManager.getOrLoad(exactSessionId, TMP_DIR)).getState().childSessionLinks)
+      .toHaveLength(MAX_DIRECT_CHILD_SESSIONS);
+
+    storeManager.clearAll();
+    const oversizedSessionId = uniqueSessionId("child-capacity-overflow");
+    await writeSessionFile(oversizedSessionId, persistedFile({
+      ...persistedState(oversizedSessionId, [], []),
+      childSessionLinks: [
+        ...links,
+        {
+          ...links[0]!,
+          parentToolCallId: "tool-call-overflow",
+          childSessionId: "child-session-overflow",
+          childExecutionId: "child-execution-overflow",
+        },
+      ],
+    }));
+    await expect(storeManager.getOrLoad(oversizedSessionId, TMP_DIR)).rejects.toThrow(
+      `Session cannot own more than ${MAX_DIRECT_CHILD_SESSIONS} direct child Sessions`,
+    );
+  });
+
+  test("load rejects direct-child identity outside the closed domains", async () => {
+    const baseLink = sampleChildSessionLinks()[0]!;
+    for (const [suffix, link, message] of [
+      ["agent", { ...baseLink, childAgentName: "unknown-agent" }, "Invalid option"],
+      ["root-agent", { ...baseLink, childAgentName: "lead" }, "Invalid option"],
+      ["profile", { ...baseLink, childProfile: "principal" }, "Invalid option"],
+      ["status", { ...baseLink, status: "unknown" }, "Invalid option"],
+      ["blank-title", { ...baseLink, title: " " }, "must not be blank"],
+      ["title-code-points", {
+        ...baseLink,
+        title: "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1),
+      }, "Unicode code points"],
+    ] as const) {
+      storeManager.clearAll();
+      const sessionId = uniqueSessionId(`child-${suffix}`);
+      const validFile = persistedFile({
+        ...persistedState(sessionId, [], []),
+        childSessionLinks: [],
+      });
+      await writeSessionFile(sessionId, { ...validFile, childSessionLinks: [link] });
+      await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow(message);
+    }
   });
 
   test("load rejects unknown todo fields", async () => {

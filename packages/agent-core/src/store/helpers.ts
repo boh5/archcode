@@ -6,10 +6,17 @@ import type { SessionStoreState, StoredMessage } from "./types";
 import {
   SKILL_PROMPT_MAX_BYTES,
   SKILL_SOURCE_TIERS,
+  DELEGATED_AGENT_NAMES,
+  DIRECT_CHILD_AGENT_PROFILES,
+  MAX_DIRECT_CHILD_SESSIONS,
+  MAX_SESSION_TODOS,
+  TOOL_CHILD_SESSION_LINK_STATUSES,
   isSessionEventPayload,
   isValidAttachmentMediaType,
   isValidAttachmentName,
   TOOL_TOOL_SEARCH,
+  sessionTodoCapacityViolation,
+  utf8ByteLength,
   validateExecutionFinalOutputSelection,
   type FinalizedToolResult,
   type JsonObject,
@@ -37,7 +44,7 @@ import { sessionIdentityInvariantError } from "../agents/root-session-identity";
 import type { ProfileName } from "../config";
 import { HitlBoundaryCodec } from "../hitl/boundary-codec";
 import { atomicWrite } from "../utils/safe-file";
-import { DelegationRequestSchema } from "../delegation/schema";
+import { DelegatedSessionTitleSchema, DelegationRequestSchema } from "../delegation/schema";
 import { sessionGoalNoticeInvariantError } from "../session-goal/invariant";
 import { GoalNoticePartSchema, SessionGoalSchema } from "../session-goal/schema";
 import { MemoryLearningStateSchema } from "../memory/learning-schemas";
@@ -582,23 +589,13 @@ const ToolChildSessionLinkSchema = z.strictObject({
   toolName: z.string(),
   childSessionId: z.string(),
   childExecutionId: z.string(),
-  childAgentName: z.string(),
-  childProfile: z.enum(["deep", "fast"]),
+  childAgentName: z.enum(DELEGATED_AGENT_NAMES),
+  childProfile: z.enum(DIRECT_CHILD_AGENT_PROFILES),
   childSkillNames: z.array(z.string().trim().min(1)),
-  title: z.string().trim().min(1),
+  title: DelegatedSessionTitleSchema,
   depth: z.number(),
   background: z.boolean(),
-  status: z.enum([
-    "linked",
-    "running",
-    "waiting_for_human",
-    "cancelling",
-    "completed",
-    "failed",
-    "timed_out",
-    "cancelled",
-    "interrupted",
-  ]),
+  status: z.enum(TOOL_CHILD_SESSION_LINK_STATUSES),
   createdAt: z.number(),
   startedAt: z.number().optional(),
   endedAt: z.number().optional(),
@@ -1250,13 +1247,20 @@ export const SessionFileSchema = z.strictObject({
   executions: z.array(SessionExecutionRecordSchema),
   promptTraces: z.array(PromptTraceSnapshotSchema),
   compression: CompressionStateSchema,
-  todos: z.array(StoredTodoSchema)
+  todos: z.array(StoredTodoSchema).max(MAX_SESSION_TODOS)
     .refine(
       (todos) => todos.filter((todo) => todo.status === "in_progress").length <= 1,
       "Only one todo can be in_progress",
+    )
+    .refine(
+      (todos) => sessionTodoCapacityViolation(todos) === undefined,
+      "Session todo list exceeds its serialized capacity",
     ),
   reminders: z.array(ReminderSchema),
-  childSessionLinks: z.array(ToolChildSessionLinkSchema),
+  childSessionLinks: z.array(ToolChildSessionLinkSchema).refine(
+    (links) => new Set(links.map((link) => link.childSessionId)).size <= MAX_DIRECT_CHILD_SESSIONS,
+    `Session cannot own more than ${MAX_DIRECT_CHILD_SESSIONS} direct child Sessions`,
+  ),
   delegationRequest: DelegationRequestSchema.optional(),
   toolBatches: z.array(SessionToolBatchSchema).superRefine((batches, ctx) => {
     if (batches.filter((batch) => batch.archivedAt === undefined).length > 1) {
@@ -1287,6 +1291,13 @@ export const SessionFileSchema = z.strictObject({
   const isChild = session.parentSessionId !== undefined;
   if (isChild !== (session.delegationRequest !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["delegationRequest"], message: "delegationRequest must exist exactly for child Sessions" });
+  }
+  if (isChild && !DelegatedSessionTitleSchema.safeParse(session.title).success) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["title"],
+      message: "Child Session title must satisfy the canonical delegated title contract",
+    });
   }
   if (session.delegationRequest !== undefined && session.delegationRequest.agent_type !== session.agentName) {
     ctx.addIssue({ code: "custom", path: ["delegationRequest", "agent_type"], message: "delegationRequest agent_type must match the Session agentName" });

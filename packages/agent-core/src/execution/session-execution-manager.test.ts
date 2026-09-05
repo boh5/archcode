@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import {
+  MAX_DIRECT_CHILD_SESSIONS,
+  MAX_DELEGATED_SESSION_TITLE_LENGTH,
   createEmptySessionStats,
   isTerminalChildSessionStatus,
   TOOL_TOOL_SEARCH,
@@ -31,6 +33,11 @@ import { toolSearchTool, ToolSearchInputSchema } from "../tools/builtins/tool-se
 import { defineTool } from "../tools/define-tool";
 import { createTextToolResult } from "../tools/results";
 import type { ToolExecutionContext } from "../tools/types";
+import {
+  CHILD_FINAL_CONTEXTUAL_TAIL_CORPUS,
+  CHILD_FINAL_MISSING_MESSAGE,
+  CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
+} from "../delegation/final-output";
 import { testExecutionEnd, testExecutionRecord, testExecutionStart, testExecutionSuspended } from "../testing/test-execution-fixtures";
 import { applySessionToolBatchChildOutcome } from "./session-tool-batch-scheduler";
 import { setLlmAdapterForTest } from "../llm/adapter";
@@ -203,15 +210,22 @@ function createTestSession(
   const normalizedOptions = options.parentSessionId === undefined && options.source === undefined
     ? { ...options, source: { kind: "direct" } as const }
     : options;
-  if (normalizedOptions.parentSessionId === undefined || normalizedOptions.delegationRequest !== undefined) {
+  if (normalizedOptions.parentSessionId === undefined) {
     return manager.create(sessionId, root, normalizedOptions);
+  }
+  const title = normalizedOptions.title
+    ?? normalizedOptions.delegationRequest?.title
+    ?? "Delegated child";
+  if (normalizedOptions.delegationRequest !== undefined) {
+    return manager.create(sessionId, root, { ...normalizedOptions, title });
   }
   const request = delegationRequest({
     agent_type: normalizedOptions.agentName === "build" ? "build" : "explore",
-    title: normalizedOptions.title ?? "Delegated child",
+    title,
   });
   return manager.create(sessionId, root, {
     ...normalizedOptions,
+    title,
     delegationRequest: request,
   });
 }
@@ -248,6 +262,20 @@ function normalizeMockAgentResult(result: MockAgentResult, finalOutputStepId?: s
     ...(result.error === undefined ? {} : { error: result.error }),
     ...(result.cwdChanged === undefined ? {} : { cwdChanged: result.cwdChanged }),
   };
+}
+
+function appendMockFinalOutput(
+  store: StoreApi<SessionStoreState>,
+  options: AgentRunOptions,
+  text: string,
+): string {
+  const stepId = crypto.randomUUID();
+  store.getState().append({ type: "step-start", stepId, step: options.initialStep });
+  store.getState().append({ type: "text-start", stepId, blockId: "output" });
+  store.getState().append({ type: "text-delta", stepId, blockId: "output", text });
+  store.getState().append({ type: "text-end", stepId, blockId: "output" });
+  store.getState().append({ type: "step-end", stepId, step: options.initialStep, finishReason: "stop" });
+  return stepId;
 }
 
 class MockAgent implements Agent {
@@ -800,7 +828,7 @@ async function writeSessionFile(input: {
     agentName: input.agentName ?? (input.parentSessionId === undefined ? "lead" : "explore"),
     activeSkillNames: [],
     modelSelection: { revision: 0 },
-    title: input.title ?? null,
+    title: input.title ?? request?.title ?? null,
     messages: input.messages ?? [],
     pendingMessages: [],
     inputRequestReceipts: [],
@@ -861,7 +889,11 @@ function blockedToolBatch(hitlId: string): SessionToolBatch {
   };
 }
 
-function makeChildLink(parentSessionId: string, childSessionId: string, childAgentName: string): ToolChildSessionLink {
+function makeChildLink(
+  parentSessionId: string,
+  childSessionId: string,
+  childAgentName: ToolChildSessionLink["childAgentName"],
+): ToolChildSessionLink {
   return {
     parentSessionId,
     parentToolCallId: `tool-${childSessionId}`,
@@ -1675,7 +1707,7 @@ describe("SessionExecutionManager", () => {
     const childId = crypto.randomUUID();
     const childRun = deferred<MockAgentResult>();
     storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    storeManager.create(childId, workspaceRoot, {
+    createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
@@ -1722,7 +1754,7 @@ describe("SessionExecutionManager", () => {
     const childId = crypto.randomUUID();
     const childRun = deferred<MockAgentResult>();
     const rootStore = storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    storeManager.create(childId, workspaceRoot, {
+    createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
@@ -1761,12 +1793,12 @@ describe("SessionExecutionManager", () => {
     const siblingId = crypto.randomUUID();
     const siblingRun = deferred<MockAgentResult>();
     storeManager.create(rootId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    const childStore = storeManager.create(childId, workspaceRoot, {
+    const childStore = createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
     });
-    storeManager.create(siblingId, workspaceRoot, {
+    createTestSession(storeManager, siblingId, workspaceRoot, {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
@@ -2826,7 +2858,11 @@ describe("SessionExecutionManager", () => {
       cwd: workspaceRoot,
       classifyCommand: mock((_input: string) => null),
       executeCommand: mock(async (_command: AgentCommand): Promise<AgentCommandResult> => ({ kind: "handled" })),
-      run: mock(async (): Promise<AgentResult> => normalizeMockAgentResult(await resumedRun.promise)),
+      run: mock(async (_binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> => {
+        if (options === undefined) throw new Error("Execution identity is required");
+        const result = await resumedRun.promise;
+        return normalizeMockAgentResult(result, appendMockFinalOutput(childStore, options, result.text));
+      }),
       dispose: mock(() => undefined),
     } as unknown as MockAgent;
     const deadlineScheduler = createTestDeadlineScheduler();
@@ -4283,6 +4319,81 @@ describe("SessionExecutionManager", () => {
     }
   });
 
+  test("admits the final direct child, rejects the next without residue, and still permits resume", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, {
+      source: { kind: "direct" },
+      agentName: "lead",
+    });
+    for (let index = 0; index < MAX_DIRECT_CHILD_SESSIONS - 1; index += 1) {
+      parentStore.getState().append({
+        type: "tool-child-session-link",
+        link: {
+          parentSessionId: parentId,
+          parentToolCallId: `historical-tool-${index}`,
+          toolName: "delegate",
+          childSessionId: `historical-child-${index}`,
+          childExecutionId: `historical-execution-${index}`,
+          childAgentName: "explore",
+          childProfile: "fast",
+          childSkillNames: [],
+          title: `Historical child ${index}`,
+          depth: 1,
+          background: true,
+          status: "completed",
+          createdAt: index,
+        },
+      });
+    }
+    const { manager, sessionAgentManager } = createManager({}, { factory: makeFactory() });
+
+    const finalChild = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "final-allowed-child",
+      toolName: "delegate",
+      request: delegationRequest({ title: "Final allowed child" }),
+      parentAbort: undefined,
+    });
+    await finalChild.result;
+    expect(new Set(parentStore.getState().childSessionLinks.map((link) => link.childSessionId)).size)
+      .toBe(MAX_DIRECT_CHILD_SESSIONS);
+
+    const rejectedChildId = crypto.randomUUID();
+    const linksBeforeRejection = parentStore.getState().childSessionLinks;
+    await expect(manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "overflow-child",
+      childSessionId: rejectedChildId,
+      toolName: "delegate",
+      request: delegationRequest({ title: "Overflow child" }),
+      parentAbort: undefined,
+    })).rejects.toMatchObject({
+      name: "DelegationExecutionAdmissionError",
+      code: "DELEGATION_SESSION_CAPACITY_REACHED",
+    });
+    expect(parentStore.getState().childSessionLinks).toBe(linksBeforeRejection);
+    expect(storeManager.get(rejectedChildId, workspaceRoot)).toBeUndefined();
+    expect(await Bun.file(getSessionPath(workspaceRoot, rejectedChildId)).exists()).toBe(false);
+    expect(sessionAgentManager.createChildAgent).toHaveBeenCalledTimes(1);
+
+    const resumed = await manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-at-capacity",
+      toolName: "resume_session",
+      sessionId: finalChild.sessionId,
+      instruction: "Continue the existing child",
+      background: false,
+      parentAbort: undefined,
+    });
+    await resumed.result;
+    expect(resumed.sessionId).toBe(finalChild.sessionId);
+    expect(new Set(parentStore.getState().childSessionLinks.map((link) => link.childSessionId)).size)
+      .toBe(MAX_DIRECT_CHILD_SESSIONS);
+  });
+
   test("startChildExecution appends link and canonical prompt before model execution", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
@@ -4420,6 +4531,185 @@ describe("SessionExecutionManager", () => {
       childSessionId: handle.sessionId,
       status: "completed",
     });
+  });
+
+  test("fails a sync child with no final answer before publishing its terminal outcome", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      childRun: Promise.resolve({ text: "", steps: 1 }),
+    });
+
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "missing-final",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Missing final", background: false }),
+    });
+
+    expect(await child.result).toEqual({
+      outcome: "terminal",
+      executionId: child.executionId,
+      executionStatus: "failed",
+      terminalError: CHILD_FINAL_MISSING_MESSAGE,
+    });
+    expect(child.store.getState().executions.at(-1)).toMatchObject({
+      status: "failed",
+      error: CHILD_FINAL_MISSING_MESSAGE,
+    });
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      status: "failed",
+      error: CHILD_FINAL_MISSING_MESSAGE,
+    });
+  });
+
+  test("propagates one protocol-only failure through execution, link, outcome, and reminder", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      childRun: Promise.resolve({ text: "<invoke><parameter name=\"q\">x</parameter></invoke>", steps: 1 }),
+    });
+
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "protocol-final",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Protocol final", background: true }),
+    });
+
+    expect(await child.result).toEqual({
+      outcome: "terminal",
+      executionId: child.executionId,
+      executionStatus: "failed",
+      terminalError: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
+    });
+    expect(child.store.getState().executions.at(-1)).toMatchObject({
+      status: "failed",
+      error: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
+    });
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      status: "failed",
+      error: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
+    });
+    expect(parentStore.getState().reminders.at(-1)).toMatchObject({
+      terminalState: "failed",
+      content: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
+    });
+  });
+
+  test("fails the locked adjacent DSML fragment sequence at the canonical child gate", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const harness = createManager({}, {
+      factory: makeFactory(),
+      childAgentFactory: (input) => ({
+        store: input.store,
+        cwd: input.store.getState().cwd,
+        classifyCommand: () => null,
+        executeCommand: async () => ({ kind: "handled" as const }),
+        run: async (_binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> => {
+          if (options === undefined) throw new Error("Execution identity is required");
+          const previousStepId = crypto.randomUUID();
+          input.store.getState().append({ type: "step-start", stepId: previousStepId, step: options.initialStep });
+          input.store.getState().append({ type: "text-start", stepId: previousStepId, blockId: "previous" });
+          input.store.getState().append({ type: "text-delta", stepId: previousStepId, blockId: "previous", text: CHILD_FINAL_CONTEXTUAL_TAIL_CORPUS.previous });
+          input.store.getState().append({ type: "text-end", stepId: previousStepId, blockId: "previous" });
+          input.store.getState().append({ type: "step-end", stepId: previousStepId, step: options.initialStep, finishReason: "tool-calls" });
+          const finalStepId = appendMockFinalOutput(
+            input.store,
+            { ...options, initialStep: options.initialStep + 1 },
+            CHILD_FINAL_CONTEXTUAL_TAIL_CORPUS.final,
+          );
+          return {
+            outcome: "terminal",
+            text: CHILD_FINAL_CONTEXTUAL_TAIL_CORPUS.final,
+            steps: options.initialStep + 2,
+            status: "completed",
+            finalOutputStepId: finalStepId,
+          };
+        },
+        dispose: () => undefined,
+      }) as unknown as MockAgent,
+    });
+
+    const child = await harness.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "dsml-tail",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "DSML tail", background: false }),
+    });
+    expect(await child.result).toMatchObject({
+      executionStatus: "failed",
+      terminalError: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
+    });
+    expect(child.store.getState().executions.at(-1)).toMatchObject({
+      status: "failed",
+      error: CHILD_FINAL_PROTOCOL_ONLY_MESSAGE,
+    });
+  });
+
+  test("keeps root completion legal when it has no delegated final report", async () => {
+    const rootId = crypto.randomUUID();
+    const rootAgent = new MockAgent(rootId, Promise.resolve({ text: "", steps: 1 }), workspaceRoot);
+    const { manager } = createManager({ [rootId]: rootAgent });
+    const execution = await manager.startCheckedExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: rootId,
+      input: { kind: "direct", text: "complete through a root-owned terminal action" },
+    });
+    await execution.promise;
+    expect(rootAgent.store.getState().executions.at(-1)).toMatchObject({ status: "completed" });
+  });
+
+  test("does not dispatch an already queued child continuation after an invalid final", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
+    const firstRun = deferred<MockAgentResult>();
+    const inputService = new SessionInputService(storeManager, EMPTY_SESSION_ATTACHMENT_RESOLVER);
+    const harness = createManager({}, {
+      factory: makeFactory(),
+      sessionInputService: inputServicePort(inputService),
+      childAgentFactory: sequencedChildAgentFactory([firstRun.promise, Promise.resolve({ text: "must not run", steps: 1 })]),
+    });
+    const child = await harness.manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "invalid-final-queue",
+      toolName: "delegate",
+      request: delegationRequest({ agent_type: "explore", title: "Invalid final Queue", background: true }),
+    });
+    await inputService.acceptParentAgentMessage({
+      sessionId: child.sessionId,
+      workspaceRoot,
+      text: "continue",
+      clientRequestId: "queued-after-invalid-final",
+      expectedExecutionId: child.executionId,
+      delivery: "queue",
+      provenance: {
+        senderSessionId: parentId,
+        senderAgentName: "lead",
+        senderExecutionId: "sender-execution",
+        senderRunOrdinal: 0,
+        senderToolBatchId: "sender-batch",
+        senderToolCallId: "sender-call",
+      },
+      requestedModelSelection: TEST_REQUESTED_MODEL_SELECTION,
+    });
+
+    firstRun.resolve({ text: "   ", steps: 1 });
+    expect(await child.result).toMatchObject({
+      executionStatus: "failed",
+      terminalError: CHILD_FINAL_MISSING_MESSAGE,
+    });
+    expect(harness.manager.getExecution(workspaceRoot, child.sessionId)).toBeUndefined();
+    expect(child.store.getState().pendingMessages).toHaveLength(1);
+    expect(child.store.getState().executions).toHaveLength(1);
   });
 
   test("child HITL pause remains non-terminal, then family Stop converges its link once", async () => {
@@ -5716,7 +6006,7 @@ describe("SessionExecutionManager", () => {
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     const runEntered = deferred<void>();
     const childAgent = {
-      store: storeManager.create(childId, workspaceRoot, {
+      store: createTestSession(storeManager, childId, workspaceRoot, {
         rootSessionId: rootId,
         parentSessionId: rootId,
         agentName: "explore",
@@ -6420,6 +6710,8 @@ describe("SessionExecutionManager", () => {
       rootSessionId: rootId,
       parentSessionId: rootId,
       agentName: "explore",
+      title: "Delegated child",
+      delegationRequest: delegationRequest(),
     }, childId);
     const rootLoad = deferred<typeof rootStore>();
     const rootLoadEntered = deferred<void>();
@@ -6559,7 +6851,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    const childStore = storeManager.create(childId, workspaceRoot, {
+    const childStore = createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
       agentName: "explore",
@@ -6588,27 +6880,71 @@ describe("SessionExecutionManager", () => {
       .toMatchObject({ title: "Canonical title", status: "completed" });
   });
 
-  test("resumeChildExecution rejects a child without a canonical title", async () => {
-    const parentId = crypto.randomUUID();
-    const childId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    storeManager.create(childId, workspaceRoot, {
-      rootSessionId: parentId,
-      parentSessionId: parentId,
-      agentName: "explore",
-    });
-    const { manager } = createManager({}, { factory: makeFactory() });
+  test("resume rejects invalid canonical child titles before model, link, Execution, or input mutation", async () => {
+    for (const [suffix, title] of [
+      ["null", null],
+      ["blank", " "],
+      ["code-points", "t".repeat(MAX_DELEGATED_SESSION_TITLE_LENGTH + 1)],
+    ] as const) {
+      storeManager.clearAll();
+      const parentId = crypto.randomUUID();
+      const childId = crypto.randomUUID();
+      const parentStore = storeManager.create(parentId, workspaceRoot, {
+        source: { kind: "direct" },
+        agentName: "lead",
+      });
+      const childStore = storeManager.create(childId, workspaceRoot, {
+        rootSessionId: parentId,
+        parentSessionId: parentId,
+        agentName: "explore",
+        title: title ?? "Valid canonical title",
+        activeSkillNames: [],
+        delegationRequest: delegationRequest({
+          agent_type: "explore",
+          title: "Valid delegated title",
+          skills: [],
+        }),
+      });
+      childStore.setState({ title });
+      const childAgent = new MockAgent(
+        childId,
+        Promise.resolve({ text: "should not run", steps: 1 }),
+        workspaceRoot,
+      );
+      childAgent.store.setState(childStore.getState());
+      const { manager, sessionAgentManager } = createManager(
+        { [childId]: childAgent },
+        { factory: makeFactory() },
+      );
+      const linksBefore = parentStore.getState().childSessionLinks;
+      const executionsBefore = childStore.getState().executions;
+      const messagesBefore = childStore.getState().messages;
+      const pendingMessagesBefore = childStore.getState().pendingMessages;
+      const receiptsBefore = childStore.getState().inputRequestReceipts;
 
-    await expect(manager.resumeChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "missing-title-resume",
-      toolName: "resume_session",
-      sessionId: childId,
-      instruction: "resume",
-    background: false,
-    })).rejects.toThrow(`Child Session "${childId}" has no canonical title`);
-    expect(parentStore.getState().childSessionLinks).toEqual([]);
+      await expect(manager.resumeChildExecution(workspaceRoot, {
+        parentStore,
+        parentSessionId: parentId,
+        parentToolCallId: `invalid-title-resume-${suffix}`,
+        toolName: "resume_session",
+        sessionId: childId,
+        instruction: "resume",
+        background: false,
+      })).rejects.toMatchObject({
+        name: "DelegationExecutionAdmissionError",
+        code: "DELEGATION_IDENTITY_REQUIRED",
+        message: `Child Session "${childId}" has an invalid canonical title`,
+      });
+      expect(childAgent.runMock).not.toHaveBeenCalled();
+      expect(childAgent.runBindings).toEqual([]);
+      expect(sessionAgentManager.getOrCreate).not.toHaveBeenCalled();
+      expect(parentStore.getState().childSessionLinks).toBe(linksBefore);
+      expect(parentStore.getState().childSessionLinks).toEqual([]);
+      expect(childStore.getState().executions).toBe(executionsBefore);
+      expect(childStore.getState().messages).toBe(messagesBefore);
+      expect(childStore.getState().pendingMessages).toBe(pendingMessagesBefore);
+      expect(childStore.getState().inputRequestReceipts).toBe(receiptsBefore);
+    }
   });
 
   test("resumeChildExecution rejects Skills that drift from the durable delegation request", async () => {
@@ -6967,7 +7303,7 @@ describe("SessionExecutionManager", () => {
     const parentId = crypto.randomUUID();
     const childId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { source: { kind: "direct" }, agentName: "lead" });
-    const childStore = storeManager.create(childId, workspaceRoot, {
+    const childStore = createTestSession(storeManager, childId, workspaceRoot, {
       rootSessionId: parentId,
       parentSessionId: parentId,
       agentName: "explore",
@@ -7084,12 +7420,16 @@ describe("SessionExecutionManager", () => {
         store: input.store,
         classifyCommand: mock(() => null),
         executeCommand: mock(async (): Promise<AgentCommandResult> => ({ kind: "handled" })),
-        run: mock(async (): Promise<AgentResult> => {
+        run: mock(async (_binding: ExecutionModelBinding, options?: AgentRunOptions): Promise<AgentResult> => {
           childRunCount += 1;
           if (childRunCount === 1) {
             await new Promise<never>(() => undefined);
           }
-          return { outcome: "terminal", text: "done", steps: 1, status: "completed" };
+          if (options === undefined) throw new Error("Execution identity is required");
+          return normalizeMockAgentResult(
+            { text: "done", steps: 1 },
+            appendMockFinalOutput(input.store, options, "done"),
+          );
         }),
         dispose: mock(() => undefined),
       }) as unknown as MockAgent,
@@ -7537,11 +7877,15 @@ describe("SessionExecutionManager", () => {
         classifyCommand: () => null,
         executeCommand: async () => ({ kind: "handled" as const }),
         run: async (_binding: ExecutionModelBinding, options?: AgentRunOptions) => {
+          if (options === undefined) throw new Error("Execution identity is required");
           await allowConsume.promise;
           await options?.consumeSteers?.();
           consumed.resolve(undefined);
           await allowReturn.promise;
-          return { outcome: "terminal" as const, text: "done", steps: 1, status: "completed" as const };
+          return normalizeMockAgentResult(
+            { text: "done", steps: 1 },
+            appendMockFinalOutput(input.store, options, "done"),
+          );
         },
         dispose: () => undefined,
       }) as unknown as MockAgent,
@@ -7636,10 +7980,14 @@ describe("SessionExecutionManager", () => {
         classifyCommand: () => null,
         executeCommand: async () => ({ kind: "handled" as const }),
         run: async (_binding: ExecutionModelBinding, options?: AgentRunOptions) => {
+          if (options === undefined) throw new Error("Execution identity is required");
           await allowConsume.promise;
           await options?.consumeSteers?.();
           agentReturned.resolve(undefined);
-          return { outcome: "terminal" as const, text: "done", steps: 1, status: "completed" as const };
+          return normalizeMockAgentResult(
+            { text: "done", steps: 1 },
+            appendMockFinalOutput(input.store, options, "done"),
+          );
         },
         dispose: () => undefined,
       }) as unknown as MockAgent,

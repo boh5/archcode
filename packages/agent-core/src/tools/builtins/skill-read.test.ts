@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { SkillService } from "../../skills";
+import { agentDefinitions } from "../../agents/definitions";
 import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
@@ -127,6 +128,28 @@ ENTRY_BODY
     expect(expectTextDraft(result)).toContain("Resources: none\n\n\nENTRY_BODY\n");
   });
 
+  test("the documented entry-first flow can read a real builtin entry and resource for every Agent", async () => {
+    for (const definition of agentDefinitions) {
+      const entry = await skillReadTool.execute(
+        { name: "codemap" },
+        makeContext(definition.skills),
+      );
+      expect(entry.isError, definition.name).not.toBe(true);
+      expect(expectTextDraft(entry), definition.name).toContain(
+        "- references/evidence-map-example.md",
+      );
+
+      const resource = await skillReadTool.execute(
+        { name: "codemap", resource: "references/evidence-map-example.md" },
+        makeContext(definition.skills),
+      );
+      expect(resource.isError, definition.name).not.toBe(true);
+      expect(expectTextDraft(resource), definition.name).toContain(
+        "resource: references/evidence-map-example.md",
+      );
+    }
+  });
+
   test("resource read returns exactly one UTF-8 resource with a fixed identity header", async () => {
     await writeProjectSkill("codemap", `---
 name: codemap
@@ -198,6 +221,8 @@ ENTRY_BODY
 
     expect(result.isError).toBe(true);
     expect(result.details?.error?.code).toBe("TOOL_SKILL_RESOURCE_NOT_FOUND");
+    expect(result.details?.error?.hint).toContain('skill_read({"name":"codemap"})');
+    expect(result.details?.error?.hint).toContain("Resources");
   });
 
   test("unknown resource on an unresolved Skill reports the Skill-level error", async () => {
@@ -211,6 +236,8 @@ ENTRY_BODY
     expect(expectTextDraft(result)).toContain(
       "Skill not found or not allowed for current agent: missing-skill",
     );
+    expect(result.details?.error?.hint).toContain("skill_list({})");
+    expect(result.details?.error?.hint).toContain("Do not create or modify");
   });
 
   test("rejects traversal and absolute resource paths at the tool boundary", async () => {
@@ -228,8 +255,53 @@ ENTRY_BODY
         makeContext(["codemap"]),
       );
       expect(result.isError).toBe(true);
-      expect(result.details?.error?.code).toBe("TOOL_SKILL_INVALID");
+      expect(result.details?.error?.code).toBe("TOOL_SKILL_RESOURCE_PATH_INVALID");
+      expect(result.details?.error?.hint).toContain('skill_read({"name":"codemap"})');
     }
+  });
+
+  test("replays the exact absolute-root resource miss with entry-first recovery", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Maps code architecture when investigating an unfamiliar repository.
+---
+
+ENTRY_BODY
+`, { "references/guide.md": "guide" });
+
+    const parsed = SkillReadInputSchema.safeParse({ name: "codemap", resource: "/" });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("Expected the exact incident input to pass the public schema");
+
+    const result = await skillReadTool.execute(parsed.data, makeContext(["codemap"]));
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error).toMatchObject({ code: "TOOL_SKILL_RESOURCE_PATH_INVALID" });
+    expect(result.details?.error?.hint).toContain('skill_read({"name":"codemap"})');
+    expect(result.details?.error?.hint).toContain("copy a resource path exactly");
+    expect(result.details?.error?.hint).toContain("Do not create");
+  });
+
+  test("replays a PLACEHOLDER resource guess with entry-first recovery", async () => {
+    await writeProjectSkill("codemap", `---
+name: codemap
+description: Maps code architecture when investigating an unfamiliar repository.
+---
+
+ENTRY_BODY
+`, { "references/guide.md": "guide" });
+
+    const parsed = SkillReadInputSchema.safeParse({ name: "codemap", resource: "PLACEHOLDER" });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("Expected the resource placeholder to pass the public schema");
+
+    const result = await skillReadTool.execute(parsed.data, makeContext(["codemap"]));
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.error).toMatchObject({ code: "TOOL_SKILL_RESOURCE_NOT_FOUND" });
+    expect(result.details?.error?.hint).toContain('skill_read({"name":"codemap"})');
+    expect(result.details?.error?.hint).toContain("Resources");
+    expect(result.details?.error?.hint).toContain("Do not create");
   });
 
   test("resolves same-name project Skills from the Session cwd", async () => {
@@ -299,7 +371,8 @@ CHANGED_ENTRY_BODY
 
     expect(result.isError).toBe(true);
     expect(expectTextDraft(result)).toContain("Skill not found or not allowed for current agent: git-master");
-    expect(result.details?.error).toBeDefined();
+    expect(result.details?.error?.hint).toContain("skill_list({})");
+    expect(result.details?.error?.hint).toContain("Do not create or modify");
   });
 
   test("unknown skill name returns structured error", async () => {
@@ -310,7 +383,8 @@ CHANGED_ENTRY_BODY
 
     expect(result.isError).toBe(true);
     expect(expectTextDraft(result)).toContain("Skill not found or not allowed for current agent: missing-skill");
-    expect(result.details?.error).toBeDefined();
+    expect(result.details?.error?.hint).toContain("skill_list({})");
+    expect(result.details?.error?.hint).toContain("Do not create or modify");
   });
 
   test("invalid skill name returns structured error", async () => {
@@ -322,6 +396,7 @@ CHANGED_ENTRY_BODY
     expect(result.isError).toBe(true);
     expect(expectTextDraft(result)).toContain("Invalid Skill name");
     expect(result.details?.error).toBeDefined();
+    expect(result.details?.error?.hint).toContain("skill_list({})");
   });
 
   test("invalid skill file returns structured error", async () => {
@@ -369,6 +444,23 @@ Broken body.
     expect(serialized).not.toContain("?!");
     expect(serialized).toContain("current-Agent Skill name");
     expect(serialized).toContain("target-scoped delegation result");
+    const properties = schema.properties as Record<string, { readonly description?: string }>;
+    expect(properties.name?.description).toContain("call skill_list({})");
+    expect(properties.name?.description).toContain("copy one returned name value");
+    expect(properties.resource?.description).toContain("first call with only the copied name");
+    expect(properties.resource?.description).toContain("copy one listed resource path");
+    expect(serialized).not.toContain("codemap");
+  });
+
+  test("description teaches entry-first reads and rejects guessed paths", () => {
+    expect(skillReadTool.description).toContain("call `skill_list({})`");
+    expect(skillReadTool.description).toContain('{"name": copiedName}');
+    expect(skillReadTool.description).toContain(
+      '{"name": copiedName, "resource": copiedResourcePath}',
+    );
+    expect(skillReadTool.description).toContain("not literal strings to submit");
+    expect(skillReadTool.description).toContain("Never guess either field");
+    expect(skillReadTool.description).not.toContain("codemap");
   });
 
   test("has correct read-only concurrency-safe traits and is registered", () => {

@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { DelegatedSessionTitleSchema } from "../delegation/schema";
 import { TOOL_DELEGATE, TOOL_SKILL_LIST } from "../tools/names";
 import type { AnyToolDescriptor } from "../tools/types";
 import type { DelegationCapabilitySnapshot } from "./factory-types";
@@ -48,7 +49,7 @@ function projectDelegateDescriptor(
       profile: z.enum(asNonEmptyEnum(profiles)).describe(
         `Allowed Profile union for visible targets. Exact target mapping: ${profileMapping}.`,
       ),
-      title: z.string().min(1).describe("Short user-facing title for the child Session."),
+      title: DelegatedSessionTitleSchema,
       objective: z.string().min(1).describe("Self-contained task-specific handoff for the fresh child."),
       skills: z.array(z.string()).describe(
         "Exact target Skill names copied from skill_list({ agent_type }); use [] when no workflow Skill is needed.",
@@ -64,30 +65,36 @@ function projectSkillListDescriptor(
   descriptor: AnyToolDescriptor,
   capabilities: DelegationCapabilitySnapshot,
 ): AnyToolDescriptor {
+  const targetNames = capabilities.targets.map((target) => target.agentName);
+  const targetExample = targetNames.includes("build")
+    ? "build"
+    : targetNames[0];
   const shared = {
     cursor: z.string().min(1).optional().describe(
-      "Opaque cursor from a previous page; omit for the first current catalog page.",
+      "Opaque cursor copied exactly from nextCursor on the immediately preceding successful page; omit it for the first page. If rejected, discard it and retry the same-scope first-page JSON instead of constructing a cursor.",
     ),
   };
   const aiInputSchema = capabilities.targets.length === 0
     ? z.strictObject(shared)
     : z.strictObject({
         ...shared,
-        agent_type: z.enum(asNonEmptyEnum(capabilities.targets.map((target) => target.agentName)))
+        agent_type: z.enum(asNonEmptyEnum(targetNames))
           .optional()
           .describe(
-            "Optional allowed direct child target. Omit for the current Agent catalog; provide a target only to discover exact names for delegate.skills.",
+            `Optional allowed direct child target. Omit for the current Agent catalog. For a target first page, copy an allowed enum value exactly; for example use skill_list({"agent_type":"${targetExample}"}) only when that value is allowed, then copy exact names for delegate.skills.`,
           ),
       });
 
   return {
     ...descriptor,
     description: [
-      "List one bounded, digest-bound page of current Skill metadata.",
-      "Call skill_list({}) for the current Agent; those exact names may be opened with skill_read.",
-      ...(capabilities.targets.length === 0
+      "List one bounded, digest-bound page of current Skill metadata; the result contains exactly name, description, and source, never Skill bodies or resource contents.",
+      "First page: omit cursor and call skill_list({}). Copy its exact current-Agent names into skill_read.",
+      ...(targetExample === undefined
         ? []
-        : ["Call skill_list({ agent_type }) for an allowed direct child only when selecting names for delegate.skills. A target page grants no parent read access."]),
+        : [`For an allowed direct child target, first copy an allowed agent_type enum value; for example call skill_list({"agent_type":"${targetExample}"}) only when ${targetExample} is allowed, then copy exact names into delegate.skills. A target page grants no parent read access.`]),
+      "Later page: copy only nextCursor from the immediately preceding successful page into cursor. If the cursor is malformed or stale, discard it and retry the same-scope first page (preserving agent_type); never construct a new cursor.",
+      "Never guess or invent a Skill name or use /, :first, first, new, invalid, or PLACEHOLDER as cursor, agent_type, or Skill name.",
     ].join("\n"),
     aiInputSchema,
   };

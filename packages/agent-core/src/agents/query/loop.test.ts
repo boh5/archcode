@@ -18,6 +18,7 @@ import type { ToolOutputAccessService } from "../../tool-output/access-service";
 import { askUserTool } from "../../tools/builtins/ask-user";
 import { toolSearchTool, TOOL_SEARCH_REDACTED_QUERY, TOOL_SEARCH_SENSITIVE_QUERY_CODE } from "../../tools/builtins/tool-search";
 import { defineTool } from "../../tools/define-tool";
+import { createToolErrorResult } from "../../tools/errors";
 import { ToolRegistry } from "../../tools/registry";
 import { createTextToolResult } from "../../tools/results";
 import { SecretRedactionPolicy } from "../../security";
@@ -25,7 +26,7 @@ import { createTestProjectContext } from "../../tools/test-project-context";
 import { deferTestApprovalReviewer } from "../../tools/test-approval-reviewer";
 import type { ToolExecutionContext } from "../../tools/types";
 import { runQueryLoop } from "./loop";
-import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
+import { type QueryLoopOptions } from "./types";
 import { createTestModelInfo, testExecutionStart } from "../../testing/test-execution-fixtures";
 import { SessionGoalService } from "../../session-goal";
 import type { SessionToolBatch } from "../../store/types";
@@ -620,22 +621,411 @@ describe("QueryLoop Tool Output Plane", () => {
     expect(toolEvents(harness)[0]!.result.details?.presentations?.[0]).toMatchObject({ kind: "ask_user" });
   });
 
-  test("settles doom-loop calls through Registry and retains strict result shape", async () => {
+  test("settles the third identical deterministic failure then fails before another model call", async () => {
     const harness = await createHarness();
     let executions = 0;
-    registerInline(harness, "echo", async () => { executions += 1; return createTextToolResult("ok"); });
+    registerInline(harness, "echo", async () => {
+      executions += 1;
+      return {
+        ...createTextToolResult("invalid"),
+        isError: true,
+        details: { error: { kind: "schema", code: "TOOL_SCHEMA_INVALID_INPUT", name: "FixtureError", hint: "fix input" } },
+      };
+    });
     harness.appendUser("run");
-    const calls = [1, 2, 3].map((index) => ({ toolCallId: `call-${index}`, toolName: "echo", input: { value: "same" } }));
     installRounds([
-      { finishReason: "tool-calls", toolCalls: calls },
-      { finishReason: "stop", text: "done" },
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "call-1", toolName: "echo", input: { value: "same" } }] },
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "call-2", toolName: "echo", input: { value: "same" } }] },
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "call-3", toolName: "echo", input: { value: "same" } }] },
     ]);
-    await runQueryLoop(harness.options);
-    expect(executions).toBe(2);
+    const result = await runQueryLoop(harness.options);
+    expect(result).toMatchObject({ status: "failed", error: expect.stringContaining("TOOL_SCHEMA_INVALID_INPUT") });
+    expect(executions).toBe(3);
     expect(toolEvents(harness)).toHaveLength(3);
     expect(toolEvents(harness).find((event) => event.toolCallId === "call-3")!.result).toMatchObject({
       isError: true,
-      output: { preview: expect.stringContaining(DOOM_LOOP_MESSAGE) },
+      details: { error: { code: "TOOL_SCHEMA_INVALID_INPUT" } },
+    });
+  });
+
+  test("counts interleaved failures across the logical execution by canonical input", async () => {
+    const harness = await createHarness();
+    harness.appendUser("run");
+    let modelCalls = 0;
+    const call = (index: number, value: string) => ({
+      toolCallId: `call-${index}`,
+      toolName: "absent",
+      input: { nested: { b: 2, a: value } },
+    });
+    installRounds([
+      { finishReason: "tool-calls", toolCalls: [call(1, "A")] },
+      { finishReason: "tool-calls", toolCalls: [call(2, "B")] },
+      { finishReason: "tool-calls", toolCalls: [call(3, "C")] },
+      { finishReason: "tool-calls", toolCalls: [{ ...call(4, "A"), input: { nested: { a: "A", b: 2 } } }] },
+      { finishReason: "tool-calls", toolCalls: [call(5, "B")] },
+      { finishReason: "tool-calls", toolCalls: [call(6, "C")] },
+      { finishReason: "tool-calls", toolCalls: [call(7, "A")] },
+      { finishReason: "stop", text: "must not run" },
+    ], () => { modelCalls += 1; });
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("TOOL_UNKNOWN"),
+    });
+    expect(modelCalls).toBe(7);
+    expect(toolEvents(harness)).toHaveLength(7);
+  });
+
+  test("terminates the third normalized A after interleaving distinct deterministic codes and inputs", async () => {
+    const harness = await createHarness();
+    const codes = {
+      A: "TOOL_SCHEMA_INVALID_INPUT",
+      B: "TOOL_NOT_ALLOWED",
+      C: "TOOL_SKILL_RESOURCE_PATH_INVALID",
+    } as const;
+    registerInline(harness, "interleaved_codes", async (input) => {
+      const value = input.value;
+      if (value !== "A" && value !== "B" && value !== "C") throw new Error("Unknown interleaved fixture input");
+      return createToolErrorResult({
+        kind: "execution",
+        code: codes[value],
+        message: `deterministic ${value} failure`,
+      });
+    });
+    harness.appendUser("run");
+    const sequence = ["A", "B", "C", "A", "B", "C", "A"] as const;
+    let modelCalls = 0;
+    installRounds(
+      sequence.map((value, index) => ({
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: `interleaved-${index}`, toolName: "interleaved_codes", input: { value } }],
+      })),
+      () => { modelCalls += 1; },
+    );
+
+    const result = await runQueryLoop(harness.options);
+
+    expect(result).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining(codes.A),
+    });
+    expect(modelCalls).toBe(sequence.length);
+    expect(toolEvents(harness)).toHaveLength(sequence.length);
+    expect(toolEvents(harness).map((event) => event.result.details?.error?.code)).toEqual(
+      sequence.map((value) => codes[value]),
+    );
+  });
+
+  test("clears prior counts after success and fails open for unlisted errors", async () => {
+    const successHarness = await createHarness();
+    let attempts = 0;
+    registerInline(successHarness, "sometimes", async () => {
+      attempts += 1;
+      if (attempts === 3) return createTextToolResult("ok");
+      return createToolErrorResult({
+        kind: "schema",
+        code: "TOOL_SCHEMA_INVALID_INPUT",
+        message: "invalid",
+      });
+    });
+    successHarness.appendUser("run");
+    installRounds([
+      ...Array.from({ length: 6 }, (_, index) => ({
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: `sometimes-${index}`, toolName: "sometimes", input: { value: "same" } }],
+      })),
+      { finishReason: "stop", text: "must not run" },
+    ]);
+    expect(await runQueryLoop(successHarness.options)).toMatchObject({ status: "failed" });
+    expect(attempts).toBe(6);
+
+    const transientHarness = await createHarness();
+    registerInline(transientHarness, "transient", async () => createToolErrorResult({
+      kind: "bash-timeout",
+      code: "TOOL_BASH_TIMEOUT",
+      message: "timed out",
+    }));
+    transientHarness.appendUser("run");
+    installRounds([
+      ...Array.from({ length: 3 }, (_, index) => ({
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: `transient-${index}`, toolName: "transient", input: { value: "same" } }],
+      })),
+      { finishReason: "stop", text: "done" },
+    ]);
+    expect(await runQueryLoop(transientHarness.options)).toMatchObject({ status: "completed", text: "done" });
+  });
+
+  test("keeps error codes distinct and applies the Skill error-code boundary exactly", async () => {
+    const distinctHarness = await createHarness();
+    let distinctAttempt = 0;
+    registerInline(distinctHarness, "distinct", async () => {
+      distinctAttempt += 1;
+      const code = distinctAttempt === 2
+        ? "TOOL_BEFORE_HOOK_INVALID_INPUT"
+        : "TOOL_SCHEMA_INVALID_INPUT";
+      return createToolErrorResult({ kind: "schema", code, message: "invalid" });
+    });
+    distinctHarness.appendUser("run");
+    installRounds([
+      ...Array.from({ length: 3 }, (_, index) => ({
+        finishReason: "tool-calls",
+        toolCalls: [{ toolCallId: `distinct-${index}`, toolName: "distinct", input: { value: "same" } }],
+      })),
+      { finishReason: "stop", text: "done" },
+    ]);
+    expect(await runQueryLoop(distinctHarness.options)).toMatchObject({ status: "completed", text: "done" });
+
+    for (const fixture of [
+      { code: "TOOL_SKILL_RESOURCE_PATH_INVALID", fails: true },
+      { code: "TOOL_PREPARE_INPUT_FAILED", fails: false },
+      { code: "TOOL_SKILL_INVALID", fails: false },
+    ] as const) {
+      const harness = await createHarness();
+      registerInline(harness, "skill_fixture", async () => createToolErrorResult({
+        kind: "execution",
+        code: fixture.code,
+        message: "skill error",
+      }));
+      harness.appendUser("run");
+      installRounds([
+        ...Array.from({ length: 3 }, (_, index) => ({
+          finishReason: "tool-calls",
+          toolCalls: [{ toolCallId: `${fixture.code}-${index}`, toolName: "skill_fixture", input: { value: "same" } }],
+        })),
+        { finishReason: "stop", text: "done" },
+      ]);
+      expect(await runQueryLoop(harness.options), fixture.code).toMatchObject({
+        outcome: "terminal",
+        status: fixture.fails ? "failed" : "completed",
+      });
+    }
+  });
+
+  test("fails open after three actual QueryLoop results for every excluded transient or generic code", async () => {
+    const fixtures = [
+      ["permission confirmation timeout", "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"],
+      ["permission confirmation denied", "TOOL_PERMISSION_CONFIRMATION_DENIED"],
+      ["bash timeout", "TOOL_BASH_TIMEOUT"],
+      ["lsp timeout", "TOOL_LSP_TIMEOUT"],
+      ["web timeout", "TOOL_WEBFETCH_TIMEOUT"],
+      ["cancelled", "TOOL_CANCELLED"],
+      ["bash aborted", "TOOL_BASH_ABORTED"],
+      ["process aborted", "TOOL_PROCESS_ABORTED"],
+      ["web HTTP error", "TOOL_WEBFETCH_HTTP_ERROR"],
+      ["MCP network timeout", "TOOL_MCP_CALL_TIMEOUT"],
+      ["MCP network abort", "TOOL_MCP_CALL_ABORTED"],
+      ["generic execution", "TOOL_EXECUTION_FAILED"],
+      ["unknown code", "TOOL_UNKNOWN_NEW_CODE"],
+      ["prepare input", "TOOL_PREPARE_INPUT_FAILED"],
+      ["Skill validation", "TOOL_SKILL_INVALID"],
+    ] as const;
+
+    for (const [index, [label, code]] of fixtures.entries()) {
+      const harness = await createHarness();
+      const toolName = `fail_open_${index}`;
+      let executions = 0;
+      registerInline(harness, toolName, async () => {
+        executions += 1;
+        return createToolErrorResult({ kind: "execution", code, message: `${label} fixture` });
+      });
+      harness.appendUser("run");
+      let modelCalls = 0;
+      installRounds([
+        ...Array.from({ length: 3 }, (_, attempt) => ({
+          finishReason: "tool-calls",
+          toolCalls: [{ toolCallId: `${toolName}-${attempt}`, toolName, input: { value: "same" } }],
+        })),
+        { finishReason: "stop", text: "done" },
+      ], () => { modelCalls += 1; });
+
+      expect(await runQueryLoop(harness.options), label).toMatchObject({ status: "completed", text: "done" });
+      expect(executions, label).toBe(3);
+      expect(modelCalls, label).toBe(4);
+      expect(toolEvents(harness), label).toHaveLength(3);
+      expect(toolEvents(harness).every((event) => event.result.details?.error?.code === code), label).toBe(true);
+    }
+  });
+
+  test("terminates after three TOOL_SKILL_RESOURCE_PATH_INVALID results before another model call", async () => {
+    const harness = await createHarness();
+    let executions = 0;
+    registerInline(harness, "invalid_skill_resource_path", async () => {
+      executions += 1;
+      return createToolErrorResult({
+        kind: "execution",
+        code: "TOOL_SKILL_RESOURCE_PATH_INVALID",
+        message: "resource path is outside the Skill root",
+      });
+    });
+    harness.appendUser("run");
+    let modelCalls = 0;
+    installRounds([
+      ...Array.from({ length: 3 }, (_, attempt) => ({
+        finishReason: "tool-calls",
+        toolCalls: [{
+          toolCallId: `invalid-skill-resource-path-${attempt}`,
+          toolName: "invalid_skill_resource_path",
+          input: { value: "same" },
+        }],
+      })),
+      { finishReason: "stop", text: "must not run" },
+    ], () => { modelCalls += 1; });
+
+    const result = await runQueryLoop(harness.options);
+
+    expect(result).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("TOOL_SKILL_RESOURCE_PATH_INVALID"),
+    });
+    expect(executions).toBe(3);
+    expect(modelCalls).toBe(3);
+    expect(toolEvents(harness)).toHaveLength(3);
+  });
+
+  test("settles every sibling in the triggering batch before failing", async () => {
+    const harness = await createHarness();
+    registerInline(harness, "invalid", async () => createToolErrorResult({
+      kind: "schema",
+      code: "TOOL_SCHEMA_INVALID_INPUT",
+      message: "invalid",
+    }));
+    registerInline(harness, "sibling", async () => createTextToolResult("settled"));
+    harness.appendUser("run");
+    installRounds([
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "invalid-1", toolName: "invalid", input: { value: "same" } }] },
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "invalid-2", toolName: "invalid", input: { value: "same" } }] },
+      { finishReason: "tool-calls", toolCalls: [
+        { toolCallId: "invalid-3", toolName: "invalid", input: { value: "same" } },
+        { toolCallId: "sibling", toolName: "sibling", input: {} },
+      ] },
+    ]);
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "failed" });
+    expect(toolEvents(harness).filter((event) => event.toolCallId === "invalid-3")).toHaveLength(1);
+    expect(toolEvents(harness).filter((event) => event.toolCallId === "sibling")).toHaveLength(1);
+    expect(toolEvents(harness).find((event) => event.toolCallId === "sibling")?.result.isError).toBe(false);
+  });
+
+  test("lets a later same-batch success clear three earlier deterministic failures", async () => {
+    const harness = await createHarness();
+    let attempts = 0;
+    registerInline(harness, "same_batch_clear", async () => {
+      attempts += 1;
+      return attempts === 4
+        ? createTextToolResult("recovered")
+        : createToolErrorResult({
+            kind: "schema",
+            code: "TOOL_SCHEMA_INVALID_INPUT",
+            message: "invalid",
+          });
+    });
+    harness.appendUser("run");
+    let modelCalls = 0;
+    installRounds([
+      {
+        finishReason: "tool-calls",
+        toolCalls: Array.from({ length: 4 }, (_, index) => ({
+          toolCallId: `same-batch-clear-${index}`,
+          toolName: "same_batch_clear",
+          input: { value: "same" },
+        })),
+      },
+      { finishReason: "stop", text: "done" },
+    ], () => { modelCalls += 1; });
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({ status: "completed", text: "done" });
+    expect(attempts).toBe(4);
+    expect(modelCalls).toBe(2);
+    expect(toolEvents(harness)).toHaveLength(4);
+  });
+
+  test("starts a fresh count after same-batch success and stops on the next third failure", async () => {
+    const harness = await createHarness();
+    let attempts = 0;
+    registerInline(harness, "same_batch_reset", async () => {
+      attempts += 1;
+      return attempts === 4
+        ? createTextToolResult("recovered")
+        : createToolErrorResult({
+            kind: "schema",
+            code: "TOOL_SCHEMA_INVALID_INPUT",
+            message: "invalid",
+          });
+    });
+    harness.appendUser("run");
+    let modelCalls = 0;
+    installRounds([
+      {
+        finishReason: "tool-calls",
+        toolCalls: Array.from({ length: 4 }, (_, index) => ({
+          toolCallId: `same-batch-reset-${index}`,
+          toolName: "same_batch_reset",
+          input: { value: "same" },
+        })),
+      },
+      ...Array.from({ length: 3 }, (_, index) => ({
+        finishReason: "tool-calls",
+        toolCalls: [{
+          toolCallId: `post-reset-${index}`,
+          toolName: "same_batch_reset",
+          input: { value: "same" },
+        }],
+      })),
+      { finishReason: "stop", text: "must not run" },
+    ], () => { modelCalls += 1; });
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("TOOL_SCHEMA_INVALID_INPUT"),
+    });
+    expect(attempts).toBe(7);
+    expect(modelCalls).toBe(4);
+    expect(toolEvents(harness)).toHaveLength(7);
+  });
+
+  test("rebuilds repeated failures across HITL suspension and resume", async () => {
+    const harness = await createHarness();
+    registerInline(harness, "invalid", async () => createToolErrorResult({
+      kind: "schema",
+      code: "TOOL_SCHEMA_INVALID_INPUT",
+      message: "invalid",
+    }));
+    harness.registry.register(askUserTool);
+    harness.options.allowedTools = [...harness.options.allowedTools, "ask_user"];
+    harness.appendUser("run");
+    installRounds([
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "invalid-1", toolName: "invalid", input: { value: "same" } }] },
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "invalid-2", toolName: "invalid", input: { value: "same" } }] },
+      { finishReason: "tool-calls", toolCalls: [{
+        toolCallId: "ask-resume",
+        toolName: "ask_user",
+        input: { questions: [{ question: "Continue?", header: "Continue", options: [], custom: true }] },
+      }] },
+    ]);
+    const suspended = await runQueryLoop(harness.options);
+    expect(suspended).toMatchObject({ outcome: "suspended", suspension: { kind: "hitl" } });
+    if (suspended.outcome !== "suspended") throw new Error("Expected suspended fixture");
+    const blocker = harness.store.getState().toolBatches.at(-1)!.calls[0]!.blocker!;
+    await applySessionToolBatchResponse({
+      registry: harness.registry,
+      storeManager: harness.storeManager,
+      workspaceRoot: harness.workspaceRoot,
+      sessionId: harness.sessionId,
+      hitlId: blocker.hitlId!,
+      requestKey: blocker.requestKey,
+      response: { type: "question_answer", answers: ["Yes"] },
+    });
+    harness.options.initialStep = suspended.steps;
+    harness.options.runOrdinal = 1;
+    installRounds([
+      { finishReason: "tool-calls", toolCalls: [{ toolCallId: "invalid-3", toolName: "invalid", input: { value: "same" } }] },
+      { finishReason: "stop", text: "must not run" },
+    ]);
+
+    expect(await runQueryLoop(harness.options)).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("TOOL_SCHEMA_INVALID_INPUT"),
     });
   });
 
